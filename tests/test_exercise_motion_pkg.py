@@ -54345,8 +54345,14 @@ def test_fixed_rig_fk_jacobian_matches_finite_differences() -> None:
     os.name != "nt" or shutil.which("pwsh") is None,
     reason="The production workout-plan process path requires Windows PowerShell.",
 )
+@pytest.mark.parametrize(
+    "fresh_source_evidence",
+    [False, True],
+    ids=["cached-source-evidence", "fresh-source-evidence"],
+)
 def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
     tmp_path: Path,
+    fresh_source_evidence: bool,
 ) -> None:
     """Run discovery, source prefetch, fit, render, review, and packaging in one process path.
 
@@ -54473,6 +54479,17 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
         str(source_video), cv2.VideoWriter_fourcc(*"mp4v"), canonical_clip.fps, (width, height)
     )
     assert writer.isOpened()
+    background_rng = np.random.default_rng(20261005)
+    fixed_camera_background = background_rng.integers(
+        24,
+        72,
+        size=(height, width, 3),
+        dtype=np.uint8,
+    )
+    for x in range(0, width, 16):
+        cv2.line(fixed_camera_background, (x, 0), (x, height - 1), (92, 92, 92), 1)
+    for y in range(0, height, 16):
+        cv2.line(fixed_camera_background, (0, y), (width - 1, y), (10, 10, 10), 1)
     source_pose_frames: list[dict[str, object]] = []
     connections = (
         ("pelvis", "spine1"), ("spine1", "spine2"), ("spine2", "spine3"),
@@ -54492,7 +54509,7 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
                 name: [0.5 + point[0] * 0.4, 0.92 - point[1] * 0.42]
                 for name, point in frame.joints.items()
             }
-            image = np.zeros((height, width, 3), dtype=np.uint8)
+            image = fixed_camera_background.copy()
             pixels = {
                 name: (round(point[0] * width), round(point[1] * height))
                 for name, point in image_points.items()
@@ -54535,103 +54552,139 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
     item_workspace = workspace_root / "squat" / "bake"
     candidate_workspace = item_workspace / "squat-001-synthetic-squat"
     selected_video = candidate_workspace / "input" / "selected_segment.mp4"
-    selected_video.parent.mkdir(parents=True, exist_ok=True)
-    selected_video.write_bytes(source_video.read_bytes())
-    source_sha256 = hashlib.sha256(selected_video.read_bytes()).hexdigest()
+    source_sha256 = hashlib.sha256(source_video.read_bytes()).hexdigest()
     reference_path = candidate_workspace / "segment_detection" / "exact_source_pose_reference.json"
-    reference_path.parent.mkdir(parents=True, exist_ok=True)
-    reference_path.write_text(
-        json.dumps(
-            {
-                "schemaVersion": 1,
-                "sourceVideoSha256": source_sha256,
-                "pose": {
-                    "coordinateSpace": "normalized_image_xy",
-                    "imageWidth": width,
-                    "imageHeight": height,
-                    "frames": source_pose_frames,
-                    "sourcePoseEvidenceAudit": {
-                        "policyVersion": 1,
-                        "events": [],
-                        "unresolved": False,
-                    },
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    seeded_source_metrics = {
-        "required": True,
-        "passed": True,
-        "reason": "fixture_exact_source_cycle_evidence",
-        "validationPolicyVersion": EXACT_SOURCE_PHASE_VALIDATION_POLICY_VERSION,
-        "sourceVideoPath": str(selected_video.resolve()),
-        "sourcePoseReferencePath": str(reference_path.resolve()),
-        "sourcePoseEndpointContractValidation": {"available": True, "passed": True},
-    }
     source_cache_path = reference_path.parent / "exact_source_phase_validation.json"
-    _, source_cache_key = exact_source_phase_validation_cache_key(
-        source_video_path=selected_video,
-        exercise_name=exercise.name,
-        exercise_motion_contract=contract,
-    )
-    write_exact_source_phase_validation_cache(
-        cache_path=source_cache_path,
-        cache_key=source_cache_key,
-        metrics=seeded_source_metrics,
-    )
-
-    # The production observer's cache is keyed by exact selected-video bytes
-    # and observer policy. Its normal image/VLM path is not reached on this hit.
-    body_support_digest = hashlib.sha256(selected_video.read_bytes()).hexdigest()
     body_support_cache_dir = reference_path.parent / "body_support"
     body_support_cache_path = body_support_cache_dir / (
-        f"body-support-{body_support_digest}-v{body_support_module.POLICY_VERSION}.json"
+        f"body-support-{source_sha256}-v{body_support_module.POLICY_VERSION}.json"
     )
-    body_support_cache_path.parent.mkdir(parents=True, exist_ok=True)
-    body_support_cache_path.write_text(
-        json.dumps(
+    source_pose_prefilter_payload = {
+        "passed": True,
+        "score": 0.99,
+        "reasons": [],
+        "model": "deterministic_process_e2e_pose_fixture",
+        "sampleFps": canonical_clip.fps,
+        "maxSeconds": frames[-1].time_sec,
+        "scanStrategy": "full",
+        "samplingPolicyVersion": 2,
+        "dominantPoseSampleCoordinateSpace": "normalized_image_xy",
+        "imageWidth": width,
+        "imageHeight": height,
+        "sampledFrameCount": len(source_pose_frames),
+        "validChunks": [
+            {"startSeconds": 0.0, "endSeconds": frames[-1].time_sec, "score": 0.99}
+        ],
+        "dominantPoseSamples": [
             {
-                "status": "observed",
-                "source": "exact_source_visual_support_observation",
-                "sourceVideoSha256": body_support_digest,
-                "policyVersion": body_support_module.POLICY_VERSION,
-                "observation": {
-                    "torsoSurface": "vertical",
-                    "pelvisAndUpperBackSameSurface": False,
-                    "pelvis": "moving",
-                    "upperBack": "moving",
-                    "head": "moving",
-                    "leftFoot": "stationary_full_sole",
-                    "rightFoot": "stationary_full_sole",
-                    "leftFootSurface": "ground",
-                    "rightFootSurface": "ground",
-                    "leftHand": "moving",
-                    "rightHand": "moving",
-                    "handsSameHorizontalSurface": False,
-                    "observations": "Synthetic squat fixture with both feet planted.",
+                "timeSeconds": frame["sourceTimeSec"],
+                "sourceTimeSec": frame["sourceTimeSec"],
+                "bbox": [
+                    min(point[0] for point in frame["joints"].values()),
+                    min(point[1] for point in frame["joints"].values()),
+                    max(point[0] for point in frame["joints"].values()),
+                    max(point[1] for point in frame["joints"].values()),
+                ],
+                "keypoints": {
+                    name: [point[0], point[1], frame["jointConfidence"].get(name, 1.0)]
+                    for name, point in frame["joints"].items()
                 },
             }
-        ),
-        encoding="utf-8",
-    )
-    (reference_path.parent / "segment_selection.json").write_text(
-        json.dumps(
-            {
-                "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
-                "role": "pre_wham_validated_source_cut",
-                "sourcePrepReason": "pre_wham_source_window_choice",
-                "preWhamSourceValidationEnabled": True,
-                "exerciseMotionContractEnabled": True,
-                "exerciseMotionContractStatus": "generated",
-                "exerciseMotionContract": contract,
-                "selectedSegmentPath": str(selected_video.resolve()),
-                "selectedSpan": {"startSeconds": 0.0, "endSeconds": frames[-1].time_sec},
-                "exactSourcePhaseValidation": seeded_source_metrics,
-            }
-        ),
-        encoding="utf-8",
-    )
+            for frame in source_pose_frames
+        ],
+    }
+    seeded_source_metrics: dict[str, Any] = {}
+    source_cache_key: str | None = None
+    body_support_digest = source_sha256
+    if not fresh_source_evidence:
+        selected_video.parent.mkdir(parents=True, exist_ok=True)
+        selected_video.write_bytes(source_video.read_bytes())
+        reference_path.parent.mkdir(parents=True, exist_ok=True)
+        reference_path.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "sourceVideoSha256": source_sha256,
+                    "pose": {
+                        "coordinateSpace": "normalized_image_xy",
+                        "imageWidth": width,
+                        "imageHeight": height,
+                        "frames": source_pose_frames,
+                        "sourcePoseEvidenceAudit": {
+                            "policyVersion": 1,
+                            "events": [],
+                            "unresolved": False,
+                        },
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        seeded_source_metrics = {
+            "required": True,
+            "passed": True,
+            "reason": "fixture_exact_source_cycle_evidence",
+            "validationPolicyVersion": EXACT_SOURCE_PHASE_VALIDATION_POLICY_VERSION,
+            "sourceVideoPath": str(selected_video.resolve()),
+            "sourcePoseReferencePath": str(reference_path.resolve()),
+            "sourcePoseEndpointContractValidation": {"available": True, "passed": True},
+        }
+        _, source_cache_key = exact_source_phase_validation_cache_key(
+            source_video_path=selected_video,
+            exercise_name=exercise.name,
+            exercise_motion_contract=contract,
+        )
+        write_exact_source_phase_validation_cache(
+            cache_path=source_cache_path,
+            cache_key=source_cache_key,
+            metrics=seeded_source_metrics,
+        )
+
+        # The cached arm preserves the earlier bounded path that proves reuse.
+        body_support_cache_path.parent.mkdir(parents=True, exist_ok=True)
+        body_support_cache_path.write_text(
+            json.dumps(
+                {
+                    "status": "observed",
+                    "source": "exact_source_visual_support_observation",
+                    "sourceVideoSha256": body_support_digest,
+                    "policyVersion": body_support_module.POLICY_VERSION,
+                    "observation": {
+                        "torsoSurface": "vertical",
+                        "pelvisAndUpperBackSameSurface": False,
+                        "pelvis": "moving",
+                        "upperBack": "moving",
+                        "head": "moving",
+                        "leftFoot": "stationary_full_sole",
+                        "rightFoot": "stationary_full_sole",
+                        "leftFootSurface": "ground",
+                        "rightFootSurface": "ground",
+                        "leftHand": "moving",
+                        "rightHand": "moving",
+                        "handsSameHorizontalSurface": False,
+                        "observations": "Synthetic squat fixture with both feet planted.",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (reference_path.parent / "segment_selection.json").write_text(
+            json.dumps(
+                {
+                    "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
+                    "role": "pre_wham_validated_source_cut",
+                    "sourcePrepReason": "pre_wham_source_window_choice",
+                    "preWhamSourceValidationEnabled": True,
+                    "exerciseMotionContractEnabled": True,
+                    "exerciseMotionContractStatus": "generated",
+                    "exerciseMotionContract": contract,
+                    "selectedSegmentPath": str(selected_video.resolve()),
+                    "selectedSpan": {"startSeconds": 0.0, "endSeconds": frames[-1].time_sec},
+                    "exactSourcePhaseValidation": seeded_source_metrics,
+                }
+            ),
+            encoding="utf-8",
+        )
 
     workout_plan_path = tmp_path / "workout_plan.json"
     workout_plan_path.write_text(
@@ -54662,6 +54715,10 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
                 "sourceValidationCacheKey": source_cache_key,
                 "bodySupportCachePath": str(body_support_cache_path.resolve()),
                 "bodySupportSourceVideoSha256": body_support_digest,
+                "freshSourceEvidence": fresh_source_evidence,
+                "sourcePosePrefilterPayload": source_pose_prefilter_payload,
+                "sourceDurationSeconds": frames[-1].time_sec,
+                "exerciseMotionContract": contract,
                 "callsPath": str(calls_path.resolve()),
                 "sourceVideoPath": str(source_video.resolve()),
             }
@@ -54737,8 +54794,11 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
             "-NoExerciseNameRewrite",
             "-SkipPosePrefilter",
             "-SkipExerciseMotionContractPrefetch",
-            "-SkipSourceSegmentDetection",
-            "-SkipTwoScaleSourceValidation",
+            *(
+                []
+                if fresh_source_evidence
+                else ["-SkipSourceSegmentDetection", "-SkipTwoScaleSourceValidation"]
+            ),
             "-SkipAdaptivePreviewSettings",
             "-NoWhamDocker",
             "-MotionReconstructor",
@@ -54760,6 +54820,10 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
             "-ArtifactRetention",
             "debug",
         ]
+    if fresh_source_evidence:
+        assert not candidate_workspace.exists(), (
+            "Fresh-source process E2E must not seed a selected segment or evidence cache"
+        )
     stdout_path = tmp_path / "workout_plan.stdout.log"
     stderr_path = tmp_path / "workout_plan.stderr.log"
     queue_root = workspace_root / "staged-wave-services" / "v1"
@@ -54886,31 +54950,120 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
         call for call in boundary_calls if call["event"] == "source_validation"
     ]
     assert source_validation_calls, "the production exact-source cache gate was not reached"
-    assert all(call["cacheStatus"] == "reused" for call in source_validation_calls)
+    expected_source_cache_statuses = {"computed", "reused"} if fresh_source_evidence else {"reused"}
+    retained_source_audit_dir = workspace_root / "squat" / "selected" / "segment_detection"
+    selected_source_validation = None
+    if fresh_source_evidence:
+        selected_source_validation = json.loads(
+            (retained_source_audit_dir / "exact_source_phase_validation.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        expected_source_validation_cache_key = selected_source_validation.get("cacheKey")
+    else:
+        expected_source_validation_cache_key = source_cache_key
     assert all(
-        call["cacheKey"] == source_cache_key
-        and call["sourcePoseReferencePath"] == str(reference_path.resolve())
-        and call["validationPolicyVersion"] == EXACT_SOURCE_PHASE_VALIDATION_POLICY_VERSION
+        call["cacheStatus"] in expected_source_cache_statuses
         for call in source_validation_calls
-    )
-    assert not any(
-        call["event"] == "source_validation_cache_miss" for call in boundary_calls
-    )
+    ), source_validation_calls
+    if fresh_source_evidence:
+        assert any(call["cacheStatus"] == "computed" for call in source_validation_calls), (
+            "fresh exact-source evidence was not computed"
+        )
+    for call in source_validation_calls:
+        assert call["validationPolicyVersion"] == EXACT_SOURCE_PHASE_VALIDATION_POLICY_VERSION
+        assert len(call["sourceVideoSha256"]) == 64
+        assert len(call["cacheKey"]) == 64
+        assert call["sourcePoseReferencePath"]
+    if not fresh_source_evidence:
+        assert all(
+            call["cacheKey"] == expected_source_validation_cache_key
+            and call["sourcePoseReferencePath"] == str(reference_path.resolve())
+            for call in source_validation_calls
+        )
+    if fresh_source_evidence:
+        assert any(
+            call["event"] == "source_pose_prefilter_fixture"
+            for call in boundary_calls
+        ), "fresh exact-source validation did not use the deterministic pose adapter"
+        assert any(
+            call["event"] == "fresh_source_selection_input"
+            for call in boundary_calls
+        ), "the production source-window selection path was not entered"
+        source_cut_calls = [
+            call for call in boundary_calls if call["event"] == "source_cut_review_request"
+        ]
+        assert source_cut_calls, "production source-window candidates were not reviewed"
+        assert any(
+            row["approved"]
+            and abs(call["candidateWindows"][row["id"]][0]) <= 0.0625
+            and abs(
+                call["candidateWindows"][row["id"]][1] - frames[-1].time_sec
+            ) <= 0.0625
+            for call in source_cut_calls
+            for row in json.loads(call["response"])["candidates"]
+        ), "the complete source cycle was not selected for validation"
+        assert selected_source_validation is not None
+        assert selected_source_validation["metrics"]["cacheStatus"] in {
+            "computed",
+            "reused_deterministic_candidate_confirmation",
+        }
+        assert selected_source_validation["metrics"]["passed"] is True
+        assert Path(
+            selected_source_validation["metrics"]["sourcePoseReferencePath"]
+        ).is_file()
+        source_selection = json.loads(
+            (retained_source_audit_dir / "segment_selection.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert source_selection["selectedSpan"]["startSeconds"] == pytest.approx(0.0)
+        assert source_selection["selectedSpan"]["endSeconds"] == pytest.approx(
+            frames[-1].time_sec
+        )
+        assert source_selection["sourcePrepReason"] == "pre_wham_source_window_choice"
+        assert source_selection["exactSourcePhaseValidation"]["cacheStatus"] in {
+            "computed",
+            "reused_deterministic_candidate_confirmation",
+        }
+        assert source_selection["exactSourcePhaseValidationPassed"] is True
+    else:
+        assert not any(
+            call["event"] == "source_validation_cache_miss" for call in boundary_calls
+        )
     body_support_calls = [
         call for call in boundary_calls if call["event"] == "body_support_observation"
     ]
     assert body_support_calls, "the production body-support observer was not reached"
-    assert all(
-        call["cacheHit"] is True
-        and call["sourceVideoSha256"] == body_support_digest
-        and call["policyVersion"] == body_support_module.POLICY_VERSION
-        and call["cachePath"] == str(body_support_cache_path.resolve())
-        for call in body_support_calls
-    )
-    assert not any(
-        call["event"] in {"body_support_cache_miss", "body_support_visual_call_unexpected"}
-        for call in boundary_calls
-    )
+    if fresh_source_evidence:
+        fresh_body_support_calls = [
+            call for call in body_support_calls if call["cacheHit"] is False
+        ]
+        assert fresh_body_support_calls, "body-support evidence was only reused, not created"
+        validated_source_video_digests = {
+            call["sourceVideoSha256"] for call in source_validation_calls
+        }
+        assert all(
+            call["status"] == "observed"
+            and call["policyVersion"] == body_support_module.POLICY_VERSION
+            and call["sourceVideoSha256"] in validated_source_video_digests
+            for call in fresh_body_support_calls
+        )
+        assert any(
+            call["event"] == "body_support_request" for call in boundary_calls
+        ), "fresh body-support creation did not use the deterministic vision adapter"
+    else:
+        assert all(
+            call["cacheHit"] is True
+            and call["sourceVideoSha256"] == body_support_digest
+            and call["policyVersion"] == body_support_module.POLICY_VERSION
+            and call["cachePath"] == str(body_support_cache_path.resolve())
+            for call in body_support_calls
+        )
+        assert not any(
+            call["event"] in {"body_support_cache_miss", "body_support_visual_call_unexpected"}
+            for call in boundary_calls
+        )
     final_review_requests = [
         call for call in boundary_calls if call["event"] == "final_visual_review_request"
     ]
@@ -54954,6 +55107,11 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
     assert generated_manifest_path.is_file()
     retained_reference_path = selected_output_dir / "segment_detection" / "exact_source_pose_reference.json"
     retained_source_video = Path(selected["selectedInputSourceVideoPath"])
+    if fresh_source_evidence:
+        assert retained_source_video.is_file()
+        assert hashlib.sha256(retained_source_video.read_bytes()).hexdigest() in {
+            call["sourceVideoSha256"] for call in source_validation_calls
+        }
     assert bake_and_rank_module.load_verified_source_pose_reference(
         retained_reference_path, retained_source_video
     ) is not None
@@ -55001,6 +55159,18 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
     final_validation = selected["ranking"]["payload"]["finalOutputValidation"]
     assert final_validation.get("passed") is True
     assert final_validation.get("renderEvidence", {}).get("passed") is True
+    if fresh_source_evidence:
+        source_evidence = final_validation.get("sourceEvidence")
+        assert isinstance(source_evidence, dict)
+        assert source_evidence.get("required") is True
+        assert source_evidence.get("available") is True
+        assert source_evidence.get("passed") is True
+        two_scale_validation = source_evidence.get("validation")
+        assert isinstance(two_scale_validation, dict)
+        assert two_scale_validation.get("passed") is True
+        assert any(
+            call["event"] == "two_scale_topology_request" for call in boundary_calls
+        )
     visual_review = final_validation.get("visualReview")
     assert visual_review["status"] == "observed"
     assert visual_review["advisoryOnly"] is True

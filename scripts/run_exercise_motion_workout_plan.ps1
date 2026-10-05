@@ -1431,7 +1431,28 @@ function Copy-SelectedSourceAuditEvidence {
 
     $sourceDirectory = Join-Path $CandidateWorkspace "segment_detection"
     $sourceValidationPath = Join-Path $sourceDirectory "exact_source_phase_validation.json"
-    if (-not (Test-Path -LiteralPath $sourceValidationPath)) {
+    $sourceSelectionPath = Join-Path $sourceDirectory "segment_selection.json"
+    $sourcePosePath = Join-Path $sourceDirectory "exact_source_pose_reference.json"
+    $sourceSelection = $null
+    if (Test-Path -LiteralPath $sourceSelectionPath -PathType Leaf) {
+        try {
+            $sourceSelection = Get-Content -LiteralPath $sourceSelectionPath -Raw | ConvertFrom-Json
+        } catch {
+            $sourceSelection = $null
+        }
+    }
+    $embeddedValidation = Get-ObjectProperty -Object $sourceSelection -Name "exactSourcePhaseValidation"
+    $sourcePosePathValue = [string](Get-ObjectProperty -Object $embeddedValidation -Name "sourcePoseReferencePath")
+    if (-not (Test-Path -LiteralPath $sourcePosePath -PathType Leaf) -and
+        -not [string]::IsNullOrWhiteSpace($sourcePosePathValue) -and
+        (Test-Path -LiteralPath $sourcePosePathValue -PathType Leaf)) {
+        $sourcePosePath = $sourcePosePathValue
+    }
+    $hasValidationFile = Test-Path -LiteralPath $sourceValidationPath -PathType Leaf
+    if (-not $hasValidationFile -and $null -eq $embeddedValidation) {
+        return $null
+    }
+    if (-not (Test-Path -LiteralPath $sourcePosePath -PathType Leaf)) {
         return $null
     }
 
@@ -1441,14 +1462,29 @@ function Copy-SelectedSourceAuditEvidence {
         -SourcePath (Join-Path $sourceDirectory "exact_source_pose_reference.json") `
         -DestinationDirectory $destinationAuditDirectory `
         -DestinationFileName "exact_source_pose_reference.json"
-    $destinationValidationPath = Copy-SelectedFile `
-        -SourcePath $sourceValidationPath `
-        -DestinationDirectory $destinationAuditDirectory `
-        -DestinationFileName "exact_source_phase_validation.json"
-    $destinationSelectionPath = Copy-SelectedFile `
-        -SourcePath (Join-Path $sourceDirectory "segment_selection.json") `
-        -DestinationDirectory $destinationAuditDirectory `
-        -DestinationFileName "segment_selection.json"
+    $destinationValidationPath = $null
+    if ($hasValidationFile) {
+        $destinationValidationPath = Copy-SelectedFile `
+            -SourcePath $sourceValidationPath `
+            -DestinationDirectory $destinationAuditDirectory `
+            -DestinationFileName "exact_source_phase_validation.json"
+    } else {
+        $destinationValidationPath = Join-Path $destinationAuditDirectory "exact_source_phase_validation.json"
+        $cacheKey = Get-ObjectProperty -Object $embeddedValidation -Name "cacheKey"
+        $validationRecord = [ordered]@{
+            cacheKey = $cacheKey
+            metrics = $embeddedValidation
+            retainedFromSegmentSelection = $true
+        }
+        Write-AtomicJsonDocument -Path $destinationValidationPath -InputObject $validationRecord -Depth 100
+    }
+    $destinationSelectionPath = $null
+    if (Test-Path -LiteralPath $sourceSelectionPath -PathType Leaf) {
+        $destinationSelectionPath = Copy-SelectedFile `
+            -SourcePath $sourceSelectionPath `
+            -DestinationDirectory $destinationAuditDirectory `
+            -DestinationFileName "segment_selection.json"
+    }
 
     if ($destinationPosePath -and $destinationValidationPath) {
         try {
@@ -1461,6 +1497,9 @@ function Copy-SelectedSourceAuditEvidence {
                 $selection = Get-Content -LiteralPath $destinationSelectionPath -Raw | ConvertFrom-Json
                 if ($selection.exactSourcePhaseValidation -and $selection.exactSourcePhaseValidation.metrics) {
                     $selection.exactSourcePhaseValidation.metrics.sourcePoseReferencePath = [System.IO.Path]::GetFullPath($destinationPosePath)
+                    Write-AtomicJsonDocument -Path $destinationSelectionPath -InputObject $selection -Depth 100
+                } elseif ($selection.exactSourcePhaseValidation) {
+                    $selection.exactSourcePhaseValidation.sourcePoseReferencePath = [System.IO.Path]::GetFullPath($destinationPosePath)
                     Write-AtomicJsonDocument -Path $destinationSelectionPath -InputObject $selection -Depth 100
                 }
             }

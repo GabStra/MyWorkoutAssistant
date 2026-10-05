@@ -31,6 +31,31 @@ def _record(config: dict[str, Any], event: str, **details: Any) -> None:
 def _patch_module(fullname: str, module: Any) -> None:
     config = _config()
 
+    if fullname == "exercise_motion_pkg.pose_prefilter":
+        if config.get("freshSourceEvidence") is True:
+            pose_payload = config["sourcePosePrefilterPayload"]
+
+            def refresh_fixture_pose_evidence(
+                _payload: dict[str, Any] | None,
+                *,
+                video_path: str | Path,
+                output_dir: str | Path,
+                exercise_name: str,
+                contract: dict[str, Any] | None,
+            ) -> dict[str, Any]:
+                _record(
+                    config,
+                    "source_pose_prefilter_fixture",
+                    videoPath=str(Path(video_path).resolve()),
+                    outputDir=str(Path(output_dir).resolve()),
+                    exerciseName=exercise_name,
+                    hasContract=isinstance(contract, dict),
+                )
+                return pose_payload
+
+            module.refresh_legacy_spread_pose_evidence = refresh_fixture_pose_evidence
+        return
+
     if fullname == "exercise_motion_pkg.youtube":
         def search_local_fixture(query: str, results_per_query: int, **_kwargs: Any) -> list[Any]:
             _record(config, "discovery_search", query=query, requestedCount=results_per_query)
@@ -89,7 +114,7 @@ def _patch_module(fullname: str, module: Any) -> None:
 
         class FixtureVisionClient:
             def caption_images(self, *, frame_paths: list[Path], prompt: str, **_kwargs: Any) -> str:
-                if not frame_paths:
+                if not frame_paths and "Audit only the consistency of independent written visual observations" not in prompt:
                     payload = {
                         "score": 0.99,
                         "wrongExercise": False,
@@ -99,6 +124,152 @@ def _patch_module(fullname: str, module: Any) -> None:
                         "reason": "Local process E2E text identity fixture.",
                     }
                     event = "semantic_gate_request"
+                elif (
+                    "Classify one candidate source-video cut" in prompt
+                    or "Classify each listed candidate source-video cut" in prompt
+                ):
+                    import re
+
+                    candidate_windows = {
+                        candidate_id: (float(start), float(end))
+                        for candidate_id, start, end in re.findall(
+                            r"^- Candidate ([A-Z]+):\s*([0-9.]+)s to ([0-9.]+)s;",
+                            prompt,
+                            re.MULTILINE,
+                        )
+                    }
+                    candidate_ids = re.findall(r"^- Candidate ([A-Z]+):", prompt, re.MULTILINE)
+                    if not candidate_ids:
+                        candidate_ids = ["A"]
+                    source_duration = float(config.get("sourceDurationSeconds") or 0.0)
+                    full_cycle_ids = {
+                        candidate_id
+                        for candidate_id, (start, end) in candidate_windows.items()
+                        if abs(start) <= 0.0625 and abs(end - source_duration) <= 0.0625
+                    }
+                    payload = {
+                        "candidates": [
+                            {
+                                "id": candidate_id,
+                                "approved": candidate_id in full_cycle_ids,
+                                "confidence": 0.99,
+                                "completeMovement": candidate_id in full_cycle_ids,
+                                "startBoundaryClean": True,
+                                "finishBoundaryClean": True,
+                                "setupOrFiller": False,
+                                "namedEquipmentEngagedStatus": "not_applicable",
+                                "reject": [] if candidate_id in full_cycle_ids else ["partial_movement"],
+                                "note": (
+                                    "Complete squat repetition in view."
+                                    if candidate_id in full_cycle_ids
+                                    else "The full repetition is outside this cut."
+                                ),
+                                "identityMatch": "match",
+                                "identityEvidence": "The subject visibly squats and stands.",
+                                "boundaryEvidence": (
+                                    "The full cycle is contained in the cut."
+                                    if candidate_id in full_cycle_ids
+                                    else "This cut omits part of the full repetition."
+                                ),
+                                "qualityEvidence": "Continuous clear movement is visible.",
+                            }
+                            for candidate_id in candidate_ids
+                        ]
+                    }
+                    event = "source_cut_review_request"
+                elif "Report only visible support contacts" in prompt:
+                    payload = {
+                        "torsoSurface": "vertical",
+                        "pelvisAndUpperBackSameSurface": False,
+                        "pelvis": "moving",
+                        "upperBack": "moving",
+                        "head": "moving",
+                        "leftFoot": "stationary_full_sole",
+                        "rightFoot": "stationary_full_sole",
+                        "leftFootSurface": "ground",
+                        "rightFootSurface": "ground",
+                        "leftHand": "moving",
+                        "rightHand": "moving",
+                        "handsSameHorizontalSurface": False,
+                        "observations": "Both feet remain planted while the subject squats.",
+                    }
+                    event = "body_support_request"
+                elif "Verify an exact exercise-specific movement topology" in prompt:
+                    from exercise_motion_pkg.bake_and_rank import movement_topology_from_contract
+
+                    topology = movement_topology_from_contract(
+                        config.get("exerciseMotionContract")
+                    ) or {}
+                    phases = topology.get("phases") or []
+                    required_equipment = str(
+                        topology.get("requiredEquipment")
+                        or topology.get("required_equipment")
+                        or "none"
+                    )
+                    payload = {
+                        "startStateMatch": "match",
+                        "phaseEvidence": [
+                            {
+                                "phaseId": phase.get("id"),
+                                "visible": True,
+                                "position": (index + 1) / (len(phases) + 1),
+                                "evidence": "The squat phase is visible in sequence.",
+                            }
+                            for index, phase in enumerate(phases)
+                        ],
+                        "endStateMatch": "match",
+                        "requiredEquipmentMatch": (
+                            "not_applicable" if required_equipment == "none" else "match"
+                        ),
+                        "complete": True,
+                        "evidence": "The subject completes the squat sequence.",
+                    }
+                    event = "two_scale_topology_request"
+                elif "You verify only exercise identity" in prompt:
+                    payload = {
+                        "verdict": "match",
+                        "visibleEquipment": ["none"],
+                        "observedAction": "The subject lowers and raises the hips.",
+                        "evidence": "A complete squat is visible.",
+                    }
+                    event = "two_scale_identity_request"
+                elif "You inspect one uniformly sampled chronological contact sheet" in prompt:
+                    payload = {
+                        "unrelatedActionVisible": False,
+                        "unrelatedTileNumbers": [],
+                        "evidence": "The tiles show only the squat movement.",
+                    }
+                    event = "two_scale_uniform_request"
+                elif "You inspect one motion-focused chronological contact sheet" in prompt:
+                    payload = {
+                        "targetExerciseActionVisible": True,
+                        "namedEquipmentEngagedStatus": "not_applicable",
+                        "evidence": "The subject visibly squats and stands.",
+                    }
+                    event = "two_scale_motion_request"
+                elif "Make a target-blind observation of chronological contact sheets" in prompt:
+                    payload = {
+                        "visibleEquipment": ["none"],
+                        "startState": "Standing upright with feet planted.",
+                        "orderedPhases": ["Lower into a squat", "Stand upright again"],
+                        "endState": "Standing upright with feet planted.",
+                        "startStateVisible": True,
+                        "actionPhaseVisible": True,
+                        "turningPointVisible": True,
+                        "returnOrFinishVisible": True,
+                        "complete": True,
+                        "evidence": "The subject lowers, reaches depth, then stands.",
+                    }
+                    event = "two_scale_completeness_request"
+                elif "Audit only the consistency of independent written visual observations" in prompt:
+                    payload = {
+                        "corroboratedConflict": False,
+                        "targetIdentitySupported": "true",
+                        "requiredEquipmentSupported": "not_applicable",
+                        "completeExecutionSupported": "true",
+                        "corroboratedContradictions": [],
+                    }
+                    event = "two_scale_consistency_request"
                 else:
                     payload = {
                         "correct_exercise": True,
@@ -135,6 +306,7 @@ def _patch_module(fullname: str, module: Any) -> None:
                     event,
                     promptCharacters=len(prompt),
                     framePaths=[str(path) for path in frame_paths],
+                    candidateWindows=(candidate_windows if event == "source_cut_review_request" else None),
                     response=response,
                 )
                 return response
@@ -170,6 +342,15 @@ def _patch_module(fullname: str, module: Any) -> None:
     ) -> Any:
         from exercise_motion_pkg.pipeline import GenerateRequest, run_generation_pipeline
 
+        source_pose_reference_path = Path(config["sourcePoseReferencePath"])
+        if config.get("freshSourceEvidence") is True:
+            candidate_workspace = Path(prepared_video_path).resolve().parent.parent
+            source_pose_reference_path = (
+                candidate_workspace
+                / "segment_detection"
+                / "exact_source_pose_reference.json"
+            )
+
         _record(
             config,
             "generation",
@@ -186,7 +367,7 @@ def _patch_module(fullname: str, module: Any) -> None:
                 motion_reconstruction_backend="wham",
                 ground_contact_mode="intermittent",
                 support_mode_hint="standing",
-                source_pose_reference_path=Path(config["sourcePoseReferencePath"]),
+                source_pose_reference_path=source_pose_reference_path,
                 reuse_wham_cache=True,
                 structural_refinement_enabled=True,
             )
@@ -213,6 +394,57 @@ def _patch_module(fullname: str, module: Any) -> None:
 
     if fullname == "exercise_motion_pkg.bake_and_rank":
         module.generate_candidate_motion = generate_from_normalized_fixture
+
+        if config.get("freshSourceEvidence") is True:
+            from types import SimpleNamespace
+
+            pose_payload = config["sourcePosePrefilterPayload"]
+
+            def run_fixture_pose_prefilter(*, video_path: str | Path, settings: Any) -> Any:
+                _record(
+                    config,
+                    "source_pose_prefilter_fixture",
+                    videoPath=str(Path(video_path).resolve()),
+                    device=getattr(settings, "device", None),
+                )
+                return SimpleNamespace(
+                    passed=True,
+                    score=0.99,
+                    reasons=[],
+                    payload=pose_payload,
+                )
+
+            module.run_yolo_pose_prefilter = run_fixture_pose_prefilter
+
+            production_prepare_candidate_input_video = module.prepare_candidate_input_video
+
+            def prepare_with_fixture_source_evidence(ranked_candidate: Any, **kwargs: Any) -> Path:
+                from dataclasses import replace
+
+                candidate = dict(ranked_candidate.candidate)
+                vision_payload = dict(candidate.get("visionPayload") or {})
+                vision_payload["posePrefilter"] = pose_payload
+                candidate["visionPayload"] = vision_payload
+                candidate["sourceWindowHint"] = {
+                    "startSeconds": 0.0,
+                    "endSeconds": float(config["sourceDurationSeconds"]),
+                    "score": 0.99,
+                }
+                candidate_with_evidence = replace(ranked_candidate, candidate=candidate)
+                if candidate_with_evidence.source_chunk_hint is None:
+                    raise AssertionError("Fixture source-window hint was not constructed")
+                _record(
+                    config,
+                    "fresh_source_selection_input",
+                    candidateSlug=candidate_with_evidence.workspace_slug,
+                    sourceWindowHint={
+                        "startSeconds": candidate_with_evidence.source_chunk_hint.start_seconds,
+                        "endSeconds": candidate_with_evidence.source_chunk_hint.end_seconds,
+                    },
+                )
+                return production_prepare_candidate_input_video(candidate_with_evidence, **kwargs)
+
+            module.prepare_candidate_input_video = prepare_with_fixture_source_evidence
 
         def download_local_source_fixture(
             url: str,
@@ -269,7 +501,7 @@ def _patch_module(fullname: str, module: Any) -> None:
                 ),
                 None,
             )
-            if cache_hit_path is None:
+            if cache_hit_path is None and config.get("freshSourceEvidence") is not True:
                 _record(
                     config,
                     "source_validation_cache_miss",
@@ -286,7 +518,7 @@ def _patch_module(fullname: str, module: Any) -> None:
                 config,
                 "source_validation",
                 sourceVideoPath=str(source_video_path.resolve()),
-                cachePath=str(cache_hit_path.resolve()),
+                cachePath=str((cache_hit_path or cache_path).resolve()),
                 cacheKey=cache_key,
                 sourceVideoSha256=cache_key_payload["videoSha256"],
                 cacheStatus=result.get("cacheStatus"),
@@ -313,15 +545,92 @@ def _patch_module(fullname: str, module: Any) -> None:
                 prompt: str,
                 **_request_options: Any,
             ) -> str:
-                response = json.dumps(
-                    {
+                if "Verify an exact exercise-specific movement topology" in prompt:
+                    from exercise_motion_pkg.bake_and_rank import movement_topology_from_contract
+
+                    topology = movement_topology_from_contract(
+                        config.get("exerciseMotionContract")
+                    ) or {}
+                    phases = topology.get("phases") or []
+                    required_equipment = str(
+                        topology.get("requiredEquipment")
+                        or topology.get("required_equipment")
+                        or "none"
+                    )
+                    payload = {
+                        "startStateMatch": "match",
+                        "phaseEvidence": [
+                            {
+                                "phaseId": phase.get("id"),
+                                "visible": True,
+                                "position": (index + 1) / (len(phases) + 1),
+                                "evidence": "The squat phase is visible in sequence.",
+                            }
+                            for index, phase in enumerate(phases)
+                        ],
+                        "endStateMatch": "match",
+                        "requiredEquipmentMatch": (
+                            "not_applicable" if required_equipment == "none" else "match"
+                        ),
+                        "complete": True,
+                        "evidence": "The subject completes the squat sequence.",
+                    }
+                    event = "two_scale_topology_request"
+                elif "You verify only exercise identity" in prompt:
+                    payload = {
+                        "verdict": "match",
+                        "visibleEquipment": ["none"],
+                        "observedAction": "The subject lowers and raises the hips.",
+                        "evidence": "A complete squat is visible.",
+                    }
+                    event = "two_scale_identity_request"
+                elif "You inspect one uniformly sampled chronological contact sheet" in prompt:
+                    payload = {
+                        "unrelatedActionVisible": False,
+                        "unrelatedTileNumbers": [],
+                        "evidence": "The tiles show only the squat movement.",
+                    }
+                    event = "two_scale_uniform_request"
+                elif "You inspect one motion-focused chronological contact sheet" in prompt:
+                    payload = {
+                        "targetExerciseActionVisible": True,
+                        "namedEquipmentEngagedStatus": "not_applicable",
+                        "evidence": "The subject visibly squats and stands.",
+                    }
+                    event = "two_scale_motion_request"
+                elif "Make a target-blind observation of chronological contact sheets" in prompt:
+                    payload = {
+                        "visibleEquipment": ["none"],
+                        "startState": "Standing upright with feet planted.",
+                        "orderedPhases": ["Lower into a squat", "Stand upright again"],
+                        "endState": "Standing upright with feet planted.",
+                        "startStateVisible": True,
+                        "actionPhaseVisible": True,
+                        "turningPointVisible": True,
+                        "returnOrFinishVisible": True,
+                        "complete": True,
+                        "evidence": "The subject lowers, reaches depth, then stands.",
+                    }
+                    event = "two_scale_completeness_request"
+                elif "Audit only the consistency of independent written visual observations" in prompt:
+                    payload = {
+                        "corroboratedConflict": False,
+                        "targetIdentitySupported": "true",
+                        "requiredEquipmentSupported": "not_applicable",
+                        "completeExecutionSupported": "true",
+                        "corroboratedContradictions": [],
+                    }
+                    event = "two_scale_consistency_request"
+                else:
+                    payload = {
                         "findings": [],
                         "note": "Deterministic process E2E visual-review response.",
                     }
-                )
+                    event = "final_visual_review_request"
+                response = json.dumps(payload)
                 _record(
                     config,
-                    "final_visual_review_request",
+                    event,
                     skeletonPath=str(item.skeleton_path.resolve()),
                     promptCharacters=len(prompt),
                     framePaths=[str(path.resolve()) for path in frame_paths],
@@ -371,6 +680,25 @@ def _patch_module(fullname: str, module: Any) -> None:
             )
             expected_cache_path = config.get("bodySupportCachePath")
             expected_video_digest = config.get("bodySupportSourceVideoSha256")
+            if config.get("freshSourceEvidence") is True:
+                cache_hit_before_call = cache_path.is_file()
+                result = production_body_support_observer(
+                    video_path,
+                    caption_images,
+                    cache_dir,
+                )
+                _record(
+                    config,
+                    "body_support_observation",
+                    sourceVideoPath=str(video_path.resolve()),
+                    cachePath=str(cache_path.resolve()),
+                    sourceVideoSha256=digest,
+                    policyVersion=result.get("policyVersion"),
+                    cacheHit=cache_hit_before_call,
+                    status=result.get("status"),
+                )
+                return result
+
             if (
                 expected_cache_path
                 and cache_path.resolve() != Path(expected_cache_path).resolve()
@@ -442,6 +770,7 @@ class _PatchLoader(importlib.abc.Loader):
 class _PatchFinder(importlib.abc.MetaPathFinder):
     _TARGETS = {
         "exercise_motion_pkg.bake_and_rank",
+        "exercise_motion_pkg.pose_prefilter",
         "exercise_motion_pkg.wave_pipeline",
         "exercise_motion_pkg.body_support_observation",
         "exercise_motion_pkg.youtube",
