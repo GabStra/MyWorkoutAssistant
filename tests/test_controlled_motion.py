@@ -2274,7 +2274,7 @@ def test_smooth_root_translation_reduces_second_difference():
 def test_polish_stages_order_contact_before_temporal_before_seam():
     from exercise_motion_pkg.controlled_motion import (
         polish_stage_for_failures, polishable_near_miss,
-        prioritize_jerk_only_fit_refinement)
+        prioritize_fit_before_broad_temporal_smoothing)
     assert polish_stage_for_failures(['equipment', 'loopSeam']) == 'A'
     assert polish_stage_for_failures(['loopSeam', 'jerk']) == 'C'
     assert polish_stage_for_failures(['jerk', 'jointShake']) == 'C'
@@ -2286,14 +2286,23 @@ def test_polish_stages_order_contact_before_temporal_before_seam():
     assert polishable_near_miss(['loopSeam'])
     assert polishable_near_miss(['rootContinuity', 'settling'])
     assert not polishable_near_miss(['anatomy', 'contacts'])
-    assert prioritize_jerk_only_fit_refinement(
+    assert prioritize_fit_before_broad_temporal_smoothing(
         ['jerk'], playback_passed=True, contact_error_meters=0.0002)
-    assert not prioritize_jerk_only_fit_refinement(
+    assert not prioritize_fit_before_broad_temporal_smoothing(
         ['jerk', 'settling'], playback_passed=True, contact_error_meters=0.0002)
-    assert not prioritize_jerk_only_fit_refinement(
+    assert not prioritize_fit_before_broad_temporal_smoothing(
         ['jerk'], playback_passed=False, contact_error_meters=0.0002)
-    assert not prioritize_jerk_only_fit_refinement(
+    assert not prioritize_fit_before_broad_temporal_smoothing(
         ['jerk'], playback_passed=True, contact_error_meters=0.0005)
+    assert prioritize_fit_before_broad_temporal_smoothing(
+        ['jerk', 'playback'], playback_passed=False,
+        contact_error_meters=0.0002, playback_path_repair_attempted=True)
+    assert not prioritize_fit_before_broad_temporal_smoothing(
+        ['jerk', 'playback'], playback_passed=False,
+        contact_error_meters=0.0002, playback_path_repair_attempted=False)
+    assert not prioritize_fit_before_broad_temporal_smoothing(
+        ['jerk', 'playback'], playback_passed=False,
+        contact_error_meters=0.0005, playback_path_repair_attempted=True)
 
 
 def test_repair_motion_discontinuity_clears_swing_foot_velocity_spike():
