@@ -8,6 +8,7 @@ import importlib.machinery
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
 from typing import Any
 
@@ -29,6 +30,136 @@ def _record(config: dict[str, Any], event: str, **details: Any) -> None:
 
 def _patch_module(fullname: str, module: Any) -> None:
     config = _config()
+
+    if fullname == "exercise_motion_pkg.youtube":
+        def search_local_fixture(query: str, results_per_query: int, **_kwargs: Any) -> list[Any]:
+            _record(config, "discovery_search", query=query, requestedCount=results_per_query)
+            payload = {
+                "entries": [
+                    {
+                        "id": "synthetic-squat",
+                        "title": "Squat with a complete repetition",
+                        "channel": "Local process E2E fixture",
+                        "duration": 30,
+                        "view_count": 1000,
+                    }
+                ]
+            }
+            return module.parse_yt_dlp_search_results(payload)[: max(1, results_per_query)]
+
+        module.search_youtube = search_local_fixture
+
+        def download_local_preview_fixture(
+            url: str,
+            destination_dir: str | Path,
+            *_args: Any,
+            **_kwargs: Any,
+        ) -> Path:
+            source_path = Path(config["sourceVideoPath"])
+            destination = Path(destination_dir) / "local_preview.mp4"
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_path, destination)
+            _record(
+                config,
+                "candidate_preview_download",
+                url=url,
+                sourceVideoPath=str(source_path.resolve()),
+                destinationPath=str(destination.resolve()),
+            )
+            return destination
+
+        module.download_youtube_preview = download_local_preview_fixture
+
+        production_candidate_prefetch = module.prefetch_youtube_candidate_previews
+
+        def prefetch_without_external_preview_io(**kwargs: Any) -> dict[str, Any]:
+            def record_local_preview_prefetch(candidates: list[Any], _settings: Any) -> None:
+                _record(
+                    config,
+                    "candidate_preview_prefetch",
+                    videoIds=[candidate.video_id for candidate in candidates],
+                )
+
+            return production_candidate_prefetch(
+                **kwargs,
+                preview_prefetcher=record_local_preview_prefetch,
+            )
+
+        module.prefetch_youtube_candidate_previews = prefetch_without_external_preview_io
+
+        class FixtureVisionClient:
+            def caption_images(self, *, frame_paths: list[Path], prompt: str, **_kwargs: Any) -> str:
+                if not frame_paths:
+                    payload = {
+                        "score": 0.99,
+                        "wrongExercise": False,
+                        "wrongEquipment": False,
+                        "unrequestedVariantTerms": [],
+                        "matchedExercise": "Squat",
+                        "reason": "Local process E2E text identity fixture.",
+                    }
+                    event = "semantic_gate_request"
+                else:
+                    payload = {
+                        "correct_exercise": True,
+                        "usable_for_motion_extraction": True,
+                        "complete_repetition_visible": True,
+                        "exercise_only_chunk": True,
+                        "normal_speed_execution": True,
+                        "not_broken_into_steps": True,
+                        "continuous_motion": True,
+                        "no_step_breakdown": True,
+                        "movement_start_posture_visible": True,
+                        "primary_effort_phase_visible": True,
+                        "movement_action_path_visible": True,
+                        "movement_end_posture_visible": True,
+                        "no_setup_or_talking_frames": True,
+                        "contract_start_state_match": True,
+                        "contract_end_state_match": True,
+                        "all_required_phases_visible": True,
+                        "target_identity_match": True,
+                        "target_match": 0.99,
+                        "complete_movement": 0.99,
+                        "execution_quality": 0.99,
+                        "source_score": 0.99,
+                        "real_human_subject": True,
+                        "moving_subject_realism_score": 0.99,
+                        "confidence": 0.99,
+                        "blocking_issues": [],
+                        "reason": "Local process E2E complete squat-cycle fixture.",
+                    }
+                    event = "source_vision_request"
+                response = json.dumps(payload)
+                _record(
+                    config,
+                    event,
+                    promptCharacters=len(prompt),
+                    framePaths=[str(path) for path in frame_paths],
+                    response=response,
+                )
+                return response
+
+            def close(self) -> None:
+                return None
+
+        class FixtureVisionRanker:
+            def __init__(self, settings: Any) -> None:
+                self.settings = settings
+                self.client = FixtureVisionClient()
+
+            def rank_prepared(self, prepared: Any, settings: Any, **kwargs: Any) -> Any:
+                del kwargs
+                return module.score_prepared_vision_review(
+                    prepared=prepared,
+                    settings=settings,
+                    caption_images=self.client.caption_images,
+                )
+
+            def close(self, *, force_stop_server: bool = False) -> None:
+                del force_stop_server
+                self.client.close()
+
+        module.LlamaCppVisionRanker = FixtureVisionRanker
 
     def generate_from_normalized_fixture(
         candidate: Any,
@@ -82,6 +213,27 @@ def _patch_module(fullname: str, module: Any) -> None:
 
     if fullname == "exercise_motion_pkg.bake_and_rank":
         module.generate_candidate_motion = generate_from_normalized_fixture
+
+        def download_local_source_fixture(
+            url: str,
+            destination_dir: str | Path,
+            *_args: Any,
+            **_kwargs: Any,
+        ) -> Path:
+            source_path = Path(config["sourceVideoPath"])
+            destination = Path(destination_dir) / source_path.name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_path, destination)
+            _record(
+                config,
+                "source_download",
+                url=url,
+                sourceVideoPath=str(source_path.resolve()),
+                destinationPath=str(destination.resolve()),
+            )
+            return destination
+
+        module.download_youtube = download_local_source_fixture
 
         production_exact_source_validator = module.validate_exact_source_with_cached_gpu_handoff
 
@@ -292,6 +444,7 @@ class _PatchFinder(importlib.abc.MetaPathFinder):
         "exercise_motion_pkg.bake_and_rank",
         "exercise_motion_pkg.wave_pipeline",
         "exercise_motion_pkg.body_support_observation",
+        "exercise_motion_pkg.youtube",
     }
 
     def find_spec(self, fullname: str, path: Any, target: Any = None) -> Any:

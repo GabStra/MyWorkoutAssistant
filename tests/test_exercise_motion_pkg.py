@@ -54333,12 +54333,12 @@ def test_fixed_rig_fk_jacobian_matches_finite_differences() -> None:
 def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
     tmp_path: Path,
 ) -> None:
-    """Run the process, fit, render, cached evidence gates, and package path end to end.
+    """Run discovery, source prefetch, fit, render, review, and packaging in one process path.
 
-    Candidate discovery/source acquisition and WHAM inference remain explicit
-    fixture boundaries here; downstream source-cache identity and validation,
-    fitting, rendering, visual-response parsing, artifact lineage, and packaging
-    use their production implementations.
+    Search, download, WHAM inference, and VLM responses use local deterministic
+    adapters. Discovery parsing and gates, source-cache identity and validation,
+    fitting, rendering, review parsing, artifact lineage, and packaging use
+    their production implementations.
     """
     import gzip
     import hashlib
@@ -54500,6 +54500,23 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
     assert source_video.is_file() and source_video.stat().st_size > 0
 
     workspace_root = tmp_path / "workout-plan-workspace"
+    contract_cache_dir = workspace_root / "exercise-motion-contract-cache"
+    contract_cache_settings = youtube_module.YouTubeRankingSettings(
+        exercise_motion_contract_cache_dir=contract_cache_dir,
+    )
+    cached_contract_path = youtube_module.cache_exercise_motion_contract(
+        exercise,
+        contract_cache_settings,
+        contract,
+    )
+    assert cached_contract_path is not None
+    cached_contract = youtube_module.load_cached_exercise_motion_contract(
+        exercise,
+        contract_cache_settings,
+    )
+    assert cached_contract is not None
+    contract = {**cached_contract, "motionContext": exercise.motion_context}
+
     item_workspace = workspace_root / "squat" / "bake"
     candidate_workspace = item_workspace / "squat-001-synthetic-squat"
     selected_video = candidate_workspace / "input" / "selected_segment.mp4"
@@ -54601,59 +54618,6 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
         encoding="utf-8",
     )
 
-    candidates_path = tmp_path / "candidates.json"
-    candidates_path.write_text(
-        json.dumps(
-            {
-                "exercises": [
-                    {
-                        "exerciseId": "squat",
-                        "exerciseName": "Squat",
-                        "slug": "squat",
-                        "exerciseMotionContract": contract,
-                        "candidates": [
-                            {
-                                "videoId": "synthetic-squat",
-                                "videoPath": str(source_video.resolve()),
-                                "title": "Squat with a complete repetition",
-                                "status": "recommended",
-                                "visionPayload": {
-                                    "bestChunkScore": 0.97,
-                                    "validChunkCount": 1,
-                                    "scoredChunkCount": 1,
-                                    "target_identity_match": True,
-                                    "correct_exercise": True,
-                                    "usable_for_motion_extraction": True,
-                                    "real_human_subject": True,
-                                    "continuous_motion": True,
-                                    "complete_repetition_visible": True,
-                                },
-                            }
-                        ],
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
-    )
-    prepared_manifest_path = tmp_path / "prepared_candidates_manifest.json"
-    prepared_manifest_path.write_text(
-        json.dumps(
-            {
-                "schemaVersion": 1,
-                "kind": "prepared_exercise_candidates",
-                "items": [
-                    {
-                        "exerciseId": "squat",
-                        "exerciseSlug": "squat",
-                        "candidatesJson": str(candidates_path.resolve()),
-                        "expectedVideoId": "synthetic-squat",
-                    }
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
     workout_plan_path = tmp_path / "workout_plan.json"
     workout_plan_path.write_text(
         json.dumps(
@@ -54684,6 +54648,7 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
                 "bodySupportCachePath": str(body_support_cache_path.resolve()),
                 "bodySupportSourceVideoSha256": body_support_digest,
                 "callsPath": str(calls_path.resolve()),
+                "sourceVideoPath": str(source_video.resolve()),
             }
         ),
         encoding="utf-8",
@@ -54729,8 +54694,6 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
             str(workspace_root),
             "-MobilePackageOutputJson",
             str(output_path),
-            "-PreparedCandidatesManifest",
-            str(prepared_manifest_path),
             "-PythonCommand",
             sys.executable,
             "-WhamRepoPath",
@@ -54744,8 +54707,19 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
             "-YouTubeSourceCacheDir",
             str(tmp_path / "source_cache"),
             "-SkipLlamaCppQueryPlanner",
-            "-SkipVisionRanking",
-            "-SkipSemanticGate",
+            "-ResultsPerQuery",
+            "1",
+            "-CandidateReviewBatchSize",
+            "1",
+            "-CandidateReviewTargetSuitableCount",
+            "1",
+            "-VisionCandidatesPerExercise",
+            "1",
+            "-SemanticGateCandidatesPerExercise",
+            "1",
+            "-SemanticGateMaxCandidatesPerExercise",
+            "1",
+            "-NoExerciseNameRewrite",
             "-SkipPosePrefilter",
             "-SkipExerciseMotionContractPrefetch",
             "-SkipSourceSegmentDetection",
@@ -54817,9 +54791,48 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
     final_worker_state = json.loads(worker_state_path.read_text(encoding="utf-8"))
     assert final_worker_state.get("status") == "stopped", final_worker_state
 
+    discovery_candidates_path = workspace_root / "squat" / "youtube_candidates.json"
+    discovery_candidates = json.loads(discovery_candidates_path.read_text(encoding="utf-8"))
+    discovered_exercise = discovery_candidates["exercises"][0]
+    discovered_candidates = discovered_exercise["candidates"]
+    assert len(discovered_candidates) == 1, discovered_candidates
+    assert discovered_candidates[0]["videoId"] == "synthetic-squat"
+    assert discovered_candidates[0]["status"] == "recommended"
+    assert discovered_candidates[0]["visionPayload"]["semanticGate"]["passed"] is True
+    assert discovered_exercise["exerciseMotionContract"]["cacheStatus"] == "reused"
+    discovery_progress_path = workspace_root / "squat" / "youtube_discovery_progress.jsonl"
+    discovery_progress = [
+        json.loads(line)
+        for line in discovery_progress_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert any(event["event"] == "exercise_completed" for event in discovery_progress)
+
+    source_prefetch_path = workspace_root / "squat" / "youtube_source_prefetch.json"
+    source_prefetch = json.loads(source_prefetch_path.read_text(encoding="utf-8"))
+    assert source_prefetch["cachedOrDownloadedCount"] == 1, source_prefetch
+    assert source_prefetch["results"][0]["status"] == "downloaded"
+    assert hashlib.sha256(Path(source_prefetch["results"][0]["path"]).read_bytes()).hexdigest() == source_sha256
     boundary_calls = [
         json.loads(line) for line in calls_path.read_text(encoding="utf-8").splitlines()
     ]
+    assert any(call["event"] == "discovery_search" for call in boundary_calls)
+    assert any(call["event"] == "candidate_preview_download" for call in boundary_calls)
+    source_download_calls = [
+        call for call in boundary_calls if call["event"] == "source_download"
+    ]
+    assert len(source_download_calls) == 1
+    source_vision_calls = [
+        call for call in boundary_calls if call["event"] == "source_vision_request"
+    ]
+    semantic_gate_calls = [
+        call for call in boundary_calls if call["event"] == "semantic_gate_request"
+    ]
+    assert source_vision_calls and semantic_gate_calls
+    assert all(
+        call["framePaths"]
+        and all(Path(path).is_file() for path in call["framePaths"])
+        for call in source_vision_calls
+    )
     generation_calls = [call for call in boundary_calls if call["event"] == "generation"]
     generation_completions = [
         call for call in boundary_calls if call["event"] == "generation_complete"
