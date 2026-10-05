@@ -8818,6 +8818,9 @@ def _build_html(
         return {{
           ...frame,
           joints,
+          ...(frame.sourceJoints ? {{
+            sourceJoints: normalizeJointMap(frame.sourceJoints),
+          }} : {{}}),
           ...(frame.cameraPlacementReferenceJoints ? {{
             cameraPlacementReferenceJoints: normalizeJointMap(frame.cameraPlacementReferenceJoints),
           }} : {{}}),
@@ -9029,6 +9032,9 @@ def _build_html(
         return {{
           ...frame,
           joints,
+          ...(frame.sourceJoints ? {{
+            sourceJoints: rotateJointMap(frame.sourceJoints),
+          }} : {{}}),
           ...(frame.cameraPlacementReferenceJoints ? {{
             cameraPlacementReferenceJoints: rotateJointMap(frame.cameraPlacementReferenceJoints),
           }} : {{}}),

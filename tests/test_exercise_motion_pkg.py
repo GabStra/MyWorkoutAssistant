@@ -7209,6 +7209,10 @@ def test_browser_bake_recovers_source_joints_from_original_payload() -> None:
     # reference so every exported per-frame joint field shares one frame.
     assert "rawSourceJoints" in source
     assert "toBaseWorldPoint(sourcePoint, translation, true, null" in source
+    # The browser's final normalization and grid-alignment transforms must
+    # apply to the pre-IK target alongside rendered joints and the camera basis.
+    assert "sourceJoints: normalizeJointMap(frame.sourceJoints)" in source
+    assert "sourceJoints: rotateJointMap(frame.sourceJoints)" in source
 
 
 def test_staged_wave_preserves_unlimited_final_output_rejections() -> None:
