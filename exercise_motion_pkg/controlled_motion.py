@@ -40,7 +40,7 @@ SUPPORT_REFERENCE_CONTACT_LIMIT_METERS = min(
     PLAYBACK_CONTACT_LIMIT_METERS * 0.5,
 )
 
-CONTROLLED_MOTION_STRATEGY = 'fixed_rig_controlled_motion_v68_jerk_fit_after_path_repair'
+CONTROLLED_MOTION_STRATEGY = 'fixed_rig_controlled_motion_v69_jerk_fit_budget'
 # Feasibility pre-flight threshold, calibrated from fit reports: every
 # successful fit's target bones matched the rig within ~0.002m, while
 # structurally conflicted fits measured 0.05-0.15m before burning their
@@ -403,6 +403,31 @@ def prioritize_fit_before_broad_temporal_smoothing(
         and bool(playback_path_repair_attempted)
         and contact_error < 0.0005
     )
+
+
+def stage_fit_refinement_budget(
+    remaining_seconds,
+    *,
+    stage,
+    minimum_update_seconds,
+    prioritize_fit,
+):
+    """Return a bounded polish window that can afford one measured fit update."""
+    remaining = max(0.0, float(remaining_seconds))
+    default_budget = min(remaining - 0.5, max(5.0, remaining * {
+        'A': 0.40, 'B': 0.35, 'C': 0.30,
+    }.get(stage, 0.35)))
+    if not prioritize_fit or stage != 'C' or minimum_update_seconds <= 0:
+        return default_budget
+
+    # A timed-out post-fit block can retain a partial iterate but cannot report
+    # its post-update cost. Use twice the measured estimate for a whole block;
+    # otherwise defer directly to the outer continuation's larger window.
+    required_budget = 2.0 * float(minimum_update_seconds) + 0.5
+    available_budget = max(0.0, remaining - 0.5)
+    if required_budget > available_budget:
+        return None
+    return min(available_budget, max(default_budget, required_budget))
 
 
 EVIDENCE_TERMINATIONS = frozenset({
@@ -7619,10 +7644,31 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             'initialFailedChecks': failed_checks, 'evaluationsPerBlock': polish_evaluations, 'blocks': []})
         refinement['evaluationsPerBlock'] = polish_evaluations
         refinement['stage'] = stage
-        # Stage-capped block budgets so one LS timeout cannot eat the whole leftover.
-        stage_share = {'A': .40, 'B': .35, 'C': .30}.get(stage, .35)
         if report.get('optimizerTermination') in {'solve_phase_budget', 'time_budget', 'evaluation_limit'}:
-            block_budget = min(remaining - 0.5, max(5., remaining * stage_share))
+            prioritize_fit = prioritize_fit_before_broad_temporal_smoothing(
+                failed_checks,
+                playback_passed=(report.get('playback') or {}).get('passed'),
+                contact_error_meters=report.get('maximumContactErrorMeters'),
+                playback_path_repair_attempted=bool(
+                    refinement.get('playbackPathRepair')
+                    or refinement.get('playbackPlantProjection')
+                ),
+            )
+            block_budget = stage_fit_refinement_budget(
+                remaining,
+                stage=stage,
+                minimum_update_seconds=minimum_update_seconds,
+                prioritize_fit=prioritize_fit,
+            )
+            if block_budget is None:
+                report['optimizerTermination'] = 'solve_phase_budget'
+                report['deferredStageCOptimizerBlock'] = {
+                    'minimumUpdateSeconds': float(minimum_update_seconds),
+                    'remainingPolishSeconds': float(remaining),
+                    'reason': 'deferred_to_outer_fit_continuation',
+                }
+                refinement['fitUpdateDeferredToEvaluationContinuation'] = True
+                break
             optimization_deadline = monotonic() + block_budget
             report['optimizerTermination'] = 'evaluation_limit'
         # Soft LS rarely beats contact-dominated cost on jerk-only near-misses.
