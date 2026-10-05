@@ -35263,6 +35263,14 @@ def test_artifact_retention_debug_prunes_heavy_intermediates_and_keeps_debug_out
         / "source"
         / "contact_sheet_01.jpg"
     )
+    final_render_contact_sheet = (
+        candidate
+        / "review"
+        / "selected.default-final-output-validation"
+        / "source"
+        / "contact_sheet_01.jpg"
+    )
+    unretained_frame_dump = candidate / "review" / "unretained-frames" / "frame_02.jpg"
     selected_wear = candidate / "wear" / "skeleton.baked.llm-selected-section.json"
     preview_html = candidate / "preview" / "motion_preview.html"
     selected_preview_html = workspace / "selected_section_preview.html"
@@ -35278,6 +35286,8 @@ def test_artifact_retention_debug_prunes_heavy_intermediates_and_keeps_debug_out
         (contact_sheet, b"sheet"),
         (frame_dump, b"frame"),
         (final_source_contact_sheet, b"final-source-sheet"),
+        (final_render_contact_sheet, b"final-render-sheet"),
+        (unretained_frame_dump, b"unretained-frame"),
         (selected_wear, b"wear"),
         (preview_html, b"html"),
         (selected_preview_html, b"selected-html"),
@@ -35311,6 +35321,9 @@ def test_artifact_retention_debug_prunes_heavy_intermediates_and_keeps_debug_out
                     "payload": {
                         "finalOutputValidation": {
                             "sourceContactSheetPaths": [str(final_source_contact_sheet)],
+                            "renderEvidence": {
+                                "contactSheetPaths": [str(final_render_contact_sheet)],
+                            },
                         },
                     },
                 },
@@ -35322,16 +35335,18 @@ def test_artifact_retention_debug_prunes_heavy_intermediates_and_keeps_debug_out
 
     assert summary["mode"] == "debug"
     assert summary["removedDirectoryCount"] == 4
-    assert summary["removedFileCount"] == 1
+    assert summary["removedFileCount"] == 2
     assert selected_input.exists()
     assert selected_review.exists()
     assert contact_sheet.exists()
     assert final_source_contact_sheet.exists()
+    assert final_render_contact_sheet.exists()
     assert selected_wear.exists()
     assert preview_html.exists()
     assert selected_preview_html.exists()
     assert candidate_manifest.exists()
     assert not frame_dump.exists()
+    assert not unretained_frame_dump.exists()
     assert not raw_pkl.exists()
     assert not cleaned_json.exists()
     assert not retarget_json.exists()
@@ -54743,7 +54758,7 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
             "-ProgressIntervalSeconds",
             "1",
             "-ArtifactRetention",
-            "full",
+            "debug",
         ]
     stdout_path = tmp_path / "workout_plan.stdout.log"
     stderr_path = tmp_path / "workout_plan.stderr.log"
@@ -54791,7 +54806,9 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
     final_worker_state = json.loads(worker_state_path.read_text(encoding="utf-8"))
     assert final_worker_state.get("status") == "stopped", final_worker_state
 
-    discovery_candidates_path = workspace_root / "squat" / "youtube_candidates.json"
+    discovery_candidates_path = (
+        workspace_root / "squat" / "selected" / "debug" / "youtube_candidates.full.json"
+    )
     discovery_candidates = json.loads(discovery_candidates_path.read_text(encoding="utf-8"))
     discovered_exercise = discovery_candidates["exercises"][0]
     discovered_candidates = discovered_exercise["candidates"]
@@ -54898,7 +54915,7 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
             "note": "Deterministic process E2E visual-review response.",
         }
         and call["framePaths"]
-        and all(Path(path).is_file() for path in call["framePaths"])
+        and all(Path(path).is_absolute() for path in call["framePaths"])
         for call in final_review_requests
     )
     final_review_calls = [
@@ -54919,15 +54936,23 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
     service_log = workspace_root / "staged-wave-services" / "v1" / "service.log"
     assert service_log.is_file(), "the persistent staged-wave service was not launched"
 
-    generated_manifest_path = Path(generation_completion["manifestPath"])
+    selection_path = workspace_root / "squat" / "selected" / "selection_manifest.json"
+    selection_manifest = json.loads(selection_path.read_text(encoding="utf-8"))
+    assert selection_manifest.get("finalOutputValidationEnabled") is True
+    assert selection_manifest.get("selectionStatus") == "selected"
+    selected = selection_manifest.get("selected")
+    assert isinstance(selected, dict)
+    selected_output_dir = selection_path.parent
+
+    generated_manifest_path = Path(selected["manifestPath"])
     assert generated_manifest_path.is_file()
+    retained_reference_path = selected_output_dir / "segment_detection" / "exact_source_pose_reference.json"
+    retained_source_video = Path(selected["selectedInputSourceVideoPath"])
     assert bake_and_rank_module.load_verified_source_pose_reference(
-        reference_path, selected_video
+        retained_reference_path, retained_source_video
     ) is not None
-    checkpoint = json.loads(
-        (candidate_workspace / "baked_stage_checkpoint.json").read_text(encoding="utf-8")
-    )
-    export_payload = checkpoint["payload"]["artifacts"][0]["artifact"]["export_payload"]
+    skeleton_path = Path(selected["selectedWearSkeletonPath"])
+    export_payload = json.loads(skeleton_path.read_text(encoding="utf-8"))
     fit_report = export_payload["controlledMotionFit"]
     assert fit_report["applied"] is True
     fit_source_evidence = controlled_motion_fit_source_evidence(export_payload)
@@ -54949,15 +54974,11 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
     shoulder_attachment_violation = "anatomy_chest_attachment:shoulders"
     assert shoulder_attachment_violation not in anatomy["sourceViolations"]
     assert shoulder_attachment_violation not in anatomy["remainingViolations"]
-    assert list(candidate_workspace.rglob("*.webm")), "the production browser bake did not render a review video"
+    assert Path(selected["selectedReviewVideoPath"]).is_file()
+    assert Path(selected["selectedReviewVideoPath"]) == Path(selected["selectedPreviewVideoPath"])
+    assert list(selected_output_dir.glob("*_selected_preview.webm")), "the production browser bake did not retain a review video"
     assert final_review_calls, "the final visual-review boundary was not exercised"
-
-    selection_path = workspace_root / "squat" / "selected" / "selection_manifest.json"
-    selection_manifest = json.loads(selection_path.read_text(encoding="utf-8"))
-    assert selection_manifest.get("finalOutputValidationEnabled") is True
-    assert selection_manifest.get("selectionStatus") == "selected"
-    selected = selection_manifest.get("selected")
-    assert isinstance(selected, dict)
+    assert not item_workspace.exists(), "debug retention left the completed bake workspace behind"
     selected_state = selected["artifactState"]
     assert selected_state["lineageComplete"] is True
     packaged_state = selected["packagedArtifactState"]
@@ -54980,14 +55001,19 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
     assert visual_review["discardedFindingCount"] == 0
     assert visual_review["note"] == "Deterministic process E2E visual-review response."
     review_identity = final_validation["renderEvidence"]["skeletonIdentity"]
-    skeleton_path = Path(selected["selectedWearSkeletonPath"])
     skeleton_payload = json.loads(skeleton_path.read_text(encoding="utf-8"))
     skeleton_sha256 = hashlib.sha256(skeleton_path.read_bytes()).hexdigest()
     assert review_identity["sha256"] == skeleton_sha256
     assert review_identity["frameCount"] == len(skeleton_payload["frames"])
     assert package_parity["sha256"] == skeleton_sha256
     assert package_parity["frameCount"] == len(skeleton_payload["frames"])
-    assert all(Path(path).is_file() for path in final_validation["renderEvidence"]["contactSheetPaths"])
+    retained_contact_sheets = [
+        Path(path) for path in final_validation["renderEvidence"]["contactSheetPaths"]
+    ]
+    assert retained_contact_sheets
+    assert all(path.is_file() for path in retained_contact_sheets)
+    assert all(path.is_relative_to(selected_output_dir) for path in retained_contact_sheets)
+    assert len(retained_contact_sheets) == len(final_review_requests[-1]["framePaths"])
 
     summary_path = workspace_root / "workout_motion_generation_summary.json"
     summary = json.loads(summary_path.read_text(encoding="utf-8-sig"))

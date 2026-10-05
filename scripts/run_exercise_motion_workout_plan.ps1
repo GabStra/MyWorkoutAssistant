@@ -862,6 +862,135 @@ function Copy-SelectedFile {
     return $destinationPath
 }
 
+function Copy-SelectedFinalRenderContactSheets {
+    param(
+        [object]$SelectionEntry,
+        [string]$DestinationDirectory,
+        [int]$OptionIndex
+    )
+
+    $ranking = Get-ObjectProperty -Object $SelectionEntry -Name "ranking"
+    $rankingPayload = Get-ObjectProperty -Object $ranking -Name "payload"
+    $finalValidation = Get-ObjectProperty -Object $rankingPayload -Name "finalOutputValidation"
+    $renderEvidence = Get-ObjectProperty -Object $finalValidation -Name "renderEvidence"
+    $sourcePaths = @(Get-ObjectProperty -Object $renderEvidence -Name "contactSheetPaths") |
+        Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }
+    if ($sourcePaths.Count -eq 0) {
+        throw "Selected option $OptionIndex has no final render contact sheets to retain."
+    }
+
+    $optionDirectory = Join-Path $DestinationDirectory ("final_render_evidence\option_{0:D2}" -f $OptionIndex)
+    $copiedPaths = @()
+    $sheetIndex = 1
+    foreach ($sourcePath in $sourcePaths) {
+        $sourcePath = [string]$sourcePath
+        if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
+            throw "Final render contact sheet is missing before artifact promotion: $sourcePath"
+        }
+        $extension = [System.IO.Path]::GetExtension($sourcePath)
+        if ([string]::IsNullOrWhiteSpace($extension)) {
+            $extension = ".jpg"
+        }
+        $fileName = "contact_sheet_{0:D2}{1}" -f $sheetIndex, $extension
+        $destinationPath = Copy-SelectedFile `
+            -SourcePath $sourcePath `
+            -DestinationDirectory $optionDirectory `
+            -DestinationFileName $fileName
+        if ([string]::IsNullOrWhiteSpace($destinationPath) -or
+            -not (Test-Path -LiteralPath $destinationPath -PathType Leaf)) {
+            throw "Could not retain final render contact sheet: $sourcePath"
+        }
+        $copiedPaths += $destinationPath
+        $sheetIndex += 1
+    }
+    return ,$copiedPaths
+}
+
+function Update-PackagedSelectionArtifactReferences {
+    param(
+        [string]$SelectionManifestPath,
+        [int]$OptionIndex,
+        [string]$SelectedOutputDirectory,
+        [string]$AuditOutputDirectory,
+        [string]$PackagedSkeletonPath,
+        [string]$ReviewVideoPath,
+        [string]$InputVideoPath,
+        [string]$InputSourceVideoPath,
+        [string]$PreviewHtmlPath,
+        [string]$InteractivePreviewHtmlPath,
+        [string[]]$ContactSheetPaths
+    )
+
+    if (-not (Test-Path -LiteralPath $SelectionManifestPath -PathType Leaf)) {
+        throw "Selected output manifest disappeared before its artifact paths were updated."
+    }
+    $selection = Get-Content -LiteralPath $SelectionManifestPath -Raw | ConvertFrom-Json
+    $selectedIndex = $OptionIndex - 1
+    $selectedResults = @(Get-ObjectProperty -Object $selection -Name "selectedResults")
+    $record = @($selectedResults | Where-Object {
+        [int](Get-ObjectProperty -Object $_ -Name "selectedResultIndex") -eq $selectedIndex
+    } | Select-Object -First 1)
+    if ($record.Count -eq 0) {
+        throw "Selected option $OptionIndex is missing from the copied selection manifest."
+    }
+    $record = $record[0]
+
+    $sourceCandidateWorkspace = [string](Get-ObjectProperty -Object $record -Name "candidateWorkspace")
+    if (-not [string]::IsNullOrWhiteSpace($sourceCandidateWorkspace)) {
+        $record | Add-Member -NotePropertyName "sourceCandidateWorkspace" `
+            -NotePropertyValue $sourceCandidateWorkspace -Force
+        $record | Add-Member -NotePropertyName "candidateWorkspace" `
+            -NotePropertyValue $SelectedOutputDirectory -Force
+    }
+    foreach ($propertyName in @("skeletonPath", "selectedWearSkeletonPath", "packagedWearSkeletonPath")) {
+        $record | Add-Member -NotePropertyName $propertyName -NotePropertyValue $PackagedSkeletonPath -Force
+    }
+    foreach ($propertyName in @("reviewVideoPath", "selectedReviewVideoPath", "selectedPreviewVideoPath")) {
+        if (-not [string]::IsNullOrWhiteSpace($ReviewVideoPath)) {
+            $record | Add-Member -NotePropertyName $propertyName -NotePropertyValue $ReviewVideoPath -Force
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($InputVideoPath)) {
+        $record | Add-Member -NotePropertyName "selectedInputVideoPath" -NotePropertyValue $InputVideoPath -Force
+        $record | Add-Member -NotePropertyName "inputVideoPath" -NotePropertyValue $InputVideoPath -Force
+    }
+    if (-not [string]::IsNullOrWhiteSpace($InputSourceVideoPath)) {
+        $record | Add-Member -NotePropertyName "selectedInputSourceVideoPath" `
+            -NotePropertyValue $InputSourceVideoPath -Force
+    }
+    foreach ($propertyName in @("previewHtmlPath", "selectedPreviewHtmlPath")) {
+        if (-not [string]::IsNullOrWhiteSpace($PreviewHtmlPath)) {
+            $record | Add-Member -NotePropertyName $propertyName -NotePropertyValue $PreviewHtmlPath -Force
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($InteractivePreviewHtmlPath)) {
+        $record | Add-Member -NotePropertyName "sourcePreviewHtmlPath" `
+            -NotePropertyValue $InteractivePreviewHtmlPath -Force
+    }
+    $manifestCopy = Join-Path $AuditOutputDirectory "processing_evidence\manifest.json"
+    if (Test-Path -LiteralPath $manifestCopy -PathType Leaf) {
+        $record | Add-Member -NotePropertyName "manifestPath" -NotePropertyValue $manifestCopy -Force
+    }
+
+    $ranking = Get-ObjectProperty -Object $record -Name "ranking"
+    $rankingPayload = Get-ObjectProperty -Object $ranking -Name "payload"
+    $finalValidation = Get-ObjectProperty -Object $rankingPayload -Name "finalOutputValidation"
+    $renderEvidence = Get-ObjectProperty -Object $finalValidation -Name "renderEvidence"
+    if ($null -eq $renderEvidence) {
+        throw "Selected option $OptionIndex has no final render evidence to retain."
+    }
+    $renderEvidence | Add-Member -NotePropertyName "contactSheetPaths" `
+        -NotePropertyValue @($ContactSheetPaths) -Force
+
+    if ($selectedIndex -eq 0) {
+        if ($null -eq $selection.selected) {
+            throw "The copied selection manifest has no primary selected artifact."
+        }
+        $selection.selected = $record
+    }
+    Write-AtomicJsonDocument -Path $SelectionManifestPath -InputObject $selection -Depth 100
+}
+
 function Get-WearSkeletonIdentity {
     param([string]$Path)
 
@@ -5204,6 +5333,43 @@ function Complete-BakeJob {
             $optionSourceAuditDirectory = Copy-SelectedSourceAuditEvidence `
                 -CandidateWorkspace $optionCandidateWorkspace `
                 -DestinationDirectory $optionAuditOutputDirectory
+            $optionInputSourcePath = Get-ObjectProperty -Object $option -Name "selectedInputSourceVideoPath"
+            $optionInputSourceCopyPath = $null
+            if (-not [string]::IsNullOrWhiteSpace([string]$optionInputSourcePath)) {
+                if (-not (Test-Path -LiteralPath $optionInputSourcePath -PathType Leaf)) {
+                    $status = "failed"
+                    $failureStage = "selected_output_copy"
+                    $errorMessage = "Selected reconstruction input is missing before artifact promotion: $optionInputSourcePath"
+                    break
+                }
+                $sourceInputIsReviewInput = $false
+                if (-not [string]::IsNullOrWhiteSpace([string]$optionInputVideoSourcePath) -and
+                    -not [string]::IsNullOrWhiteSpace([string]$optionInputVideoPath)) {
+                    $sourceInputIsReviewInput = [string]::Equals(
+                        [System.IO.Path]::GetFullPath([string]$optionInputSourcePath),
+                        [System.IO.Path]::GetFullPath([string]$optionInputVideoSourcePath),
+                        [System.StringComparison]::OrdinalIgnoreCase
+                    )
+                }
+                if ($sourceInputIsReviewInput -and $optionInputVideoPath) {
+                    $optionInputSourceCopyPath = $optionInputVideoPath
+                } else {
+                    $sourceInputExtension = [System.IO.Path]::GetExtension([string]$optionInputSourcePath)
+                    if ([string]::IsNullOrWhiteSpace($sourceInputExtension)) {
+                        $sourceInputExtension = ".mp4"
+                    }
+                    $optionInputSourceCopyPath = Copy-SelectedFile `
+                        -SourcePath ([string]$optionInputSourcePath) `
+                        -DestinationDirectory (Join-Path $optionAuditOutputDirectory "processing_evidence") `
+                        -DestinationFileName ("selected_input_source{0}{1}" -f $optionSuffix, $sourceInputExtension)
+                    if ([string]::IsNullOrWhiteSpace($optionInputSourceCopyPath)) {
+                        $status = "failed"
+                        $failureStage = "selected_output_copy"
+                        $errorMessage = "Selected reconstruction input was not retained for option $optionIndex."
+                        break
+                    }
+                }
+            }
             $optionInteractivePreviewSourcePath = Get-ObjectProperty -Object $option -Name "sourcePreviewHtmlPath"
             $optionInteractivePreviewPath = Copy-SelectedFile `
                 -SourcePath $optionInteractivePreviewSourcePath `
@@ -5246,6 +5412,29 @@ function Complete-BakeJob {
                 -StartSeconds $optionStartSeconds `
                 -EndSeconds $optionEndSeconds `
                 -SettingsOptionsJson $optionSettingsOptionsJson
+            try {
+                $optionContactSheetPaths = Copy-SelectedFinalRenderContactSheets `
+                    -SelectionEntry $option `
+                    -DestinationDirectory $selectedOutputDir `
+                    -OptionIndex $optionIndex
+                Update-PackagedSelectionArtifactReferences `
+                    -SelectionManifestPath $selectedSelectionManifestPath `
+                    -OptionIndex $optionIndex `
+                    -SelectedOutputDirectory $selectedOutputDir `
+                    -AuditOutputDirectory $optionAuditOutputDirectory `
+                    -PackagedSkeletonPath $optionWearSkeletonPath `
+                    -ReviewVideoPath $optionPreviewVideoPath `
+                    -InputVideoPath $optionInputVideoPath `
+                    -InputSourceVideoPath $optionInputSourceCopyPath `
+                    -PreviewHtmlPath $optionPreviewHtmlPath `
+                    -InteractivePreviewHtmlPath $optionInteractivePreviewPath `
+                    -ContactSheetPaths $optionContactSheetPaths
+            } catch {
+                $status = "failed"
+                $failureStage = "selected_output_evidence_copy"
+                $errorMessage = $_.Exception.Message
+                break
+            }
             $selectedResultOutputs += [ordered]@{
                 optionIndex = $optionIndex
                 label = if ($option.PSObject.Properties.Name -contains "manualSelectionLabel") { $option.manualSelectionLabel } else { "Option $optionIndex" }
@@ -5255,7 +5444,7 @@ function Complete-BakeJob {
                 selectedInteractivePreviewHtmlPath = $optionInteractivePreviewPath
                 selectedSourceVideoPath = $optionInputVideoPath
                 selectedSourceVideoWebmPath = $optionInputVideoWebmPath
-                selectedSourceVideoOriginalPath = $optionInputVideoSourcePath
+                selectedSourceVideoOriginalPath = if ($optionInputSourceCopyPath) { $optionInputSourceCopyPath } else { $optionInputVideoPath }
                 selectedSourceVideoMissing = $optionInputVideoMissing
                 selectedSourceAuditDirectory = $optionSourceAuditDirectory
                 selectedSkeletonReviewParity = $optionSkeletonReviewParity
@@ -5268,7 +5457,7 @@ function Complete-BakeJob {
                 $selectedInteractivePreviewHtmlPath = $optionInteractivePreviewPath
                 $selectedInputVideoPath = $optionInputVideoPath
                 $selectedInputVideoWebmPath = $optionInputVideoWebmPath
-                $selectedInputVideoSourcePath = $optionInputVideoSourcePath
+                $selectedInputVideoSourcePath = if ($optionInputSourceCopyPath) { $optionInputSourceCopyPath } else { $optionInputVideoPath }
                 $selectedInputVideoMissing = $optionInputVideoMissing
             }
             $optionIndex += 1

@@ -335,6 +335,7 @@ ARTIFACT_RETENTION_PROTECTED_PATH_KEYS = frozenset(
         "sourceSkeletonPath",
         "sourceContactSheetPath",
         "sourceContactSheetPaths",
+        "contactSheetPaths",
         "previewContactSheetPath",
         "previewContactSheetPaths",
         "promptPath",
