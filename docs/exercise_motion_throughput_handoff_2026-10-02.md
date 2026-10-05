@@ -21,10 +21,27 @@
   It therefore does not exercise or validate this fix. The replay still failed
   the source-relative jerk gate: 0.000859 RMS against a 0.000413 source limit,
   so it remains a rejected fit and does not establish a successful RDL output.
-- Verification on this working tree: three targeted controlled-motion
-  regressions passed, both cached and fresh-source-evidence production-wrapper
-  cases passed (`2 passed in 309.22s`), and edited Python modules compiled.
-  No live model/GPU campaign or app tests were run.
+- A failure-only jerk decomposition was added without retaining candidate
+  poses. A CPU replay of the same 87-frame input (SHA-256
+  `ad98554f6079dbe204b2d7b600bd0576bf8af6c0ec6147b9a9206f948a5e98a4`) took
+  136.9s, made no model/reconstruction calls, and reproduced the same rejection.
+  Collar, spine2, shoulder, and neck tracks contribute 62.3% of output jerk
+  energy. The highest excess windows are source times 1.50–1.77s,
+  2.40–2.67s, 1.07–1.33s, and 3.67–3.93s. These localize the defect to
+  upper-body articulation and cycle transitions, but do not identify the exact
+  repair that caused it. Reweighting and unconstrained smoothing have reopened
+  other strict checks in prior diagnostics; no safe jerk repair is established.
+- The support audit of that exact input found one mapped full-sole interval
+  (fit frames 10–59) and `unknown` patch states elsewhere; it found no persisted
+  `airborne` state. Source ankle candidates are not treated as full-XYZ pins,
+  and incomplete patch spans are not promoted to full-cycle support. No generic
+  contact-detector change is justified by this run's evidence.
+- Verification: the three focused playback-repair regressions passed, and the
+  production wrapper passed both cached and fresh-source-evidence cases
+  (`2 passed in 309.22s`) before the diagnostic-only addition. After adding the
+  jerk decomposition, all four focused repair/diagnostic regressions passed and
+  edited Python modules compiled. No live model/GPU campaign or app tests were
+  run.
 
 ## Current-HEAD OHP production-path check — 2026-10-04
 
