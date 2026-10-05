@@ -490,6 +490,10 @@ directory has a condensed version of this state; update it after the arms land.
   does not corroborate, using the same rule as source preparation. Timed source
   contacts and unrelated support joints remain intact. A focused regression
   covers stale bilateral anchors, toe-only evidence, and an all-unknown side.
+- Source preparation applies this cleanup before the intermittent/unknown-mode
+  early return as well. That prevents retained full-cycle `bodySupport` anchors
+  from surviving beside timed contacts when the current patch evidence is
+  incomplete; the timed contacts themselves remain available to later stages.
 - All 7 tests in `tests/test_body_support_observation.py` passed, Python
   compilation and `git diff --check` passed. The production workout-plan process E2E passed
   after the change (1 passed in 140.87s); it continues to use a prepared
@@ -500,6 +504,12 @@ directory has a condensed version of this state; update it after the arms land.
   check now passes, while contacts, trajectory fit, anatomy, motion continuity,
   and playback/loop checks still fail. No successful current RDL selection or
   package is established by this replay.
+- The retained 95-frame contact-sequence-correction render passes video
+  encoding checks. Re-evaluating its corrected payload with current source
+  support cleanup, contact correction, and the pre-render gate passes with
+  source-pose fidelity P90 error 0.072 body ratios. This is a deterministic
+  bake candidate only; no final visual review or normal selection/package path
+  was run for this re-evaluation.
 - No source search, WHAM/GVHMR, visual-review model call, or throughput campaign
   was run. The agreed OHP + RDL pair still lacks two current production-path
   successes, so maximum throughput remains unverified; the interrupted baseline
