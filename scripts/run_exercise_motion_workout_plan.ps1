@@ -1603,6 +1603,34 @@ function Get-SharedLlamaSessionDir {
     return (Join-Path ([System.IO.Path]::GetTempPath()) "myworkoutassistant-shared-llama-$port")
 }
 
+function Get-MotionProcessIdentityState {
+    param(
+        [int]$ProcessId,
+        [object]$ExpectedProcessIdentity
+    )
+
+    if ($ProcessId -le 0) {
+        return "unknown"
+    }
+    $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+    if ($null -eq $process) {
+        return "stopped"
+    }
+    try {
+        $identity = [long]$process.StartTime.ToUniversalTime().ToFileTimeUtc()
+        if ($null -ne $ExpectedProcessIdentity -and
+            $identity -ne [long]$ExpectedProcessIdentity) {
+            return "stopped"
+        }
+        if ($process.HasExited) {
+            return "stopped"
+        }
+        return "running"
+    } catch {
+        return "unknown"
+    }
+}
+
 function Get-SharedLlamaLiveInflightCounters {
     param([string]$SessionDir)
 
@@ -1622,12 +1650,61 @@ function Get-SharedLlamaLiveInflightCounters {
         try { $ownerPid = [int]$payload.pid } catch { continue }
         try { $active = [int]$payload.activeRequests } catch { continue }
         if ($ownerPid -le 0) { continue }
-        $ownerAlive = $null -ne (Get-Process -Id $ownerPid -ErrorAction SilentlyContinue)
-        if ($ownerAlive -and $active -gt 0) {
-            $live += [pscustomobject]@{ pid = $ownerPid; activeRequests = $active }
+        $ownerIdentity = $payload.processIdentity
+        $ownerState = Get-MotionProcessIdentityState `
+            -ProcessId $ownerPid `
+            -ExpectedProcessIdentity $ownerIdentity
+        if ($ownerState -ne "stopped" -and $active -gt 0) {
+            $live += [pscustomobject]@{
+                pid = $ownerPid
+                processIdentity = $ownerIdentity
+                identityState = $ownerState
+                activeRequests = $active
+            }
         }
     }
     return $live
+}
+
+function Stop-MotionProcessWithIdentity {
+    param(
+        [int]$ProcessId,
+        [object]$ExpectedProcessIdentity,
+        [int]$WaitTimeoutSeconds = 10
+    )
+
+    if ($ProcessId -le 0 -or $null -eq $ExpectedProcessIdentity) {
+        return "unknown"
+    }
+    $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+    if ($null -eq $process) {
+        return "stopped"
+    }
+    try {
+        # Reading StartTime opens this exact process handle. Kill through the
+        # same Process object after verifying identity, never by PID alone.
+        $identity = [long]$process.StartTime.ToUniversalTime().ToFileTimeUtc()
+        if ($identity -ne [long]$ExpectedProcessIdentity) {
+            return "stopped"
+        }
+        if ($process.HasExited) {
+            return "stopped"
+        }
+        $process.Kill()
+        $null = $process.WaitForExit([Math]::Max(0, $WaitTimeoutSeconds) * 1000)
+        if ($process.HasExited) {
+            return "stopped"
+        }
+        return "running"
+    } catch {
+        try {
+            if ($process.HasExited) {
+                return "stopped"
+            }
+        } catch {
+        }
+        return "unknown"
+    }
 }
 
 function Get-MotionServiceRuntimeState {
@@ -1640,20 +1717,9 @@ function Get-MotionServiceRuntimeState {
         "process" {
             $processId = 0
             try { $processId = [int]$RuntimeOwner.pid } catch { return "unknown" }
-            if ($processId -le 0) { return "unknown" }
-            $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
-            if ($null -eq $process) { return "stopped" }
-            try {
-                $identity = [long]$process.StartTime.ToUniversalTime().ToFileTimeUtc()
-                if ($null -ne $RuntimeOwner.processIdentity -and
-                    $identity -ne [long]$RuntimeOwner.processIdentity) {
-                    return "stopped"
-                }
-                if ($process.HasExited) { return "stopped" }
-                return "running"
-            } catch {
-                return "unknown"
-            }
+            return Get-MotionProcessIdentityState `
+                -ProcessId $processId `
+                -ExpectedProcessIdentity $RuntimeOwner.processIdentity
         }
         "docker" {
             $identifier = [string]$RuntimeOwner.containerId
@@ -1902,9 +1968,12 @@ function Start-SharedLlamaServer {
             Start-Sleep -Seconds 2
         }
     }
-    try {
-        Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-    } catch {
+    $startupCleanupState = Stop-MotionProcessWithIdentity `
+        -ProcessId $process.Id `
+        -ExpectedProcessIdentity $runtimeOwner.processIdentity `
+        -WaitTimeoutSeconds 10
+    if ($startupCleanupState -ne "stopped") {
+        Write-Warning "Shared llama.cpp startup timed out and process cleanup could not be confirmed (pid $($process.Id), state $startupCleanupState)."
     }
     @{ error = "Timed out waiting for shared llama.cpp server startup after $LlamaCppServerStartupTimeoutSeconds seconds." } |
         ConvertTo-Json | Set-Content -LiteralPath (Join-Path $SessionDir "startup_error.json") -Encoding UTF8
@@ -1932,23 +2001,39 @@ function Stop-SharedLlamaServer {
     try {
         # Close attached clients' admission gates before draining, mirroring the
         # Python quiesce protocol's stop-intent ordering.
-        @{ pid = $PID; requestedAtUnixSeconds = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() } |
+        $supervisorProcess = Get-Process -Id $PID -ErrorAction SilentlyContinue
+        $supervisorIdentity = $null
+        if ($null -ne $supervisorProcess) {
+            try { $supervisorIdentity = [long]$supervisorProcess.StartTime.ToUniversalTime().ToFileTimeUtc() } catch {}
+        }
+        @{ pid = $PID; processIdentity = $supervisorIdentity; requestedAtUnixSeconds = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() } |
             ConvertTo-Json | Set-Content -LiteralPath (Join-Path $sessionDir "stop_intent.json") -Encoding UTF8
     } catch {
     }
     $deadline = (Get-Date).AddSeconds($SharedLlamaServerStopDrainTimeoutSeconds)
+    $drainCompleted = $false
     while ((Get-Date) -lt $deadline) {
         $live = @(Get-SharedLlamaLiveInflightCounters -SessionDir $sessionDir)
         if ($live.Count -eq 0) {
+            $drainCompleted = $true
             break
         }
         Start-Sleep -Seconds 1
     }
-    try {
-        Stop-Process -Id $Server.processId -Force -ErrorAction Stop
-        Wait-Process -Id $Server.processId -Timeout 10 -ErrorAction SilentlyContinue
-    } catch {
-        Write-Warning "Failed to stop shared llama.cpp server (pid $($Server.processId)): $($_.Exception.Message)"
+    $remainingRequests = @(Get-SharedLlamaLiveInflightCounters -SessionDir $sessionDir)
+    if (-not $drainCompleted -and $remainingRequests.Count -gt 0) {
+        Remove-Item -LiteralPath (Join-Path $sessionDir "stop_intent.json") -Force -ErrorAction SilentlyContinue
+        Write-Warning "Shared llama.cpp server drain timed out with $($remainingRequests.Count) live client counter(s); leaving the server running."
+        $null = Release-MotionServiceSessionLease -SessionDirectory $Server.sessionLeaseKey
+        return
+    }
+
+    $stopState = Stop-MotionProcessWithIdentity `
+        -ProcessId ([int]$Server.processId) `
+        -ExpectedProcessIdentity $Server.runtimeOwner.processIdentity `
+        -WaitTimeoutSeconds 10
+    if ($stopState -ne "stopped") {
+        Write-Warning "Shared llama.cpp server shutdown could not be confirmed (pid $($Server.processId), state $stopState)."
     }
     $runtimeState = Release-MotionServiceSessionLease -SessionDirectory $Server.sessionLeaseKey
     if ($runtimeState -eq "stopped") {

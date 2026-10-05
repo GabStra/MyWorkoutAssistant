@@ -1,6 +1,8 @@
 import json
 import os
 from pathlib import Path
+import shutil
+import subprocess
 
 import pytest
 
@@ -145,3 +147,128 @@ def test_shared_llama_restart_reuses_held_lease_only_after_runtime_stops():
     assert 'if ($serverRuntimeState -eq "stopped")' in runtime_transition
     assert 'elseif ($serverRuntimeState -eq "running")' in runtime_transition
     assert 'process identity is unverified' in runtime_transition
+
+
+def test_powershell_shared_llama_counter_ignores_recycled_pid_identity(tmp_path: Path):
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell is required to exercise the shared llama supervisor helpers")
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "run_exercise_motion_workout_plan.ps1"
+    )
+    source = script_path.read_text(encoding="utf-8-sig")
+    helpers = "\n".join(
+        _powershell_function(source, name)
+        for name in (
+            "Get-MotionProcessIdentityState",
+            "Get-SharedLlamaLiveInflightCounters",
+            "Stop-MotionProcessWithIdentity",
+        )
+    )
+    session_dir = str(tmp_path / "shared-llama").replace("'", "''")
+    command = f"""
+$ErrorActionPreference = 'Stop'
+{helpers}
+$sessionDir = '{session_dir}'
+$counterDir = Join-Path $sessionDir 'in-flight'
+New-Item -ItemType Directory -Force -Path $counterDir | Out-Null
+$owner = Get-Process -Id $PID
+$identity = [long]$owner.StartTime.ToUniversalTime().ToFileTimeUtc()
+$counterPath = Join-Path $counterDir "$PID.json"
+@{{ pid = $PID; processIdentity = ($identity + 1); activeRequests = 2 }} |
+    ConvertTo-Json -Compress | Set-Content -LiteralPath $counterPath -Encoding UTF8
+if (@(Get-SharedLlamaLiveInflightCounters -SessionDir $sessionDir).Count -ne 0) {{
+    throw 'A counter from a recycled PID was treated as a live request.'
+}}
+if ((Get-MotionProcessIdentityState -ProcessId $PID -ExpectedProcessIdentity ($identity + 1)) -ne 'stopped') {{
+    throw 'A mismatched process identity was not classified as stopped.'
+}}
+@{{ pid = $PID; processIdentity = $identity; activeRequests = 2 }} |
+    ConvertTo-Json -Compress | Set-Content -LiteralPath $counterPath -Encoding UTF8
+$live = @(Get-SharedLlamaLiveInflightCounters -SessionDir $sessionDir)
+if ($live.Count -ne 1 -or $live[0].activeRequests -ne 2 -or $live[0].identityState -ne 'running') {{
+    throw 'A live matching in-flight owner was not retained by the drain check.'
+}}
+if ((Stop-MotionProcessWithIdentity -ProcessId $PID -ExpectedProcessIdentity ($identity + 1)) -ne 'stopped') {{
+    throw 'A recycled PID was not rejected by identity-safe process shutdown.'
+}}
+if ($null -eq (Get-Process -Id $PID -ErrorAction SilentlyContinue)) {{
+    throw 'The identity check unexpectedly stopped the current PowerShell process.'
+}}
+"""
+    completed = subprocess.run(
+        [pwsh, "-NoProfile", "-Command", command],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+def test_powershell_shared_llama_does_not_stop_server_after_drain_timeout(tmp_path: Path):
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell is required to exercise the shared llama supervisor helpers")
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "run_exercise_motion_workout_plan.ps1"
+    )
+    source = script_path.read_text(encoding="utf-8-sig")
+    helpers = "\n".join(
+        _powershell_function(source, name)
+        for name in (
+            "Get-MotionProcessIdentityState",
+            "Get-SharedLlamaLiveInflightCounters",
+            "Stop-SharedLlamaServer",
+        )
+    )
+    session_dir = str(tmp_path / "shared-llama").replace("'", "''")
+    command = f"""
+$ErrorActionPreference = 'Stop'
+{helpers}
+$script:leaseReleased = $false
+$script:processStopAttempted = $false
+function Set-MotionServiceSessionState {{ param($SessionDirectory, $RuntimeOwner, $ServiceState) }}
+function Release-MotionServiceSessionLease {{
+    param($SessionDirectory)
+    $script:leaseReleased = $true
+    return 'running'
+}}
+function Stop-MotionProcessWithIdentity {{
+    param($ProcessId, $ExpectedProcessIdentity, $WaitTimeoutSeconds)
+    $script:processStopAttempted = $true
+    throw 'The server must remain up while an attached request is in flight.'
+}}
+$sessionDir = '{session_dir}'
+$counterDir = Join-Path $sessionDir 'in-flight'
+New-Item -ItemType Directory -Force -Path $counterDir | Out-Null
+$owner = Get-Process -Id $PID
+$identity = [long]$owner.StartTime.ToUniversalTime().ToFileTimeUtc()
+@{{ pid = $PID; processIdentity = $identity; activeRequests = 1 }} |
+    ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $counterDir "$PID.json") -Encoding UTF8
+$SharedLlamaServerStopDrainTimeoutSeconds = 0.1
+$server = [pscustomobject]@{{
+    processId = $PID
+    sessionDir = $sessionDir
+    sessionLeaseKey = $sessionDir
+    runtimeOwner = [pscustomobject]@{{ processIdentity = $identity }}
+}}
+Stop-SharedLlamaServer -Server $server
+if (-not $script:leaseReleased) {{ throw 'The live server ownership evidence was not preserved.' }}
+if ($script:processStopAttempted) {{ throw 'The server was force-stopped before requests drained.' }}
+if (Test-Path -LiteralPath (Join-Path $sessionDir 'stop_intent.json')) {{
+    throw 'A failed drain left client admissions permanently blocked.'
+}}
+"""
+    completed = subprocess.run(
+        [pwsh, "-NoProfile", "-Command", command],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr

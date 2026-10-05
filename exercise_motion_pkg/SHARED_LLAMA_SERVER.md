@@ -2,7 +2,9 @@
 
 Design for one supervisor-owned `llama-server` process shared by every vision
 client in the exercise motion pipeline: wave processes, discovery jobs, and
-contract prefetch. Status: **increment 1, opt-in, default-off** (`--shared-llama-server`).
+contract prefetch. Current status: **run-scoped and opt-in** through
+`run_exercise_motion_workout_plan.ps1 -SharedLlamaServer`; it is not a
+host-level service shared across separate workout-plan runs.
 
 ## Problem
 
@@ -14,8 +16,10 @@ plus ~2.2 GiB compute/KV at ctx 49152 / batch 1024):
   stop + lazy restart (~40 s) before the next vision request.
 - Per-session startup costs ~7-40 s each (2,445 startups measured in one
   workspace).
-- One server with `--parallel 8` could serve all clients at **zero extra
-  VRAM**, unlocking wave-overlap pipelining (increment 2).
+- One server with `--parallel 8` serves attached clients without multiplying
+  model VRAM within one run. Wave overlap is a separate scheduling change; the
+  measured two-wave arm was slower and lost acceptance parity, so it remains
+  disabled.
 
 **Permanent constraint:** GVHMR reconstruction (~4.3-6 GiB) can never co-reside
 with the server. Exclusive generation phases remain; the shared design must
@@ -68,14 +72,10 @@ whoever encounters it.
 | `close()` | Stops/releases the owned server (force semantics unchanged) | Releases nothing: counter removed, markers owned by us cleared, server untouched - even with `force_stop_server=True` |
 | `run_without_llama_overlap` (exclusive handoff) | Drain local calls, force-stop the owned server, run, lazily restart on next request | Quiesce protocol (below), run, request supervisor restart |
 
-Server-model/runtime validation on attach is unchanged (model id, `--parallel`,
-reasoning-flag conflicts). Note for increment 2: today's production bake
-settings run reasoning **on** (budget 64), which the runtime-mismatch check
-rejects against a server started `--reasoning off ... --reasoning-budget 0`.
-Wiring must reconcile the supervisor's reasoning flags with the runtime
-settings (align flags, or pass matching `--llama-cpp-reasoning-budget` /
-`--llama-cpp-disable-reasoning` to shared-mode clients); weakening the
-validation is not an option.
+Server-model/runtime validation on attach is unchanged (model id,
+`--parallel`, and reasoning flags). The run-scoped supervisor derives those
+values from the same parameters passed to bake, discovery, and
+contract-prefetch clients; do not weaken the runtime-mismatch checks.
 
 ## In-flight counter ownership
 
@@ -169,17 +169,18 @@ survives a detachment while counted requests are still in flight.
   exposure: the session's quiesce does not drain its own pid, so they fail and
   recover through the existing client recovery path, as with today's owned
   force-stop.
-- If the supervisor is not running (increment 1 default), nobody restarts the
-  server; the next attach/recovery waits out the startup timeout and raises
-  an actionable error. Attach with no server at the base URL fails fast.
+- Outside the run-scoped supervisor (for example, standalone attach mode),
+  nobody restarts the server; the next attach/recovery waits out the startup
+  timeout and raises an actionable error. Attach with no server at the base URL
+  fails fast.
 - Two simultaneous `begin_exclusive_phase` writers race only at the
   optimistic-lock level; correctness there still rests on the GPU stage locks.
 - A restart request landing while another process is already entering its own
   exclusive phase causes at most one wasted supervisor start/stop cycle: the
   second quiesce stops whatever is at the port before its operation runs, so
   VRAM exclusivity is never violated.
-- `heartbeat.json` staleness is informational in increment 1 (supervisor
-  liveness reporting); clients do not gate on it.
+- `heartbeat.json` is supervisor liveness reporting; clients do not gate on
+  its timestamp.
 - Per-process admission caps (`--parallel`) are unchanged; processes
   time-share the server's 8 slots via HTTP queuing (server-side), which is the
   intended capacity sharing.
@@ -198,55 +199,39 @@ survives a detachment while counted requests are still in flight.
 ## Supervisor (PowerShell)
 
 `Start-SharedLlamaServer -SessionDir <dir>` (mirrors `Start-WhamWarmWorker`):
-clears stale markers and `in-flight/*.json`, starts `llama-server` with the
-production flag set (`-m Qwen3.5-9B-UD-Q4_K_XL.gguf`, `--mmproj
-mmproj-BF16(6).gguf --mmproj-offload`, `--parallel 8`, `--ctx-size 49152`,
-`--batch-size 1024`, `--ubatch-size 512`, `--flash-attn on`,
-`--cache-type-k/v q8_0`, `--fit on`, `--threads-http 8`, `--reasoning off
---reasoning-format none --reasoning-budget 0`, `--cont-batching`,
-`--gpu-layers all`; host/port from `-LlamaCppBaseUrl`, paths from the existing
-`-LlamaCpp*` params), polls `/v1/models` until healthy within
+clears stale markers and `in-flight/*.json`, starts `llama-server` using the
+configured `-LlamaCpp*` parameters (model and projection paths, parallelism,
+context and batch sizes, cache types, reasoning mode and budget, and GPU
+layers); host/port come from `-LlamaCppBaseUrl`. It polls `/v1/models` until
+healthy within
 `-LlamaCppServerStartupTimeoutSeconds`, writes `ready.json` +
 `heartbeat.json`, redirects output to `server.log`, writes
 `startup_error.json` and throws on failure. Returns the instance object.
 
 `Stop-SharedLlamaServer -Server <instance>` (mirrors `Stop-WhamWarmWorker`):
 writes `stop_intent.json` (closing admissions), waits (bounded) for live
-`in-flight/*.json` counters to drain, force-stops the process, writes
-`stopped.json`, clears intent/ready markers.
+`in-flight/*.json` counters to drain, stops only the process whose recorded
+start identity still matches, then writes `stopped.json` and clears
+intent/ready markers. If drain times out, it preserves the server and its
+shutdown-unconfirmed lease instead of stopping clients mid-request.
 
 `Update-SharedLlamaServerHeartbeat` refreshes `heartbeat.json` from the run
-loop. **Increment 1 ships the functions + params only; nothing calls them.**
+loop. The workout-plan runner starts, monitors, restarts, and stops this
+supervised instance when `-SharedLlamaServer` is enabled.
 
-## Deferred follow-ups (increment 2+)
+## Remaining follow-ups
 
-1. **Run-loop wiring** (the deliberate increment-2 scope):
-   - Resolve the shared session dir once (`Get-SharedLlamaSessionDir`) and
-     start the instance before the first wave (or lazily on
-     `start_requested.json` in the drain loop, mirroring
-     `$lazyWarmWorkerSessionDir` handling).
-   - Pass `--shared-llama-server` (and the session dir /
-     `EXERCISE_MOTION_SHARED_LLAMA_SESSION_DIR`) to bake wave job args, and
-     set it in the wave job environment alongside
-     `EXERCISE_MOTION_*_LAZY_START`.
-   - Watch `start_requested.json` in the drain loop: restart via
-     `Start-SharedLlamaServer` when no instance is live, delete the marker
-     after readiness; refresh the heartbeat each loop iteration.
-   - Call `Stop-SharedLlamaServer` at wave-set end / script teardown
-     (`finally` blocks next to `Stop-WhamWarmWorker`).
-   - Reconcile the reasoning flags (see "Attach vs. own semantics").
-   - Stop starting per-process servers for discovery/contract paths once
-     shared mode is proven (see next items).
-2. **Wave-overlap scheduling**: with one resident server, the scheduler can
-   overlap the next wave's source-validation VLM phase with the previous
-   wave's exclusive generation tail (the original motivation).
-3. **Discovery sharing**: `youtube-search`/discovery jobs attach to the same
-   server instead of starting their own; requires the same flag plumbing in
-   `build_youtube_ranking_settings` callers and budget fairness rules.
-4. **Contract prefetch sharing**: the exercise-contract text path attaches
-   like any other client (settings already flow via `dataclass_replace`).
+1. **Host-level service lifetime**: the current supervisor is owned by one
+   workout-plan invocation. Reusing it across separate runs requires a
+   separately managed owner, crash recovery, and an explicit shutdown policy.
+2. **Wave overlap**: overlap remains disabled after a measured regression. Any
+   revisit needs fit-drained admission and browser/CPU headroom, followed by a
+   new comparison that preserves accepted outputs.
+3. **Standalone bake runner**: the workout-plan runner owns shared-server
+   startup and shutdown. The standalone bake-and-rank entry point does not yet
+   share that run-scoped supervisor.
 
-## Increment 2: run-loop wiring (opt-in via `-SharedLlamaServer`)
+## Current run-scoped integration (opt-in via `-SharedLlamaServer`)
 
 Enabled with `-SharedLlamaServer` on `run_exercise_motion_workout_plan.ps1`
 (default off; disabled automatically when vision ranking is skipped):
@@ -267,14 +252,13 @@ Enabled with `-SharedLlamaServer` on `run_exercise_motion_workout_plan.ps1`
   SAME `$LlamaCpp*` params that feed the requests, so the clients' attach-time
   runtime validation (slot count, reasoning flags) always matches.
 
-Discovery-side in-flight counters ship with increment 2 (see "In-flight
-counter ownership" above): every shared-server request a discovery process
-makes is published through `LlamaCppVisionClient.caption_images`, and the
-client-level admission gate defers new discovery requests while a live foreign
-exclusive phase holds the server. A wave's quiesce therefore drains discovery
-requests instead of killing them mid-flight. Remaining follow-ups:
-wave-overlap scheduling (the actual throughput payoff) and sharing the server
-with the standalone bake runner.
+Discovery-side in-flight counters are active (see "In-flight counter
+ownership" above): each shared-server request a discovery process makes is
+published through `LlamaCppVisionClient.caption_images`, and the client-level
+admission gate defers new discovery requests while a live foreign exclusive
+phase holds the server. A wave's quiesce therefore drains discovery requests
+instead of killing them mid-flight. See "Remaining follow-ups" for work outside
+this run-scoped integration.
 
 Live-verified 2026-10-01 (real server): attach+caption, quiesce (3.3s drain ->
 stop -> restart request), supervised restart, caption resume, and
