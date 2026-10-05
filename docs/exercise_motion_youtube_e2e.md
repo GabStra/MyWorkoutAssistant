@@ -1,6 +1,6 @@
 # Exercise Motion YouTube E2E Runbook
 
-Use this when you want to start from an exercise name, find a suitable YouTube clip, run WHAM, rank the generated motion, and produce the Wear skeleton JSON.
+Use this when you want to start from an exercise name, find a suitable YouTube clip, reconstruct and rank the generated motion, and produce the Wear skeleton JSON. The repo-level wrappers use GVHMR by default; WHAM is an explicit alternate backend.
 
 The current default path is optimized for source quality first:
 
@@ -8,16 +8,16 @@ The current default path is optimized for source quality first:
 2. Run the semantic gate to discard unrelated candidates.
 3. Run the YOLO pose prefilter on candidate timelines to find single-person, in-frame, stable-camera chunks. The single-exercise and workout-plan scripts enable this by default; pass `-SkipPosePrefilter` only for debugging.
 4. Review the remaining source chunks with the VLM.
-5. Run pre-WHAM source validation and source segment preparation.
-6. Run WHAM, deterministic cleanup, adaptive preview settings, movement cut selection, and final materialization.
+5. Run source validation and source segment preparation before reconstruction.
+6. Run the configured motion reconstructor, deterministic cleanup, adaptive preview settings, movement cut selection, and final materialization.
 7. Write `selection_manifest.json`, the selected preview, and the selected Wear skeleton JSON.
 
 ## Prerequisites
 
 - Run from the repo root: `C:\Users\gabri\Documents\MyWorkoutAssistant`.
-- Docker Desktop must be running for the default WHAM Docker path.
-- The default WHAM repo is the `third_party/WHAM` submodule. Init it with `git submodule update --init third_party/WHAM`, then keep SMPL models and checkpoints in that working tree (they are gitignored).
-- The default body model root is `<WHAM>\dataset\body_models`.
+- Docker Desktop must be running for the default GVHMR Docker path, which uses `myworkoutassistant/gvhmr:torch2.3-cu121`.
+- The default body-model root is `third_party/WHAM/dataset/body_models`. Initialize the submodule with `git submodule update --init third_party/WHAM` if that directory or its required model files are missing.
+- To select WHAM instead of the default GVHMR, pass `-MotionReconstructor wham`; its Docker image is `myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1`.
 - The default VLM path uses llama.cpp with:
   - `C:\Users\gabri\Downloads\Qwen3.5-9B-UD-Q4_K_XL.gguf`
   - `C:\Users\gabri\Downloads\mmproj-BF16(6).gguf`
@@ -30,7 +30,7 @@ Use a long shell/tool timeout when running these. A good source can finish much 
 
 Use these repo-level PowerShell entrypoints from `C:\Users\gabri\Documents\MyWorkoutAssistant`:
 
-- Single exercise from an exercise name, with YouTube search, source validation, WHAM, ranking, final validation, selected preview, and selected Wear skeleton:
+- Single exercise from an exercise name, with YouTube search, source validation, reconstruction, ranking, final validation, selected preview, and selected Wear skeleton:
   `scripts/run_exercise_motion_youtube_bake_and_rank.ps1`
 - Single exercise from an exact local video or exact YouTube URL, without YouTube search/ranking:
   `scripts/run_exercise_motion_generation.ps1`
@@ -41,7 +41,7 @@ For generated app-ready movements, prefer the first and third scripts. The direc
 
 ## Single Exercise By Name
 
-This is the normal single-exercise movement generator. It searches YouTube using the exercise name, validates source chunks before WHAM, bakes/ranks generated movement, and writes the selected preview and Wear skeleton.
+This is the normal single-exercise movement generator. It searches YouTube using the exercise name, validates source chunks before reconstruction, bakes/ranks generated movement, and writes the selected preview and Wear skeleton. It uses GVHMR by default; pass `-MotionReconstructor wham` to choose WHAM.
 
 ```powershell
 pwsh ./scripts/run_exercise_motion_youtube_bake_and_rank.ps1 `
@@ -100,7 +100,6 @@ pwsh ./scripts/run_exercise_motion_generation.ps1 `
   -ExerciseSlug "barbell-back-squat-manual" `
   -VideoPath "C:\path\to\selected_source.mp4" `
   -Workspace "build/exercise_motion/manual-source-runs" `
-  -UseWhamDocker `
   -SegmentStartSeconds 2.0 `
   -SegmentEndSeconds 7.0
 ```
@@ -114,10 +113,12 @@ pwsh ./scripts/run_exercise_motion_generation.ps1 `
   -YouTubeUrl "https://www.youtube.com/watch?v=VIDEO_ID" `
   -YouTubeCookiesPath "C:\Users\gabri\Downloads\www.youtube.com_cookies(18).txt" `
   -Workspace "build/exercise_motion/manual-source-runs" `
-  -UseWhamDocker `
   -SegmentStartSeconds 2.0 `
   -SegmentEndSeconds 7.0
 ```
+
+These direct-generation examples use the script's default GVHMR path. For WHAM,
+add `-MotionReconstructor wham -UseWhamDocker`.
 
 If you do not pass `-SegmentStartSeconds` and `-SegmentEndSeconds`, this script runs segment detection unless you pass `-UseSourceAsIs` or `-SkipSegmentDetection`.
 
@@ -175,10 +176,11 @@ Candidate preparation is pipelined automatically. Two CPU/network prefetch worke
 keep up to six upcoming exercises ready and each uses twelve parallel preview
 downloads. The library runner groups ready exercises into resumable 8-exercise
 waves by default. Each wave keeps one VLM session for source-cut validation,
-releases it, runs the prepared candidates through one warm WHAM worker, releases
-WHAM, and then keeps one VLM session for the unchanged final validators. Only
+releases it, runs the prepared candidates through one warm reconstruction worker
+(GVHMR by default), releases the reconstructor, and then keeps one VLM session for
+the unchanged final validators. Only
 unsuccessful exercises enter the deeper individual retry lane. This prevents
-per-exercise model loading and keeps GPU-backed VLM and WHAM stages mutually
+per-exercise model loading and keeps GPU-backed VLM and reconstruction stages mutually
 exclusive on a 12 GB GPU. The defaults can be tuned with `-StagedWaveSize`,
 `-PrefetchWorkers`, and `-PrefetchQueueDepth`; use `-DisableStagedWaves` or
 `-DisableCpuPrefetch` only for troubleshooting.
@@ -351,12 +353,12 @@ The compact `debug` mode keeps what is normally useful to inspect a result:
 
 It removes bulky generated intermediates:
 
-- WHAM raw outputs such as `.pkl` and `.pth`
+- raw reconstruction outputs such as `.pkl` and `.pth`
 - raw/cleaned/retarget/source generation directories
 - per-frame contact-sheet dumps like `frame_*.jpg`
 - `.npy` and `.npz` scratch artifacts
 
-Use `-ArtifactRetention full` when you need to debug WHAM internals or inspect every intermediate file from a run.
+Use `-ArtifactRetention full` when you need to inspect reconstructor internals or every intermediate file from a run.
 
 ## Debugging A Bad Result
 
@@ -368,14 +370,14 @@ Check:
 - `artifactRetention`: what was pruned.
 - `selected`: final Wear skeleton, selected preview video, selected input video, section timing, and ranking payload.
 - `selectedResults`: all retained manual-pick options when `-MaxSelectedResults` is greater than 1.
-- `candidateResults`: which candidates reached WHAM and which failed earlier.
+- `candidateResults`: which candidates reached reconstruction and which failed earlier.
 - `reviewItems`: what generated previews were reviewed and how they scored.
 
 Then inspect:
 
 - `youtube_candidates.json` or `selected/debug/youtube_candidates.full.json` for source selection and VLM source scores.
 - `candidate_decisions.jsonl` for batch-by-batch YouTube candidate decisions.
-- `<candidate>/input/selected_segment.mp4` to verify the source fed into WHAM.
+- `<candidate>/input/selected_segment.mp4` to verify the source fed into reconstruction.
 - `<candidate>/review/ranking.json` to see final preview scoring.
 - `<candidate>/segment_detection/segment_selection.json` when the source cut is wrong.
 - `<candidate>/review/**/contact_sheet_*.jpg` when the VLM cut decision is suspect.

@@ -516,7 +516,38 @@ directory has a condensed version of this state; update it after the arms land.
   source-stationarity metrics also passes. Normal final review,
   selection-manifest creation, and packaging remain unverified for this RDL
   candidate.
-- No source search, WHAM/GVHMR, visual-review model call, or throughput campaign
-  was run. The agreed OHP + RDL pair still lacks two current production-path
-  successes, so maximum throughput remains unverified; the interrupted baseline
-  and measured overlap regression remain closed as recorded above.
+- The RDL stale-support replay itself did not run source search, WHAM/GVHMR
+  inference, a visual-review model call, or a throughput campaign. At that replay
+  checkpoint, the retained RDL artifact had not established production-path
+  acceptance; the separate completed two-exercise arm is recorded below. Maximum
+  throughput remains unverified, the interrupted baseline remains stopped, and
+  the shared-overlap regression remains closed as recorded above.
+
+### Retained Oct 5 fixed-source production arm — corrected evidence
+
+- The completed shared arm at `build/exercise_motion/speed-harness/20261005-040656-a9f2ab42`
+  took 1282.0 seconds and completed one serial two-exercise wave. Its phase
+  totals were source 218.0s, generation 443.2s, and final validation 536.0s.
+  Both selected artifacts passed acceptance and review-to-package hash parity:
+  RDL (95 frames, `bb68faec0b5d65e0e343f9e8c98b24b5b28b6d6ac47d19e06884db5547fea510`)
+  and OHP (89 frames, `224daa370203d04f9afcb3607edeac991e85adf38d92d8bcd7c74100fe0b5a43`).
+- This arm did run GVHMR inference for both exercises. The selected finalization
+  manifests say `reused_processed` because finalization reused the generation
+  outputs; the authoritative generation records are under each selected
+  artifact's `processing_evidence/generation_checkpoint.json`. They record
+  backend `gvhmr`, successful `gvhmr-warm-worker` commands, and inference
+  prediction timings. RDL records 320.8s in the reconstruction stage and 4.7s
+  in model prediction; OHP records 360.0s in the stage and 1.4s in prediction.
+- The harness reported zero reconstruction calls because candidate workspaces
+  had been pruned before its post-run manifest snapshot. It did preserve the
+  full candidate-generation elapsed sum of 840.4s, which includes cleanup and
+  other generation work and must not be called GVHMR inference time. The staged
+  wave checkpoint now retains a compact reconstruction timing record per
+  candidate so future measurements survive retention cleanup.
+- This arm used fixed prepared source candidates and did not measure YouTube
+  discovery or downloads. It is a successful production generation/finalize/
+  package run, not a search-inclusive E2E or a comparison against baseline.
+  The stopped baseline remains stopped, and the earlier shared-overlap arm
+  remains a measured regression. Maximum throughput is therefore still
+  unproven; this result establishes a successful 1282-second serial reference
+  for the two fixed inputs, not a global maximum.
