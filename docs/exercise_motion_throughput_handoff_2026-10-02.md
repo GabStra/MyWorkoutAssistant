@@ -693,3 +693,37 @@ directory has a condensed version of this state; update it after the arms land.
   `source_contact_observation_unavailable`. This arm cannot compare prefetch
   on versus off. The completed OHP and failed RDL do not establish maximum
   throughput; no additional arm was run from this diagnostic.
+
+### Oct 5 current-code RDL continuity and fit follow-up
+
+- Commit `827e5683` fixes the contact-correction seam admission bug. The
+  correction gate now receives the exercise motion contract, and a return-to-
+  start correction is not added to the review artifacts when it worsens the
+  measured loop seam. The regression uses the retained RDL seam values
+  (32.09mm baseline, 61.83mm corrected); the focused test, Python compilation,
+  and `git diff --check` passed. This prevents a known bad sibling artifact; it
+  does not by itself recover the failed RDL.
+- Replayed the retained failed RDL's exact 87-frame cycle payload from
+  `20261005-081407-439afbde` with the production Python environment, current
+  fitter, and a 120-second fit budget. The replay report is
+  `build/exercise_motion/replays/20261005-rdl-87-frame-current-fit-report.json`;
+  it made zero model calls and ran no reconstruction. It ended in
+  `unreachable_conflict` after 125.63s wall / 124.81s in the fit. Anatomy,
+  contacts, trajectory fit, temporal quality, root continuity, and playback
+  failed; source articulation, body support, support alignment, equipment,
+  root travel, height-only contacts, and the loop seam passed. Maximum stored
+  contact error was 16.69mm, maximum articulation change 19.29 degrees, and
+  target RMS was 74.2mm. Source-camera projection had 22 frames and 286
+  observations, including selected-cycle start/end coverage.
+- The report has zero bounded-refinement evaluations and stops at the existing
+  unreachable-conflict guard. The 120-second value is a solver/refinement
+  budget rather than a strict wall cap: optimizer work checks between calls,
+  and final validation runs to completion to classify and record the result.
+  This replay does not identify a gate-preserving early stop or justify
+  increasing the fit budget. A separate 123-frame full-interval replay was not
+  used as evidence for this failure because it did not match the failed 87-frame
+  cycle.
+- No post-`827e5683` source-to-package RDL run or comparable throughput result
+  exists. The correction regression is verified locally, but the current
+  accepted two-exercise artifact remains the earlier 1282-second serial arm;
+  throughput and current-revision package parity remain unverified.
