@@ -40,7 +40,7 @@ SUPPORT_REFERENCE_CONTACT_LIMIT_METERS = min(
     PLAYBACK_CONTACT_LIMIT_METERS * 0.5,
 )
 
-CONTROLLED_MOTION_STRATEGY = 'fixed_rig_controlled_motion_v66_normal_velocity_path_repair'
+CONTROLLED_MOTION_STRATEGY = 'fixed_rig_controlled_motion_v67_jerk_fit_first'
 # Feasibility pre-flight threshold, calibrated from fit reports: every
 # successful fit's target bones matched the rig within ~0.002m, while
 # structurally conflicted fits measured 0.05-0.15m before burning their
@@ -378,6 +378,21 @@ def polishable_near_miss(failed_checks):
     """Failures that leftover outer time should keep polishing."""
     failed = set(failed_checks or [])
     return bool(failed) and failed <= (POLISH_STAGE_A | POLISH_STAGE_B | POLISH_STAGE_C)
+
+
+def prioritize_jerk_only_fit_refinement(failed_checks, *, playback_passed, contact_error_meters):
+    """Preserve Stage-C budget for fitting a jerk-only near-miss first.
+
+    Absolute-coordinate smoothing can consume the reserved Stage-C window and
+    alter source motion before the fit objective gets another chance to reduce
+    jerk. When playback and contacts already pass, defer those broad smoothers
+    and give the source-constrained Stage-C fit a chance before smoothing.
+    """
+    return (
+        set(failed_checks or ()) == {'jerk'}
+        and bool(playback_passed)
+        and float(contact_error_meters or 0.) < 0.0005
+    )
 
 
 EVIDENCE_TERMINATIONS = frozenset({
@@ -7410,7 +7425,15 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 candidate, report = validate_solution(
                     solved, project_playback_plants=not keep_path)
             failed_checks = failed_check_names(report.get('checks'))
+        defer_broad_jerk_smoothing = prioritize_jerk_only_fit_refinement(
+            failed_checks,
+            playback_passed=(report.get('playback') or {}).get('passed'),
+            contact_error_meters=report.get('maximumContactErrorMeters'),
+        )
+        if defer_broad_jerk_smoothing:
+            refinement['broadTemporalSmoothingDeferredForJerkFit'] = True
         if (report.get('checks') and 'jerk' in failed_checks
+                and not defer_broad_jerk_smoothing
                 and not refinement.get('temporalJerkSmooth')
                 and (set(failed_checks) <= (POLISH_STAGE_C | POLISH_STAGE_B | {'anatomy', 'playback'})
                      or refinement.get('playbackPathRepair'))
@@ -7465,6 +7488,11 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         # near-misses; it leaves planted chains locked and restores source-aware
         # anatomy after smoothing unplanted joints.
         if (not refinement.get('temporalPathStrong')
+                and not prioritize_jerk_only_fit_refinement(
+                    failed_checks,
+                    playback_passed=(report.get('playback') or {}).get('passed'),
+                    contact_error_meters=report.get('maximumContactErrorMeters'),
+                )
                 and (report.get('playback') or {}).get('passed')
                 and ({'jerk', 'jointShake', 'relativeJointShake', 'settling'} & set(failed_checks))
                 and (report.get('maximumContactErrorMeters') or 0.) < 0.0005):
@@ -7613,6 +7641,11 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 candidate, report = validate_solution(solved)
             continue
         if (stage == 'C' and 'jerk' in failed_checks and not refinement.get('temporalJerkSmooth')
+                and not prioritize_jerk_only_fit_refinement(
+                    failed_checks,
+                    playback_passed=(report.get('playback') or {}).get('passed'),
+                    contact_error_meters=report.get('maximumContactErrorMeters'),
+                )
                 and set(failed_checks) <= (POLISH_STAGE_C | POLISH_STAGE_B)
                 and (report.get('maximumContactErrorMeters') or 0.) < 0.00035):
             previous_coordinates = solved.x.copy()
@@ -7999,6 +8032,11 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             # cleared playback path free-DOF temporal can still clear Stage-C.
             if (play_ok and leftover <= POLISH_STAGE_C
                     and ({'jerk', 'jointShake', 'relativeJointShake', 'settling'} & leftover)
+                    and not prioritize_jerk_only_fit_refinement(
+                        leftover,
+                        playback_passed=play_ok,
+                        contact_error_meters=report.get('maximumContactErrorMeters'),
+                    )
                     and not refinement.get('temporalFreeStageC')):
                 previous_coordinates = solved.x.copy()
                 previous_failed = set(failed_checks)
@@ -8067,6 +8105,9 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             cost_before = float(errors@errors)
             solved = trajectory_solver(residual, solved.x, pattern, polish_evaluations)
             solved.nfev = (solved.nfev or 0) + initial_evaluations
+            if (stage == 'C'
+                    and refinement.get('broadTemporalSmoothingDeferredForJerkFit')):
+                refinement['stageCFitAttemptedBeforeBroadTemporalSmoothing'] = True
             errors = residual(solved.x)
             cost_after = float(errors@errors)
             stalled = cost_before-cost_after <= max(1e-12, abs(cost_before)*1e-6)
