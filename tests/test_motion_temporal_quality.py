@@ -9,7 +9,8 @@ from exercise_motion_pkg.pose_fidelity import _endpoint_angle_metrics
 from exercise_motion_pkg.models import MotionClip, MotionFrame
 from exercise_motion_pkg.structural_refinement import constrain_to_source_articulation_envelope
 from exercise_motion_pkg.temporal_quality import (
-    bone_roll_metrics, introduced_joint_spikes, refresh_motion_bounds, transport_corrected_bone_sides,
+    bone_roll_metrics, introduced_joint_spikes, refresh_motion_bounds,
+    third_difference_jerk_failure_evidence, transport_corrected_bone_sides,
 )
 
 
@@ -71,6 +72,39 @@ def test_processing_spike_does_not_hide_in_clip_average():
     assert not introduced_joint_spikes(payload)["severe"]
     frames[4]["joints"]["left_wrist"][2] = .08
     assert introduced_joint_spikes(payload)["severe"]
+
+
+def test_jerk_failure_evidence_reconstructs_global_rms_and_source_window():
+    points = np.zeros((8, 2, 3))
+    desired_d3 = np.array([0., 0., 0., 1., 0.])
+    for sample_index, jerk in enumerate(desired_d3):
+        points[sample_index + 3, 0, 0] = (
+            jerk + 3 * points[sample_index + 2, 0, 0]
+            - 3 * points[sample_index + 1, 0, 0]
+            + points[sample_index, 0, 0]
+        )
+    source = np.zeros_like(points)
+    fit_times = np.arange(len(points)) / 10.
+    source_times = 10. + fit_times
+
+    evidence = third_difference_jerk_failure_evidence(
+        points, source, ["left_collar", "right_collar"], fps=10.,
+        fit_times=fit_times, source_times=source_times,
+        top_window_count=1, window_seconds=.1,
+    )
+
+    expected = float(np.sqrt(np.mean(np.diff(points, n=3, axis=0) ** 2)))
+    assert evidence["available"]
+    assert evidence["globalOutputRms"] == pytest.approx(expected)
+    assert evidence["globalOutputRmsFromJointContributions"] == pytest.approx(expected)
+    assert evidence["topJointContributions"][0]["joint"] == "left_collar"
+    window = evidence["topExcessWindows"][0]
+    assert window["startFrame"] == 3
+    assert window["endFrame"] == 6
+    assert window["fitTimeStartSec"] == pytest.approx(.3)
+    assert window["fitTimeEndSec"] == pytest.approx(.6)
+    assert window["sourceTimeStartSec"] == pytest.approx(10.3)
+    assert window["sourceTimeEndSec"] == pytest.approx(10.6)
 
 
 def test_endpoint_check_exposes_one_bad_limb_phase():

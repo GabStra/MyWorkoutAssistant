@@ -65,6 +65,106 @@ def track_discontinuity_metrics(joint_tracks, *, root_joint, fps=30., body_heigh
             'policy': 'time_normalized_local_velocity_discontinuity_v1', 'referenceFps': 30.}
 
 
+def third_difference_jerk_failure_evidence(
+    points, reference, joint_names, *, fps, fit_times=None, source_times=None,
+    top_joint_count=6, top_window_count=4, window_seconds=0.2,
+):
+    """Decompose excess third-difference energy without retaining fit poses."""
+    values = np.asarray(points, dtype=float)
+    baseline = np.asarray(reference, dtype=float)
+    names = list(joint_names)
+    if (values.ndim != 3 or values.shape[-1] != 3 or values.shape[1] != len(names)
+            or baseline.shape != values.shape or values.shape[0] < 4
+            or not np.isfinite(values).all() or not np.isfinite(baseline).all()
+            or not np.isfinite(fps) or fps <= 0):
+        return {"available": False, "reason": "invalid_jerk_tracks"}
+
+    output_d3 = np.diff(values, n=3, axis=0)
+    source_d3 = np.diff(baseline, n=3, axis=0)
+    output_energy_by_joint = np.mean(output_d3 ** 2, axis=(0, 2))
+    source_energy_by_joint = np.mean(source_d3 ** 2, axis=(0, 2))
+    output_rms = float(np.sqrt(np.mean(output_energy_by_joint)))
+    source_rms = float(np.sqrt(np.mean(source_energy_by_joint)))
+    total_energy = float(np.sum(output_energy_by_joint))
+    joint_order = np.argsort(output_energy_by_joint)[::-1][:max(0, int(top_joint_count))]
+    joints = []
+    for index in joint_order:
+        output_joint_rms = float(np.sqrt(output_energy_by_joint[index]))
+        source_joint_rms = float(np.sqrt(source_energy_by_joint[index]))
+        joints.append({
+            "joint": names[int(index)],
+            "outputRms": output_joint_rms,
+            "sourceRms": source_joint_rms,
+            "energyFraction": float(output_energy_by_joint[index] / total_energy)
+                if total_energy > 0 else 0.,
+            "rmsRatio": float(output_joint_rms / source_joint_rms)
+                if source_joint_rms > 1e-12 else None,
+        })
+
+    fit_clock = _valid_metric_clock(fit_times, len(values))
+    source_clock = _valid_metric_clock(source_times, len(values))
+    sample_count = len(output_d3)
+    window_samples = min(sample_count, max(1, int(round(float(fps) * window_seconds))))
+    output_sample_energy = np.mean(output_d3 ** 2, axis=(1, 2))
+    source_sample_energy = np.mean(source_d3 ** 2, axis=(1, 2))
+    candidates = []
+    for start in range(sample_count - window_samples + 1):
+        stop = start + window_samples
+        output_energy = float(np.mean(output_sample_energy[start:stop]))
+        source_energy = float(np.mean(source_sample_energy[start:stop]))
+        excess_energy = output_energy - source_energy
+        if excess_energy <= 0:
+            continue
+        last_frame = stop + 2  # Each third-difference sample spans four keyframes.
+        window = {
+            "startFrame": start,
+            "endFrame": last_frame,
+            "sampleCount": window_samples,
+            "outputRms": float(np.sqrt(output_energy)),
+            "sourceRms": float(np.sqrt(source_energy)),
+            "excessEnergy": excess_energy,
+        }
+        if fit_clock is not None:
+            window["fitTimeStartSec"] = float(fit_clock[start])
+            window["fitTimeEndSec"] = float(fit_clock[last_frame])
+        if source_clock is not None:
+            window["sourceTimeStartSec"] = float(source_clock[start])
+            window["sourceTimeEndSec"] = float(source_clock[last_frame])
+        candidates.append(window)
+    candidates.sort(key=lambda window: window["excessEnergy"], reverse=True)
+    selected = []
+    for candidate in candidates:
+        if any(candidate["startFrame"] <= kept["endFrame"]
+               and kept["startFrame"] <= candidate["endFrame"] for kept in selected):
+            continue
+        selected.append(candidate)
+        if len(selected) >= max(0, int(top_window_count)):
+            break
+
+    reconstructed_rms = float(np.sqrt(np.mean([
+        float(np.mean(output_d3[:, index, :] ** 2)) for index in range(len(names))
+    ])))
+    return {
+        "available": True,
+        "policy": "source_relative_third_difference_energy_v1",
+        "globalOutputRms": output_rms,
+        "globalSourceRms": source_rms,
+        "globalOutputRmsFromJointContributions": reconstructed_rms,
+        "topJointContributions": joints,
+        "topExcessWindows": selected,
+        "windowSeconds": window_samples / float(fps),
+    }
+
+
+def _valid_metric_clock(values, expected_count):
+    if values is None:
+        return None
+    clock = np.asarray(values, dtype=float)
+    if clock.shape != (expected_count,) or not np.isfinite(clock).all():
+        return None
+    return clock
+
+
 def body_orientation_axes(points, names):
     """Dimensionless axes expose rotation noise even on a narrow skeleton."""
     required = ('left_hip', 'right_hip', 'pelvis', 'neck')

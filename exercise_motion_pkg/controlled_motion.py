@@ -26,7 +26,11 @@ from .contact_constraints import (
 )
 from .smpl_joint_names import SMPL_JOINT_NAMES, SMPL_JOINT_PARENTS
 from .physical_validation import ARTICULATIONS, angles, body_scale, collision_clearances, collision_specs, validate_physical_motion, anatomical_structure_residuals
-from .temporal_quality import body_orientation_axes, body_orientation_noise, body_local_head_direction, introduced_joint_spikes, refresh_motion_bounds, transport_corrected_bone_sides
+from .temporal_quality import (
+    body_orientation_axes, body_orientation_noise, body_local_head_direction,
+    introduced_joint_spikes, refresh_motion_bounds,
+    third_difference_jerk_failure_evidence, transport_corrected_bone_sides,
+)
 from .motion_placement import contact_consistent_target, root_motion_quality, register_contact_placement, align_registered_contacts_above_floor
 from .rig_interpolation import INTERPOLATION
 from .rig_playback import PLAYBACK_CONTACT_LIMIT_METERS, PLAYBACK_FLOOR_LIMIT_METERS
@@ -6872,6 +6876,18 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         travel_after = np.linalg.norm(np.ptp(result[:,rig.root],axis=0))
         fit_error = float(np.sqrt(np.mean((result-target)**2)))
         jerk_after = float(np.sqrt(np.mean(np.diff(result,n=3,axis=0)**2)))
+        if jerk_after > jerk_limit:
+            source_times = np.asarray([
+                frame.get('sourceTimeSec', np.nan) for frame in frames
+            ], dtype=float)
+            jerk_evidence = third_difference_jerk_failure_evidence(
+                result, jerk_basis, names, fps=fps, fit_times=times,
+                source_times=source_times,
+            )
+            if jerk_evidence.get('available'):
+                jerk_evidence['acceptanceLimitRms'] = float(jerk_limit)
+                jerk_evidence['limitRatio'] = float(jerk_after / max(jerk_limit, 1e-12))
+                report['jerkFailureEvidence'] = jerk_evidence
         target_span = np.linalg.norm(np.ptp(target-target[:,rig.root:rig.root+1],axis=0),axis=-1)
         result_span = np.linalg.norm(np.ptp(result-result[:,rig.root:rig.root+1],axis=0),axis=-1)
         moving = target_span > .1*scale
