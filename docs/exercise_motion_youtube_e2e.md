@@ -249,8 +249,15 @@ Aggregate a frozen validation set without launching any model:
 python scripts/analyze_exercise_motion_source_funnel.py `
   build/exercise_motion/source-selection-baseline `
   --label baseline `
+  --wall-seconds 1282.0 `
   --out-json build/exercise_motion/source-selection-baseline-summary.json
 ```
+
+Pass the measured wall duration for the whole invocation with `--wall-seconds`; use
+the harness `results.json.wallSeconds` for an isolated arm. Per-manifest
+`timings.totalSeconds` values are reported separately as
+`summedCandidateProcessingSeconds` and are never used as whole-run elapsed time. If
+whole-run wall time is omitted, `acceptedOutputsPerWallHour` is null.
 
 Run the same frozen exercise/search set into a separate workspace and outcome index,
 then compare `firstCandidateSourcePassRate`, `firstCandidateAcceptanceRate`,

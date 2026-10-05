@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 import json
+import math
 from pathlib import Path
 import sys
 from typing import Any, Iterable
@@ -62,7 +63,14 @@ def manifest_first_candidate(manifest: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def summarize_source_funnel(paths: Iterable[Path], *, label: str) -> dict[str, Any]:
+def summarize_source_funnel(
+    paths: Iterable[Path],
+    *,
+    label: str,
+    wall_seconds: float | None = None,
+) -> dict[str, Any]:
+    if wall_seconds is not None and (not math.isfinite(wall_seconds) or wall_seconds <= 0.0):
+        raise ValueError("wall_seconds must be a finite positive duration")
     rows: list[dict[str, Any]] = []
     rejection_counts: Counter[str] = Counter()
     for path in paths:
@@ -70,7 +78,7 @@ def summarize_source_funnel(paths: Iterable[Path], *, label: str) -> dict[str, A
         timings = manifest.get("timings") if isinstance(manifest.get("timings"), dict) else {}
         funnel = timings.get("sourceFunnel") if isinstance(timings.get("sourceFunnel"), dict) else {}
         first = manifest_first_candidate(manifest)
-        total_seconds = float(timings.get("totalSeconds") or 0.0)
+        candidate_processing_seconds = float(timings.get("totalSeconds") or 0.0)
         selected = isinstance(manifest.get("selected"), dict)
         if first is not None:
             rejection_counts.update(str(tag) for tag in first.get("rejectionTags") or [])
@@ -78,7 +86,7 @@ def summarize_source_funnel(paths: Iterable[Path], *, label: str) -> dict[str, A
             {
                 "path": str(path),
                 "selected": selected,
-                "totalSeconds": total_seconds,
+                "candidateProcessingSeconds": candidate_processing_seconds,
                 "processedCandidateCount": int(
                     funnel.get("processedCandidateCount")
                     or timings.get("processedCandidateCount")
@@ -91,7 +99,9 @@ def summarize_source_funnel(paths: Iterable[Path], *, label: str) -> dict[str, A
 
     count = len(rows)
     selected_count = sum(int(row["selected"]) for row in rows)
-    total_seconds = sum(float(row["totalSeconds"]) for row in rows)
+    summed_candidate_processing_seconds = sum(
+        float(row["candidateProcessingSeconds"]) for row in rows
+    )
     processed_count = sum(int(row["processedCandidateCount"]) for row in rows)
     return {
         "schemaVersion": 1,
@@ -109,9 +119,12 @@ def summarize_source_funnel(paths: Iterable[Path], *, label: str) -> dict[str, A
         ) if count else 0.0,
         "meanProcessedCandidatesPerSelection": round(processed_count / selected_count, 3)
         if selected_count else None,
-        "acceptedOutputsPerWallHour": round(selected_count / (total_seconds / 3600.0), 3)
-        if total_seconds > 0.0 else None,
-        "totalSeconds": round(total_seconds, 3),
+        "acceptedOutputsPerWallHour": round(selected_count / (wall_seconds / 3600.0), 3)
+        if wall_seconds is not None else None,
+        "armWallSeconds": round(wall_seconds, 3) if wall_seconds is not None else None,
+        "summedCandidateProcessingSeconds": round(
+            summed_candidate_processing_seconds, 3
+        ),
         "firstCandidateRejectionCounts": dict(rejection_counts.most_common()),
         "rows": rows,
     }
@@ -123,9 +136,21 @@ def main() -> int:
     )
     parser.add_argument("inputs", nargs="+", type=Path)
     parser.add_argument("--label", default="source-funnel")
+    parser.add_argument(
+        "--wall-seconds",
+        type=float,
+        help="Measured wall duration for the whole run; required to calculate output rate.",
+    )
     parser.add_argument("--out-json", type=Path)
     args = parser.parse_args()
-    summary = summarize_source_funnel(selection_manifest_paths(args.inputs), label=args.label)
+    try:
+        summary = summarize_source_funnel(
+            selection_manifest_paths(args.inputs),
+            label=args.label,
+            wall_seconds=args.wall_seconds,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
     rendered = json.dumps(summary, indent=2, sort_keys=True)
     if args.out_json is not None:
         args.out_json.parent.mkdir(parents=True, exist_ok=True)
