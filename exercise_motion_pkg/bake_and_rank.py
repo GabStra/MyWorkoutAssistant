@@ -11059,6 +11059,23 @@ def materialized_source_pose_fidelity_metrics(
             ),
             "skippedReason": "materialized_source_pose_reference_unavailable",
         }
+    source_pose_audit = source_pose_payload.get("sourcePoseEvidenceAudit")
+    if (
+        isinstance(source_pose_audit, dict)
+        and source_pose_audit.get("unresolved") is True
+    ):
+        return {
+            "available": False,
+            "required": required,
+            "passed": not required,
+            "rejectionReasons": (
+                ["materialized_source_pose_fidelity_unavailable"]
+                if required
+                else []
+            ),
+            "skippedReason": "source_pose_reference_unreliable",
+            "sourcePoseEvidenceAudit": source_pose_audit,
+        }
     if not isinstance(output_motion_payload, dict):
         return {
             "available": False,
@@ -25475,6 +25492,12 @@ def update_pre_wham_exact_phase_validation_manifest(
 
 def exact_source_validation_effectively_passed(validation: dict[str, Any]) -> bool:
     if not validation.get("requiredRegionObservations", {}).get("passed", True):
+        return False
+    source_pose_audit = validation.get("sourcePoseEvidenceAudit")
+    if (
+        isinstance(source_pose_audit, dict)
+        and source_pose_audit.get("unresolved") is True
+    ):
         return False
     readiness = validation.get("sourceBodySupportReadiness") or {}
     if readiness.get("required") and not readiness.get("ready"):
