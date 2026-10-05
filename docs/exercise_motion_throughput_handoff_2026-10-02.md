@@ -637,6 +637,14 @@ directory has a condensed version of this state; update it after the arms land.
   identity edge could reuse the same ankle anchor across explicit airborne
   episodes; fit and sequence anchor grouping now scopes reused identities by
   airborne epoch. This does not resolve the retained 93-frame RDL fit failure.
+- The retained 93-frame RDL replay is historical (before `2118c3bc` and
+  `f26d691d`) and is not a current-code fit result. Its source-confirmed
+  baseline-support gate already failed for both feet; the 240s-budget replay
+  stopped after 147.6s at `unreachable_conflict`, with 9mm stored contact error,
+  66mm playback contact error, 33mm floor penetration, and 47/50mm left ankle/
+  foot target RMS. The candidate also had a severe open seam. The fitter returned
+  the original pose; the evidence does not show that spending more solver time
+  would yield a safe fit, so no support or acceptance gate was weakened.
 - Queue retention now expires abandoned unconsumed results after 30 days and
   ambiguous crash records after 90 days, while retaining newer records for
   delayed consumers/recovery. Focused pruning regression passed; code is in
