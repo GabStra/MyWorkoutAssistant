@@ -40,7 +40,7 @@ SUPPORT_REFERENCE_CONTACT_LIMIT_METERS = min(
     PLAYBACK_CONTACT_LIMIT_METERS * 0.5,
 )
 
-CONTROLLED_MOTION_STRATEGY = 'fixed_rig_controlled_motion_v69_jerk_fit_budget'
+CONTROLLED_MOTION_STRATEGY = 'fixed_rig_controlled_motion_v70_girdle_span_fit'
 # Feasibility pre-flight threshold, calibrated from fit reports: every
 # successful fit's target bones matched the rig within ~0.002m, while
 # structurally conflicted fits measured 0.05-0.15m before burning their
@@ -3117,7 +3117,8 @@ def close_loop_seam_coordinates(coordinates, rig, pinned, *, scale, fps=30., pas
 
 
 def project_loop_seam_coordinates(coordinates, rig, pinned, *, scale, fps, max_nfev=50,
-                                  deadline=None, settling_weights=None, settling_limit=None):
+                                  deadline=None, settling_weights=None, settling_limit=None,
+                                  span_targets=None):
     """Hard-project free boundary DOFs so wrap step+velocity fall under playback limits.
 
     Planted positions are constrained in world space, while local rotations stay
@@ -3128,6 +3129,7 @@ def project_loop_seam_coordinates(coordinates, rig, pinned, *, scale, fps, max_n
     """
     from .loop_seam import (
         seam_errors, MAX_STEP_EXCESS_BODY_RATIO, MAX_VELOCITY_MISMATCH_BODY_RATIO)
+    from .physical_validation import span_rigidity_fit_residuals
     coords = np.asarray(coordinates, dtype=float).copy()
     count = len(coords)
     if count < 4:
@@ -3211,6 +3213,8 @@ def project_loop_seam_coordinates(coordinates, rig, pinned, *, scale, fps, max_n
                     deltas.append((points[local_frame, active] - original_points[local_frame, active]).ravel())
             if deltas:
                 contact_err = np.concatenate(deltas) / max(float(scale), 1e-6)
+        span_errors, _ = span_rigidity_fit_residuals(
+            unconstrained_points, rig.names, span_targets, body_scale_m=scale)
         result = np.r_[
             # Step and velocity limits are both hard playback requirements.
             # A 50x step term was dwarfed by the fps-scaled velocity residual,
@@ -3221,6 +3225,7 @@ def project_loop_seam_coordinates(coordinates, rig, pinned, *, scale, fps, max_n
             ANATOMY_FIT_WEIGHT * anatomical_structure_residuals(
                 unconstrained_points, rig.names, pose_only=True,
                 margin=ANATOMY_FIT_MARGIN, reference=original_points)[0].ravel(),
+            ANATOMY_FIT_WEIGHT * span_errors.ravel(),
             0.02 * (values - original),
         ]
         if smooth_boundary:
@@ -5632,6 +5637,38 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
     collision_pattern = np.stack([np.max(rig.dependencies[np.ravel([[names.index(n)*3+k for k in range(3)] for n in (*a,*b)])],axis=0)
                                   for _,a,b,_,_ in collision_specs(names)])
     body_dependencies = joint_dependencies(rig,('pelvis','left_hip','right_hip','neck'))
+    from .physical_validation import (
+        SPAN_FIT_ACTIVATION_FRACTION,
+        SPAN_JOINT_PAIRS,
+        SPAN_TOLERANCE_METERS,
+        SPAN_TOLERANCE_RATIO,
+        span_rigidity_fit_residuals,
+        span_rigidity_violations,
+    )
+    source_span_measurements = span_rigidity_violations(reference, names)
+    span_targets = {label: float(target)
+                    for label, (_, target) in source_span_measurements.items()}
+    span_pairs = {label: (left, right)
+                  for label, left, right in SPAN_JOINT_PAIRS
+                  if label in span_targets}
+    if span_targets:
+        report['spanStabilityConstraint'] = {
+            'targetSource': 'repaired_fit_reference_median',
+            'activationFractionOfValidationTolerance': SPAN_FIT_ACTIVATION_FRACTION,
+            'targets': {
+                label: {
+                    'targetMeters': target,
+                    'validationToleranceMeters': max(
+                        SPAN_TOLERANCE_METERS, target * SPAN_TOLERANCE_RATIO),
+                }
+                for label, target in span_targets.items()
+            },
+        }
+    span_dependencies = np.stack([
+        joint_dependencies(rig, pair) for pair in span_pairs.values()
+    ]) if span_pairs else np.empty((0, rig.width))
+    if len(span_dependencies):
+        span_dependencies[:, :3] = 0.
     head_pattern = joint_dependencies(rig,('pelvis','left_hip','right_hip','neck','head'))[None,:]
     branch_basis = joint_dependencies(rig,('pelvis','neck','left_shoulder','right_shoulder'))
     branch_pattern = np.stack([np.maximum(branch_basis,joint_dependencies(rig,(a,h,b)))
@@ -5640,7 +5677,9 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
     frame_pattern = np.vstack([rig.dependencies,rig.dependencies,rig.dependencies[1::3],
                                angle_pattern,rig.dependencies[1::3],head_pattern,rotation_prior_dependencies(rig.width),collision_pattern,
                                rig.dependencies[::3],branch_pattern])
-    structure_pattern = anatomical_structure_dependencies(rig, points, names)
+    structure_pattern = np.vstack([
+        anatomical_structure_dependencies(rig, points, names), span_dependencies,
+    ])
     frame_pattern = np.vstack([frame_pattern, structure_pattern])
     equipment_pattern = (joint_dependencies(rig, equipment['endpointPair'])[None, :]
                          if equipment.get('available') else np.empty((0, rig.width)))
@@ -5824,9 +5863,13 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             excursion_penalty,branch_penalty],axis=1)
 
     def anatomy_rows(unconstrained_candidate):
-        return ANATOMY_FIT_WEIGHT*anatomical_structure_residuals(
+        structure = anatomical_structure_residuals(
             unconstrained_candidate,names,pose_only=True,margin=ANATOMY_FIT_MARGIN,
             reference=reference)[0]
+        spans, _ = span_rigidity_fit_residuals(
+            unconstrained_candidate, names, span_targets, body_scale_m=scale)
+        return np.concatenate([ANATOMY_FIT_WEIGHT * structure,
+                               ANATOMY_FIT_WEIGHT * spans], axis=1)
 
     def keyframe_post_rows(candidate, grip_weight, contact_weight):
         return np.concatenate([
@@ -5888,10 +5931,17 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         return np.concatenate(subframe_point_sections(subframe, contact_weight, grip_weight), axis=1)
 
     def subframe_anatomy_rows(unconstrained_subframe):
-        return ANATOMY_FIT_WEIGHT*anatomical_structure_residuals(
+        interpolated_reference = (
+            reference[subframe_first] * (1. - subframe_alpha)
+            + reference[subframe_last] * subframe_alpha
+        )
+        structure = anatomical_structure_residuals(
             unconstrained_subframe,names,pose_only=True,margin=ANATOMY_FIT_MARGIN,
-            reference=(reference[subframe_first]*(1.-subframe_alpha)
-                       +reference[subframe_last]*subframe_alpha))[0]
+            reference=interpolated_reference)[0]
+        spans, _ = span_rigidity_fit_residuals(
+            unconstrained_subframe, names, span_targets, body_scale_m=scale)
+        return np.concatenate([ANATOMY_FIT_WEIGHT * structure,
+                               ANATOMY_FIT_WEIGHT * spans], axis=1)
 
     def seam_rows(candidate):
         from .loop_seam import seam_errors, MAX_STEP_EXCESS_BODY_RATIO, MAX_VELOCITY_MISMATCH_BODY_RATIO
@@ -8025,6 +8075,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                     solved.x.reshape(count, rig.width), rig, pinned,
                     scale=scale, fps=fps, settling_weights=hold_weights,
                     settling_limit=settling_limit,
+                    span_targets=span_targets,
                     # Nudge validation can consume the polish reserve. Give
                     # each bounded solve its own window, still inside
                     # the candidate's outer deadline.

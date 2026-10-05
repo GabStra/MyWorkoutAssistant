@@ -22,6 +22,9 @@ SOCKET_ALIGNMENT_MAX_LATERAL_RATIO = .06
 # girdle visibly (an accepted-with-complaints thruster reached ~19%).
 SPAN_TOLERANCE_RATIO = .12
 SPAN_TOLERANCE_METERS = .03
+# Leave a little room beneath the hard playback boundary so the fitter does
+# not land on a numerically fragile span near-miss.
+SPAN_FIT_ACTIVATION_FRACTION = .8
 # A reported anatomical repair can leave a millimetre of girdle leftover
 # against the 30 mm span cap. That must not void an otherwise legal output.
 ANATOMICAL_REFERENCE_SPAN_LEFTOVER_METERS = .002
@@ -47,6 +50,27 @@ def span_rigidity_violations(points, names, span_targets=None):
                   else float(np.median(span)))
         violations[label] = (np.abs(span-target), target)
     return violations
+
+
+def span_rigidity_fit_residuals(points, names, span_targets, *, body_scale_m):
+    """Softly constrain girdle spans to source-derived targets during fitting.
+
+    Physical validation uses the same tolerance after fitting. Activating the
+    residual before that hard boundary gives the optimizer room to correct a
+    span without replacing the observed shoulder or hip width with a template.
+    """
+    if not span_targets:
+        return np.empty((len(points), 0)), []
+    violations = span_rigidity_violations(points, names, span_targets)
+    rows = []
+    labels = []
+    scale = max(float(body_scale_m), 1e-9)
+    for label, (deviation, target) in violations.items():
+        tolerance = max(SPAN_TOLERANCE_METERS, target * SPAN_TOLERANCE_RATIO)
+        safe_deviation = SPAN_FIT_ACTIVATION_FRACTION * tolerance
+        rows.append(np.maximum(deviation - safe_deviation, 0.) / scale)
+        labels.append(label)
+    return (np.stack(rows, axis=1) if rows else np.empty((len(points), 0))), labels
 
 ARTICULATIONS = tuple(
     (f"{side}_{joint}", parent.format(s=side), f"{side}_{joint}", child.format(s=side), tolerance)
