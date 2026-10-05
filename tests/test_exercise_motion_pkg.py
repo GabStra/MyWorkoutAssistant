@@ -54258,8 +54258,32 @@ def test_unreachable_without_polish_covers_measured_pose_conflicts() -> None:
                    'trajectoryFit': True, 'rootTravel': True},
         'physicalReasons': ['anatomy_chest_attachment'],
         'maximumArticulationChangeDegrees': 10.0,
+        'optimizerTermination': 'converged',
     }
     assert unreachable_without_polish(conflict_matched_targets) is True
+    # Even a measured-looking anatomy/source conflict is not final when the
+    # optimizer only stopped at its budget fence.
+    for optimizer_termination in ('time_budget', 'solve_phase_budget', 'evaluation_limit'):
+        timed_conflict = {
+            **conflict_matched_targets,
+            'optimizerTermination': optimizer_termination,
+        }
+        assert unreachable_without_polish(timed_conflict) is False
+        for stop_reason in ('objective_stalled', 'acceptance_stalled'):
+            assert unreachable_without_polish({
+                **timed_conflict,
+                'boundedRefinement': {'stopReason': stop_reason},
+            }) is False
+
+    # A different anatomy reason may still be repairable after the optimizer;
+    # stage-C playback stalls are not evidence that torso projection was tried.
+    torso_bend_near_miss = {
+        **conflict_matched_targets,
+        'physicalReasons': ['anatomy_torso_bend'],
+        'optimizerTermination': 'converged',
+        'boundedRefinement': {'stopReason': 'acceptance_stalled'},
+    }
+    assert unreachable_without_polish(torso_bend_near_miss) is False
 
     conflict_unreachable_anchors = {
         'checks': {'anatomy': False, 'contacts': False, 'sourceArticulation': True,
@@ -54284,7 +54308,7 @@ def test_unreachable_without_polish_covers_measured_pose_conflicts() -> None:
         **conflict_unreachable_anchors,
         'optimizerTermination': 'time_budget',
         'boundedRefinement': {'stopReason': 'objective_stalled'},
-    }) is True
+    }) is False
 
     still_polishable = {
         'checks': {'anatomy': True, 'contacts': True, 'sourceArticulation': True,
@@ -54300,6 +54324,62 @@ def test_unreachable_without_polish_covers_measured_pose_conflicts() -> None:
         'maximumArticulationChangeDegrees': 5.0,
     }
     assert unreachable_without_polish(anatomy_repairable_with_articulation_headroom) is False
+
+
+def test_source_projection_alignment_preserves_grounded_sole_anchor_group() -> None:
+    """A 2D ankle observation must not split its linked foot contact anchor."""
+    import numpy as np
+
+    from exercise_motion_pkg.controlled_motion import (
+        _align_shared_contact_anchors_to_source_projection,
+    )
+
+    pinned = np.ones((2, 2), dtype=bool)
+    targets = np.zeros((2, 2, 3), dtype=float)
+    anchor_groups = np.full((2, 2), "right-sole-episode-0", dtype=object)
+    constraint = {
+        "available": True,
+        "anchorGroups": anchor_groups,
+        "projection": np.asarray([[0.0, 1.0, 0.0], [1.0, 0.0, 0.0]]),
+        "offset": np.zeros(2),
+        # The camera sees the ankle but has no 3D evidence to move a grounded
+        # sole one meter along the floor normal to match its image projection.
+        "observations": [{
+            "sharedAnchorGroup": "right-sole-episode-0",
+            "jointIndex": 0,
+            "leftFrame": 0,
+            "rightFrame": 0,
+            "alpha": 0.0,
+            "sourcePoint": np.asarray([1.0, 0.0]),
+            "confidenceWeight": 1.0,
+        }],
+    }
+    ground_contacts = np.zeros_like(pinned)
+    ground_contacts[:, 1] = True  # second joint is the linked foot anchor
+
+    grounded, grounded_report = _align_shared_contact_anchors_to_source_projection(
+        constraint, pinned, targets, ground_contacts=ground_contacts,
+    )
+    assert np.array_equal(grounded, targets)
+    assert grounded_report == {
+        "adjustedGroupCount": 0,
+        "maximumShiftMeters": 0.0,
+        "skippedGroundAnchoredGroupCount": 1,
+    }
+
+    # When the support is not ground-anchored, preserve the same shared group
+    # by translating every pinned member together even if only the ankle was
+    # observed by the source camera.
+    ungrounded, ungrounded_report = _align_shared_contact_anchors_to_source_projection(
+        constraint, pinned, targets,
+    )
+    assert np.allclose(ungrounded[:, 0, 1], 1.0)
+    assert np.allclose(ungrounded[:, 1, 1], 1.0)
+    assert ungrounded_report == {
+        "adjustedGroupCount": 1,
+        "maximumShiftMeters": 1.0,
+        "skippedGroundAnchoredGroupCount": 0,
+    }
 
 
 def test_fixed_rig_fk_jacobian_matches_finite_differences() -> None:

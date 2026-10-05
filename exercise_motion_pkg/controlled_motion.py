@@ -36,7 +36,7 @@ SUPPORT_REFERENCE_CONTACT_LIMIT_METERS = min(
     PLAYBACK_CONTACT_LIMIT_METERS * 0.5,
 )
 
-CONTROLLED_MOTION_STRATEGY = 'fixed_rig_controlled_motion_v63_airborne_scoped_contact_anchors'
+CONTROLLED_MOTION_STRATEGY = 'fixed_rig_controlled_motion_v65_bounded_reference_anatomy_repair'
 # Feasibility pre-flight threshold, calibrated from fit reports: every
 # successful fit's target bones matched the rig within ~0.002m, while
 # structurally conflicted fits measured 0.05-0.15m before burning their
@@ -402,34 +402,35 @@ def unreachable_without_polish(report):
         return True
     failed = set(failed_check_names(checks))
     reasons = set(report.get('physicalReasons') or [])
-    if {'anatomy', 'sourceArticulation'} <= failed and 'repair_articulation_distortion' in reasons:
+    optimizer_termination = report.get('optimizerTermination')
+    has_completed_solver_evidence = (
+        optimizer_termination in {'converged', 'objective_stalled'}
+        or (
+            optimizer_termination not in INCOMPLETE_OPTIMIZER_TERMINATIONS
+            and report.get('termination') in EVIDENCE_TERMINATIONS
+        )
+    )
+    if ({'anatomy', 'sourceArticulation'} <= failed
+            and 'repair_articulation_distortion' in reasons
+            and has_completed_solver_evidence):
         return True
     # The fit satisfied its target articulation and its contacts, but the
     # reaching pose breaks hard body structure: matching the source and
     # keeping the skeleton valid are conflicting objectives. Polish can only
     # re-weigh them (measured: chest-attachment conflict survived the full
     # refinement budget with contacts and sourceArticulation both passing).
-    if 'anatomy' in failed and 'contacts' not in failed and 'sourceArticulation' not in failed:
+    if ('anatomy' in failed and 'contacts' not in failed
+            and 'sourceArticulation' not in failed
+            and reasons == {'anatomy_chest_attachment'}
+            and has_completed_solver_evidence):
         return True
     # Contacts and anatomy failed together while the articulation is already
     # displaced past the distortion band: the anchors and the source pose may
-    # conflict. This is only decisive after the optimizer or a refinement block
-    # has actually converged/stalled; a time-limited iterate has not established
-    # that the remaining pose space is unreachable.
-    refinement = report.get('boundedRefinement') or {}
-    refinement_stop = refinement.get('stopReason')
-    optimizer_termination = report.get('optimizerTermination')
-    has_completed_search_evidence = (
-        optimizer_termination in {'converged', 'objective_stalled'}
-        or (
-            optimizer_termination not in INCOMPLETE_OPTIMIZER_TERMINATIONS
-            and report.get('termination') in EVIDENCE_TERMINATIONS
-        )
-        or refinement_stop in EVIDENCE_TERMINATIONS
-    )
+    # conflict. This is only decisive after the solver has actually
+    # converged/stalled; a later, unrelated refinement stop is insufficient.
     if {'anatomy', 'contacts'} <= failed and 'sourceArticulation' not in failed and (
             float(report.get('maximumArticulationChangeDegrees') or 0.)
-            >= UNREACHABLE_ARTICULATION_DEGREES) and has_completed_search_evidence:
+            >= UNREACHABLE_ARTICULATION_DEGREES) and has_completed_solver_evidence:
         return True
     return False
 
@@ -1366,7 +1367,7 @@ def temporal_free_coordinate_smooth(coordinates, rig, pinned, *, cyclic, sigma=1
 
 def polish_free_temporal_preserving_anatomy(
         coordinates, rig, pinned, contact_targets, *, cyclic, sigma,
-        deadline=None, floor=None, fps=30., spike_reference=None):
+        deadline=None, floor=None, fps=30., spike_reference=None, reference=None):
     """Free-DOF temporal smooth, then restore physical anatomy if it opened.
 
     Mild/strong free-chain smooth clears Stage-C jerk on path-repaired clips, but
@@ -1385,7 +1386,8 @@ def polish_free_temporal_preserving_anatomy(
         anatomy_deadline = (
             deadline if deadline is not None else monotonic() + 12.)
         _, polish = repair_rig_anatomy(
-            rig, rig.decode(rig.initial), deadline=anatomy_deadline)
+            rig, rig.decode(rig.initial), deadline=anatomy_deadline,
+            reference=reference)
         if not polish.get('passed'):
             rig.initial[:] = previous_initial
             rig.offsets[:] = previous_offsets
@@ -4166,14 +4168,29 @@ def _prepare_source_projection_fit_constraints(payload, frames, names, points, p
     }
 
 
-def _align_shared_contact_anchors_to_source_projection(constraint, pinned, contact_targets):
-    """Move each planted foot/ankle anchor in observable camera-plane directions."""
+def _align_shared_contact_anchors_to_source_projection(
+    constraint, pinned, contact_targets, *, ground_contacts=None,
+):
+    """Align non-ground contact groups without splitting linked sole anchors."""
     result = np.asarray(contact_targets, dtype=float).copy()
     if not constraint.get('available'):
-        return result, {'adjustedGroupCount': 0, 'maximumShiftMeters': 0.}
+        return result, {
+            'adjustedGroupCount': 0,
+            'maximumShiftMeters': 0.,
+            'skippedGroundAnchoredGroupCount': 0,
+        }
     groups = constraint.get('anchorGroups')
     if groups is None:
-        return result, {'adjustedGroupCount': 0, 'maximumShiftMeters': 0.}
+        return result, {
+            'adjustedGroupCount': 0,
+            'maximumShiftMeters': 0.,
+            'skippedGroundAnchoredGroupCount': 0,
+        }
+    ground_mask = None
+    if ground_contacts is not None:
+        ground_mask = np.asarray(ground_contacts, dtype=bool)
+        if ground_mask.shape != np.asarray(pinned).shape:
+            raise ValueError('ground contact mask must match pinned contact shape')
     grouped_observations = defaultdict(list)
     for observation in constraint['observations']:
         group = observation.get('sharedAnchorGroup')
@@ -4182,16 +4199,26 @@ def _align_shared_contact_anchors_to_source_projection(constraint, pinned, conta
     projection = constraint['projection']
     offset = constraint['offset']
     shifts = []
+    skipped_ground_groups = 0
     for group, observations in grouped_observations.items():
         design_rows = []
         residual_rows = []
         active = np.zeros(pinned.shape, dtype=bool)
-        group_joints = {observation['jointIndex'] for observation in observations}
-        for joint in group_joints:
+        # A full-sole group identifies both its foot and ankle anchors. The
+        # source camera may observe only the ankle, but moving that point alone
+        # breaks the fixed-rig foot/ankle relationship in contact_targets.
+        for joint in range(pinned.shape[1]):
             group_frames = np.fromiter(
                 (value == group for value in groups[:, joint]),
                 dtype=bool, count=len(groups))
             active[:, joint] = group_frames & np.asarray(pinned[:, joint])
+        if ground_mask is not None and np.any(active & ground_mask):
+            # A 2D camera projection cannot move a confirmed floor anchor in
+            # 3D without risking a floor-normal shift. Keep the physical ground
+            # target and let the source-projection residual remain a soft fit
+            # constraint instead of relocating the contact anchor.
+            skipped_ground_groups += 1
+            continue
         for observation in observations:
             joint = observation['jointIndex']
             left, right, alpha = (
@@ -4212,6 +4239,7 @@ def _align_shared_contact_anchors_to_source_projection(constraint, pinned, conta
     return result, {
         'adjustedGroupCount': len(shifts),
         'maximumShiftMeters': max(shifts, default=0.),
+        'skippedGroundAnchoredGroupCount': skipped_ground_groups,
     }
 
 
@@ -4902,7 +4930,12 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
     registration['floorHeightGaugeCorrectionMeters'] = height_shift
     report['placementRegistration'] = registration
     rig = FixedRig(points, names)
-    from .anatomical_repair import repair_residuals, repair_rig_anatomy, transport_equivalent_anatomical_repair
+    from .anatomical_repair import (
+        ANATOMICAL_REPAIR_INPUT_REASONS,
+        repair_residuals,
+        repair_rig_anatomy,
+        transport_equivalent_anatomical_repair,
+    )
     from .support_geometry import plant_only_body_support
     repaired_reference = None
     initialized_points = None
@@ -5486,6 +5519,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         }
     contact_targets, source_anchor_adjustment = _align_shared_contact_anchors_to_source_projection(
         source_projection_constraint, pinned, contact_targets,
+        ground_contacts=ground_contacts,
     )
     if source_anchor_adjustment['adjustedGroupCount']:
         target, _, placement_report = contact_consistent_target(
@@ -6954,6 +6988,86 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
     polish_until = min(started + timeout_seconds, monotonic() + remaining_polish)
     report['initialValidationSeconds'] = monotonic() - validation_started
     report['polishUntilSeconds'] = float(polish_until - started)
+    failed_checks = set(failed_check_names(report.get('checks')))
+    repairable_anatomy = bool(
+        set(report.get('physicalReasons') or []) & ANATOMICAL_REPAIR_INPUT_REASONS)
+    anatomy_projection_gates = {
+        'contacts', 'heightOnlyContacts', 'sourceArticulation', 'trajectoryFit',
+        'rootTravel', 'jointRange', 'fixedRig', 'bodySupport', 'supportAlignment',
+        'rootContinuity', 'equipment', 'motionDiscontinuity', 'bodyRotation',
+        'loopSeam',
+    }
+    if (allow_refinement and 'anatomy' in failed_checks and repairable_anatomy
+            and failed_checks <= {
+                'anatomy', 'playback', 'jerk', 'jointShake',
+                'relativeJointShake', 'settling'}
+            and all((report.get('checks') or {}).get(name) is True
+                    for name in anatomy_projection_gates)):
+        remaining = started + timeout_seconds - monotonic()
+        repair_budget = min(5., max(0., remaining - 3.))
+        if repair_budget >= 0.5:
+            baseline_candidate = candidate
+            baseline_report = report
+            baseline_coordinates = solved.x.copy()
+            previous_initial = rig.initial.copy()
+            previous_offsets = rig.offsets.copy()
+            projection = {'attempted': True, 'budgetSeconds': round(repair_budget, 3)}
+            try:
+                rig.initial[:] = baseline_coordinates.reshape(count, rig.width)
+                observed = rig.decode(rig.initial)
+                _, repair_report = repair_rig_anatomy(
+                    rig, observed, reference=reference,
+                    deadline=min(started + timeout_seconds,
+                                 monotonic() + repair_budget))
+                projection['repair'] = repair_report
+                trial_coordinates = rig.initial.copy()
+                if np.isfinite(trial_coordinates).all() and np.isfinite(rig.offsets).all():
+                    trial = SimpleNamespace(
+                        x=trial_coordinates.ravel(), nfev=solved.nfev,
+                        status=getattr(solved, 'status', 1))
+                    # This projection already owns anatomy and contact targets;
+                    # a second neck/plant projection could reopen the exact
+                    # structure constraint it just repaired.
+                    trial_candidate, trial_report = validate_solution(
+                        trial, project_playback_plants=False)
+                    trial_failed = set(failed_check_names(trial_report.get('checks')))
+                    improved = bool(
+                        trial_report.get('applied')
+                        or (trial_failed < failed_checks
+                            and trial_failed <= failed_checks))
+                    projection['failedChecksAfter'] = sorted(trial_failed)
+                    projection['accepted'] = improved
+                    if improved:
+                        solved = trial
+                        candidate, report = trial_candidate, trial_report
+                        failed_checks = trial_failed
+                    else:
+                        rig.initial[:] = previous_initial
+                        rig.offsets[:] = previous_offsets
+                        solved = SimpleNamespace(
+                            x=baseline_coordinates, nfev=solved.nfev,
+                            status=getattr(solved, 'status', 0))
+                        candidate, report = baseline_candidate, baseline_report
+                else:
+                    projection['accepted'] = False
+                    projection['reason'] = 'nonfinite_projection'
+                    rig.initial[:] = previous_initial
+                    rig.offsets[:] = previous_offsets
+                    solved = SimpleNamespace(
+                        x=baseline_coordinates, nfev=solved.nfev,
+                        status=getattr(solved, 'status', 0))
+                    candidate, report = baseline_candidate, baseline_report
+            except Exception as error:
+                projection['accepted'] = False
+                projection['reason'] = 'projection_exception'
+                projection['error'] = type(error).__name__
+                rig.initial[:] = previous_initial
+                rig.offsets[:] = previous_offsets
+                solved = SimpleNamespace(
+                    x=baseline_coordinates, nfev=solved.nfev,
+                    status=getattr(solved, 'status', 0))
+                candidate, report = baseline_candidate, baseline_report
+            report['postFitAnatomicalProjection'] = projection
     # Evidence-first: accept or proven unreachable/conflict ends the fit.
     # Time budget is only a watchdog for polishable near-misses still moving.
     if report.get('applied'):
@@ -7174,7 +7288,9 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                                         anatomy_trial, rig, pinned, contact_targets,
                                         cyclic=cyclic, floor=floor, max_nfev=12,
                                         deadline=min(started + timeout_seconds, path_deadline), spike_reference=spike_reference)
-                            _accept_path(anatomy_trial, 'playback_anatomy_repair')
+                            if not _accept_path(anatomy_trial, 'playback_anatomy_repair'):
+                                rig.initial[:] = previous_initial
+                                rig.offsets[:] = previous_offsets
                         else:
                             rig.initial[:] = previous_initial
                             rig.offsets[:] = previous_offsets
@@ -7298,11 +7414,10 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 candidate, report = validate_solution(
                     solved, project_playback_plants=not keep_path)
             failed_checks = failed_check_names(report.get('checks'))
-        # Playback path is clear but mild temporal left jerk/shake — free-DOF
-        # smooth plus anatomy restore. Full-rotation smooth lifts plants; free
-        # smooth alone can trip anatomy_torso_bend on hinge clips.
-        if (refinement.get('playbackPathRepair')
-                and not refinement.get('temporalPathStrong')
+        # With playback already passing, use free-DOF smoothing for temporal
+        # near-misses; it leaves planted chains locked and restores source-aware
+        # anatomy after smoothing unplanted joints.
+        if (not refinement.get('temporalPathStrong')
                 and (report.get('playback') or {}).get('passed')
                 and ({'jerk', 'jointShake', 'relativeJointShake', 'settling'} & set(failed_checks))
                 and (report.get('maximumContactErrorMeters') or 0.) < 0.0005):
@@ -7314,9 +7429,10 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             previous_offsets = rig.offsets.copy()
             strong = polish_free_temporal_preserving_anatomy(
                 solved.x.reshape(count, rig.width), rig, pinned, contact_targets,
-                cyclic=cyclic, sigma=1.25,
+                cyclic=cyclic, sigma=2.5,
                 deadline=min(started + timeout_seconds, monotonic() + min(18., max(6., started + timeout_seconds - monotonic()))),
-                floor=floor, fps=fps, spike_reference=spike_reference)
+                floor=floor, fps=fps, spike_reference=spike_reference,
+                reference=reference)
             solved = SimpleNamespace(
                 x=strong.ravel(), nfev=solved.nfev, status=getattr(solved, 'status', 1))
             candidate, report = validate_solution(solved, project_playback_plants=False)
@@ -7849,7 +7965,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                     solved.x.reshape(count, rig.width), rig, pinned, contact_targets,
                     cyclic=cyclic, sigma=free_sigma,
                     deadline=min(started + timeout_seconds, monotonic() + min(16., max(5., remaining))),
-                    floor=floor, fps=fps, spike_reference=spike_reference)
+                    floor=floor, fps=fps, spike_reference=spike_reference,
+                    reference=reference)
                 solved = SimpleNamespace(
                     x=smoothed.ravel(), nfev=solved.nfev, status=getattr(solved, 'status', 1))
                 candidate, report = validate_solution(solved, project_playback_plants=False)

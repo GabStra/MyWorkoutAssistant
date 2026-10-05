@@ -12,7 +12,7 @@ from .physical_validation import anatomical_structure_residuals, angles, body_sc
 from .smpl_joint_names import SMPL_JOINT_NAMES, SMPL_JOINT_PARENTS
 
 
-ANATOMICAL_REPAIR_STRATEGY = 'fixed_rig_anatomical_projection_v5_local_dof'
+ANATOMICAL_REPAIR_STRATEGY = 'fixed_rig_anatomical_projection_v6_reference_aware'
 
 # Stop soft polishing once geometry is valid and overall lean matches the
 # observation to the same tolerance as the lean-preservation tests.
@@ -512,8 +512,9 @@ def torso_directions(points, names):
     return directions/np.maximum(np.linalg.norm(directions, axis=-1, keepdims=True), 1e-9)
 
 
-def repair_residuals(points, names, span_targets=None):
-    structure, labels = anatomical_structure_residuals(points, names)
+def repair_residuals(points, names, span_targets=None, *, reference=None):
+    structure, labels = anatomical_structure_residuals(
+        points, names, reference=reference)
     rows = [structure]
     for side in ('left', 'right'):
         joints = [side+'_'+n for n in ('knee', 'ankle', 'foot')]
@@ -628,7 +629,7 @@ def free_rotation_columns(rig, active_labels):
     return sorted(columns) or list(range(3, rig.width))
 
 
-def repair_rig_anatomy(rig, observed, *, deadline):
+def repair_rig_anatomy(rig, observed, *, deadline, reference=None):
     """Correct curvature with fixed root positions, lengths and overall lean.
 
     This is an initializer for the contact/temporal fit, not a replacement for
@@ -636,12 +637,18 @@ def repair_rig_anatomy(rig, observed, *, deadline):
     or new body template is introduced. Final playback validation stays strict.
     """
     names = rig.names
+    reference_points = None
+    if reference is not None:
+        candidate_reference = np.asarray(reference, dtype=float)
+        if candidate_reference.shape == np.asarray(observed, dtype=float).shape:
+            reference_points = candidate_reference
     from .fit_runtime import current_fit_session
     session = current_fit_session()
     from .physical_validation import span_rigidity_violations
     span_targets = {label: target
                     for label, (_, target) in span_rigidity_violations(observed, names).items()}
-    before, labels = repair_residuals(observed, names)
+    before, labels = repair_residuals(
+        observed, names, reference=reference_points)
     # Only impossible proportions are changed; preserve the approved model's
     # dimensions whenever they are already inside the display-rig bounds.
     for side in ('left', 'right'):
@@ -653,7 +660,8 @@ def repair_rig_anatomy(rig, observed, *, deadline):
                 fitted_length = np.clip(length, base_length*low, base_length*high)
                 rig.offsets[a] *= fitted_length/length
     initial_points = rig.decode(rig.initial)
-    violations, _ = repair_residuals(initial_points, names, span_targets)
+    violations, _ = repair_residuals(
+        initial_points, names, span_targets, reference=reference_points)
     bad = np.any(violations > 1e-6, axis=1)
     evaluation_budget = anatomy_repair_evaluation_budget(int(bad.sum()))
     # Pelvis rotation must remain available: freezing it makes the solver
@@ -674,6 +682,9 @@ def repair_rig_anatomy(rig, observed, *, deadline):
     previous_solved_frame = None
     cache = {}
     span_target_key = json.dumps(span_targets, sort_keys=True, separators=(',', ':')).encode()
+    reference_key = (
+        b'' if reference_points is None else
+        hashlib.sha256(np.ascontiguousarray(reference_points).tobytes()).digest())
 
     for frame in np.flatnonzero(bad):
         if evaluated >= evaluation_budget:
@@ -684,7 +695,7 @@ def repair_rig_anatomy(rig, observed, *, deadline):
         target = initial_points[frame]-base[:3]
         torso_direction = observed_torso_directions[frame]
         key = hashlib.sha256(ANATOMICAL_REPAIR_STRATEGY.encode() + repr(names).encode()
-                             + span_target_key
+                             + span_target_key + reference_key
                              + rig.offsets.tobytes() + np.float64(scale).tobytes()
                              + base[3:].tobytes() + target.tobytes() + torso_direction.tobytes()).hexdigest()
         if session is not None and key in session.repairs:
@@ -719,7 +730,9 @@ def repair_rig_anatomy(rig, observed, *, deadline):
             current = base.copy()
             current[columns] = values
             candidate = rig.decode(current[None])
-            if np.max(repair_residuals(candidate, names, span_targets)[0], initial=0.) > 1e-6:
+            if np.max(repair_residuals(
+                    candidate, names, span_targets,
+                    reference=reference_points)[0], initial=0.) > 1e-6:
                 return False
             lean = torso_directions(candidate, names) - torso_direction
             return float(np.max(np.abs(lean), initial=0.)) <= _ANATOMY_FEASIBLE_LEAN
@@ -737,7 +750,9 @@ def repair_rig_anatomy(rig, observed, *, deadline):
             for row, free_values in enumerate(values):
                 current[row, columns] = unpack(free_values, seed_full)
             candidate = rig.decode(current)
-            geometry = repair_residuals(candidate, names, span_targets)[0]
+            geometry = repair_residuals(
+                candidate, names, span_targets,
+                reference=reference_points)[0]
             lean = torso_directions(candidate, names)-torso_direction
             # Soft orientation polishing used to keep burning evals after the
             # initializer bounds were already met. Exit as soon as geometry and
@@ -829,7 +844,9 @@ def repair_rig_anatomy(rig, observed, *, deadline):
         current = np.asarray(rig.initial[frame], dtype=float).copy()
         current[columns] = values
         candidate = rig.decode(current[None])
-        if np.max(repair_residuals(candidate, names, span_targets)[0], initial=0.) > 1e-6:
+        if np.max(repair_residuals(
+                candidate, names, span_targets,
+                reference=reference_points)[0], initial=0.) > 1e-6:
             return False
         lean = torso_directions(candidate, names) - observed_torso_directions[frame]
         return float(np.max(np.abs(lean), initial=0.)) <= _ANATOMY_FEASIBLE_LEAN
@@ -879,7 +896,8 @@ def repair_rig_anatomy(rig, observed, *, deadline):
             break
 
     corrected = rig.decode(rig.initial)
-    after, _ = repair_residuals(corrected, names, span_targets)
+    after, _ = repair_residuals(
+        corrected, names, span_targets, reference=reference_points)
     displacement = np.linalg.norm(corrected-observed, axis=-1)
     lean_change = np.rad2deg(np.arccos(np.clip(np.sum(
         torso_directions(corrected, names)*observed_torso_directions, axis=-1), -1., 1.)))

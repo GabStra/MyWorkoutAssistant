@@ -86,6 +86,39 @@ def test_valid_forward_lean_and_world_tilt_are_preserved():
     np.testing.assert_allclose(corrected, points, atol=1e-12)
 
 
+def test_anatomical_repair_uses_the_source_relative_torso_bend_floor():
+    from exercise_motion_pkg.anatomical_repair import repair_residuals
+
+    names, points = stance()
+    upper = ('spine1', 'spine2', 'spine3', 'neck', 'head', 'left_collar',
+             'right_collar', 'left_shoulder', 'right_shoulder', 'left_elbow',
+             'right_elbow', 'left_wrist', 'right_wrist', 'left_hand', 'right_hand')
+    for name in upper:
+        if name in names:
+            points[:, names.index(name), 2] += .35
+            points[:, names.index(name), 1] -= .2
+
+    absolute, labels = repair_residuals(points, names)
+    source_relative, _ = repair_residuals(points, names, reference=points)
+    torso_bend = [i for i, label in enumerate(labels)
+                  if label.startswith('anatomy_torso_bend:')]
+    assert torso_bend
+    assert absolute[:, torso_bend].max() > 1e-6
+    assert source_relative[:, torso_bend].max() <= 1e-6
+
+    rig = FixedRig(points, names)
+    corrected, report = repair_rig_anatomy(
+        rig, points, reference=points, deadline=monotonic()+10.)
+    assert report['passed']
+    from exercise_motion_pkg.physical_validation import anatomical_structure_residuals
+    corrected_residuals, corrected_labels = anatomical_structure_residuals(
+        corrected, names, reference=points)
+    torso_bend = [i for i, label in enumerate(corrected_labels)
+                  if label.startswith('anatomy_torso_bend:')]
+    assert torso_bend
+    assert corrected_residuals[:, torso_bend].max() <= 1e-6
+
+
 def test_spine_alignment_preserves_each_parent_bone_length():
     from exercise_motion_pkg.anatomical_repair import enforce_spine_axis_alignment
 
