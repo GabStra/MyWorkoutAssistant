@@ -1791,6 +1791,33 @@ def test_temporal_reference_is_unchanged_by_preview_noise(monkeypatch):
     assert reports[0]['settlingSpeedBefore'] == reports[1]['settlingSpeedBefore']
 
 
+def test_anatomical_repair_seed_transports_correction_without_freezing_motion():
+    from scipy.spatial.transform import Rotation
+    from exercise_motion_pkg.anatomical_repair import _transport_repair_rotation
+
+    previous_observed = Rotation.from_euler('xyz', [0.2, -0.1, 0.05]).as_rotvec()
+    source_step = Rotation.from_euler('xyz', [0.05, 0.12, -0.03])
+    current_observed = (
+        Rotation.from_rotvec(previous_observed) * source_step
+    ).as_rotvec()
+    repair_correction = Rotation.from_euler('xyz', [-0.08, 0.04, 0.02])
+    previous_repaired = (
+        repair_correction * Rotation.from_rotvec(previous_observed)
+    ).as_rotvec()
+
+    current_seed = Rotation.from_rotvec(_transport_repair_rotation(
+        previous_observed, previous_repaired, current_observed))
+    previous_fixed = Rotation.from_rotvec(previous_repaired)
+
+    np.testing.assert_allclose(
+        (previous_fixed.inv() * current_seed).as_rotvec(),
+        (Rotation.from_rotvec(previous_observed).inv()
+         * Rotation.from_rotvec(current_observed)).as_rotvec(),
+        atol=1e-12,
+    )
+    assert not np.allclose(previous_fixed.as_rotvec(), current_seed.as_rotvec())
+
+
 def test_fit_commits_guarded_initializer_pose_before_optimizing(monkeypatch):
     import pytest
     from exercise_motion_pkg import anatomical_repair, controlled_motion as motion

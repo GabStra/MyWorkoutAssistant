@@ -7,12 +7,13 @@ import statistics
 
 import numpy as np
 from scipy.optimize import least_squares
+from scipy.spatial.transform import Rotation
 
 from .physical_validation import anatomical_structure_residuals, angles, body_scale
 from .smpl_joint_names import SMPL_JOINT_NAMES, SMPL_JOINT_PARENTS
 
 
-ANATOMICAL_REPAIR_STRATEGY = 'fixed_rig_anatomical_projection_v6_reference_aware'
+ANATOMICAL_REPAIR_STRATEGY = 'fixed_rig_anatomical_projection_v7_motion_transported_seed'
 
 # Stop soft polishing once geometry is valid and overall lean matches the
 # observation to the same tolerance as the lean-preservation tests.
@@ -24,6 +25,15 @@ class _AnatomyFeasible(Exception):
 
     def __init__(self, values):
         self.values = np.asarray(values, dtype=float)
+
+
+def _transport_repair_rotation(previous_observed, previous_repaired, current_observed):
+    """Apply the previous frame's anatomy correction to the current pose."""
+    previous_raw = Rotation.from_rotvec(previous_observed)
+    previous_fixed = Rotation.from_rotvec(previous_repaired)
+    current_raw = Rotation.from_rotvec(current_observed)
+    correction = previous_fixed * previous_raw.inv()
+    return (correction * current_raw).as_rotvec()
 
 
 def _body_axis_second_differences(points, names):
@@ -637,6 +647,7 @@ def repair_rig_anatomy(rig, observed, *, deadline, reference=None):
     or new body template is introduced. Final playback validation stays strict.
     """
     names = rig.names
+    observed_coordinates = np.asarray(rig.initial, dtype=float).copy()
     reference_points = None
     if reference is not None:
         candidate_reference = np.asarray(reference, dtype=float)
@@ -775,7 +786,23 @@ def repair_rig_anatomy(rig, observed, *, deadline, reference=None):
         # favored the raw one and let the flip through.
         continuity_seed = None
         if previous_solved is not None and previous_solved_frame == frame - 1:
-            continuity_seed = np.asarray(previous_solved, dtype=float)
+            # Carry the previous frame's anatomical correction onto this
+            # frame's observed articulation. Reusing the previous absolute
+            # pose as the seed suppresses the source's frame-to-frame motion;
+            # the fidelity residual then has to pull it back while geometry
+            # competes for the same rotation variables. That can send adjacent
+            # repairs into different local branches and create a large jerk
+            # spike even when the source track is smooth.
+            continuity_seed = np.asarray(observed_coordinates[frame, columns], dtype=float).copy()
+            previous_observed = observed_coordinates[frame - 1]
+            for joint in rig.active:
+                slot = rig.slots[joint]
+                coordinate_slice = slice(slot - columns[0], slot - columns[0] + 3)
+                continuity_seed[coordinate_slice] = _transport_repair_rotation(
+                    previous_observed[slot:slot + 3],
+                    previous_solved[coordinate_slice],
+                    observed_coordinates[frame, slot:slot + 3],
+                )
         if continuity_seed is not None and repair_feasible(continuity_seed):
             rig.initial[frame, columns] = continuity_seed
             cache[key] = continuity_seed.copy()
