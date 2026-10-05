@@ -612,13 +612,16 @@ directory has a condensed version of this state; update it after the arms land.
 
 ### 2026-10-05 architecture and generator audit follow-up
 
-- The production process E2E passed on the latest generator code:
+- The production process E2E passed before the airborne-anchor follow-up:
   `test_workout_plan_script_fits_renders_and_packages_reviewed_movement`,
   1 passed in 146.10s at commit `54f2bef4`. It exercises the real workout-plan PowerShell wrapper,
   staged-wave service, fit, render, review parsing, selection, artifact lineage,
   and package serialization. Search, downloads, WHAM output, and VLM decisions
   use deterministic adapters or seeded evidence; this is a process integration
   check, not a live model campaign or visual-quality proof.
+- The same production process E2E passed on the tree that became `f26d691d`
+  (1 passed in 147.94s). The follow-up linear-time anchor-epoch refactor was
+  checked with its focused regression and Python compilation.
 - Architecture audit: artifact-state transitions and reviewed-to-packaged
   identity are connected and independently checked by the runner and package
   builder. Source-camera projection and endpoint constraints reach the active
@@ -638,6 +641,13 @@ directory has a condensed version of this state; update it after the arms land.
   ambiguous crash records after 90 days, while retaining newer records for
   delayed consumers/recovery. Focused pruning regression passed; code is in
   commit `54f2bef4`.
+- The staged-wave worker now synchronously publishes its active request and
+  wave IDs before entering the executor. This closes the supervisor shutdown
+  race where a fresh heartbeat could still say idle and model services could be
+  stopped during an active wave. A fake-executor regression holds back
+  heartbeat writes; it and the adjacent queue lifecycle check passed (2 tests).
+  This is an ownership-safety fix, not a throughput result. The broader
+  discovery-to-package durable scheduler remains a separate phase.
 - Maximum throughput remains unverified. The accepted 1282s two-exercise Oct 5
   arm is one serial configuration point, while the overlap arm was slower and
   broke acceptance parity. Its recorded commit was `8a1ed1d3`; the arm also had

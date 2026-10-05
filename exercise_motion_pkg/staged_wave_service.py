@@ -436,10 +436,12 @@ def _run_staged_wave_service_locked(
     }
     heartbeat_stop = threading.Event()
 
-    def update_state(**changes: Any) -> None:
+    def update_state(*, publish: bool = False, **changes: Any) -> None:
         with state_lock:
             state.update(changes)
             state["updatedAtEpoch"] = time.time()
+        if publish:
+            write_state_snapshot()
 
     def write_state_snapshot() -> None:
         # Serialize heartbeat and lifecycle writes so an older heartbeat
@@ -539,7 +541,15 @@ def _run_staged_wave_service_locked(
                     wave_id_value = str(request_payload.get("waveId") or "")
                     if not wave_id_value:
                         raise ValueError("Staged-wave request has no wave ID")
-                    update_state(currentRequestId=request_id, currentWaveId=wave_id_value)
+                    # The PowerShell supervisor checks this durable field before
+                    # stopping shared model services. Publish synchronously
+                    # before the executor can enter model/render work; the
+                    # periodic heartbeat alone leaves a shutdown race window.
+                    update_state(
+                        currentRequestId=request_id,
+                        currentWaveId=wave_id_value,
+                        publish=True,
+                    )
                     log_path_value = request_payload.get("logPath")
                     log_path = Path(str(log_path_value)) if log_path_value else None
                     run_id = _request_run_id(request_payload)

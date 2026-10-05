@@ -184,6 +184,58 @@ def test_queue_service_processes_wave_request_and_stops_after_drain(tmp_path: Pa
     assert json.loads(state_path.read_text(encoding="utf-8"))["status"] == "stopped"
 
 
+def test_active_wave_state_is_durable_before_executor_starts(tmp_path: Path, monkeypatch):
+    from exercise_motion_pkg import staged_wave_service
+
+    queue_root = tmp_path / "queue"
+    requests = queue_root / "requests"
+    requests.mkdir(parents=True)
+    state_path = queue_root / "worker_state.json"
+    state_path.write_text(json.dumps({
+        "schemaVersion": 1,
+        "status": "idle",
+        "currentRequestId": None,
+        "currentWaveId": None,
+    }), encoding="utf-8")
+    request_id = "request-active-state"
+    run_id = "run-active-state"
+    wave_id = f"{run_id}-wave-0001"
+    (requests / f"{request_id}.json").write_text(json.dumps({
+        "requestId": request_id,
+        "runId": run_id,
+        "waveId": wave_id,
+    }), encoding="utf-8")
+
+    heartbeat_attempted = threading.Event()
+    real_write_json_atomic = staged_wave_service._write_json_atomic
+
+    def hold_periodic_heartbeat(path, payload):
+        if threading.current_thread().name == "staged-wave-service-heartbeat":
+            heartbeat_attempted.set()
+            return
+        real_write_json_atomic(path, payload)
+
+    monkeypatch.setattr(staged_wave_service, "_write_json_atomic", hold_periodic_heartbeat)
+    observed = {}
+
+    def execute_wave(request):
+        assert heartbeat_attempted.wait(timeout=1)
+        observed["state"] = json.loads(state_path.read_text(encoding="utf-8"))
+        return {}
+
+    processed = run_staged_wave_service(
+        queue_root,
+        execute_wave=execute_wave,
+        poll_interval_seconds=0.005,
+        idle_timeout_seconds=0.03,
+    )
+
+    assert processed == 1
+    assert observed["state"]["status"] == "running"
+    assert observed["state"]["currentRequestId"] == request_id
+    assert observed["state"]["currentWaveId"] == wave_id
+
+
 def test_queue_service_orders_requests_by_enqueue_time_not_request_id(tmp_path: Path):
     queue_root = tmp_path / "queue"
     requests = queue_root / "requests"
