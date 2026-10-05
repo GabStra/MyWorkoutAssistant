@@ -551,6 +551,41 @@ def _candidate_key(candidate: RankedCandidate) -> str:
     return f"{candidate.exercise_id}:{candidate.workspace_slug}"
 
 
+def _reconstruction_timing_snapshot(result: Any) -> dict[str, Any] | None:
+    """Keep compact reconstruction timings in the wave checkpoint.
+
+    Candidate workspaces may be pruned after selection, so the harness cannot
+    rely on a candidate manifest remaining on disk to measure this stage.
+    """
+    timings = getattr(result, "timings", None)
+    if not isinstance(timings, dict):
+        return None
+    runner = timings.get("wham")
+    if not isinstance(runner, dict):
+        return None
+    snapshot: dict[str, Any] = {}
+    stage_seconds = timings.get("whamRunSeconds")
+    if isinstance(stage_seconds, (int, float)):
+        snapshot["whamRunSeconds"] = stage_seconds
+    runner_snapshot: dict[str, Any] = {}
+    for key in ("backend", "elapsedSeconds"):
+        value = runner.get(key)
+        if isinstance(value, (str, int, float)):
+            runner_snapshot[key] = value
+    phase_timings = runner.get("phaseTimings")
+    inference = phase_timings.get("inference") if isinstance(phase_timings, dict) else None
+    prediction_seconds = (
+        inference.get("predictionSeconds") if isinstance(inference, dict) else None
+    )
+    if isinstance(prediction_seconds, (int, float)):
+        runner_snapshot["phaseTimings"] = {
+            "inference": {"predictionSeconds": prediction_seconds}
+        }
+    if runner_snapshot:
+        snapshot["wham"] = runner_snapshot
+    return snapshot or None
+
+
 def source_attempt_log_context(candidate: RankedCandidate, number: int, total: int) -> str:
     """Identify the candidate window; the reviewer may choose a subinterval."""
     hint = candidate.source_chunk_hint
@@ -1432,6 +1467,9 @@ def _run_staged_bake_wave(
                     "cacheStatus": result.wham_cache_status,
                     "resultsPath": str(result.wham_results_pkl) if result.wham_results_pkl else None,
                 }
+                reconstruction_timings = _reconstruction_timing_snapshot(result)
+                if reconstruction_timings is not None:
+                    attempt["reconstructionTimings"] = reconstruction_timings
                 wham_attempts[exercise_id].append(attempt)
                 _ready_item, ready_sources = wham_ready.setdefault(exercise_id, (item, []))
                 ready_sources.append((candidate, selected_video_path))

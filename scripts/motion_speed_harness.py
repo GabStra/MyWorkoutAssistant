@@ -1059,7 +1059,7 @@ def capture_metric_input_snapshot(workspace: Path, snapshot_path: Path) -> dict:
         "waves": waves,
         "summary": summary,
         "schedulerTimeline": scheduler_timeline,
-        "gvhmrWorkerStartupSeconds": worker_startup_seconds,
+        "reconstructorWorkerStartupSeconds": worker_startup_seconds,
         "resourceSamples": resource_samples,
         "errors": errors,
     }
@@ -1374,8 +1374,8 @@ def extract_metrics(arm_result: dict) -> dict:
         "visionStartups": 0,
         "visionStartupSeconds": 0.0,
         "visionQueueWaitSeconds": 0.0,
-        "gvhmrWorkerStartups": 0,
-        "gvhmrWorkerStartupSeconds": 0.0,
+        "reconstructorWorkerStartups": 0,
+        "reconstructorWorkerStartupSeconds": 0.0,
         "coResidentOps": 0,
         "coResidentDeclined": 0,
         "sharedQuiesceCount": 0,
@@ -1392,13 +1392,14 @@ def extract_metrics(arm_result: dict) -> dict:
         "acceptedMovementArtifactErrors": [],
         "candidateGenerationAttempts": 0,
         "candidateGenerationAttemptSeconds": 0.0,
-        "candidateAttemptManifests": 0,
-        "gvhmrStageCalls": 0,
-        "gvhmrStageWallSeconds": 0.0,
-        "gvhmrRunnerCalls": 0,
-        "gvhmrRunnerCallSeconds": 0.0,
-        "gvhmrPredictionSamples": 0,
-        "gvhmrPredictionSeconds": 0.0,
+        "candidateGenerationTimingSamples": 0,
+        "reconstructionStageCalls": 0,
+        "reconstructionStageWallSeconds": 0.0,
+        "reconstructionRunnerCalls": 0,
+        "reconstructionRunnerCallSeconds": 0.0,
+        "reconstructionPredictionSamples": 0,
+        "reconstructionPredictionSeconds": 0.0,
+        "reconstructionBackends": {},
         "browserTasksByWave": [],
         "waveIds": [],
         "resourceMetricsByWave": [],
@@ -1520,17 +1521,16 @@ def extract_metrics(arm_result: dict) -> dict:
             ]
             for attempt in candidates:
                 # This wraps generate_candidate_motion(), including work before
-                # and after GVHMR. Keep it separate from the manifest's GVHMR
+                # and after reconstruction. Keep it separate from reconstruction
                 # stage, runner-call, and model-prediction measurements below.
                 metrics["candidateGenerationAttempts"] += 1
                 metrics["candidateGenerationAttemptSeconds"] += float(attempt["elapsedSeconds"])
                 selected_video = attempt.get("selectedVideoPath")
+                generation_timings = attempt.get("reconstructionTimings")
                 manifest_snapshot = attempt.get("_speedHarnessManifestSnapshot")
-                if isinstance(manifest_snapshot, dict):
+                if not isinstance(generation_timings, dict) and isinstance(manifest_snapshot, dict):
                     generation_timings = manifest_snapshot.get("timings") or {}
-                    if not manifest_snapshot.get("sha256"):
-                        continue
-                else:
+                if not isinstance(generation_timings, dict) or not generation_timings:
                     if not selected_video:
                         continue
                     candidate_workspace = Path(selected_video).parent.parent
@@ -1544,22 +1544,33 @@ def extract_metrics(arm_result: dict) -> dict:
                     except (OSError, ValueError):
                         continue
                     generation_timings = candidate_manifest.get("timings") or {}
-                metrics["candidateAttemptManifests"] += 1
+                if not isinstance(generation_timings, dict) or not generation_timings:
+                    continue
+                metrics["candidateGenerationTimingSamples"] += 1
                 stage_seconds = _metric_seconds(generation_timings.get("whamRunSeconds"))
                 if stage_seconds is not None:
-                    metrics["gvhmrStageCalls"] += 1
-                    metrics["gvhmrStageWallSeconds"] += stage_seconds
+                    metrics["reconstructionStageWallSeconds"] += stage_seconds
                 runner_timings = generation_timings.get("wham") or {}
+                backend = runner_timings.get("backend")
+                runner_was_invoked = bool(
+                    (isinstance(backend, str) and backend)
+                    or runner_timings.get("returncode") is not None
+                )
+                if runner_was_invoked and isinstance(backend, str) and backend:
+                    backends = metrics["reconstructionBackends"]
+                    backends[backend] = backends.get(backend, 0) + 1
+                if stage_seconds is not None and stage_seconds > 0:
+                    metrics["reconstructionStageCalls"] += 1
                 runner_seconds = _metric_seconds(runner_timings.get("elapsedSeconds"))
-                if runner_seconds is not None:
-                    metrics["gvhmrRunnerCalls"] += 1
-                    metrics["gvhmrRunnerCallSeconds"] += runner_seconds
+                if runner_seconds is not None and runner_was_invoked:
+                    metrics["reconstructionRunnerCalls"] += 1
+                    metrics["reconstructionRunnerCallSeconds"] += runner_seconds
                 phase_timings = runner_timings.get("phaseTimings") or {}
                 inference_timings = phase_timings.get("inference") or {}
                 prediction_seconds = _metric_seconds(inference_timings.get("predictionSeconds"))
                 if prediction_seconds is not None:
-                    metrics["gvhmrPredictionSamples"] += 1
-                    metrics["gvhmrPredictionSeconds"] += prediction_seconds
+                    metrics["reconstructionPredictionSamples"] += 1
+                    metrics["reconstructionPredictionSeconds"] += prediction_seconds
     summary = snapshot.get("summary") if snapshot is not None else None
     if snapshot is None:
         summary_path = workspace / "workout_motion_generation_summary.json"
@@ -1608,9 +1619,14 @@ def extract_metrics(arm_result: dict) -> dict:
         default=0,
     )
     if snapshot is not None:
-        startup_seconds = snapshot.get("gvhmrWorkerStartupSeconds") or []
-        metrics["gvhmrWorkerStartups"] = len(startup_seconds)
-        metrics["gvhmrWorkerStartupSeconds"] = sum(startup_seconds)
+        startup_seconds = snapshot.get("reconstructorWorkerStartupSeconds")
+        if not isinstance(startup_seconds, list):
+            # Metric snapshots written before the backend-neutral rename used
+            # a GVHMR-specific key for the generic extractor startup log.
+            startup_seconds = snapshot.get("gvhmrWorkerStartupSeconds")
+        startup_seconds = startup_seconds or []
+        metrics["reconstructorWorkerStartups"] = len(startup_seconds)
+        metrics["reconstructorWorkerStartupSeconds"] = sum(startup_seconds)
     else:
         run_log = arm_result.get("log")
         if run_log and Path(run_log).is_file():
@@ -1624,8 +1640,8 @@ def extract_metrics(arm_result: dict) -> dict:
                     r"Motion extractor ready in ([0-9]+(?:\.[0-9]+)?)s", log_text
                 )
             ]
-            metrics["gvhmrWorkerStartups"] = len(startup_seconds)
-            metrics["gvhmrWorkerStartupSeconds"] = sum(startup_seconds)
+            metrics["reconstructorWorkerStartups"] = len(startup_seconds)
+            metrics["reconstructorWorkerStartupSeconds"] = sum(startup_seconds)
     return metrics
 
 
@@ -1996,10 +2012,10 @@ def main() -> None:
             f"startups={m['visionStartups']}/{m['visionStartupSeconds']:.0f}s coRes={m['coResidentOps']} "
             f"quiesce={m['sharedQuiesceCount']} overlapHW={m.get('overlapHighWater')} "
             f"candidateGen={m['candidateGenerationAttempts']}x{m['candidateGenerationAttemptSeconds']:.0f}s "
-            f"gvhmrStartup={m['gvhmrWorkerStartups']}x{m['gvhmrWorkerStartupSeconds']:.0f}s "
-            f"gvhmrStage={m['gvhmrStageCalls']}x{m['gvhmrStageWallSeconds']:.0f}s "
-            f"runner={m['gvhmrRunnerCalls']}x{m['gvhmrRunnerCallSeconds']:.0f}s "
-            f"predict={m['gvhmrPredictionSamples']}x{m['gvhmrPredictionSeconds']:.1f}s "
+            f"reconstructorStartup={m['reconstructorWorkerStartups']}x{m['reconstructorWorkerStartupSeconds']:.0f}s "
+            f"reconstructionStage={m['reconstructionStageCalls']}x{m['reconstructionStageWallSeconds']:.0f}s "
+            f"runner={m['reconstructionRunnerCalls']}x{m['reconstructionRunnerCallSeconds']:.0f}s "
+            f"predict={m['reconstructionPredictionSamples']}x{m['reconstructionPredictionSeconds']:.1f}s "
             f"browserTasks={browser_task_summary(m)} statuses={m.get('statuses')}",
             flush=True,
         )

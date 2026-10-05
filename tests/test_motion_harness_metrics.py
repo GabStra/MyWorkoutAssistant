@@ -57,6 +57,8 @@ def test_metric_input_snapshot_excludes_later_waves_and_mutated_manifests(tmp_pa
         "timings": {
             "whamRunSeconds": 31.0,
             "wham": {
+                "backend": "gvhmr",
+                "returncode": 0,
                 "elapsedSeconds": 29.0,
                 "phaseTimings": {"inference": {"predictionSeconds": 5.0}},
             },
@@ -138,10 +140,12 @@ def test_metric_input_snapshot_excludes_later_waves_and_mutated_manifests(tmp_pa
     assert metrics["waveIds"] == ["run-one-wave-1"]
     assert metrics["candidateGenerationAttempts"] == 1
     assert metrics["candidateGenerationAttemptSeconds"] == 50.0
-    assert metrics["candidateAttemptManifests"] == 1
-    assert metrics["gvhmrStageWallSeconds"] == 31.0
-    assert metrics["gvhmrRunnerCallSeconds"] == 29.0
-    assert metrics["gvhmrPredictionSeconds"] == 5.0
+    assert metrics["candidateGenerationTimingSamples"] == 1
+    assert metrics["reconstructionStageWallSeconds"] == 31.0
+    assert metrics["reconstructionStageCalls"] == 1
+    assert metrics["reconstructionRunnerCalls"] == 1
+    assert metrics["reconstructionRunnerCallSeconds"] == 29.0
+    assert metrics["reconstructionPredictionSeconds"] == 5.0
     assert metrics["resourceMetricsByWave"][0]["resourceBudget"] == {"cpuFitSlots": 4}
     assert metrics["visionMetricsByWave"][0]["reviewQuestionCache"] == {"cacheHits": 2}
     assert metrics["resourceSampleCount"] == 2
@@ -153,6 +157,76 @@ def test_metric_input_snapshot_excludes_later_waves_and_mutated_manifests(tmp_pa
         "metricInputSnapshotPath": str(snapshot_path),
     })
     assert timeline["runStartedAtUtc"] == "2026-10-04T10:00:00Z"
+
+
+def test_cached_reconstruction_timings_do_not_count_as_runner_calls(tmp_path):
+    workspace = tmp_path / "workspace"
+    wave_dir = workspace / "staged-waves" / "run-one-wave-1"
+    _write_wave_report(workspace, "run-one-wave-1", cumulative_handoffs=0)
+    (wave_dir / "staged_wave_checkpoint.json").write_text(json.dumps({
+        "waveId": "run-one-wave-1",
+        "items": [{
+            "wham": {"attempts": [{
+                "status": "prepared",
+                "elapsedSeconds": 10.0,
+                "reconstructionTimings": {
+                    "wham": {"elapsedSeconds": 0.0, "cacheStatus": "reused"},
+                },
+            }]},
+        }],
+    }), encoding="utf-8")
+
+    metrics = motion_speed_harness.extract_metrics({"workspace": str(workspace)})
+
+    assert metrics["candidateGenerationTimingSamples"] == 1
+    assert metrics["reconstructionStageCalls"] == 0
+    assert metrics["reconstructionStageWallSeconds"] == 0.0
+    assert metrics["reconstructionRunnerCalls"] == 0
+    assert metrics["reconstructionRunnerCallSeconds"] == 0.0
+    assert metrics["reconstructionBackends"] == {}
+
+
+def test_generation_checkpoint_timings_survive_candidate_pruning(tmp_path):
+    workspace = tmp_path / "workspace"
+    wave_dir = workspace / "staged-waves" / "run-one-wave-1"
+    _write_wave_report(workspace, "run-one-wave-1", cumulative_handoffs=0)
+    missing_video = workspace / "pruned-candidate" / "input" / "selected_segment.mp4"
+    (wave_dir / "staged_wave_checkpoint.json").write_text(json.dumps({
+        "waveId": "run-one-wave-1",
+        "items": [{
+            "wham": {"attempts": [{
+                "status": "prepared",
+                "elapsedSeconds": 50.0,
+                "selectedVideoPath": str(missing_video),
+                "reconstructionTimings": {
+                    "whamRunSeconds": 31.0,
+                    "wham": {
+                        "backend": "gvhmr",
+                        "elapsedSeconds": 29.0,
+                        "phaseTimings": {
+                            "inference": {"predictionSeconds": 5.0},
+                        },
+                    },
+                },
+            }]},
+        }],
+    }), encoding="utf-8")
+    snapshot_path = tmp_path / "arm" / "metrics-input-snapshot.json"
+    snapshot_path.parent.mkdir()
+    motion_speed_harness.capture_metric_input_snapshot(workspace, snapshot_path)
+
+    metrics = motion_speed_harness.extract_metrics({
+        "workspace": str(workspace),
+        "metricInputSnapshotPath": str(snapshot_path),
+    })
+
+    assert metrics["candidateGenerationAttempts"] == 1
+    assert metrics["candidateGenerationAttemptSeconds"] == 50.0
+    assert metrics["candidateGenerationTimingSamples"] == 1
+    assert metrics["reconstructionBackends"] == {"gvhmr": 1}
+    assert metrics["reconstructionStageWallSeconds"] == 31.0
+    assert metrics["reconstructionRunnerCallSeconds"] == 29.0
+    assert metrics["reconstructionPredictionSeconds"] == 5.0
 
 
 def test_effective_configuration_requires_requested_wave_size_and_arm_settings():
