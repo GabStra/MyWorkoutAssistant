@@ -510,6 +510,12 @@ directory has a condensed version of this state; update it after the arms land.
   source-pose fidelity P90 error 0.072 body ratios. This is a deterministic
   bake candidate only; no final visual review or normal selection/package path
   was run for this re-evaluation.
+- Replaying the production preselection filters on the retained baseline and
+  correction artifacts removes the failed baseline and keeps the corrected
+  sibling. An independent evaluation of the correction's baseline-safety and
+  source-stationarity metrics also passes. Normal final review,
+  selection-manifest creation, and packaging remain unverified for this RDL
+  candidate.
 - No source search, WHAM/GVHMR, visual-review model call, or throughput campaign
   was run. The agreed OHP + RDL pair still lacks two current production-path
   successes, so maximum throughput remains unverified; the interrupted baseline
