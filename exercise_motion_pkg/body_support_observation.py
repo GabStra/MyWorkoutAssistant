@@ -259,18 +259,10 @@ def materialize_observed_ground_contacts(payload, source_pose):
     contacts remain interval constraints. This deliberately says nothing about
     heel height or shoe pitch, which require independent heel/toe geometry.
     """
-    # A few support-review frames cannot establish an uninterrupted ground
-    # anchor when the movement permits release. Keep the timed observations.
-    if payload.get('groundContactMode') in {'intermittent', 'none'}:
-        return
     evidence = payload.get('sourceFootSupportEvidence') or {}
     observed = evidence.get('bodySupportObservation') or {}
     answer = observed.get('observation') or {}
     floor = payload.get('renderFloorY')
-    if (observed.get('status') != 'observed' or not isinstance(floor, (int, float))
-            or not np.isfinite(floor)):
-        return
-    contacts = []
     patch = evidence.get('footPatchEvidence') or {}
     temporal_patch_available = patch.get('available') is True
     if temporal_patch_available:
@@ -280,6 +272,15 @@ def materialize_observed_ground_contacts(payload, source_pose):
             if _has_full_cycle_stationary_sole(evidence, side, patch_contact_count)
         }
         _remove_unverified_materialized_foot_support(evidence, full_cycle_sides)
+    # A few support-review frames cannot establish an uninterrupted ground
+    # anchor when the movement permits release. First remove stale cached
+    # full-clip anchors using temporal evidence, then retain only timed contacts.
+    if payload.get('groundContactMode') in {'intermittent', 'none'}:
+        return
+    if (observed.get('status') != 'observed' or not isinstance(floor, (int, float))
+            or not np.isfinite(floor)):
+        return
+    contacts = []
     for side in ('left', 'right'):
         states = ((evidence.get('footPatchEvidence') or {}).get('feet', {}).get(side) or {}).get('states', [])
         if (answer.get(f'{side}Foot') in {'stationary_full_sole', 'stationary_forefoot'}

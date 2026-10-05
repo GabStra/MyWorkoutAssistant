@@ -68,6 +68,28 @@ def test_observed_ground_toe_keeps_heel_pitch_free_and_rejects_release():
         assert 'bodySupport' not in result['sourceFootSupportEvidence']
         assert result['sourceFootSupportEvidence']['supportContacts'] == timed
 
+        # Old cache entries may still contain a full-clip plant even when the
+        # current temporal observations include a release. Clear that stale
+        # materialized support without discarding the observed timed contacts.
+        result['sourceFootSupportEvidence']['bodySupport'] = {
+            'required': True, 'status': 'confirmed',
+            'source': 'exact_source_contacts_and_stationary_pose_tracks',
+            'stationaryJoints': ['left_foot', 'right_foot'],
+            'coplanarGroups': [{'joints': ['left_foot', 'right_foot'],
+                                'normal': [0., 1., 0.]}],
+            'nonPenetrationChains': [], 'soleContacts': [],
+        }
+        result['sourceFootSupportEvidence']['footPatchEvidence'] = {
+            'available': True,
+            'feet': {
+                'left': {'states': ['full_sole', 'airborne', 'full_sole']},
+                'right': {'states': ['unknown'] * 3},
+            },
+        }
+        materialize_observed_ground_contacts(result, source)
+        assert 'bodySupport' not in result['sourceFootSupportEvidence']
+        assert result['sourceFootSupportEvidence']['supportContacts'] == timed
+
 
 def test_observed_ground_contact_needs_full_cycle_corroboration_when_patch_data_exists():
     from exercise_motion_pkg.body_support_observation import materialize_observed_ground_contacts
