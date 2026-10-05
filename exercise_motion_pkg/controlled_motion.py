@@ -430,6 +430,21 @@ def stage_fit_refinement_budget(
     return min(available_budget, max(default_budget, required_budget))
 
 
+def timed_out_stage_c_fit_is_stalled(failed_checks, hard_stage_c_tried):
+    """Whether a timed-out Stage-C fit has no remaining solver-owned failure.
+
+    Hard temporal smoothing makes another fit attempt low-value for shake and
+    settling checks under protected contacts. It does not make a timed-out fit
+    useless when jerk, root continuity, or motion discontinuity still fails:
+    those remain explicit terms in the source-constrained solver and may need
+    the outer continuation budget.
+    """
+    if not hard_stage_c_tried:
+        return False
+    failed = set(failed_checks or ())
+    return not bool(failed & {'jerk', 'rootContinuity', 'motionDiscontinuity'})
+
+
 EVIDENCE_TERMINATIONS = frozenset({
     'objective_stalled', 'acceptance_stalled', 'seam_playback_only',
     'seam_excess_needs_different_cycle', 'hard_trajectory_root_failure',
@@ -8246,7 +8261,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                     'broadTemporalSmoothingDeferredForJerkFit'))
             if stage == 'A' and refinement.get('contactRootProjection'):
                 stalled = True
-            elif stage == 'C' and hard_stage_c_tried:
+            elif (stage == 'C' and timed_out_stage_c_fit_is_stalled(
+                    failed_checks, hard_stage_c_tried)):
                 # Hard Stage-C ops already ran; another timed-out soft LS will
                 # not clear settling/shake under contact protection.
                 stalled = True

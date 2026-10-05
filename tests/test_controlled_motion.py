@@ -2302,7 +2302,7 @@ def test_polish_stages_order_contact_before_temporal_before_seam():
     from exercise_motion_pkg.controlled_motion import (
         polish_stage_for_failures, polishable_near_miss,
         prioritize_fit_before_broad_temporal_smoothing,
-        stage_fit_refinement_budget)
+        stage_fit_refinement_budget, timed_out_stage_c_fit_is_stalled)
     assert polish_stage_for_failures(['equipment', 'loopSeam']) == 'A'
     assert polish_stage_for_failures(['loopSeam', 'jerk']) == 'C'
     assert polish_stage_for_failures(['jerk', 'jointShake']) == 'C'
@@ -2339,6 +2339,10 @@ def test_polish_stages_order_contact_before_temporal_before_seam():
         10., stage='C', minimum_update_seconds=10.8, prioritize_fit=True) is None
     assert stage_fit_refinement_budget(
         20., stage='B', minimum_update_seconds=10.8, prioritize_fit=True) == 7.0
+    assert not timed_out_stage_c_fit_is_stalled({'jerk', 'loopSeam'}, True)
+    assert not timed_out_stage_c_fit_is_stalled({'rootContinuity'}, True)
+    assert timed_out_stage_c_fit_is_stalled({'jointShake', 'settling'}, True)
+    assert not timed_out_stage_c_fit_is_stalled({'jointShake'}, False)
 
 
 def test_repair_motion_discontinuity_clears_swing_foot_velocity_spike():
