@@ -165,7 +165,7 @@ def stabilize_exported_sequence(payload, *, max_evaluations=35, timeout_seconds=
     """Return an atomic candidate or the original payload, never a partial repair."""
     started = monotonic()
     frames = payload.get('frames') or []
-    report = {'applied': False, 'strategy': 'skeletal_sequence_stabilization_v4_height_only_contacts'}
+    report = {'applied': False, 'strategy': 'skeletal_sequence_stabilization_v5_airborne_scoped_contact_anchors'}
     previous = payload.get('sequenceStabilization') or {}
     if previous.get('strategy') == report['strategy'] and previous.get('outputPoseDigest') == pose_digest(payload):
         return payload, {**previous, 'reused': True}

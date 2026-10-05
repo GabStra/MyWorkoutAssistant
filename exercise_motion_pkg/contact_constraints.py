@@ -203,6 +203,41 @@ def contact_frame_bounds(contact: dict[str, Any], count: int) -> tuple[int, int]
     return max(0, min(count - 1, start)), max(0, min(count - 1, end))
 
 
+def _airborne_epoch_track(evidence, joint_name, count):
+    """Map explicit release epochs to fit frames with one pass over patch states."""
+    side = str(joint_name).split("_", 1)[0]
+    patch = (evidence or {}).get("footPatchEvidence") or {}
+    foot = (patch.get("feet") or {}).get(side)
+    states = foot.get("states") if isinstance(foot, dict) else None
+    if not isinstance(states, (list, tuple)) or not states:
+        return None
+    if count <= 0:
+        return []
+    state_indexes = np.zeros(count, dtype=int) if len(states) <= 1 else np.rint(
+        np.linspace(0, len(states) - 1, count)
+    ).astype(int)
+    epoch = 0
+    was_airborne = False
+    epochs = []
+    for state_index in state_indexes:
+        state = states[state_index]
+        airborne = str(state).casefold() == "airborne"
+        if airborne and not was_airborne:
+            epoch += 1
+        was_airborne = airborne
+        epochs.append(epoch)
+    return epochs
+
+
+def _airborne_scoped_anchor_id(group_id, epoch):
+    if group_id is None:
+        return None
+    group_id = str(group_id)
+    if epoch is None or epoch == 0:
+        return group_id
+    return f"{group_id}:after_airborne:{epoch}"
+
+
 def is_observed_ground_contact(contact, evidence):
     """Use explicit surface identity before the legacy shared-ground evidence."""
     surface = str(contact.get('surfaceKind') or '').lower()
@@ -250,6 +285,7 @@ def vertical_only_contact_mask(evidence, names, count):
 def stationary_contact_anchor_ids(evidence, names, count):
     """Transport observed anchor identity without adding contact frames."""
     result = np.full((count, len(names)), None, dtype=object)
+    airborne_epochs = {}
     for contact in motion_support_contacts(evidence):
         if not is_stationary_contact(contact):
             continue
@@ -259,8 +295,17 @@ def stationary_contact_anchor_ids(evidence, names, count):
             identities[name.replace('_foot', '_ankle')] = contact.get('ankleAnchorGroupId')
         start, end = contact_frame_bounds(contact, count)
         for joint, group in identities.items():
-            if joint in names and group is not None:
-                result[start:end+1, names.index(joint)] = str(group)
+            if joint not in names or group is None:
+                continue
+            joint_index = names.index(joint)
+            side = joint.split('_', 1)[0]
+            if side not in airborne_epochs:
+                airborne_epochs[side] = _airborne_epoch_track(evidence, joint, count)
+            epochs = airborne_epochs[side]
+            for frame_index in range(start, end + 1):
+                result[frame_index, joint_index] = _airborne_scoped_anchor_id(
+                    group, None if epochs is None else epochs[frame_index],
+                )
     return result
 
 

@@ -18,7 +18,12 @@ from scipy.sparse import coo_matrix, csr_matrix, eye, kron, lil_matrix, vstack
 from scipy.spatial.transform import Rotation
 
 from .sequence_stabilization import contact_mask, frame_basis, pose_digest, unit
-from .contact_constraints import vertical_only_contact_mask, vertical_only_contact_targets
+from .contact_constraints import (
+    _airborne_epoch_track,
+    _airborne_scoped_anchor_id,
+    vertical_only_contact_mask,
+    vertical_only_contact_targets,
+)
 from .smpl_joint_names import SMPL_JOINT_NAMES, SMPL_JOINT_PARENTS
 from .physical_validation import ARTICULATIONS, angles, body_scale, collision_clearances, collision_specs, validate_physical_motion, anatomical_structure_residuals
 from .temporal_quality import body_orientation_axes, body_orientation_noise, body_local_head_direction, introduced_joint_spikes, refresh_motion_bounds, transport_corrected_bone_sides
@@ -31,7 +36,7 @@ SUPPORT_REFERENCE_CONTACT_LIMIT_METERS = min(
     PLAYBACK_CONTACT_LIMIT_METERS * 0.5,
 )
 
-CONTROLLED_MOTION_STRATEGY = 'fixed_rig_controlled_motion_v62_height_only_contact_constraints'
+CONTROLLED_MOTION_STRATEGY = 'fixed_rig_controlled_motion_v63_airborne_scoped_contact_anchors'
 # Feasibility pre-flight threshold, calibrated from fit reports: every
 # successful fit's target bones matched the rig within ~0.002m, while
 # structurally conflicted fits measured 0.05-0.15m before burning their
@@ -3440,6 +3445,7 @@ def _stationary_source_anchor_groups(payload, names, count):
     groups = np.full((count, len(names)), None, dtype=object)
     confidences = np.full((count, len(names)), np.nan, dtype=float)
     evidence = motion_space_support_evidence(payload)
+    airborne_epochs = {}
     for contact_index, contact in enumerate(motion_support_contacts(evidence)):
         if (not is_stationary_contact(contact)
                 or contact.get('contactState') == 'heel_only'):
@@ -3454,15 +3460,18 @@ def _stationary_source_anchor_groups(payload, names, count):
         row_identity = str(supplied_anchor) if supplied_anchor is not None else f'contact:{contact_index}'
         if full_sole:
             if name.endswith('_foot'):
-                foot_anchor = row_identity
-                ankle_anchor = str(contact.get('ankleAnchorGroupId') or row_identity)
+                anchor_by_joint = {
+                    f'{side}_foot': row_identity,
+                    f'{side}_ankle': str(contact.get('ankleAnchorGroupId') or row_identity),
+                }
             else:
-                ankle_anchor = row_identity
-                foot_anchor = str(contact.get('ankleAnchorGroupId') or row_identity)
-            group_key = ('sole', side, foot_anchor, ankle_anchor)
+                anchor_by_joint = {
+                    f'{side}_ankle': row_identity,
+                    f'{side}_foot': str(contact.get('ankleAnchorGroupId') or row_identity),
+                }
             joint_names = (f'{side}_foot', f'{side}_ankle')
         else:
-            group_key = ('joint', side, name.rsplit('_', 1)[-1], row_identity)
+            anchor_by_joint = {name: row_identity}
             joint_names = (name,)
         confidence = contact.get('confidence')
         try:
@@ -3472,13 +3481,35 @@ def _stationary_source_anchor_groups(payload, names, count):
         if not np.isfinite(confidence):
             confidence = .1
         confidence = float(np.clip(confidence, 0., 1.))
-        for joint_name in joint_names:
-            if joint_name not in names:
-                continue
-            joint = names.index(joint_name)
-            for frame_index in range(start, end + 1):
+        if side not in airborne_epochs:
+            airborne_epochs[side] = _airborne_epoch_track(
+                evidence, f'{side}_ankle', count,
+            )
+        epochs = airborne_epochs[side]
+        for frame_index in range(start, end + 1):
+            scoped_anchors = {
+                joint_name: _airborne_scoped_anchor_id(
+                    anchor_id,
+                    None if epochs is None else epochs[frame_index],
+                )
+                for joint_name, anchor_id in anchor_by_joint.items()
+            }
+            if full_sole:
+                group_key = (
+                    'sole', side, scoped_anchors[f'{side}_foot'],
+                    scoped_anchors[f'{side}_ankle'],
+                )
+            else:
+                group_key = (
+                    'joint', side, name.rsplit('_', 1)[-1],
+                    scoped_anchors[name],
+                )
+            for joint_name in joint_names:
+                if joint_name not in names:
+                    continue
+                joint = names.index(joint_name)
                 groups[frame_index, joint] = group_key
-            confidences[start:end + 1, joint] = confidence
+                confidences[frame_index, joint] = confidence
     return groups, confidences
 
 

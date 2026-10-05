@@ -625,14 +625,15 @@ directory has a condensed version of this state; update it after the arms land.
   controlled fitter. The staged-wave queue is a workspace-scoped serial worker;
   discovery and source acquisition remain separate scheduler owners, so the
   proposed generator-wide service is still a separate phase.
-- A source-evidence gap remains: observed ankle rows survive under
-  `footContactCandidates` after patch classification replaces active foot
-  contacts, but the fit interval builder consumes only active contacts. Ankle
-  tangential evidence can therefore be absent during unknown patch spans unless
-  separately materialized body support supplies it. Unknown spans must remain
-  unknown; they are not full-sole or floor contacts. The retained 93-frame RDL
-  fit remains a failure; the distinct 95-frame RDL in the completed Oct 5 arm
-  was accepted and packaged.
+- Audit correction: omitting `footContactCandidates` from 3D contact constraints
+  is intentional because their stationarity is measured in source-image space
+  and does not establish camera-depth stationarity. The retained 95-frame RDL's
+  source-camera fit has 24 observations for each ankle across the selected
+  0.000–3.070s interval, including unknown patch spans. Unknown spans remain
+  unknown rather than becoming full-sole or floor contacts. A separate legacy
+  identity edge could reuse the same ankle anchor across explicit airborne
+  episodes; fit and sequence anchor grouping now scopes reused identities by
+  airborne epoch. This does not resolve the retained 93-frame RDL fit failure.
 - Queue retention now expires abandoned unconsumed results after 30 days and
   ambiguous crash records after 90 days, while retaining newer records for
   delayed consumers/recovery. Focused pruning regression passed; code is in

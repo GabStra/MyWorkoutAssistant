@@ -70,6 +70,46 @@ def test_contact_mask_skips_unrepresented_heel_without_dropping_other_plants():
     assert mask[:, 2:].all()
 
 
+def test_explicit_airborne_gap_splits_reused_ankle_anchor_identity():
+    from exercise_motion_pkg.contact_constraints import stationary_contact_anchor_ids
+    from exercise_motion_pkg.controlled_motion import _stationary_source_anchor_groups
+
+    contacts = [
+        {'jointName': 'left_foot', 'contactState': 'full_sole', 'contactMotion': 'stationary',
+         'anchorGroupId': 'left-toe', 'ankleAnchorGroupId': 'left-ankle',
+         'startFrame': 0, 'endFrame': 4},
+        {'jointName': 'left_foot', 'contactState': 'full_sole', 'contactMotion': 'stationary',
+         'anchorGroupId': 'left-toe', 'ankleAnchorGroupId': 'left-ankle',
+         'startFrame': 8, 'endFrame': 12},
+    ]
+    evidence = {
+        'contacts': contacts,
+        'footPatchEvidence': {'feet': {'left': {'states':
+            ['full_sole'] * 5 + ['airborne'] * 3 + ['full_sole'] * 5}}},
+    }
+    names = ['left_ankle', 'left_foot']
+
+    anchor_ids = stationary_contact_anchor_ids(evidence, names, 13)
+    assert anchor_ids[2, names.index('left_ankle')] != anchor_ids[10, names.index('left_ankle')]
+
+    # Distinct observed stances on opposite sides of explicit flight must not
+    # share an optimizer anchor even when legacy evidence reuses the same ID.
+    payload = {'sourceFootSupportEvidence': evidence}
+    fit_groups, _ = _stationary_source_anchor_groups(payload, names, 13)
+    assert fit_groups[2, names.index('left_ankle')] != fit_groups[10, names.index('left_ankle')]
+
+    uncertain_gap = deepcopy(evidence)
+    uncertain_gap['footPatchEvidence']['feet']['left']['states'] = (
+        ['full_sole'] * 5 + ['unknown'] * 3 + ['full_sole'] * 5
+    )
+    unknown_gap_ids = stationary_contact_anchor_ids(uncertain_gap, names, 13)
+    assert unknown_gap_ids[2, names.index('left_ankle')] == unknown_gap_ids[10, names.index('left_ankle')]
+    unknown_gap_groups, _ = _stationary_source_anchor_groups(
+        {'sourceFootSupportEvidence': uncertain_gap}, names, 13,
+    )
+    assert unknown_gap_groups[2, names.index('left_ankle')] == unknown_gap_groups[10, names.index('left_ankle')]
+
+
 def test_swapped_source_camera_maps_support_pins_and_anchor_identity_to_rig_side():
     from exercise_motion_pkg.controlled_motion import _stationary_source_anchor_groups
     from exercise_motion_pkg.contact_constraints import motion_space_support_evidence
