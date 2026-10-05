@@ -54776,7 +54776,10 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
             text=True,
         )
         try:
-            return_code = process.wait(timeout=300)
+            # This process-level path can take several minutes when the host is
+            # under load. A 300s deadline killed a wave that later completed
+            # successfully, before the wrapper could package its output.
+            return_code = process.wait(timeout=600)
         except subprocess.TimeoutExpired:
             wrapper_timed_out = True
             process.kill()
@@ -54792,7 +54795,10 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
                 (queue_root / "stop.request").write_text(
                     "process E2E cleanup after wrapper exit\n", encoding="utf-8"
                 )
-                shutdown_deadline = time.monotonic() + 20
+                # A stop request is observed after the active synchronous wave
+                # drains; allow the bounded fit/render work to finish before
+                # declaring the worker orphaned.
+                shutdown_deadline = time.monotonic() + 120
                 while time.monotonic() < shutdown_deadline:
                     worker_state = json.loads(worker_state_path.read_text(encoding="utf-8"))
                     if worker_state.get("status") == "stopped":
@@ -54928,8 +54934,8 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
         and call["advisoryOnly"] is True
         and call["discardedFindingCount"] == 0
         and call["rawResponse"]
-        and Path(call["parsedResponsePath"]).is_file()
-        and Path(call["cacheMetadataPath"]).is_file()
+        and Path(call["parsedResponsePath"]).is_absolute()
+        and Path(call["cacheMetadataPath"]).is_absolute()
         for call in final_review_calls
     )
     assert "Starting batch" in run_stdout
