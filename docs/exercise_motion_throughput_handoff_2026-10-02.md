@@ -763,10 +763,19 @@ directory has a condensed version of this state; update it after the arms land.
 - Commit `48616adf` requires convergence or explicit refinement-stop evidence
   before that heuristic is decisive. Budget-limited (`time_budget`,
   `solve_phase_budget`, and `evaluation_limit`) iterates remain eligible for the
-  existing refinement path. A focused regression passed, edited Python files
-  compiled, and `git diff --check` passed.
+  existing refinement path when budget remains. The focused regression passed,
+  edited Python files compiled, and `git diff --check` passed.
+- A post-fix replay of the same 87-frame input with the same explicit
+  120-second cap is recorded in
+  `build/exercise_motion/replays/20261005-rdl-87-frame-post-stop-fix-report.json`.
+  It now ends as `fit_validation_failed` with no unsupported unreachable label,
+  but no refinement block ran: initial validation took 18.85s after a
+  102.53s solve phase and exhausted the 14.40s polish reserve (124.74s total
+  wall). The output still fails anatomy, contacts, trajectory, temporal,
+  root-continuity, and playback checks. The production default budget for 87
+  frames is 217.5s; that path was not rerun, so any recovery benefit there is
+  unverified.
 - This is an early-stop classification fix, not an RDL quality repair. The
   retained fit still fails substantial anatomy, contacts, trajectory, temporal,
-  root-continuity, and playback checks. No fit was rerun after the correction,
-  so successful RDL generation remains unverified; acceptance gates were not
-  weakened.
+  root-continuity, and playback checks. Successful RDL generation remains
+  unverified; acceptance gates were not weakened.
