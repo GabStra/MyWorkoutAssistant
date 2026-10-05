@@ -590,3 +590,22 @@ directory has a condensed version of this state; update it after the arms land.
   and package identity path. It does not exercise live discovery/source
   acquisition or run a fresh WHAM/GVHMR campaign. The interrupted baseline
   remains stopped, and maximum throughput remains unproven.
+
+### Oct 5 height-only contact correction
+
+- A stationary `verticalOnly` / toe-only contact was being admitted to the
+  ordinary contact mask and pinned in XYZ, despite the foot-contact policy
+  describing that evidence as height-only. The fit now uses a separate
+  floor-normal residual at keyframes and playback subframes. Tangential
+  coordinates remain free; independent playback validation checks the height
+  error. Sequence stabilization follows the same split, and cycle ranking still
+  treats these intervals as support when choosing boundaries.
+- Fit and sequence-stabilization strategy versions were bumped so artifacts
+  validated under the former full-XYZ interpretation are not reused.
+- Focused source-evidence, fit-residual, playback, sequence-stabilization, and
+  cycle-slicing checks passed (32 tests); edited Python files compile. No app
+  tests, live model calls, or GPU campaigns were run for this correction.
+- This does not add the separate ankle tangential-anchor constraint for unknown
+  patch intervals. The fitter still lacks a shared per-axis projector for that
+  evidence; the retained 93-frame RDL replay remains a fit-quality failure.
+  Unknown patch spans are still not promoted to full-sole or floor contacts.

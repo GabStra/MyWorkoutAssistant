@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from exercise_motion_pkg.contact_constraints import stationary_target_track
+from exercise_motion_pkg.contact_constraints import vertical_only_contact_mask
 from exercise_motion_pkg.foot_contact_observation import assign_stationary_anchor_groups
 
 
@@ -193,8 +194,13 @@ def test_neutral_pitch_does_not_promote_forefoot_evidence_to_an_ankle_lock():
     result = classify_foot_contacts(observations, evidence, source)
     mask = contact_mask({'sourceFootSupportEvidence': result}, ['left_ankle', 'left_foot'], 20)
     assert mask[:10].all()
-    assert mask[10:, 1].all()
+    assert not mask[10:, 1].any()
     assert not mask[10:, 0].any()
+    height_only = vertical_only_contact_mask(
+        result, ['left_ankle', 'left_foot'], 20,
+    )
+    assert height_only[10:, 1].all()
+    assert not height_only[10:, 0].any()
     assert result['contacts'][-1]['minimumLiftRatio'] == 0.
     assert result['contacts'][0].get('ankleAnchorGroupId')
     assert not result['contacts'][-1].get('ankleAnchorGroupId')
@@ -209,3 +215,38 @@ def test_neutral_pitch_does_not_promote_forefoot_evidence_to_an_ankle_lock():
     assert result['contacts'][0]['ankleAnchorGroupId'] == result['contacts'][1]['ankleAnchorGroupId']
     mask = contact_mask({'sourceFootSupportEvidence': result}, ['left_ankle', 'left_foot'], 20)
     assert not mask[8:12].any()
+
+
+def test_vertical_only_contact_targets_hold_height_and_leave_tangent_free():
+    from exercise_motion_pkg.rig_playback import rig_contact_targets
+    from exercise_motion_pkg.sequence_stabilization import contact_mask
+
+    names = ['left_ankle', 'left_foot', 'right_ankle', 'right_foot']
+    points = np.zeros((8, len(names), 3), dtype=float)
+    points[:, names.index('left_foot'), 0] = np.linspace(-.2, .2, 8)
+    points[:, names.index('left_foot'), 1] = .03
+    points[:, names.index('left_foot'), 2] = np.linspace(.1, -.1, 8)
+    evidence = {
+        'contacts': [{
+            'jointName': 'left_foot',
+            'supportKind': 'observed_foot_patch',
+            'surfaceKind': 'ground',
+            'contactState': 'toe_only',
+            'contactMotion': 'stationary',
+            'verticalOnly': True,
+            'startFrame': 2,
+            'endFrame': 5,
+        }],
+    }
+
+    pinned = contact_mask({'sourceFootSupportEvidence': evidence}, names, len(points))
+    targets, _ = rig_contact_targets(
+        points, names, pinned, np.zeros((len(names), 3)), evidence=evidence, floor=0.,
+    )
+
+    assert not pinned[:, names.index('left_foot')].any()
+    np.testing.assert_allclose(targets[2:6, names.index('left_foot'), 1], 0.)
+    np.testing.assert_allclose(
+        targets[2:6, names.index('left_foot'), [0, 2]],
+        points[2:6, names.index('left_foot'), [0, 2]],
+    )

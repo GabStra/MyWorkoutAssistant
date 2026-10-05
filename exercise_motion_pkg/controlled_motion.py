@@ -18,6 +18,7 @@ from scipy.sparse import coo_matrix, csr_matrix, eye, kron, lil_matrix, vstack
 from scipy.spatial.transform import Rotation
 
 from .sequence_stabilization import contact_mask, frame_basis, pose_digest, unit
+from .contact_constraints import vertical_only_contact_mask, vertical_only_contact_targets
 from .smpl_joint_names import SMPL_JOINT_NAMES, SMPL_JOINT_PARENTS
 from .physical_validation import ARTICULATIONS, angles, body_scale, collision_clearances, collision_specs, validate_physical_motion, anatomical_structure_residuals
 from .temporal_quality import body_orientation_axes, body_orientation_noise, body_local_head_direction, introduced_joint_spikes, refresh_motion_bounds, transport_corrected_bone_sides
@@ -30,7 +31,7 @@ SUPPORT_REFERENCE_CONTACT_LIMIT_METERS = min(
     PLAYBACK_CONTACT_LIMIT_METERS * 0.5,
 )
 
-CONTROLLED_MOTION_STRATEGY = 'fixed_rig_controlled_motion_v61_canonical_interval_fit_evidence'
+CONTROLLED_MOTION_STRATEGY = 'fixed_rig_controlled_motion_v62_height_only_contact_constraints'
 # Feasibility pre-flight threshold, calibrated from fit reports: every
 # successful fit's target bones matched the rig within ~0.002m, while
 # structurally conflicted fits measured 0.05-0.15m before burning their
@@ -1636,6 +1637,26 @@ def _playback_contact_sample_error(coordinates, rig, pinned, contact_targets, *,
         return 0.
     sampled = sample_rig(_sampling_payload(rig, coords), cursors, wrap=cyclic)
     return float(np.max(np.linalg.norm((sampled - targets[first])[active], axis=-1), initial=0.))
+
+
+def _playback_vertical_contact_sample_error(
+        coordinates, rig, vertical_mask, vertical_targets, *, cyclic=False):
+    """Peak height-only contact error at the production playback subframes."""
+    coords = np.asarray(coordinates, dtype=float)
+    targets = np.asarray(vertical_targets, dtype=float)
+    count = len(coords)
+    if count < 2 or not np.any(vertical_mask):
+        return 0.
+    from .rig_playback import sample_rig
+    interval_count = count if cyclic else count - 1
+    cursors = (np.arange(interval_count)[:, None] + np.array([.25, .5, .75])).ravel()
+    first = np.floor(cursors).astype(int)
+    last = (first + 1) % count if cyclic else np.minimum(first + 1, count - 1)
+    active = vertical_mask[first] & vertical_mask[last]
+    if not np.any(active):
+        return 0.
+    sampled = sample_rig(_sampling_payload(rig, coords), cursors, wrap=cyclic)
+    return float(np.max(np.abs(sampled[:, :, 1][active] - targets[first, :, 1][active]), initial=0.))
 
 
 def _playback_support_geometry_passed(coordinates, rig, payload, *, cyclic=False):
@@ -5270,6 +5291,18 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         from .support_geometry import moving_support_articulations
         support_articulation_tracks = tuple(moving_support_articulations(
             support_range_reference, names, body_support, support_corrected_points=reference))
+    height_only_mask = vertical_only_contact_mask(
+        fit_support_evidence, names, len(frames),
+    ) & ~pinned
+    height_only_targets_mask, height_only_targets = vertical_only_contact_targets(
+        reference, fit_support_evidence, names, floor=payload.get('renderFloorY'),
+    )
+    height_only_mask &= height_only_targets_mask
+    report['heightOnlyContactConstraint'] = {
+        'available': bool(np.any(height_only_mask)),
+        'frameJointCount': int(np.count_nonzero(height_only_mask)),
+        'axis': 'floor_normal_y',
+    }
     # Initializers evaluate guarded geometry and can leave rotations far beyond
     # the socket boundary behind that guard. Commit the identical decoded pose
     # to coordinates before raw-geometry fitting, interpolation, and the rotation
@@ -5446,7 +5479,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
     branch_pattern = np.stack([np.maximum(branch_basis,joint_dependencies(rig,(a,h,b)))
                                for label,a,h,b,_ in ARTICULATIONS if label.endswith(('_knee','_elbow'))])
     settling_pattern = np.maximum(rig.dependencies,body_dependencies[None,:])
-    frame_pattern = np.vstack([rig.dependencies,rig.dependencies,
+    frame_pattern = np.vstack([rig.dependencies,rig.dependencies,rig.dependencies[1::3],
                                angle_pattern,rig.dependencies[1::3],head_pattern,rotation_prior_dependencies(rig.width),collision_pattern,
                                rig.dependencies[::3],branch_pattern])
     structure_pattern = anatomical_structure_dependencies(rig, points, names)
@@ -5495,11 +5528,14 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
     subframe_last = (subframe_first+1)%count
     subframe_pinned = pinned[subframe_first]&pinned[subframe_last]
     subframe_targets = contact_targets[subframe_first]
+    subframe_height_pinned = height_only_mask[subframe_first] & height_only_mask[subframe_last]
+    subframe_height_targets = height_only_targets[subframe_first, :, 1]
     subframe_alpha = (subframe_cursors-subframe_first)[:, None, None]
     subframe_alignment = alignment_features(
         alignment_source[subframe_first]*(1.-subframe_alpha)+alignment_source[subframe_last]*subframe_alpha,
         names, body_support)
-    subframe_pattern = np.vstack([rig.dependencies,rig.dependencies[1::3],collision_pattern,structure_pattern])
+    subframe_pattern = np.vstack([rig.dependencies,rig.dependencies[1::3],
+                                  rig.dependencies[1::3],collision_pattern,structure_pattern])
     subframe_pattern = np.vstack([subframe_pattern, equipment_pattern])
     subframe_pattern = np.vstack([subframe_pattern, support_pattern])
     subframe_pattern = np.vstack([subframe_pattern, heel_pattern])
@@ -5615,6 +5651,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             pose_error[:, rig.root] = 8. * (candidate[:, rig.root] - root_track) / scale
         return np.concatenate([pose_error.reshape(count,-1),
                                (contact_weight*(candidate-contact_targets)*pinned[:,:,None]).reshape(count,-1),
+                               (contact_weight*(candidate[:,:,1]-height_only_targets[:,:,1])
+                                * height_only_mask).reshape(count,-1),
                                articulation, floor_error, head_penalty],axis=1)
 
     def keyframe_mid_rows(candidate):
@@ -5677,8 +5715,10 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
 
     def subframe_point_sections(subframe, contact_weight, grip_weight):
         subframe_contacts = contact_weight*(subframe-subframe_targets)*subframe_pinned[:,:,None]
+        subframe_height = (contact_weight * (subframe[:, :, 1] - subframe_height_targets)
+                           * subframe_height_pinned)
         subframe_floor = np.zeros((subframe_count,joints)) if floor is None else FLOOR_FIT_WEIGHT*np.minimum(subframe[:,:,1]-float(floor),0.)
-        return [subframe_contacts.reshape(subframe_count,-1),subframe_floor,
+        return [subframe_contacts.reshape(subframe_count,-1),subframe_height,subframe_floor,
                 100.*np.minimum(collision_clearances(subframe,names,scale)[0]/scale-COLLISION_FIT_MARGIN_RATIO,0.),
                 grip_weight*grip_residual(subframe,names,equipment)/scale,
                 2000.*geometry_errors(subframe,names,body_support)/scale,
@@ -6379,11 +6419,18 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         anchored = np.max(np.linalg.norm((initial_points-contact_targets)[pinned],axis=-1),initial=0.) < PLAYBACK_CONTACT_LIMIT_METERS
         playback_anchored = _playback_contact_sample_error(
             rig.initial, rig, pinned, contact_targets, cyclic=cyclic) < PLAYBACK_CONTACT_LIMIT_METERS
+        height_anchored = np.max(np.abs(
+            (initial_points[:, :, 1] - height_only_targets[:, :, 1])[height_only_mask]
+        ), initial=0.) <= PLAYBACK_FLOOR_LIMIT_METERS
+        playback_height_anchored = _playback_vertical_contact_sample_error(
+            rig.initial, rig, height_only_mask, height_only_targets, cyclic=cyclic,
+        ) <= PLAYBACK_FLOOR_LIMIT_METERS
         playback_support_geometry_passed = _playback_support_geometry_passed(
             rig.initial, rig, payload, cyclic=cyclic)
         floor_clear = _playback_floor_penetration(
             rig.initial, rig, cyclic=cyclic, floor=floor) <= PLAYBACK_FLOOR_LIMIT_METERS
         already_valid = (not cyclic and already_rigid and already_smooth and anchored
+                         and height_anchored and playback_height_anchored
                          and playback_support_geometry_passed
                          and playback_anchored and floor_clear
                          and validate_physical_motion(initial_points,names,fps=fps)['passed']
@@ -6393,6 +6440,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             points=initial_points, names=names, equipment=equipment, payload=payload,
             support_strategy=report.get('supportInitializationStrategy'),
             playback_support_geometry_passed=playback_support_geometry_passed)
+        geometry_ready = geometry_ready and height_anchored and playback_height_anchored
         if (already_valid or geometry_ready) and not heel_contacts.pairs:
             # Avoid introducing solver noise into an already controlled / supported
             # rig. Soft LS on long plant-only clips raised jerk and ate Stage-C.
@@ -6685,6 +6733,12 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         lengths = np.array([np.linalg.norm(result[:,j]-result[:,rig.parents[j]],axis=1)
                             for j in rig.order[1:]])
         contact_error = float(np.max(np.linalg.norm((result-contact_targets)[pinned],axis=-1),initial=0.))
+        height_contact_error = float(np.max(np.abs(
+            (result[:, :, 1] - height_only_targets[:, :, 1])[height_only_mask]
+        ), initial=0.))
+        playback_height_contact_error = _playback_vertical_contact_sample_error(
+            rig.initial, rig, height_only_mask, height_only_targets, cyclic=cyclic,
+        )
         change = np.max(abs(np.stack([angles(*(result[:,i] for i in cols)) for _,cols,_ in specs],axis=1)-reference_angles))
         travel_before = np.linalg.norm(np.ptp(target[:,rig.root],axis=0))
         travel_after = np.linalg.norm(np.ptp(result[:,rig.root],axis=0))
@@ -6715,6 +6769,9 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             result, shake_basis, names, fps, spike_reference=spike_reference)
         root_quality = root_motion_quality(result[:,rig.root], fps, scale)
         checks = {'anatomy':physical['passed'], 'contacts':contact_error<.0005,
+                  'heightOnlyContacts': (
+                      height_contact_error <= PLAYBACK_FLOOR_LIMIT_METERS
+                      and playback_height_contact_error <= PLAYBACK_FLOOR_LIMIT_METERS),
                   'sourceArticulation':bool(change<np.deg2rad(20.)), 'trajectoryFit':fit_error<.025*scale,
                   'rootTravel':bool(travel_before<.05*scale or travel_after>=.9*travel_before),
                   'jointRange':range_preserved, 'jointShake':no_new_shake, 'settling':settling_preserved,
@@ -6741,6 +6798,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                       applied=bool(accepted),evaluations=solved.nfev,elapsedSeconds=monotonic()-started,
                       maximumBoneLengthVariationMeters=float(np.max(np.ptp(lengths,axis=1))),
                       maximumContactErrorMeters=contact_error,maximumArticulationChangeDegrees=float(np.rad2deg(change)),
+                      maximumHeightOnlyContactErrorMeters=height_contact_error,
+                      maximumPlaybackHeightOnlyContactErrorMeters=playback_height_contact_error,
                       targetRmsMeters=fit_error,
                       jointTargetRmsMeters={n:float(np.sqrt(np.mean((result[:,j]-target[:,j])**2))) for j,n in enumerate(names)},
                       jerkBefore=jerk_before,jerkAfter=jerk_after,

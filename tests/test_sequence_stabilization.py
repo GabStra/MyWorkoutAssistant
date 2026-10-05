@@ -139,6 +139,8 @@ def test_mapped_support_override_follows_current_camera_and_rejects_stale_labels
 
 
 def test_contact_mask_preserves_release_and_unilateral_support():
+    from exercise_motion_pkg.contact_constraints import vertical_only_contact_mask
+
     names = ['left_ankle', 'left_foot', 'right_ankle', 'right_foot', 'left_hand']
     payload = {'sourceFootSupportEvidence': {'contacts': [
         {'jointName': 'left_foot', 'contactState': 'full_sole', 'contactMotion': 'stationary', 'startFrame': 0, 'endFrame': 3},
@@ -147,8 +149,12 @@ def test_contact_mask_preserves_release_and_unilateral_support():
     ]}}
     mask = contact_mask(payload, names, 10)
     assert mask[:4, :2].all() and not mask[4:, :2].any()
-    assert mask[6:, 3].all() and not mask[:, 2].any()
+    assert not mask[:, 2:4].any()
     assert mask[2:6, 4].all() and not mask[:2, 4].any()
+    height_only = vertical_only_contact_mask(
+        payload['sourceFootSupportEvidence'], names, 10,
+    )
+    assert height_only[6:, 3].all() and not height_only[:, 2].any()
 
 
 def test_irregular_sampling_and_unresolved_repair_are_retained():

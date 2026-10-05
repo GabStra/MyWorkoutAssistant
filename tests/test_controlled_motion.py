@@ -2764,6 +2764,51 @@ def test_fit_preserves_contact_and_rig_and_is_reusable():
     assert again is result and audit['reused']
 
 
+def test_height_only_contact_uses_a_normal_residual_in_the_fit(monkeypatch):
+    from types import SimpleNamespace
+
+    from exercise_motion_pkg import controlled_motion as motion
+
+    names, points = stance(12)
+    p = payload(names, points)
+    foot_y = float(points[0, names.index('left_foot'), 1])
+    p['sourceFootSupportEvidence'] = {
+        'sharedSupportPlaneY': foot_y + .004,
+        'contacts': [{
+            'jointName': 'left_foot',
+            'supportKind': 'observed_foot_patch',
+            'surfaceKind': 'ground',
+            'contactState': 'toe_only',
+            'contactMotion': 'stationary',
+            'verticalOnly': True,
+            'startFrame': 2,
+            'endFrame': 9,
+        }],
+    }
+    monkeypatch.setattr(
+        motion,
+        'register_contact_placement',
+        lambda values, *args, **kwargs: (
+            values.copy(), {'observedGroundEpisodes': [{'joint': 'left_foot'}]},
+        ),
+    )
+    captured = {}
+
+    def capture_solver(residual, initial, pattern, max_evaluations, **kwargs):
+        captured['residual'] = residual(initial)
+        captured['pattern'] = pattern
+        return SimpleNamespace(x=initial, nfev=1, status=1)
+
+    monkeypatch.setattr(motion, 'solve_trajectory', capture_solver)
+    result, report = fit_controlled_motion(p, max_evaluations=1, timeout_seconds=20.)
+
+    assert report['heightOnlyContactConstraint']['available']
+    assert report['heightOnlyContactConstraint']['axis'] == 'floor_normal_y'
+    assert captured['residual'].shape[0] == captured['pattern'].shape[0]
+    assert report['checks']['heightOnlyContacts'] is False
+    assert result is p
+
+
 def test_timeout_and_irregular_sampling_return_original():
     names,points=stance(10)
     p=payload(names,points)

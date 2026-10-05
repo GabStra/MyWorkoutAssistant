@@ -7,8 +7,10 @@ from scipy.spatial.transform import Rotation
 from .physical_validation import angles, body_scale, validate_physical_motion
 from .sequence_stabilization import contact_mask
 from .contact_constraints import (stationary_target_track, stationary_contact_anchor_ids,
-                                  observed_ground_contact_mask, calibrate_shared_contact_pair,
-                                  InfeasibleContactCorrection)
+                                   observed_ground_contact_mask, calibrate_shared_contact_pair,
+                                   InfeasibleContactCorrection,
+                                   vertical_only_contact_mask,
+                                   vertical_only_contact_targets)
 
 # Mid-sample contact tolerance for hermite-interpolated samples. The fit's
 # keyframe anchor standard stays at 0.5mm (a solver-precision demand the
@@ -29,6 +31,11 @@ def rig_contact_targets(points, names, pinned, offsets, *, stationary_positions=
     for joint in range(len(names)):
         anchors[:,joint],_ = stationary_target_track(reference[:,joint],pinned[:,joint],
                                                     anchor_ids=anchor_ids[:, joint])
+    vertical_mask, vertical_targets = vertical_only_contact_targets(
+        reference, evidence, names, floor=floor,
+    )
+    vertical_mask &= ~pinned
+    anchors[:, :, 1][vertical_mask] = vertical_targets[:, :, 1][vertical_mask]
     ground = observed_ground_contact_mask(evidence, names, len(points)) & pinned
     if floor is not None:
         for side in ('left', 'right'):
@@ -198,6 +205,14 @@ def validate_rig_playback(payload, *, subdivisions=4):
     active=pinned[first]&pinned[last]
     contact_error=float(np.max(np.linalg.norm((points-anchors[first])[active],axis=-1),initial=0.))
     frame_contact_error=float(np.max(np.linalg.norm((originals-anchors)[pinned],axis=-1),initial=0.))
+    vertical_mask = vertical_only_contact_mask(support_evidence, names, count) & ~pinned
+    vertical_active = vertical_mask[first] & vertical_mask[last]
+    vertical_error = float(np.max(np.abs(
+        points[:, :, 1][vertical_active] - anchors[first, :, 1][vertical_active]
+    ), initial=0.))
+    frame_vertical_error = float(np.max(np.abs(
+        originals[:, :, 1][vertical_mask] - anchors[:, :, 1][vertical_mask]
+    ), initial=0.))
     from .heel_contacts import heel_contact_tracks
     heel_contacts = heel_contact_tracks(
         unplaced, names, support_evidence, floor=fitting_floor, fps=fps)
@@ -301,9 +316,17 @@ def validate_rig_playback(payload, *, subdivisions=4):
             velocity_jump = frame_boundary_velocity_jump(
                 lambda cursors: sample_rig(rig, cursors, wrap=cyclic), knots, fps)
             velocity_continuous = velocity_jump < .001*scale
-    passed=sample_error<1e-7 and physical['passed'] and contact_error<=PLAYBACK_CONTACT_LIMIT_METERS and floor_error<=PLAYBACK_FLOOR_LIMIT_METERS and variation<1e-9 and equipment['passed'] and body_support['passed'] and shoe_orientation['passed'] and alignment['passed'] and velocity_continuous
+    passed=(sample_error<1e-7 and physical['passed']
+            and contact_error<=PLAYBACK_CONTACT_LIMIT_METERS
+            and vertical_error<=PLAYBACK_FLOOR_LIMIT_METERS
+            and frame_vertical_error<=PLAYBACK_FLOOR_LIMIT_METERS
+            and floor_error<=PLAYBACK_FLOOR_LIMIT_METERS and variation<1e-9
+            and equipment['passed'] and body_support['passed']
+            and shoe_orientation['passed'] and alignment['passed'] and velocity_continuous)
     return {'passed':bool(passed),'sampleCount':len(points),'subdivisions':subdivisions,
             'maximumSamplePoseMismatchMeters':sample_error,'maximumContactErrorMeters':contact_error,
+            'maximumHeightOnlyContactErrorMeters':vertical_error,
+            'maximumStoredFrameHeightOnlyContactErrorMeters':frame_vertical_error,
             'maximumHeelContactErrorMeters':heel_error,
             'equipment': equipment,
             'bodySupport': body_support,

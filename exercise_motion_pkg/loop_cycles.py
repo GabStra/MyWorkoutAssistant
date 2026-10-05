@@ -9,7 +9,8 @@ from copy import deepcopy
 import numpy as np
 from scipy.ndimage import gaussian_filter1d
 
-from .contact_constraints import contact_frame_bounds, motion_support_contacts
+from .contact_constraints import (contact_frame_bounds, motion_support_contacts,
+                                 motion_space_support_evidence, vertical_only_contact_mask)
 from .physical_validation import body_scale
 from .sequence_stabilization import contact_mask, pose_digest
 from .temporal_quality import refresh_motion_bounds
@@ -39,6 +40,9 @@ def rank_loop_cycles(payload, *, max_candidates=5, endpoint_correction_ratio=0.,
     contacts = contact_mask(payload, names, count)
     if contacts is None:
         return []
+    contacts |= vertical_only_contact_mask(
+        motion_space_support_evidence(payload), names, count,
+    )
     # Use the same whole-interval support authority as the fitter. Fragmented
     # landmark visibility must not turn a confirmed stationary stance into
     # incompatible endpoint contacts and exclude the actual return cycle.

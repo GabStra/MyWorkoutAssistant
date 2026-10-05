@@ -21,6 +21,8 @@ from .contact_constraints import (
     is_stationary_contact,
     motion_space_support_evidence,
     motion_support_contacts,
+    vertical_only_contact_mask,
+    vertical_only_contact_targets,
 )
 from .physical_validation import ARTICULATIONS, angles, body_bones, body_scale, validate_physical_motion
 from .temporal_quality import body_orientation_axes, refresh_motion_bounds, transport_corrected_bone_sides
@@ -125,6 +127,11 @@ def contact_mask(payload, names, count):
             # Heel-only is not a pin in this shoe model. Skip it so other
             # observed plants can still constrain the retained interval.
             continue
+        if (contact.get('verticalOnly') is True
+                or contact.get('contactState') == 'toe_only'):
+            # Height-only contacts constrain the surface normal. They must not
+            # become full XYZ pins in the sequence-wide tangential projector.
+            continue
         if not is_stationary_contact(contact):
             continue
         name = str(contact.get('jointName', ''))
@@ -158,7 +165,7 @@ def stabilize_exported_sequence(payload, *, max_evaluations=35, timeout_seconds=
     """Return an atomic candidate or the original payload, never a partial repair."""
     started = monotonic()
     frames = payload.get('frames') or []
-    report = {'applied': False, 'strategy': 'skeletal_sequence_stabilization_v3'}
+    report = {'applied': False, 'strategy': 'skeletal_sequence_stabilization_v4_height_only_contacts'}
     previous = payload.get('sequenceStabilization') or {}
     if previous.get('strategy') == report['strategy'] and previous.get('outputPoseDigest') == pose_digest(payload):
         return payload, {**previous, 'reused': True}
@@ -196,6 +203,13 @@ def stabilize_exported_sequence(payload, *, max_evaluations=35, timeout_seconds=
     pinned = contact_mask(payload, names, len(frames))
     if pinned is None:
         return payload, {**report, 'reason': 'unrepresented_heel_contact'}
+    support_evidence = motion_space_support_evidence(payload)
+    vertical_mask = vertical_only_contact_mask(support_evidence, names, len(frames)) & ~pinned
+    vertical_targets = points.copy()
+    if np.any(vertical_mask):
+        _, vertical_targets = vertical_only_contact_targets(
+            points, support_evidence, names, floor=payload.get('renderFloorY'),
+        )
     coordinates = SkeletalCoordinates(points, names)
     filtered, evidence = denoise_features(coordinates.features, fps)
     report['evidence'] = evidence
@@ -204,10 +218,15 @@ def stabilize_exported_sequence(payload, *, max_evaluations=35, timeout_seconds=
         return payload, {**report, 'reason': 'no_supported_noise_correction'}
     target, _ = denoise_features(points, fps)
     target[pinned] = points[pinned]
+    count, joints, _ = points.shape
+    base_points = points.copy()
+    if np.any(vertical_mask):
+        target[:, :, 1][vertical_mask] = vertical_targets[:, :, 1][vertical_mask]
+        base_points[:, :, 1][vertical_mask] = vertical_targets[:, :, 1][vertical_mask]
     free = np.repeat(~pinned[:, :, None], 3, axis=2).ravel()
+    free.reshape(count, joints, 3)[:, :, 1][vertical_mask] = False
     if not free.any():
         return payload, {**report, 'reason': 'all_coordinates_supported'}
-    count, joints, _ = points.shape
     bones = list(dict.fromkeys([*body_bones(names), *coordinates.edges]))
     if not bones:
         return payload, {**report, 'reason': 'unsupported_skeleton_topology'}
@@ -228,7 +247,7 @@ def stabilize_exported_sequence(payload, *, max_evaluations=35, timeout_seconds=
                 low[:, column] = np.maximum(low[:, column], np.deg2rad(35.1))
                 high[:, column] = np.minimum(high[:, column], np.deg2rad(164.9))
     def expand(values):
-        result = points.copy().ravel()
+        result = base_points.copy().ravel()
         result[free] = values
         return result.reshape(points.shape)
     class Deadline(Exception):
@@ -264,9 +283,9 @@ def stabilize_exported_sequence(payload, *, max_evaluations=35, timeout_seconds=
         kron(diags([np.ones(count-2)]*3, [0, 1, 2], shape=(count-2, count)), eye(joints*3)),
     ], format='csr')[:, free]
     try:
-        initial = points.ravel()[free]+.25*np.clip(target.ravel()[free]-points.ravel()[free], -.014*scale, .014*scale)
+        initial = base_points.ravel()[free]+.25*np.clip(target.ravel()[free]-base_points.ravel()[free], -.014*scale, .014*scale)
         fit = least_squares(residual, initial, jac_sparsity=pattern,
-                            bounds=(points.ravel()[free]-.015*scale, points.ravel()[free]+.015*scale),
+                            bounds=(base_points.ravel()[free]-.015*scale, base_points.ravel()[free]+.015*scale),
                             max_nfev=max_evaluations, ftol=1e-5, xtol=1e-7, gtol=1e-7,
                             x_scale='jac', diff_step=1e-5,
                             tr_options={'maxiter': 300, 'atol': 1e-7, 'btol': 1e-7})
@@ -283,6 +302,9 @@ def stabilize_exported_sequence(payload, *, max_evaluations=35, timeout_seconds=
     # parent-first length projection can otherwise move an ankle or foot by a
     # fraction of a millimetre after the solve and silently break that promise.
     result[pinned] = points[pinned]
+    vertical_error = float(np.max(np.abs(
+        result[:, :, 1][vertical_mask] - vertical_targets[:, :, 1][vertical_mask]
+    ), initial=0.))
     physical = validate_physical_motion(result, names, reference=reference_smooth, fps=fps)
     input_reasons = set(report.get('inputPhysicalReasons') or [])
     output_reasons = {str(event.get('reason')) for event in (physical.get('events') or [])}
@@ -315,7 +337,9 @@ def stabilize_exported_sequence(payload, *, max_evaluations=35, timeout_seconds=
     range_preserved = bool(np.all(final_span[protected] >= .95*span[protected]))
     floor = payload.get('renderFloorY')
     floor_ok = floor is None or result[:, :, 1].min() >= min(float(floor)-.002, points[:, :, 1].min()-.0001)
-    accepted = physical_ok and length_error <= .002 and range_preserved and floor_ok
+    from .rig_playback import PLAYBACK_FLOOR_LIMIT_METERS
+    accepted = (physical_ok and length_error <= .002 and range_preserved and floor_ok
+                and vertical_error <= PLAYBACK_FLOOR_LIMIT_METERS)
     proposed_denoised, _ = denoise_features(result, fps)
     original_denoised, _ = denoise_features(points, fps)
     noise_before = float(np.sqrt(np.mean(((original_denoised-points)/scale)**2)))
@@ -323,7 +347,8 @@ def stabilize_exported_sequence(payload, *, max_evaluations=35, timeout_seconds=
     noise_improved = noise_after < noise_before*.999
     accepted = accepted and noise_improved
     report.update({'applied': bool(accepted), 'reason': 'validated_sequence_stabilization' if accepted else 'projection_failed_preservation_checks',
-                   'maximumBoneLengthErrorMeters': length_error, 'rangePreserved': range_preserved,
+                    'maximumBoneLengthErrorMeters': length_error, 'rangePreserved': range_preserved,
+                    'maximumHeightOnlyContactErrorMeters': vertical_error,
                    'maximumCorrectionMeters': float(np.max(np.linalg.norm(result-points, axis=-1))),
                    'physicalReasons': physical['reasons'], 'evaluations': int(fit.nfev),
                    'physicalEvents': physical.get('events', [])[:8],

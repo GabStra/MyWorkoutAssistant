@@ -230,6 +230,23 @@ def observed_ground_contact_mask(evidence, names, count):
     return result
 
 
+def vertical_only_contact_mask(evidence, names, count):
+    """Select stationary contacts that constrain height without a tangent pin."""
+    result = np.zeros((count, len(names)), dtype=bool)
+    for contact in motion_support_contacts(evidence):
+        if (contact.get('verticalOnly') is not True
+                and contact.get('contactState') != 'toe_only'):
+            continue
+        if not is_stationary_contact(contact) or contact.get('contactState') == 'heel_only':
+            continue
+        name = str(contact.get('jointName') or '')
+        if name not in names:
+            continue
+        start, end = contact_frame_bounds(contact, count)
+        result[start:end + 1, names.index(name)] = True
+    return result
+
+
 def stationary_contact_anchor_ids(evidence, names, count):
     """Transport observed anchor identity without adding contact frames."""
     result = np.full((count, len(names)), None, dtype=object)
@@ -245,6 +262,30 @@ def stationary_contact_anchor_ids(evidence, names, count):
             if joint in names and group is not None:
                 result[start:end+1, names.index(joint)] = str(group)
     return result
+
+
+def vertical_only_contact_targets(points, evidence, names, *, floor=None):
+    """Return height-only targets while leaving each contact's tangent free."""
+    values = np.asarray(points, dtype=float)
+    mask = vertical_only_contact_mask(evidence, names, len(values))
+    targets = values.copy()
+    if not np.any(mask):
+        return mask, targets
+    anchor_ids = stationary_contact_anchor_ids(evidence, names, len(values))
+    for joint in range(len(names)):
+        track, _ = stationary_target_track(
+            values[:, joint], mask[:, joint], anchor_ids=anchor_ids[:, joint],
+        )
+        targets[:, joint] = track
+    ground = observed_ground_contact_mask(evidence, names, len(values)) & mask
+    ground_y = floor if floor is not None else (evidence or {}).get('sharedSupportPlaneY')
+    try:
+        ground_y = float(ground_y)
+    except (TypeError, ValueError, OverflowError):
+        ground_y = None
+    if ground_y is not None and np.isfinite(ground_y):
+        targets[:, :, 1][ground] = ground_y
+    return mask, targets
 
 
 def stationary_target_track(

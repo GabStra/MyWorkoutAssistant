@@ -239,6 +239,34 @@ def test_contact_surface_owns_height_without_pinning_release(surface, shared_pla
     np.testing.assert_allclose(targets[:4, ankle]-targets[:4, foot], points[:4, ankle]-points[:4, foot], atol=1e-12)
 
 
+def test_playback_validates_height_only_contact_separately_from_tangent_motion():
+    rig = rig_payload(12)
+    payload = export(rig)
+    names = rig['jointNames']
+    points = decode_rig(rig, rig['coordinates'])
+    foot = names.index('left_foot')
+    payload['sourceFootSupportEvidence'] = {
+        'sharedSupportPlaneY': float(np.median(points[:, foot, 1]) + .01),
+        'contacts': [{
+            'jointName': 'left_foot',
+            'supportKind': 'observed_foot_patch',
+            'surfaceKind': 'ground',
+            'contactState': 'toe_only',
+            'contactMotion': 'stationary',
+            'verticalOnly': True,
+            'startFrame': 1,
+            'endFrame': 10,
+        }],
+    }
+
+    report = validate_rig_playback(payload)
+
+    assert report['maximumStoredFrameHeightOnlyContactErrorMeters'] == pytest.approx(.01)
+    assert report['maximumHeightOnlyContactErrorMeters'] == pytest.approx(.01)
+    assert report['maximumContactErrorMeters'] == 0.
+    assert not report['passed']
+
+
 @pytest.mark.parametrize('anchored', [False, True])
 def test_floor_clearance_translates_free_rig_without_changing_motion(anchored):
     from exercise_motion_pkg.rig_playback import unanchored_floor_clearance_lift
