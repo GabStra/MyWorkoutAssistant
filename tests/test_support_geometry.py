@@ -377,7 +377,10 @@ def test_contact_plant_projection_holds_interpolated_playback_plants():
     targets, _ = rig_contact_targets(points, names, pinned, rig.offsets)
     shifted = rig.initial.copy()
     ankle = rig.slots[names.index('left_ankle')]
-    shifted[1:-1, ankle:ankle + 3] += [0.2, 0.0, 0.05]
+    # Alternate the source ankle orientation so keyframe-only planting leaves
+    # an actual interpolation gap for the interval projector to repair.
+    for frame_index in range(1, len(shifted) - 1):
+        shifted[frame_index, ankle:ankle + 3] += [(-1) ** frame_index * .3, 0.0, .05]
     keyed = project_contact_plant_coordinates(shifted, rig, pinned, targets, max_nfev=40)
     before = _playback_contact_sample_error(keyed, rig, pinned, targets, cyclic=False)
     assert before > PLAYBACK_CONTACT_LIMIT_METERS
