@@ -873,6 +873,7 @@ def run_staged_bake_wave(
     progress: Callable[[str], None] | None = None,
     render_executor: ThreadPoolExecutor | None = None,
 ) -> dict[str, Any]:
+    wave_started = time.perf_counter()
     # Speculative post-WHAM bake/fit must not oversubscribe the shared CPU fit.
     from .resource_budget import render_prefetch_worker_limit
     prefetch_workers = render_prefetch_worker_limit(len(items))
@@ -912,11 +913,21 @@ def run_staged_bake_wave(
             preserve_active_exception=True,
         )
         raise
-    _drain_render_prefetch_futures(
-        render_futures,
-        render_workspaces,
-        preserve_active_exception=False,
-    )
+    if render_futures:
+        drain_started = time.perf_counter()
+        drained_prefetch = _drain_render_prefetch_futures(
+            render_futures,
+            render_workspaces,
+            preserve_active_exception=False,
+        )
+        drain_seconds = time.perf_counter() - drain_started
+        _record_render_prefetch_drain(
+            report,
+            drained_prefetch,
+            drain_seconds=drain_seconds,
+            elapsed_seconds=time.perf_counter() - wave_started,
+            workspace=workspace,
+        )
     return report
 
 
@@ -925,10 +936,10 @@ def _drain_render_prefetch_futures(
     render_workspaces: dict[str, Path],
     *,
     preserve_active_exception: bool,
-) -> None:
+) -> dict[str, dict[str, Any]]:
     """Stop and join this request's speculative work before its lease ends."""
     if not render_futures:
-        return
+        return {}
     from concurrent.futures import CancelledError
     from .fit_runtime import (
         abandon_speculative_workspace,
@@ -936,21 +947,75 @@ def _drain_render_prefetch_futures(
     )
 
     storage_failure: BaseException | None = None
+    results: dict[str, dict[str, Any]] = {}
     for key, future in render_futures.items():
         candidate_workspace = render_workspaces.get(key)
-        if not future.done() and not future.cancel() and candidate_workspace is not None:
+        cancelled_before_start = not future.done() and future.cancel()
+        if not future.done() and not cancelled_before_start and candidate_workspace is not None:
             abandon_speculative_workspace(candidate_workspace)
         try:
-            future.result()
+            result = future.result()
+            results[key] = {
+                "workerDrainStatus": "completed",
+                "workerResult": result if isinstance(result, dict) else None,
+            }
         except CancelledError:
-            pass
+            results[key] = {"workerDrainStatus": "cancelled_before_start"}
         except BaseException as exc:
+            results[key] = {
+                "workerDrainStatus": "failed",
+                "workerError": f"{type(exc).__name__}: {exc}",
+            }
             if not preserve_active_exception and is_storage_failure(exc):
                 storage_failure = storage_failure or exc
         finally:
             clear_speculative_workspace_state(candidate_workspace)
     if storage_failure is not None:
         raise storage_failure
+    return results
+
+
+def _record_render_prefetch_drain(
+    report: dict[str, Any],
+    drained_prefetch: dict[str, dict[str, Any]],
+    *,
+    drain_seconds: float,
+    elapsed_seconds: float,
+    workspace: Path,
+) -> None:
+    """Persist what abandoned prefetch workers did while finalization ran."""
+    metrics = report.setdefault("metrics", {})
+    prefetch_metrics = metrics.get("cpuRenderPrefetch")
+    if isinstance(prefetch_metrics, dict):
+        for key, drained in drained_prefetch.items():
+            entry = prefetch_metrics.get(key)
+            if not isinstance(entry, dict) or entry.get("status") != "abandoned_for_finalization":
+                continue
+            entry["workerDrainStatus"] = drained.get("workerDrainStatus")
+            worker_result = drained.get("workerResult")
+            if isinstance(worker_result, dict):
+                entry["workerResultStatus"] = worker_result.get("status")
+                entry["workerElapsedSeconds"] = worker_result.get("elapsedSeconds")
+                entry["workerStartedAt"] = worker_result.get("startedAt")
+                entry["workerFinishedAt"] = worker_result.get("finishedAt")
+            if drained.get("workerError"):
+                entry["workerError"] = drained["workerError"]
+    metrics["renderPrefetchDrainSeconds"] = round(drain_seconds, 3)
+
+    report["elapsedSeconds"] = round(elapsed_seconds, 3)
+    efficiency = report.get("generationEfficiency")
+    if isinstance(efficiency, dict):
+        elapsed_minutes = elapsed_seconds / 60.0
+        accepted_count = int(efficiency.get("acceptedMovementCount") or 0)
+        efficiency["acceptedPerElapsedMinute"] = (
+            accepted_count / elapsed_minutes if elapsed_minutes > 0.0 else None
+        )
+        efficiency["timingBasis"] = "wave_wall_clock_including_queue_validation_and_prefetch_drain"
+
+    checkpoint_path = workspace.expanduser().resolve() / "staged_wave_checkpoint.json"
+    report_path = checkpoint_path.with_name("staged_wave_report.json")
+    _write_json_atomic(report_path, report)
+    _write_json_atomic(checkpoint_path, report)
 
 
 def _run_staged_bake_wave(

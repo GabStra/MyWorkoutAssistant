@@ -168,6 +168,63 @@ def test_persistent_render_prefetch_is_drained_before_wave_returns(tmp_path, mon
         shared_render_executor.shutdown(wait=True)
 
 
+def test_abandoned_render_prefetch_drain_result_is_recorded(tmp_path, monkeypatch):
+    from concurrent.futures import Future
+
+    wave_workspace = tmp_path / "wave"
+    worker_workspace = tmp_path / "candidate"
+    worker_workspace.mkdir()
+    key = "rdl:candidate-1"
+
+    def run_wave(_items, **kwargs):
+        future = Future()
+        future.set_result({
+            "status": "abandoned_for_finalization",
+            "startedAt": "2026-10-05T10:00:00+00:00",
+            "finishedAt": "2026-10-05T10:00:12+00:00",
+            "elapsedSeconds": 12.0,
+        })
+        kwargs["render_futures"][key] = future
+        kwargs["render_workspaces"][key] = worker_workspace
+        return {
+            "waveId": "prefetch-drain",
+            "elapsedSeconds": 20.0,
+            "completedExerciseCount": 1,
+            "generationEfficiency": {
+                "acceptedMovementCount": 1,
+                "acceptedPerElapsedMinute": 3.0,
+            },
+            "metrics": {
+                "cpuRenderPrefetch": {
+                    key: {
+                        "status": "abandoned_for_finalization",
+                        "cancelledBeforeStart": False,
+                    }
+                }
+            },
+        }
+
+    monkeypatch.setattr(wave, "_run_staged_bake_wave", run_wave)
+    report = wave.run_staged_bake_wave(
+        [None], workspace=wave_workspace, wave_id="prefetch-drain"
+    )
+
+    prefetch = report["metrics"]["cpuRenderPrefetch"][key]
+    assert prefetch["workerDrainStatus"] == "completed"
+    assert prefetch["workerResultStatus"] == "abandoned_for_finalization"
+    assert prefetch["workerElapsedSeconds"] == 12.0
+    assert prefetch["workerStartedAt"] == "2026-10-05T10:00:00+00:00"
+    assert prefetch["workerFinishedAt"] == "2026-10-05T10:00:12+00:00"
+    assert report["metrics"]["renderPrefetchDrainSeconds"] >= 0.0
+    assert report["generationEfficiency"]["timingBasis"].endswith(
+        "and_prefetch_drain"
+    )
+
+    for report_name in ("staged_wave_report.json", "staged_wave_checkpoint.json"):
+        persisted = json.loads((wave_workspace / report_name).read_text(encoding="utf-8"))
+        assert persisted["metrics"]["cpuRenderPrefetch"][key]["workerElapsedSeconds"] == 12.0
+
+
 @pytest.mark.parametrize('unavailable_count', [0, 5])
 @pytest.mark.parametrize('remaining_source_passes', [True, False])
 def test_ready_sources_defer_later_attempts_and_resume_next_candidate(tmp_path, monkeypatch, remaining_source_passes, unavailable_count):
