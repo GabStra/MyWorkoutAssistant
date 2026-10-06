@@ -1094,3 +1094,17 @@ generator meets the RDL contract. Do not tune fitting further to make this
 fixture pass. Replace the source with an inspected contract-matching repetition
 and make its deterministic review fixture reflect that actual evidence before
 resuming the agreed OHP/RDL production-script acceptance comparison.
+
+Replacement-source candidate found locally: `yQbSQCkhvTM`, retained in
+`exercise-library/barbell-romanian-deadlift/selected/`. Its 124-frame input shows
+an upright start, hip hinge, and continuous return to upright; denser inspection
+of frames 100–122 confirms the return is visible. Source SHA-256 is
+`8fc700728af368f782a6bd217bbe36beb99b46282cd3396ca5ae2a3607f4be01`.
+The selected directory retains `processing_evidence/motion.raw.json` and
+`motion.cleaned.json`, plus exact-source pose and phase evidence. Candidate
+identities and hashes are recorded in
+`build/exercise_motion/replays/20261006-replacement-rdl-source-candidate.json`.
+Its old generated artifact is explicitly invalid (`supported_body_moves`,
+`support_surface_geometry_mismatch`); reuse reconstruction evidence only after
+checking its source/timeline identity, not that old generated acceptance. The
+replacement has not yet passed the current production path or rendered review.
