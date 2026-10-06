@@ -83,7 +83,10 @@ fun WorkoutCompleteScreen(
     var selectedCandidateIndex by remember { mutableStateOf(0) }
 
     val scope = rememberWearCoroutineScope()
+    // Review UI is a deliberate-labeling tool: only offer it for sessions the user explicitly
+    // toggled on, not for routine auto-captured sessions (legacy records: userInitiated null).
     val reviewSession = motionCaptureUiState.latestReviewSession
+        ?.takeIf { it.session.sensorConfig.userInitiated == true }
     val reviewSegments = reviewSession?.segments.orEmpty()
     val activeReviewSegment = reviewSegments.getOrNull(selectedReviewSegmentIndex.coerceAtMost((reviewSegments.size - 1).coerceAtLeast(0)))
 

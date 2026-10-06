@@ -92,6 +92,7 @@ class MotionCaptureCoordinator(
     private var currentChunkSampleCount = 0
     private var currentChunkIndex = 0
     private var lowStorageAbortTriggered = false
+    private var captureToggledOnManually = false
     private val eventsFileName = "events.csv"
 
     companion object {
@@ -107,6 +108,7 @@ class MotionCaptureCoordinator(
 
     fun setCollectionEnabled(enabled: Boolean) {
         MotionCapturePreferences.setEnabled(context, enabled)
+        captureToggledOnManually = enabled
         _uiState.value = _uiState.value.copy(collectionEnabled = enabled)
         if (!enabled) {
             scope.launch { stopCapture(MotionCaptureSessionStatus.ABANDONED) }
@@ -257,7 +259,8 @@ class MotionCaptureCoordinator(
             appVersion = appVersionProvider(),
             sessionDirectoryName = sessionDirectoryName,
             sensorConfig = sensorConfig.copy(
-                observedSensors = sensorRepository.observedSensors(sensorConfig).sorted().toList()
+                observedSensors = sensorRepository.observedSensors(sensorConfig).sorted().toList(),
+                userInitiated = captureToggledOnManually
             ),
             exerciseCandidates = candidates
         )
@@ -271,6 +274,7 @@ class MotionCaptureCoordinator(
         currentChunkSampleCount = 0
         currentChunkFileName = null
         lowStorageAbortTriggered = false
+        captureToggledOnManually = false
         val sessionDirectory = sessionsRootDirectory().resolve(sessionDirectoryName).apply { mkdirs() }
         initializeEventsFile(sessionDirectory)
         startSensorCollection(session)
