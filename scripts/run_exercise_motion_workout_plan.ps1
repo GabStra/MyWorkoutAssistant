@@ -2168,6 +2168,7 @@ function Test-SharedLlamaServerRestartAdmission {
         [bool]$RestartRequired,
         [bool]$StartRequested,
         [bool]$ReadyMarkerExists,
+        [int]$SafeBakeRunningJobCount,
         [int]$UnsafeBakeRunningJobCount,
         [int]$PrefetchRunningJobCount,
         [int]$PendingPrefetchCount,
@@ -2177,6 +2178,7 @@ function Test-SharedLlamaServerRestartAdmission {
     )
 
     $hasWork = (
+        $SafeBakeRunningJobCount -gt 0 -or
         $PrefetchRunningJobCount -gt 0 -or
         $PendingPrefetchCount -gt 0 -or
         $DiscoveryRunningJobCount -gt 0 -or
@@ -2187,7 +2189,7 @@ function Test-SharedLlamaServerRestartAdmission {
     return [bool]($UnsafeBakeRunningJobCount -eq 0 -and $hasWork -and $hasRestartSignal)
 }
 
-function Get-SharedLlamaUnsafeBakeRunningJobCount {
+function Get-SharedLlamaBakeRestartCounts {
     param([object[]]$RunningJobs)
 
     # A staged wave owns the exclusive GPU only during WHAM generation. Its
@@ -2195,6 +2197,7 @@ function Get-SharedLlamaUnsafeBakeRunningJobCount {
     # blanket "any bake job" gate can strand those phases after a model
     # handoff. Treat unknown/missing checkpoints conservatively.
     $safeStages = @("source_validation", "wham_released", "final_validation")
+    $safeCount = 0
     $unsafeCount = 0
     foreach ($job in @($RunningJobs)) {
         if (-not ($job.PSObject.Properties.Name -contains "IsStagedWave") -or
@@ -2211,14 +2214,19 @@ function Get-SharedLlamaUnsafeBakeRunningJobCount {
         }
         try {
             $checkpoint = Get-Content -LiteralPath $checkpointPath -Raw | ConvertFrom-Json
-            if ([string]$checkpoint.stage -notin $safeStages) {
+            if ([string]$checkpoint.stage -in $safeStages) {
+                $safeCount++
+            } else {
                 $unsafeCount++
             }
         } catch {
             $unsafeCount++
         }
     }
-    return $unsafeCount
+    return [pscustomobject]@{
+        safeBakeRunningJobCount = $safeCount
+        unsafeBakeRunningJobCount = $unsafeCount
+    }
 }
 
 function Stop-SharedLlamaServer {
@@ -7654,13 +7662,17 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                         throw "Shared llama.cpp server process identity is unverified; refusing to restart or assume it is healthy: $resolvedSharedLlamaServerSessionDir"
                     }
                 }
+                if ($null -eq $sharedLlamaServerInstance) {
+                    $bakeRestartCounts = Get-SharedLlamaBakeRestartCounts -RunningJobs $bakeRunningJobs
+                }
                 if (
                     $null -eq $sharedLlamaServerInstance -and
                     (Test-SharedLlamaServerRestartAdmission `
                         -RestartRequired $sharedLlamaServerRestartRequired `
                         -StartRequested (Test-Path -LiteralPath (Join-Path $resolvedSharedLlamaServerSessionDir "start_requested.json")) `
                         -ReadyMarkerExists (Test-Path -LiteralPath (Join-Path $resolvedSharedLlamaServerSessionDir "ready.json")) `
-                        -UnsafeBakeRunningJobCount (Get-SharedLlamaUnsafeBakeRunningJobCount -RunningJobs $bakeRunningJobs) `
+                        -SafeBakeRunningJobCount $bakeRestartCounts.safeBakeRunningJobCount `
+                        -UnsafeBakeRunningJobCount $bakeRestartCounts.unsafeBakeRunningJobCount `
                         -PrefetchRunningJobCount $prefetchRunningJobs.Count `
                         -PendingPrefetchCount $pendingPrefetchItems.Count `
                         -DiscoveryRunningJobCount $discoveryRunningJobs.Count `
