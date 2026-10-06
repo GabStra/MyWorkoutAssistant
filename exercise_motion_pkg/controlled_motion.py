@@ -4976,8 +4976,18 @@ def _fit_observed_cycles(payload, *, max_evaluations=None, timeout_seconds=None)
             core_unreachable_failures = []
             break
         core_unreachable_failures.append(failed_core_checks)
-    skip_retained_after_core_failure = bool(cycle_attempts) and (
-        len(core_unreachable_failures) == len(cycle_attempts)
+    shared_core_failures = (
+        set(core_unreachable_failures[0]) if core_unreachable_failures else set()
+    )
+    for failures in core_unreachable_failures[1:]:
+        shared_core_failures.intersection_update(failures)
+    # A looped candidate and the retained open-seam fit have different endpoint
+    # constraints. One stalled cycle cannot establish that the open fit is
+    # unreachable; require repeated cycle attempts with the same core blocker.
+    skip_retained_after_core_failure = (
+        len(cycle_attempts) >= 2
+        and len(core_unreachable_failures) == len(cycle_attempts)
+        and bool(shared_core_failures)
     )
     failed_anatomy_cycle_attempts = [
         attempt for attempt in cycle_attempts
@@ -5035,7 +5045,8 @@ def _fit_observed_cycles(payload, *, max_evaluations=None, timeout_seconds=None)
             'applied': False,
             'reason': 'retained_interval_skipped_after_unreachable_core_cycle_failure',
             'skipReason': 'unreachable_core_cycle_failure',
-            'coreCycleFailureChecks': core_unreachable_failures,
+            'coreCycleFailureChecks': sorted(shared_core_failures),
+            'coreCycleFailureAttempts': len(cycle_attempts),
             'availableBudgetSeconds': remaining_before_retained,
             'retainedIntervalFit': False,
             'checks': {},

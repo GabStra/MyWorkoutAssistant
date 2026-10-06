@@ -513,12 +513,12 @@ def test_cycle_attempt_wall_timing_includes_early_fit_phases(monkeypatch):
     assert cycle_attempt['fitReport']['supportInitializationSeconds'] == 17.
 
 
-def test_unreachable_core_cycle_failure_skips_unproductive_retained_fit(monkeypatch):
+def test_repeated_unreachable_core_cycle_failures_skip_retained_fit(monkeypatch):
     from exercise_motion_pkg import controlled_motion as motion, loop_cycles
 
-    proposal = {'id': 'cycle-a'}
+    proposals = [{'id': 'cycle-a'}, {'id': 'cycle-b'}]
     current = {'loop': {'enabled': True}, 'frames': [{}] * 80,
-               'observedCycleProposals': [proposal]}
+               'observedCycleProposals': proposals}
     calls = []
 
     monkeypatch.setattr(
@@ -541,7 +541,7 @@ def test_unreachable_core_cycle_failure_skips_unproductive_retained_fit(monkeypa
 
     _, report = motion._fit_observed_cycles(current, timeout_seconds=360.)
 
-    assert calls == [{'id': 'cycle-a'}]
+    assert calls == proposals
     assert report['cycleSelectionAttempts'][-1]['selection'] == {'kind': 'retained_interval'}
     assert report['cycleSelectionAttempts'][-1]['reason'] == (
         'retained_interval_skipped_after_unreachable_core_cycle_failure'
@@ -550,6 +550,49 @@ def test_unreachable_core_cycle_failure_skips_unproductive_retained_fit(monkeypa
         'unreachable_core_cycle_failure'
     )
     assert report['retainedIntervalFit'] is False
+
+
+def test_single_unreachable_core_cycle_keeps_open_retained_fallback(monkeypatch):
+    from exercise_motion_pkg import controlled_motion as motion, loop_cycles
+
+    proposal = {'id': 'cycle-a'}
+    current = {'loop': {'enabled': True}, 'frames': [{}] * 80,
+               'observedCycleProposals': [proposal]}
+    calls = []
+
+    monkeypatch.setattr(
+        loop_cycles,
+        'slice_loop_cycle',
+        lambda payload, selection: {**payload, 'cycleSelection': selection},
+    )
+
+    def fail_cycle_then_recover_open_fit(fit_payload, **_kwargs):
+        selection = fit_payload.get('cycleSelection')
+        calls.append(selection or {'kind': 'retained_interval'})
+        if selection:
+            return fit_payload, {
+                'applied': False,
+                'reason': 'fit_validation_failed',
+                'termination': 'unreachable_conflict',
+                'checks': {'contacts': False, 'trajectoryFit': False},
+                'elapsedSeconds': 12.,
+            }
+        assert fit_payload['loop']['enabled'] is False
+        return fit_payload, {
+            'applied': True,
+            'reason': 'validated_controlled_motion',
+            'checks': {},
+            'elapsedSeconds': 12.,
+        }
+
+    monkeypatch.setattr(motion, '_fit_controlled_motion', fail_cycle_then_recover_open_fit)
+
+    _, report = motion._fit_observed_cycles(current, timeout_seconds=360.)
+
+    assert calls == [proposal, {'kind': 'retained_interval'}]
+    assert report['applied'] is True
+    assert report['reason'] == 'validated_controlled_motion_open_seam'
+    assert report['retainedIntervalFit'] is True
 
 
 def test_unreachable_noncore_cycle_failure_keeps_retained_recovery(monkeypatch):
