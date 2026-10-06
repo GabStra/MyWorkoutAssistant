@@ -6735,9 +6735,9 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
     try:
         if fit_should_yield_for_priority() or monotonic()-started > timeout_seconds:
             raise TimeoutError
-        # Soft LS must not consume the reserved polish window after anatomy/support.
-        # Keep the full reserve (do not shrink with leftover); hard-stop the solve
-        # at that fence so Stage-C always gets a real window.
+        # Soft LS must leave room for first validation and the normal polish window.
+        # Keep the full reserve (do not shrink with leftover); conditional plant
+        # polish can use any time left after those protected phases.
         outer_remaining = max(0., started + timeout_seconds - monotonic())
         polish_left = min(float(reserved_polish), max(0., outer_remaining - 20.))
         if cyclic and outer_remaining >= 8.:
@@ -6780,7 +6780,10 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             playback_support_geometry_passed=playback_support_geometry_passed)
         geometry_ready = geometry_ready and height_anchored and playback_height_anchored
         nominal_solve = max(45., min(150., 1.25 * float(count)))
-        post_validation_polish_reserve = max(float(polish_left), 12.) + plant_polish
+        # Protect the ordinary polish window from the solve. Mid-sample plant
+        # polish remains opportunistic; reserving its full 22s here can starve
+        # the main fit before we know whether that extra window is needed.
+        post_validation_polish_reserve = max(float(polish_left), 12.)
         optimization_deadline, solve_phase_budget = fit_soft_solve_deadline(
             fit_started=started,
             timeout_seconds=timeout_seconds,
@@ -6792,6 +6795,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         report['solvePhaseBudgetSeconds'] = float(solve_phase_budget)
         report['polishReserveRemainingSeconds'] = float(polish_left)
         report['postValidationPolishReserveSeconds'] = float(post_validation_polish_reserve)
+        report['conditionalPlantPolishSeconds'] = float(plant_polish)
         if (already_valid or geometry_ready) and not heel_contacts.pairs:
             # Avoid introducing solver noise into an already controlled / supported
             # rig. Soft LS on long plant-only clips raised jerk and ate Stage-C.
@@ -7239,7 +7243,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         return candidate,report
 
     validation_started = monotonic()
-    post_validation_polish_reserve = max(float(polish_left), 12.) + plant_polish
+    post_validation_polish_reserve = max(float(polish_left), 12.)
     validation_repair_deadline = min(
         started + timeout_seconds - post_validation_polish_reserve,
         validation_started + validation_reserve,
@@ -7256,7 +7260,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         solved, repair_deadline=validation_repair_deadline)
     polish_until = min(
         started + timeout_seconds,
-        validation_repair_deadline + post_validation_polish_reserve,
+        validation_repair_deadline + post_validation_polish_reserve + plant_polish,
     )
     report['initialValidationSeconds'] = monotonic() - validation_started
     report['polishUntilSeconds'] = float(polish_until - started)

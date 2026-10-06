@@ -3186,6 +3186,7 @@ def test_initial_validation_preserves_polish_reserve_within_outer_budget(monkeyp
     assert report['polishUntilSeconds'] <= (
         report['initialValidationRepairDeadlineSeconds']
         + report['postValidationPolishReserveSeconds']
+        + report['conditionalPlantPolishSeconds']
     )
     # Validation can finish after its allowance, but cannot extend the fit deadline.
     validation_cost[0] = 80.

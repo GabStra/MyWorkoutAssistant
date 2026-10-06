@@ -937,16 +937,20 @@ directory has a condensed version of this state; update it after the arms land.
   acceptance, and no output is promoted. The fit report now identifies joints
   failing the shake limit to make follow-up diagnosis direct.
 - The next captured-cycle replay showed that the first fit's 120-second budget
-  left no time for bounded repair after its 23.2-second validation. Soft-solve
-  scheduling now reserves a frame-scaled validation allowance (capped at 25s)
-  plus the existing post-fit polish window; validation-local projections and
-  later Stage-A/B/C repair use separate deadlines inside the same outer budget.
-  The 123-frame replay used a 24.6s validation reserve and entered bounded
-  contact cleanup. It stopped at `acceptance_stalled` rather than running the
-  remaining budget without measurable acceptance progress. This did not fix
-  RDL: the cyclic attempt still failed anatomy, contacts, shake, playback, and
-  seam checks, while the retained interval still failed shake and playback.
-  Total replay time was 159.2s with no model calls. The captured cyclic attempt
-  also had a 35.7s soft-solve budget, and its motion-discontinuity check regressed
-  relative to the prior replay, so this is not a quality or throughput win yet.
-  Focused deadline regressions and `py_compile` passed; no GPU campaign was run.
+  left too little time for bounded repair after validation. Soft-solve scheduling
+  reserves a frame-scaled validation allowance (capped at 25s) and the normal
+  polish window; the extra plant-polish allowance is opportunistic so it does
+  not starve the main fit. Validation-local projections and later Stage-A/B/C
+  repair use separate deadlines inside the same outer budget. The 123-frame
+  CPU replay used a 60.3s soft-solve budget and 24.6s validation allowance;
+  actual validation took 26.0s. Contact cleanup then ran, and the cyclic result
+  passed contacts and motion-discontinuity, but remained rejected on anatomy,
+  joint shake, playback, and loop seam. Its playback seam was still 118mm and
+  3.84m/s. The retained open interval passed anatomy and contacts, but remained
+  rejected on joint shake and playback; interpolated grip spacing was 11.3mm
+  against a 9.4mm limit. Total replay time was 166.8s, with no model or
+  reconstruction calls. The earlier 35.7s soft-solve allocation regressed
+  motion-discontinuity, so reserving the optional 22s plant window up front was
+  removed. The allocation change is not an accepted-generation or throughput
+  win. Focused deadline regressions and `py_compile` passed; no GPU campaign was
+  run.
