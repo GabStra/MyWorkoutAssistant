@@ -2896,6 +2896,11 @@ def project_playback_rigid_pair_grip(coordinates, rig, names, equipment, *,
                 continue
             x0 = np.concatenate([coords[frame, begin:end] for frame, begin, end in parts])
             original = x0.copy()
+            arm_joints = np.asarray([
+                joint for joint, slot in rig.slots.items() if slot in arm_slots
+            ], dtype=int)
+            base_arm_points = rig.decode(coords)[:, arm_joints]
+            correction_scale = max(body_scale(rig.decode(coords), names), 1e-9)
 
             def unpack(values, _parts=parts):
                 trial = coords.copy()
@@ -2919,8 +2924,14 @@ def project_playback_rigid_pair_grip(coordinates, rig, names, equipment, *,
                 key_grip = grip_residual(points[key_frames], names, equipment).ravel()
                 mid = sample_rig(_sampling_payload(rig, trial), mid_cursors, wrap=cyclic)
                 mid_grip = grip_residual(mid, names, equipment).ravel()
+                arm_correction = points[:, arm_joints] - base_arm_points
+                smooth_correction = np.diff(arm_correction, n=2, axis=0).ravel()
                 return np.concatenate([
-                    8000. * key_grip, 20000. * mid_grip, 0.02 * (values - original)])
+                    8000. * key_grip,
+                    20000. * mid_grip,
+                    0.02 * (values - original),
+                    10000. * smooth_correction / correction_scale,
+                ])
 
             try:
                 solved = least_squares(
@@ -7496,6 +7507,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
 
             def _accept_path(trial, label):
                 nonlocal kept, kept_play, kept_nested, solved, candidate, report, failed_checks
+                previous_playback = report.get('playback') or {}
+                previous_equipment = previous_playback.get('equipment') or {}
                 solved = SimpleNamespace(
                     x=trial.ravel(), nfev=solved.nfev, status=getattr(solved, 'status', 1))
                 candidate, report = validate_solution(solved, project_playback_plants=False)
@@ -7503,12 +7516,39 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 play_after = float((report.get('playback') or {}).get('maximumContactErrorMeters') or 0.)
                 nested_after = _playback_nested_failures(report.get('playback'))
                 failed_after = set(failed_check_names(report.get('checks')))
+                trial_equipment = (report.get('playback') or {}).get('equipment') or {}
+                reject_reasons = []
                 # Never keep a trial that reopens the playback plant gate.
-                if (contact_after >= 0.0005
-                        or 'contact' in nested_after
-                        or play_after > max(previous_play * 1.5, 0.00075) + 1e-9
-                        or not failed_after <= previous_failed
-                        or polish_worsened_jerk(report, previous_jerk)):
+                if contact_after >= 0.0005:
+                    reject_reasons.append('keyframe_contact_regressed')
+                if 'contact' in nested_after:
+                    reject_reasons.append('playback_contact_regressed')
+                if play_after > max(previous_play * 1.5, 0.00075) + 1e-9:
+                    reject_reasons.append('playback_contact_error_increased')
+                if not failed_after <= previous_failed:
+                    reject_reasons.append('new_acceptance_failures')
+                jerk_regressed = polish_worsened_jerk(report, previous_jerk)
+                if jerk_regressed:
+                    reject_reasons.append('jerk_regressed')
+                attempt_record = {
+                    'method': label,
+                    'retained': False,
+                    'rejectionReasons': reject_reasons,
+                    'failedChecks': sorted(failed_after),
+                    'nestedPlaybackFailures': sorted(nested_after),
+                    'maximumContactErrorMeters': contact_after,
+                    'playbackContactErrorMeters': play_after,
+                    'previousEquipmentSpacingErrorMeters': previous_equipment.get(
+                        'maximumSpacingErrorMeters'),
+                    'trialEquipmentSpacingErrorMeters': trial_equipment.get(
+                        'maximumSpacingErrorMeters'),
+                    'previousJerkAfter': previous_jerk,
+                    'trialJerkAfter': report.get('jerkAfter'),
+                    'jerkRegressed': jerk_regressed,
+                }
+                if reject_reasons:
+                    refinement.setdefault('playbackPathRepairAttempts', []).append(
+                        attempt_record)
                     return False
                 cleared_velocity = (
                     'velocity' in (kept_nested | previous_nested)
@@ -7523,6 +7563,13 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                     or (cleared_equipment and 'velocity' not in nested_after)
                     or (len(nested_after) < len(kept_nested)
                         and not ({'velocity'} & nested_after - kept_nested)))
+                if improved:
+                    attempt_record['retained'] = True
+                else:
+                    attempt_record['rejectionReasons'].append(
+                        'playback_failure_not_reduced')
+                refinement.setdefault('playbackPathRepairAttempts', []).append(
+                    attempt_record)
                 if improved:
                     kept = trial.copy()
                     kept_play = play_after
@@ -7620,7 +7667,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 failed_checks = failed_check_names(report.get('checks'))
             refinement['playbackPathRepairKept'] = bool(
                 report.get('applied')
-                or not np.allclose(kept, previous_coordinates, rtol=0., atol=1e-12)
+                or not np.allclose(kept.ravel(), previous_coordinates, rtol=0., atol=1e-12)
             )
             refinement['playbackPathRepair'] = True
             if report.get('applied'):

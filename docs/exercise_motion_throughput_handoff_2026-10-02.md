@@ -976,3 +976,19 @@ directory has a condensed version of this state; update it after the arms land.
   removed. The allocation change is not an accepted-generation or throughput
   win. Focused deadline regressions and `py_compile` passed; no GPU campaign was
   run.
+- A 45-second CPU replay of the retained open RDL interval tested a smoothness
+  residual on the rigid-pair playback grip projection. It retained the bar-grip
+  repair without increasing jerk: interpolated spacing fell from 11.32mm to
+  9.12mm, inside the 9.41mm limit, while contact and body-support checks
+  remained valid. The fit still rejects on `relativeJointShake`; bounded shake
+  cleanup reopened other checks and was rolled back. This is a safe partial
+  playback improvement, not a successful RDL output. The generic projection
+  change passed its focused regressions and Python compilation; no model or
+  reconstruction calls were made.
+- A follow-up source-support audit ruled out the suspected absolute-height
+  detector bug: both RDL ankle tracks pass its pre-normalization ground cutoff.
+  The right-side continuity gap is 0.667s (over the 0.5s merge limit), and
+  unobserved foot-patch samples are `unknown`, not airborne. The current
+  production path can reconcile hash-matched full-sole ground evidence with
+  stable ankle tracks; the retained fit payload predates that rematerialization.
+  Do not widen the generic floor threshold based on this stale payload.
