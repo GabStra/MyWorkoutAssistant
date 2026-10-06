@@ -1070,3 +1070,27 @@ directory has a condensed version of this state; update it after the arms land.
   `requires_cycle_repair`. Cycle selection/rebake, reviewed render, package
   parity, and an OHP+RDL production-script E2E remain unverified. No throughput
   claim follows from this fit replay.
+
+### Oct 6 correction: retained RDL fixture is not a valid acceptance base
+
+Direct inspection of all three cached chronological contact sheets for the
+`retained_pair_process_e2e_20261006_022134` RDL case shows a floor pickup,
+standing lockout, and return to the floor. The fixture's contract instead requires
+an upright start with the bar at hip height, a hip hinge, and return to that
+upright posture. The selected clip does not establish that required repetition.
+
+The cached source-review payload is a fixture response: all scores are 0.99,
+all contract-match flags are true, and its reason is
+`Retained Barbell Romanian Deadlift fixture.` This is not independent visual
+approval. The cached video has 123 frames at 29.97 fps (about 4.1 seconds), with
+SHA-256 `0cf054adb5d21c79ba3c91f30e555e9bf8ff30c3281504185462214e3f4ceb6b`;
+there is no later repetition available in this cached file to select instead.
+
+Exclude this retained case from successful RDL generation and accepted-output
+throughput comparisons. Its solver profiles and focused processing regressions
+can still demonstrate local implementation behavior, but neither successful
+open-clip fitting nor repeated failed cyclic fitting establishes that the
+generator meets the RDL contract. Do not tune fitting further to make this
+fixture pass. Replace the source with an inspected contract-matching repetition
+and make its deterministic review fixture reflect that actual evidence before
+resuming the agreed OHP/RDL production-script acceptance comparison.
