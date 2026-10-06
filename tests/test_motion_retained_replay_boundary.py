@@ -18,6 +18,51 @@ def test_retained_replay_rejects_changed_input_bytes(tmp_path):
         verified_file(fixture, "sourceVideoPath")
 
 
+def test_retained_replay_seeds_only_hash_pinned_usable_contract_cache(
+    tmp_path, monkeypatch
+):
+    from exercise_motion_pkg import youtube
+    from scripts.run_motion_retained_replay import seed_replay_contract_cache
+
+    exercise = SimpleNamespace(exercise_id="press")
+    source_dir = tmp_path / "source-cache"
+    source_dir.mkdir()
+    source_cache = source_dir / "press.json"
+    source_cache.write_text('{"contract":"validated"}', encoding="utf-8")
+    source_digest = hashlib.sha256(source_cache.read_bytes()).hexdigest()
+    monkeypatch.setattr(youtube, "load_workout_plan_exercises", lambda *_args, **_kwargs: [exercise])
+    monkeypatch.setattr(
+        youtube,
+        "exercise_motion_contract_cache_path",
+        lambda item, settings: settings.exercise_motion_contract_cache_dir / f"{item.exercise_id}.json",
+    )
+    monkeypatch.setattr(
+        youtube,
+        "load_cached_exercise_motion_contract",
+        lambda item, settings: (
+            {"cacheStatus": "reused"}
+            if (settings.exercise_motion_contract_cache_dir / f"{item.exercise_id}.json").is_file()
+            else None
+        ),
+    )
+    config = {
+        "workoutPlanPath": str(tmp_path / "plan.json"),
+        "exerciseMotionContractCacheSeed": {
+            "sourceDir": str(source_dir),
+            "sha256ByExerciseId": {"press": source_digest},
+        },
+    }
+
+    seeded = seed_replay_contract_cache(config, tmp_path / "workspace")
+
+    target_cache = tmp_path / "workspace/exercise-motion-contract-cache/press.json"
+    assert target_cache.read_bytes() == source_cache.read_bytes()
+    assert seeded == [{"exerciseId": "press", "cachePath": str(target_cache.resolve()), "sha256": source_digest}]
+    config["exerciseMotionContractCacheSeed"]["sha256ByExerciseId"]["press"] = "0" * 64
+    with pytest.raises(ValueError, match="changed"):
+        seed_replay_contract_cache(config, tmp_path / "another-workspace")
+
+
 def test_retained_replay_keeps_real_review_owner_and_rejects_unpinned_discovery():
     review_owner = object()
     module = SimpleNamespace(LlamaCppVisionRanker=review_owner,

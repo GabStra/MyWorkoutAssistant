@@ -1347,6 +1347,16 @@ frames and original schema, preserving the initial response for diagnosis;
 the focused JSON-repair regression passes. Neither recovery nor JSON repair has
 yet been observed succeeding in a complete production-script replay.
 
+The retained pair also had usable definition-contract caches for both exact
+plan entries, model, mmproj, and policy. The prior replay used a fresh workspace
+without those entries and spent 240.75 seconds on Press contract requests before
+the server failure. The corrected replay fixture now pins those cache files by
+SHA-256; its runner copies them into the isolated workspace and revalidates
+each through `load_cached_exercise_motion_contract` before launch. Both cached
+contracts passed that production loader and the isolated seeding check. This
+removes the redundant contract-generation step from the next replay; it is not
+a measured accepted-output throughput gain.
+
 At the next replay attempt the device had 10,292 MiB used, 1,708 MiB free, and
 100% reported GPU utilization, with a separate Strata inference service on
 port 8080. No additional model campaign was started. A successful corrected

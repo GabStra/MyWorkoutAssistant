@@ -54,6 +54,59 @@ def verify_replay_outputs(run_root: Path, exercise_ids: set[str]) -> None:
             raise ValueError(f"Replay packaged movement differs from reviewed output: {exercise_id}")
 
 
+def seed_replay_contract_cache(config: dict, workspace_root: Path) -> list[dict[str, str]]:
+    """Copy only hash-pinned, semantically usable contracts into a fresh replay workspace."""
+    seed = config.get("exerciseMotionContractCacheSeed")
+    if not seed:
+        return []
+    if not isinstance(seed, dict) or not isinstance(seed.get("sourceDir"), str):
+        raise ValueError("Contract cache seed must specify a sourceDir")
+    expected_hashes = seed.get("sha256ByExerciseId")
+    if not isinstance(expected_hashes, dict):
+        raise ValueError("Contract cache seed must pin a SHA-256 for each exercise")
+
+    from exercise_motion_pkg.youtube import (
+        YouTubeRankingSettings,
+        exercise_motion_contract_cache_path,
+        load_cached_exercise_motion_contract,
+        load_workout_plan_exercises,
+    )
+
+    source_dir = Path(seed["sourceDir"]).resolve()
+    source_settings = YouTubeRankingSettings(exercise_motion_contract_cache_dir=source_dir)
+    target_dir = (workspace_root / "exercise-motion-contract-cache").resolve()
+    target_settings = YouTubeRankingSettings(exercise_motion_contract_cache_dir=target_dir)
+    exercises = load_workout_plan_exercises(Path(config["workoutPlanPath"]))
+    by_id = {exercise.exercise_id: exercise for exercise in exercises}
+    seeded: list[dict[str, str]] = []
+    for exercise_id, expected_hash in expected_hashes.items():
+        exercise = by_id.get(str(exercise_id))
+        if exercise is None:
+            raise ValueError(f"Contract cache seed references an exercise outside the plan: {exercise_id}")
+        source_path = exercise_motion_contract_cache_path(exercise, source_settings)
+        if source_path is None or not source_path.is_file():
+            raise ValueError(f"Pinned contract cache is missing for {exercise_id}")
+        source_digest = hashlib.sha256(source_path.read_bytes()).hexdigest()
+        if source_digest.lower() != str(expected_hash).lower():
+            raise ValueError(f"Pinned contract cache changed for {exercise_id}: {source_path}")
+        if load_cached_exercise_motion_contract(exercise, source_settings) is None:
+            raise ValueError(f"Pinned contract cache is no longer usable for {exercise_id}")
+
+        target_path = exercise_motion_contract_cache_path(exercise, target_settings)
+        if target_path is None:
+            raise ValueError(f"Could not resolve replay contract cache path for {exercise_id}")
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_bytes(source_path.read_bytes())
+        if load_cached_exercise_motion_contract(exercise, target_settings) is None:
+            raise ValueError(f"Seeded contract cache failed replay validation for {exercise_id}")
+        seeded.append({
+            "exerciseId": str(exercise_id),
+            "cachePath": str(target_path),
+            "sha256": source_digest,
+        })
+    return seeded
+
+
 def run_bounded_process(command, *, environment, stdout, stderr, timeout_seconds):
     """Bound the entire replay, including model waits outside stage budgets."""
     with subprocess.Popen(command, cwd=REPO_ROOT, env=environment,
@@ -96,6 +149,8 @@ def run_replay(config_path: Path, run_root: Path, python_command: str | None,
             raise ValueError("Retained reconstruction upstream identity is required")
     run_root.mkdir(parents=True, exist_ok=False)
     config["callsPath"] = str((run_root / "boundary_calls.jsonl").resolve())
+    workspace_root = run_root / "workspace"
+    config["seededExerciseMotionContracts"] = seed_replay_contract_cache(config, workspace_root)
     local_config = run_root / "replay_config.json"
     local_config.write_text(json.dumps(config, indent=2), encoding="utf-8")
     startup = run_root / "python_startup"
@@ -113,7 +168,7 @@ def run_replay(config_path: Path, run_root: Path, python_command: str | None,
         "pwsh", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
         str(REPO_ROOT / "scripts/run_exercise_motion_workout_plan.ps1"),
         "-AllowDirtyWorktree", "-WorkoutPlanJson", config["workoutPlanPath"],
-        "-WorkspaceRoot", str((run_root / "workspace").resolve()),
+        "-WorkspaceRoot", str(workspace_root.resolve()),
         "-MobilePackageOutputJson", str((run_root / "package.json").resolve()),
         "-SharedLlamaServer", "-DiscoveryWorkers", "1",
         "-RequireWhamCache", "-SkipLlamaCppQueryPlanner", "-NoExerciseNameRewrite",
