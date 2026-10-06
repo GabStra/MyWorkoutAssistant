@@ -3311,9 +3311,39 @@ def close_loop_seam_coordinates(coordinates, rig, pinned, *, scale, fps=30., pas
     return best
 
 
+def _boundary_source_fit_constraints(constraint, boundary, free_frames):
+    """Keep source rows affected by repair, including their fixed context."""
+    if not constraint or not constraint.get('available'):
+        return {}, list(boundary)
+    free_frames = set(free_frames)
+
+    def touches_free_frame(link):
+        return ((link['leftFrame'] in free_frames and link['alpha'] < 1.)
+                or (link['rightFrame'] in free_frames and link['alpha'] > 0.))
+
+    observations = [row for row in constraint['observations'] if touches_free_frame(row)]
+    endpoint_rows = [row for row in constraint.get('endpointPostureObservations', [])
+                     if any(link['weight'] != 0. and touches_free_frame(link)
+                            for link in row['fitLinks'])]
+    context = set(boundary)
+    for link in [*observations, *(link for row in endpoint_rows for link in row['fitLinks'])]:
+        context.update((link['leftFrame'], link['rightFrame']))
+    context = sorted(context)
+    indices = {frame: index for index, frame in enumerate(context)}
+
+    def remap(link):
+        return {**link, 'leftFrame': indices[link['leftFrame']],
+                'rightFrame': indices[link['rightFrame']]}
+
+    return {**constraint, 'observations': [remap(row) for row in observations],
+            'endpointPostureObservations': [
+                {**row, 'fitLinks': [remap(link) for link in row['fitLinks']]}
+                for row in endpoint_rows]}, context
+
+
 def project_loop_seam_coordinates(coordinates, rig, pinned, *, scale, fps, max_nfev=50,
                                   deadline=None, settling_weights=None, settling_limit=None,
-                                  span_targets=None, equipment=None):
+                                  span_targets=None, equipment=None, source_projection_constraint=None):
     """Hard-project free boundary DOFs so wrap step+velocity fall under playback limits.
 
     Planted positions are constrained in world space, while local rotations stay
@@ -3385,6 +3415,12 @@ def project_loop_seam_coordinates(coordinates, rig, pinned, *, scale, fps, max_n
 
     boundary_template = coords[list(boundary)]
     boundary_indices = {frame: index for index, frame in enumerate(boundary)}
+    boundary_source, source_context = _boundary_source_fit_constraints(
+        source_projection_constraint, boundary, free_frames)
+    if boundary_source.get('available'):
+        source_template = rig.decode(coords[source_context])
+        source_indices = {frame: index for index, frame in enumerate(source_context)}
+        source_boundary_indices = [source_indices[frame] for frame in boundary]
 
     def unpack(values, *, boundary_only=False):
         trial = boundary_template.copy() if boundary_only else coords.copy()
@@ -3439,6 +3475,12 @@ def project_loop_seam_coordinates(coordinates, rig, pinned, *, scale, fps, max_n
              / max(float(scale), 1e-6)).ravel(),
             0.02 * (values - original),
         ]
+        if boundary_source.get('available'):
+            source_points = source_template.copy()
+            source_points[source_boundary_indices] = points
+            result = np.r_[result,
+                _source_projection_fit_rows(source_points, boundary_source),
+                _source_endpoint_posture_fit_rows(source_points, boundary_source)]
         if smooth_boundary:
             middle = len(boundary) // 2
             for segment, limit in zip(
@@ -8497,6 +8539,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                     settling_limit=settling_limit,
                     span_targets=span_targets,
                     equipment=equipment,
+                    source_projection_constraint=source_projection_constraint,
                     # Nudge validation can consume the polish reserve. Give
                     # each bounded solve its own window, still inside
                     # the candidate's outer deadline.

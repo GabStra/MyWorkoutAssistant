@@ -2782,6 +2782,37 @@ def test_seam_boundary_nudge_reduces_first_last_root_gap():
     assert projected_score <= closed_score + 1e-9
 
 
+def test_boundary_source_constraints_preserve_interpolation_and_fixed_endpoint_context():
+    from exercise_motion_pkg import controlled_motion as motion
+
+    points = np.arange(8 * 3 * 3, dtype=float).reshape(8, 3, 3) / 100.
+    active = {'leftFrame': 0, 'rightFrame': 3, 'alpha': .3,
+              'jointIndex': 0, 'sourcePoint': np.array([.1, .2]), 'confidenceWeight': .8}
+    fixed = {**active, 'leftFrame': 3, 'rightFrame': 4, 'alpha': .4}
+    constraint = {'available': True, 'projection': np.array([[1., 0., 0.], [0., 1., 0.]]),
+                  'offset': np.array([.1, -.2]), 'normalization': 1., 'weight': 10.,
+                  'observations': [active, fixed], 'endpointPostureObservations': [{
+                      'jointIndex': 0, 'centerJointIndices': [1, 2],
+                      'sourceDelta': np.array([.2, .4]), 'confidenceWeight': .7,
+                      'fitLinks': [{**active, 'weight': .25}, {**fixed, 'weight': .75}]}]}
+    compact, context = motion._boundary_source_fit_constraints(
+        constraint, (0, 1, 6, 7), (0, 1, 6, 7))
+    assert context == [0, 1, 3, 4, 6, 7]
+    assert len(compact['observations']) == 1
+    assert len(compact['endpointPostureObservations'][0]['fitLinks']) == 2
+    for change in (0., .2):
+        candidate = points.copy()
+        candidate[0, 0] += change
+        np.testing.assert_allclose(
+            motion._source_projection_fit_rows(candidate[context], compact),
+            motion._source_projection_fit_rows(candidate, constraint)[:2])
+        np.testing.assert_allclose(
+            motion._source_endpoint_posture_fit_rows(candidate[context], compact),
+            motion._source_endpoint_posture_fit_rows(candidate, constraint))
+    assert active['rightFrame'] == 3
+    assert constraint['endpointPostureObservations'][0]['fitLinks'][1]['rightFrame'] == 4
+
+
 def test_seam_projection_scores_grip_and_rejects_breaking_a_valid_pair(monkeypatch):
     from types import SimpleNamespace
     from exercise_motion_pkg import controlled_motion as motion
@@ -2794,6 +2825,13 @@ def test_seam_projection_scores_grip_and_rejects_breaking_a_valid_pair(monkeypat
         {'equipmentConstraints': {'handRelationship': 'rigid_pair'}},
         rig.decode(original), names)
     pinned = np.zeros(points.shape[:2], dtype=bool)
+    hand = names.index('left_hand')
+    projection = np.array([[1., 0., 0.], [0., 0., 1.]])
+    source = {'available': True, 'projection': projection, 'offset': np.zeros(2),
+              'normalization': 1., 'weight': 10., 'observations': [{
+                  'leftFrame': 0, 'rightFrame': 2, 'alpha': .5, 'jointIndex': hand,
+                  'sourcePoint': projection @ rig.decode(original)[0, hand],
+                  'confidenceWeight': 1.}]}
 
     def solve(residual, initial, *, jac, **kwargs):
         baseline = residual(initial)
@@ -2801,13 +2839,15 @@ def test_seam_projection_scores_grip_and_rejects_breaking_a_valid_pair(monkeypat
         probe[:, rig.slots[names.index('left_wrist')]] += .6
         assert not validate_grip(rig.decode(probe), names, equipment)['passed']
         errors = residual(probe.ravel())
+        np.testing.assert_allclose(baseline[-2:], 0., atol=1e-12)
+        assert np.linalg.norm(errors[-2:]) > .01
         assert errors @ errors > baseline @ baseline
         return SimpleNamespace(x=probe.ravel())
 
     monkeypatch.setattr(motion, 'least_squares', solve)
     projected = motion.project_loop_seam_coordinates(
         original, rig, pinned, scale=motion.body_scale(points, names), fps=30.,
-        equipment=equipment)
+        equipment=equipment, source_projection_constraint=source)
     np.testing.assert_array_equal(projected, original)
 
 
