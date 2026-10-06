@@ -2168,7 +2168,7 @@ function Test-SharedLlamaServerRestartAdmission {
         [bool]$RestartRequired,
         [bool]$StartRequested,
         [bool]$ReadyMarkerExists,
-        [int]$BakeRunningJobCount,
+        [int]$UnsafeBakeRunningJobCount,
         [int]$PrefetchRunningJobCount,
         [int]$PendingPrefetchCount,
         [int]$DiscoveryRunningJobCount,
@@ -2184,7 +2184,41 @@ function Test-SharedLlamaServerRestartAdmission {
         $PendingLegacyBakeCount -gt 0
     )
     $hasRestartSignal = $RestartRequired -or $StartRequested -or -not $ReadyMarkerExists
-    return [bool]($BakeRunningJobCount -eq 0 -and $hasWork -and $hasRestartSignal)
+    return [bool]($UnsafeBakeRunningJobCount -eq 0 -and $hasWork -and $hasRestartSignal)
+}
+
+function Get-SharedLlamaUnsafeBakeRunningJobCount {
+    param([object[]]$RunningJobs)
+
+    # A staged wave owns the exclusive GPU only during WHAM generation. Its
+    # source and final validation phases need the shared vision server, so a
+    # blanket "any bake job" gate can strand those phases after a model
+    # handoff. Treat unknown/missing checkpoints conservatively.
+    $safeStages = @("source_validation", "wham_released", "final_validation")
+    $unsafeCount = 0
+    foreach ($job in @($RunningJobs)) {
+        if (-not ($job.PSObject.Properties.Name -contains "IsStagedWave") -or
+            -not $job.IsStagedWave -or
+            -not ($job.PSObject.Properties.Name -contains "WaveWorkspace") -or
+            [string]::IsNullOrWhiteSpace([string]$job.WaveWorkspace)) {
+            $unsafeCount++
+            continue
+        }
+        $checkpointPath = Join-Path $job.WaveWorkspace "staged_wave_checkpoint.json"
+        if (-not (Test-Path -LiteralPath $checkpointPath)) {
+            $unsafeCount++
+            continue
+        }
+        try {
+            $checkpoint = Get-Content -LiteralPath $checkpointPath -Raw | ConvertFrom-Json
+            if ([string]$checkpoint.stage -notin $safeStages) {
+                $unsafeCount++
+            }
+        } catch {
+            $unsafeCount++
+        }
+    }
+    return $unsafeCount
 }
 
 function Stop-SharedLlamaServer {
@@ -7626,7 +7660,7 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                         -RestartRequired $sharedLlamaServerRestartRequired `
                         -StartRequested (Test-Path -LiteralPath (Join-Path $resolvedSharedLlamaServerSessionDir "start_requested.json")) `
                         -ReadyMarkerExists (Test-Path -LiteralPath (Join-Path $resolvedSharedLlamaServerSessionDir "ready.json")) `
-                        -BakeRunningJobCount $bakeRunningJobs.Count `
+                        -UnsafeBakeRunningJobCount (Get-SharedLlamaUnsafeBakeRunningJobCount -RunningJobs $bakeRunningJobs) `
                         -PrefetchRunningJobCount $prefetchRunningJobs.Count `
                         -PendingPrefetchCount $pendingPrefetchItems.Count `
                         -DiscoveryRunningJobCount $discoveryRunningJobs.Count `
@@ -7634,8 +7668,9 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                         -PendingLegacyBakeCount $pendingLegacyBakeItems.Count)
                 ) {
                     # Restart after an observed exit even when ready.json is
-                    # stale. Defer GPU model startup while an exclusive bake
-                    # is active. Start-SharedLlamaServer clears stale markers.
+                    # stale. Staged-wave checkpoints admit startup only after
+                    # WHAM has released the GPU; unknown phases remain blocked.
+                    # Start-SharedLlamaServer clears stale markers.
                     $sharedLlamaServerInstance = Start-SharedLlamaServer -SessionDir $resolvedSharedLlamaServerSessionDir
                     $sharedLlamaServerRestartRequired = $false
                 }

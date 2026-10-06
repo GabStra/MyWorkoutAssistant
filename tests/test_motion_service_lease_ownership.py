@@ -149,7 +149,7 @@ def test_shared_llama_restart_reuses_held_lease_only_after_runtime_stops():
     assert 'process identity is unverified' in runtime_transition
 
 
-def test_shared_llama_restart_admission_ignores_stale_ready_and_defers_for_bake():
+def test_shared_llama_restart_admission_ignores_stale_ready_and_defers_only_for_unsafe_bake():
     pwsh = shutil.which("pwsh")
     if pwsh is None:
         pytest.skip("PowerShell is required to exercise the shared llama restart gate")
@@ -160,27 +160,50 @@ def test_shared_llama_restart_admission_ignores_stale_ready_and_defers_for_bake(
     )
     source = script_path.read_text(encoding="utf-8-sig")
     helper = _powershell_function(source, "Test-SharedLlamaServerRestartAdmission")
+    unsafe_bake_counter = _powershell_function(source, "Get-SharedLlamaUnsafeBakeRunningJobCount")
     command = f"""
 $ErrorActionPreference = 'Stop'
 {helper}
+{unsafe_bake_counter}
 $staleReadyRestart = Test-SharedLlamaServerRestartAdmission `
     -RestartRequired $true -StartRequested $false -ReadyMarkerExists $true `
-    -BakeRunningJobCount 0 -PrefetchRunningJobCount 0 -PendingPrefetchCount 0 `
+    -UnsafeBakeRunningJobCount 0 -PrefetchRunningJobCount 0 -PendingPrefetchCount 0 `
     -DiscoveryRunningJobCount 1 -PendingDiscoveryCount 0 -PendingLegacyBakeCount 0
 if (-not $staleReadyRestart) {{ throw 'An observed server exit was hidden by stale ready.json.' }}
 $prefetchRestart = Test-SharedLlamaServerRestartAdmission `
     -RestartRequired $true -StartRequested $false -ReadyMarkerExists $true `
-    -BakeRunningJobCount 0 -PrefetchRunningJobCount 1 -PendingPrefetchCount 0 `
+    -UnsafeBakeRunningJobCount 0 -PrefetchRunningJobCount 1 -PendingPrefetchCount 0 `
     -DiscoveryRunningJobCount 0 -PendingDiscoveryCount 0 -PendingLegacyBakeCount 0
 if (-not $prefetchRestart) {{ throw 'Active prefetch work did not admit a required restart.' }}
 $exclusiveBake = Test-SharedLlamaServerRestartAdmission `
     -RestartRequired $true -StartRequested $true -ReadyMarkerExists $false `
-    -BakeRunningJobCount 1 -PrefetchRunningJobCount 0 -PendingPrefetchCount 0 `
+    -UnsafeBakeRunningJobCount 1 -PrefetchRunningJobCount 0 -PendingPrefetchCount 0 `
     -DiscoveryRunningJobCount 1 -PendingDiscoveryCount 0 -PendingLegacyBakeCount 0
 if ($exclusiveBake) {{ throw 'The shared vision server restarted during an exclusive bake.' }}
+$safeWave = [pscustomobject]@{{ IsStagedWave = $true; WaveWorkspace = 'safe-wave' }}
+$safeCheckpoint = [pscustomobject]@{{ stage = 'source_validation' }}
+function Get-Content {{ return $safeCheckpoint | ConvertTo-Json }}
+function Test-Path {{ return $true }}
+$safeBakeCount = Get-SharedLlamaUnsafeBakeRunningJobCount -RunningJobs @($safeWave)
+if ($safeBakeCount -ne 0) {{ throw 'Source validation was treated as GPU-exclusive.' }}
+$safeSourceRestart = Test-SharedLlamaServerRestartAdmission `
+    -RestartRequired $true -StartRequested $true -ReadyMarkerExists $false `
+    -UnsafeBakeRunningJobCount $safeBakeCount -PrefetchRunningJobCount 0 -PendingPrefetchCount 0 `
+    -DiscoveryRunningJobCount 1 -PendingDiscoveryCount 0 -PendingLegacyBakeCount 0
+if (-not $safeSourceRestart) {{ throw 'A source-validation wave could not restart its required vision server.' }}
+$safeCheckpoint = [pscustomobject]@{{ stage = 'final_validation' }}
+$safeFinalCount = Get-SharedLlamaUnsafeBakeRunningJobCount -RunningJobs @($safeWave)
+if ($safeFinalCount -ne 0) {{ throw 'Final validation was treated as GPU-exclusive.' }}
+$safeCheckpoint = [pscustomobject]@{{ stage = 'wham_generation' }}
+$unsafeBakeCount = Get-SharedLlamaUnsafeBakeRunningJobCount -RunningJobs @($safeWave)
+if ($unsafeBakeCount -ne 1) {{ throw 'WHAM generation did not block the shared vision server restart.' }}
+$unknownWave = [pscustomobject]@{{ IsStagedWave = $true; WaveWorkspace = 'unknown-wave' }}
+function Test-Path {{ return $false }}
+$unknownBakeCount = Get-SharedLlamaUnsafeBakeRunningJobCount -RunningJobs @($unknownWave)
+if ($unknownBakeCount -ne 1) {{ throw 'A missing staged checkpoint did not fail closed.' }}
 $staleMarkerOnly = Test-SharedLlamaServerRestartAdmission `
     -RestartRequired $false -StartRequested $false -ReadyMarkerExists $true `
-    -BakeRunningJobCount 0 -PrefetchRunningJobCount 0 -PendingPrefetchCount 0 `
+    -UnsafeBakeRunningJobCount 0 -PrefetchRunningJobCount 0 -PendingPrefetchCount 0 `
     -DiscoveryRunningJobCount 1 -PendingDiscoveryCount 0 -PendingLegacyBakeCount 0
 if ($staleMarkerOnly) {{ throw 'A stale ready marker without an observed exit triggered a restart.' }}
 """
