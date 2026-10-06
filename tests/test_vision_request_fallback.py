@@ -1,5 +1,6 @@
 import httpx
 import pytest
+from contextlib import contextmanager
 
 from exercise_motion_pkg.segment_detection import LlamaCppVisionClient
 from exercise_motion_pkg.vlm_errors import CriticalVlmInteractionError
@@ -71,5 +72,33 @@ def test_vision_recovery_uses_remaining_request_budget(monkeypatch, spent, expec
             assert timeouts == [10, 7]
             assert recoveries == [True]
         assert len(timeouts) == expected_calls
+    finally:
+        client.close()
+
+
+def test_vision_admission_wait_consumes_request_budget(monkeypatch):
+    from exercise_motion_pkg import segment_detection
+
+    clock = [0.0]
+    monkeypatch.setattr(segment_detection.time, "monotonic", lambda: clock[0])
+
+    @contextmanager
+    def queued_scope(**kwargs):
+        assert kwargs["timeout_seconds"] == 10
+        clock[0] += 8
+        yield
+
+    monkeypatch.setattr(segment_detection, "shared_llama_request_scope", queued_scope)
+    client = LlamaCppVisionClient("http://127.0.0.1:8090", "test")
+    timeouts = []
+
+    def post(**kwargs):
+        timeouts.append(kwargs["timeout"])
+        return httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}]})
+
+    monkeypatch.setattr(client, "_post_chat_completion", post)
+    try:
+        assert client.caption_images(frame_paths=[], prompt="Return JSON.", request_timeout_seconds=10) == "{}"
+        assert timeouts == [2]
     finally:
         client.close()

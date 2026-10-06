@@ -1591,13 +1591,16 @@ class LlamaCppVisionClient:
     ) -> str:
         if self.base_url is None:
             raise RuntimeError("llama-cpp vision mode requires a base URL.")
+        request_timeout = self._resolved_request_timeout(request_timeout_seconds)
+        request_deadline = (None if request_timeout is None
+                            else time.monotonic() + request_timeout)
         # Single choke point for every shared-server vision request (wave
         # sessions, discovery, contract prefetch): publish this process's
         # in-flight count so any quiescing client drains us before stopping
         # the server. No-op unless this process attached to a shared session
         # dir, and for threads already counted by LazyLlamaCppVisionSession.
         with shared_llama_request_scope(
-            timeout_seconds=self._resolved_request_timeout(request_timeout_seconds)
+            timeout_seconds=request_timeout
         ):
             return self._caption_images_via_server(
                 frame_paths=frame_paths,
@@ -1609,6 +1612,7 @@ class LlamaCppVisionClient:
                 temperature=temperature,
                 top_p=top_p,
                 top_k=top_k,
+                request_deadline=request_deadline,
             )
 
     def _resolved_request_timeout(self, request_timeout_seconds: float | None) -> float | None:
@@ -1629,6 +1633,7 @@ class LlamaCppVisionClient:
         temperature: float | None = None,
         top_p: float | None = None,
         top_k: int | None = None,
+        request_deadline: float | None = None,
     ) -> str:
         content: list[dict[str, object]] = [{"type": "text", "text": prompt}]
         for frame_path in frame_paths:
@@ -1665,8 +1670,8 @@ class LlamaCppVisionClient:
         image_count = len(frame_paths)
         image_bytes = sum(frame_path.stat().st_size for frame_path in frame_paths if frame_path.exists())
         request_timeout = self._resolved_request_timeout(request_timeout_seconds)
-        request_deadline = (None if request_timeout is None
-                            else time.monotonic() + request_timeout)
+        if request_deadline is None and request_timeout is not None:
+            request_deadline = time.monotonic() + request_timeout
         request_kwargs: dict[str, object] = {"json": payload, "timeout": request_timeout}
         interaction = "llama-cpp vision chat completion"
         last_error: CriticalVlmInteractionError | None = None
