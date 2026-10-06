@@ -6685,6 +6685,7 @@ $effectiveSharedLlamaServer = (
     -not $SkipVisionRanking
 )
 $sharedLlamaServerInstance = $null
+$sharedLlamaServerRestartRequired = $false
 # Overlapping staged waves need that shared server: two concurrent wave VLM
 # phases each spawn a dedicated llama-server without it, which cannot
 # co-reside on the GPU. Collapse the cap to 1 (serialized waves, today's
@@ -7584,9 +7585,9 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                     $serverRuntimeState = Get-MotionServiceRuntimeState `
                         -RuntimeOwner $sharedLlamaServerInstance.runtimeOwner
                     if ($serverRuntimeState -eq "stopped") {
-                        $restartRequested = Test-Path -LiteralPath (Join-Path $resolvedSharedLlamaServerSessionDir "start_requested.json")
-                        if ($bakeRunningJobs.Count -gt 0 -and -not $restartRequested) {
-                            Write-Host "Shared llama.cpp server stopped for an exclusive GPU phase; it will restart when a client requests it."
+                        $sharedLlamaServerRestartRequired = $true
+                        if ($bakeRunningJobs.Count -gt 0) {
+                            Write-Host "Shared llama.cpp server stopped for an exclusive GPU phase; restart is deferred until that phase ends."
                         }
                         $sharedLlamaServerInstance = $null
                     } elseif ($serverRuntimeState -eq "running") {
@@ -7597,16 +7598,19 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                 }
                 if (
                     $null -eq $sharedLlamaServerInstance -and
-                    ($discoveryRunningJobs.Count -gt 0 -or $bakeRunningJobs.Count -gt 0 -or $pendingLegacyBakeItems.Count -gt 0) -and
+                    $bakeRunningJobs.Count -eq 0 -and
+                    ($discoveryRunningJobs.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or $pendingLegacyBakeItems.Count -gt 0) -and
                     (
+                        $sharedLlamaServerRestartRequired -or
                         (Test-Path -LiteralPath (Join-Path $resolvedSharedLlamaServerSessionDir "start_requested.json")) -or
                         -not (Test-Path -LiteralPath (Join-Path $resolvedSharedLlamaServerSessionDir "ready.json"))
                     )
                 ) {
-                    # Initial start or a client-requested restart after an
-                    # exclusive phase released the GPU. Start-SharedLlamaServer
-                    # clears stale markers (including the request) itself.
+                    # Restart after an observed exit even when ready.json is
+                    # stale. Defer GPU model startup while an exclusive bake
+                    # is active. Start-SharedLlamaServer clears stale markers.
                     $sharedLlamaServerInstance = Start-SharedLlamaServer -SessionDir $resolvedSharedLlamaServerSessionDir
+                    $sharedLlamaServerRestartRequired = $false
                 }
             }
             while (

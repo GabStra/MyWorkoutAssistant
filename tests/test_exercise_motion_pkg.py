@@ -14338,6 +14338,60 @@ def test_prepared_vision_scoring_ignores_vlm_camera_and_framing_fields(
     assert payload["static_camera_throughout"] is False
 
 
+def test_prepared_vision_review_repairs_one_non_json_response(
+    tmp_path: Path,
+) -> None:
+    temp_dir = tempfile.TemporaryDirectory(dir=tmp_path)
+    frame_path = tmp_path / "frame.jpg"
+    frame_path.write_bytes(b"frame")
+    prepared = PreparedVisionReview(
+        candidate=YouTubeCandidate(
+            url="https://www.youtube.com/watch?v=json-repair",
+            video_id="json-repair",
+            title="Clean and Jerk demo",
+            channel=None,
+            duration_seconds=40,
+            view_count=None,
+            upload_date=None,
+            description_snippet=None,
+            thumbnail=None,
+        ),
+        temp_dir=temp_dir,
+        frame_paths=[frame_path],
+        frame_path_chunks=[[frame_path]],
+        chunk_windows=[(0.0, 4.0)],
+        chunk_count=1,
+        prompt="Score this source and return the required JSON schema.",
+    )
+    prompts: list[str] = []
+    responses = [
+        "Source Description: Clean and Jerk. Complete Description: lift overhead.",
+        json.dumps(high_quality_vision_payload_for_test()),
+    ]
+
+    def caption_images(*, frame_paths: list[Path], prompt: str) -> str:
+        assert frame_paths == [frame_path]
+        prompts.append(prompt)
+        return responses.pop(0)
+
+    try:
+        score, reasons, payload = score_prepared_vision_review(
+            prepared=prepared,
+            settings=YouTubeRankingSettings(vision_max_chunks_per_candidate=1),
+            caption_images=caption_images,
+        )
+    finally:
+        prepared.close()
+
+    assert score >= 0.8
+    assert "valid_motion_scene" in reasons
+    assert len(prompts) == 2
+    assert "previous response did not follow" in prompts[1]
+    assert payload is not None
+    assert payload["reviewedChunks"][0]["jsonRepairAttempted"] is True
+    assert payload["reviewedChunks"][0]["jsonRepairSucceeded"] is True
+
+
 def test_vision_scoring_ignores_vlm_camera_cuts_and_cropping_fields() -> None:
     score, reasons = score_candidate_vision_payload(
         high_quality_vision_payload_for_test(

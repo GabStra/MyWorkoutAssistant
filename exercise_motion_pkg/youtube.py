@@ -10349,9 +10349,26 @@ def score_prepared_vision_review(
             continue
         vlm_started = time.monotonic()
         contradiction_review = None
+        json_repair_attempted = False
+        prior_invalid_json_response = None
         try:
             raw = caption_images(frame_paths=chunk_paths, prompt=chunk_prompt)
             initial_payload = extract_json_object(raw)
+            if not isinstance(initial_payload, dict):
+                json_repair_attempted = True
+                prior_invalid_json_response = raw
+                raw = caption_images(
+                    frame_paths=chunk_paths,
+                    prompt=(
+                        chunk_prompt
+                        + "\nYour previous response did not follow this task's required JSON schema. "
+                        "Reinspect the same attached frames and answer source suitability only. "
+                        "Return exactly one JSON object using the keys and value types specified above. "
+                        "Do not summarize or reproduce the exercise contract or its generated guidance. "
+                        "Do not use markdown or prose outside the JSON object."
+                    ),
+                )
+                initial_payload = extract_json_object(raw)
             if not contradiction_review_used and source_review_needs_contradiction_check(initial_payload, pose_motion_evidence):
                 contradiction_review_used = True
                 initial_raw = raw
@@ -10414,6 +10431,8 @@ def score_prepared_vision_review(
                 chunk_end=chunk_end,
                 window_source=window_source,
                 frame_paths=chunk_paths,
+                raw_response=raw if json_repair_attempted else None,
+                prior_raw_response=prior_invalid_json_response,
                 prompt=chunk_prompt,
                 error={"type": type(exc).__name__, "message": str(exc)},
             )
@@ -10429,6 +10448,9 @@ def score_prepared_vision_review(
                     debug_artifacts=debug_artifacts,
                 )
             )
+            if json_repair_attempted:
+                reviewed_chunks[-1]["jsonRepairAttempted"] = True
+                reviewed_chunks[-1]["jsonRepairSucceeded"] = False
             continue
         vlm_elapsed = time.monotonic() - vlm_started
         vlm_elapsed_total += vlm_elapsed
@@ -10444,20 +10466,23 @@ def score_prepared_vision_review(
                 frame_paths=chunk_paths,
                 prompt=chunk_prompt,
                 raw_response=raw,
+                prior_raw_response=prior_invalid_json_response,
                 error={"type": "invalid_json", "message": "VLM response did not contain a JSON object."},
             )
-            reviewed_chunks.append(
-                build_reviewed_chunk_timing(
-                    chunk_index=chunk_index,
-                    chunk_start=chunk_start,
-                    chunk_end=chunk_end,
-                    window_source=window_source,
-                    render_elapsed=render_elapsed,
-                    vlm_elapsed=vlm_elapsed,
-                    failure="invalid_json",
-                    debug_artifacts=debug_artifacts,
-                )
+            reviewed_chunk = build_reviewed_chunk_timing(
+                chunk_index=chunk_index,
+                chunk_start=chunk_start,
+                chunk_end=chunk_end,
+                window_source=window_source,
+                render_elapsed=render_elapsed,
+                vlm_elapsed=vlm_elapsed,
+                failure="invalid_json",
+                debug_artifacts=debug_artifacts,
             )
+            if json_repair_attempted:
+                reviewed_chunk["jsonRepairAttempted"] = True
+                reviewed_chunk["jsonRepairSucceeded"] = False
+            reviewed_chunks.append(reviewed_chunk)
             continue
         score, reasons = score_candidate_vision_payload(payload)
         if contradiction_review is not None:
@@ -10471,25 +10496,28 @@ def score_prepared_vision_review(
             frame_paths=chunk_paths,
             prompt=chunk_prompt,
             raw_response=raw,
+            prior_raw_response=prior_invalid_json_response,
             parsed_payload=payload,
             score=score,
             reasons=reasons,
         )
         chunk_scores.append(score)
         chunk_results.append((score, reasons, payload, chunk_index))
-        reviewed_chunks.append(
-            build_reviewed_chunk_timing(
-                chunk_index=chunk_index,
-                chunk_start=chunk_start,
-                chunk_end=chunk_end,
-                window_source=window_source,
-                render_elapsed=render_elapsed,
-                vlm_elapsed=vlm_elapsed,
-                score=score,
-                valid=score >= 0.50,
-                debug_artifacts=debug_artifacts,
-            )
+        reviewed_chunk = build_reviewed_chunk_timing(
+            chunk_index=chunk_index,
+            chunk_start=chunk_start,
+            chunk_end=chunk_end,
+            window_source=window_source,
+            render_elapsed=render_elapsed,
+            vlm_elapsed=vlm_elapsed,
+            score=score,
+            valid=score >= 0.50,
+            debug_artifacts=debug_artifacts,
         )
+        if json_repair_attempted:
+            reviewed_chunk["jsonRepairAttempted"] = True
+            reviewed_chunk["jsonRepairSucceeded"] = True
+        reviewed_chunks.append(reviewed_chunk)
         early_stop_reason = adaptive_review_stop_reason(
             chunk_scores=chunk_scores,
             chunk_results=chunk_results,
@@ -10951,6 +10979,7 @@ def write_prepared_vision_chunk_debug(
     frame_paths: list[Path],
     prompt: str,
     raw_response: str | None = None,
+    prior_raw_response: str | None = None,
     parsed_payload: dict[str, Any] | None = None,
     score: float | None = None,
     reasons: list[str] | None = None,
@@ -10964,10 +10993,14 @@ def write_prepared_vision_chunk_debug(
         prompt_path = chunk_dir / "prompt.txt"
         prompt_path.write_text(prompt, encoding="utf-8")
         raw_response_path: Path | None = None
+        prior_raw_response_path: Path | None = None
         parsed_payload_path: Path | None = None
         if raw_response is not None:
             raw_response_path = chunk_dir / "raw_response.txt"
             raw_response_path.write_text(raw_response, encoding="utf-8")
+        if prior_raw_response is not None:
+            prior_raw_response_path = chunk_dir / "prior_raw_response.txt"
+            prior_raw_response_path.write_text(prior_raw_response, encoding="utf-8")
         if parsed_payload is not None:
             parsed_payload_path = chunk_dir / "parsed_payload.json"
             parsed_payload_path.write_text(json.dumps(parsed_payload, indent=2), encoding="utf-8")
@@ -10986,6 +11019,12 @@ def write_prepared_vision_chunk_debug(
             "promptChars": len(prompt),
             "rawResponsePath": str(raw_response_path) if raw_response_path is not None else None,
             "rawResponseChars": len(raw_response) if raw_response is not None else 0,
+            "priorRawResponsePath": (
+                str(prior_raw_response_path) if prior_raw_response_path is not None else None
+            ),
+            "priorRawResponseChars": (
+                len(prior_raw_response) if prior_raw_response is not None else 0
+            ),
             "parsedPayloadPath": str(parsed_payload_path) if parsed_payload_path is not None else None,
             "score": score,
             "reasons": reasons or [],
@@ -10996,6 +11035,11 @@ def write_prepared_vision_chunk_debug(
             "artifactDir": str(chunk_dir),
             "promptPath": str(prompt_path),
             "rawResponsePath": str(raw_response_path) if raw_response_path is not None else None,
+            "priorRawResponsePath": (
+                str(prior_raw_response_path)
+                if prior_raw_response_path is not None
+                else None
+            ),
             "parsedPayloadPath": str(parsed_payload_path) if parsed_payload_path is not None else None,
             "debugPath": str(debug_path),
         }

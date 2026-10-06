@@ -18,6 +18,8 @@ import sys
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 
 def verify_replay_outputs(run_root: Path, exercise_ids: set[str]) -> None:
@@ -69,7 +71,7 @@ def run_bounded_process(command, *, environment, stdout, stderr, timeout_seconds
             return 124, True
 
 
-def run_replay(config_path: Path, run_root: Path, python_command: str,
+def run_replay(config_path: Path, run_root: Path, python_command: str | None,
                timeout_seconds: float = 2400) -> int:
     if timeout_seconds <= 0:
         raise ValueError("Replay timeout must be positive")
@@ -113,7 +115,6 @@ def run_replay(config_path: Path, run_root: Path, python_command: str,
         "-AllowDirtyWorktree", "-WorkoutPlanJson", config["workoutPlanPath"],
         "-WorkspaceRoot", str((run_root / "workspace").resolve()),
         "-MobilePackageOutputJson", str((run_root / "package.json").resolve()),
-        "-PythonCommand", python_command,
         "-SharedLlamaServer", "-DiscoveryWorkers", "1",
         "-RequireWhamCache", "-SkipLlamaCppQueryPlanner", "-NoExerciseNameRewrite",
         "-SkipPosePrefilter", "-SkipExerciseMotionContractPrefetch", "-SkipSourceSegmentDetection",
@@ -130,6 +131,11 @@ def run_replay(config_path: Path, run_root: Path, python_command: str,
         "-CandidateTimeoutSeconds", "300", "-ExerciseTimeoutSeconds", "600",
         "-ProgressIntervalSeconds", "5", "-ArtifactRetention", "debug",
     ]
+    # Let the production wrapper select EXERCISE_MOTION_PYTHON or its CUDA
+    # default. Passing this runner's sys.executable would silently override
+    # that selection with a CPU-only interpreter on many developer machines.
+    if python_command:
+        command.extend(["-PythonCommand", python_command])
     (run_root / "command.json").write_text(json.dumps(command, indent=2), encoding="utf-8")
     with (run_root / "stdout.log").open("w", encoding="utf-8") as stdout, \
             (run_root / "stderr.log").open("w", encoding="utf-8") as stderr:
@@ -159,7 +165,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--run-root", required=True, type=Path)
-    parser.add_argument("--python", default=sys.executable)
+    parser.add_argument("--python", default=None)
     parser.add_argument("--timeout-seconds", type=float, default=2400)
     args = parser.parse_args()
     raise SystemExit(run_replay(args.config.resolve(), args.run_root.resolve(), args.python,
