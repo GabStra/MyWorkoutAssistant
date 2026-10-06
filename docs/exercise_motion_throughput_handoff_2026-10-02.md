@@ -927,8 +927,12 @@ directory has a condensed version of this state; update it after the arms land.
   6.54m/s to 93.4mm and 3.08m/s, but still fails; anatomy also remains failed
   (`anatomy_chest_attachment`, `anatomy_spine_deviation`, and
   `anatomy_torso_bend`). The retained open interval passes anatomy and
-  contacts, but still fails playback, with a 176mm seam and 5.06m/s mismatch;
-  right-wrist and right-hand shake exceed their limits by 1.2% and 0.3%, and
-  interpolated grip spacing is 11.3mm against a 9.4mm limit. Phase preflight is
-  not fit acceptance, and no output is promoted. The fit report now identifies
-  joints failing the shake limit to make follow-up diagnosis direct.
+  contacts, but still fails playback: interpolated grip spacing is 11.3mm
+  against a 9.4mm limit. Its 176mm position difference and 5.06m/s boundary
+  mismatch are open-interval diagnostics, not the cyclic candidate's seam
+  target. Right-wrist and right-hand shake exceed their limits by 1.2% and
+  0.3%. The cyclic attempt also misses playback body-support range (5.88mm
+  against 5mm) and interpolated grip (20.6mm against 9.4mm), so its remaining
+  failures are not isolated to seam closure. Phase preflight is not fit
+  acceptance, and no output is promoted. The fit report now identifies joints
+  failing the shake limit to make follow-up diagnosis direct.
