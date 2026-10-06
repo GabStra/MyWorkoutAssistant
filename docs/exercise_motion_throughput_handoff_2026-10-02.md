@@ -9,8 +9,8 @@ below describe the current production owners, not a promotion verdict.
 | --- | --- | --- |
 | Artifact state machine | Implemented; corrected two-exercise acceptance verified | `artifact_state.py` validates lineage and terminal classes; `bake_and_rank.py` binds the final review window and selected skeleton identity; `build_workout_plan_movement_package.py::validate_selected_movement` checks the packaged selection against review evidence. The current production-script replay accepted Press and the corrected 117-frame RDL interval, with terminal RDL `cyclic_rebake`, real final review, and package hashes matching the reviewed skeletons. Evidence is under `build/exercise_motion/retained_pair_corrected_interval_fixed_20261006/`. |
 | Source-evidence constraints in fitting | Implemented; corrected pair verified on retained inputs | `controlled_motion_fit_source_evidence` binds selected interval, observed support, articulation, and projection evidence to the fit cache. Contact projection preserves observed root posture and refreshes confirmed ground heights. The corrected RDL used exact source frames 6–122 and the matching retained reconstruction; its controlled fit passed and the terminal cycle passed review. This verifies fit/render/acceptance for pinned reconstructions, not fresh GVHMR inference or cache lookup. Camera projection and strict endpoint coverage remain conditional on available evidence and declared intervals. |
-| Queue-backed long-lived services | Partial implementation | `staged_wave_service.py::_execute_wave_request` accepts staged bake manifests and keeps the render executor alive across requests. Opt-in reconstruction workers are persistent. `Start-InitialDiscoveryJob`, prefetch, download, and legacy individual jobs still launch transient processes; the generator-wide service queue is not implemented. |
-| Persistent infrastructure ownership | Partial implementation | Workspace/process leases, shared-model quiescing, machine-wide fit slots, durable queue claims, ambiguous recovery, and content-verified caches exist for the implemented services. VLM recovery now shares the request budget and avoids restarting a responsive server after a busy inference probe. CLEF owns its server per decision lease and releases it on failure; it is not a long-lived model service. External GPU experiments do not participate in this generator's ownership protocol. |
+| Queue-backed long-lived services | Partial implementation | `staged_wave_service.py::_execute_wave_request` accepts staged bake manifests and keeps the render executor alive across requests. Opt-in reconstruction workers are persistent. `Start-InitialDiscoveryJob`, prefetch, download, and legacy individual jobs still launch transient processes; the generator-wide service queue is not implemented. The measured `exercise_motion_pkg` import overhead (median 0.784s) does not justify serializing discovery behind the bake queue; a wider service needs multiple consumers and evidence of a meaningful wall-time gain. |
+| Persistent infrastructure ownership | Partial implementation; staged shared-llama restart gap fixed and verified | Workspace/process leases, shared-model quiescing, machine-wide fit slots, durable queue claims, ambiguous recovery, and content-verified caches exist. The PowerShell supervisor now admits Qwen restart when every active staged wave reports `source_validation`, `wham_released`, or `final_validation`, counts that safe active work as restart demand, and blocks WHAM, unknown stages, and non-staged jobs. The corrected two-exercise replay completed without the prior RDL infrastructure retry. Remaining boundaries include transient discovery/prefetch/download owners and GPU processes outside the generator protocol. CLEF still owns a server per decision lease rather than as a long-lived service. |
 
 ### Concrete retained quality evidence
 
@@ -1516,3 +1516,41 @@ strictly additive. Browser startup and export were 1.1s and 1.5s. Discovery took
 spends most candidate time in fitting and review rendering, while this run does
 not support a claim of fresh-inference savings, library-wide quality, or a
 speedup against a controlled baseline.
+
+### Oct 6 shared-llama restart admission and current-code paired replay
+
+The first stage-aware restart change (`62c3d2dd`) classified safe and unsafe
+staged-wave phases, but its admission predicate still did not count an active
+safe staged wave as pending work. The post-change replay
+`build/exercise_motion/retained_pair_stageaware_restart_20261006/run/` exposed
+that omission in production: Press passed, then RDL source validation remained
+without Qwen for 131.01 seconds, ended as `retry_required`, and entered the
+fallback bake path. This run still completed both movements, but it did not
+verify that restart admission worked.
+
+Commit `3fdf3298` fixes the owning predicate. The supervisor counts active
+staged waves in `source_validation`, `wham_released`, and `final_validation` as
+restart demand, while any WHAM, unknown, malformed, or non-staged running job
+continues to block startup. The focused PowerShell regression now verifies
+restart with only a safe active wave, blocks WHAM, and fails closed on a missing
+checkpoint; it passes along with PowerShell parsing.
+
+The bounded production-script replay on that revision is
+`build/exercise_motion/retained_pair_restart_fix_final_20261006/run/`. It used
+the same hash-pinned Press and RDL inputs, ran genuine production source/final
+reviews and the normal fit/render/package gates, and reports
+`productionScriptE2EPassed=true`, two approved outputs, and two packaged
+movement references. Qwen stopped for the exclusive phase and restarted while
+the active wave was in a safe checkpoint. RDL source validation completed in
+27.48 seconds, versus 131.01 seconds and an infrastructure retry in the prior
+run: 103.53 seconds less in that phase. End-to-end wall time fell from 713.8s
+to 615.9s (97.9s, 13.7%) for these two runs.
+
+All four sampled production-render contact sheets (two per exercise) are
+byte-identical between those runs. Both runs also report reviewed-artifact
+parity and package-byte verification. The skeleton JSON hashes differ, so this
+is not bit-for-bit artifact identity and the two-run timing delta is not a
+library-wide throughput claim or default-promotion result. It is direct
+production evidence that the restart wait was removed without changing the
+sampled rendered playback or acceptance outcome. The GPU was idle after the
+replay.
