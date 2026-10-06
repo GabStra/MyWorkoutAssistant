@@ -2268,6 +2268,42 @@ def test_playback_rigid_pair_grip_closes_mid_sample_spacing_bow():
     assert validate_grip(rig.decode(planted), names, equipment)['passed']
 
 
+def test_playback_grip_repair_skips_plant_projection_when_contacts_pass(monkeypatch):
+    from exercise_motion_pkg import controlled_motion as motion
+
+    class IdentityRig:
+        @staticmethod
+        def decode(coordinates):
+            return np.asarray(coordinates, dtype=float)
+
+    rig = IdentityRig()
+    coordinates = np.zeros((4, 2, 3), dtype=float)
+    targets = np.zeros_like(coordinates)
+    pinned = np.ones((4, 2), dtype=bool)
+    monkeypatch.setattr(
+        motion, '_playback_contact_sample_error',
+        lambda *_args, **_kwargs: 0.000863,
+    )
+
+    # The stored contact gate is 0.5mm and production playback allows 3mm.
+    # A valid grip correction must not trigger a plant solve that can disturb
+    # already-valid support geometry.
+    assert not motion.playback_contact_repair_needed(
+        coordinates, rig, pinned, targets, cyclic=False)
+
+    targets[2, 1, 0] = motion.SUPPORT_REFERENCE_CONTACT_LIMIT_METERS * 1.1
+    assert motion.playback_contact_repair_needed(
+        coordinates, rig, pinned, targets, cyclic=False)
+
+    targets.fill(0.)
+    monkeypatch.setattr(
+        motion, '_playback_contact_sample_error',
+        lambda *_args, **_kwargs: motion.PLAYBACK_CONTACT_LIMIT_METERS,
+    )
+    assert motion.playback_contact_repair_needed(
+        coordinates, rig, pinned, targets, cyclic=False)
+
+
 def test_velocity_continuity_repair_replants_under_playback_gate(monkeypatch):
     """Smooth clears C1 jumps but lifts plants; repair must restore the 0.5 mm gate.
 

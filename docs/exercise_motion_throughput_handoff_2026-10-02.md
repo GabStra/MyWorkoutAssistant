@@ -42,6 +42,19 @@
   jerk decomposition, all four focused repair/diagnostic regressions passed and
   edited Python modules compiled. No live model/GPU campaign or app tests were
   run.
+- A focused retained-interval trace found that playback grip projection alone
+  reduced interpolated bar-grip error from 11.32mm to 8.81mm (the gate is
+  9.41mm), but the repair path then ran contact-plant projection unconditionally
+  whenever any joints were pinned. That projection moved supported feet by
+  23.3mm and failed support, discarding the grip correction. Contact repair now
+  runs only when stored contacts exceed 0.5mm or interpolated contacts exceed
+  the 3mm playback gate. The regression passes and the post-change replay no
+  longer shows the support regression, but RDL remains rejected: final playback
+  still reports 11.32mm grip error and right-wrist/hand shake is over its limits
+  by 1.2%/0.3%. This is a bounded-path bug fix, not a successful generation.
+  The same replay with soft LS forced on cleared grip and shake but introduced
+  anatomy and playback-velocity failures, so the geometry-ready soft-solve skip
+  remains enabled.
 
 ## Current-HEAD OHP production-path check — 2026-10-04
 

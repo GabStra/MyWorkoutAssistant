@@ -1804,6 +1804,22 @@ def _playback_contact_sample_error(coordinates, rig, pinned, contact_targets, *,
     return float(np.max(np.linalg.norm((sampled - targets[first])[active], axis=-1), initial=0.))
 
 
+def playback_contact_repair_needed(coordinates, rig, pinned, contact_targets, *, cyclic=False):
+    """Avoid perturbing planted geometry when an unrelated repair leaves it valid."""
+    pinned = np.asarray(pinned, dtype=bool)
+    if not np.any(pinned):
+        return False
+    points = rig.decode(np.asarray(coordinates, dtype=float))
+    targets = np.asarray(contact_targets, dtype=float)
+    keyframe_error = float(np.max(
+        np.linalg.norm((points - targets)[pinned], axis=-1), initial=0.))
+    if keyframe_error >= SUPPORT_REFERENCE_CONTACT_LIMIT_METERS:
+        return True
+    return _playback_contact_sample_error(
+        coordinates, rig, pinned, targets, cyclic=cyclic,
+    ) >= PLAYBACK_CONTACT_LIMIT_METERS
+
+
 def _playback_vertical_contact_sample_error(
         coordinates, rig, vertical_mask, vertical_targets, *, cyclic=False):
     """Peak height-only contact error at the production playback subframes."""
@@ -7527,7 +7543,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 trial = project_playback_rigid_pair_grip(
                     trial, rig, names, equipment, pinned=pinned, cyclic=cyclic,
                     max_nfev=16, deadline=grip_deadline)
-                if np.any(pinned):
+                if playback_contact_repair_needed(
+                        trial, rig, pinned, contact_targets, cyclic=cyclic):
                     trial = project_contact_plant_coordinates(
                         trial, rig, pinned, contact_targets, max_nfev=16,
                         freeze_root=True, deadline=min(started + timeout_seconds, grip_deadline))
