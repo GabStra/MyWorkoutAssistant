@@ -1565,6 +1565,31 @@ def polish_reserve_seconds(timeout_seconds, *, cyclic):
     return min(reserve, max(0., 0.4 * float(timeout_seconds)))
 
 
+def fit_validation_reserve_seconds(frame_count, timeout_seconds):
+    """Reserve time for full-payload checks before allowing soft LS to finish.
+
+    Playback validation cost grows with the number of frames. A bounded estimate
+    keeps long fits from spending the validation window on optimization while
+    avoiding a fixed surcharge on short diagnostic fits.
+    """
+    timeout = max(0., float(timeout_seconds or 0.))
+    frames = max(0, int(frame_count or 0))
+    return min(25., 0.20 * frames, 0.25 * timeout)
+
+
+def fit_soft_solve_deadline(
+        *, fit_started, timeout_seconds, now, nominal_solve_seconds,
+        validation_reserve_seconds, post_validation_polish_seconds):
+    """Cap soft LS so validation and a strict post-fit repair window can run."""
+    fit_deadline = float(fit_started) + max(0., float(timeout_seconds))
+    protected = max(0., float(validation_reserve_seconds)) + max(
+        0., float(post_validation_polish_seconds))
+    remaining = max(0., fit_deadline - float(now))
+    solve_budget = min(max(0., float(nominal_solve_seconds)), max(0., remaining - protected))
+    solve_deadline = min(fit_deadline - protected, float(now) + solve_budget)
+    return solve_deadline, solve_budget
+
+
 def supported_geometry_ready_for_skip_soft_solve(
         *, anchored, playback_anchored, floor_clear, points, names, equipment, payload,
         support_strategy=None, playback_support_geometry_passed=True):
@@ -5006,8 +5031,14 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
     timeout_seconds = fit_time_budget(payload, timeout_seconds)
     cyclic_preview = bool((payload.get('loop') or {}).get('enabled'))
     reserved_polish = polish_reserve_seconds(timeout_seconds, cyclic=cyclic_preview)
+    validation_reserve = fit_validation_reserve_seconds(
+        len(payload.get('frames') or []), timeout_seconds)
     report = {'applied': False, 'strategy': CONTROLLED_MOTION_STRATEGY,
-              'timeBudgetSeconds': timeout_seconds, 'polishReserveSeconds': reserved_polish}
+              'timeBudgetSeconds': timeout_seconds, 'polishReserveSeconds': reserved_polish,
+              'validationReserveSeconds': validation_reserve}
+    polish_left = reserved_polish
+    plant_polish = 0.
+    post_validation_polish_reserve = max(float(reserved_polish), 12.)
     optimization_deadline = started + timeout_seconds
     from .contact_constraints import motion_space_support_evidence
     fit_support_evidence = motion_space_support_evidence(payload)
@@ -6713,14 +6744,6 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             # Cyclic near-miss seam closure needs a real Stage-B/C window after solve.
             polish_left = max(polish_left, min(float(reserved_polish), min(20., 0.25 * outer_remaining)))
         polish_left = max(polish_left, min(12., max(0., outer_remaining - 30.))) if outer_remaining >= 40. else polish_left
-        nominal_solve = max(45., min(150., 1.25 * float(count)))
-        solve_phase_budget = min(nominal_solve, max(0., outer_remaining - polish_left))
-        optimization_deadline = min(
-            started + timeout_seconds - polish_left,
-            monotonic() + solve_phase_budget,
-        )
-        report['solvePhaseBudgetSeconds'] = float(solve_phase_budget)
-        report['polishReserveRemainingSeconds'] = float(polish_left)
         initial_points = rig.decode(rig.initial)
         # Rig feasibility belongs to the observed pose. Comparing against the
         # smoothed target needlessly refits already clean, small articulations
@@ -6730,6 +6753,10 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         anchored = np.max(np.linalg.norm((initial_points-contact_targets)[pinned],axis=-1),initial=0.) < PLAYBACK_CONTACT_LIMIT_METERS
         playback_anchored = _playback_contact_sample_error(
             rig.initial, rig, pinned, contact_targets, cyclic=cyclic) < PLAYBACK_CONTACT_LIMIT_METERS
+        plant_polish = 22. if (
+            np.any(pinned) and not playback_anchored
+            and report.get('supportInitializationStrategy') == 'plant_projection'
+        ) else 0.
         height_anchored = np.max(np.abs(
             (initial_points[:, :, 1] - height_only_targets[:, :, 1])[height_only_mask]
         ), initial=0.) <= PLAYBACK_FLOOR_LIMIT_METERS
@@ -6752,6 +6779,19 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             support_strategy=report.get('supportInitializationStrategy'),
             playback_support_geometry_passed=playback_support_geometry_passed)
         geometry_ready = geometry_ready and height_anchored and playback_height_anchored
+        nominal_solve = max(45., min(150., 1.25 * float(count)))
+        post_validation_polish_reserve = max(float(polish_left), 12.) + plant_polish
+        optimization_deadline, solve_phase_budget = fit_soft_solve_deadline(
+            fit_started=started,
+            timeout_seconds=timeout_seconds,
+            now=monotonic(),
+            nominal_solve_seconds=nominal_solve,
+            validation_reserve_seconds=validation_reserve,
+            post_validation_polish_seconds=post_validation_polish_reserve,
+        )
+        report['solvePhaseBudgetSeconds'] = float(solve_phase_budget)
+        report['polishReserveRemainingSeconds'] = float(polish_left)
+        report['postValidationPolishReserveSeconds'] = float(post_validation_polish_reserve)
         if (already_valid or geometry_ready) and not heel_contacts.pairs:
             # Avoid introducing solver noise into an already controlled / supported
             # rig. Soft LS on long plant-only clips raised jerk and ate Stage-C.
@@ -6842,18 +6882,6 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                     report['selectedContactFeasibleIterate'] = True
                 solved = SimpleNamespace(x=preferred, nfev=total_nfev,
                                          status=getattr(solved, 'status', 0))
-        # Guarantee a bounded Stage-C window from now. Do not extend polish to
-        # the full outer timeout — that re-burned soft LS after geometry-ready skip.
-        # Mid-sample plant bows need a longer hard-plant window than jerk polish.
-        plant_polish = 0.
-        if (np.any(pinned) and not playback_anchored
-                and report.get('supportInitializationStrategy') == 'plant_projection'):
-            plant_polish = 22.
-        polish_until = min(
-            started + timeout_seconds,
-            monotonic() + max(float(polish_left), 12.) + plant_polish,
-        )
-        report['polishUntilSeconds'] = float(polish_until - started)
     except TimeoutError:
         # A budget ends optimization, not validation. Prefer the best soft-LS
         # iterate; if none was scored yet, still try the initialized rig rather
@@ -6877,21 +6905,15 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         # repairable near-misses; only the true outer deadline is time_budget.
         outer_deadline = started + timeout_seconds
         report['optimizerTermination'] = (
-            'time_budget' if monotonic() >= outer_deadline - reserved_polish
+            'time_budget' if monotonic() >= outer_deadline - post_validation_polish_reserve
+            - validation_reserve
             else 'solve_phase_budget')
-        polish_until = min(
-            started + timeout_seconds,
-            monotonic() + max(float(reserved_polish), 12.),
-        )
-        report['polishUntilSeconds'] = float(polish_until - started)
     finally:
         if fit_session is not None and best_coordinates is not None:
             fit_session.trajectories[trajectory_key] = best_coordinates.tolist()
-    if 'polish_until' not in locals():
-        polish_until = started + timeout_seconds
     if getattr(solved, 'status', 1) == 0:
         report.setdefault('optimizerTermination', 'evaluation_limit')
-    def validate_solution(solved, *, project_playback_plants=True):
+    def validate_solution(solved, *, project_playback_plants=True, repair_deadline=None):
         # A finite soft-constrained solve can cross the socket boundary again after
         # initialization. Enforce its analytic attachment on the exported coordinates
         # too, then validate geometry, temporal quality and interpolated playback.
@@ -6899,6 +6921,10 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         # plants / C1 continuity — do not re-run floor clearance or playback TRF
         # that recreate knot velocity jumps.
         from .physical_validation import SOCKET_ALIGNMENT_MAX_LATERAL_RATIO
+        repair_deadline = min(
+            polish_until if repair_deadline is None else float(repair_deadline),
+            started + timeout_seconds,
+        )
         rig.initial[:] = solved.x.reshape(count, rig.width)
         unprojected = rig.decode(rig.initial)
         # Neck / numerical anatomy projection can reintroduce C1 knot jumps after
@@ -6910,15 +6936,15 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             # Establish it before anatomy polish so a tiny neck correction cannot
             # reopen an already boundary-tight spine constraint afterward.
             rig.initial[:] = project_playback_neck_clearance(
-                rig.initial, rig, cyclic=cyclic, deadline=polish_until)
+                rig.initial, rig, cyclic=cyclic, deadline=repair_deadline)
             numerical_errors, _ = repair_residuals(rig.decode(rig.initial), names)
             largest_error = float(np.max(numerical_errors, initial=0.))
-            if 1e-6 < largest_error <= ANATOMY_FIT_MARGIN and monotonic() < polish_until:
+            if 1e-6 < largest_error <= ANATOMY_FIT_MARGIN and monotonic() < repair_deadline:
                 previous_coordinates, previous_offsets = rig.initial.copy(), rig.offsets.copy()
                 polish_started = monotonic()
                 try:
                     _, polish = repair_rig_anatomy(
-                        rig, rig.decode(rig.initial), deadline=polish_until)
+                        rig, rig.decode(rig.initial), deadline=repair_deadline)
                 except TimeoutError:
                     polish = {'passed': False, 'reason': 'time_budget'}
                 polish['elapsedSeconds'] = monotonic()-polish_started
@@ -6933,8 +6959,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                              'offsets':rig.offsets.tolist(),'interpolation':INTERPOLATION,
                              'rotationJointNames':[names[j] for j in rig.active],
                              'coordinates':rig.initial.tolist()}
-        validation_repair_deadline = min(polish_until, started + timeout_seconds)
-        if (project_playback_plants and monotonic() < validation_repair_deadline
+        if (project_playback_plants and monotonic() < repair_deadline
                 and np.any(pinned) and _playback_failing_intervals(
                 rig.initial, rig, pinned, contact_targets, cyclic=cyclic, floor=floor)):
             # Support already spent a play pass on plant_projection; keep validate
@@ -6948,22 +6973,22 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             rig.initial[:] = project_interval_playback_plants(
                 rig.initial, rig, pinned, contact_targets, cyclic=cyclic, floor=floor,
                 max_nfev=plant_nfev,
-                deadline=min(validation_repair_deadline, monotonic() + plant_cap), spike_reference=spike_reference)
+                deadline=min(repair_deadline, monotonic() + plant_cap), spike_reference=spike_reference)
             result = rig.decode(rig.initial)
             solved.x = rig.initial.ravel().copy()
             fixed_rig_payload['coordinates'] = rig.initial.tolist()
             report['validatePlaybackPlantsApplied'] = True
         if (not report.get('introducedSpikeProjectionAttempted')
-                and monotonic() < validation_repair_deadline):
+                and monotonic() < repair_deadline):
             spikes = relative_motion_quality(
                 result, result, names, fps, spike_reference=spike_reference)['introducedSpikes']
-            if spikes['severe'] and monotonic() < validation_repair_deadline:
+            if spikes['severe'] and monotonic() < repair_deadline:
                 report['introducedSpikeProjectionAttempted'] = True
                 report['introducedSpikesBeforeProjection'] = spikes
                 rig.initial[:] = project_introduced_spikes_coordinates(
                     rig.initial, rig, pinned, contact_targets, spike_reference,
                     fps=fps, cyclic=cyclic, floor=floor,
-                    deadline=min(validation_repair_deadline, monotonic() + 16.))
+                    deadline=min(repair_deadline, monotonic() + 16.))
                 result = rig.decode(rig.initial)
                 solved.x = rig.initial.ravel().copy()
                 fixed_rig_payload['coordinates'] = rig.initial.tolist()
@@ -7214,12 +7239,25 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         return candidate,report
 
     validation_started = monotonic()
-    remaining_polish = max(0., polish_until - validation_started)
-    candidate, report = validate_solution(solved)
-    # Validation includes contact projection and dense playback checks. Charge
-    # that work to the outer budget, but do not silently spend the reserved
-    # refinement window before the first failed checks are available.
-    polish_until = min(started + timeout_seconds, monotonic() + remaining_polish)
+    post_validation_polish_reserve = max(float(polish_left), 12.) + plant_polish
+    validation_repair_deadline = min(
+        started + timeout_seconds - post_validation_polish_reserve,
+        validation_started + validation_reserve,
+    )
+    # Initial validation has its own bounded repair window. Later Stage-A/B/C
+    # work owns the remaining outer budget, so validation cannot spend it first.
+    polish_until = validation_repair_deadline
+    report['postValidationPolishReserveSeconds'] = float(post_validation_polish_reserve)
+    report['initialValidationRepairDeadlineSeconds'] = float(
+        validation_repair_deadline - started)
+    report['initialValidationRepairBudgetSeconds'] = float(
+        max(0., validation_repair_deadline - validation_started))
+    candidate, report = validate_solution(
+        solved, repair_deadline=validation_repair_deadline)
+    polish_until = min(
+        started + timeout_seconds,
+        validation_repair_deadline + post_validation_polish_reserve,
+    )
     report['initialValidationSeconds'] = monotonic() - validation_started
     report['polishUntilSeconds'] = float(polish_until - started)
     anatomy_projection_attempted = False

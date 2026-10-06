@@ -2531,6 +2531,26 @@ def test_polish_reserve_scales_and_protects_stage_deadlines(monkeypatch):
     assert support == 1000. + 120.
 
 
+def test_fit_validation_reserve_leaves_time_for_repair_inside_outer_deadline():
+    from exercise_motion_pkg import controlled_motion as motion
+    assert motion.fit_validation_reserve_seconds(123, 120.) == 24.6
+    assert motion.fit_validation_reserve_seconds(123, 10.) == 2.5
+    assert motion.fit_validation_reserve_seconds(2000, 360.) == 25.
+    assert motion.fit_validation_reserve_seconds(0, 120.) == 0.
+
+    solve_deadline, solve_budget = motion.fit_soft_solve_deadline(
+        fit_started=100., timeout_seconds=120., now=112.,
+        nominal_solve_seconds=150., validation_reserve_seconds=24.6,
+        post_validation_polish_seconds=15.,
+    )
+    assert solve_budget == 68.4
+    assert solve_deadline == 180.4
+    validation_deadline = min(solve_deadline + 24.6, 220. - 15.)
+    post_validation_deadline = min(220., validation_deadline + 15.)
+    assert validation_deadline <= 205.
+    assert post_validation_deadline == 220.
+
+
 def test_support_init_minimum_scales_past_flat_ninety_for_long_cycles():
     from exercise_motion_pkg.controlled_motion import (
         SUPPORT_INIT_COLD_EVALUATIONS,
@@ -3161,8 +3181,13 @@ def test_initial_validation_preserves_polish_reserve_within_outer_budget(monkeyp
     _, report = motion.fit_controlled_motion(payload(names, points), timeout_seconds=60.)
     assert report['applied']
     assert report['initialValidationSeconds'] >= 20.
-    assert 20. < report['polishUntilSeconds'] <= 60.
-    # Validation can finish after the watchdog, but cannot grant extra repair time.
+    assert abs(report['validationReserveSeconds'] - 2.4) < 1e-9
+    assert report['polishUntilSeconds'] <= 60.
+    assert report['polishUntilSeconds'] <= (
+        report['initialValidationRepairDeadlineSeconds']
+        + report['postValidationPolishReserveSeconds']
+    )
+    # Validation can finish after its allowance, but cannot extend the fit deadline.
     validation_cost[0] = 80.
     _, report = motion.fit_controlled_motion(payload(names, points), timeout_seconds=60.)
     assert report['initialValidationSeconds'] >= 80.
