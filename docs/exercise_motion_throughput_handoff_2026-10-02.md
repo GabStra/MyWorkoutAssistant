@@ -1155,3 +1155,22 @@ upright/hinge/return sequence. A contact sheet does not establish temporal quali
 No final model approval, packaging, or corrected OHP/RDL production-script E2E is
 claimed. These timings are checkpoint measurements, not a controlled throughput
 comparison or proof of a successfully packaged movement.
+
+### Oct 6 genuine replacement-source final validation
+
+A single bounded local-model validation through `final_output_validation_metrics`
+used the configured Qwen3.5-9B vision model, the actual replacement source window,
+and both current-runtime final render views. It completed in 55.95 seconds with
+`passed=true`, no rejection reasons, and required source evidence passing. The
+independent source observations corroborate barbell equipment and upright start,
+hip hinge, and upright return. Final render evidence binds the exact 117-frame
+skeleton (SHA-256 `547c5a62692e148775e35524ce9e3bb851609e336a9269df28f52a3dd0d92617`)
+and source frames 6–122. Evidence is retained in
+`20261006-inspected-rdl-cycle-bake/genuine_final_validation_checkpoint.json`.
+
+Visual findings are advisory under the existing production policy: low-poly
+faceting and absence of rendered equipment. They are not a new motion approval
+score or proof of temporal quality. This checkpoint uses genuine model responses,
+not retained fixture approvals. Packaging and the corrected two-exercise
+production-script E2E still remain unverified; no accepted-output throughput claim
+is made from this isolated checkpoint.
