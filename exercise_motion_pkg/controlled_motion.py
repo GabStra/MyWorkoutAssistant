@@ -35,6 +35,16 @@ from .motion_placement import contact_consistent_target, root_motion_quality, re
 from .rig_interpolation import INTERPOLATION
 from .rig_playback import PLAYBACK_CONTACT_LIMIT_METERS, PLAYBACK_FLOOR_LIMIT_METERS
 
+KEYFRAME_CONTACT_LIMIT_METERS = .0005
+
+
+def contact_iterate_is_feasible(keyframe_error, playback_error, floor_penetration):
+    """Preserve iterates that clear both stored and interpolated contact gates."""
+    return (keyframe_error < KEYFRAME_CONTACT_LIMIT_METERS
+            and playback_error < PLAYBACK_CONTACT_LIMIT_METERS
+            and floor_penetration <= PLAYBACK_FLOOR_LIMIT_METERS)
+
+
 SUPPORT_REFERENCE_CONTACT_LIMIT_METERS = min(
     0.001,
     PLAYBACK_CONTACT_LIMIT_METERS * 0.5,
@@ -6449,9 +6459,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 heel_contacts.residual(subframe, subframe_first, subframe_last), axis=-1), initial=0.)))
             floor_pen = 0. if floor is None else max(
                 0., float(floor) - float(min(candidate[:,:,1].min(), subframe[:,:,1].min())))
-            if (contact_err < PLAYBACK_CONTACT_LIMIT_METERS
-                    and play_err < PLAYBACK_CONTACT_LIMIT_METERS
-                    and floor_pen <= PLAYBACK_FLOOR_LIMIT_METERS
+            if (contact_iterate_is_feasible(contact_err, play_err, floor_pen)
                     and cost < best_feasible_cost):
                 best_feasible_cost, best_feasible_coordinates = cost, values.copy()
         return errors
@@ -7399,7 +7407,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         relative_quality = relative_motion_quality(
             result, shake_basis, names, fps, spike_reference=spike_reference)
         root_quality = root_motion_quality(result[:,rig.root], fps, scale)
-        checks = {'anatomy':physical['passed'], 'contacts':contact_error<.0005,
+        checks = {'anatomy':physical['passed'], 'contacts':contact_error<KEYFRAME_CONTACT_LIMIT_METERS,
                   'heightOnlyContacts': (
                       height_contact_error <= PLAYBACK_FLOOR_LIMIT_METERS
                       and playback_height_contact_error <= PLAYBACK_FLOOR_LIMIT_METERS),

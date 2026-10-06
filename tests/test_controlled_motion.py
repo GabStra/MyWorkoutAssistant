@@ -8,6 +8,18 @@ from scipy.spatial.transform import Rotation
 from exercise_motion_pkg.controlled_motion import FixedRig, body_relative_points, controlled_target, fit_controlled_motion
 
 
+def test_contact_iterate_selection_distinguishes_stored_precision_from_playback_allowance():
+    from exercise_motion_pkg import controlled_motion as motion
+
+    # A 1 mm stored error clears the 3 mm playback gate but must not displace
+    # an iterate that clears the final 0.5 mm stored-frame contact gate.
+    assert not motion.contact_iterate_is_feasible(.001, .002, .001)
+    assert motion.contact_iterate_is_feasible(.0004, .002, .001)
+    assert not motion.contact_iterate_is_feasible(.0004, .003, .001)
+    assert not motion.contact_iterate_is_feasible(.0004, .002, .003)
+    assert not motion.contact_iterate_is_feasible(.0005, .002, .001)
+
+
 def test_hybrid_jacobian_defaults_on_and_supports_explicit_fallback(monkeypatch):
     from exercise_motion_pkg import controlled_motion as motion
 
