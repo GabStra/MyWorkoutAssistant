@@ -1547,10 +1547,18 @@ run: 103.53 seconds less in that phase. End-to-end wall time fell from 713.8s
 to 615.9s (97.9s, 13.7%) for these two runs.
 
 All four sampled production-render contact sheets (two per exercise) are
-byte-identical between those runs. Both runs also report reviewed-artifact
-parity and package-byte verification. The skeleton JSON hashes differ, so this
-is not bit-for-bit artifact identity and the two-run timing delta is not a
-library-wide throughput claim or default-promotion result. It is direct
-production evidence that the restart wait was removed without changing the
-sampled rendered playback or acceptance outcome. The GPU was idle after the
-replay.
+byte-identical between those runs. The complete decoded production preview
+videos also match pixel-for-pixel: Press is 166/166 frames at 60 fps, and RDL
+is 180/180 frames at 46.957 fps; every compared pixel has zero difference.
+Both runs independently report reviewed-artifact parity and package-byte
+verification. The skeleton JSON hashes differ, but the full production-rendered
+playback and acceptance outcomes are identical. This is direct evidence that
+the restart wait was removed without reducing visible movement quality.
+
+On the corrected run, candidate processing was 141.2s for Press and 198.5s for
+RDL; preview baking accounted for 78.5s and 141.1s respectively. RDL final
+validation was 202.2s, including fit and review work. These stage counters
+overlap and should not be added together. They identify preview baking and
+final validation as the remaining high-cost stages after removing the restart
+retry. This two-exercise timing result is not a library-wide throughput claim
+or a concurrency-default promotion. The GPU was idle after the replay.
