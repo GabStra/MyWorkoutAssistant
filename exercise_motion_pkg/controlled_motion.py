@@ -304,6 +304,23 @@ def failed_check_names(checks):
     return [key for key, passed in checks.items() if not passed]
 
 
+def fit_report_improves_acceptance(previous_report, trial_report):
+    """Keep a continuation only when it passes or strictly reduces failures."""
+    if not isinstance(trial_report, dict):
+        return False
+    if trial_report.get('applied'):
+        return True
+    if not isinstance(previous_report, dict):
+        return False
+    previous_checks = previous_report.get('checks')
+    trial_checks = trial_report.get('checks')
+    if not isinstance(previous_checks, dict) or not previous_checks:
+        return False
+    if not isinstance(trial_checks, dict) or not trial_checks:
+        return False
+    return set(failed_check_names(trial_checks)) < set(failed_check_names(previous_checks))
+
+
 def bounded_anatomy_projection_eligible(
     failed_checks: set[str],
     checks: dict,
@@ -7249,7 +7266,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             trial_candidate, trial_report = validate_solution(
                 trial, project_playback_plants=False)
             trial_failed = set(failed_check_names(trial_report.get('checks')))
-            improved = bool(trial_report.get('applied') or trial_failed < current_failed)
+            improved = fit_report_improves_acceptance(baseline_report, trial_report)
             projection['failedChecksAfter'] = sorted(trial_failed)
             projection['accepted'] = improved
             if improved:
@@ -8459,6 +8476,13 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             'stage': polish_stage_for_failures(failed_now),
         }
         previous_coordinates = solved.x.copy()
+        previous_nfev = solved.nfev
+        previous_status = getattr(solved, 'status', 0)
+        previous_candidate = candidate
+        previous_report = report
+        previous_rig_initial = rig.initial.copy()
+        previous_rig_offsets = rig.offsets.copy()
+        previous_failed = set(failed_check_names(previous_report.get('checks')))
         initial_evaluations = solved.nfev or 0
         if report.get('optimizerTermination') in {'solve_phase_budget', 'time_budget'}:
             optimization_deadline = started + timeout_seconds - min(5., max(0., timeout_seconds) * .05)
@@ -8474,8 +8498,26 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         if fit_session is not None and best_coordinates is not None:
             fit_session.trajectories[trajectory_key] = best_coordinates.tolist()
         candidate, report = validate_solution(solved)
-        continuation['applied'] = bool(report.get('applied'))
-        continuation['reason'] = report.get('reason')
+        retained = fit_report_improves_acceptance(previous_report, report)
+        continuation.update({
+            'applied': bool(report.get('applied')),
+            'reason': report.get('reason'),
+            'retained': retained,
+            'failedChecksBefore': sorted(previous_failed),
+            'failedChecksAfter': sorted(failed_check_names(report.get('checks'))),
+        })
+        if not retained:
+            # Normal polish stages all guard against regressions. The terminal
+            # solver continuation needs the same protection or it can replace
+            # a better bounded-refinement candidate with a worse one.
+            rig.initial[:] = previous_rig_initial
+            rig.offsets[:] = previous_rig_offsets
+            solved = SimpleNamespace(
+                x=previous_coordinates, nfev=previous_nfev,
+                status=previous_status)
+            candidate, report = previous_candidate, previous_report
+            if fit_session is not None:
+                fit_session.trajectories[trajectory_key] = previous_coordinates.tolist()
         report['evaluationContinuation'] = continuation
     elif (not report.get('applied')
           and report.get('reason') in {'fit_evaluation_limit', 'fit_timeout', 'fit_validation_failed'}

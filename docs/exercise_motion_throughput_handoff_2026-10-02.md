@@ -882,6 +882,16 @@ directory has a condensed version of this state; update it after the arms land.
   overall fit remains rejected (`applied=false`); this does not resolve RDL
   generation. Its remaining temporal spikes are at the left foot around 1.8s
   and 2.5s. No reconstruction or model calls were made.
+- The same replay exposed a final-state regression: after bounded repair had
+  reduced the fit to a motion-discontinuity-only failure, the terminal Stage-C
+  evaluation continuation worsened the failed-check set and replaced that
+  stronger state. Earlier polish already rolled back regressions, but this last
+  continuation did not. Continuations now retain a result only when it passes
+  or strictly reduces the failed-check set; rejected continuations restore the
+  prior coordinates, report, rig state, and session warm start. A focused test
+  covers unchanged, regressed, improved, and accepted reports. This preserves
+  the best known state but does not repair RDL's remaining temporal failure;
+  the retained replay was not repeated after this guard was added.
 - Focused regressions passed (`6 passed`), and the edited Python modules and
   tests compiled with `py_compile`. No throughput promotion is claimed.
 - Architecture status: reviewed render/package artifact identity is connected

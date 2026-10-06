@@ -66,6 +66,33 @@ def test_bounded_anatomy_projection_allows_temporal_near_misses_only():
     )
 
 
+def test_fit_continuation_must_strictly_improve_failed_checks():
+    from exercise_motion_pkg import controlled_motion as motion
+
+    previous = {'applied': False, 'checks': {
+        'anatomy': True, 'contacts': True, 'playback': False,
+        'motionDiscontinuity': False,
+    }}
+    assert not motion.fit_report_improves_acceptance(previous, {
+        'applied': False, 'checks': dict(previous['checks']),
+    })
+    assert not motion.fit_report_improves_acceptance(previous, {
+        'applied': False, 'checks': {
+            'anatomy': True, 'contacts': False, 'playback': True,
+            'motionDiscontinuity': False,
+        },
+    })
+    assert motion.fit_report_improves_acceptance(previous, {
+        'applied': False, 'checks': {
+            'anatomy': True, 'contacts': True, 'playback': True,
+            'motionDiscontinuity': False,
+        },
+    })
+    assert motion.fit_report_improves_acceptance(previous, {
+        'applied': True, 'checks': {name: True for name in previous['checks']},
+    })
+
+
 def test_swapped_materialized_sole_support_reaches_fit_without_mutating_source(monkeypatch):
     from copy import deepcopy
 
