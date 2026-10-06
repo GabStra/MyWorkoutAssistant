@@ -132,7 +132,10 @@ def test_retained_replay_uses_pinned_clip_when_final_validation_has_no_staged_vi
     assert result.normalized_motion_json == raw.resolve()
 
 
-@pytest.mark.parametrize("defect", [None, "missing", "different_bytes", "missing_state"])
+@pytest.mark.parametrize(
+    "defect",
+    [None, "missing", "different_bytes", "missing_state", "missing_review_window"],
+)
 def test_retained_replay_checks_reviewed_package_outputs(tmp_path, defect):
     from scripts.run_motion_retained_replay import verify_replay_outputs
     from scripts import build_workout_plan_movement_package as builder
@@ -143,6 +146,10 @@ def test_retained_replay_checks_reviewed_package_outputs(tmp_path, defect):
     path = workspace / "press/selected/movement.json"
     manifest = path.with_name("selection_manifest.json")
     movement = write_reviewed_movement(path, manifest)
+    if defect == "missing_review_window":
+        manifest_payload = json.loads(manifest.read_text(encoding="utf-8"))
+        manifest_payload["selected"]["ranking"]["payload"]["finalOutputValidation"]["renderEvidence"].pop("reviewWindow")
+        manifest.write_text(json.dumps(manifest_payload), encoding="utf-8")
     summary = {"exercises": [{"exerciseId": "press", "status": "completed",
                                "selectedWearSkeletonPath": str(path),
                                "selectionManifestPath": str(manifest)}]}
@@ -166,7 +173,8 @@ def test_retained_replay_checks_reviewed_package_outputs(tmp_path, defect):
         package["exerciseMovements"][0].pop("packagedArtifactState")
     (tmp_path / "package.json").write_text(json.dumps(package))
     if defect:
-        with pytest.raises(ValueError, match="package"):
+        expected_error = "final review window" if defect == "missing_review_window" else "package"
+        with pytest.raises(ValueError, match=expected_error):
             verify_replay_outputs(tmp_path, {"press"})
     else:
         verify_replay_outputs(tmp_path, {"press"})

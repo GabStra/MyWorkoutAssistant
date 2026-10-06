@@ -11,6 +11,11 @@ from exercise_motion_pkg.artifact_state import (
     build_artifact_state,
     validate_packaged_artifact_state,
 )
+from exercise_motion_pkg.review_window import (
+    artifact_review_selection,
+    frame_timestamps_for_indices,
+    sample_review_frame_indices,
+)
 
 
 SCRIPT_PATH = Path(__file__).parents[1] / "scripts" / "build_workout_plan_movement_package.py"
@@ -40,6 +45,15 @@ def write_reviewed_movement(movement_path: Path, manifest_path: Path) -> dict:
         required_class=FULL_CLIP_BAKE,
         selection_evidence={"fullClipBake": baked_payload_identity(payload)},
     )
+    review_indices = sample_review_frame_indices(payload, 2)
+    review_window = {
+        "schemaVersion": 1,
+        "frameCount": len(payload["frames"]),
+        "frameIndices": review_indices,
+        "frameTimesSec": frame_timestamps_for_indices(payload, review_indices),
+        "sampling": {"policy": "evenly_spaced_v1", "requestedFrameCount": 2},
+        "selection": artifact_review_selection(payload["artifactState"], payload),
+    }
     movement_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     review_identity = {
         "sha256": hashlib.sha256(movement_path.read_bytes()).hexdigest(),
@@ -64,6 +78,7 @@ def write_reviewed_movement(movement_path: Path, manifest_path: Path) -> dict:
                                     "available": True,
                                     "passed": True,
                                     "skeletonIdentity": review_identity,
+                                    "reviewWindow": review_window,
                                 },
                             }
                         }
@@ -370,6 +385,33 @@ def test_packager_rejects_manifest_without_passing_final_render_validation(
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     with pytest.raises(ValueError, match="no passing final render validation"):
+        BUILDER.validate_selected_movement(
+            movement_path,
+            {"selectionManifestPath": str(manifest_path)},
+            summary_path=tmp_path / "summary.json",
+            summary={},
+        )
+
+
+@pytest.mark.parametrize("defect", ["missing", "invalid_frame", "wrong_interval"])
+def test_packager_rejects_manifest_with_invalid_final_review_window(
+    tmp_path,
+    defect: str,
+) -> None:
+    movement_path = tmp_path / "movement.json"
+    manifest_path = tmp_path / "selection_manifest.json"
+    write_reviewed_movement(movement_path, manifest_path)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    review_window = manifest["selected"]["ranking"]["payload"]["finalOutputValidation"]["renderEvidence"]["reviewWindow"]
+    if defect == "missing":
+        review_window.pop("frameIndices")
+    elif defect == "invalid_frame":
+        review_window["frameIndices"][-1] = 2
+    else:
+        review_window["selection"]["interval"]["endFrame"] = 99
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="final review window"):
         BUILDER.validate_selected_movement(
             movement_path,
             {"selectionManifestPath": str(manifest_path)},

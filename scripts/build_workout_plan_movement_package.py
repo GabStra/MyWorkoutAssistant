@@ -22,6 +22,7 @@ from exercise_motion_pkg.artifact_state import (
     build_packaged_artifact_state,
     validate_artifact_state,
 )
+from exercise_motion_pkg.review_window import validate_final_output_review_window
 
 
 MOVEMENT_FORMAT = "wear_skeleton_json_v1"
@@ -265,6 +266,16 @@ def validate_selected_movement(
     render_evidence = successful_final_validation(selected, movement_state["artifactClass"])
     if render_evidence is None:
         raise ValueError(f"Selection manifest has no passing final render validation: {manifest_path}")
+    try:
+        validate_final_output_review_window(
+            render_evidence.get("reviewWindow"),
+            artifact_state=movement_state,
+            movement_payload=movement_payload,
+        )
+    except ValueError as exc:
+        raise ValueError(
+            f"Selection manifest final review window does not match the selected artifact: {manifest_path}: {exc}"
+        ) from exc
 
     review_identity = selected_review_identity(selected)
     if not isinstance(review_identity, dict):

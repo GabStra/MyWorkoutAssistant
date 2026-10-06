@@ -21,6 +21,12 @@ from exercise_motion_pkg.artifact_state import (
     validate_artifact_state,
     validate_packaged_artifact_state,
 )
+from exercise_motion_pkg.review_window import (
+    artifact_review_selection as _artifact_review_selection,
+    frame_timestamps_for_indices,
+    sample_review_frame_indices,
+    validate_final_output_review_window,
+)
 
 from exercise_motion_pkg.browser_workers import browser_session, browser_worker
 
@@ -5473,50 +5479,6 @@ def selected_skeleton_file_identity(path: Path) -> dict[str, Any]:
     }
 
 
-def _artifact_review_selection(
-    artifact_state: dict[str, Any],
-    movement_payload: dict[str, Any],
-) -> dict[str, Any]:
-    artifact_class = artifact_state["artifactClass"]
-    evidence = artifact_state.get("selectionEvidence") or {}
-    if artifact_class == CYCLIC_REBAKE:
-        selected = evidence["cycleSelection"]
-        return {
-            "artifactClass": artifact_class,
-            "selectionId": selected["selectionId"],
-            "interval": selected["interval"],
-        }
-    if artifact_class == BOUNDED_MOVEMENT_REBAKE:
-        selected = evidence["boundedMovementSelection"]
-        return {
-            "artifactClass": artifact_class,
-            "selectionId": selected["selectionId"],
-            "interval": selected["interval"],
-        }
-
-    loop = movement_payload.get("loop")
-    frames = movement_payload.get("frames")
-    if not isinstance(loop, dict) or not isinstance(frames, list) or not frames:
-        raise ValueError("Full-clip review is missing its materialized source interval")
-    first = frames[0] if isinstance(frames[0], dict) else {}
-    last = frames[-1] if isinstance(frames[-1], dict) else {}
-    start_frame = loop.get("sourceStartFrame", first.get("sourceFrameIndex", 0))
-    end_frame = loop.get("sourceEndFrame", last.get("sourceFrameIndex", len(frames) - 1))
-    start_time = loop.get("sourceStartTimeSec", first.get("sourceTimeSec", 0.0))
-    end_time = loop.get("sourceEndTimeSec", last.get("sourceTimeSec"))
-    if end_time is None:
-        end_time = max(0, len(frames) - 1) / parse_export_fps(movement_payload)
-    interval = {
-        "type": "full_clip_bake",
-        "startFrame": start_frame,
-        "endFrame": end_frame,
-        "startTimeSec": start_time,
-        "endTimeSec": end_time,
-        "durationSec": max(0.0, float(end_time) - float(start_time)),
-    }
-    return {"artifactClass": artifact_class, "selectionId": None, "interval": interval}
-
-
 def build_final_output_review_window_evidence(
     movement_payload: dict[str, Any],
     *,
@@ -5564,61 +5526,6 @@ def build_final_output_review_window_evidence(
         "selection": _artifact_review_selection(artifact_state, movement_payload),
     }
     return evidence, artifact_state
-
-
-def validate_final_output_review_window(
-    review_window: Any,
-    *,
-    artifact_state: dict[str, Any],
-    movement_payload: dict[str, Any],
-) -> None:
-    """Verify persisted review frames and selected interval against the packaged payload."""
-    if not isinstance(review_window, dict) or review_window.get("schemaVersion") != 1:
-        raise ValueError("Final render evidence is missing its review window")
-    frames = movement_payload.get("frames")
-    if (
-        not isinstance(frames, list)
-        or review_window.get("frameCount") != len(frames)
-        or type(review_window.get("frameCount")) is not int
-    ):
-        raise ValueError("Final review window frame count differs from the selected artifact")
-    frame_indices = review_window.get("frameIndices")
-    if (
-        not isinstance(frame_indices, list)
-        or not frame_indices
-        or any(type(index) is not int or not 0 <= index < len(frames) for index in frame_indices)
-    ):
-        raise ValueError("Final review window contains invalid frame indices")
-    sampling = review_window.get("sampling")
-    if not isinstance(sampling, dict):
-        raise ValueError("Final review window is missing its sampling policy")
-    if sampling.get("policy") == "evenly_spaced_v1":
-        requested_count = sampling.get("requestedFrameCount")
-        if type(requested_count) is not int or requested_count < 1:
-            raise ValueError("Final review window has an invalid requested frame count")
-        if sample_review_frame_indices(movement_payload, requested_count) != frame_indices:
-            raise ValueError("Final review frame indices differ from their sampling policy")
-    elif sampling.get("policy") == "explicit_indices_v1":
-        if sampling.get("requestedFrameIndices") != frame_indices:
-            raise ValueError("Final review frame indices differ from the explicit request")
-    else:
-        raise ValueError("Final review window has an unknown sampling policy")
-    expected_times = frame_timestamps_for_indices(movement_payload, frame_indices)
-    actual_times = review_window.get("frameTimesSec")
-    if (
-        not isinstance(actual_times, list)
-        or len(actual_times) != len(expected_times)
-        or any(
-            not isinstance(actual, (int, float))
-            or isinstance(actual, bool)
-            or not math.isclose(float(actual), expected, rel_tol=0.0, abs_tol=1e-6)
-            for actual, expected in zip(actual_times, expected_times)
-        )
-    ):
-        raise ValueError("Final review timestamps differ from the selected artifact frames")
-    expected_selection = _artifact_review_selection(artifact_state, movement_payload)
-    if review_window.get("selection") != expected_selection:
-        raise ValueError("Final review interval differs from the selected artifact lineage")
 
 
 def final_output_validation_metrics(
@@ -32895,32 +32802,6 @@ def preview_settings_variants(*, motion_tuning_enabled: bool = True) -> list[dic
     return variants
 
 
-def sample_review_frame_indices(export_payload: dict[str, Any], count: int) -> list[int]:
-    frames = export_payload.get("frames")
-    declared_frame_count = export_payload.get("frameCount")
-    frame_count = (
-        int(declared_frame_count)
-        if isinstance(declared_frame_count, (int, float))
-        and not isinstance(declared_frame_count, bool)
-        and math.isfinite(float(declared_frame_count))
-        and float(declared_frame_count) > 0
-        else len(frames) if isinstance(frames, list) else 0
-    )
-    if frame_count <= 0:
-        return [0]
-    sample_count = max(1, min(int(count), frame_count))
-    if sample_count == frame_count:
-        return list(range(frame_count))
-    if sample_count == 1:
-        return [frame_count // 2]
-    return sorted(
-        {
-            round(index * (frame_count - 1) / (sample_count - 1))
-            for index in range(sample_count)
-        }
-    )
-
-
 def final_output_review_frame_indices(
     export_payload: dict[str, Any],
     *,
@@ -33099,29 +32980,6 @@ def parse_export_fps(export_payload: dict[str, Any]) -> float:
     if isinstance(value, (int, float)) and math.isfinite(float(value)) and float(value) > 0:
         return float(value)
     return 30.0
-
-
-def frame_timestamps_for_indices(export_payload: dict[str, Any], frame_indices: list[int | float]) -> list[float]:
-    export_frames = export_payload.get("frames") if isinstance(export_payload, dict) else None
-    if not isinstance(export_frames, list):
-        return []
-    fps = parse_export_fps(export_payload)
-    timestamps: list[float] = []
-    for frame_index in frame_indices:
-        base_index = math.floor(frame_index)
-        frame = (
-            export_frames[base_index]
-            if 0 <= base_index < len(export_frames) and isinstance(export_frames[base_index], dict)
-            else {}
-        )
-        timestamps.append(
-            frame_time_seconds(
-                frame,
-                fallback_index=base_index,
-                fps=fps,
-            ) + (frame_index-base_index)/fps
-        )
-    return timestamps
 
 
 def parse_review_video_fps(export_payload: dict[str, Any], *, frame_count: int) -> float:
