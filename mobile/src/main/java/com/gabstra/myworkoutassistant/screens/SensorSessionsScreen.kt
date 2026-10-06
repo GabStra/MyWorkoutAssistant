@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.screens
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.widget.Toast
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
@@ -47,6 +48,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
 import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
 import com.gabstra.myworkoutassistant.shared.datalayer.MotionCaptureSyncDao
 import com.gabstra.myworkoutassistant.shared.datalayer.MotionCaptureSyncMappings
@@ -302,6 +304,20 @@ fun SensorSessionDetailScreen(
                 context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             clipboard.setPrimaryClip(ClipData.newPlainText("Sensor session zip", exportedZipPath))
             Toast.makeText(context, "Path copied.", Toast.LENGTH_SHORT).show()
+        },
+        onShareExportPath = { path ->
+            val zipFile = java.io.File(path)
+            val uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                zipFile
+            )
+            val share = Intent(Intent.ACTION_SEND).apply {
+                type = "application/zip"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(share, "Share sensor session"))
         }
     )
 }
@@ -316,7 +332,8 @@ private fun SensorSessionDetailScreenContent(
     onBack: () -> Unit,
     onExportClick: () -> Unit,
     onDismissExportDialog: () -> Unit,
-    onCopyExportPath: () -> Unit
+    onCopyExportPath: () -> Unit,
+    onShareExportPath: (String) -> Unit
 ) {
     BreadcrumbScaffold(
         topBar = {
@@ -441,13 +458,18 @@ private fun SensorSessionDetailScreenContent(
             title = { Text("Session exported") },
             text = { Text(path) },
             confirmButton = {
-                TextButton(onClick = onDismissExportDialog) {
-                    Text("Close")
+                TextButton(onClick = { onShareExportPath(path) }) {
+                    Text("Share")
                 }
             },
             dismissButton = {
-                TextButton(onClick = onCopyExportPath) {
-                    Text("Copy path")
+                Row {
+                    TextButton(onClick = onCopyExportPath) {
+                        Text("Copy path")
+                    }
+                    TextButton(onClick = onDismissExportDialog) {
+                        Text("Close")
+                    }
                 }
             }
         )
@@ -637,7 +659,8 @@ private fun SensorSessionDetailScreenPreview() {
             onBack = {},
             onExportClick = {},
             onDismissExportDialog = {},
-            onCopyExportPath = {}
+            onCopyExportPath = {},
+            onShareExportPath = {}
         )
     }
 }
