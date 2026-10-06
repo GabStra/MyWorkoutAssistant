@@ -1,5 +1,41 @@
 # Handoff: exercise-motion throughput campaign — 2026-10-02, ~16:12 local
 
+## Current completion audit — 2026-10-06, after CLEF integration
+
+The overall architecture and generator goal remains incomplete. The statuses
+below describe the current production owners, not a promotion verdict.
+
+| Requested area | Status | Production evidence and remaining work |
+| --- | --- | --- |
+| Artifact state machine | Partial verification | `artifact_state.py` validates lineage and terminal classes; `bake_and_rank.py` binds the final review window and selected skeleton identity; `build_workout_plan_movement_package.py::validate_selected_movement` checks the packaged selection against review evidence. The corrected RDL fit/render/review/package checkpoint passed before CLEF integration. The current-code two-exercise production-script replay has not passed. |
+| Source-evidence constraints in fitting | Implemented, verification partial | `controlled_motion_fit_source_evidence` binds selected interval, observed support, articulation, and projection evidence to the fit cache. Contact projection now preserves observed root posture and refreshes confirmed ground heights. The corrected RDL fitted and passed review; corrected Press fitting and current-code pair acceptance remain unverified. Camera projection and strict endpoint coverage remain conditional on available evidence and declared intervals. |
+| Queue-backed long-lived services | Partial implementation | `staged_wave_service.py::_execute_wave_request` accepts staged bake manifests and keeps the render executor alive across requests. Opt-in reconstruction workers are persistent. `Start-InitialDiscoveryJob`, prefetch, download, and legacy individual jobs still launch transient processes; the generator-wide service queue is not implemented. |
+| Persistent infrastructure ownership | Partial implementation | Workspace/process leases, shared-model quiescing, machine-wide fit slots, durable queue claims, ambiguous recovery, and content-verified caches exist for the implemented services. VLM recovery now shares the request budget and avoids restarting a responsive server after a busy inference probe. CLEF owns its server per decision lease and releases it on failure; it is not a long-lived model service. External GPU experiments do not participate in this generator's ownership protocol. |
+
+### Concrete retained quality evidence
+
+- Corrected RDL: `20261006-inspected-rdl-spike-guard-fit-report.json` records an
+  applied validated fit, all twenty checks passing, and 88.891 seconds inside
+  fitting (91.421 seconds measured wall time). Its standing endpoint tilt is
+  approximately 0.94 degrees, versus approximately eleven degrees introduced
+  by the previous support projection. The production renderer, real review,
+  and packaged-byte parity were checked in
+  `build/exercise_motion/replays/20261006-rdl-corrected-posture-render`.
+- This single retained result is not proof of library-wide quality or maximum
+  throughput. The fit Jacobian comparison proved identical residuals and
+  derivatives with a 39 percent reduction for that measured operation only.
+- CLEF code is integrated into all production bake runners, including the
+  workout-plan runner. Typed-answer mapping, uncertainty handling, CLI
+  forwarding, managed-server cleanup, and existing equipment gates have focused
+  coverage. Its managed startup had an undefined endpoint; commit `986ee0cf`
+  fixes it. No current-code pair generation or throughput comparison proves
+  the new backend's quality parity or total runtime benefit.
+- `run_motion_retained_replay.py` preserves real model reviews while pinning
+  source bytes and retained raw reconstruction. It bounds the process tree and
+  verifies approved outputs and reviewed-versus-packaged bytes. It does not
+  cover extractor inference/cache lookup, and a passing harness unit check is
+  not a passing production-script replay.
+
 ## Generator architecture and retained-fit update — 2026-10-05
 
 - The artifact-state path is implemented through bake, review, selection, and
