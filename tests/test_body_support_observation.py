@@ -91,6 +91,114 @@ def test_observed_ground_toe_keeps_heel_pitch_free_and_rejects_release():
         assert result['sourceFootSupportEvidence']['supportContacts'] == timed
 
 
+def test_hash_matched_confirmed_support_adds_only_observed_stationary_ground_feet():
+    from exercise_motion_pkg.body_support_observation import (
+        materialize_observed_ground_contacts,
+        materialize_stationary_sole_support,
+    )
+
+    fixture = json.loads((Path(__file__).parent / 'fixtures' /
+                          'sequence_stabilization_stance.json').read_text())
+    joints = fixture['joints']
+    frame_count = 12
+    source_pose = {'frames': [
+        {'joints': deepcopy(joints)} for _ in range(frame_count)
+    ]}
+
+    def payload_for(*, airborne_side=None, matching_hash=True):
+        video_hash = 'source-video-hash'
+        evidence_hash = video_hash if matching_hash else 'different-video-hash'
+        evidence = {
+            'bodySupport': {
+                'required': True,
+                'status': 'confirmed',
+                'source': 'exact_source_contacts_and_stationary_pose_tracks',
+                'sourceVideoSha256': evidence_hash,
+                'stationaryJoints': ['left_foot'],
+                'coplanarGroups': [{
+                    'joints': ['left_foot'], 'normal': [0., 1., 0.],
+                    'planeOffsetMeters': fixture['renderFloorY'],
+                }],
+                'nonPenetrationChains': [],
+                'soleContacts': [],
+            },
+            'bodySupportObservation': {
+                'status': 'observed',
+                'sourceVideoSha256': video_hash,
+                'observation': {
+                    'leftFoot': 'stationary_full_sole', 'leftFootSurface': 'ground',
+                    'rightFoot': 'stationary_full_sole', 'rightFootSurface': 'ground',
+                },
+            },
+            'footPatchEvidence': {
+                'available': True,
+                'feet': {
+                    'left': {'states': ['unknown'] * 4 + ['full_sole'] * 4 + ['unknown'] * 4},
+                    'right': {'states': ['unknown'] * frame_count},
+                },
+            },
+        }
+        if airborne_side:
+            states = evidence['footPatchEvidence']['feet'][airborne_side]['states']
+            states[frame_count // 2] = 'airborne'
+        return {
+            'jointNames': list(joints),
+            'renderFloorY': fixture['renderFloorY'],
+            'frames': [{'joints': deepcopy(joints)} for _ in range(frame_count)],
+            'sourceFootSupportEvidence': evidence,
+            'sourcePoseCameraReference': {
+                'camera': {'bilateralAssignment': 'swapped'},
+                'sourcePose': source_pose,
+            },
+        }
+
+    payload = payload_for()
+    materialize_body_support(payload, source_pose)
+    rig_evidence = materialize_stationary_sole_support(payload)
+    rig_support = rig_evidence['bodySupport']
+    assert {'left_ankle', 'left_foot', 'right_ankle', 'right_foot'}.issubset(
+        set(rig_support['stationaryJoints']))
+    assert {contact['joints'][2] for contact in rig_support['soleContacts']} == {
+        'left_foot', 'right_foot',
+    }
+
+    # The ordinary bake path's later temporal filter must preserve those same
+    # hash-matched, source-observed anchors when patch frames are merely unknown.
+    materialize_observed_ground_contacts(payload, source_pose)
+    source_support = payload['sourceFootSupportEvidence']['bodySupport']
+    assert {'left_foot', 'right_foot'}.issubset(set(source_support['stationaryJoints']))
+
+    # A short leading occlusion may be bridged only under the exact-video
+    # visual observation above; the stationary-track displacement gates remain.
+    from exercise_motion_pkg.body_support_observation import stationary_source_track
+    partially_occluded_pose = deepcopy(source_pose)
+    for frame in partially_occluded_pose['frames'][:3]:
+        frame['joints'].pop('right_ankle')
+    assert not stationary_source_track(partially_occluded_pose, 'right_ankle')
+    assert stationary_source_track(
+        partially_occluded_pose, 'right_ankle', max_leading_gap_ratio=.30)
+    partially_occluded = payload_for()
+    partially_occluded['sourcePoseCameraReference']['sourcePose'] = partially_occluded_pose
+    materialize_body_support(partially_occluded, partially_occluded_pose)
+    partial_rig_support = materialize_stationary_sole_support(partially_occluded)['bodySupport']
+    assert {'left_ankle', 'left_foot', 'right_ankle', 'right_foot'}.issubset(
+        set(partial_rig_support['stationaryJoints']))
+
+    airborne = payload_for(airborne_side='right')
+    materialize_body_support(airborne, source_pose)
+    airborne_rig = materialize_stationary_sole_support(airborne)
+    airborne_sole_joints = {
+        contact['joints'][2]
+        for contact in airborne_rig.get('bodySupport', {}).get('soleContacts', [])
+    }
+    assert 'right_foot' in airborne_sole_joints  # Source left maps to rig right.
+    assert 'left_foot' not in airborne_sole_joints
+
+    stale = payload_for(matching_hash=False)
+    materialize_body_support(stale, source_pose)
+    assert 'right_ankle' not in stale['sourceFootSupportEvidence']['bodySupport']['stationaryJoints']
+
+
 def test_observed_ground_contact_needs_full_cycle_corroboration_when_patch_data_exists():
     from exercise_motion_pkg.body_support_observation import materialize_observed_ground_contacts
 

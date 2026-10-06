@@ -117,7 +117,7 @@ of a shared horizontal surface.'''
     return result
 
 
-def stationary_source_track(source_pose, joint):
+def stationary_source_track(source_pose, joint, *, max_leading_gap_ratio=0.15):
     """Reject absent, sparse, moving, or low-confidence source observations."""
     from .bake_and_rank import (
         SOURCE_POSE_SUPPORT_STATIONARY_CHUNK_RANGE_RATIO_THRESHOLD,
@@ -143,7 +143,8 @@ def stationary_source_track(source_pose, joint):
     if len(tracks) < max(6, .7*len(frames)) or not spans:
         return False
     indexes, points = zip(*tracks)
-    if indexes[0] > .15*len(frames) or indexes[-1] < .85*(len(frames)-1):
+    if (indexes[0] > max_leading_gap_ratio*len(frames)
+            or indexes[-1] < .85*(len(frames)-1)):
         return False
     centers = np.asarray([np.median(chunk, axis=0) for chunk in np.array_split(points, 4)])
     scale = max(float(np.median(spans)), 1e-8)
@@ -163,7 +164,11 @@ def materialize_body_support(payload, source_pose, contract=None):
     """
     evidence = payload.get('sourceFootSupportEvidence') or {}
     if (evidence.get('bodySupport') or {}).get('status') == 'confirmed':
-        return  # Existing explicit source annotations remain authoritative.
+        # Retained evidence can be only partially materialized. Fill missing
+        # ground-foot anchors from the same hash-matched source observation,
+        # while retaining all existing torso and support constraints.
+        _augment_confirmed_ground_sole_support(payload, evidence, source_pose)
+        return
     observed = evidence.get('bodySupportObservation') or {}
     answer = observed.get('observation') or {}
     anchors = list(body_support_required_anchors(contract))
@@ -265,12 +270,15 @@ def materialize_observed_ground_contacts(payload, source_pose):
     floor = payload.get('renderFloorY')
     patch = evidence.get('footPatchEvidence') or {}
     temporal_patch_available = patch.get('available') is True
+    source_confirmed_sides = _augment_confirmed_ground_sole_support(
+        payload, evidence, source_pose)
     if temporal_patch_available:
         patch_contact_count = len(payload.get('frames') or [])
         full_cycle_sides = {
             side for side in ('left', 'right')
             if _has_full_cycle_stationary_sole(evidence, side, patch_contact_count)
         }
+        full_cycle_sides.update(source_confirmed_sides)
         _remove_unverified_materialized_foot_support(evidence, full_cycle_sides)
     # A few support-review frames cannot establish an uninterrupted ground
     # anchor when the movement permits release. First remove stale cached
@@ -322,6 +330,86 @@ def add_ground_sole_contacts(payload, support, medians, sides):
         support['coplanarGroups'].append({'joints': [ankle, foot], 'normal': [0, 1, 0],
             'planeOffsetMeters': float(payload.get('renderFloorY') or 0.)+.04*shoe_height})
         support['soleContacts'].append({'joints': [knee, ankle, foot], 'normal': [0, 1, 0]})
+
+
+def _confirmed_observed_ground_sole_sides(evidence, source_pose, joint_names):
+    """Return foot sides backed by the same confirmed video and stable source tracks."""
+    support = evidence.get('bodySupport') or {}
+    observed = evidence.get('bodySupportObservation') or {}
+    video_digest = observed.get('sourceVideoSha256')
+    if (support.get('status') != 'confirmed'
+            or not isinstance(video_digest, str) or not video_digest
+            or support.get('sourceVideoSha256') != video_digest
+            or observed.get('status') != 'observed'):
+        return set()
+
+    answer = observed.get('observation') or {}
+    names = set(joint_names or [])
+    patch = evidence.get('footPatchEvidence') or {}
+    feet = patch.get('feet') or {}
+    mapping = evidence.get('motionSpaceMapping') or {}
+    swapped = mapping.get('bilateralAssignment') == 'swapped'
+    confirmed = set()
+    for side in ('left', 'right'):
+        if not {f'{side}_ankle', f'{side}_foot', f'{side}_knee'}.issubset(names):
+            continue
+        if (answer.get(f'{side}Foot') != 'stationary_full_sole'
+                or answer.get(f'{side}FootSurface') != 'ground'):
+            continue
+        states = (feet.get(side) or {}).get('states') or []
+        normalized_states = {str(state).casefold() for state in states}
+        # Unknown samples do not contradict an exact source observation. Any
+        # observed release or partial sole does, so never widen it to a full
+        # clip anchor.
+        if normalized_states - {'unknown', 'full_sole'}:
+            continue
+        source_side = ('right' if side == 'left' else 'left') if swapped else side
+        # An exact-video observation can confirm that a foot remains planted
+        # while the source pose tracker briefly loses it at the clip start.
+        # Keep the usual 70% sample, endpoint, and displacement checks; relax
+        # only the leading-coverage guard for this hash- and patch-gated path.
+        if stationary_source_track(
+                source_pose, f'{source_side}_ankle', max_leading_gap_ratio=.30):
+            confirmed.add(side)
+    return confirmed
+
+
+def _body_support_has_complete_ground_sole(support, side):
+    ankle, foot, knee = (f'{side}_ankle', f'{side}_foot', f'{side}_knee')
+    stationary = set(support.get('stationaryJoints') or [])
+    has_plane = any(
+        {ankle, foot}.issubset(set(group.get('joints') or []))
+        and isinstance(group.get('planeOffsetMeters'), (int, float))
+        and np.isfinite(group.get('planeOffsetMeters'))
+        for group in support.get('coplanarGroups') or []
+    )
+    has_sole = any(
+        {knee, ankle, foot}.issubset(set(contact.get('joints') or []))
+        for contact in support.get('soleContacts') or []
+    )
+    return {ankle, foot}.issubset(stationary) and has_plane and has_sole
+
+
+def _augment_confirmed_ground_sole_support(payload, evidence, source_pose, *, sides=None):
+    support = evidence.get('bodySupport') or {}
+    if (support.get('status') != 'confirmed'
+            or payload.get('groundContactMode') in {'intermittent', 'none'}):
+        return set()
+    confirmed_sides = (_confirmed_observed_ground_sole_sides(
+        evidence, source_pose, payload.get('jointNames')) if sides is None else set(sides))
+    missing_sides = [side for side in sorted(confirmed_sides)
+                     if not _body_support_has_complete_ground_sole(support, side)]
+    frames = payload.get('frames') or []
+    names = payload.get('jointNames') or []
+    if not missing_sides or not frames or not set(names).issubset(
+            set(frames[0].get('joints') or {})):
+        return confirmed_sides
+    medians = {
+        name: np.median([frame['joints'][name] for frame in frames], axis=0)
+        for name in names
+    }
+    add_ground_sole_contacts(payload, support, medians, missing_sides)
+    return confirmed_sides
 
 
 def observed_stationary_sole_contacts(evidence):
@@ -418,16 +506,26 @@ def materialize_stationary_sole_support(payload):
     count = len(payload.get('frames') or [])
     names = payload.get('jointNames') or []
     patch = evidence.get('footPatchEvidence') or {}
+    source_pose_reference = payload.get('sourcePoseCameraReference') or {}
+    source_pose = source_pose_reference.get('sourcePose') or {}
+    source_confirmed_sides = set()
+    if payload.get('groundContactMode') not in {'intermittent', 'none'}:
+        source_confirmed_sides = _confirmed_observed_ground_sole_sides(
+            evidence, source_pose, names)
     if patch.get('available') is True:
         corroborated_sides = {
             side for side in ('left', 'right')
             if _has_full_cycle_stationary_sole(evidence, side, count)
         }
+        corroborated_sides.update(source_confirmed_sides)
         # Retained source evidence may carry bodySupport anchors materialized by
         # an older cache policy. Recheck them in the fit's motion-space view so
         # direct fitting and source digests cannot bypass the temporal patch
         # gate used by the normal source-preparation path.
         _remove_unverified_materialized_foot_support(evidence, corroborated_sides)
+    existing = evidence.get('bodySupport') or {}
+    _augment_confirmed_ground_sole_support(
+        payload, evidence, source_pose, sides=source_confirmed_sides)
     existing = evidence.get('bodySupport') or {}
     observed = evidence.get('bodySupportObservation') or {}
     if observed.get('status') != 'observed':
@@ -441,6 +539,11 @@ def materialize_stationary_sole_support(payload):
     sides = []
     existing_soles = {c['joints'][2] for c in existing.get('soleContacts', [])}
     for side in ('left', 'right'):
+        if side in source_confirmed_sides:
+            if (side not in existing_soles
+                    and not _body_support_has_complete_ground_sole(existing, side)):
+                sides.append(side)
+            continue
         if f'{side}_foot' in existing_soles:
             continue
         if answer.get(f'{side}Foot') != 'stationary_full_sole' or answer.get(f'{side}FootSurface') != 'ground':

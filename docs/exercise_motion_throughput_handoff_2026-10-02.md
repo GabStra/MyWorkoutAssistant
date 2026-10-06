@@ -902,3 +902,27 @@ directory has a condensed version of this state; update it after the arms land.
   ownership, atomic state, caches, and crash recovery were audited; no new
   persistent-infrastructure gap was found. Broader service migration remains
   a separate phase.
+- The retained 123-frame RDL payload showed its source-observed bilateral
+  ground stance was only partly materialized: the source-left ankle track was
+  stable for the full clip, while source-right was stable over 22/31 samples
+  but its leading 29% was occluded. Camera mapping correctly assigns
+  source-left to fit-right. The generic 15% leading-coverage rule therefore
+  left fit-left unsupported even though the hash-matched visual observation
+  confirmed both feet grounded and no patch sample contradicted it. The
+  confirmed-contact path now permits up to 30% leading occlusion only while
+  retaining the 70% sample, endpoint, and stationary-displacement checks; all
+  other callers retain the original 15% rule. Explicit release/partial-sole
+  patch states, source-hash mismatch, and intermittent/none contact modes still
+  block the added anchor. Focused support regression passed.
+- One CPU-only replay of the same retained payload after bilateral support
+  materialization took 51.9s versus 151.6s immediately before the change. Both
+  ankle/foot target RMS values fell from 35.2/44.2mm on fit-left to 0, and
+  anatomy, motion-discontinuity, contacts, and support checks now pass. The fit
+  remains rejected: right-wrist and right-hand shake exceed their limits by
+  only 1.2% and 0.3%, and playback reports an 11.3mm interpolated grip-spacing
+  error against a 9.4mm limit. The decisive remaining artifact issue is its
+  `requiredClass=cyclic_rebake` with no accepted source-cycle proposal; the
+  playback seam is 176mm and 5.06m/s over the reported limits. This source
+  cycle is not made valid by the bilateral-support fix, so no acceptance or
+  cycle-quality claim is made. The fit report now identifies joints failing
+  the shake limit to avoid another opaque diagnosis replay.

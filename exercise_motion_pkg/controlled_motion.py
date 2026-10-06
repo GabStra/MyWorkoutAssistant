@@ -7085,7 +7085,9 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         shake_basis = settling_basis if body_support.get('required') else temporal_reference
         acceleration_before = np.sqrt(np.mean(np.diff(shake_basis,n=2,axis=0)**2,axis=(0,2)))
         acceleration_after = np.sqrt(np.mean(np.diff(result,n=2,axis=0)**2,axis=(0,2)))
-        no_new_shake = bool(np.all(acceleration_after <= np.maximum(acceleration_before*1.2,.003*(30./fps)**2)))
+        shake_limits = np.maximum(acceleration_before*1.2,.003*(30./fps)**2)
+        shake_ratios = acceleration_after / np.maximum(shake_limits, 1e-12)
+        no_new_shake = bool(np.all(shake_ratios <= 1.))
         settling_after = weighted_settling_speed(result, names, fps, hold_weights)
         settling_preserved = settling_after <= settling_limit
         relative_quality = relative_motion_quality(
@@ -7127,6 +7129,20 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                       jointTargetRmsMeters={n:float(np.sqrt(np.mean((result[:,j]-target[:,j])**2))) for j,n in enumerate(names)},
                       jerkBefore=jerk_before,jerkAfter=jerk_after,
                       rangePreserved=range_preserved,noNewJointShake=no_new_shake,
+                      jointShakeFailureEvidence=(
+                          {
+                              'failedJoints': [names[j] for j in np.flatnonzero(shake_ratios > 1.)],
+                              'maximumLimitRatio': float(np.max(shake_ratios)),
+                              'topLimitRatios': [
+                                  {'joint': names[j], 'ratio': float(shake_ratios[j]),
+                                   'accelerationBefore': float(acceleration_before[j]),
+                                   'accelerationAfter': float(acceleration_after[j]),
+                                   'limit': float(shake_limits[j])}
+                                  for j in np.argsort(shake_ratios)[-5:][::-1]
+                              ],
+                          }
+                          if not no_new_shake else None
+                      ),
                       jointRangeRatios={names[j]:float(result_span[j]/target_span[j]) for j in np.flatnonzero(moving)},
                       settlingSpeedBefore=settling_before,settlingSpeedAfter=settling_after,settlingPreserved=settling_preserved,
                       settlingLimit=settling_limit,
