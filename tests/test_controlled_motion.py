@@ -2721,6 +2721,29 @@ def test_support_init_minimum_scales_past_flat_ninety_for_long_cycles():
     assert deadline >= support_min
 
 
+def test_seam_nudges_preserve_planted_descendants_without_freezing_free_limbs():
+    from exercise_motion_pkg.controlled_motion import (
+        FixedRig, seam_boundary_coordinate_nudge, seam_velocity_neighbor_nudge)
+
+    names, points = stance(12)
+    rig = FixedRig(points, names)
+    coordinates = rig.initial.copy()
+    for name in ('pelvis', 'left_knee', 'left_shoulder'):
+        slot = rig.slots[names.index(name)]
+        coordinates[-1, slot] += .15
+    pinned = np.zeros(points.shape[:2], dtype=bool)
+    for name in ('left_ankle', 'right_ankle', 'left_foot', 'right_foot'):
+        pinned[:, names.index(name)] = True
+    baseline = rig.decode(coordinates)
+    shoulder_slot = rig.slots[names.index('left_shoulder')]
+    for nudge in (seam_boundary_coordinate_nudge, seam_velocity_neighbor_nudge):
+        changed = nudge(coordinates, rig, pinned, strength=.8)
+        np.testing.assert_allclose(rig.decode(changed)[pinned], baseline[pinned], atol=1e-12)
+        assert not np.array_equal(
+            changed[:, shoulder_slot:shoulder_slot + 3],
+            coordinates[:, shoulder_slot:shoulder_slot + 3])
+
+
 def test_seam_boundary_nudge_reduces_first_last_root_gap():
     from exercise_motion_pkg.controlled_motion import (
         FixedRig, seam_boundary_coordinate_nudge, close_loop_seam_coordinates,

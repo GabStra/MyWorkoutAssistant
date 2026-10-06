@@ -1692,7 +1692,8 @@ def seam_boundary_coordinate_nudge(coordinates, rig, pinned, *, strength=0.55):
         delta_t = coords[0, :3] - coords[-1, :3]
         coords[0, :3] -= 0.5 * strength * delta_t
         coords[-1, :3] += 0.5 * strength * delta_t
-    free_joints = [j for j in range(pinned.shape[1]) if not bool(np.any(pinned[:, j]))]
+    planted_chain = set(_plant_chain_slots(rig, pinned))
+    free_joints = [j for j in range(pinned.shape[1]) if j not in planted_chain]
     free_cols = []
     for joint in free_joints:
         slot = rig.slots.get(joint)
@@ -1754,8 +1755,9 @@ def seam_velocity_neighbor_nudge(coordinates, rig, pinned, *, strength=0.55):
     planted = bool(np.any(pinned))
     if planted:
         free_cols = []
+        planted_chain = set(_plant_chain_slots(rig, pinned))
         for joint in range(pinned.shape[1]):
-            if bool(np.any(pinned[:, joint])):
+            if joint in planted_chain:
                 continue
             slot = rig.slots.get(joint)
             if slot is not None:
