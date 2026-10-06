@@ -26388,6 +26388,10 @@ def constrain_baked_payload_to_source_articulation(
         if source_pose_reference is not None and (working.get("loop") or {}).get("enabled"):
             working["observedCycleProposals"], working["sourceCyclePreflight"] = source_validated_cycle_proposals(
                 working, source_pose_reference, exercise_motion_contract)
+            if selected_cycle_interval_evidence(working) is not None:
+                working["selectedIntervalSourcePhasePreflight"] = (
+                    selected_interval_source_phase_preflight(
+                        working, source_pose_reference, exercise_motion_contract))
         fit_kwargs = {}
         if timeout_seconds is not None:
             fit_kwargs["timeout_seconds"] = max(0.0, float(timeout_seconds))
@@ -26395,7 +26399,26 @@ def constrain_baked_payload_to_source_articulation(
         from .controlled_motion import controlled_motion_fit_source_evidence_digest
         fit_input_pose_digest = pose_digest(payload)
         fit_input_source_evidence_digest = controlled_motion_fit_source_evidence_digest(payload)
-        fitted, fit_report = fit_controlled_motion(working, **fit_kwargs)
+        selected_preflight = working.get("selectedIntervalSourcePhasePreflight")
+        selected_source_phase = (
+            selected_preflight.get("sourcePhase")
+            if isinstance(selected_preflight, dict)
+            else None
+        )
+        if (isinstance(selected_source_phase, dict)
+                and selected_source_phase.get("required") is True
+                and selected_source_phase.get("passed") is False):
+            fitted = working
+            fit_report = {
+                "applied": False,
+                "reason": "selected_interval_source_phase_rejected",
+                "selectedIntervalSourcePhasePreflight": selected_preflight,
+                "elapsedSeconds": 0.,
+            }
+        else:
+            fitted, fit_report = fit_controlled_motion(working, **fit_kwargs)
+            if selected_preflight is not None:
+                fit_report["selectedIntervalSourcePhasePreflight"] = selected_preflight
         # An unsuccessful initialization/fit must not replace the caller's pose.
         result = fitted if fit_report.get("applied") else copy.deepcopy(payload)
         result["controlledMotionFit"] = {
@@ -28134,6 +28157,38 @@ def source_validated_cycle_proposals(payload, source_pose, contract):
                 })
                 accepted.append(full_interval)
     return accepted, diagnostics
+
+
+def selected_cycle_interval_evidence(payload):
+    """Return declared cycle selection evidence, including legacy selections."""
+    legacy = payload.get("loopCycleSelection")
+    if isinstance(legacy, dict):
+        return {"source": "loopCycleSelection", "selection": legacy}
+    artifact_state = payload.get("artifactState")
+    evidence = artifact_state.get("selectionEvidence") if isinstance(artifact_state, dict) else None
+    cycle = evidence.get("cycleSelection") if isinstance(evidence, dict) else None
+    if isinstance(cycle, dict) and isinstance(cycle.get("interval"), dict):
+        return {"source": "artifactState.selectionEvidence.cycleSelection", "selection": cycle}
+    return None
+
+
+def selected_interval_source_phase_preflight(payload, source_pose, contract):
+    """Check the exact selected interval against its matched source phase before fitting."""
+    ranking = {"exerciseMotionContract": contract} if contract else {}
+    observed_source = source_pose_reference_for_motion(source_pose, payload)
+    source_phase = full_repetition_phase_completeness_metrics_from_source_pose_payload(
+        observed_source, exercise_name="", ranking_payload=ranking)
+    output_phase = full_repetition_phase_completeness_metrics_from_payload(
+        payload, exercise_name="", ranking_payload=ranking)
+    source_phase_required = source_phase.get("required") is True
+    source_phase_passed = source_phase.get("passed") is True
+    return {
+        "selection": selected_cycle_interval_evidence(payload),
+        "sourcePhase": source_phase,
+        "outputPhase": output_phase,
+        "required": source_phase_required,
+        "passed": not source_phase_required or source_phase_passed,
+    }
 
 
 def pre_render_deterministic_gate(

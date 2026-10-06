@@ -4715,9 +4715,29 @@ def _fit_observed_cycles(payload, *, max_evaluations=None, timeout_seconds=None)
         and isinstance(selection_evidence[key].get('interval'), dict)
         for key in ('cycleSelection', 'boundedMovementSelection')
     )
+    selected_phase_preflight = payload.get('selectedIntervalSourcePhasePreflight')
     if (not (payload.get('loop') or {}).get('enabled') or payload.get('fixedRig')
             or payload.get('loopCycleSelection') or has_artifact_selected_interval
             or timeout_seconds <= 0):
+        source_phase = (
+            selected_phase_preflight.get('sourcePhase')
+            if isinstance(selected_phase_preflight, dict)
+            else None
+        )
+        if (timeout_seconds > 0
+                and (payload.get('loop') or {}).get('enabled')
+                and not payload.get('fixedRig')
+                and isinstance(source_phase, dict)
+                and source_phase.get('required') is True
+                and source_phase.get('passed') is False):
+            return payload, {
+                'applied': False,
+                'strategy': CONTROLLED_MOTION_STRATEGY,
+                'reason': 'selected_interval_source_phase_rejected',
+                'retainedIntervalFit': False,
+                'selectedIntervalSourcePhasePreflight': selected_phase_preflight,
+                'elapsedSeconds': 0.,
+            }
         return _fit_controlled_motion(payload, max_evaluations=max_evaluations,
                                       timeout_seconds=timeout_seconds)
     from .loop_cycles import rank_loop_cycles, slice_loop_cycle

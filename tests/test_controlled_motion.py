@@ -982,6 +982,42 @@ def test_rejected_source_cycle_preflight_skips_open_seam_fit(monkeypatch):
     assert report['retainedIntervalFit'] is False
 
 
+def test_selected_artifact_cycle_with_failed_source_phase_skips_fitting(monkeypatch):
+    from exercise_motion_pkg import controlled_motion as motion
+
+    current = {
+        'loop': {'enabled': True},
+        'frames': [{}] * 80,
+        'artifactState': {
+            'selectionEvidence': {
+                'cycleSelection': {
+                    'interval': {'startFrame': 4, 'endFrame': 79},
+                },
+            },
+        },
+        'selectedIntervalSourcePhasePreflight': {
+            'required': True,
+            'passed': False,
+            'sourcePhase': {'required': True, 'passed': False},
+        },
+    }
+
+    def fail_if_fit_runs(*_args, **_kwargs):
+        raise AssertionError('source-rejected selected cycle must skip fitting')
+
+    monkeypatch.setattr(motion, 'monotonic', lambda: 0.)
+    monkeypatch.setattr(motion, '_fit_controlled_motion', fail_if_fit_runs)
+
+    result, report = motion._fit_observed_cycles(current, timeout_seconds=240.)
+
+    assert result is current
+    assert report['applied'] is False
+    assert report['reason'] == 'selected_interval_source_phase_rejected'
+    assert report['selectedIntervalSourcePhasePreflight'] == (
+        current['selectedIntervalSourcePhasePreflight']
+    )
+
+
 def stance(count=45):
     fixture=json.loads((Path(__file__).parent/'fixtures/sequence_stabilization_stance.json').read_text())
     names=list(fixture['joints'])
