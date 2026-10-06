@@ -4260,7 +4260,7 @@ def _prepare_source_projection_fit_constraints(payload, frames, names, points, p
                     _bilateral_name(name, swap=swap) in names
                     for name in source_frames[nearest_index]['joints']
                 )
-                covered = delta <= coverage_tolerance and source_joint_count >= 3
+                covered = delta <= coverage_tolerance + 1e-9 and source_joint_count >= 3
                 cycle_boundary_coverage[role] = {
                     'available': covered,
                     'sourceObservationIndex': nearest_index if covered else None,
@@ -4319,7 +4319,7 @@ def _prepare_source_projection_fit_constraints(payload, frames, names, points, p
                 window_frames = [
                     (frame_index, frame)
                     for frame_index, frame in enumerate(source_frames)
-                    if abs(float(frame['time']) - target_time) <= posture_window_half_width
+                    if abs(float(frame['time']) - target_time) <= posture_window_half_width + 1e-9
                 ]
                 samples_by_joint = defaultdict(dict)
                 center_sample_times = []

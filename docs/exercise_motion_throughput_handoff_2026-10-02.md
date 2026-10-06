@@ -1363,3 +1363,41 @@ port 8080. No additional model campaign was started. A successful corrected
 OHP/RDL production-script E2E, genuine source and final reviews, CUDA source
 validation, fitting, production render, package parity, and comparable accepted
 output throughput therefore remain unverified.
+
+### Oct 6 sequential replay findings
+
+The next real-review replay is
+`build/exercise_motion/retained_pair_sequential_20261006_1733`. The replay
+runner now isolates `source_outcome_index.json` per run and uses staged wave
+size 1, so only one exercise enters fit at a time. A preceding attempt showed
+two simultaneous fit lanes despite `MaxConcurrentStagedWaves=1`; it was stopped
+before those fits ran. The sequential attempt completed with zero packaged
+outputs, but it reached both real source reviews and both fit paths.
+
+The Press source review now passes without a malformed-JSON retry after the
+ranker disables reasoning on its JSON-only suitability requests. Press then
+failed before the solver because its sampled source poses landed exactly on
+half-sample cycle and endpoint-window boundaries. Floating-point rounding put
+those observations a few ulps outside the comparison tolerance. A 1e-9 second
+numerical cushion was added to source boundary and endpoint-window comparisons.
+The targeted regression and the exact retained Press checkpoint now report
+both endpoint postures and cycle boundaries covered; no acceptance threshold
+changed. The complete Press fit/render/package path still needs a fresh replay.
+
+RDL passed genuine source review and reached controlled fitting. Its fit used
+193.28 seconds, stopped at the evaluation limit with 165.56 seconds remaining
+in the fit budget, and failed eleven quality checks. The source phase reports
+axis 1 with `planar_source_depth_unobservable`; the output phase reports axis 2
+and only 0.070 body-height motion range. Jerk rose from 0.000650 in the source
+to 0.09305 after fitting (136.4 times the acceptance limit), with discontinuity
+and shake failures across the body. This confirms the valid source clip still
+does not yield a usable RDL reconstruction. The newly generated contract again
+describes the target as depth travel, while the retained pose evidence cannot
+observe depth; the contract-to-source/fit coordinate relationship remains the
+next owner to resolve. No RDL fitting or quality gate was weakened.
+
+The run had one active fit lane, per-run source outcome state, real source
+review, and sequential admission. It produced no approved output and therefore
+does not establish a throughput gain. A fresh OHP run is required to verify the
+boundary fix through actual fitting, and the RDL source-evidence/coordinate
+mismatch remains unresolved before another full pair can succeed.

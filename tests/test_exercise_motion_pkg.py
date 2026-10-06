@@ -847,6 +847,36 @@ def test_llama_cpp_server_recovery_is_serialized_across_vlm_workers() -> None:
     assert max_active_recoveries == 1
 
 
+def test_llama_cpp_source_review_disables_reasoning_for_json_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+    ranker = youtube_module.LlamaCppVisionRanker.__new__(youtube_module.LlamaCppVisionRanker)
+
+    def caption_images(*, frame_paths: list[str], prompt: str, disable_reasoning: bool = False) -> str:
+        captured["disable_reasoning"] = disable_reasoning
+        captured["frame_paths"] = frame_paths
+        captured["prompt"] = prompt
+        return "{}"
+
+    ranker.client = SimpleNamespace(caption_images=caption_images)
+
+    def fake_score_prepared_vision_review(**kwargs: Any) -> str:
+        kwargs["caption_images"](frame_paths=["frame.png"], prompt="review")
+        return "ranked"
+
+    monkeypatch.setattr(youtube_module, "score_prepared_vision_review", fake_score_prepared_vision_review)
+
+    result = ranker.rank_prepared(object(), object())
+
+    assert result == "ranked"
+    assert captured == {
+        "disable_reasoning": True,
+        "frame_paths": ["frame.png"],
+        "prompt": "review",
+    }
+
+
 def test_force_stopping_owned_llama_cpp_server_kills_without_graceful_wait() -> None:
     class FakeProcess:
         def __init__(self) -> None:

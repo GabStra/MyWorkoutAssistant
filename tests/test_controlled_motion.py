@@ -1443,10 +1443,10 @@ def test_selected_cycle_boundaries_get_stronger_source_projection_fit_rows():
     assert np.isclose(np.linalg.norm(start_delta) / np.linalg.norm(middle_delta), 2.0)
 
 
-def _artifact_state_source_fit_payload(selection_class):
+def _artifact_state_source_fit_payload(selection_class, *, frame_count=12):
     from exercise_motion_pkg import controlled_motion as motion
 
-    names, points = stance(12)
+    names, points = stance(frame_count)
     current = payload(names, points)
     source_origin = 3.0
     source_start_frame = 10
@@ -1629,6 +1629,42 @@ def test_endpoint_posture_uses_the_same_pelvis_center_for_source_and_fit():
         motion.body_scale(points, names),
     )
 
+    assert constraint['endpointPostureCoverage']['start']['available'] is True
+    assert constraint['endpointPostureCoverage']['end']['available'] is True
+
+
+def test_fit_source_coverage_accepts_exact_half_sample_boundaries_with_float_rounding():
+    from exercise_motion_pkg import controlled_motion as motion
+
+    current, names, points = _artifact_state_source_fit_payload(
+        'cycleSelection', frame_count=23,
+    )
+    source_origin = 3.0
+    source_frames = []
+    for source_index in (0, 4, 8, 12, 16, 20, 24):
+        source_points = points[min(source_index, len(points) - 1)]
+        source_frames.append({
+            'sourceTimeSec': source_origin + source_index / 30.,
+            'joints': {
+                name: [float(point[0] * .4 + .5), float(point[1] * .4 + .5)]
+                for name, point in zip(names, source_points)
+            },
+            'jointConfidence': {name: .81 for name in names},
+        })
+    current['sourcePoseCameraReference']['sourcePose']['frames'] = source_frames
+
+    constraint = motion._prepare_source_projection_fit_constraints(
+        current,
+        current['frames'],
+        names,
+        points,
+        np.zeros((len(points), len(names)), dtype=bool),
+        motion.body_scale(points, names),
+    )
+
+    assert constraint['available'] is True
+    assert constraint['cycleBoundaryCoverage']['start']['available'] is True
+    assert constraint['cycleBoundaryCoverage']['end']['available'] is True
     assert constraint['endpointPostureCoverage']['start']['available'] is True
     assert constraint['endpointPostureCoverage']['end']['available'] is True
     pelvis_index = names.index('pelvis')

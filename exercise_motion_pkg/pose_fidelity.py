@@ -302,9 +302,9 @@ def source_pose_reference_for_motion(
         tolerance = max(0.5 * source_step, 0.5 * fit_step, 1e-6)
         before = [row for row in ordered if row[0] < start]
         after = [row for row in ordered if row[0] > end]
-        if before and start - before[-1][0] <= tolerance:
+        if before and start - before[-1][0] <= tolerance + 1e-9:
             boundary_evidence.append(before[-1])
-        if after and after[0][0] - end <= tolerance:
+        if after and after[0][0] - end <= tolerance + 1e-9:
             boundary_evidence.append(after[0])
     combined = sorted(selected + boundary_evidence, key=lambda row: row[1])
     selected_reference = {

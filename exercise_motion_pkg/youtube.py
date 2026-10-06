@@ -9689,10 +9689,13 @@ class LlamaCppVisionRanker:
         *,
         stop_event: threading.Event | None = None,
     ) -> VisionRankResult:
+        def caption_images_without_reasoning(**kwargs: Any) -> str:
+            return self.client.caption_images(disable_reasoning=True, **kwargs)
+
         return score_prepared_vision_review(
             prepared=prepared,
             settings=settings,
-            caption_images=self.client.caption_images,
+            caption_images=caption_images_without_reasoning,
             stop_event=stop_event,
         )
 
