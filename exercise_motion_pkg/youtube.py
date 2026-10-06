@@ -107,7 +107,6 @@ SEMANTIC_GATE_DURATION_HORIZON_SECONDS = 120.0
 LLAMA_CPP_CHAT_READY_PROBE_TIMEOUT_SECONDS = 5.0
 # Consecutive failed chat probes (while /v1/models still answers) before the
 # recovery path force-restarts a wedged server instead of waiting it out.
-WEDGED_SERVER_RESTART_STRIKES = 2
 DEFAULT_YOUTUBE_SEARCH_TIMEOUT_SECONDS = 60.0
 YOUTUBE_SEARCH_MAX_ATTEMPTS = 4
 YOUTUBE_SEARCH_RETRY_BASE_DELAY_SECONDS = 2.0
@@ -9271,25 +9270,11 @@ class LlamaCppVisionRanker:
         # worker cannot clear self.process while another is polling its restart.
         with self._server_recovery_lock:
             if self._server_models_payload() is not None:
-                # A busy model must not be restarted because an inference
-                # health probe cannot acquire a slot within five seconds. But a
-                # server whose compute slots are WEDGED (e.g. a CUDA hang under
-                # VRAM over-commit) still answers /v1/models while every chat
-                # completion fails - treat consecutive failed chat probes as a
-                # wedged server and force-restart it.
-                chat_ready, _ = self._chat_completions_ready()
-                if chat_ready:
-                    self._wedged_server_strikes = 0
-                    return
-                self._wedged_server_strikes = getattr(self, "_wedged_server_strikes", 0) + 1
-                if self._wedged_server_strikes < WEDGED_SERVER_RESTART_STRIKES:
-                    return
-                self._wedged_server_strikes = 0
-                print(
-                    f"[llama-cpp] server at {self.settings.llama_cpp_base_url} answers /v1/models but "
-                    f"failed {WEDGED_SERVER_RESTART_STRIKES} consecutive chat probes; force-restarting it.",
-                    flush=True,
-                )
+                # Inference probes compete with the request that timed out.
+                # Their timeout is not evidence of a wedged compute backend;
+                # restarting here discards peer work and repeats model startup.
+                # An unresponsive models endpoint still follows recovery below.
+                return
             if self.process is not None and not self.settings.keep_llama_cpp_server:
                 self._stop_owned_llama_cpp_server()
                 self._ensure_server()
