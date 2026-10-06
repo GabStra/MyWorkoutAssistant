@@ -1001,3 +1001,39 @@ directory has a condensed version of this state; update it after the arms land.
   production path can reconcile hash-matched full-sole ground evidence with
   stable ankle tracks; the retained fit payload predates that rematerialization.
   Do not widen the generic floor threshold based on this stale payload.
+
+### Oct 6 shake-aware grip projection and architecture status
+
+- The retained 123-frame RDL fit failed only because the playback rigid-pair
+  correction raised right-wrist/right-hand acceleration just beyond the existing
+  absolute `jointShake` limit. The bounded projection previously optimized grip
+  spacing and correction smoothness without seeing that limit. Commit
+  `6199f736` passes the same per-joint RMS limits into that projection and adds
+  a small excess-only residual with a 0.1% target cushion; the validator and its
+  acceptance threshold are unchanged.
+- Replayed the exact retained input (SHA-256
+  `183ad0bc37647ad1dd632c4c2727f0c88d6fe335fce8d54aa5b3e3ea02249796`) with a
+  139s candidate cap. The fit completed in 41.691s with `applied=true`, and all
+  19 reported checks passed, including `jointShake`, `relativeJointShake`,
+  equipment, playback, contact, anatomy, body support, and motion discontinuity.
+  Interpolated grip spacing is 8.807mm against a 9.409mm limit, and playback
+  contact error is 0.864mm. It used zero model calls and zero reconstruction
+  runs. The exact replay report and payload are
+  `build/exercise_motion/replays/20261006-rdl-grip-shake-aware-v4-report.json`
+  and `build/exercise_motion/replays/20261006-rdl-grip-shake-aware-v4.json`.
+- This qualifies the retained fit only. It does not establish a fresh source
+  discovery/reconstruction run, reviewed render, selected artifact, package
+  parity, or an end-to-end throughput change. The agreed OHP+RDL pair still has
+  no current-code two-exercise production result; run that only after the
+  bounded production-path verification stage.
+- Current architecture audit: artifact lineage and final state transitions are
+  connected through fit, final review, selection, package construction, and
+  independent package audit. Source constraints reach the fitter; strict source
+  endpoint coverage is conditional on a declared selected interval, while a
+  full-clip fit can proceed without camera projection evidence. Staged-wave
+  baking and opt-in WHAM/GVHMR workers are queue-backed long-lived services;
+  discovery, prefetch, downloads, and legacy individual jobs remain transient
+  PowerShell jobs. Persistent process/GPU/CPU ownership, ambiguous-job recovery,
+  and content-verified caches are present for the implemented services. Thus the
+  generator-wide service queue remains a separate phase; these audit findings
+  do not claim it is implemented or prove maximum throughput.
