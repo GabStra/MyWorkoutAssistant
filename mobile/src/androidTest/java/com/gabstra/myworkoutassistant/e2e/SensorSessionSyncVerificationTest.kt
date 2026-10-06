@@ -33,18 +33,28 @@ class SensorSessionSyncVerificationTest {
             checkpoint = CrossDeviceSyncAssertions.finalCheckpoint,
             timeoutMs = resolvedSyncTimeoutMs()
         )
-        val historyId = db.workoutHistoryDao().getAllWorkoutHistories()
-            .firstOrNull {
-                it.isDone && it.workoutId == CrossDeviceSyncPhoneWorkoutStoreFixture.WORKOUT_ID
-            }?.id
+        val history = db.workoutHistoryDao().getAllWorkoutHistories()
+            .filter { it.isDone && it.workoutId == CrossDeviceSyncPhoneWorkoutStoreFixture.WORKOUT_ID }
+            .maxByOrNull { it.startTime }
             ?: error("Cross-device history arrived but could not be resolved for session correlation")
+
+        // The capture session can start before the workout history id is assigned, so the synced
+        // row may carry a null workoutHistoryId; correlate by workout + session recency instead.
+        val windowStartMs = history.startTime
+            .atZone(java.time.ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli() - 60_000
 
         val session = pollFor {
             db.motionCaptureSessionDao()
                 .getLatestByStatus(MotionCaptureSessionStatus.COMPLETED.name)
-                ?.takeIf { it.workoutHistoryId == historyId }
+                ?.takeIf {
+                    it.workoutId == CrossDeviceSyncPhoneWorkoutStoreFixture.WORKOUT_ID &&
+                        it.startedAtEpochMs >= windowStartMs &&
+                        (it.workoutHistoryId == history.id || it.workoutHistoryId == null)
+                }
         } ?: error(
-            "No COMPLETED sensor session synced for workout history $historyId within " +
+            "No COMPLETED sensor session synced for workout history ${history.id} within " +
                 "${resolvedSyncTimeoutMs()}ms"
         )
 
