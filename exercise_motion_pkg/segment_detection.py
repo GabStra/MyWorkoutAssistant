@@ -1665,6 +1665,8 @@ class LlamaCppVisionClient:
         image_count = len(frame_paths)
         image_bytes = sum(frame_path.stat().st_size for frame_path in frame_paths if frame_path.exists())
         request_timeout = self._resolved_request_timeout(request_timeout_seconds)
+        request_deadline = (None if request_timeout is None
+                            else time.monotonic() + request_timeout)
         request_kwargs: dict[str, object] = {"json": payload, "timeout": request_timeout}
         interaction = "llama-cpp vision chat completion"
         last_error: CriticalVlmInteractionError | None = None
@@ -1673,6 +1675,11 @@ class LlamaCppVisionClient:
             attempt_started = time.monotonic()
             attempt_client_generation = self._client_generation
             try:
+                if request_deadline is not None:
+                    remaining = request_deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise httpx.TimeoutException("VLM request budget exhausted before retry")
+                    request_kwargs["timeout"] = remaining
                 response = self._post_chat_completion(**request_kwargs)
                 error_body = response.text.casefold() if response.status_code in {400, 422} else ""
                 unsupported_format_fields = [
@@ -1687,7 +1694,11 @@ class LlamaCppVisionClient:
                     fallback_payload = dict(payload)
                     for field in unsupported_format_fields:
                         fallback_payload.pop(field)
-                    fallback_request_kwargs: dict[str, object] = {"json": fallback_payload, "timeout": request_timeout}
+                    remaining = (None if request_deadline is None
+                                 else request_deadline - time.monotonic())
+                    if remaining is not None and remaining <= 0:
+                        raise httpx.TimeoutException("VLM request budget exhausted before compatibility fallback")
+                    fallback_request_kwargs: dict[str, object] = {"json": fallback_payload, "timeout": remaining}
                     response = self._post_chat_completion(**fallback_request_kwargs)
                 if response.status_code >= 400:
                     body = response.text.strip()
@@ -1737,7 +1748,10 @@ class LlamaCppVisionClient:
                     recoveryEvents=list(recovery_events),
                 )
                 last_error = critical
-                if not critical.recoverable or attempt_index >= self.max_recovery_retries:
+                budget_exhausted = (request_deadline is not None
+                                    and time.monotonic() >= request_deadline)
+                critical.add_details(requestBudgetExhausted=budget_exhausted)
+                if budget_exhausted or not critical.recoverable or attempt_index >= self.max_recovery_retries:
                     if critical is exc:
                         raise
                     raise critical from exc
