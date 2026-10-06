@@ -6418,6 +6418,53 @@ if ([string]::IsNullOrWhiteSpace($BodyModelRoot)) {
 $resolvedWhamRepoPath = Resolve-StrictPath $WhamRepoPath
 $resolvedBodyModelRoot = Resolve-StrictPath $BodyModelRoot
 
+function Assert-StagedWaveWorkspaceIsQuiescent {
+    param([string]$WorkspaceRoot)
+
+    $queueRoot = Join-Path (Join-Path $WorkspaceRoot "staged-wave-services") "v1"
+    if (-not (Test-Path -LiteralPath $queueRoot -PathType Container)) {
+        return
+    }
+
+    Invoke-WithStagedWaveAdmissionLock -QueueRoot $queueRoot -Operation {
+        $pendingPaths = @(
+            Get-ChildItem -LiteralPath (Join-Path $queueRoot "requests") `
+                -Filter "*.json" -File -ErrorAction SilentlyContinue |
+                ForEach-Object { $_.FullName }
+        )
+        $processingPaths = @(
+            Get-ChildItem -LiteralPath (Join-Path $queueRoot "processing") `
+                -Filter "*.json" -File -ErrorAction SilentlyContinue |
+                ForEach-Object { $_.FullName }
+        )
+        $ambiguousPaths = @(
+            Get-ChildItem -LiteralPath (Join-Path $queueRoot "ambiguous") `
+                -Filter "*.json" -File -ErrorAction SilentlyContinue |
+                ForEach-Object { $_.FullName }
+        )
+        $service = Get-StagedBakeQueueServiceState -QueueRoot $queueRoot
+        $workerState = $service.state
+        $workerBusy = $false
+        if ($service.matchingProcess) {
+            $workerBusy = (
+                -not $service.healthy -or
+                [string]$workerState.status -ne "idle" -or
+                -not [string]::IsNullOrWhiteSpace([string]$workerState.currentRequestId) -or
+                -not [string]::IsNullOrWhiteSpace([string]$workerState.currentWaveId)
+            )
+        }
+
+        if ($pendingPaths.Count -gt 0 -or $processingPaths.Count -gt 0 -or
+            $ambiguousPaths.Count -gt 0 -or $workerBusy) {
+            $evidence = @($pendingPaths) + @($processingPaths) + @($ambiguousPaths)
+            if ($workerBusy -and $workerState) {
+                $evidence += "worker pid=$($workerState.pid) status=$($workerState.status) request=$($workerState.currentRequestId) wave=$($workerState.currentWaveId)"
+            }
+            throw "Motion workspace '$WorkspaceRoot' has staged-wave work that is pending, active, ambiguous, or unverifiable. Resolve this queue before starting a new run: $($evidence -join '; ')"
+        }
+    }
+}
+
 function Acquire-MotionWorkspaceLease {
     param([string]$WorkspaceRoot)
 
@@ -6461,6 +6508,13 @@ function Acquire-MotionWorkspaceLease {
             if ($null -ne $stream) { $stream.Dispose() }
             throw
         }
+    }
+
+    try {
+        Assert-StagedWaveWorkspaceIsQuiescent -WorkspaceRoot $WorkspaceRoot
+    } catch {
+        $stream.Dispose()
+        throw
     }
 
     $ownerToken = [guid]::NewGuid().ToString("N")

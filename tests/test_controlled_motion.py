@@ -1311,7 +1311,7 @@ def test_source_projection_constraint_enters_the_production_fit_jacobian(monkeyp
         return SimpleNamespace(x=initial, nfev=1, status=0)
 
     monkeypatch.setattr(motion, 'solve_trajectory', capture_solver)
-    _, report = motion.fit_controlled_motion(current, max_evaluations=1, timeout_seconds=10.)
+    _, report = motion.fit_controlled_motion(current, max_evaluations=1, timeout_seconds=60.)
 
     constraint = report['sourceProjectionConstraint']
     assert constraint['available'] is True
@@ -1500,6 +1500,46 @@ def _artifact_state_source_fit_payload(selection_class, *, frame_count=12):
         },
     }
     return current, names, points
+
+
+def test_source_fit_uses_confident_hip_midpoint_when_synthesized_pelvis_has_no_confidence():
+    from exercise_motion_pkg import controlled_motion as motion
+
+    current, names, points = _artifact_state_source_fit_payload('cycleSelection')
+    source_frames = current['sourcePoseCameraReference']['sourcePose']['frames']
+    for frame in source_frames:
+        frame['jointConfidence'].pop('pelvis')
+        frame['joints']['pelvis'] = [0.1, 0.9]
+
+    constraint = motion._prepare_source_projection_fit_constraints(
+        current,
+        current['frames'],
+        names,
+        points,
+        np.zeros((len(points), len(names)), dtype=bool),
+        motion.body_scale(points, names),
+    )
+
+    pelvis_index = names.index('pelvis')
+    pelvis_observation = next(
+        row for row in constraint['observations']
+        if row['jointIndex'] == pelvis_index
+    )
+    expected_center = (
+        np.asarray(source_frames[0]['joints']['left_hip'])
+        + np.asarray(source_frames[0]['joints']['right_hip'])
+    ) * .5
+    np.testing.assert_allclose(pelvis_observation['sourcePoint'], expected_center)
+    assert np.isclose(pelvis_observation['confidenceWeight'], np.sqrt(.81))
+    assert all(
+        row['centerJointIndices'] == (
+            names.index('left_hip'), names.index('right_hip'))
+        for row in constraint['endpointPostureObservations']
+    )
+    assert np.isclose(
+        constraint['endpointPostureCoverage']['start']['meanConfidenceWeight'],
+        np.sqrt(.81),
+    )
 
 
 def test_artifact_state_selected_intervals_feed_endpoint_fit_rows_and_cycle_only_boundary_weight():
@@ -2729,12 +2769,16 @@ def test_polish_stages_order_contact_before_temporal_before_seam():
     assert polish_stage_for_failures(['loopSeam', 'jerk']) == 'C'
     assert polish_stage_for_failures(['jerk', 'jointShake']) == 'C'
     assert polish_stage_for_failures(['rootContinuity', 'loopSeam']) == 'C'
+    assert polish_stage_for_failures(['rootTravel']) == 'C'
+    assert polish_stage_for_failures(['rootTravel', 'contacts']) == 'A'
     assert polish_stage_for_failures(['motionDiscontinuity']) == 'C'
     assert polish_stage_for_failures(['loopSeam']) == 'B'
     assert polish_stage_for_failures(['playback']) == 'C'
     assert polishable_near_miss(['contacts', 'equipment'])
     assert polishable_near_miss(['loopSeam'])
     assert polishable_near_miss(['rootContinuity', 'settling'])
+    assert not polishable_near_miss(['rootTravel'])
+    assert polishable_near_miss(['rootTravel', 'jerk'])
     assert not polishable_near_miss(['anatomy', 'contacts'])
     assert prioritize_fit_before_broad_temporal_smoothing(
         ['jerk'], playback_passed=True, contact_error_meters=0.0002)

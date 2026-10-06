@@ -127,6 +127,86 @@ def test_power_shell_services_preserve_leases_until_runtime_exit():
     assert '$runtimeState -ne "stopped"' in worker_stop
 
 
+def test_power_shell_workspace_admission_rejects_queued_motion_work(tmp_path: Path):
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell is required to exercise staged-wave workspace admission")
+    script = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "run_exercise_motion_workout_plan.ps1"
+    ).read_text(encoding="utf-8-sig")
+    admission = _powershell_function(script, "Assert-StagedWaveWorkspaceIsQuiescent")
+    acquire = _powershell_function(script, "Acquire-MotionWorkspaceLease")
+    assert "Assert-StagedWaveWorkspaceIsQuiescent -WorkspaceRoot $WorkspaceRoot" in acquire
+    command = fr"""
+function Invoke-WithStagedWaveAdmissionLock {{
+    param([string]$QueueRoot, [scriptblock]$Operation)
+    return & $Operation
+}}
+function Get-StagedBakeQueueServiceState {{
+    param([string]$QueueRoot)
+    return $script:MockStagedWaveServiceState
+}}
+$workspaceRoot = $env:MOTION_TEST_WORKSPACE
+$queueRoot = Join-Path (Join-Path $workspaceRoot "staged-wave-services") "v1"
+New-Item -ItemType Directory -Force -Path $queueRoot, `
+    (Join-Path $queueRoot "requests"), `
+    (Join-Path $queueRoot "processing"), `
+    (Join-Path $queueRoot "ambiguous") | Out-Null
+{admission}
+
+$script:MockStagedWaveServiceState = [pscustomobject]@{{
+    healthy = $true
+    matchingProcess = $true
+    state = [pscustomobject]@{{ status = "idle"; currentRequestId = ""; currentWaveId = ""; pid = 123 }}
+}}
+Assert-StagedWaveWorkspaceIsQuiescent -WorkspaceRoot $workspaceRoot
+
+$script:MockStagedWaveServiceState.state.status = "running"
+$activeRejected = $false
+try {{ Assert-StagedWaveWorkspaceIsQuiescent -WorkspaceRoot $workspaceRoot }} catch {{
+    $activeRejected = $_.Exception.Message.Contains("active") -or $_.Exception.Message.Contains("unverifiable")
+}}
+if (-not $activeRejected) {{ throw "A live staged-wave worker was not rejected." }}
+
+$script:MockStagedWaveServiceState.matchingProcess = $false
+$script:MockStagedWaveServiceState.state.status = "stopped"
+Set-Content -LiteralPath (Join-Path $queueRoot "requests\pending.json") -Value "{{}}"
+$pendingRejected = $false
+try {{ Assert-StagedWaveWorkspaceIsQuiescent -WorkspaceRoot $workspaceRoot }} catch {{
+    $pendingRejected = $_.Exception.Message.Contains("pending")
+}}
+if (-not $pendingRejected) {{ throw "An unclaimed staged-wave request was not rejected." }}
+Remove-Item -LiteralPath (Join-Path $queueRoot "requests\pending.json") -Force
+
+Set-Content -LiteralPath (Join-Path $queueRoot "processing\claimed.json") -Value "{{}}"
+$processingRejected = $false
+try {{ Assert-StagedWaveWorkspaceIsQuiescent -WorkspaceRoot $workspaceRoot }} catch {{
+    $processingRejected = $_.Exception.Message.Contains("processing") -or $_.Exception.Message.Contains("pending")
+}}
+if (-not $processingRejected) {{ throw "A claimed staged-wave request was not rejected." }}
+Remove-Item -LiteralPath (Join-Path $queueRoot "processing\claimed.json") -Force
+
+Set-Content -LiteralPath (Join-Path $queueRoot "ambiguous\uncertain.json") -Value "{{}}"
+$ambiguousRejected = $false
+try {{ Assert-StagedWaveWorkspaceIsQuiescent -WorkspaceRoot $workspaceRoot }} catch {{
+    $ambiguousRejected = $_.Exception.Message.Contains("ambiguous")
+}}
+if (-not $ambiguousRejected) {{ throw "An ambiguous staged-wave request was not rejected." }}
+"""
+    environment = dict(os.environ)
+    environment["MOTION_TEST_WORKSPACE"] = str(tmp_path)
+    completed = subprocess.run(
+        [pwsh, "-NoProfile", "-NonInteractive", "-Command", command],
+        capture_output=True,
+        text=True,
+        env=environment,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
 def test_shared_llama_restart_reuses_held_lease_only_after_runtime_stops():
     script = (
         Path(__file__).resolve().parents[1]

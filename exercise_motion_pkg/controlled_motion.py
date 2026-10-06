@@ -467,7 +467,7 @@ POLISH_STAGE_A = frozenset({'contacts', 'equipment', 'bodySupport', 'supportAlig
 POLISH_STAGE_B = frozenset({'playback', 'loopSeam'})
 POLISH_STAGE_C = frozenset({
     'jerk', 'jointShake', 'relativeJointShake', 'settling',
-    'rootContinuity', 'motionDiscontinuity',
+    'rootContinuity', 'rootTravel', 'motionDiscontinuity',
 })
 # Stage-A soft LS otherwise loses to seam/temporal terms on supported cycles.
 STAGE_A_CONTACT_POLISH_WEIGHT = 8.
@@ -480,7 +480,7 @@ GRIP_FIT_WEIGHT_WHEN_REFERENCE_FAILS = 40000.
 
 
 def polish_stage_for_failures(failed_checks):
-    """Ordered polish focus: contacts → body continuity/temporal → seam."""
+    """Ordered polish focus: contacts → trajectory/temporal → seam."""
     failed = set(failed_checks or [])
     if failed & POLISH_STAGE_A:
         return 'A'
@@ -498,6 +498,10 @@ def polish_stage_for_failures(failed_checks):
 def polishable_near_miss(failed_checks):
     """Failures that leftover outer time should keep polishing."""
     failed = set(failed_checks or [])
+    if failed == {'rootTravel'}:
+        # A bounded trajectory polish is attempted in Stage C, but repeating
+        # identical root-travel-only solves cannot change the source candidate.
+        return False
     return bool(failed) and failed <= (POLISH_STAGE_A | POLISH_STAGE_B | POLISH_STAGE_C)
 
 
@@ -4299,12 +4303,28 @@ def _prepare_source_projection_fit_constraints(payload, frames, names, points, p
 
             def source_center(frame):
                 joints = frame['joints']
-                if can_use_pelvis_center and 'pelvis' in joints:
+                pelvis_confidence = (
+                    source_confidence(frame, ('pelvis',))
+                    if 'pelvis' in joints else 0.
+                )
+                if (can_use_pelvis_center and 'pelvis' in joints
+                        and pelvis_confidence >= .35):
                     center = np.asarray(joints['pelvis'], dtype=float)
                     confidence_names = ('pelvis',)
                     center_joint_indices = (fit_joint_index['pelvis'],)
-                elif (can_use_hip_center and 'left_hip' in joints
-                      and 'right_hip' in joints):
+                elif (can_use_hip_center and {'left_hip', 'right_hip'} <= joints.keys()
+                      and source_confidence(frame, ('left_hip', 'right_hip')) >= .35):
+                    center = (np.asarray(joints['left_hip'], dtype=float)
+                              + np.asarray(joints['right_hip'], dtype=float)) * .5
+                    confidence_names = ('left_hip', 'right_hip')
+                    center_joint_indices = (
+                        fit_joint_index['left_hip'], fit_joint_index['right_hip'],
+                    )
+                elif can_use_pelvis_center and 'pelvis' in joints:
+                    center = np.asarray(joints['pelvis'], dtype=float)
+                    confidence_names = ('pelvis',)
+                    center_joint_indices = (fit_joint_index['pelvis'],)
+                elif (can_use_hip_center and {'left_hip', 'right_hip'} <= joints.keys()):
                     center = (np.asarray(joints['left_hip'], dtype=float)
                               + np.asarray(joints['right_hip'], dtype=float)) * .5
                     confidence_names = ('left_hip', 'right_hip')
@@ -4348,8 +4368,19 @@ def _prepare_source_projection_fit_constraints(payload, frames, names, points, p
                         joint_index = fit_joint_index.get(motion_name)
                         if joint_index is None or joint_index in center_joint_indices:
                             continue
+                        point_confidence_names = (source_name,)
+                        if (source_name == 'pelvis'
+                                and source_confidence(source_frame, ('pelvis',)) < .35
+                                and {'left_hip', 'right_hip'} <= source_frame['joints'].keys()
+                                and source_confidence(
+                                    source_frame, ('left_hip', 'right_hip')) >= .35):
+                            source_point = (
+                                np.asarray(source_frame['joints']['left_hip'], dtype=float)
+                                + np.asarray(source_frame['joints']['right_hip'], dtype=float)
+                            ) * .5
+                            point_confidence_names = ('left_hip', 'right_hip')
                         confidence = min(
-                            source_confidence(source_frame, (source_name,)),
+                            source_confidence(source_frame, point_confidence_names),
                             center_confidence,
                         )
                         if confidence <= 0.:
@@ -4516,6 +4547,20 @@ def _prepare_source_projection_fit_constraints(payload, frames, names, points, p
             # An absent confidence value is unknown; keep the observation at
             # low trust instead of silently promoting it to full authority.
             confidence_value = confidence.get(source_name)
+            if (source_name == 'pelvis'
+                    and (confidence_value is None or confidence_value < .35)
+                    and {'left_hip', 'right_hip'} <= source_frame['joints'].keys()):
+                hip_confidence = source_confidence(
+                    source_frame, ('left_hip', 'right_hip'))
+                if hip_confidence >= .35:
+                    # Some pose extractors synthesize pelvis from the hips but
+                    # omit its confidence. Treat that derived center as no more
+                    # uncertain than its observed bilateral inputs.
+                    source_point = (
+                        np.asarray(source_frame['joints']['left_hip'], dtype=float)
+                        + np.asarray(source_frame['joints']['right_hip'], dtype=float)
+                    ) * .5
+                    confidence_value = hip_confidence
             try:
                 confidence_value = float(confidence_value)
             except (TypeError, ValueError, OverflowError):
@@ -7482,7 +7527,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                       height_contact_error <= PLAYBACK_FLOOR_LIMIT_METERS
                       and playback_height_contact_error <= PLAYBACK_FLOOR_LIMIT_METERS),
                   'sourceArticulation':bool(change<np.deg2rad(20.)), 'trajectoryFit':fit_error<.025*scale,
-                  'rootTravel':bool(travel_before<.05*scale or travel_after>=.9*travel_before),
+                  'rootTravel': bool(travel_before<.05*scale or travel_after>=.9*travel_before),
                   'jointRange':range_preserved, 'jointShake':no_new_shake, 'settling':settling_preserved,
                   'jerk':jerk_after<=jerk_limit,
                   'fixedRig':bool(np.max(np.ptp(lengths,axis=1))<1e-9),
