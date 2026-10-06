@@ -8,7 +8,7 @@ below describe the current production owners, not a promotion verdict.
 | Requested area | Status | Production evidence and remaining work |
 | --- | --- | --- |
 | Artifact state machine | Partial verification | `artifact_state.py` validates lineage and terminal classes; `bake_and_rank.py` binds the final review window and selected skeleton identity; `build_workout_plan_movement_package.py::validate_selected_movement` checks the packaged selection against review evidence. The corrected RDL fit/render/review/package checkpoint passed before CLEF integration. The current-code two-exercise production-script replay has not passed. |
-| Source-evidence constraints in fitting | Implemented, verification partial | `controlled_motion_fit_source_evidence` binds selected interval, observed support, articulation, and projection evidence to the fit cache. Contact projection now preserves observed root posture and refreshes confirmed ground heights. The corrected RDL fitted and passed review; corrected Press fitting and current-code pair acceptance remain unverified. Camera projection and strict endpoint coverage remain conditional on available evidence and declared intervals. |
+| Source-evidence constraints in fitting | Implemented, verification partial | `controlled_motion_fit_source_evidence` binds selected interval, observed support, articulation, and projection evidence to the fit cache. Contact projection now preserves observed root posture and refreshes confirmed ground heights. The corrected RDL fitted and passed review. Corrected Press fitting and pre-render gates passed; its real final review and current-code pair acceptance remain unverified. Camera projection and strict endpoint coverage remain conditional on available evidence and declared intervals. |
 | Queue-backed long-lived services | Partial implementation | `staged_wave_service.py::_execute_wave_request` accepts staged bake manifests and keeps the render executor alive across requests. Opt-in reconstruction workers are persistent. `Start-InitialDiscoveryJob`, prefetch, download, and legacy individual jobs still launch transient processes; the generator-wide service queue is not implemented. |
 | Persistent infrastructure ownership | Partial implementation | Workspace/process leases, shared-model quiescing, machine-wide fit slots, durable queue claims, ambiguous recovery, and content-verified caches exist for the implemented services. VLM recovery now shares the request budget and avoids restarting a responsive server after a busy inference probe. CLEF owns its server per decision lease and releases it on failure; it is not a long-lived model service. External GPU experiments do not participate in this generator's ownership protocol. |
 
@@ -24,6 +24,16 @@ below describe the current production owners, not a promotion verdict.
 - This single retained result is not proof of library-wide quality or maximum
   throughput. The fit Jacobian comparison proved identical residuals and
   derivatives with a 39 percent reduction for that measured operation only.
+- Corrected Press: retained parent frames 53–139 (87 frames) rebuilt with no
+  reconstruction run, then passed all twenty fit checks and the production
+  pre-render gates. The measured bake-and-fit wall time was 119.395 seconds;
+  fitting reported 74.641 seconds and 29 evaluations. The review video and
+  sampled production playback were inspected in
+  `build/exercise_motion/replays/20261006-corrected-press-local-time-bake`.
+  Final model review and packaging remain pending. An earlier preparation used
+  parent-video pose timestamps with a zero-based cropped clip; the pre-fit gate
+  rejected that invalid fixture in 15.663 seconds. The fixture was rebased and
+  regenerated; no production gate was weakened.
 - CLEF code is integrated into all production bake runners, including the
   workout-plan runner. Typed-answer mapping, uncertainty handling, CLI
   forwarding, managed-server cleanup, and existing equipment gates have focused
