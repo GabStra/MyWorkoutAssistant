@@ -20,6 +20,7 @@ import com.gabstra.myworkoutassistant.shared.typeconverters.TernaryTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.TimeTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.UIntConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.UUIDConverter
+import com.gabstra.myworkoutassistant.shared.datalayer.MotionCaptureSyncDao
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSegmentDao
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSegmentEntity
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSessionDao
@@ -71,6 +72,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun errorLogDao(): ErrorLogDao
     abstract fun motionCaptureSessionDao(): MotionCaptureSessionDao
     abstract fun motionCaptureSegmentDao(): MotionCaptureSegmentDao
+    abstract fun motionCaptureSyncDao(): MotionCaptureSyncDao
 
     companion object {
         private val MIGRATION_60_61 = object : Migration(60, 61) {

@@ -129,6 +129,7 @@ fun WorkoutsScreen(
     onExportEquipment: () -> Unit,
     onClearAllExerciseInfo: () -> Unit,
     onViewErrorLogs: () -> Unit,
+    onViewSensorSessions: () -> Unit,
     selectedTabIndex: Int
 ) {
     val animatedSyncProgress by animateFloatAsState(
@@ -628,6 +629,7 @@ fun WorkoutsScreen(
                         onExportEquipment = onExportEquipment,
                         onClearAllExerciseInfo = onClearAllExerciseInfo,
                         onViewErrorLogs = onViewErrorLogs,
+                        onViewSensorSessions = onViewSensorSessions,
                         onMenuItemClick = { action ->
                             scope.launch {
                                 drawerState.close()

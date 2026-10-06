@@ -61,6 +61,7 @@ import com.gabstra.myworkoutassistant.shared.workout.model.ownerDeviceOrDefault
 import com.gabstra.myworkoutassistant.shared.workout.model.SessionOwnerDevice
 import com.gabstra.myworkoutassistant.sync.BackupCoordinator
 import com.gabstra.myworkoutassistant.sync.PhoneSyncToWatchSuppressor
+import com.gabstra.myworkoutassistant.sync.SensorSessionInboundReceiver
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
@@ -226,6 +227,9 @@ class DataLayerListenerService : WearableListenerService() {
 
     private val workoutStoreRepository by lazy { WorkoutStoreRepository(this.filesDir) }
     private val phoneLlmOperationExecutor by lazy { PhoneLlmOperationExecutor(this) }
+    private val sensorSessionInboundReceiver by lazy {
+        SensorSessionInboundReceiver(this, dataClient, scope)
+    }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -1998,6 +2002,21 @@ class DataLayerListenerService : WearableListenerService() {
                         } // End of workout history path handling
                     }
 
+                    DataLayerPaths.matchesPrefix(path, DataLayerPaths.SENSOR_SESSION_START_PREFIX) ||
+                            DataLayerPaths.matchesPrefix(path, DataLayerPaths.SENSOR_SESSION_CHUNK_PREFIX) -> {
+                        val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
+                        if (DataLayerPaths.matchesPrefix(path, DataLayerPaths.SENSOR_SESSION_START_PREFIX)) {
+                            sensorSessionInboundReceiver.handleStart(path, dataMap)
+                        } else {
+                            sensorSessionInboundReceiver.handleChunk(path, dataMap)
+                        }
+                    }
+
+                    DataLayerPaths.matchesPrefix(path, DataLayerPaths.SENSOR_SESSION_DISCARD_PREFIX) -> {
+                        val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
+                        sensorSessionInboundReceiver.handleDiscard(path, dataMap)
+                    }
+
                     path == OPEN_PAGE_PATH -> {
                         val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
                         val valueToPass =
@@ -2089,6 +2108,7 @@ class DataLayerListenerService : WearableListenerService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        sensorSessionInboundReceiver.shutdown()
         scope.cancel()
     }
 

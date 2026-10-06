@@ -42,6 +42,7 @@ import com.gabstra.myworkoutassistant.shared.datalayer.WorkoutSessionHeartbeat
 import com.gabstra.myworkoutassistant.shared.datalayer.WorkoutSessionHeartbeatKeys
 import com.gabstra.myworkoutassistant.shared.workout.model.WATCH_SESSION_STATE_RETURNED_HOME
 import com.gabstra.myworkoutassistant.sync.PendingWorkoutHistorySyncTracker
+import com.gabstra.myworkoutassistant.sync.SensorSessionSyncWorker
 import com.gabstra.myworkoutassistant.sync.WearCompletedHistorySyncSender
 import com.gabstra.myworkoutassistant.sync.WearCompletedHistorySyncResult
 import com.gabstra.myworkoutassistant.sync.WearDirectHistorySyncClaim
@@ -1714,6 +1715,9 @@ open class AppViewModel : WorkoutViewModel() {
                 if (syncContext != null && completedHistoryId != null) {
                     enqueuePendingWorkoutHistoryId(syncContext, completedHistoryId)
                 }
+                // Sensor-session capture sync is independent of the history channel: enqueue the
+                // WorkManager retry worker without blocking the workout-history sync path.
+                syncContext?.let { SensorSessionSyncWorker.enqueue(it) }
             }
             if (currentState is WorkoutState.Set) {
                 upsertWorkoutRecord(currentState.exerciseId, currentState.setIndex)

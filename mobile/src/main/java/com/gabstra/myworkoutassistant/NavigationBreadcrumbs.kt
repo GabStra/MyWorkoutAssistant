@@ -128,6 +128,8 @@ private fun ScreenData.breadcrumbLabel(
     is ScreenData.WorkoutDetail -> store.workouts.firstOrNull { it.id == workoutId }?.name ?: "Workout"
     is ScreenData.WorkoutHistory -> "History"
     is ScreenData.ExternalWorkoutSession -> "External session"
+    is ScreenData.SensorSessions -> "Sensor sessions"
+    is ScreenData.SensorSessionDetail -> "Sensor session"
     is ScreenData.ExerciseDetail -> exercises[selectedExerciseId]?.name ?: "Exercise"
     is ScreenData.ExerciseHistory -> "History"
     is ScreenData.HistoryChatExercise, is ScreenData.HistoryChatWorkoutSession -> "History chat"
