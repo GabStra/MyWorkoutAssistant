@@ -1298,6 +1298,15 @@ included `supported_body_moves` and `support_surface_geometry_mismatch`. Treat
 this as invalid-fixture evidence, not as a current regression or throughput
 measurement.
 
+The old Press attempt also pinpoints the waste: its 9.625-second full-source
+candidate spent 464.266 seconds in `previewBakeSeconds` of 487.388 seconds
+candidate processing, then was rejected with
+`materialized_source_pose_contract_mismatch`. In the current staged production
+path, `wave_pipeline.py` runs `review_prepared_source` before reconstruction;
+the focused regression `test_staged_wave_rejects_source_before_motion_generation`
+asserts that a source-pose-contract rejection never reaches motion generation.
+This verifies the pre-fit ordering only, not a successful full production run.
+
 The current bounded replay config is
 `build/exercise_motion/replays/20261006-corrected-pair-inputs/config.json`.
 Its Press input pins source frames 53–139 and its RDL input uses `yQbSQCkhvTM`.

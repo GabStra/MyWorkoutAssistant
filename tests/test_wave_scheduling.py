@@ -293,6 +293,68 @@ def test_ready_sources_defer_later_attempts_and_resume_next_candidate(tmp_path, 
     assert not (items[2].request.workspace / 'source_turn_resume.json').exists()
 
 
+def test_staged_wave_rejects_source_before_motion_generation(tmp_path, monkeypatch):
+    class Session:
+        def __init__(self, request): pass
+        def caption_images(self, **kwargs): return '{}'
+        def close(self, **kwargs): pass
+        def run_without_llama_overlap(self, operation): return operation()
+
+    candidate = bake.RankedCandidate(
+        exercise_index=0,
+        candidate_rank=0,
+        exercise_id='press',
+        exercise_name='Dumbbell Overhead Press',
+        exercise_slug='press',
+        candidate={'videoId': 'press-source', 'title': 'Press'},
+    )
+    request = bake.BakeAndRankRequest(
+        candidates_json=tmp_path / 'candidates.json',
+        workspace=tmp_path / 'press',
+        wham_repo_path=None,
+        body_model_root=None,
+        two_scale_source_validation=True,
+        fallback_candidates=0,
+        max_final_output_rejections=0,
+    )
+    item = wave.StagedWaveItem('press', 'Dumbbell Overhead Press', request)
+    source_path = tmp_path / 'press' / 'selected.mp4'
+    reviewed = []
+
+    monkeypatch.setattr(wave, 'LazyLlamaCppVisionSession', Session)
+    monkeypatch.setattr(wave, '_wave_candidates', lambda _request: [candidate])
+    monkeypatch.setattr(wave, 'build_exercise_motion_contract_resolver', lambda **_kwargs: None)
+    monkeypatch.setattr(wave, 'first_attempt_readiness_assessment',
+                        lambda *_args, **_kwargs: {'eligible': True, 'portfolioSize': 1})
+    monkeypatch.setattr(wave, 'evaluate_source_candidate_gate',
+                        lambda *_args, **_kwargs: {'passed': True})
+    monkeypatch.setattr(wave, 'prepare_candidate_input_video',
+                        lambda *_args, **_kwargs: source_path)
+
+    def reject_source(reviewed_candidate, *, selected_video, **_kwargs):
+        reviewed.append((reviewed_candidate, selected_video))
+        raise bake.SourceCandidateRejected(
+            'Source endpoints contradict the movement contract.',
+            reason_tags=['two_scale_source_pose_contract_mismatch'],
+        )
+
+    monkeypatch.setattr(wave, 'review_prepared_source', reject_source)
+    monkeypatch.setattr(wave, 'generate_candidate_motion',
+                        lambda *_args, **_kwargs: pytest.fail('rejected source reached reconstruction'))
+    monkeypatch.setattr(wave, 'run_bake_and_rank_pipeline',
+                        lambda *_args, **_kwargs: {'selected': None})
+
+    report = wave.run_staged_bake_wave(
+        [item], workspace=tmp_path / 'wave', wave_id='source-endpoint-reject',
+    )
+
+    assert reviewed == [(candidate, source_path)]
+    attempt = report['items'][0]['source']['attempts'][0]
+    assert attempt['status'] == 'rejected_source_validation'
+    assert attempt['reasonTags'] == ['two_scale_source_pose_contract_mismatch']
+    assert report['items'][0]['wham']['status'] != 'prepared'
+
+
 def test_cached_source_rejects_invalid_variant_contract(tmp_path):
     contract = contract_for(exercise('Barbell Push Jerk'))
     contract['requiredPhases'] = ['catch the barbell in a split stance']
