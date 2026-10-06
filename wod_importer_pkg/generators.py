@@ -21,7 +21,6 @@ import json
 import re
 from pathlib import Path
 
-from wod_importer_pkg.mapping import MovementMapper, _normalize
 
 REPO = Path(__file__).resolve().parents[2]
 DEFAULT_BASE_LIBRARY = Path("exercise_libraries/exercise_library_2026-08-17_164507_with_movements.json")
@@ -48,6 +47,10 @@ This is a coach-authored CrossFit/Hyrox WOD. Hard constraints:
 """.strip()
 
 
+def _normalize(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", name.lower())
+
+
 def _load_json(path: Path) -> dict:
     with open(path, encoding="utf-8") as handle:
         return json.load(handle)
@@ -60,29 +63,6 @@ def load_working_library(base_library: Path, accumulated_library: Path) -> tuple
     library = _load_json(base_library)
     library.setdefault("exerciseMovements", [])
     return library, accumulated_library
-
-
-def _definition_covered(mapper: MovementMapper, movement_name: str) -> bool:
-    try:
-        resolution = mapper.resolve(movement_name, None)
-    except Exception:
-        return False
-    return resolution.source in ("synonym", "library")
-
-
-def movement_names(ir) -> list[str]:
-    """Distinct movement names from a parsed WodIR, block order preserved."""
-    names: list[str] = []
-    seen: set[str] = set()
-    for block in ir.blocks:
-        for movement in block.movements:
-            if movement.name in ("rest", "") or movement.rest_seconds:
-                continue
-            key = _normalize(movement.name)
-            if key and key not in seen:
-                seen.add(key)
-                names.append(movement.name)
-    return names
 
 
 def ensure_definitions(
@@ -98,14 +78,7 @@ def ensure_definitions(
     Returns (updated_library, created_names, skipped_names). When every movement is
     already covered, returns the working library untouched with zero LLM calls.
     """
-    mapper = MovementMapper(library_path=None)
-    mapper.definitions_by_name = {
-        _normalize(d["name"]): d for d in working_library.get("exerciseDefinitions", [])
-    }
-    for equipment in working_library.get("equipments", []):
-        mapper.equipment_by_id[equipment["id"]] = equipment
-
-    missing = [name for name in movement_names if not _definition_covered(mapper, name)]
+    missing = list(movement_names)
     if not missing:
         return working_library, [], []
 
@@ -148,11 +121,13 @@ def ensure_definitions(
                 working_library.setdefault("equipments", []).append(equipment)
                 existing_equipment_ids.add(equipment["id"])
 
-        mapper = MovementMapper(library_path=None)
-        mapper.definitions_by_name = {
-            _normalize(d["name"]): d for d in working_library.get("exerciseDefinitions", [])
-        }
-        still_missing = [name for name in still_missing if not _definition_covered(mapper, name)]
+        known_keys = {_normalize(d["name"]) for d in working_library.get("exerciseDefinitions", [])}
+        still_missing = [
+            name for name in still_missing
+            if not any(name_key in known_key or known_key in name_key
+                       for known_key in known_keys
+                       for name_key in [_normalize(name)])
+        ]
         if not still_missing:
             break
 
