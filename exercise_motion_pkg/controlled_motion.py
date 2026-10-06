@@ -2170,6 +2170,23 @@ def _trf_playback_run_coupled(
         row += size
     pattern = vstack([pattern.tocsr(), eye(len(x0), format='csr')], format='csr')
     best_values, best_cost = x0.copy(), float('inf')
+    # Only free frames and temporal neighbors can change during this local
+    # solve. Keep global contact screening without decoding the full clip for
+    # every finite-difference probe.
+    decoded_frames = sorted(set(frames) | {
+        frame + offset for frame in spike_rows for offset in (-1, 0, 1)})
+    decoded_index = np.asarray(decoded_frames, dtype=int)
+    local_indices = {frame: index for index, frame in enumerate(decoded_frames)}
+    key_indices = np.asarray([local_indices[frame] for frame in frames], dtype=int)
+    spike_indices = np.asarray([
+        [local_indices[frame + offset] for offset in (-1, 0, 1)]
+        for frame in spike_rows], dtype=int)
+    fixed_frames = np.ones(count, dtype=bool)
+    fixed_frames[decoded_index] = False
+    fixed_points = rig.decode(coords[fixed_frames]) if np.any(fixed_frames) else None
+    fixed_key_error = (float(np.max(np.linalg.norm(
+        (fixed_points - targets[fixed_frames])[pinned[fixed_frames]], axis=-1), initial=0.))
+        if fixed_points is not None else 0.)
 
     class PlaybackConstraintsSatisfied(Exception):
         pass
@@ -2188,9 +2205,9 @@ def _trf_playback_run_coupled(
         if deadline is not None and monotonic() >= deadline:
             raise TimeoutError
         trial = unpack(values)
-        points = rig.decode(trial)
+        points = rig.decode(trial[decoded_index])
         chunks = [
-            key_weight * (points[frame_index] - targets[frame_index])[pinned[frame_index]].ravel(),
+            key_weight * (points[key_indices] - targets[frame_index])[pinned[frame_index]].ravel(),
         ]
         mid_error, floor_error = 0., 0.
         if mid_cursors.size:
@@ -2207,7 +2224,8 @@ def _trf_playback_run_coupled(
         spikes_clear = True
         if spike_rows.size:
             relative = points - points[:, rig.root:rig.root + 1]
-            sizes = .5 * np.linalg.norm(np.diff(relative[:, spike_joints], n=2, axis=0), axis=-1)[spike_rows - 1]
+            stencil = relative[spike_indices][:, :, spike_joints]
+            sizes = .5 * np.linalg.norm(np.diff(stencil, n=2, axis=1)[:, 0], axis=-1)
             chunks.append((20000. * np.maximum(sizes - .95 * spike_limits, 0.)).ravel())
             spikes_clear = bool(np.all(sizes <= spike_limits))
         chunks.append(0.001 * (values - original))
@@ -2215,7 +2233,8 @@ def _trf_playback_run_coupled(
         cost = float(errors @ errors)
         if cost < best_cost:
             best_values, best_cost = values.copy(), cost
-        key_error = float(np.max(np.linalg.norm((points - targets)[pinned], axis=-1), initial=0.))
+        key_error = max(fixed_key_error, float(np.max(np.linalg.norm(
+            (points - targets[decoded_index])[pinned[decoded_index]], axis=-1), initial=0.)))
         if (contact_iterate_is_feasible(key_error, mid_error, floor_error)
                 and spikes_clear):
             # This run has met its playback constraints. Continuing to minimize
