@@ -1560,5 +1560,12 @@ RDL; preview baking accounted for 78.5s and 141.1s respectively. RDL final
 validation was 202.2s, including fit and review work. These stage counters
 overlap and should not be added together. They identify preview baking and
 final validation as the remaining high-cost stages after removing the restart
-retry. This two-exercise timing result is not a library-wide throughput claim
-or a concurrency-default promotion. The GPU was idle after the replay.
+retry. RDL's preview diagnostics attribute 100.54s to the source-articulation
+fit call and 29.89s to rendering the final review video (180 frames); the fit
+itself reports 95.92s, 38 evaluations, zero fit-queue wait, and all 20 checks
+passing. The 95.92s fit counter is nested inside the 100.54s wrapper timing,
+not a second fit. The optimizer ended at its evaluation limit, not its time
+budget. This run shows no redundant fit to remove and does not support reducing
+the evaluation limit without broader near-miss quality evidence. The two-
+exercise timing result is not a library-wide throughput claim or a concurrency-
+default promotion. The GPU was idle after the replay.
