@@ -1325,6 +1325,11 @@ def test_source_projection_constraint_enters_the_production_fit_jacobian(monkeyp
         for role in ('start', 'end')
     )
     assert constraint['endpointPostureObservationCount'] > constrained_joint_count
+    root_travel = report['rootTravelEvidence']
+    assert root_travel['targetRangeMeters'] >= 0.
+    assert root_travel['fittedRangeMeters'] >= 0.
+    assert root_travel['minimumPreservedRatio'] == .9
+    assert root_travel['preservationToleranceMeters'] == .001
     assert captured
     residual, errors, jacobian, initial = captured[0]
     source_row_count = constraint['observationCount'] * 2

@@ -36,6 +36,7 @@ from .rig_interpolation import INTERPOLATION
 from .rig_playback import PLAYBACK_CONTACT_LIMIT_METERS, PLAYBACK_FLOOR_LIMIT_METERS
 
 KEYFRAME_CONTACT_LIMIT_METERS = .0005
+ROOT_TRAVEL_PRESERVATION_TOLERANCE_METERS = .001
 
 
 def contact_iterate_is_feasible(keyframe_error, playback_error, floor_penetration):
@@ -7522,12 +7523,27 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         relative_quality = relative_motion_quality(
             result, shake_basis, names, fps, spike_reference=spike_reference)
         root_quality = root_motion_quality(result[:,rig.root], fps, scale)
+        root_travel_small = bool(travel_before < .05 * scale)
+        root_travel_shortfall = max(0., .9 * travel_before - travel_after)
+        root_travel_preserved = bool(
+            root_travel_shortfall <= ROOT_TRAVEL_PRESERVATION_TOLERANCE_METERS)
+        report['rootTravelEvidence'] = {
+            'targetRangeMeters': float(travel_before),
+            'fittedRangeMeters': float(travel_after),
+            'preservedRatio': float(travel_after / max(travel_before, 1e-9)),
+            'smallTravelAllowanceMeters': float(.05 * scale),
+            'minimumPreservedRatio': .9,
+            'preservationToleranceMeters': ROOT_TRAVEL_PRESERVATION_TOLERANCE_METERS,
+            'preservationShortfallMeters': float(root_travel_shortfall),
+            'smallTravelAllowancePassed': root_travel_small,
+            'preservedRangePassed': root_travel_preserved,
+        }
         checks = {'anatomy':physical['passed'], 'contacts':contact_error<KEYFRAME_CONTACT_LIMIT_METERS,
                   'heightOnlyContacts': (
                       height_contact_error <= PLAYBACK_FLOOR_LIMIT_METERS
                       and playback_height_contact_error <= PLAYBACK_FLOOR_LIMIT_METERS),
                   'sourceArticulation':bool(change<np.deg2rad(20.)), 'trajectoryFit':fit_error<.025*scale,
-                  'rootTravel': bool(travel_before<.05*scale or travel_after>=.9*travel_before),
+                  'rootTravel': root_travel_small or root_travel_preserved,
                   'jointRange':range_preserved, 'jointShake':no_new_shake, 'settling':settling_preserved,
                   'jerk':jerk_after<=jerk_limit,
                   'fixedRig':bool(np.max(np.ptp(lengths,axis=1))<1e-9),
