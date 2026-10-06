@@ -7189,77 +7189,100 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
     polish_until = min(started + timeout_seconds, monotonic() + remaining_polish)
     report['initialValidationSeconds'] = monotonic() - validation_started
     report['polishUntilSeconds'] = float(polish_until - started)
-    failed_checks = set(failed_check_names(report.get('checks')))
-    repairable_anatomy = bool(
-        set(report.get('physicalReasons') or []) & ANATOMICAL_REPAIR_INPUT_REASONS)
-    if allow_refinement and bounded_anatomy_projection_eligible(
-        failed_checks,
-        report.get('checks') or {},
-        repairable_anatomy=repairable_anatomy,
-        cyclic=cyclic,
-    ):
+    anatomy_projection_attempted = False
+
+    def attempt_bounded_anatomy_projection():
+        nonlocal solved, candidate, report, anatomy_projection_attempted
+        if anatomy_projection_attempted:
+            return
+        current_failed = set(failed_check_names(report.get('checks')))
+        repairable_anatomy = bool(
+            set(report.get('physicalReasons') or []) & ANATOMICAL_REPAIR_INPUT_REASONS)
+        if not (allow_refinement and bounded_anatomy_projection_eligible(
+            current_failed,
+            report.get('checks') or {},
+            repairable_anatomy=repairable_anatomy,
+            cyclic=cyclic,
+        )):
+            return
+
+        # A failed structural check can make the projection unsafe on the first
+        # validation. Revisit once bounded contact/equipment cleanup has cleared
+        # those gates, while still limiting anatomy projection to one attempt.
+        anatomy_projection_attempted = True
         remaining = started + timeout_seconds - monotonic()
         repair_budget = min(5., max(0., remaining - 3.))
-        if repair_budget >= 0.5:
-            baseline_candidate = candidate
-            baseline_report = report
-            baseline_coordinates = solved.x.copy()
-            previous_initial = rig.initial.copy()
-            previous_offsets = rig.offsets.copy()
-            projection = {'attempted': True, 'budgetSeconds': round(repair_budget, 3)}
-            try:
-                rig.initial[:] = baseline_coordinates.reshape(count, rig.width)
-                observed = rig.decode(rig.initial)
-                _, repair_report = repair_rig_anatomy(
-                    rig, observed, reference=reference,
-                    deadline=min(started + timeout_seconds,
-                                 monotonic() + repair_budget))
-                projection['repair'] = repair_report
-                trial_coordinates = rig.initial.copy()
-                if np.isfinite(trial_coordinates).all() and np.isfinite(rig.offsets).all():
-                    trial = SimpleNamespace(
-                        x=trial_coordinates.ravel(), nfev=solved.nfev,
-                        status=getattr(solved, 'status', 1))
-                    # This projection already owns anatomy and contact targets;
-                    # a second neck/plant projection could reopen the exact
-                    # structure constraint it just repaired.
-                    trial_candidate, trial_report = validate_solution(
-                        trial, project_playback_plants=False)
-                    trial_failed = set(failed_check_names(trial_report.get('checks')))
-                    improved = bool(trial_report.get('applied') or trial_failed < failed_checks)
-                    projection['failedChecksAfter'] = sorted(trial_failed)
-                    projection['accepted'] = improved
-                    if improved:
-                        solved = trial
-                        candidate, report = trial_candidate, trial_report
-                        failed_checks = trial_failed
-                    else:
-                        rig.initial[:] = previous_initial
-                        rig.offsets[:] = previous_offsets
-                        solved = SimpleNamespace(
-                            x=baseline_coordinates, nfev=solved.nfev,
-                            status=getattr(solved, 'status', 0))
-                        candidate, report = baseline_candidate, baseline_report
-                else:
-                    projection['accepted'] = False
-                    projection['reason'] = 'nonfinite_projection'
-                    rig.initial[:] = previous_initial
-                    rig.offsets[:] = previous_offsets
-                    solved = SimpleNamespace(
-                        x=baseline_coordinates, nfev=solved.nfev,
-                        status=getattr(solved, 'status', 0))
-                    candidate, report = baseline_candidate, baseline_report
-            except Exception as error:
+        projection = {'attempted': repair_budget >= 0.5,
+                      'budgetSeconds': round(repair_budget, 3)}
+        if repair_budget < 0.5:
+            projection['reason'] = 'insufficient_budget'
+            report['postFitAnatomicalProjection'] = projection
+            return
+
+        baseline_candidate = candidate
+        baseline_report = report
+        baseline_coordinates = solved.x.copy()
+        baseline_nfev = solved.nfev
+        baseline_status = getattr(solved, 'status', 0)
+        previous_initial = rig.initial.copy()
+        previous_offsets = rig.offsets.copy()
+        try:
+            rig.initial[:] = baseline_coordinates.reshape(count, rig.width)
+            observed = rig.decode(rig.initial)
+            _, repair_report = repair_rig_anatomy(
+                rig, observed, reference=reference,
+                deadline=min(started + timeout_seconds,
+                             monotonic() + repair_budget))
+            projection['repair'] = repair_report
+            trial_coordinates = rig.initial.copy()
+            if not (np.isfinite(trial_coordinates).all()
+                    and np.isfinite(rig.offsets).all()):
                 projection['accepted'] = False
-                projection['reason'] = 'projection_exception'
-                projection['error'] = type(error).__name__
+                projection['reason'] = 'nonfinite_projection'
+                raise ValueError('anatomy projection produced nonfinite coordinates')
+
+            trial = SimpleNamespace(
+                x=trial_coordinates.ravel(), nfev=baseline_nfev,
+                status=baseline_status)
+            # This projection already owns anatomy and contact targets; a second
+            # neck/plant projection could reopen the structure constraint.
+            trial_candidate, trial_report = validate_solution(
+                trial, project_playback_plants=False)
+            trial_failed = set(failed_check_names(trial_report.get('checks')))
+            improved = bool(trial_report.get('applied') or trial_failed < current_failed)
+            projection['failedChecksAfter'] = sorted(trial_failed)
+            projection['accepted'] = improved
+            if improved:
+                # Validation creates a fresh report. Preserve the refinement
+                # trace and outer timing metadata accumulated before this point.
+                for key in ('boundedRefinement', 'initialValidationSeconds',
+                            'polishUntilSeconds'):
+                    if key in baseline_report:
+                        trial_report[key] = baseline_report[key]
+                solved = trial
+                candidate, report = trial_candidate, trial_report
+            else:
                 rig.initial[:] = previous_initial
                 rig.offsets[:] = previous_offsets
                 solved = SimpleNamespace(
-                    x=baseline_coordinates, nfev=solved.nfev,
-                    status=getattr(solved, 'status', 0))
+                    x=baseline_coordinates, nfev=baseline_nfev,
+                    status=baseline_status)
                 candidate, report = baseline_candidate, baseline_report
-            report['postFitAnatomicalProjection'] = projection
+        except Exception as error:
+            projection['accepted'] = False
+            projection.setdefault('reason', 'projection_exception')
+            projection['error'] = type(error).__name__
+            rig.initial[:] = previous_initial
+            rig.offsets[:] = previous_offsets
+            solved = SimpleNamespace(
+                x=baseline_coordinates, nfev=baseline_nfev,
+                status=baseline_status)
+            candidate, report = baseline_candidate, baseline_report
+        report['postFitAnatomicalProjection'] = projection
+
+    failed_checks = set(failed_check_names(report.get('checks')))
+    attempt_bounded_anatomy_projection()
+    failed_checks = set(failed_check_names(report.get('checks')))
     # Evidence-first: accept or proven unreachable/conflict ends the fit.
     # Time budget is only a watchdog for polishable near-misses still moving.
     if report.get('applied'):
@@ -7717,6 +7740,9 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             and monotonic() < polish_until
             and report.get('termination') not in EVIDENCE_TERMINATIONS
             and not fit_should_yield_for_priority()):
+        attempt_bounded_anatomy_projection()
+        if report.get('applied'):
+            break
         failed_checks = failed_check_names(report['checks'])
         remaining = max(0., polish_until - monotonic())
         if remaining < 0.5:

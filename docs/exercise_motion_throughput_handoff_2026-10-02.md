@@ -870,6 +870,18 @@ directory has a condensed version of this state; update it after the arms land.
   projected result is kept only when it clears checks without introducing any
   failure. The focused eligibility regression passed. No retained RDL fit was
   rerun, so this is a safe repair opportunity, not proof of a successful output.
+- A CPU-only replay of the retained 123-frame production RDL payload showed the
+  eligibility gate could still miss its repair window: initial contact failure
+  blocked projection, then bounded contact cleanup cleared the structural
+  checks without reconsidering anatomy. The fitter now retries that decision
+  once at the top of the bounded-polish loop, still capped at five seconds and
+  still requiring a strict failed-check reduction or full acceptance. The
+  176.4-second replay exercised the delayed projection and reduced the final
+  failures from anatomy/contact/playback/discontinuity to relative-joint-shake
+  and motion-discontinuity, with anatomy, contacts, and playback passing. The
+  overall fit remains rejected (`applied=false`); this does not resolve RDL
+  generation. Its remaining temporal spikes are at the left foot around 1.8s
+  and 2.5s. No reconstruction or model calls were made.
 - Focused regressions passed (`6 passed`), and the edited Python modules and
   tests compiled with `py_compile`. No throughput promotion is claimed.
 - Architecture status: reviewed render/package artifact identity is connected
