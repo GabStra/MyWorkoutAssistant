@@ -17739,30 +17739,44 @@ def test_materialized_cycle_uses_its_exact_source_phase_for_endpoint_reconciliat
         "kneeState": "extended",
         "stance": "shoulder_width",
     }
-    ranking_payload = {
-        "artifactState": {
-            "artifactClass": "cyclic_rebake",
-            "lineageComplete": True,
-            "selectionEvidence": {
-                "cyclicRebake": {"contentSha256": "a" * 64, "frameCount": 85},
-                "sourceCyclePreflight": [
-                    {
+    artifact_state = {
+        "artifactClass": "cyclic_rebake",
+        "lineageComplete": True,
+        "selectionEvidence": {
+            "cyclicRebake": {"contentSha256": "a" * 64, "frameCount": 85},
+            "sourceCyclePreflight": [
+                {
+                    "passed": True,
+                    "selection": {"startFrame": 5, "stopFrameExclusive": 85},
+                    "sourcePhase": {
+                        "required": True,
                         "passed": True,
-                        "selection": {"startFrame": 5, "stopFrameExclusive": 85},
-                        "sourcePhase": {
-                            "required": True,
-                            "passed": True,
-                            "hasCompleteMajorCycle": True,
-                            "hasSingleMajorCycle": True,
-                        },
-                    }
-                ],
-            },
-        }
+                        "hasCompleteMajorCycle": True,
+                        "hasSingleMajorCycle": True,
+                    },
+                }
+            ],
+        },
     }
+    item = bake_and_rank_module.ReviewItem(
+        exercise_index=0,
+        candidate_rank=0,
+        loop_index=0,
+        exercise_name="Dumbbell Overhead Press",
+        candidate_title="Overhead press cycle",
+        candidate_workspace=Path("."),
+        preview_html_path=Path("preview.html"),
+        skeleton_path=Path("skeleton.json"),
+        review_video_path=Path("review.webm"),
+        duration_sec=2.8,
+        loop_start_seconds=0.0,
+        loop_end_seconds=2.8,
+        candidate={},
+        export_payload={"artifactState": artifact_state},
+    )
 
     phase_metrics = bake_and_rank_module.selected_source_cycle_phase_metrics_for_review(
-        ranking_payload,
+        item,
         contract,
     )
     validation = bake_and_rank_module.validate_source_pose_endpoints_against_contract(
@@ -17781,7 +17795,7 @@ def test_materialized_cycle_uses_its_exact_source_phase_for_endpoint_reconciliat
 
     phase_metrics["hasSingleMajorCycle"] = False
     assert bake_and_rank_module.selected_source_cycle_phase_metrics_for_review(
-        ranking_payload,
+        item,
         contract,
     ) is None
 

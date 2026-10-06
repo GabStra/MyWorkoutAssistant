@@ -9276,7 +9276,7 @@ def materialized_output_acceptance_metrics(
         exercise_motion_contract,
     ):
         selected_cycle_phase_metrics = selected_source_cycle_phase_metrics_for_review(
-            ranking.payload if isinstance(ranking.payload, dict) else None,
+            item,
             exercise_motion_contract,
         )
         if selected_cycle_phase_metrics is not None:
@@ -10670,13 +10670,13 @@ def source_phase_corroborates_single_return_cycle(
 
 
 def selected_source_cycle_phase_metrics_for_review(
-    ranking_payload: dict[str, Any] | None,
+    item: ReviewItem,
     contract: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
     """Return unambiguous single-cycle evidence for this materialized rebake."""
-    if not isinstance(ranking_payload, dict):
+    has_persisted_state, artifact_state, _payload = persisted_review_item_artifact_state(item)
+    if not has_persisted_state:
         return None
-    artifact_state = ranking_payload.get("artifactState")
     if (
         not isinstance(artifact_state, dict)
         or artifact_state.get("artifactClass") != "cyclic_rebake"
