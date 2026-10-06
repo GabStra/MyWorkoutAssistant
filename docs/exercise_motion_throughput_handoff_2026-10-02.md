@@ -1174,3 +1174,30 @@ score or proof of temporal quality. This checkpoint uses genuine model responses
 not retained fixture approvals. Packaging and the corrected two-exercise
 production-script E2E still remain unverified; no accepted-output throughput claim
 is made from this isolated checkpoint.
+
+### Oct 6 full acceptance and isolated production packaging checkpoint
+
+The outer `apply_materialized_output_acceptance_gate` exposed missing fidelity
+evidence despite the preceding fit and visual-review checks: without phase-file
+metadata it redetected poses on the trimmed video, conflicting with the retained
+parent-camera observations. Commit `8dc92b98` falls back to the hash-verified
+`exact_source_pose_reference.json` and selects the artifact's explicit source-time
+interval before computing phase evidence. Two focused reuse tests and compilation
+pass. No fidelity thresholds or camera provenance checks changed.
+
+The actual outer acceptance replay then returned `valid`, no rejection reasons,
+and passing source-output fidelity with comparable-frame ratio 1.0. It took
+179.82 seconds including genuine review; this is not a controlled speed result.
+Its selection manifest is `production_acceptance_selection_manifest.json` in the
+replacement cyclic-bake workspace.
+
+An isolated packaging checkpoint executed the production PowerShell functions
+`Assert-SelectedSkeletonReviewParity` and `Record-PackagedSkeletonReviewParity`,
+extracted from the current generator script, on a copy of the accepted artifact.
+The independent `audit_artifact_package_state` returns `passed=true`,
+`approvedMovement=true`, `artifactClass=cyclic_rebake`, and
+`packagedArtifactClass=packaged_movement`, with no rejection reasons. The copied
+117-frame skeleton is byte-identical to the rendered and reviewed artifact.
+Evidence and the copied package are under the cyclic-bake workspace's
+`packaging-checkpoint/`. This verifies the owning packaging functions and parity,
+not execution of the whole workout-plan script or the corrected OHP/RDL E2E.
