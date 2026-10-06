@@ -17,6 +17,7 @@ if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
 from exercise_motion_pkg import controlled_motion
+from exercise_motion_pkg.sequence_stabilization import pose_digest
 
 
 def _captured_cycle_selection(payload: dict[str, Any]) -> dict[str, Any]:
@@ -109,12 +110,26 @@ def main() -> int:
     except ValueError as error:
         parser.error(str(error))
 
+    fit_input_pose_digest = pose_digest(replay_payload)
+    fit_input_source_evidence_digest = (
+        controlled_motion.controlled_motion_fit_source_evidence_digest(replay_payload)
+    )
     started = time.perf_counter()
     fitted_payload, fit_report = controlled_motion.fit_controlled_motion(
         replay_payload,
         max_evaluations=args.max_evaluations,
         timeout_seconds=args.timeout_seconds,
     )
+    fit_report = {
+        **fit_report,
+        "fitInputPoseDigest": fit_input_pose_digest,
+        "fitSourceEvidenceDigest": fit_report.get("fitSourceEvidenceDigest")
+        or fit_input_source_evidence_digest,
+    }
+    # Keep the artifact self describing, matching the production caller. Without
+    # this, a successful replay writes the new poses next to the input's stale fit
+    # report, so later stages cannot safely reuse the accepted fit.
+    fitted_payload["controlledMotionFit"] = fit_report
     elapsed = time.perf_counter() - started
     if args.output_payload:
         args.output_payload.parent.mkdir(parents=True, exist_ok=True)
