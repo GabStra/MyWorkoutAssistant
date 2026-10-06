@@ -2,11 +2,9 @@ package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.widget.Toast
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,9 +32,7 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.Text
 import androidx.wear.tooling.preview.devices.WearDevices
-import com.gabstra.myworkoutassistant.composables.ButtonWithText
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
-import com.gabstra.myworkoutassistant.composables.OutlinedButtonWithText
 import com.gabstra.myworkoutassistant.composables.ProgressionSection
 import com.gabstra.myworkoutassistant.composables.ProgressionInfo
 import com.gabstra.myworkoutassistant.composables.ProgressionSectionContent
@@ -52,8 +48,6 @@ import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.presentation.theme.baseline
 import com.gabstra.myworkoutassistant.presentation.theme.darkScheme
-import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureReviewStatus
-import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSegmentRecord
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.utils.Ternary
 import com.gabstra.myworkoutassistant.shared.Green
@@ -73,26 +67,13 @@ fun WorkoutCompleteScreen(
 ){
     val showNextDialog by viewModel.isCustomDialogOpen.collectAsState()
     val workout by viewModel.selectedWorkout
-    val motionCaptureUiState by viewModel.motionCaptureUiState.collectAsState()
     val context = LocalContext.current
 
     var progressionDataCalculated by remember { mutableStateOf(false) }
     var progressionIsEmpty by remember { mutableStateOf<Boolean?>(null) }
     var completionSyncInitiated by remember { mutableStateOf(false) }
-    var selectedReviewSegmentIndex by remember { mutableStateOf(0) }
-    var selectedCandidateIndex by remember { mutableStateOf(0) }
 
     val scope = rememberWearCoroutineScope()
-    // Review UI is a deliberate-labeling tool: only offer it for sessions the user explicitly
-    // toggled on, not for routine auto-captured sessions (legacy records: userInitiated null).
-    val reviewSession = motionCaptureUiState.latestReviewSession
-        ?.takeIf { it.session.sensorConfig.userInitiated == true }
-    val reviewSegments = reviewSession?.segments.orEmpty()
-    val activeReviewSegment = reviewSegments.getOrNull(selectedReviewSegmentIndex.coerceAtMost((reviewSegments.size - 1).coerceAtLeast(0)))
-
-    LaunchedEffect(activeReviewSegment?.id) {
-        selectedCandidateIndex = 0
-    }
 
     fun returnToWorkoutSelection() {
         hapticsViewModel.doGentleVibration()
@@ -162,56 +143,6 @@ fun WorkoutCompleteScreen(
                     }
                 }
             )
-        },
-        motionReviewContent = {
-            if (reviewSession != null && activeReviewSegment != null) {
-                MotionCaptureReviewPanel(
-                    segment = activeReviewSegment,
-                    segmentIndex = selectedReviewSegmentIndex,
-                    segmentCount = reviewSegments.size,
-                    candidateNames = reviewSession.session.exerciseCandidates.map { it.exerciseName },
-                    selectedCandidateIndex = selectedCandidateIndex,
-                    lastExportDirectory = motionCaptureUiState.lastExportDirectory,
-                    onPreviousSegment = {
-                        selectedReviewSegmentIndex = (selectedReviewSegmentIndex - 1).coerceAtLeast(0)
-                    },
-                    onNextSegment = {
-                        selectedReviewSegmentIndex = (selectedReviewSegmentIndex + 1)
-                            .coerceAtMost((reviewSegments.lastIndex).coerceAtLeast(0))
-                    },
-                    onNextCandidate = {
-                        if (reviewSession.session.exerciseCandidates.isNotEmpty()) {
-                            selectedCandidateIndex =
-                                (selectedCandidateIndex + 1) % reviewSession.session.exerciseCandidates.size
-                        }
-                    },
-                    onConfirm = {
-                        scope.launch { viewModel.confirmMotionCaptureSegment(activeReviewSegment.id) }
-                    },
-                    onUseCandidate = {
-                        val candidate = reviewSession.session.exerciseCandidates.getOrNull(selectedCandidateIndex)
-                        if (candidate != null) {
-                            scope.launch {
-                                viewModel.relabelMotionCaptureSegment(activeReviewSegment.id, candidate)
-                            }
-                        }
-                    },
-                    onMarkRest = {
-                        scope.launch { viewModel.markMotionCaptureSegmentRest(activeReviewSegment.id) }
-                    },
-                    onDrop = {
-                        scope.launch { viewModel.dropMotionCaptureSegment(activeReviewSegment.id) }
-                    },
-                    onExport = {
-                        scope.launch {
-                            val exportPath = viewModel.exportLatestMotionCaptureSession()
-                            if (exportPath != null) {
-                                Toast.makeText(context, "Exported to $exportPath", Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    }
-                )
-            }
         }
     )
 
@@ -244,8 +175,7 @@ private fun WorkoutCompleteScreenContent(
     progressionDataCalculated: Boolean,
     progressionIsEmpty: Boolean,
     onDoneClick: () -> Unit,
-    progressionContent: @Composable ColumnScope.() -> Unit,
-    motionReviewContent: @Composable ColumnScope.() -> Unit = {}
+    progressionContent: @Composable ColumnScope.() -> Unit
 ) {
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
 
@@ -294,8 +224,6 @@ private fun WorkoutCompleteScreenContent(
             progressionContent()
         }
 
-        motionReviewContent()
-
         if (progressionDataCalculated) {
             WearPrimaryButton(
                 modifier = if (progressionIsEmpty) Modifier else Modifier.padding(top = 5.dp),
@@ -303,111 +231,6 @@ private fun WorkoutCompleteScreenContent(
                 onClick = onDoneClick,
             )
         }
-    }
-}
-
-@Composable
-private fun ColumnScope.MotionCaptureReviewPanel(
-    segment: MotionCaptureSegmentRecord,
-    segmentIndex: Int,
-    segmentCount: Int,
-    candidateNames: List<String>,
-    selectedCandidateIndex: Int,
-    lastExportDirectory: String?,
-    onPreviousSegment: () -> Unit,
-    onNextSegment: () -> Unit,
-    onNextCandidate: () -> Unit,
-    onConfirm: () -> Unit,
-    onUseCandidate: () -> Unit,
-    onMarkRest: () -> Unit,
-    onDrop: () -> Unit,
-    onExport: () -> Unit
-) {
-    val displayedLabel = segment.correctedLabel ?: segment.autoLabel
-    val durationSeconds = ((segment.endedAtEpochMs ?: segment.startedAtEpochMs) - segment.startedAtEpochMs) / 1000.0
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 6.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        Text(
-            text = "MOTION REVIEW ${segmentIndex + 1}/$segmentCount",
-            style = MaterialTheme.typography.bodyExtraSmall,
-            textAlign = TextAlign.Center
-        )
-        Text(
-            text = "${displayedLabel.exerciseName ?: displayedLabel.kind.name} • ${"%.1f".format(durationSeconds)}s",
-            style = MaterialTheme.typography.bodySmall,
-            textAlign = TextAlign.Center
-        )
-        Text(
-            text = "Status: ${segment.reviewStatus.name}",
-            style = MaterialTheme.typography.bodyExtraSmall,
-            textAlign = TextAlign.Center
-        )
-        if (candidateNames.isNotEmpty()) {
-            Text(
-                text = "Candidate: ${candidateNames[selectedCandidateIndex.coerceIn(candidateNames.indices)]}",
-                style = MaterialTheme.typography.bodyExtraSmall,
-                textAlign = TextAlign.Center
-            )
-        }
-        if (lastExportDirectory != null) {
-            Text(
-                text = lastExportDirectory,
-                style = MaterialTheme.typography.bodyExtraSmall,
-                textAlign = TextAlign.Center,
-                maxLines = 2
-            )
-        }
-        WearPrimaryButton(
-            modifier = Modifier.fillMaxWidth(),
-            text = "Confirm",
-            onClick = onConfirm
-        )
-        ButtonWithText(
-            modifier = Modifier.fillMaxWidth(),
-            text = "Next candidate",
-            enabled = candidateNames.isNotEmpty(),
-            onClick = onNextCandidate
-        )
-        ButtonWithText(
-            modifier = Modifier.fillMaxWidth(),
-            text = "Use candidate",
-            enabled = candidateNames.isNotEmpty(),
-            onClick = onUseCandidate
-        )
-        OutlinedButtonWithText(
-            modifier = Modifier.fillMaxWidth(),
-            text = "Mark rest",
-            onClick = onMarkRest
-        )
-        OutlinedButtonWithText(
-            modifier = Modifier.fillMaxWidth(),
-            text = "Drop segment",
-            onClick = onDrop
-        )
-        ButtonWithText(
-            modifier = Modifier.fillMaxWidth(),
-            text = "Export session",
-            onClick = onExport
-        )
-        Spacer(modifier = Modifier.fillMaxWidth())
-        ButtonWithText(
-            modifier = Modifier.fillMaxWidth(),
-            text = "Previous segment",
-            enabled = segmentIndex > 0,
-            onClick = onPreviousSegment
-        )
-        ButtonWithText(
-            modifier = Modifier.fillMaxWidth(),
-            text = "Next segment",
-            enabled = segmentIndex < segmentCount - 1,
-            onClick = onNextSegment
-        )
     }
 }
 
