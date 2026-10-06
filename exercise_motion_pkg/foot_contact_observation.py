@@ -15,7 +15,7 @@ import numpy as np
 from .contact_constraints import contact_frame_bounds, is_stationary_contact
 
 MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task"
-POLICY_VERSION = 9
+POLICY_VERSION = 10
 # Classification changes reuse the exact same expensive landmark observations.
 OBSERVATION_CACHE_VERSION = 2
 LANDMARKS = {"left_shoulder": 11, "right_shoulder": 12,
@@ -404,6 +404,54 @@ def add_observed_foot_contacts(
         # flat-foot assumption. Non-foot support evidence is unaffected.
         result["contacts"] = [record for record in result.get("contacts", [])
                               if not str(record.get("jointName", "")).endswith(("_ankle", "_foot"))]
+        # Preserve independently observed source-pose stance through patch
+        # frames classified as unknown. Only explicit airborne observations
+        # contradict a continuous stance; in that case retain its supported
+        # spans as temporal ankle contacts around the observed release.
+        source_support_contacts = []
+        patch_feet = patch_evidence.get("feet") or {}
+        for side, foot in (result.get("feet") or {}).items():
+            if (
+                not isinstance(foot, dict)
+                or not foot.get("continuousSupport")
+                or not is_stationary_contact(foot)
+            ):
+                continue
+            states = (patch_feet.get(side) or {}).get("states")
+            if not isinstance(states, (list, tuple)) or not states:
+                continue
+            airborne = [str(state).casefold() == "airborne" for state in states]
+            if not any(airborne):
+                continue
+
+            foot["continuousSupport"] = False
+            foot["supportSplitByObservedAirborne"] = True
+            joint_name = str(foot.get("jointName") or f"{side}_ankle")
+            try:
+                confidence = max(0.0, min(1.0, float(foot.get("confidence", 1.0))))
+            except (TypeError, ValueError):
+                confidence = 1.0
+            start = None
+            for index in range(len(airborne) + 1):
+                supported = index < len(airborne) and not airborne[index]
+                if supported and start is None:
+                    start = index
+                if supported or start is None:
+                    continue
+                end = index - 1
+                if end > start and confidence > 0.0:
+                    source_support_contacts.append({
+                        "jointName": joint_name,
+                        "supportKind": "foot",
+                        "contactMotion": "stationary",
+                        "startFrame": start,
+                        "endFrame": end,
+                        "startRatio": start / max(1, len(airborne) - 1),
+                        "endRatio": end / max(1, len(airborne) - 1),
+                        "confidence": confidence,
+                        "source": "source_pose_continuous_support_excluding_observed_airborne",
+                    })
+                start = None
         result["contacts"].extend(patch_evidence["contacts"])
-        result["feet"] = {}
+        result["contacts"].extend(source_support_contacts)
     return result

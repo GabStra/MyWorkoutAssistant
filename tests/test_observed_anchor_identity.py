@@ -217,6 +217,100 @@ def test_neutral_pitch_does_not_promote_forefoot_evidence_to_an_ankle_lock():
     assert not mask[8:12].any()
 
 
+@pytest.mark.parametrize(
+    'states,expected_pins,continuous',
+    [
+        (['full_sole', 'unknown', 'unknown', 'full_sole'], [True] * 4, True),
+        (
+            ['unknown', 'unknown', 'airborne', 'airborne', 'airborne', 'unknown', 'unknown'],
+            [True, True, False, False, False, True, True],
+            False,
+        ),
+    ],
+    ids=['unknown-patch-keeps-source-stance', 'observed-airborne-splits-source-stance'],
+)
+def test_foot_patch_merge_preserves_source_support_unless_airborne_is_observed(
+    monkeypatch, states, expected_pins, continuous,
+):
+    import exercise_motion_pkg.foot_contact_observation as foot_observation
+    from exercise_motion_pkg.sequence_stabilization import contact_mask
+
+    source_evidence = {
+        'contacts': [{'jointName': 'left_ankle', 'startFrame': 0, 'endFrame': len(states) - 1}],
+        'feet': {
+            'left': {
+                'jointName': 'left_ankle',
+                'continuousSupport': True,
+                'confidence': 0.9,
+            },
+        },
+    }
+    patch_evidence = {
+        'available': True,
+        'contacts': [],
+        'feet': {'left': {'states': states}},
+    }
+    monkeypatch.setattr(
+        foot_observation,
+        'classify_foot_contacts',
+        lambda *_args, **_kwargs: copy.deepcopy(patch_evidence),
+    )
+
+    merged = foot_observation.add_observed_foot_contacts(
+        source_evidence,
+        {'available': True},
+        {'frames': []},
+    )
+
+    assert merged['feet']['left']['continuousSupport'] is continuous
+    mask = contact_mask(
+        {'sourceFootSupportEvidence': merged},
+        ['left_ankle'],
+        len(states),
+    )[:, 0]
+    assert mask.tolist() == expected_pins
+
+
+def test_foot_patch_airborne_does_not_promote_sliding_source_support_to_stationary_contact(monkeypatch):
+    import exercise_motion_pkg.foot_contact_observation as foot_observation
+    from exercise_motion_pkg.sequence_stabilization import contact_mask
+
+    source_evidence = {
+        'contacts': [{'jointName': 'left_ankle', 'startFrame': 0, 'endFrame': 4}],
+        'feet': {
+            'left': {
+                'jointName': 'left_ankle',
+                'continuousSupport': True,
+                'contactMotion': 'sliding',
+                'confidence': 0.9,
+            },
+        },
+    }
+    patch_evidence = {
+        'available': True,
+        'contacts': [],
+        'feet': {'left': {'states': ['unknown', 'unknown', 'airborne', 'unknown', 'unknown']}},
+    }
+    monkeypatch.setattr(
+        foot_observation,
+        'classify_foot_contacts',
+        lambda *_args, **_kwargs: copy.deepcopy(patch_evidence),
+    )
+
+    merged = foot_observation.add_observed_foot_contacts(
+        source_evidence,
+        {'available': True},
+        {'frames': []},
+    )
+
+    assert merged['feet']['left']['continuousSupport'] is True
+    assert not contact_mask(
+        {'sourceFootSupportEvidence': merged},
+        ['left_ankle'],
+        5,
+    ).any()
+
+
 def test_vertical_only_contact_targets_hold_height_and_leave_tangent_free():
     from exercise_motion_pkg.rig_playback import rig_contact_targets
     from exercise_motion_pkg.sequence_stabilization import contact_mask
