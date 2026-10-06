@@ -58,6 +58,22 @@ def test_bounded_anatomy_projection_allows_temporal_near_misses_only():
         repairable_anatomy=True,
         cyclic=True,
     )
+    cyclic_near_miss = {
+        **checks,
+        'loopSeam': False,
+    }
+    assert motion.bounded_anatomy_projection_eligible(
+        {'anatomy', 'motionDiscontinuity', 'playback', 'loopSeam'},
+        cyclic_near_miss,
+        repairable_anatomy=True,
+        cyclic=True,
+    )
+    assert not motion.bounded_anatomy_projection_eligible(
+        {'anatomy', 'motionDiscontinuity', 'playback', 'loopSeam'},
+        {**cyclic_near_miss, 'bodySupport': False},
+        repairable_anatomy=True,
+        cyclic=True,
+    )
     assert motion.bounded_anatomy_projection_eligible(
         {'anatomy', 'motionDiscontinuity', 'playback'},
         {**checks, 'loopSeam': True},

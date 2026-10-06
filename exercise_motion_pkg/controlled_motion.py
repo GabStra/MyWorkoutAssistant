@@ -331,7 +331,7 @@ def bounded_anatomy_projection_eligible(
     """Gate a short anatomy projection on every independent structural check."""
     allowed_failures = {
         'anatomy', 'playback', 'motionDiscontinuity', 'jerk',
-        'jointShake', 'relativeJointShake', 'settling',
+        'jointShake', 'relativeJointShake', 'settling', 'loopSeam',
     }
     if (
         not repairable_anatomy
@@ -347,9 +347,14 @@ def bounded_anatomy_projection_eligible(
     }
     if not all(checks.get(name) is True for name in structural_gates):
         return False
-    # Open motion has no seam gate. Cyclic motion must already have a valid
-    # seam before anatomy projection is allowed to spend the remaining budget.
-    return not cyclic or checks.get('loopSeam') is True
+    # A bounded anatomy projection can reduce anatomy first on a cyclic near-
+    # miss, then let Stage B repair the seam. Keep the seam gate present and
+    # strictly validate every projected candidate before retaining it.
+    return (
+        not cyclic
+        or checks.get('loopSeam') is True
+        or ('loopSeam' in failed_checks and checks.get('loopSeam') is False)
+    )
 
 
 def support_reference_grossly_invalid(report, *, tolerance_multiplier=5.):
