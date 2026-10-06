@@ -4054,6 +4054,8 @@ def test_solver_sparsity_covers_interpolated_equipment_derivatives(monkeypatch):
     def inspect(residual, initial, pattern, max_evaluations, **options):
         rig = FixedRig(points, names)
         column = 3 * rig.width + rig.slots[names.index('right_elbow')]
+        residual(initial)
+        jacobian = options['local_jacobian'](initial)
         plus, minus = initial.copy(), initial.copy()
         plus[column] += 1e-6
         minus[column] -= 1e-6
@@ -4061,6 +4063,9 @@ def test_solver_sparsity_covers_interpolated_equipment_derivatives(monkeypatch):
         missing = np.flatnonzero((np.abs(derivative) > 1e-4)
                                 & (pattern[:, column].toarray().ravel() == 0))
         assert missing.size == 0, f"Residual derivatives absent from sparsity rows: {missing.tolist()}"
+        predicted = jacobian[:, column].toarray().ravel()
+        relative_error = np.linalg.norm(predicted - derivative) / max(1., np.linalg.norm(derivative))
+        assert relative_error < 1e-4
         inspected.append(True)
         raise Inspected()
 

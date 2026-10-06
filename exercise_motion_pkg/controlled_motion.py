@@ -6658,7 +6658,10 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                         for c in range(shifts):
                             check_optimizer_budget()
                             frames = np.arange(c, n_frames, shifts)
-                            probes = [base.copy() for base in bases]
+                            # Keep unchanged bases by identity so their residual
+                            # sections can reuse this Jacobian's baseline rows.
+                            probes = list(bases)
+                            probes[array_index] = bases[array_index].copy()
                             for j in group:
                                 if shifts == 1:
                                     probes[array_index][:, j, comp] += fd_step
@@ -6705,10 +6708,12 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         w_key_total = w_key + wan
 
         def keyframe_composite(points, unconstrained):
-            return np.concatenate([keyframe_pre_rows(points, contact_weight),
-                                   keyframe_mid_rows(points),
-                                   keyframe_post_rows(points, grip_weight, contact_weight),
-                                   anatomy_rows(unconstrained)], axis=1)
+            return np.concatenate([
+                pre if points is candidate else keyframe_pre_rows(points, contact_weight),
+                mid if points is candidate else keyframe_mid_rows(points),
+                post if points is candidate else keyframe_post_rows(points, grip_weight, contact_weight),
+                base_anat if unconstrained is unconstrained_candidate else anatomy_rows(unconstrained),
+            ], axis=1)
         base_key = (np.concatenate([pre, mid, post, base_anat], axis=1)
                     if cached_rows is not None
                     else keyframe_composite(candidate, unconstrained_candidate))
@@ -6859,6 +6864,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             base_sub = cached_rows['subframe']
             w_sub_anat = base_sub_anat.shape[1]
             w_sub_total = base_sub.shape[1]
+            base_sub_points = base_sub[:, :w_sub_pts]
         else:
             sub_sections_list = subframe_point_sections(subframe, contact_weight, grip_weight)
             section_widths = tuple(section.shape[1] for section in sub_sections_list)
@@ -6866,10 +6872,13 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             w_sub_pts = sum(section.shape[1] for section in sub_sections_list)
             w_sub_anat = base_sub_anat.shape[1]
             w_sub_total = w_sub_pts + w_sub_anat
+            base_sub_points = np.concatenate(sub_sections_list, axis=1)
 
         def subframe_composite(points, unconstrained):
-            return np.concatenate([subframe_point_rows(points, contact_weight, grip_weight),
-                                   subframe_anatomy_rows(unconstrained)], axis=1)
+            return np.concatenate([
+                base_sub_points if points is subframe else subframe_point_rows(points, contact_weight, grip_weight),
+                base_sub_anat if unconstrained is unconstrained_subframe else subframe_anatomy_rows(unconstrained),
+            ], axis=1)
         if cached_rows is None:
             base_sub = subframe_composite(subframe, unconstrained_subframe)
         check_optimizer_budget()
