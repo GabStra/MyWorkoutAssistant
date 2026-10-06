@@ -382,6 +382,64 @@ def support_reference_contacts_pass(maximum_error_meters):
     return float(maximum_error_meters or 0.) < SUPPORT_REFERENCE_CONTACT_LIMIT_METERS
 
 
+def supported_reference_projection_metrics(
+    points,
+    *,
+    payload,
+    names,
+    alignment_reference,
+    body_support,
+    equipment,
+    pinned,
+    contact_targets,
+):
+    """Keep local support projections only when every seed-reference gate holds."""
+    from .anatomical_repair import repair_residuals
+    from .equipment_constraints import validate_grip
+    from .support_alignment import validate_alignment
+    from .support_geometry import validate_support_geometry
+
+    errors, labels = repair_residuals(points, names)
+    failed_features = np.max(errors, axis=0) > 1e-6
+    anatomy = {
+        'passed': not bool(np.any(failed_features)),
+        'violations': [labels[index] for index in np.flatnonzero(failed_features)],
+        'residualByViolation': {
+            labels[index]: float(np.max(errors[:, index]))
+            for index in np.flatnonzero(failed_features)},
+    }
+    geometry = validate_support_geometry(payload, points, names)
+    alignment = validate_alignment(points, alignment_reference, names, body_support)
+    grip = validate_grip(points, names, equipment)
+    contact_error = float(np.max(
+        np.linalg.norm((points - contact_targets)[pinned], axis=-1), initial=0.))
+    contacts = {
+        'passed': support_reference_contacts_pass(contact_error),
+        'maximumErrorMeters': contact_error,
+        'toleranceMeters': SUPPORT_REFERENCE_CONTACT_LIMIT_METERS,
+    }
+    rejection_reasons = []
+    if not anatomy['passed']:
+        rejection_reasons.append('support_reference_anatomy_invalid')
+    if not geometry['passed']:
+        rejection_reasons.extend(geometry.get('rejectionReasons') or ['support_reference_geometry_invalid'])
+    if not alignment['passed']:
+        rejection_reasons.append(alignment.get('reason') or 'support_alignment_invalid')
+    if not grip['passed']:
+        rejection_reasons.append('support_equipment_invalid')
+    if not contacts['passed']:
+        rejection_reasons.append('support_reference_contacts_invalid')
+    return {
+        'passed': not rejection_reasons,
+        'rejectionReasons': list(dict.fromkeys(rejection_reasons)),
+        'anatomy': anatomy,
+        'geometry': geometry,
+        'alignment': alignment,
+        'equipment': grip,
+        'contacts': contacts,
+    }
+
+
 def support_reference_can_be_polished(report):
     """Return whether support geometry provides a sound frame for local repair.
 
@@ -2713,7 +2771,8 @@ def _rigid_pair_arm_slots(rig, names, equipment, pinned=None):
     torso = {
         names.index(n) for n in (
             'pelvis', 'spine', 'spine1', 'spine2', 'spine3', 'neck', 'head',
-            'left_hip', 'right_hip', 'left_knee', 'right_knee',
+            'left_hip', 'right_hip', 'left_shoulder', 'right_shoulder',
+            'left_knee', 'right_knee',
             'left_ankle', 'right_ankle', 'left_foot', 'right_foot',
         ) if n in names
     }
@@ -5559,6 +5618,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 and monotonic() < started + timeout_seconds):
             grip_budget = min(12., max(2., 0.08 * float(timeout_seconds)))
             grip_deadline = min(started + timeout_seconds - 30., monotonic() + grip_budget)
+            before_grip_coordinates = rig.initial.copy()
             gripped = project_rigid_pair_grip_coordinates(
                 rig.initial, rig, names, equipment, pinned=pinned, max_nfev=25,
                 deadline=grip_deadline)
@@ -5574,24 +5634,36 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                     gripped = project_contact_plant_coordinates(
                         gripped, rig, pinned, contact_targets, max_nfev=16,
                         deadline=plant_deadline)
-            rig.initial[:] = gripped
-            reference = rig.decode(gripped)
-            initialized_points = reference
-            report['supportReferenceEquipment'] = validate_grip(reference, names, equipment)
+            gripped_reference = rig.decode(gripped)
+            grip_projection_metrics = supported_reference_projection_metrics(
+                gripped_reference,
+                payload=payload,
+                names=names,
+                alignment_reference=alignment_source,
+                body_support=body_support,
+                equipment=equipment,
+                pinned=pinned,
+                contact_targets=contact_targets,
+            )
             report['supportReferenceGripProjection'] = {
-                'applied': True,
-                'passed': bool(report['supportReferenceEquipment']['passed']),
-                'maximumSpacingErrorMeters': report['supportReferenceEquipment'].get(
+                'applied': grip_projection_metrics['passed'],
+                'passed': grip_projection_metrics['passed'],
+                'rejectionReasons': grip_projection_metrics['rejectionReasons'],
+                'maximumSpacingErrorMeters': grip_projection_metrics['equipment'].get(
                     'maximumSpacingErrorMeters'),
+                **grip_projection_metrics,
             }
-            if np.any(pinned):
-                reference_contact_error = float(np.max(
-                    np.linalg.norm((reference - contact_targets)[pinned], axis=-1), initial=0.))
-                report['supportReferenceContacts'] = {
-                    'passed': support_reference_contacts_pass(reference_contact_error),
-                    'maximumErrorMeters': reference_contact_error,
-                    'toleranceMeters': SUPPORT_REFERENCE_CONTACT_LIMIT_METERS,
-                }
+            if grip_projection_metrics['passed']:
+                rig.initial[:] = gripped
+                reference = gripped_reference
+                initialized_points = reference
+                report['supportReferenceAnatomy'] = grip_projection_metrics['anatomy']
+                report['supportReferenceGeometry'] = grip_projection_metrics['geometry']
+                report['supportReferenceAlignment'] = grip_projection_metrics['alignment']
+                report['supportReferenceEquipment'] = grip_projection_metrics['equipment']
+                report['supportReferenceContacts'] = grip_projection_metrics['contacts']
+            else:
+                rig.initial[:] = before_grip_coordinates
         # One playback-plant pass after keyframe plants (+ optional grip). Soft LS
         # cannot close mid-sample bows; do not pay for this twice around grip.
         if (report.get('supportInitializationStrategy') == 'plant_projection'
@@ -5604,23 +5676,41 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             if play_deadline > monotonic() and _playback_failing_intervals(
                     rig.initial, rig, pinned, contact_targets, cyclic=cyclic_preview,
                     floor=payload.get('renderFloorY')):
-                rig.initial[:] = project_interval_playback_plants(
+                before_playback_coordinates = rig.initial.copy()
+                projected_coordinates = project_interval_playback_plants(
                     rig.initial, rig, pinned, contact_targets,
                     cyclic=cyclic_preview, floor=payload.get('renderFloorY'),
                     max_nfev=16, deadline=play_deadline, spike_reference=spike_reference)
-                reference = rig.decode(rig.initial)
-                initialized_points = reference
-                reference_contact_error = float(np.max(
-                    np.linalg.norm((reference - contact_targets)[pinned], axis=-1), initial=0.))
-                report['supportReferenceContacts'] = {
-                    'passed': support_reference_contacts_pass(reference_contact_error),
-                    'maximumErrorMeters': reference_contact_error,
-                    'toleranceMeters': SUPPORT_REFERENCE_CONTACT_LIMIT_METERS,
+                projected_reference = rig.decode(projected_coordinates)
+                playback_projection_metrics = supported_reference_projection_metrics(
+                    projected_reference,
+                    payload=payload,
+                    names=names,
+                    alignment_reference=alignment_source,
+                    body_support=body_support,
+                    equipment=equipment,
+                    pinned=pinned,
+                    contact_targets=contact_targets,
+                )
+                report['supportPlaybackPlantProjection'] = {
+                    'applied': playback_projection_metrics['passed'],
+                    **playback_projection_metrics,
                 }
-                if equipment.get('handRelationship') == 'rigid_pair':
-                    report['supportReferenceEquipment'] = validate_grip(
-                        reference, names, equipment)
-            report['supportPlaybackPlantsApplied'] = True
+                if playback_projection_metrics['passed']:
+                    rig.initial[:] = projected_coordinates
+                    reference = projected_reference
+                    initialized_points = reference
+                    report['supportReferenceAnatomy'] = playback_projection_metrics['anatomy']
+                    report['supportReferenceGeometry'] = playback_projection_metrics['geometry']
+                    report['supportReferenceAlignment'] = playback_projection_metrics['alignment']
+                    report['supportReferenceEquipment'] = playback_projection_metrics['equipment']
+                    report['supportReferenceContacts'] = playback_projection_metrics['contacts']
+                    report['supportPlaybackPlantsApplied'] = True
+                else:
+                    rig.initial[:] = before_playback_coordinates
+                    report['supportPlaybackPlantsApplied'] = False
+            else:
+                report['supportPlaybackPlantsApplied'] = False
         report['supportReferenceCorrection'] = {'source': body_support.get('source'),
             'maximumCorrectionMeters': float(np.max(np.linalg.norm(reference-points, axis=-1)))}
     # Under support, jointRange accepts articulation excursion (not world-space

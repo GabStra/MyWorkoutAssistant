@@ -1037,3 +1037,36 @@ directory has a condensed version of this state; update it after the arms land.
   and content-verified caches are present for the implemented services. Thus the
   generator-wide service queue remains a separate phase; these audit findings
   do not claim it is implemented or prove maximum throughput.
+
+### Oct 6 RDL fit-to-pre-render corrections
+
+- The retained RDL showed two production-path mismatches. The final body-rotation
+  screen compared fitted joints against raw `sourceJoints`, although controlled
+  fitting had used `controlledArticulationReferenceJoints`. The screen now uses
+  that exact fit reference when complete and keeps the raw-source fallback for
+  legacy payloads.
+- The rigid-pair grip projector described itself as distal-arm-only but omitted
+  the shoulder joints from its torso lock set. It could rotate the shoulders,
+  add a 10.8mm torso-bend violation to the support reference, then leave stale
+  pre-projection anatomy status in the report. The shoulders are now locked;
+  grip and interpolated-plant projections are retained only after anatomy,
+  support geometry, alignment, grip, and contact checks all pass. Failed local
+  projections roll back to their validated input pose.
+- Final materialized acceptance now explicitly requires a terminal movement
+  state. Intermediate pre-render checks still permit a nonterminal full-clip
+  parent because cycle selection/rebake has not happened yet.
+- Replayed the exact 123-frame RDL input (SHA-256
+  `183ad0bc37647ad1dd632c4c2727f0c88d6fe335fce8d54aa5b3e3ea02249796`). The
+  CPU-only fit completed in 43.658s, applied successfully, and passed all 19 fit
+  checks. Both local support projections passed their complete reference gates.
+  Current deterministic pre-render validation then passed in 2.059s with no
+  rejection reasons; no model or reconstruction calls were made. Replay evidence
+  is `build/exercise_motion/replays/20261006-rdl-grip-shake-aware-v7-report.json`,
+  `build/exercise_motion/replays/20261006-rdl-grip-shake-aware-v7.json`, and
+  `build/exercise_motion/replays/20261006-rdl-grip-shake-aware-v7-prerender.json`.
+- This is still a validated full-clip parent, not an accepted final RDL
+  movement: the contract requires a `cyclic_rebake`, while this artifact remains
+  `full_clip_bake` with `terminal=false`. Its seam check correctly reports
+  `requires_cycle_repair`. Cycle selection/rebake, reviewed render, package
+  parity, and an OHP+RDL production-script E2E remain unverified. No throughput
+  claim follows from this fit replay.

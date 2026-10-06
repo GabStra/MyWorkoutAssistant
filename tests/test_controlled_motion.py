@@ -2274,11 +2274,18 @@ def test_rigid_pair_grip_projection_collapses_spacing_variance():
     }
     before = validate_grip(decoded, names, equipment)
     assert not before['passed'], before
+    shoulder_slots = [
+        rig.slots[names.index(name)]
+        for name in ('left_shoulder', 'right_shoulder')
+        if names.index(name) in rig.slots
+    ]
     projected = project_rigid_pair_grip_coordinates(
         rig.initial, rig, names, equipment, max_nfev=30)
     after = validate_grip(rig.decode(projected), names, equipment)
     assert after['passed'], (before, after)
     assert after['maximumSpacingErrorMeters'] < before['maximumSpacingErrorMeters']
+    for slot in shoulder_slots:
+        np.testing.assert_allclose(projected[:, slot:slot + 3], rig.initial[:, slot:slot + 3])
 
 
 def test_playback_rigid_pair_grip_closes_mid_sample_spacing_bow():

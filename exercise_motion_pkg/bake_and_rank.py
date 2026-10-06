@@ -5227,6 +5227,7 @@ def apply_materialized_output_acceptance_gate(
             else TERMINAL_ARTIFACT_CLASSES
         ),
         gate_name="final_output_acceptance",
+        require_terminal=True,
     )
     if ranking is None:
         ranking = LoopRanking(score=0.0, reasons=["artifact_class_gate_required"], payload={})

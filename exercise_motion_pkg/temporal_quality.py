@@ -218,11 +218,22 @@ def body_local_head_direction(points, names):
 def body_orientation_noise_from_payload(payload):
     names = ['left_hip', 'right_hip', 'pelvis', 'neck']
     frames = payload.get('frames') or []
-    if not frames or any(any(n not in (f.get(key) or {}) for n in names)
-                         for f in frames for key in ('joints', 'sourceJoints')):
+    if not frames or any(any(n not in (f.get('joints') or {}) for n in names)
+                         for f in frames):
         return {'available': False, 'severe': False}
-    points, reference = [np.asarray([[f[key][n] for n in names] for f in frames], dtype=float)
-                         for key in ('joints', 'sourceJoints')]
+    reference_field = 'controlledArticulationReferenceJoints'
+    if not all(
+        all(n in (frame.get(reference_field) or {}) for n in names)
+        for frame in frames
+    ):
+        reference_field = 'sourceJoints'
+    if any(any(n not in (frame.get(reference_field) or {}) for n in names) for frame in frames):
+        return {'available': False, 'severe': False}
+    points = np.asarray([[frame['joints'][n] for n in names] for frame in frames], dtype=float)
+    reference = np.asarray(
+        [[frame[reference_field][n] for n in names] for frame in frames],
+        dtype=float,
+    )
     return body_orientation_noise(points, names, reference, float(payload.get('fps') or 30.))
 
 

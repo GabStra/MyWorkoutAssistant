@@ -105,6 +105,43 @@ def test_rotation_noise_check_is_world_rotation_invariant_and_requires_source():
     np.testing.assert_allclose(rotated['outputRmsDegreesAt30Hz'], before['outputRmsDegreesAt30Hz'])
     assert not body_orientation_noise_from_payload({'frames': [{'joints': {}}]})['available']
 
+
+def test_orientation_noise_uses_the_fitter_articulation_reference_when_available():
+    from scipy.spatial.transform import Rotation
+    from exercise_motion_pkg.temporal_quality import body_orientation_noise_from_payload
+
+    names = ['left_hip', 'right_hip', 'pelvis', 'neck']
+    neutral = np.asarray([[-.1, 0., 0.], [.1, 0., 0.], [0., 0., 0.], [0., 1., 0.]])
+    yaw = np.asarray([0., 5., -5., 5., -5., 5., -5., 5., 0.])
+    rotations = Rotation.from_euler('y', yaw[:, None], degrees=True).as_matrix()
+    fitted = np.einsum('fij,kj->fki', rotations, neutral)
+    payload = {
+        'fps': 30.,
+        'frames': [
+            {
+                'sourceJoints': {name: neutral[i].tolist() for i, name in enumerate(names)},
+                'controlledArticulationReferenceJoints': {
+                    name: fitted[frame, i].tolist() for i, name in enumerate(names)
+                },
+                'joints': {name: fitted[frame, i].tolist() for i, name in enumerate(names)},
+            }
+            for frame in range(len(fitted))
+        ],
+    }
+
+    corrected_reference = body_orientation_noise_from_payload(payload)
+    legacy_fallback = body_orientation_noise_from_payload({
+        **payload,
+        'frames': [
+            {key: value for key, value in frame.items()
+             if key != 'controlledArticulationReferenceJoints'}
+            for frame in payload['frames']
+        ],
+    })
+
+    assert corrected_reference['severe'] is False
+    assert legacy_fallback['severe'] is True
+
 def test_attached_head_keeps_intentional_nod_while_torso_moves():
     from exercise_motion_pkg.temporal_quality import body_local_head_direction
     names = ['left_hip', 'right_hip', 'pelvis', 'neck', 'head']

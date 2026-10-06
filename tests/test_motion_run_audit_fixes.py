@@ -157,6 +157,14 @@ def test_cyclic_contract_rejects_full_clip_before_final_render_validation(monkey
         "materialized_metrics_with_gpu_handoff",
         lambda *args, **kwargs: pytest.fail("Artifact-class mismatch must short-circuit expensive validation"),
     )
+    class_gate_calls = []
+    original_class_gate = bake.movement_artifact_class_gate
+
+    def capture_class_gate(*args, **kwargs):
+        class_gate_calls.append(kwargs)
+        return original_class_gate(*args, **kwargs)
+
+    monkeypatch.setattr(bake, "movement_artifact_class_gate", capture_class_gate)
 
     rejected_item, rejected_ranking = bake.apply_materialized_output_acceptance_gate(
         (item, ranking),
@@ -174,6 +182,7 @@ def test_cyclic_contract_rejects_full_clip_before_final_render_validation(monkey
         bake.CYCLIC_REBAKE
     ]
     assert rejected_ranking.payload["acceptanceDecision"]["status"] == "invalid"
+    assert class_gate_calls[0]["require_terminal"] is True
 
 
 def test_artifact_state_records_full_clip_cycle_selection_and_rebake():
@@ -922,9 +931,13 @@ def test_cycle_without_full_clip_parent_cannot_become_terminal():
         state,
         accepted_classes=bake.TERMINAL_ARTIFACT_CLASSES,
         gate_name="focused_regression",
+        require_terminal=True,
     )
     assert gate["passed"] is False
-    assert gate["rejectionReasons"] == ["artifact_lineage_incomplete"]
+    assert gate["rejectionReasons"] == [
+        "artifact_lineage_incomplete",
+        "artifact_state_not_terminal",
+    ]
 
     with pytest.raises(ValueError, match="unaccepted movement"):
         from exercise_motion_pkg.artifact_state import build_packaged_artifact_state
