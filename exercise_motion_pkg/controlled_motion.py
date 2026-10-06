@@ -3383,14 +3383,26 @@ def project_loop_seam_coordinates(coordinates, rig, pinned, *, scale, fps, max_n
     x0 = np.concatenate([coords[frame, start:stop] for frame, start, stop in parts])
     original = x0.copy()
 
-    def unpack(values):
-        trial = coords.copy()
+    boundary_template = coords[list(boundary)]
+    boundary_indices = {frame: index for index, frame in enumerate(boundary)}
+
+    def unpack(values, *, boundary_only=False):
+        trial = boundary_template.copy() if boundary_only else coords.copy()
         offset = 0
         for frame, start, stop in parts:
             width = stop - start
-            trial[frame, start:stop] = values[offset:offset + width]
+            target_frame = boundary_indices[frame] if boundary_only else frame
+            trial[target_frame, start:stop] = values[offset:offset + width]
             offset += width
         return trial
+
+    boundary_acceleration_limits = []
+    if smooth_boundary:
+        middle = len(boundary) // 2
+        for segment in (slice(None, middle), slice(middle, None)):
+            before = np.linalg.norm(np.diff(original_points[segment], n=2, axis=0), axis=-1)
+            boundary_acceleration_limits.append(np.maximum(
+                1.1 * before, np.sqrt(3.) * .003 * (30. / fps) ** 2))
 
     best_values, best_cost = x0.copy(), float('inf')
 
@@ -3429,14 +3441,13 @@ def project_loop_seam_coordinates(coordinates, rig, pinned, *, scale, fps, max_n
         ]
         if smooth_boundary:
             middle = len(boundary) // 2
-            for segment in (slice(None, middle), slice(middle, None)):
-                before = np.linalg.norm(np.diff(original_points[segment], n=2, axis=0), axis=-1)
+            for segment, limit in zip(
+                    (slice(None, middle), slice(middle, None)), boundary_acceleration_limits):
                 after = np.linalg.norm(np.diff(points[segment], n=2, axis=0), axis=-1)
                 # Bound added acceleration, not changes in acceleration: removing
                 # a source endpoint spike must not be penalized as a new defect.
                 # The temporal gate's 3 mm per-axis floor is in meters, not
                 # body-scale units. Convert it to a vector norm at this fps.
-                limit = np.maximum(1.1 * before, np.sqrt(3.) * .003 * (30. / fps) ** 2)
                 result = np.r_[result, (1000. * np.maximum(after - limit, 0.) / scale).ravel()]
         if settling_segments:
             squared_speed = max(0., settling_outside)
@@ -3452,7 +3463,7 @@ def project_loop_seam_coordinates(coordinates, rig, pinned, *, scale, fps, max_n
         nonlocal best_values, best_cost
         if monotonic() >= deadline:
             raise TimeoutError('seam_projection_budget_exhausted')
-        boundary_coordinates = unpack(values)[list(boundary)]
+        boundary_coordinates = unpack(values, boundary_only=True)
         points = rig.decode(boundary_coordinates)
         unconstrained_points = rig.decode(boundary_coordinates, project_socket=False)
         result = residual_from_points(values, points, unconstrained_points)
@@ -3469,7 +3480,7 @@ def project_loop_seam_coordinates(coordinates, rig, pinned, *, scale, fps, max_n
         steps = np.sqrt(np.finfo(float).eps) * np.maximum(1., np.abs(values))
         probes = np.tile(values, (len(values) + 1, 1))
         probes[np.arange(len(values)), np.arange(len(values))] += steps
-        trials = np.asarray([unpack(probe)[list(boundary)] for probe in probes])
+        trials = np.asarray([unpack(probe, boundary_only=True) for probe in probes])
         points = rig.decode(trials.reshape(-1, coords.shape[1])).reshape(
             len(probes), len(boundary), len(rig.names), 3)
         unconstrained_points = rig.decode(
