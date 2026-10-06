@@ -6,6 +6,7 @@ verdicts or prove reconstruction cache lookup. Every input is pinned by bytes.
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 import shutil
 from typing import Any
@@ -67,12 +68,41 @@ def patch_module(fullname: str, module: Any, config: dict[str, Any], record: Any
         from exercise_motion_pkg import bake_and_rank as bake
         from exercise_motion_pkg.pipeline import GenerateRequest, run_generation_pipeline
 
-        if prepared_video_path is None:
-            raise AssertionError("Retained reconstruction replay requires the staged source-review path")
         fixture = fixtures[candidate.exercise_id]
-        selected = Path(prepared_video_path).resolve()
-        if hashlib.sha256(selected.read_bytes()).hexdigest() != fixture["sourceVideoPathSha256"]:
-            raise AssertionError("Selected source differs from the retained reconstruction timeline")
+        selected = verified_file(fixture, "sourceVideoPath")
+        selection_path = (
+            request.workspace
+            / candidate.workspace_slug
+            / "segment_detection/segment_selection.json"
+        )
+        if not selection_path.is_file():
+            raise AssertionError("Production source interval evidence is missing before reconstruction replay")
+        selection = json.loads(selection_path.read_text(encoding="utf-8"))
+        selected_source = Path(selection["sourceVideoPath"]).resolve()
+        selected_source_hash = hashlib.sha256(selected_source.read_bytes()).hexdigest()
+        if selected_source_hash != fixture["sourceVideoPathSha256"]:
+            raise AssertionError("Production source selection does not use the pinned retained clip")
+        selected_segment = Path(selection["selectedSegmentPath"]).resolve()
+        if not selected_segment.is_file():
+            raise AssertionError("Production-reviewed selected segment is missing before reconstruction replay")
+        span = selection.get("selectedSpanInOriginalSource") or {}
+        from exercise_motion_pkg.video_utils import read_basic_video_metadata
+        metadata = read_basic_video_metadata(selected)
+        source_duration = metadata.frame_count / metadata.fps
+        frame_tolerance = 1.0 / metadata.fps
+        if (
+            float(span.get("startSeconds", -1)) > frame_tolerance
+            or abs(float(span.get("endSeconds", -1)) - source_duration) > frame_tolerance
+        ):
+            raise AssertionError("Production source review selected an interval that differs from retained reconstruction")
+        if prepared_video_path is not None:
+            prepared_path = Path(prepared_video_path).resolve()
+            if prepared_path != selected_segment:
+                raise AssertionError("Staged source differs from the production-reviewed selected segment")
+            prepared_metadata = read_basic_video_metadata(prepared_path)
+            if (prepared_metadata.frame_count != metadata.frame_count
+                    or abs(prepared_metadata.fps - metadata.fps) > 0.001):
+                raise AssertionError("Staged source timeline differs from retained reconstruction")
         raw = verified_file(fixture, "normalizedMotionPath")
         contract = bake.exercise_motion_contract_from_candidate(candidate.candidate)
         pose = request.workspace / candidate.workspace_slug / "segment_detection/exact_source_pose_reference.json"
@@ -80,7 +110,10 @@ def patch_module(fullname: str, module: Any, config: dict[str, Any], record: Any
             raise AssertionError("Production exact-source pose evidence is missing before reconstruction replay")
         record(config, "retained_reconstruction_boundary", exerciseId=candidate.exercise_id,
                sourceSha256=fixture["sourceVideoPathSha256"], rawSha256=fixture["normalizedMotionPathSha256"],
-               upstreamIdentity=fixture["upstreamIdentity"], owner=fullname)
+               upstreamIdentity=fixture["upstreamIdentity"], owner=fullname,
+               selectedSourcePath=str(selected), stagedSourcePath=(
+                   str(Path(prepared_video_path).resolve()) if prepared_video_path is not None else None
+               ), selectedSpan=span)
         return run_generation_pipeline(GenerateRequest(
             exercise_slug=candidate.workspace_slug, workspace=request.workspace,
             video_path=selected, normalized_motion_json=raw,

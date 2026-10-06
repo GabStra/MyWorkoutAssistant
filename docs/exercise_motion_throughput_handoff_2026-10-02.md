@@ -7,8 +7,8 @@ below describe the current production owners, not a promotion verdict.
 
 | Requested area | Status | Production evidence and remaining work |
 | --- | --- | --- |
-| Artifact state machine | Implemented; two-exercise verification partial | `artifact_state.py` validates lineage and terminal classes; `bake_and_rank.py` binds the final review window and selected skeleton identity; `build_workout_plan_movement_package.py::validate_selected_movement` checks the packaged selection against review evidence. Revalidated the retained corrected RDL checkpoint with current `audit_artifact_package_state` and `successful_final_validation`: the 117-frame `cyclic_rebake` passed state, render-identity, and package-parity checks (skeleton SHA-256 `01e11579fcd2e9bcfd451d099998c9199d8b33716f7db42f99f570fb829aab4c`). The current-code two-exercise production-script replay has not passed. |
-| Source-evidence constraints in fitting | Implemented, verification partial | `controlled_motion_fit_source_evidence` binds selected interval, observed support, articulation, and projection evidence to the fit cache. Contact projection now preserves observed root posture and refreshes confirmed ground heights. The corrected RDL fitted and passed review. Corrected Press fitting and pre-render gates passed; its real final review and current-code pair acceptance remain unverified. Camera projection and strict endpoint coverage remain conditional on available evidence and declared intervals. |
+| Artifact state machine | Implemented; corrected two-exercise acceptance verified | `artifact_state.py` validates lineage and terminal classes; `bake_and_rank.py` binds the final review window and selected skeleton identity; `build_workout_plan_movement_package.py::validate_selected_movement` checks the packaged selection against review evidence. The current production-script replay accepted Press and the corrected 117-frame RDL interval, with terminal RDL `cyclic_rebake`, real final review, and package hashes matching the reviewed skeletons. Evidence is under `build/exercise_motion/retained_pair_corrected_interval_fixed_20261006/`. |
+| Source-evidence constraints in fitting | Implemented; corrected pair verified on retained inputs | `controlled_motion_fit_source_evidence` binds selected interval, observed support, articulation, and projection evidence to the fit cache. Contact projection preserves observed root posture and refreshes confirmed ground heights. The corrected RDL used exact source frames 6–122 and the matching retained reconstruction; its controlled fit passed and the terminal cycle passed review. This verifies fit/render/acceptance for pinned reconstructions, not fresh GVHMR inference or cache lookup. Camera projection and strict endpoint coverage remain conditional on available evidence and declared intervals. |
 | Queue-backed long-lived services | Partial implementation | `staged_wave_service.py::_execute_wave_request` accepts staged bake manifests and keeps the render executor alive across requests. Opt-in reconstruction workers are persistent. `Start-InitialDiscoveryJob`, prefetch, download, and legacy individual jobs still launch transient processes; the generator-wide service queue is not implemented. |
 | Persistent infrastructure ownership | Partial implementation | Workspace/process leases, shared-model quiescing, machine-wide fit slots, durable queue claims, ambiguous recovery, and content-verified caches exist for the implemented services. VLM recovery now shares the request budget and avoids restarting a responsive server after a busy inference probe. CLEF owns its server per decision lease and releases it on failure; it is not a long-lived model service. External GPU experiments do not participate in this generator's ownership protocol. |
 
@@ -1420,22 +1420,65 @@ The replay took about 4m47s overall. Discovery used one reviewed candidate in
 baking took 81.14s. WHAM was reused. The retained reconstruction boundary still
 excludes fresh inference/cache lookup.
 
-The RDL failure was probed with the same retained fit input and only five solver
+The earlier full-source RDL failure was probed with only five solver
 evaluations. It returned `fit_validation_failed` in 55.19s with negligible fit
 queue wait (0.010s), jerk 0.09188 versus source 0.000650, and failures across
 anatomy, contacts, source articulation, trajectory fit, joint and relative
 shake, body rotation, root continuity, jerk, motion discontinuity, and playback.
 The full production fit used 40 evaluations and 193.28s, with the same failure
-families and jerk 0.09305. Thus most of that solve time did not change the
-rejection outcome for this input. In the corresponding Press fit-only probe,
+families and jerk 0.09305. This was the 124-frame parent interval, not the
+accepted RDL fixture (source frames 6–122); exclude it from fit-speed or
+early-stop conclusions about the accepted movement. In the corresponding
+Press fit-only probe,
 five evaluations passed every fit check in 18.81s; the full production Press
 replay then passed through packaging.
 
-These two retained cases support investigating staged fit validation: validate
-after an initial five-evaluation block, keep a valid result immediately, and
-continue only when a failed quality vector shows a repairable trend. They do
-not yet establish a safe global stopping policy. Do not cap every fit at five
-evaluations: the next phase must preserve continuation for repairable near
-misses and compare the final quality vector before adopting the optimization.
-The RDL root/source-coordinate failure remains unresolved; its rejected fit is
-not packaged.
+These mismatched-input probes do not establish a safe global stopping policy.
+The accepted 117-frame RDL interval subsequently passed production fit and
+review; retain continuation for repairable near misses and compare the final
+quality vector before changing solver stopping behavior.
+
+### Oct 6 corrected two-exercise retained-input production replay
+
+The first corrected-pair attempt was invalidated before it could test RDL fit:
+the shared repository YouTube source cache supplied the 124-frame parent clip,
+so source validation selected frames 0–116 while the retained reconstruction
+belongs to frames 6–122. The retained replay adapter then stopped at its own
+assertion because final validation did not supply a staged-video argument. That
+run is not fit or acceptance evidence.
+
+Two replay-boundary fixes remove both causes. The replay now uses per-run source
+and preview caches, preventing a cached video with the same YouTube ID from
+shadowing a hash-pinned fixture. The retained adapter now verifies the production
+selection manifest's source hash and full-clip interval, then uses the
+hash-pinned video and reconstruction when final validation uses the non-staged
+fallback path. A focused regression covers that path; the focused boundary file
+passes (7 tests), and both edited Python files compile.
+
+The production workout-plan script then completed both exercises in
+`build/exercise_motion/retained_pair_corrected_interval_fixed_20261006/`:
+`process_result.json` reports exit code 0, no timeout, and
+`productionScriptE2EPassed=true`. Press and RDL are both `completed`; the
+production package contains two movement references, and decompressed package
+content hashes match their `movementRef.contentHash` values. RDL's source and
+selected-segment MP4s both hash to
+`9974382fe00395022f2586fb9c2fa311b3c9a13bb073599f7c7a47bd6d195bde`, matching
+the pinned 117-frame retained clip; its raw reconstruction hash is
+`245a21f3fc4860e29d1ed5f853bf1da23ad641cd1c881cfbc69f8c11407571eb`, with
+source frames 6–122 recorded in the upstream identity. The final RDL artifact is
+an accepted, terminal `cyclic_rebake` with
+`full_clip_bake → cycle_selection → cyclic_rebake` lineage. Its selected loop is
+3.8 seconds and its model-reviewed render contact sheets show the upright,
+hinge, and return phases.
+
+This run verifies the current fit, render, review, and packaging path for the
+two pinned retained inputs. It does not verify fresh GVHMR inference or prove
+library-wide throughput. Candidate processing took 126.3s for Press and 267.4s
+for RDL; RDL reports 96.7s in controlled fit, 63.1s in structural refinement,
+and 143.3s in preview bake. The preview bake aggregate attributes 102.0s to
+source-articulation fitting and 29.3s to artifact review rendering. These are
+single-run stage observations, not a controlled speed comparison. The RDL
+support-dominance classifier was uncertain after a local endpoint conflict; the
+movement still passed the configured final validation and package gate, so keep
+that classifier issue visible rather than treating the run as a throughput
+promotion.
