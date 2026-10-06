@@ -30,6 +30,11 @@ def verify_replay_outputs(
 ) -> None:
     """Require reviewed production artifacts and their exact packaged bytes."""
     from scripts import build_workout_plan_movement_package as builder
+    from exercise_motion_pkg.artifact_state import (
+        PACKAGED_MOVEMENT,
+        build_packaged_artifact_state,
+        validate_packaged_artifact_state,
+    )
 
     summary_workspace = workspace_root or run_root / "workspace"
     summary_path = summary_workspace / "workout_motion_generation_summary.json"
@@ -58,6 +63,25 @@ def verify_replay_outputs(
         if (decoded != builder.read_text_file(path).encode("utf-8")
                 or hashlib.sha256(decoded).hexdigest() != reference.get("contentHash")):
             raise ValueError(f"Replay packaged movement differs from reviewed output: {exercise_id}")
+        movement_payload = json.loads(decoded)
+        expected_package_state = build_packaged_artifact_state(
+            movement_payload.get("artifactState"),
+            package_class=PACKAGED_MOVEMENT,
+        )
+        packaged_state = backup.get("packagedArtifactState")
+        try:
+            validate_packaged_artifact_state(
+                packaged_state,
+                movement_state=movement_payload.get("artifactState"),
+            )
+        except ValueError as exc:
+            raise ValueError(
+                f"Replay package artifact lifecycle state is invalid: {exercise_id}: {exc}"
+            ) from exc
+        if packaged_state != expected_package_state:
+            raise ValueError(
+                f"Replay package artifact lifecycle differs from reviewed movement: {exercise_id}"
+            )
 
 
 def seed_replay_contract_cache(config: dict, workspace_root: Path) -> list[dict[str, str]]:

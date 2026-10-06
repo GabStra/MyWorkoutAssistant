@@ -2103,13 +2103,55 @@ function Start-SharedLlamaServer {
         -RuntimeOwner $runtimeOwner `
         -ServiceState "starting"
     Write-Host "Starting shared llama.cpp server ($($serverArgs -join ' '))..."
-    $process = Start-Process `
-        -FilePath $LlamaCppServerCommand `
-        -ArgumentList (@($serverArgs | ForEach-Object { if ($_ -match '\s') { '"{0}"' -f $_ } else { $_ } })) `
-        -RedirectStandardOutput $logPath `
-        -RedirectStandardError $errorLogPath `
-        -WindowStyle Hidden `
-        -PassThru
+    $launchAttemptStartedAt = [DateTime]::UtcNow
+    try {
+        $process = Start-Process `
+            -FilePath $LlamaCppServerCommand `
+            -ArgumentList (@($serverArgs | ForEach-Object { if ($_ -match '\s') { '"{0}"' -f $_ } else { $_ } })) `
+            -RedirectStandardOutput $logPath `
+            -RedirectStandardError $errorLogPath `
+            -WindowStyle Hidden `
+            -PassThru
+    } catch {
+        $launchError = $_
+        $possibleServerProcess = $false
+        $serverProcessName = [System.IO.Path]::GetFileNameWithoutExtension($LlamaCppServerCommand)
+        for ($probeAttempt = 0; $probeAttempt -lt 4 -and -not $possibleServerProcess; $probeAttempt++) {
+            try {
+                $possibleServerProcess = @(
+                    Get-Process -Name $serverProcessName -ErrorAction SilentlyContinue |
+                        Where-Object { $_.StartTime.ToUniversalTime() -ge $launchAttemptStartedAt.AddSeconds(-1) }
+                ).Count -gt 0
+            } catch {
+                # Inability to inspect a possible child is not proof that it
+                # failed to start; keep the durable unknown owner in that case.
+                $possibleServerProcess = $true
+            }
+            if (-not $possibleServerProcess -and $probeAttempt -lt 3) {
+                Start-Sleep -Milliseconds 250
+            }
+        }
+        $endpointResponding = $false
+        try {
+            $null = Invoke-RestMethod -Uri "$baseUrl/v1/models" -TimeoutSec 2
+            $endpointResponding = $true
+        } catch {
+        }
+        if (-not $possibleServerProcess -and -not $endpointResponding) {
+            # Start-Process threw, no matching child appeared during the
+            # observation window, and the configured endpoint is not serving.
+            # This is the one case where the PID-zero owner is known to be a
+            # failed launch rather than an interrupted post-spawn handoff.
+            Set-MotionServiceSessionRuntimeOwner `
+                -SessionDirectory $sessionLeaseKey `
+                -RuntimeOwner $null `
+                -ServiceState "stopped"
+            $null = Release-MotionServiceSessionLease -SessionDirectory $sessionLeaseKey
+            throw "Shared llama.cpp process launch failed before a child was created: $($launchError.Exception.Message)"
+        }
+        Write-Warning "Shared llama.cpp launch failed but a child process or responding endpoint may exist; retaining the unknown runtime owner."
+        throw $launchError
+    }
     $runtimeOwner.pid = $process.Id
     $runtimeOwner.processIdentity = [long]$process.StartTime.ToUniversalTime().ToFileTimeUtc()
     Set-MotionServiceSessionRuntimeOwner `

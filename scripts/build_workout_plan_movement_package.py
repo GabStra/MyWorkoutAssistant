@@ -18,7 +18,10 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
-from exercise_motion_pkg.artifact_state import validate_artifact_state
+from exercise_motion_pkg.artifact_state import (
+    build_packaged_artifact_state,
+    validate_artifact_state,
+)
 
 
 MOVEMENT_FORMAT = "wear_skeleton_json_v1"
@@ -444,13 +447,17 @@ def main() -> int:
             )
             continue
 
-        validate_selected_movement(
+        movement_payload = validate_selected_movement(
             selected_path,
             summary_item,
             summary_path=summary_path,
             summary=summary,
         )
         movement_json = read_text_file(selected_path)
+        packaged_artifact_state = build_packaged_artifact_state(
+            movement_payload["artifactState"],
+            package_class="packaged_movement",
+        )
 
         content_hash = hashlib.sha256(movement_json.encode("utf-8")).hexdigest()
         movement_id = movement_id_for(args.movement_id_prefix, exercise_id, exercise_name)
@@ -467,6 +474,7 @@ def main() -> int:
 
         movement_backups[(movement_id, content_hash)] = {
             "movementRef": movement_ref,
+            "packagedArtifactState": packaged_artifact_state,
             "compressedJsonBase64": gzip_base64(movement_json),
             "compression": MOVEMENT_COMPRESSION,
         }

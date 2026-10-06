@@ -132,16 +132,17 @@ def test_retained_replay_uses_pinned_clip_when_final_validation_has_no_staged_vi
     assert result.normalized_motion_json == raw.resolve()
 
 
-@pytest.mark.parametrize("defect", [None, "missing", "different_bytes"])
+@pytest.mark.parametrize("defect", [None, "missing", "different_bytes", "missing_state"])
 def test_retained_replay_checks_reviewed_package_outputs(tmp_path, defect):
     from scripts.run_motion_retained_replay import verify_replay_outputs
     from scripts import build_workout_plan_movement_package as builder
+    from exercise_motion_pkg.artifact_state import PACKAGED_MOVEMENT, build_packaged_artifact_state
     from test_build_workout_plan_movement_package import write_reviewed_movement
 
     workspace = tmp_path / "workspace"
     path = workspace / "press/selected/movement.json"
     manifest = path.with_name("selection_manifest.json")
-    write_reviewed_movement(path, manifest)
+    movement = write_reviewed_movement(path, manifest)
     summary = {"exercises": [{"exerciseId": "press", "status": "completed",
                                "selectedWearSkeletonPath": str(path),
                                "selectionManifestPath": str(manifest)}]}
@@ -152,11 +153,17 @@ def test_retained_replay_checks_reviewed_package_outputs(tmp_path, defect):
     package = {"workouts": [{"workoutComponents": [{"type": "Exercise", "id": "press",
                                                      "movementRef": reference}]}],
                "exerciseMovements": [{"movementRef": reference,
+                                       "packagedArtifactState": build_packaged_artifact_state(
+                                           movement["artifactState"],
+                                           package_class=PACKAGED_MOVEMENT,
+                                       ),
                                        "compressedJsonBase64": builder.gzip_base64(text)}]}
     if defect == "missing":
         package["exerciseMovements"] = []
     elif defect == "different_bytes":
         package["exerciseMovements"][0]["compressedJsonBase64"] = builder.gzip_base64(text + " ")
+    elif defect == "missing_state":
+        package["exerciseMovements"][0].pop("packagedArtifactState")
     (tmp_path / "package.json").write_text(json.dumps(package))
     if defect:
         with pytest.raises(ValueError, match="package"):

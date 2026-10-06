@@ -9,6 +9,7 @@ from exercise_motion_pkg.artifact_state import (
     FULL_CLIP_BAKE,
     baked_payload_identity,
     build_artifact_state,
+    validate_packaged_artifact_state,
 )
 
 
@@ -144,6 +145,12 @@ def test_library_definition_can_receive_movement_ref_and_backup(tmp_path, monkey
     movement_ref = output["exerciseDefinitions"][0]["movementRef"]
     assert movement_ref["movementId"] == "exercise-motion:definition-a"
     assert output["exerciseMovements"][0]["movementRef"] == movement_ref
+    packaged_state = output["exerciseMovements"][0]["packagedArtifactState"]
+    validate_packaged_artifact_state(
+        packaged_state,
+        movement_state=json.loads(movement_path.read_text(encoding="utf-8"))["artifactState"],
+    )
+    assert packaged_state["history"] == ["full_clip_bake", "packaged_movement"]
 
 
 def test_summary_without_explicit_success_status_is_not_approved():

@@ -1300,7 +1300,6 @@ def test_source_projection_constraint_enters_the_production_fit_jacobian(monkeyp
             'bilateralAssignment': 'identity',
         },
     }
-
     captured = []
 
     def capture_solver(residual, initial, pattern, max_evaluations, *, local_jacobian=None):
@@ -1360,6 +1359,112 @@ def test_source_projection_constraint_enters_the_production_fit_jacobian(monkeyp
         endpoint_numeric,
         rtol=2e-3,
         atol=2e-4,
+    )
+
+
+def test_confirmed_source_support_adds_relative_pelvis_path_fit_rows():
+    from exercise_motion_pkg import controlled_motion as motion
+
+    current, names, points = _artifact_state_source_fit_payload('cycleSelection')
+    for frame in current['sourcePoseCameraReference']['sourcePose']['frames']:
+        frame['joints'].pop('left_foot', None)
+        (frame.get('jointConfidence') or {}).pop('left_foot', None)
+    current['sourceFootSupportEvidence'] = {'bodySupport': {
+        'required': True,
+        'status': 'confirmed',
+        'stationaryJoints': ['left_foot'],
+        'coplanarGroups': [{
+            'joints': ['left_foot'],
+            'normal': [0., 1., 0.],
+            'planeOffsetMeters': float(points[0, names.index('left_foot'), 1]),
+        }],
+    }}
+    current['sourcePoseCameraReference']['camera']['bilateralAssignment'] = 'swapped'
+
+    constraint = motion._prepare_source_projection_fit_constraints(
+        current,
+        current['frames'],
+        names,
+        points,
+        np.zeros((len(points), len(names)), dtype=bool),
+        motion.body_scale(points, names),
+    )
+
+    relative_observations = constraint['supportRelativeObservations']
+    assert len(relative_observations) == len(points)
+    assert constraint['supportRelativeJointNames'] == ['right_ankle']
+    assert all(row['sourceSupportJoint'] == 'left_ankle' for row in relative_observations)
+    assert all(row['supportJointIndex'] == names.index('right_ankle')
+               for row in relative_observations)
+    assert constraint['supportRelativeMaterialMotion'] is False
+
+    baseline_rows = motion._source_support_relative_fit_rows(points, constraint)
+    assert baseline_rows.size == 0
+    constant_offset = points.copy()
+    constant_offset[:, names.index('pelvis'), 0] += .01
+    np.testing.assert_allclose(
+        motion._source_support_relative_fit_rows(constant_offset, constraint),
+        baseline_rows,
+        atol=1e-10,
+    )
+    shifted = points.copy()
+    shifted[4, names.index('pelvis'), 0] += .01
+    assert np.linalg.norm(
+        motion._source_support_relative_fit_rows(shifted, constraint) - baseline_rows
+    ) == 0.
+    baseline_evidence = motion._source_support_relative_fit_evidence(points, constraint)
+    offset_evidence = motion._source_support_relative_fit_evidence(constant_offset, constraint)
+    assert baseline_evidence['materialMotion'] is False
+    assert baseline_evidence['reason'] == 'not_materially_moving'
+    assert baseline_evidence['passed'] is True
+    assert baseline_evidence['relativePathRmsBodyRatio'] == pytest.approx(
+        offset_evidence['relativePathRmsBodyRatio'])
+    assert baseline_evidence['relativePositionOffsetBodyRatio'] != pytest.approx(
+        offset_evidence['relativePositionOffsetBodyRatio'])
+
+    rig = FixedRig(points, names)
+    material_constraint = {
+        **constraint,
+        'supportRelativeObservations': [
+            {
+                **row,
+                'sourceDelta': np.asarray(row['sourceDelta']) + np.array([
+                    index * .02, 0.,
+                ]),
+            }
+            for index, row in enumerate(relative_observations)
+        ],
+    }
+    assert motion._source_support_relative_has_material_motion(
+        material_constraint['supportRelativeObservations'],
+    ) is True
+    material_constraint['supportRelativeMaterialMotion'] = True
+    assert motion._source_support_relative_fit_rows(points, material_constraint).size > 0
+    jacobian = motion._source_support_relative_fit_jacobian(
+        material_constraint,
+        frame_count=len(points),
+        joint_count=len(names),
+        rig=rig,
+        coordinates=rig.initial,
+    )
+    pair_count = len(motion._source_support_relative_fit_pairs(material_constraint))
+    assert jacobian.shape == (pair_count * 2, len(rig.initial.ravel()))
+    assert jacobian.nnz > 0
+    jacobian_coo = jacobian.tocoo()
+    largest = int(np.argmax(np.abs(jacobian_coo.data)))
+    coordinate_index = int(jacobian_coo.col[largest])
+    epsilon = 1e-6
+    moved_coordinates = rig.initial.copy().ravel()
+    moved_coordinates[coordinate_index] += epsilon
+    numeric = (
+        motion._source_support_relative_fit_rows(
+            rig.decode(moved_coordinates.reshape(rig.initial.shape)), material_constraint,
+        )
+        - motion._source_support_relative_fit_rows(rig.decode(rig.initial), material_constraint)
+    ) / epsilon
+    np.testing.assert_allclose(
+        jacobian[:, coordinate_index].toarray().ravel(), numeric,
+        rtol=2e-3, atol=2e-4,
     )
 
 
@@ -2383,6 +2488,10 @@ def test_supported_geometry_ready_skips_when_plants_and_grip_hold():
     assert not supported_geometry_ready_for_skip_soft_solve(
         anchored=True, playback_anchored=True, floor_clear=True,
         points=points, names=names, equipment=equipment, payload=payload,
+        support_strategy='plant_projection', source_support_trajectory_passed=False)
+    assert not supported_geometry_ready_for_skip_soft_solve(
+        anchored=True, playback_anchored=True, floor_clear=True,
+        points=points, names=names, equipment=equipment, payload=payload,
         support_strategy='supported_motion_ls')
     assert not supported_geometry_ready_for_skip_soft_solve(
         anchored=False, playback_anchored=True, floor_clear=True,
@@ -2777,6 +2886,8 @@ def test_polish_stages_order_contact_before_temporal_before_seam():
     assert polish_stage_for_failures(['rootTravel']) == 'C'
     assert polish_stage_for_failures(['rootTravel', 'contacts']) == 'A'
     assert polish_stage_for_failures(['motionDiscontinuity']) == 'C'
+    assert polish_stage_for_failures(['sourceSupportTrajectory']) == 'C'
+    assert polishable_near_miss(['sourceSupportTrajectory'])
     assert polish_stage_for_failures(['loopSeam']) == 'B'
     assert polish_stage_for_failures(['playback']) == 'C'
     assert polishable_near_miss(['contacts', 'equipment'])

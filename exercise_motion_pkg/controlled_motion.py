@@ -51,7 +51,7 @@ SUPPORT_REFERENCE_CONTACT_LIMIT_METERS = min(
     PLAYBACK_CONTACT_LIMIT_METERS * 0.5,
 )
 
-CONTROLLED_MOTION_STRATEGY = 'fixed_rig_controlled_motion_v70_girdle_span_fit'
+CONTROLLED_MOTION_STRATEGY = 'fixed_rig_controlled_motion_v72_material_source_support_trajectory'
 # Feasibility pre-flight threshold, calibrated from fit reports: every
 # successful fit's target bones matched the rig within ~0.002m, while
 # structurally conflicted fits measured 0.05-0.15m before burning their
@@ -104,6 +104,15 @@ POLISH_RESERVE_FRACTION = .18
 POLISH_RESERVE_MAX_SECONDS = 25.
 POLISH_RESERVE_MIN_SECONDS = 12.
 SOURCE_PROJECTION_FIT_WEIGHT = 2.0
+SOURCE_SUPPORT_RELATIVE_FIT_MULTIPLIER = 6.0
+SOURCE_SUPPORT_RELATIVE_MIN_CONFIDENCE = .35
+SOURCE_SUPPORT_RELATIVE_MIN_OBSERVATIONS = 3
+SOURCE_SUPPORT_RELATIVE_MAX_RMS_BODY_RATIO = .12
+# Treat suppression beyond half of a materially visible source excursion as a
+# fit failure; movement below 8% of pelvis-to-support image distance is not
+# distinguishable from small pose-estimation drift for this gate.
+SOURCE_SUPPORT_RELATIVE_MIN_TRAVEL_RATIO = .5
+SOURCE_SUPPORT_RELATIVE_MIN_TRAVEL_DISTANCE_RATIO = .08
 SOURCE_CYCLE_BOUNDARY_FIT_MULTIPLIER = 2.0
 SOURCE_CYCLE_BOUNDARY_MIN_EFFECTIVE_OBSERVATIONS = 3
 SOURCE_ENDPOINT_POSTURE_FIT_MULTIPLIER = 1.5
@@ -111,7 +120,7 @@ SOURCE_ENDPOINT_POSTURE_MIN_WINDOW_SECONDS = 0.05
 SOURCE_ENDPOINT_POSTURE_MAX_WINDOW_SECONDS = 0.2
 REQUIRED_FIT_CHECKS = ('anatomy', 'contacts', 'sourceArticulation', 'trajectoryFit',
                        'rootTravel', 'jointRange', 'jointShake', 'settling', 'jerk',
-                       'fixedRig', 'playback', 'relativeJointShake', 'bodyRotation', 'rootContinuity', 'equipment', 'motionDiscontinuity', 'bodySupport', 'supportAlignment')
+                       'fixedRig', 'playback', 'relativeJointShake', 'bodyRotation', 'rootContinuity', 'equipment', 'motionDiscontinuity', 'bodySupport', 'supportAlignment', 'sourceSupportTrajectory')
 
 
 def _hermite_probe_collision_cursors(neighbors, *, probe_period=4):
@@ -468,7 +477,7 @@ POLISH_STAGE_A = frozenset({'contacts', 'equipment', 'bodySupport', 'supportAlig
 POLISH_STAGE_B = frozenset({'playback', 'loopSeam'})
 POLISH_STAGE_C = frozenset({
     'jerk', 'jointShake', 'relativeJointShake', 'settling',
-    'rootContinuity', 'rootTravel', 'motionDiscontinuity',
+    'rootContinuity', 'rootTravel', 'motionDiscontinuity', 'sourceSupportTrajectory',
 })
 # Stage-A soft LS otherwise loses to seam/temporal terms on supported cycles.
 STAGE_A_CONTACT_POLISH_WEIGHT = 8.
@@ -1671,7 +1680,8 @@ def fit_soft_solve_deadline(
 
 def supported_geometry_ready_for_skip_soft_solve(
         *, anchored, playback_anchored, floor_clear, points, names, equipment, payload,
-        support_strategy=None, playback_support_geometry_passed=True):
+        support_strategy=None, playback_support_geometry_passed=True,
+        source_support_trajectory_passed=True):
     """Skip supported geometry only when any required loop seam also passes.
 
     Long plant-only clips were burning ~150s of soft LS after plants were under
@@ -1679,7 +1689,8 @@ def supported_geometry_ready_for_skip_soft_solve(
     grip leftovers belong to Stage-A hard projection, not soft LS.
     """
     del playback_anchored, equipment
-    if not (anchored and floor_clear and playback_support_geometry_passed):
+    if not (anchored and floor_clear and playback_support_geometry_passed
+            and source_support_trajectory_passed):
         return False
     if support_strategy == 'plant_projection':
         if (payload.get('loop') or {}).get('enabled'):
@@ -4599,6 +4610,132 @@ def _prepare_source_projection_fit_constraints(payload, frames, names, points, p
                     source_time < times[0] - 1e-9 or source_time > times[-1] + 1e-9
                 ),
             })
+    support_relative_observations = []
+    support_relative_joint_names = []
+    if (body_support.get('required') is True
+            and body_support.get('status') == 'confirmed'):
+        support_plane_joints = {
+            joint_name
+            for group in body_support.get('coplanarGroups') or []
+            if group.get('planeOffsetMeters') is not None
+            for joint_name in group.get('joints') or []
+        }
+        for support_name in sorted(
+            set(body_support.get('stationaryJoints') or []) & support_plane_joints
+        ):
+            source_support_base = _bilateral_name(support_name, swap=swap)
+            source_support_names = [source_support_base]
+            if source_support_base.endswith('_foot'):
+                source_support_names.append(source_support_base[:-5] + '_ankle')
+            source_support_name = next((
+                name for name in source_support_names
+                if any(name in frame['joints'] for frame in selected_source_frames)
+            ), None)
+            if source_support_name is None:
+                continue
+            support_motion_name = _bilateral_name(source_support_name, swap=swap)
+            support_joint_index = fit_joint_index.get(support_motion_name)
+            if support_joint_index is None:
+                continue
+
+            source_center_modes = []
+            if 'pelvis' in fit_joint_index:
+                source_center_modes.append((('pelvis',), (fit_joint_index['pelvis'],)))
+            if {'left_hip', 'right_hip'} <= set(fit_joint_index):
+                source_center_modes.append((
+                    ('left_hip', 'right_hip'),
+                    tuple(fit_joint_index[_bilateral_name(name, swap=swap)]
+                          for name in ('left_hip', 'right_hip')),
+                ))
+            if not source_center_modes:
+                continue
+
+            def support_source_confidence(source_frame, joint_names):
+                confidence_values = source_frame.get('jointConfidence') or {}
+                values = []
+                for joint_name in joint_names:
+                    try:
+                        value = float(confidence_values.get(joint_name, .1))
+                    except (TypeError, ValueError, OverflowError):
+                        value = .1
+                    if not np.isfinite(value):
+                        value = .1
+                    values.append(float(np.clip(value, 0., 1.)))
+                return min(values, default=.1)
+
+            seen_times = set()
+            for source_frame in selected_source_frames:
+                source_time = float(source_frame['time'])
+                if source_time in seen_times:
+                    continue
+                source_joints = source_frame['joints']
+
+                support_point = source_joints.get(source_support_name)
+                if (support_point is None
+                        or support_source_confidence(source_frame, (source_support_name,))
+                        < SOURCE_SUPPORT_RELATIVE_MIN_CONFIDENCE):
+                    continue
+                center_names = None
+                center_indices = None
+                center_point = None
+                center_confidence = .1
+                for source_names, candidate_indices in source_center_modes:
+                    if not all(name in source_joints for name in source_names):
+                        continue
+                    candidate_confidence = support_source_confidence(source_frame, source_names)
+                    if candidate_confidence >= SOURCE_SUPPORT_RELATIVE_MIN_CONFIDENCE:
+                        center_names = source_names
+                        center_indices = candidate_indices
+                        center_point = np.mean(
+                            [np.asarray(source_joints[name], dtype=float)[:2]
+                             for name in source_names], axis=0,
+                        )
+                        center_confidence = candidate_confidence
+                        break
+                if center_point is None:
+                    continue
+
+                right = int(np.searchsorted(times, source_time, side='left'))
+                if right <= 0:
+                    left, right, alpha = 0, 0, 0.
+                elif right >= len(times):
+                    left, right, alpha = len(times) - 1, len(times) - 1, 0.
+                else:
+                    left = right - 1
+                    span = float(times[right] - times[left])
+                    alpha = 0. if span <= 1e-12 else float((source_time - times[left]) / span)
+                support_point = np.asarray(support_point, dtype=float)[:2]
+                source_delta = center_point - support_point
+                if (not np.isfinite(source_delta).all()
+                        or not np.isfinite(support_point).all()):
+                    continue
+                support_relative_observations.append({
+                    'leftFrame': left,
+                    'rightFrame': right,
+                    'alpha': alpha,
+                    'centerJointIndices': tuple(center_indices),
+                    'supportJointIndex': support_joint_index,
+                    'sourceDelta': source_delta,
+                    'confidenceWeight': float(np.sqrt(min(
+                        center_confidence,
+                        support_source_confidence(source_frame, (source_support_name,)),
+                    ))),
+                    'sourceTime': source_time,
+                    'sourceCenterJoints': tuple(center_names),
+                    'sourceSupportJoint': source_support_name,
+                    'supportGroup': support_motion_name,
+                })
+                seen_times.add(source_time)
+                support_relative_joint_names.append(support_motion_name)
+
+    support_relative_times = {
+        round(row['sourceTime'], 6) for row in support_relative_observations
+    }
+    if len(support_relative_times) < SOURCE_SUPPORT_RELATIVE_MIN_OBSERVATIONS:
+        support_relative_observations = []
+    support_relative_material_motion = _source_support_relative_has_material_motion(
+        support_relative_observations,
+    )
     distinct_frames = len({(row['leftFrame'], row['rightFrame']) for row in observations})
     for role in ('start', 'end'):
         cycle_boundary_coverage[role]['effectiveObservationCount'] = (
@@ -4613,6 +4750,13 @@ def _prepare_source_projection_fit_constraints(payload, frames, names, points, p
     return {
         'available': True,
         'observations': observations,
+        'supportRelativeObservations': support_relative_observations,
+        'supportRelativeMaterialMotion': support_relative_material_motion,
+        'supportRelativeJointNames': sorted(set(support_relative_joint_names)),
+        'supportRelativeWeight': SOURCE_PROJECTION_FIT_WEIGHT * SOURCE_SUPPORT_RELATIVE_FIT_MULTIPLIER,
+        'supportRelativeMaxRmsBodyRatio': SOURCE_SUPPORT_RELATIVE_MAX_RMS_BODY_RATIO,
+        'supportRelativeMinTravelRatio': SOURCE_SUPPORT_RELATIVE_MIN_TRAVEL_RATIO,
+        'supportRelativeMinTravelDistanceRatio': SOURCE_SUPPORT_RELATIVE_MIN_TRAVEL_DISTANCE_RATIO,
         'projection': projection,
         'offset': offset,
         'normalization': max(float(scale) * projection_scale, 1e-9),
@@ -4737,6 +4881,199 @@ def _source_projection_fit_rows(candidate, constraint):
             'fitConfidenceWeight', observation['confidenceWeight'])
         rows.extend((weight * confidence_weight * error / normalization).tolist())
     return np.asarray(rows, dtype=float)
+
+
+def _source_support_relative_fit_rows(candidate, constraint):
+    """Match source-projected temporal travel, invariant to one constant offset."""
+    pairs = _source_support_relative_fit_pairs(constraint)
+    if not constraint.get('available') or not pairs:
+        return np.empty(0, dtype=float)
+    projection = constraint['projection']
+    normalization = constraint['normalization']
+    weight = constraint['supportRelativeWeight']
+    rows = []
+    for reference, observation in pairs:
+        fitted_delta = _projected_source_support_delta(candidate, observation, projection)
+        reference_delta = _projected_source_support_delta(candidate, reference, projection)
+        source_delta = observation['sourceDelta'] - reference['sourceDelta']
+        error = (fitted_delta - reference_delta) - source_delta
+        confidence_weight = min(
+            observation['confidenceWeight'], reference['confidenceWeight'],
+        )
+        rows.extend((weight * confidence_weight * error / normalization).tolist())
+    return np.asarray(rows, dtype=float)
+
+
+def _source_support_relative_fit_pairs(constraint):
+    if not constraint.get('supportRelativeMaterialMotion', False):
+        return []
+    grouped = defaultdict(list)
+    for observation in constraint.get('supportRelativeObservations') or []:
+        grouped[observation.get('supportGroup')].append(observation)
+    return [
+        (observations[0], observation)
+        for observations in grouped.values()
+        for observation in observations[1:]
+    ]
+
+
+def _source_support_relative_has_material_motion(observations):
+    grouped = defaultdict(list)
+    for observation in observations or []:
+        grouped[observation.get('supportGroup')].append(observation['sourceDelta'])
+    for tracks in grouped.values():
+        source_tracks = np.asarray(tracks, dtype=float)
+        if len(source_tracks) < 2:
+            continue
+        typical_source_distance = max(
+            float(np.median(np.linalg.norm(source_tracks, axis=1))), 1e-9,
+        )
+        source_span = np.ptp(source_tracks, axis=0) / typical_source_distance
+        if np.any(source_span >= SOURCE_SUPPORT_RELATIVE_MIN_TRAVEL_DISTANCE_RATIO):
+            return True
+    return False
+
+
+def _projected_source_support_delta(candidate, observation, projection):
+    left, right, alpha = (
+        observation['leftFrame'], observation['rightFrame'], observation['alpha'],
+    )
+    center_joints = observation['centerJointIndices']
+    center = np.mean(candidate[left, center_joints], axis=0) * (1. - alpha)
+    center += np.mean(candidate[right, center_joints], axis=0) * alpha
+    support_joint = observation['supportJointIndex']
+    support = (candidate[left, support_joint] * (1. - alpha)
+               + candidate[right, support_joint] * alpha)
+    return projection @ (center - support)
+
+
+def _source_support_relative_fit_jacobian(
+    constraint, *, frame_count, joint_count, rig, coordinates,
+):
+    pairs = _source_support_relative_fit_pairs(constraint)
+    if not constraint.get('available') or not pairs:
+        return csr_matrix((0, frame_count * rig.width))
+    rows, columns, values = [], [], []
+    projection = constraint['projection']
+    normalization = constraint['normalization']
+    weight = constraint['supportRelativeWeight']
+    for observation_index, (reference, observation) in enumerate(pairs):
+        confidence_weight = min(
+            observation['confidenceWeight'], reference['confidenceWeight'],
+        )
+        gain = weight * confidence_weight / normalization
+        for sample, sample_sign in ((observation, 1.), (reference, -1.)):
+            left, right, alpha = (
+                sample['leftFrame'], sample['rightFrame'], sample['alpha'],
+            )
+            endpoints = [(left, 1. - alpha)]
+            if right != left:
+                endpoints.append((right, alpha))
+            center_joints = sample['centerJointIndices']
+            support_joint = sample['supportJointIndex']
+            for frame_index, interpolation_weight in endpoints:
+                if interpolation_weight == 0.:
+                    continue
+                for output_axis in range(2):
+                    row = observation_index * 2 + output_axis
+                    for coordinate in range(3):
+                        component_gain = (sample_sign * gain * interpolation_weight
+                                          * projection[output_axis, coordinate])
+                        if component_gain == 0.:
+                            continue
+                        center_gain = component_gain / len(center_joints)
+                        for center_joint in center_joints:
+                            rows.append(row)
+                            columns.append((frame_index * joint_count + center_joint) * 3 + coordinate)
+                            values.append(center_gain)
+                        rows.append(row)
+                        columns.append((frame_index * joint_count + support_joint) * 3 + coordinate)
+                        values.append(-component_gain)
+    point_jacobian = csr_matrix(
+        (values, (rows, columns)),
+        shape=(len(pairs) * 2, frame_count * joint_count * 3),
+    )
+    return point_jacobian @ rig.fk_jacobian(coordinates)
+
+
+def _source_support_relative_fit_evidence(candidate, constraint):
+    observations = constraint.get('supportRelativeObservations') or []
+    if not constraint.get('available') or not observations:
+        return {'available': False, 'passed': True, 'reason': 'confirmed_source_support_unavailable'}
+    projection = constraint['projection']
+    normalization = constraint['normalization']
+    grouped = defaultdict(list)
+    for observation in observations:
+        grouped[observation.get('supportGroup')].append(observation)
+    path_errors = []
+    relevant_travel_ratios = []
+    source_travel_by_support = {}
+    fitted_travel_by_support = {}
+    retention_by_support = {}
+    position_offsets = []
+    material_motion = False
+    for support_group, group_observations in grouped.items():
+        source_tracks = np.asarray([row['sourceDelta'] for row in group_observations], dtype=float)
+        fitted_tracks = np.asarray([
+            _projected_source_support_delta(candidate, row, projection)
+            for row in group_observations
+        ], dtype=float)
+        if len(source_tracks) < 2:
+            continue
+        raw_error = fitted_tracks - source_tracks
+        position_offsets.append(np.mean(raw_error, axis=0) / normalization)
+        path_error = (fitted_tracks - fitted_tracks[0]) - (source_tracks - source_tracks[0])
+        path_errors.extend(path_error[1:] / normalization)
+        typical_source_distance = max(
+            float(np.median(np.linalg.norm(source_tracks, axis=1))), 1e-9,
+        )
+        source_span = np.ptp(source_tracks, axis=0) / typical_source_distance
+        fitted_span = np.ptp(fitted_tracks, axis=0) / typical_source_distance
+        relevant_axes = source_span >= SOURCE_SUPPORT_RELATIVE_MIN_TRAVEL_DISTANCE_RATIO
+        ratios = np.divide(
+            fitted_span,
+            np.maximum(source_span, 1e-12),
+            out=np.ones_like(fitted_span),
+            where=relevant_axes,
+        )
+        source_travel_by_support[str(support_group)] = source_span.tolist()
+        fitted_travel_by_support[str(support_group)] = fitted_span.tolist()
+        retention_by_support[str(support_group)] = [float(value) for value in ratios]
+        if np.any(relevant_axes):
+            material_motion = True
+            relevant_travel_ratios.extend(ratios[relevant_axes].tolist())
+    path_errors = np.asarray(path_errors, dtype=float)
+    rms_body_ratio = float(np.sqrt(np.mean(np.sum(path_errors ** 2, axis=1)))) if len(path_errors) else 0.
+    minimum_travel_ratio = (
+        float(np.min(relevant_travel_ratios)) if relevant_travel_ratios else None
+    )
+    position_offset_body_ratio = (
+        float(np.sqrt(np.mean(np.sum(np.asarray(position_offsets) ** 2, axis=1))))
+        if position_offsets else 0.
+    )
+    passed = (
+        (not material_motion or rms_body_ratio <= SOURCE_SUPPORT_RELATIVE_MAX_RMS_BODY_RATIO)
+        and (minimum_travel_ratio is None
+             or minimum_travel_ratio >= SOURCE_SUPPORT_RELATIVE_MIN_TRAVEL_RATIO)
+    )
+    return {
+        'available': True,
+        'passed': bool(passed),
+        'observationCount': len(observations),
+        'supportJointNames': constraint.get('supportRelativeJointNames') or [],
+        'relativePathRmsBodyRatio': rms_body_ratio,
+        'relativePositionOffsetBodyRatio': position_offset_body_ratio,
+        'sourceTravelRatiosBySupport': source_travel_by_support,
+        'fittedTravelRatiosBySupport': fitted_travel_by_support,
+        'travelRetentionRatiosBySupport': retention_by_support,
+        'minimumRelevantTravelRetentionRatio': minimum_travel_ratio,
+        'materialMotion': material_motion,
+        'reason': 'source_path_mismatch' if material_motion and not passed else (
+            'not_materially_moving' if not material_motion else None),
+        'maximumRmsBodyRatio': SOURCE_SUPPORT_RELATIVE_MAX_RMS_BODY_RATIO,
+        'minimumTravelRetentionRatio': SOURCE_SUPPORT_RELATIVE_MIN_TRAVEL_RATIO,
+        'minimumSourceTravelRelativeDistanceRatio': SOURCE_SUPPORT_RELATIVE_MIN_TRAVEL_DISTANCE_RATIO,
+    }
 
 
 def _source_endpoint_posture_fit_rows(candidate, constraint):
@@ -6074,6 +6411,14 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             'selectedIntervalKind', 'selectedIntervalEvidenceSource', 'selectedIntervalReason',
         )
     }
+    report['sourceProjectionConstraint'].update({
+        'supportRelativeObservationCount': len(
+            source_projection_constraint.get('supportRelativeObservations') or []
+        ),
+        'supportRelativeJointNames': source_projection_constraint.get(
+            'supportRelativeJointNames', []),
+        'supportRelativeWeight': source_projection_constraint.get('supportRelativeWeight'),
+    })
     report['sourceProjectionConstraint']['sharedAnchorAdjustment'] = {
         'adjustedGroupCount': 0,
         'maximumShiftMeters': 0.,
@@ -6272,6 +6617,30 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 source_pattern[observation_index * 2, columns] = 1
                 source_pattern[observation_index * 2 + 1, columns] = 1
         pattern = vstack([pattern, source_pattern.tocsr()], format='csr')
+        support_relative_pairs = _source_support_relative_fit_pairs(source_projection_constraint)
+        if support_relative_pairs:
+            support_relative_pattern = lil_matrix(
+                (len(support_relative_pairs) * 2, count * rig.width), dtype=np.int8,
+            )
+            for observation_index, pair in enumerate(support_relative_pairs):
+                for observation in pair:
+                    joint_indices = (
+                        *observation['centerJointIndices'], observation['supportJointIndex'])
+                    active_columns = np.unique(np.concatenate([
+                        np.flatnonzero(np.max(
+                            rig.dependencies[joint * 3:joint * 3 + 3], axis=0) > 0)
+                        for joint in joint_indices
+                    ]))
+                    endpoints = [(observation['leftFrame'], 1. - observation['alpha'])]
+                    if observation['rightFrame'] != observation['leftFrame']:
+                        endpoints.append((observation['rightFrame'], observation['alpha']))
+                    for frame_index, interpolation_weight in endpoints:
+                        if interpolation_weight <= 0.:
+                            continue
+                        columns = frame_index * rig.width + active_columns
+                        support_relative_pattern[observation_index * 2, columns] = 1
+                        support_relative_pattern[observation_index * 2 + 1, columns] = 1
+            pattern = vstack([pattern, support_relative_pattern.tocsr()], format='csr')
         endpoint_observations = source_projection_constraint.get('endpointPostureObservations') or []
         if endpoint_observations:
             endpoint_pattern = lil_matrix(
@@ -6539,6 +6908,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                      rows['subframe'].ravel(),closure.ravel(),seam_excess.ravel(),seam_velocity_excess.ravel()]
         errors = np.r_[errors, world_jerk_rows(candidate)]
         errors = np.r_[errors, _source_projection_fit_rows(candidate, source_projection_constraint)]
+        errors = np.r_[errors, _source_support_relative_fit_rows(candidate, source_projection_constraint)]
         errors = np.r_[errors, _source_endpoint_posture_fit_rows(candidate, source_projection_constraint)]
         if support_articulation_tracks:
             # Soft floor slightly above the 0.85 acceptance ratio so the solver
@@ -7095,6 +7465,13 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 rig=rig,
                 coordinates=coordinates,
             ))
+            parts.append(_source_support_relative_fit_jacobian(
+                source_projection_constraint,
+                frame_count=count,
+                joint_count=joints,
+                rig=rig,
+                coordinates=coordinates,
+            ))
             parts.append(_source_endpoint_posture_fit_jacobian(
                 source_projection_constraint,
                 frame_count=count,
@@ -7149,9 +7526,14 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             rig.initial, rig, payload, cyclic=cyclic)
         floor_clear = _playback_floor_penetration(
             rig.initial, rig, cyclic=cyclic, floor=floor) <= PLAYBACK_FLOOR_LIMIT_METERS
+        source_support_initial = _source_support_relative_fit_evidence(
+            initial_points, source_projection_constraint,
+        )
+        report['sourceSupportTrajectoryInitial'] = source_support_initial
         already_valid = (not cyclic and already_rigid and already_smooth and anchored
                          and height_anchored and playback_height_anchored
                          and playback_support_geometry_passed
+                         and source_support_initial['passed']
                          and playback_anchored and floor_clear
                          and validate_physical_motion(initial_points,names,fps=fps)['passed']
                          and validate_grip(initial_points,names,equipment)['passed'])
@@ -7159,7 +7541,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             anchored=anchored, playback_anchored=playback_anchored, floor_clear=floor_clear,
             points=initial_points, names=names, equipment=equipment, payload=payload,
             support_strategy=report.get('supportInitializationStrategy'),
-            playback_support_geometry_passed=playback_support_geometry_passed)
+            playback_support_geometry_passed=playback_support_geometry_passed,
+            source_support_trajectory_passed=source_support_initial['passed'])
         geometry_ready = geometry_ready and height_anchored and playback_height_anchored
         nominal_solve = max(45., min(150., 1.25 * float(count)))
         # Protect the ordinary polish window from the solve. Mid-sample plant
@@ -7538,6 +7921,10 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             'smallTravelAllowancePassed': root_travel_small,
             'preservedRangePassed': root_travel_preserved,
         }
+        source_support_trajectory = _source_support_relative_fit_evidence(
+            result, source_projection_constraint,
+        )
+        report['sourceSupportTrajectory'] = source_support_trajectory
         checks = {'anatomy':physical['passed'], 'contacts':contact_error<KEYFRAME_CONTACT_LIMIT_METERS,
                   'heightOnlyContacts': (
                       height_contact_error <= PLAYBACK_FLOOR_LIMIT_METERS
@@ -7556,6 +7943,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         checks['bodySupport'] = report['bodySupport']['passed']
         report['supportAlignment'] = validate_alignment(result, alignment_source, names, body_support)
         checks['supportAlignment'] = report['supportAlignment']['passed']
+        checks['sourceSupportTrajectory'] = source_support_trajectory['passed']
         from .temporal_quality import track_discontinuity_metrics
         discontinuity = track_discontinuity_metrics({name: result[:, j].tolist() for j, name in enumerate(names)},
                                                     root_joint=names[rig.root], fps=fps,
