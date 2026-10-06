@@ -4901,6 +4901,8 @@ function Start-StagedBakeWaveJob {
             [string]$ExpectedRequestId,
             [string]$QueueRoot
         )
+        $requestPath = Join-Path (Join-Path $QueueRoot "requests") "$ExpectedRequestId.json"
+        $processingPath = Join-Path (Join-Path $QueueRoot "processing") "$ExpectedRequestId.json"
         $resultPath = Join-Path (Join-Path $QueueRoot "results") "$ExpectedRequestId.json"
         $statePath = Join-Path $QueueRoot "worker_state.json"
         $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
@@ -4914,7 +4916,10 @@ function Start-StagedBakeWaveJob {
                 try {
                     $serviceResult = Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json
                     if ($serviceResult.requestId -ne $ExpectedRequestId -or $serviceResult.waveId -ne $ExpectedWaveId) {
-                        throw "Ignoring staged service result with unexpected request or wave identity."
+                        $serviceStatus = $using:StagedWaveAmbiguousRecoveryStatus
+                        $exitCode = $using:StagedWaveAmbiguousRecoveryExitCode
+                        $errorMessage = "Staged service published a result with an unexpected request or wave identity. Inspect the retained request and wave workspace before retrying."
+                        break
                     }
                     $exitCode = [int]$serviceResult.exitCode
                     $serviceStatus = [string]$serviceResult.status
@@ -4931,12 +4936,14 @@ function Start-StagedBakeWaveJob {
                         $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
                         if ($report.waveId -ne $ExpectedWaveId) {
                             $report = $null
-                            $exitCode = 1
-                            $errorMessage = "Staged report has an unexpected wave identity."
+                            $exitCode = $using:StagedWaveAmbiguousRecoveryExitCode
+                            $serviceStatus = $using:StagedWaveAmbiguousRecoveryStatus
+                            $errorMessage = "Staged report has an unexpected wave identity. Inspect the retained wave workspace before retrying."
                         }
                     } elseif ($exitCode -eq 0) {
-                        $exitCode = 1
-                        $errorMessage = "Staged-wave service reported success without a report file."
+                        $exitCode = $using:StagedWaveAmbiguousRecoveryExitCode
+                        $serviceStatus = $using:StagedWaveAmbiguousRecoveryStatus
+                        $errorMessage = "Staged-wave service reported success without a report file. Inspect the retained wave workspace before retrying."
                     }
                     # The request waiter owns result consumption. Moving the
                     # validated terminal record lets the persistent service
@@ -4955,7 +4962,9 @@ function Start-StagedBakeWaveJob {
                     }
                     break
                 } catch {
-                    $errorMessage = $_.Exception.Message
+                    $serviceStatus = $using:StagedWaveAmbiguousRecoveryStatus
+                    $exitCode = $using:StagedWaveAmbiguousRecoveryExitCode
+                    $errorMessage = "Could not validate the staged service response: $($_.Exception.Message). Inspect the retained request and wave workspace before retrying."
                     break
                 }
             }
@@ -4963,15 +4972,14 @@ function Start-StagedBakeWaveJob {
             if (Test-Path -LiteralPath $statePath) {
                 try { $workerState = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json } catch {}
             }
-            if ($workerState -and $workerState.status -eq "stopped") {
-                $errorMessage = "Persistent staged-wave service stopped before returning this wave."
-                break
-            }
+            $requestQueued = Test-Path -LiteralPath $requestPath
+            $requestProcessing = Test-Path -LiteralPath $processingPath
+            $workerProcess = $null
+            $workerIdentityMatches = $false
             if ($workerState) {
                 $heartbeatAge = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() / 1000.0 - [double]$workerState.updatedAtEpoch
                 $stateQueueMatches = [string]::Equals([string]$workerState.queueRoot, $QueueRoot, [StringComparison]::OrdinalIgnoreCase)
                 $workerProcess = Get-Process -Id ([int]$workerState.pid) -ErrorAction SilentlyContinue
-                $workerIdentityMatches = $false
                 if ($workerProcess -and $null -ne $workerState.processIdentity) {
                     try {
                         $workerIdentityMatches = [int64]$workerProcess.StartTime.ToUniversalTime().ToFileTimeUtc() -eq [int64]$workerState.processIdentity
@@ -4979,14 +4987,43 @@ function Start-StagedBakeWaveJob {
                         $workerIdentityMatches = $false
                     }
                 }
+                $workerMatchesRequest = [string]::Equals(
+                    [string]$workerState.currentRequestId,
+                    $ExpectedRequestId,
+                    [StringComparison]::OrdinalIgnoreCase
+                )
                 if ($workerState.schemaVersion -ne 1 -or -not $stateQueueMatches -or
-                    $heartbeatAge -lt -5 -or $heartbeatAge -gt 20 -or
                     $null -eq $workerProcess -or -not $workerIdentityMatches) {
-                    $errorMessage = "Persistent staged-wave service heartbeat stopped while awaiting the wave result."
+                    # A published request may already have been claimed. If
+                    # the owning service cannot be verified before a terminal
+                    # result appears, replaying the workspace could collide
+                    # with work that completed just before the worker exited.
+                    $serviceStatus = $using:StagedWaveAmbiguousRecoveryStatus
+                    $exitCode = $using:StagedWaveAmbiguousRecoveryExitCode
+                    $errorMessage = "Staged-wave request has no terminal result and its owning service can no longer be verified. Inspect the retained request, processing record, and wave workspace before retrying."
+                    break
+                } elseif ($heartbeatAge -lt -5 -or $heartbeatAge -gt 20) {
+                    # Heartbeat timestamps are liveness hints, not request
+                    # completion evidence. A matching live process plus a
+                    # queued, claimed, or active request must never enter the
+                    # individual retry lane.
+                    if (-not $requestQueued -and -not $requestProcessing -and -not $workerMatchesRequest) {
+                        $serviceStatus = $using:StagedWaveAmbiguousRecoveryStatus
+                        $exitCode = $using:StagedWaveAmbiguousRecoveryExitCode
+                        $errorMessage = "Staged-wave heartbeat is stale and the request is no longer visible in the queue or worker state. Inspect the retained wave workspace before retrying."
+                        break
+                    }
+                } elseif ($workerState.status -eq "stopped" -and
+                    -not $requestQueued -and -not $requestProcessing -and -not $workerMatchesRequest) {
+                    $serviceStatus = $using:StagedWaveAmbiguousRecoveryStatus
+                    $exitCode = $using:StagedWaveAmbiguousRecoveryExitCode
+                    $errorMessage = "Persistent staged-wave service stopped without publishing a terminal result for this request. Inspect the retained wave workspace before retrying."
                     break
                 }
             } elseif ($stopwatch.Elapsed.TotalSeconds -gt 45) {
-                $errorMessage = "Persistent staged-wave service did not publish its startup heartbeat."
+                $serviceStatus = $using:StagedWaveAmbiguousRecoveryStatus
+                $exitCode = $using:StagedWaveAmbiguousRecoveryExitCode
+                $errorMessage = "Persistent staged-wave service did not publish a verifiable heartbeat for this published request. Inspect the retained request and wave workspace before retrying."
                 break
             }
             Start-Sleep -Milliseconds 250
@@ -5007,6 +5044,7 @@ function Start-StagedBakeWaveJob {
     $job | Add-Member -MemberType NoteProperty -Name IsStagedWave -Value $true
     $job | Add-Member -MemberType NoteProperty -Name WaveWorkspace -Value $waveWorkspace
     $job | Add-Member -MemberType NoteProperty -Name WaveId -Value $waveId
+    $job | Add-Member -MemberType NoteProperty -Name RequestId -Value $requestId
     $job | Add-Member -MemberType NoteProperty -Name StartedAt -Value (Get-Date)
     return $job
 }
@@ -7940,6 +7978,76 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                         } finally {
                             Remove-Job -Job $job -Force
                         }
+                        if (-not $waveResult) {
+                            # Recover a terminal response if the PowerShell
+                            # waiter itself failed after the service completed.
+                            # If ownership cannot be resolved, do not let the
+                            # legacy lane replay a request that may still be
+                            # using the same exercise workspace.
+                            $requestIdForRecovery = Get-ObjectProperty -Object $job -Name "RequestId"
+                            $recoveryResultPath = if ($requestIdForRecovery) {
+                                Join-Path (Join-Path $script:StagedWaveServiceQueueRoot "results") "$requestIdForRecovery.json"
+                            } else { $null }
+                            $recoveryError = "Staged-wave waiter ended without a terminal response. Inspect the retained request and wave workspace before retrying."
+                            if ($recoveryResultPath -and (Test-Path -LiteralPath $recoveryResultPath)) {
+                                try {
+                                    $serviceResult = Get-Content -LiteralPath $recoveryResultPath -Raw | ConvertFrom-Json
+                                    if ($serviceResult.requestId -eq $requestIdForRecovery -and $serviceResult.waveId -eq $job.WaveId) {
+                                        $recoveredReport = $null
+                                        $recoveredExitCode = [int]$serviceResult.exitCode
+                                        $recoveredStatus = [string]$serviceResult.status
+                                        if ($recoveredExitCode -eq 0) {
+                                            $recoveredReportPath = Join-Path $job.WaveWorkspace "staged_wave_report.json"
+                                            if (Test-Path -LiteralPath $recoveredReportPath) {
+                                                $recoveredReport = Get-Content -LiteralPath $recoveredReportPath -Raw | ConvertFrom-Json
+                                                if ($recoveredReport.waveId -ne $job.WaveId) {
+                                                    $recoveredReport = $null
+                                                    $recoveredStatus = $StagedWaveAmbiguousRecoveryStatus
+                                                    $recoveredExitCode = $StagedWaveAmbiguousRecoveryExitCode
+                                                    $recoveryError = "Recovered staged report has an unexpected wave identity. Inspect the retained wave workspace before retrying."
+                                                }
+                                            } else {
+                                                $recoveredStatus = $StagedWaveAmbiguousRecoveryStatus
+                                                $recoveredExitCode = $StagedWaveAmbiguousRecoveryExitCode
+                                                $recoveryError = "Staged-wave service completed without a report file. Inspect the retained wave workspace before retrying."
+                                            }
+                                        } elseif ($recoveredStatus -eq $StagedWaveAmbiguousRecoveryStatus) {
+                                            $recoveredExitCode = $StagedWaveAmbiguousRecoveryExitCode
+                                        }
+                                        $waveResult = [pscustomobject]@{
+                                            exitCode = $recoveredExitCode
+                                            stage = "staged_wave"
+                                            elapsedSeconds = 0.0
+                                            reportPath = Join-Path $job.WaveWorkspace "staged_wave_report.json"
+                                            report = $recoveredReport
+                                            serviceStatus = $recoveredStatus
+                                            logPath = Join-Path $job.WaveWorkspace "wave.log"
+                                            error = if ($serviceResult.error) { [string]$serviceResult.error } else { $recoveryError }
+                                        }
+                                        try {
+                                            $consumedDirectory = Join-Path $script:StagedWaveServiceQueueRoot "consumed"
+                                            New-Item -ItemType Directory -Force -Path $consumedDirectory | Out-Null
+                                            Move-Item -LiteralPath $recoveryResultPath -Destination (Join-Path $consumedDirectory "$requestIdForRecovery.json") -ErrorAction Stop
+                                        } catch {}
+                                    }
+                                } catch {
+                                    $recoveryError = "Staged-wave response could not be recovered: $($_.Exception.Message). Inspect the retained request and wave workspace before retrying."
+                                }
+                            }
+                            if (-not $waveResult) {
+                                $waveResult = [pscustomobject]@{
+                                    exitCode = $StagedWaveAmbiguousRecoveryExitCode
+                                    stage = "staged_wave"
+                                    elapsedSeconds = 0.0
+                                    reportPath = Join-Path $job.WaveWorkspace "staged_wave_report.json"
+                                    report = $null
+                                    serviceStatus = $StagedWaveAmbiguousRecoveryStatus
+                                    logPath = Join-Path $job.WaveWorkspace "wave.log"
+                                    error = $recoveryError
+                                }
+                            }
+                        }
+                        $waveAmbiguousRecovery = (Get-ObjectProperty -Object $waveResult -Name "serviceStatus") -eq $StagedWaveAmbiguousRecoveryStatus
                         # A successful staged coordinator stops the resident
                         # WHAM worker before loading the final-validation VLM.
                         # On an early failure, stop it here before retrying -
@@ -7954,14 +8062,14 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                             $_.Id -ne $job.Id -and
                             $_.PSObject.Properties.Name -contains "IsStagedWave" -and $_.IsStagedWave
                         }).Count -gt 0
-                        if (-not $waveResult -or $waveResult.exitCode -ne 0) {
+                        if (-not $waveAmbiguousRecovery -and (-not $waveResult -or $waveResult.exitCode -ne 0)) {
                             if ($siblingStagedWaveRunning) {
                                 Write-Host "Motion extractor left for the overlapping staged batch; that batch stops it before its validation phase."
                             } else {
                                 Stop-WhamWarmWorker -Worker $warmWhamWorkerInstance
                             }
                         }
-                        if (-not $siblingStagedWaveRunning) {
+                        if (-not $siblingStagedWaveRunning -and -not $waveAmbiguousRecovery) {
                             $warmWhamWorkerInstance = $null
                         }
                         if ($waveResult -and $waveResult.exitCode -eq 75) {
@@ -7969,7 +8077,7 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                             exit 75
                         }
                         $waveStates = @{}
-                        if ($waveResult -and (Get-ObjectProperty -Object $waveResult -Name "serviceStatus") -eq $StagedWaveAmbiguousRecoveryStatus) {
+                        if ($waveAmbiguousRecovery) {
                             foreach ($waveItem in @($job.WorkItems)) {
                                 $waveStates["$($waveItem.exerciseId)"] = @{
                                     retryDisposition = "operator_inspection"
@@ -8040,12 +8148,13 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                                 $pendingLegacyBakeItems.Enqueue($waveItem)
                             }
                         }
-                        if ($waveResult -and (Get-ObjectProperty -Object $waveResult -Name "serviceStatus") -eq $StagedWaveAmbiguousRecoveryStatus) {
-                            Write-Warning "Staged-wave completion is ambiguous; affected exercises were routed for operator inspection without retry. Inspect the retained wave workspace: $($job.WaveWorkspace)"
+                        if ($waveAmbiguousRecovery) {
+                            Write-Warning "Staged-wave completion is ambiguous; affected exercises were routed for operator inspection without retry. $($waveResult.error) Retained wave workspace: $($job.WaveWorkspace)"
                         } elseif (-not $waveResult -or $waveResult.exitCode -ne 0) {
                             $waveLog = if ($waveResult) { $waveResult.logPath } else { "the staged-wave log" }
                             $waveExitCode = if ($waveResult) { "$($waveResult.exitCode)" } else { "unavailable" }
-                            Write-Warning "Staged movement wave did not finish cleanly (exit code $waveExitCode); retrying its exercises individually. Details: $waveLog"
+                            $waveError = if ($waveResult) { "$($waveResult.error)" } else { "waiter returned no result" }
+                            Write-Warning "Staged movement wave did not finish cleanly (exit code $waveExitCode); retrying its exercises individually. Details: $waveLog. $waveError"
                         }
                         Write-ProgressCheckpoint
                     } else {
