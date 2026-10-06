@@ -3686,9 +3686,9 @@ def test_global_range_derivative_does_not_force_full_clip_difference_groups():
     assert len(calls) < 30
 
 
-def test_solver_accepts_a_precomputed_local_jacobian_with_tail_rows():
+def test_solver_accepts_a_precomputed_local_jacobian_with_tail_rows(monkeypatch):
     from scipy.sparse import csr_matrix, eye, vstack
-    from exercise_motion_pkg.controlled_motion import solve_trajectory
+    from exercise_motion_pkg import controlled_motion as motion
 
     target = np.array([1., -2.])
     residual = lambda values: np.r_[values - target, 0.]
@@ -3699,8 +3699,13 @@ def test_solver_accepts_a_precomputed_local_jacobian_with_tail_rows():
     def tail_jacobian(values):
         return csr_matrix([[0., 0.]])
 
+    def unused_coloring(_pattern):
+        raise AssertionError('hybrid Jacobian must not build finite-difference coloring')
+
+    monkeypatch.setattr(motion, 'group_columns', unused_coloring)
+
     pattern = vstack([eye(2), csr_matrix([[1., 1.]])], format='csr')
-    solved = solve_trajectory(
+    solved = motion.solve_trajectory(
         residual, np.zeros(2), pattern, 5,
         local_jacobian=local_jacobian, tail_jacobian=tail_jacobian)
 

@@ -3711,7 +3711,7 @@ def solve_trajectory(residual, initial, pattern, max_evaluations, *,
     # and interpolated-frame evaluations as central differences would.
     tail_rows = 0 if tail_jacobian is None else tail_jacobian(initial).shape[0]
     local_pattern = pattern[:-tail_rows] if tail_rows else pattern
-    groups = group_columns(local_pattern)
+    groups = group_columns(local_pattern) if local_jacobian is None else None
     initial_values = np.asarray(initial, dtype=float).reshape(-1)
     seeded_jacobian = initial_jacobian
     if (seeded_jacobian is not None
