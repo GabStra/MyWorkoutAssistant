@@ -2782,6 +2782,37 @@ def test_seam_boundary_nudge_reduces_first_last_root_gap():
     assert projected_score <= closed_score + 1e-9
 
 
+def test_seam_projection_stops_jacobian_after_a_batch_expires_its_budget(monkeypatch):
+    from exercise_motion_pkg import controlled_motion as motion
+
+    names, points = stance(4)
+    rig = FixedRig(points, names)
+    original = rig.initial.copy()
+    decode = rig.decode
+    clock = [0.]
+    batches = []
+
+    def timed_decode(values, **kwargs):
+        if len(values) > len(points):
+            batches.append(kwargs.get('project_socket', True))
+            clock[0] = 2.
+        return decode(values, **kwargs)
+
+    def solve(residual, initial, *, jac, **kwargs):
+        residual(initial)
+        jac(initial)
+        raise AssertionError('Expired Jacobian must stop the solve')
+
+    monkeypatch.setattr(motion, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(rig, 'decode', timed_decode)
+    monkeypatch.setattr(motion, 'least_squares', solve)
+    result = motion.project_loop_seam_coordinates(
+        original, rig, np.zeros(points.shape[:2], dtype=bool),
+        scale=motion.body_scale(points, names), fps=30., deadline=1.)
+    assert batches == [True]
+    np.testing.assert_array_equal(result, original)
+
+
 def test_boundary_source_constraints_preserve_interpolation_and_fixed_endpoint_context():
     from exercise_motion_pkg import controlled_motion as motion
 

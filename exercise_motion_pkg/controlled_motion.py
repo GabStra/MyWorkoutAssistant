@@ -3501,10 +3501,13 @@ def project_loop_seam_coordinates(coordinates, rig, pinned, *, scale, fps, max_n
                 settling_speed / max(settling_limit, 1e-12) - .95, 0.)]
         return result
 
-    def residual(values):
-        nonlocal best_values, best_cost
+    def check_projection_budget():
         if monotonic() >= deadline:
             raise TimeoutError('seam_projection_budget_exhausted')
+
+    def residual(values):
+        nonlocal best_values, best_cost
+        check_projection_budget()
         boundary_coordinates = unpack(values, boundary_only=True)
         points = rig.decode(boundary_coordinates)
         unconstrained_points = rig.decode(boundary_coordinates, project_socket=False)
@@ -3515,20 +3518,28 @@ def project_loop_seam_coordinates(coordinates, rig, pinned, *, scale, fps, max_n
         return result
 
     def jacobian(values):
-        if monotonic() >= deadline:
-            raise TimeoutError('seam_projection_budget_exhausted')
+        check_projection_budget()
         # Decode all finite-difference probes together. Per-coordinate FK calls
         # otherwise spend most of this bounded solve traversing the same rig.
         steps = np.sqrt(np.finfo(float).eps) * np.maximum(1., np.abs(values))
         probes = np.tile(values, (len(values) + 1, 1))
         probes[np.arange(len(values)), np.arange(len(values))] += steps
         trials = np.asarray([unpack(probe, boundary_only=True) for probe in probes])
+        check_projection_budget()
         points = rig.decode(trials.reshape(-1, coords.shape[1])).reshape(
             len(probes), len(boundary), len(rig.names), 3)
+        check_projection_budget()
         unconstrained_points = rig.decode(
             trials.reshape(-1, coords.shape[1]), project_socket=False).reshape(points.shape)
-        residuals = np.asarray([residual_from_points(probe, pose, raw_pose)
+        check_projection_budget()
+
+        def probe_residual(probe, pose, raw_pose):
+            check_projection_budget()
+            return residual_from_points(probe, pose, raw_pose)
+
+        residuals = np.asarray([probe_residual(probe, pose, raw_pose)
                                 for probe, pose, raw_pose in zip(probes, points, unconstrained_points)])
+        check_projection_budget()
         return ((residuals[:-1] - residuals[-1]) / steps[:, None]).T
 
     try:
