@@ -17547,10 +17547,11 @@ def test_exercise_name_endpoint_semantics_distinguish_overhead_lifts_from_grip_n
     assert finish_requirements.get("end.handHeight") == expected_end_hand_height
 
 
-def test_source_pose_endpoint_contract_rejects_airborne_start_as_standing() -> None:
+def test_source_pose_endpoint_contract_keeps_ambiguous_translation_diagnostic() -> None:
     frames = [source_pose_frame(wrists_y=0.70) for _ in range(12)]
-    # The first boundary samples translate upward together, as during flight;
-    # leg extension alone must not be mistaken for grounded standing support.
+    # The first boundary samples translate upward together. With monocular 2D
+    # evidence this could be flight, camera motion, or a supported body shift,
+    # so translation remains diagnostic instead of overriding leg posture.
     for index, frame in enumerate(frames[:3]):
         offset = -0.09 * index
         for point in frame["joints"].values():
@@ -17565,13 +17566,11 @@ def test_source_pose_endpoint_contract_rejects_airborne_start_as_standing() -> N
         },
     )
 
-    assert endpoints["start"]["supportMode"] == "airborne"
+    assert endpoints["start"]["supportMode"] == "standing"
     assert endpoints["start"]["supportMotion"]["commonBodyTranslation"] is True
-    assert validation["passed"] is False
-    assert ("start", "supportMode") in {
-        (mismatch["endpoint"], mismatch["field"])
-        for mismatch in validation["blockingMismatches"]
-    }
+    assert endpoints["start"]["supportMotion"]["supportInference"] == "ambiguous_2d_translation"
+    assert validation["passed"] is True
+    assert not validation["blockingMismatches"]
 
 
 def test_source_pose_endpoint_contract_keeps_non_primary_hand_height_diagnostic() -> None:
