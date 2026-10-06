@@ -345,6 +345,7 @@ def add_ground_sole_contacts(payload, support, medians, sides, *, evidence):
         support['coplanarGroups'].append({'joints': [ankle, foot], 'normal': [0, 1, 0],
             'planeOffsetMeters': float(payload.get('renderFloorY') or 0.)+.04*shoe_height})
         support['soleContacts'].append({'joints': [knee, ankle, foot], 'normal': [0, 1, 0]})
+    _remove_superseded_ground_sole_planes(support, sides)
 
 
 def _confirmed_observed_ground_sole_sides(evidence, source_pose, joint_names):
@@ -405,6 +406,25 @@ def _body_support_has_complete_ground_sole(support, side):
     return {ankle, foot}.issubset(stationary) and has_plane and has_sole
 
 
+def _remove_superseded_ground_sole_planes(support, sides):
+    """A calibrated full sole replaces earlier ground-point plane estimates."""
+    complete = [side for side in sides if _body_support_has_complete_ground_sole(support, side)]
+    groups = []
+    for group in support.get('coplanarGroups', []):
+        joints = list(group['joints'])
+        for side in complete:
+            sole = {f'{side}_ankle', f'{side}_foot'}
+            if not sole.issubset(group['joints']):
+                joints = [name for name in joints if name not in sole]
+        if len(joints) < (1 if 'planeOffsetMeters' in group else 2):
+            continue
+        updated = {**group, 'joints': joints}
+        if 'anchorJoint' in updated and updated['anchorJoint'] not in joints:
+            updated['anchorJoint'] = joints[0]
+        groups.append(updated)
+    support['coplanarGroups'] = groups
+
+
 def _augment_confirmed_ground_sole_support(payload, evidence, source_pose, *, sides=None):
     support = evidence.get('bodySupport') or {}
     if (support.get('status') != 'confirmed'
@@ -414,6 +434,7 @@ def _augment_confirmed_ground_sole_support(payload, evidence, source_pose, *, si
         evidence, source_pose, payload.get('jointNames')) if sides is None else set(sides))
     missing_sides = [side for side in sorted(confirmed_sides)
                      if not _body_support_has_complete_ground_sole(support, side)]
+    _remove_superseded_ground_sole_planes(support, confirmed_sides)
     frames = payload.get('frames') or []
     names = payload.get('jointNames') or []
     if not missing_sides or not frames or not set(names).issubset(

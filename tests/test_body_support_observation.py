@@ -167,6 +167,19 @@ def test_hash_matched_confirmed_support_adds_only_observed_stationary_ground_fee
 
     assert sole_planes(rig_support) == sole_planes(direct_support)
     assert len(set(sole_planes(rig_support).values())) == 2
+    for side in ('left', 'right'):
+        assert sum(f'{side}_foot' in group['joints']
+                   for group in rig_support['coplanarGroups']) == 1
+
+    # Cached complete soles can still carry an older raw ground-point plane.
+    # Reopening the cache must not give one foot two different target heights.
+    stale_planes = deepcopy(payload)
+    stale_planes['sourceFootSupportEvidence']['bodySupport']['coplanarGroups'].append({
+        'joints': ['left_foot'], 'normal': [0., 1., 0.],
+        'planeOffsetMeters': fixture['renderFloorY']})
+    reopened = materialize_stationary_sole_support(stale_planes)['bodySupport']
+    assert sole_planes(reopened) == sole_planes(rig_support)
+    assert len(reopened['coplanarGroups']) == len(rig_support['coplanarGroups'])
     assert {'left_ankle', 'left_foot', 'right_ankle', 'right_foot'}.issubset(
         set(rig_support['stationaryJoints']))
     assert {contact['joints'][2] for contact in rig_support['soleContacts']} == {
