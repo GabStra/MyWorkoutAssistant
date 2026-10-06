@@ -73,6 +73,7 @@ def _load_events(path: Path) -> list[dict[str, Any]]:
                     "segmentId": row.get("segmentId") or None,
                     "reviewStatus": row.get("reviewStatus") or None,
                     "notes": row.get("notes") or None,
+                    "actualReps": _optional_int(row.get("actualReps")),
                 }
             )
         return rows
@@ -126,5 +127,15 @@ def _optional_float(value: str | None) -> float | None:
         return np.nan
     try:
         return float(value)
+    except ValueError:
+        return None
+
+
+def _optional_int(value: str | None) -> int | None:
+    """Missing column and empty string both mean "not recorded"; unparsable values degrade to None."""
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
     except ValueError:
         return None

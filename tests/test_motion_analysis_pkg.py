@@ -15,7 +15,7 @@ from uuid import uuid4
 import numpy as np
 import pytest
 
-from motion_annotation_pkg.analysis import analyze_session
+from motion_annotation_pkg.analysis import METRICS_FILE_NAME, analyze_session
 from motion_annotation_pkg.frames import build_sensor_frames
 from motion_annotation_pkg.loader import load_export_bundle
 from motion_annotation_pkg.phase_detector import RepDetection, detect_rep_phases
@@ -26,6 +26,11 @@ SAMPLE_RATE_HZ = 50
 _SAMPLE_INTERVAL_NANOS = 20_000_000
 _BASE_NANOS = 1_000_000_000
 _BASE_EPOCH_MS = 1_000_000
+
+
+def _elapsed(index: int) -> int:
+    """Elapsed-realtime nanos of the index-th sample on the uniform 50 Hz grid."""
+    return _BASE_NANOS + index * _SAMPLE_INTERVAL_NANOS
 
 
 # ---------------------------------------------------------------------------
@@ -91,6 +96,36 @@ def _lateral_profiles(
         velocity[start + up + pause : start + up + pause + down] = (
             -excursion_m * np.sin(2 * np.pi * np.arange(down) / SAMPLE_RATE_HZ / down_s)
         )
+    return np.gradient(velocity, 1.0 / SAMPLE_RATE_HZ), velocity
+
+
+def _drifting_stroke_profiles(
+    periods_s: list[float],
+    displacement_m: float = 0.9,
+    pad_s: float = 1.0,
+    tail_s: float = 0.5,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Accel/velocity for strokes whose period shrinks every rep (accelerating tempo).
+
+    Each stroke scales with its period (up 0.3, pause 0.1, down 0.5 of it) and
+    the per-rep displacement is held constant, so the rep count is the only
+    moving ground truth: len(periods_s) reps spanning the given periods.
+    """
+    velocity_blocks = []
+    for period_s in periods_s:
+        up_s = 0.3 * period_s
+        pause_s = 0.1 * period_s
+        down_s = 0.5 * period_s
+        v_up = displacement_m * np.pi / (2.0 * up_s)
+        up = int(up_s * SAMPLE_RATE_HZ)
+        pause = int(pause_s * SAMPLE_RATE_HZ)
+        down = int(down_s * SAMPLE_RATE_HZ)
+        block = np.zeros(up + pause + down)
+        block[:up] = v_up * np.sin(np.pi * np.arange(up) / SAMPLE_RATE_HZ / up_s)
+        block[up + pause :] = -v_up * up_s / down_s * np.sin(np.pi * np.arange(down) / SAMPLE_RATE_HZ / down_s)
+        velocity_blocks.append(block)
+    velocity = np.concatenate(velocity_blocks)
+    velocity = np.concatenate([np.zeros(int(pad_s * SAMPLE_RATE_HZ)), velocity, np.zeros(int(tail_s * SAMPLE_RATE_HZ))])
     return np.gradient(velocity, 1.0 / SAMPLE_RATE_HZ), velocity
 
 
@@ -218,8 +253,10 @@ def test_phase_detector_boundaries_and_sign_normalization() -> None:
 def test_analyze_session_writes_metrics_plots_and_replay_data(tmp_path: Path) -> None:
     export_dir = _write_analysis_export_bundle(tmp_path, with_short_segment=True)
     session_dir = _copy_into_workspace(export_dir, tmp_path / "workspace")
+    # The file value deliberately differs from the event-embedded actualReps (4):
+    # the metrics must carry the event count, proving event ground truth wins.
     ground_truth_path = tmp_path / "ground_truth.json"
-    ground_truth_path.write_text(json.dumps({"set-0": 4}), encoding="utf-8")
+    ground_truth_path.write_text(json.dumps({"set-0": 5}), encoding="utf-8")
 
     analysis_dir = analyze_session(session_dir, ground_truth_path)
 
@@ -232,6 +269,7 @@ def test_analyze_session_writes_metrics_plots_and_replay_data(tmp_path: Path) ->
     analyzed = metrics["sets"][0]
     assert analyzed["set_id"] == "set-0"
     assert analyzed["rep_count"] == 4
+    assert analyzed["ground_truth_source"] == "event"
     assert analyzed["ground_truth_rep_count"] == 4
     assert analyzed["rep_count_error"] == 0
     assert 2.2 <= analyzed["mean_tempo_s"] <= 2.6
@@ -291,7 +329,7 @@ def test_analyze_session_writes_metrics_plots_and_replay_data(tmp_path: Path) ->
 
 
 def test_analyze_session_without_ground_truth_omits_error_fields(tmp_path: Path) -> None:
-    export_dir = _write_analysis_export_bundle(tmp_path, with_short_segment=False)
+    export_dir = _write_analysis_export_bundle(tmp_path, with_short_segment=False, with_event_ground_truth=False)
     session_dir = _copy_into_workspace(export_dir, tmp_path / "workspace")
 
     analysis_dir = analyze_session(session_dir)
@@ -300,6 +338,124 @@ def test_analyze_session_without_ground_truth_omits_error_fields(tmp_path: Path)
     assert len(metrics["sets"]) == 1
     assert "rep_count_error" not in metrics["sets"][0]
     assert "ground_truth_rep_count" not in metrics["sets"][0]
+    assert metrics["sets"][0]["ground_truth_source"] is None
+
+
+def test_analyze_session_uses_ground_truth_file_when_events_lack_actual_reps(tmp_path: Path) -> None:
+    export_dir = _write_analysis_export_bundle(tmp_path, with_short_segment=False, with_event_ground_truth=False)
+    session_dir = _copy_into_workspace(export_dir, tmp_path / "workspace")
+    ground_truth_path = tmp_path / "ground_truth.json"
+    ground_truth_path.write_text(json.dumps({"set-0": 4}), encoding="utf-8")
+
+    analyze_session(session_dir, ground_truth_path)
+
+    metrics = json.loads((session_dir / "analysis" / "metrics.json").read_text(encoding="utf-8"))
+    analyzed = metrics["sets"][0]
+    assert analyzed["ground_truth_source"] == "file"
+    assert analyzed["ground_truth_rep_count"] == 4
+    assert analyzed["rep_count_error"] == 0
+
+
+def test_analyze_session_event_ground_truth_falls_back_to_set_id_join(tmp_path: Path) -> None:
+    # A SET_COMPLETED whose segmentId matches no segment: the latest set-matching
+    # completion at or before the segment end still supplies the ground truth.
+    export_dir = _write_analysis_export_bundle(tmp_path, with_short_segment=False, event_segment_id="segment-unknown")
+    session_dir = _copy_into_workspace(export_dir, tmp_path / "workspace")
+
+    analyze_session(session_dir)
+
+    metrics = json.loads((session_dir / "analysis" / "metrics.json").read_text(encoding="utf-8"))
+    analyzed = metrics["sets"][0]
+    assert analyzed["ground_truth_source"] == "event"
+    assert analyzed["ground_truth_rep_count"] == 4
+    assert analyzed["rep_count_error"] == 0
+
+
+def test_loader_parses_actual_reps_across_old_and_new_event_headers(tmp_path: Path) -> None:
+    new_header_bundle = _write_actual_reps_events_bundle(tmp_path / "new_header", _EVENT_HEADER_NEW)
+    old_header_bundle = _write_actual_reps_events_bundle(tmp_path / "old_header", _EVENT_HEADER_OLD)
+
+    new_events = load_export_bundle(new_header_bundle)["events"]
+    old_events = load_export_bundle(old_header_bundle)["events"]
+
+    # New 14-column header: an integer value parses; an empty string means "not recorded".
+    assert [event["actualReps"] for event in new_events] == [8, None, None]
+    # Old 13-column header (pre-actualReps watch builds): the column is absent,
+    # every row degrades to None.
+    assert [event["actualReps"] for event in old_events] == [None, None]
+
+
+# ---------------------------------------------------------------------------
+# Detector hardening (coverage boundary): honest degradation, never miscounting
+# ---------------------------------------------------------------------------
+
+
+def _analyze_hardening_set(tmp_path: Path, name: str, accel_z: np.ndarray, gyro_z: np.ndarray) -> dict:
+    export_dir = _write_hardening_export_bundle(tmp_path, name, accel_z, gyro_z)
+    analysis_dir = analyze_session(export_dir)
+    metrics = json.loads((analysis_dir / METRICS_FILE_NAME).read_text(encoding="utf-8"))
+    assert len(metrics["sets"]) == 1
+    assert metrics["sets"][0]["status"] == "analyzed"
+    return metrics["sets"][0]
+
+
+def test_hardening_aperiodic_near_static_segment_stays_low_confidence(tmp_path: Path) -> None:
+    # Wrist barely moves: a 0.05 Hz drift far below the 0.3 Hz analysis band and
+    # no rep periodicity. Whatever the detector reports, it must be flagged
+    # low-confidence instead of asserting a confident (wrong) count.
+    n = int(30.0 * SAMPLE_RATE_HZ)
+    t = np.arange(n) / SAMPLE_RATE_HZ
+    accel = 0.02 * np.sin(2 * np.pi * 0.05 * t)
+    report = _analyze_hardening_set(tmp_path, "static-drift", accel, np.zeros(n))
+
+    assert report["rep_count"] == 0 or report["detector_confidence"]["band"] == "low"
+    assert report["detector_confidence"]["band"] == "low"
+
+
+def test_hardening_drifting_tempo_counts_exactly(tmp_path: Path) -> None:
+    # 8 reps accelerating from a 3.0 s to a 1.5 s period (mean 2.25 s): the count
+    # must stay exact and the measured tempo within tolerance, with the majority
+    # of reps still carrying a concentric->eccentric sequence.
+    periods = [3.0 - index * (1.5 / 7.0) for index in range(8)]
+    accel, velocity = _drifting_stroke_profiles(periods)
+    report = _analyze_hardening_set(tmp_path, "drifting-tempo", accel, velocity)
+
+    assert report["rep_count"] == 8
+    assert report["mean_tempo_s"] == pytest.approx(2.25, abs=0.35)
+    starts = [rep["start_offset_s"] for rep in report["reps"]]
+    assert starts == sorted(starts)
+    ordered_phase_reps = 0
+    for rep in report["reps"]:
+        labels = [phase["label"] for phase in rep["phases"]]
+        if "concentric" in labels and "eccentric" in labels:
+            assert labels.index("concentric") < labels.index("eccentric")
+            ordered_phase_reps += 1
+    assert ordered_phase_reps >= 6
+
+
+def test_hardening_symmetric_strokes_resolve_to_true_count(tmp_path: Path) -> None:
+    # Symmetric strokes: |gyro|/|accel| rectify into two identical lobes per rep,
+    # so a magnitude candidate counts 2x. The robust candidate selection must
+    # resolve the true count via a signed full-cycle axis.
+    accel, velocity = _stroke_profiles(20.0, reps=8, period_s=2.0, up_s=0.6, down_s=0.6, v_up=1.5)
+    report = _analyze_hardening_set(tmp_path, "symmetric-strokes", accel, velocity)
+
+    assert report["rep_count"] == 8
+    assert "_magnitude" not in report["signal_source"]
+
+
+def test_hardening_noise_floor_never_confident_nonzero_count(tmp_path: Path) -> None:
+    # White noise with no reps: a nonzero count may only appear flagged
+    # low-confidence, never as a confident number.
+    rng = np.random.default_rng(20261006)
+    n = int(30.0 * SAMPLE_RATE_HZ)
+    accel = rng.normal(0.0, 0.15, n)
+    gyro = rng.normal(0.0, 0.05, n)
+    report = _analyze_hardening_set(tmp_path, "noise-floor", accel, gyro)
+
+    confidence = report["detector_confidence"]
+    assert not (report["rep_count"] > 0 and confidence["band"] != "low")
+    assert confidence["band"] == "low"
 
 
 # ---------------------------------------------------------------------------
@@ -307,7 +463,12 @@ def test_analyze_session_without_ground_truth_omits_error_fields(tmp_path: Path)
 # ---------------------------------------------------------------------------
 
 
-def _write_analysis_export_bundle(tmp_path: Path, with_short_segment: bool) -> Path:
+def _write_analysis_export_bundle(
+    tmp_path: Path,
+    with_short_segment: bool,
+    with_event_ground_truth: bool = True,
+    event_segment_id: str = "segment-1",
+) -> Path:
     """Full capture bundle: 4 reps (2.4 s period, slow eccentric) + REST + optional tiny set."""
     accel, velocity = _stroke_profiles(
         12.5,
@@ -328,15 +489,12 @@ def _write_analysis_export_bundle(tmp_path: Path, with_short_segment: bool) -> P
     accel_xyz, gyro_xyz, quaternion = _row_values(accel, velocity, lateral_accel)
     n = accel_xyz.__len__()
 
-    def elapsed(index: int) -> int:
-        return _BASE_NANOS + index * _SAMPLE_INTERVAL_NANOS
-
     segments = [
         _segment(
             "segment-1",
             0,
-            elapsed(int(0.5 * SAMPLE_RATE_HZ)),
-            elapsed(int(11.0 * SAMPLE_RATE_HZ)),
+            _elapsed(int(0.5 * SAMPLE_RATE_HZ)),
+            _elapsed(int(11.0 * SAMPLE_RATE_HZ)),
             "exercise-analysis",
             "Biceps Curl",
             "WEIGHT",
@@ -347,8 +505,8 @@ def _write_analysis_export_bundle(tmp_path: Path, with_short_segment: bool) -> P
         _segment(
             "segment-2",
             1,
-            elapsed(int(11.0 * SAMPLE_RATE_HZ)),
-            elapsed(int(12.0 * SAMPLE_RATE_HZ)),
+            _elapsed(int(11.0 * SAMPLE_RATE_HZ)),
+            _elapsed(int(12.0 * SAMPLE_RATE_HZ)),
             "exercise-analysis",
             "Biceps Curl",
             "WEIGHT",
@@ -362,8 +520,8 @@ def _write_analysis_export_bundle(tmp_path: Path, with_short_segment: bool) -> P
             _segment(
                 "segment-3",
                 2,
-                elapsed(int(12.0 * SAMPLE_RATE_HZ)),
-                elapsed(int(12.5 * SAMPLE_RATE_HZ)),
+                _elapsed(int(12.0 * SAMPLE_RATE_HZ)),
+                _elapsed(int(12.5 * SAMPLE_RATE_HZ)),
                 "exercise-analysis",
                 "Biceps Curl",
                 "WEIGHT",
@@ -415,15 +573,28 @@ def _write_analysis_export_bundle(tmp_path: Path, with_short_segment: bool) -> P
     export_dir = tmp_path / "export"
     export_dir.mkdir(parents=True)
     (export_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-    (export_dir / "events.csv").write_text(
-        "eventType,epochTimeMs,elapsedRealtimeNanos,stateName,exerciseId,exerciseName,setId,setIndex,exerciseType,noRepExpected,segmentId,reviewStatus,notes\n"
-        f"entered_set,{_BASE_EPOCH_MS},{_BASE_NANOS},Set,exercise-analysis,Biceps Curl,set-0,0,WEIGHT,false,segment-1,,\n",
-        encoding="utf-8",
-    )
+    events_rows = [
+        f"entered_set,{_BASE_EPOCH_MS},{_BASE_NANOS},Set,exercise-analysis,Biceps Curl,set-0,0,WEIGHT,false,segment-1,,\n"
+    ]
+    if with_event_ground_truth:
+        # SET_COMPLETED carrying the new trailing actualReps column (14 fields);
+        # timestamped at the segment end so the set-id fallback also applies.
+        events_rows.append(
+            f"set_completed,{_BASE_EPOCH_MS + 11_000},{_elapsed(int(11.0 * SAMPLE_RATE_HZ))},"
+            f"Set,exercise-analysis,Biceps Curl,set-0,0,WEIGHT,false,{event_segment_id},,,4\n"
+        )
+    if with_short_segment:
+        # Old-format row: pre-actualReps watch builds end the line after notes
+        # (13 fields under the 14-column header), parsing as actualReps=None.
+        events_rows.append(
+            f"set_completed,{_BASE_EPOCH_MS + 12_000},{_elapsed(int(12.0 * SAMPLE_RATE_HZ))},"
+            f"Set,exercise-analysis,Biceps Curl,set-short,2,WEIGHT,false,segment-3,,\n"
+        )
+    (export_dir / "events.csv").write_text(_EVENT_HEADER_NEW + "".join(events_rows), encoding="utf-8")
 
     rows: list[str] = []
     for index in range(n):
-        stamp = f"{_BASE_EPOCH_MS + index * 20},{elapsed(index)}"
+        stamp = f"{_BASE_EPOCH_MS + index * 20},{_elapsed(index)}"
         rows.append(f"ACCELEROMETER,{stamp},3,{accel_xyz[index][0]},{accel_xyz[index][1]},{accel_xyz[index][2]},\n")
         rows.append(f"GYROSCOPE,{stamp},3,{gyro_xyz[index][0]},{gyro_xyz[index][1]},{gyro_xyz[index][2]},\n")
         rows.append(f"ROTATION_VECTOR,{stamp},3,{quaternion[index][0]},{quaternion[index][1]},{quaternion[index][2]},{quaternion[index][3]}\n")
@@ -492,7 +663,100 @@ def _copy_into_workspace(export_dir: Path, workspace: Path) -> Path:
     return copy_export_into_workspace(export_dir, workspace)
 
 
+def _write_actual_reps_events_bundle(root: Path, header: str) -> Path:
+    """Minimal bundle whose events.csv exercises one header variant end to end."""
+    root.mkdir(parents=True)
+    metadata = {
+        "schemaVersion": 2,
+        "session": {"id": "events-header-session", "status": "COMPLETED"},
+        "rawSensorFiles": [],
+        "eventsFile": "events.csv",
+    }
+    (root / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    if header == _EVENT_HEADER_NEW:
+        rows = (
+            "set_completed,1000,1000000000,Set,exercise-rep,Squat,set-1,0,WEIGHT,false,segment-1,,,8\n"
+            "set_completed,2000,2000000000,Set,exercise-rep,Squat,set-2,1,WEIGHT,false,segment-2,,\n"
+            "entered_set,3000,3000000000,Set,exercise-rep,Squat,set-3,2,WEIGHT,false,segment-3,,\n"
+        )
+    else:
+        rows = (
+            "set_completed,1000,1000000000,Set,exercise-rep,Squat,set-1,0,WEIGHT,false,segment-1,,\n"
+            "entered_set,3000,3000000000,Set,exercise-rep,Squat,set-3,2,WEIGHT,false,segment-3,,\n"
+        )
+    (root / "events.csv").write_text(header + rows, encoding="utf-8")
+    return root
+
+
+def _write_hardening_export_bundle(
+    tmp_path: Path,
+    session_id: str,
+    accel_z: np.ndarray,
+    gyro_z: np.ndarray,
+) -> Path:
+    """Single-EXERCISE-segment bundle (50 Hz accel + gyro + rotation vector) for detector hardening."""
+    accel_xyz, gyro_xyz, quaternion = _row_values(accel_z, gyro_z)
+    n = len(accel_xyz)
+    segment = _segment(
+        f"segment-{session_id}",
+        0,
+        _elapsed(0),
+        _elapsed(n - 1),
+        "exercise-hardening",
+        "Hardening Probe",
+        "WEIGHT",
+        False,
+        "EXERCISE",
+        f"set-{session_id}",
+        session_id=session_id,
+    )
+    metadata = {
+        "schemaVersion": 2,
+        "session": {
+            "id": session_id,
+            "workoutId": str(uuid4()),
+            "workoutHistoryId": str(uuid4()),
+            "status": "COMPLETED",
+            "startedAtEpochMs": _BASE_EPOCH_MS,
+            "endedAtEpochMs": _BASE_EPOCH_MS + n * 20,
+            "deviceManufacturer": "Google",
+            "deviceModel": "Pixel Watch",
+            "deviceName": "pixel_watch",
+            "appVersion": "1.0.0",
+            "sessionDirectoryName": session_id,
+        },
+        "sensorConfig": {
+            "sampleRateHz": SAMPLE_RATE_HZ,
+            "chunkSampleCount": 500,
+            "enabledSensors": ["ACCELEROMETER", "GYROSCOPE", "ROTATION_VECTOR"],
+        },
+        "workoutContext": {"workoutId": str(uuid4()), "workoutHistoryId": str(uuid4()), "orderedExerciseCandidates": []},
+        "coarseReviewedSegments": [segment],
+        "rawSensorFiles": [{"fileName": "chunk_00001.csv"}],
+        "eventsFile": "events.csv",
+    }
+    export_dir = tmp_path / session_id
+    export_dir.mkdir(parents=True)
+    (export_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    (export_dir / "events.csv").write_text(_EVENT_HEADER_NEW, encoding="utf-8")
+    rows: list[str] = []
+    for index in range(n):
+        stamp = f"{_BASE_EPOCH_MS + index * 20},{_elapsed(index)}"
+        rows.append(f"ACCELEROMETER,{stamp},3,{accel_xyz[index][0]},{accel_xyz[index][1]},{accel_xyz[index][2]},\n")
+        rows.append(f"GYROSCOPE,{stamp},3,{gyro_xyz[index][0]},{gyro_xyz[index][1]},{gyro_xyz[index][2]},\n")
+        rows.append(f"ROTATION_VECTOR,{stamp},3,{quaternion[index][0]},{quaternion[index][1]},{quaternion[index][2]},{quaternion[index][3]}\n")
+    (export_dir / "chunk_00001.csv").write_text(_CHUNK_HEADER + "".join(rows), encoding="utf-8")
+    return export_dir
+
+
 _CHUNK_HEADER = "sensorType,epochTimeMs,elapsedRealtimeNanos,accuracy,x,y,z,w\n"
+# events.csv before the actualReps watch change (13 columns)...
+_EVENT_HEADER_OLD = (
+    "eventType,epochTimeMs,elapsedRealtimeNanos,stateName,exerciseId,exerciseName,"
+    "setId,setIndex,exerciseType,noRepExpected,segmentId,reviewStatus,notes\n"
+)
+# ...and after it: SET_COMPLETED rows gain the trailing ground-truth column.
+_EVENT_HEADER_NEW = _EVENT_HEADER_OLD[:-1] + ",actualReps\n"
 
 
 def _segment(
@@ -506,6 +770,7 @@ def _segment(
     no_rep_expected: bool,
     label_kind: str,
     set_id: str,
+    session_id: str = "analysis-session-1",
 ) -> dict[str, object]:
     label = {
         "kind": label_kind,
@@ -524,7 +789,7 @@ def _segment(
     }
     return {
         "id": segment_id,
-        "sessionId": "analysis-session-1",
+        "sessionId": session_id,
         "sequenceIndex": sequence_index,
         "startedAtEpochMs": start_nanos // 1_000_000,
         "endedAtEpochMs": end_nanos // 1_000_000,

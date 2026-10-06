@@ -3,8 +3,10 @@
 `analyze_session` reads a recorded session (export or workspace layout), analyzes
 every rep-based EXERCISE segment, and writes `<session-dir>/analysis/` with
 metrics.json, per-set trajectory and time-series PNGs, and per-set replay data
-(NPZ + CSV). An optional ground-truth map (setId -> rep count) adds per-set
-count-error fields when provided.
+(NPZ + CSV). Per-set rep-count ground truth comes from the SET_COMPLETED events
+(actualReps column) when the session carries it, falling back to the optional
+ground-truth map (setId -> rep count) file; either source adds per-set
+count-error fields tagged with `ground_truth_source`.
 """
 from __future__ import annotations
 
@@ -47,6 +49,7 @@ def analyze_session(session_dir: str | Path, ground_truth_reps: str | Path | Non
     analysis_dir = session_path / ANALYSIS_DIR_NAME
     analysis_dir.mkdir(parents=True, exist_ok=True)
     ground_truth = _load_ground_truth(ground_truth_reps)
+    event_counts_by_segment, event_counts_by_set = _event_ground_truth(bundle["events"])
 
     segments = sorted(metadata.get("coarseReviewedSegments", []), key=lambda entry: int(entry["startedAtElapsedRealtimeNanos"]))
     set_reports = []
@@ -57,9 +60,12 @@ def analyze_session(session_dir: str | Path, ground_truth_reps: str | Path | Non
             continue
         set_id = str(label.get("setId") or segment["id"])
         report = _analyze_set(segment, label, set_id, exercise_set_index, frames, analysis_dir)
-        ground_truth_count = ground_truth.get(set_id)
+        ground_truth_count, ground_truth_source = _resolve_ground_truth_count(
+            segment, set_id, event_counts_by_segment, event_counts_by_set, ground_truth
+        )
         if ground_truth_count is not None and report.get("status") == "analyzed":
             report["ground_truth_rep_count"] = ground_truth_count
+            report["ground_truth_source"] = ground_truth_source
             report["rep_count_error"] = report["rep_count"] - ground_truth_count
         set_reports.append(report)
         exercise_set_index += 1
@@ -92,6 +98,8 @@ def _analyze_set(
         "exercise_id": label.get("exerciseId"),
         "exercise_name": label.get("exerciseName"),
         "exercise_type": label.get("exerciseType"),
+        # Null until a rep-count ground truth is attached (event or file).
+        "ground_truth_source": None,
     }
     if sub.timestamps_nanos.size < _MIN_SET_SAMPLES:
         report.update({"status": "skipped", "reason": f"only {sub.timestamps_nanos.size} samples in segment"})
@@ -497,3 +505,56 @@ def _load_ground_truth(ground_truth_reps: str | Path | None) -> dict[str, int]:
         return {}
     payload = json.loads(Path(ground_truth_reps).read_text(encoding="utf-8"))
     return {str(set_id): int(count) for set_id, count in payload.items()}
+
+
+def _event_ground_truth(
+    events: list[dict[str, Any]],
+) -> tuple[dict[str, int], dict[str, list[tuple[int, int]]]]:
+    """Rep counts embedded in SET_COMPLETED events, indexed by segmentId and by setId.
+
+    Events without a parsable actualReps value (old watch builds, timed sets)
+    carry no ground truth and are skipped; a later completion for the same
+    segment overrides an earlier one.
+    """
+    by_segment: dict[str, int] = {}
+    by_set: dict[str, list[tuple[int, int]]] = {}
+    for event in events:
+        if (event.get("eventType") or "").strip().lower() != "set_completed":
+            continue
+        actual_reps = event.get("actualReps")
+        if actual_reps is None:
+            continue
+        segment_id = event.get("segmentId")
+        if segment_id:
+            by_segment[segment_id] = int(actual_reps)
+        set_id = event.get("setId")
+        if set_id:
+            by_set.setdefault(set_id, []).append((int(event["elapsedRealtimeNanos"]), int(actual_reps)))
+    return by_segment, by_set
+
+
+def _resolve_ground_truth_count(
+    segment: dict[str, Any],
+    set_id: str,
+    event_counts_by_segment: dict[str, int],
+    event_counts_by_set: dict[str, list[tuple[int, int]]],
+    file_ground_truth: dict[str, int],
+) -> tuple[int | None, str | None]:
+    """Per-set rep-count ground truth with its source ("event" | "file" | None).
+
+    Precedence: SET_COMPLETED event ground truth (join by segmentId first, then
+    the latest set-matching completion at or before the segment ends) overrides
+    the optional --ground-truth-reps JSON file, which remains the fallback for
+    sessions whose events carry no actualReps values.
+    """
+    event_count = event_counts_by_segment.get(str(segment["id"]))
+    if event_count is not None:
+        return event_count, "event"
+    end_nanos = int(segment.get("endedAtElapsedRealtimeNanos") or segment["startedAtElapsedRealtimeNanos"])
+    completions_before_end = [entry for entry in event_counts_by_set.get(set_id, []) if entry[0] <= end_nanos]
+    if completions_before_end:
+        return max(completions_before_end, key=lambda entry: entry[0])[1], "event"
+    file_count = file_ground_truth.get(set_id)
+    if file_count is not None:
+        return file_count, "file"
+    return None, None
