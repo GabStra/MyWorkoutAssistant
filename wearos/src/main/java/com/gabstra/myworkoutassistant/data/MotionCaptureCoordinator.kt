@@ -227,7 +227,7 @@ class MotionCaptureCoordinator(
             if (currentSession.workoutHistoryId == historyId || historyId == null) {
                 return
             }
-            if (currentSession.workoutHistoryId == null && historyId != null) {
+            if (currentSession.workoutHistoryId == null) {
                 val updatedSession = currentSession.copy(workoutHistoryId = historyId)
                 sessionDao.insert(updatedSession.toEntity())
                 activeSession = updatedSession
