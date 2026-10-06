@@ -80,6 +80,41 @@ def test_playback_repair_recovers_contact_preserving_progress(monkeypatch, timeo
     assert np.max(np.linalg.norm((rig.decode(repaired)-targets)[pinned], axis=-1)) < .0005
 
 
+@pytest.mark.parametrize('transition', ['none', 'mask', 'anchor', 'freeze_root'])
+def test_plant_seed_transports_correction_without_freezing_observed_motion(transition):
+    from exercise_motion_pkg import controlled_motion as motion
+
+    names, points = stance(4)
+    rig = FixedRig(points, names)
+    observed = rig.initial.copy()
+    slot = rig.slots[rig.root]
+    observed[1, :3] += [.02, .03, .04]
+    observed[1, slot:slot + 3] = [.1, -.15, .2]
+    coords = observed.copy()
+    correction = Rotation.from_rotvec([.03, .04, -.02])
+    coords[0, slot:slot + 3] = (correction * Rotation.from_rotvec(
+        observed[0, slot:slot + 3])).as_rotvec()
+    coords[0, :3] += [.005, -.004, .003]
+    pinned = np.zeros(points.shape[:2], dtype=bool)
+    pinned[:, names.index('left_foot')] = True
+    targets = np.broadcast_to(points[0], points.shape).copy()
+    if transition == 'mask':
+        pinned[0, names.index('left_foot')] = False
+    if transition == 'anchor':
+        targets[1, names.index('left_foot'), 0] += .1
+    seed = motion._plant_projection_continuity_seed(
+        coords, observed, 1, rig, [rig.root], pinned, targets,
+        freeze_root=transition == 'freeze_root')
+    if transition in ('mask', 'anchor'):
+        np.testing.assert_array_equal(seed, coords[1])
+    else:
+        expected = correction * Rotation.from_rotvec(observed[1, slot:slot + 3])
+        np.testing.assert_allclose(Rotation.from_rotvec(seed[slot:slot + 3]).as_matrix(),
+                                   expected.as_matrix(), atol=1e-14)
+        expected_root = observed[1, :3] if transition == 'freeze_root' else observed[1, :3] + coords[0, :3] - observed[0, :3]
+        np.testing.assert_allclose(seed[:3], expected_root)
+
+
 def test_hybrid_jacobian_defaults_on_and_supports_explicit_fallback(monkeypatch):
     from exercise_motion_pkg import controlled_motion as motion
 

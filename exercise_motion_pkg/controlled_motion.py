@@ -2621,6 +2621,24 @@ def _batched_projection_jacobian(rig, coordinates, columns, residuals, weight, p
                       prior_weight * np.eye(len(columns))])
 
 
+def _plant_projection_continuity_seed(coords, observed, frame, rig, chain, pinned, targets, *, freeze_root):
+    """Carry corrections across the same observed stationary contact episode."""
+    seed = coords[frame].copy()
+    if (frame == 0 or not np.array_equal(pinned[frame], pinned[frame - 1])
+            or not np.allclose(targets[frame][pinned[frame]],
+                               targets[frame - 1][pinned[frame]], rtol=0., atol=1e-8)):
+        return seed
+    from .anatomical_repair import _transport_repair_rotation
+    if not freeze_root:
+        seed[:3] = observed[frame, :3] + coords[frame - 1, :3] - observed[frame - 1, :3]
+    for joint in chain:
+        slot = rig.slots[joint]
+        seed[slot:slot + 3] = _transport_repair_rotation(
+            observed[frame - 1, slot:slot + 3], coords[frame - 1, slot:slot + 3],
+            observed[frame, slot:slot + 3])
+    return seed
+
+
 def project_contact_plant_coordinates(coordinates, rig, pinned, contact_targets, *, max_nfev=40,
                                       freeze_root=False, deadline=None):
     """Hard-project root + planted-chain DOFs onto contact targets.
@@ -2640,6 +2658,7 @@ def project_contact_plant_coordinates(coordinates, rig, pinned, contact_targets,
     targets = np.asarray(contact_targets, dtype=float)
     count = len(coords)
     plant_joints = [j for j in range(pinned.shape[1]) if pinned[:, j].any()]
+    observed = coords.copy()
     chain = set()
     for joint in plant_joints:
         ancestor = joint
@@ -2733,11 +2752,14 @@ def project_contact_plant_coordinates(coordinates, rig, pinned, contact_targets,
                     axis=-1), initial=0.))
                 if before < gate:
                     continue
-                coords[frame] = _project_frame(
-                    coords[frame], pinned[frame], targets[frame], frame_nfev)
+                seed = _plant_projection_continuity_seed(
+                    coords, observed, frame, rig, chain, pinned, targets, freeze_root=freeze_root)
+                projected = _project_frame(seed, pinned[frame], targets[frame], frame_nfev)
                 after = float(np.max(np.linalg.norm(
-                    (rig.decode(coords[frame:frame + 1])[0] - targets[frame])[pinned[frame]],
+                    (rig.decode(projected[None, :])[0] - targets[frame])[pinned[frame]],
                     axis=-1), initial=0.))
+                if after <= before * 1.01:
+                    coords[frame] = projected
                 if after < before * 0.98:
                     progressed = True
             if not progressed:
