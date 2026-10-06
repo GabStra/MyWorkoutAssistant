@@ -1401,3 +1401,41 @@ review, and sequential admission. It produced no approved output and therefore
 does not establish a throughput gain. A fresh OHP run is required to verify the
 boundary fix through actual fitting, and the RDL source-evidence/coordinate
 mismatch remains unresolved before another full pair can succeed.
+
+### Oct 6 retained Press completion and RDL fit-cost probe
+
+With the GPU available, a Press-only replay was run through the production
+workout-plan script using the hash-pinned corrected source and retained raw
+motion. The numerical boundary fix now passes the full path: real source review,
+retained WHAM reuse, fit, preview render, final selection, and package attachment.
+`process_result.json` reports `productionScriptE2EPassed=true`; package
+verification found the packed movement bytes and SHA-256 identical to the
+reviewed selected skeleton. Final output is a terminal `cyclic_rebake` for
+0.133–2.867 seconds. A visual sample of the final production-rendered contact
+sheet shows the press and return. This is a one-exercise production-path pass,
+not completion of the two-exercise base or a throughput promotion.
+
+The replay took about 4m47s overall. Discovery used one reviewed candidate in
+24.49s, selection took 140.06s, candidate processing took 136.98s, and preview
+baking took 81.14s. WHAM was reused. The retained reconstruction boundary still
+excludes fresh inference/cache lookup.
+
+The RDL failure was probed with the same retained fit input and only five solver
+evaluations. It returned `fit_validation_failed` in 55.19s with negligible fit
+queue wait (0.010s), jerk 0.09188 versus source 0.000650, and failures across
+anatomy, contacts, source articulation, trajectory fit, joint and relative
+shake, body rotation, root continuity, jerk, motion discontinuity, and playback.
+The full production fit used 40 evaluations and 193.28s, with the same failure
+families and jerk 0.09305. Thus most of that solve time did not change the
+rejection outcome for this input. In the corresponding Press fit-only probe,
+five evaluations passed every fit check in 18.81s; the full production Press
+replay then passed through packaging.
+
+These two retained cases support investigating staged fit validation: validate
+after an initial five-evaluation block, keep a valid result immediately, and
+continue only when a failed quality vector shows a repairable trend. They do
+not yet establish a safe global stopping policy. Do not cap every fit at five
+evaluations: the next phase must preserve continuation for repairable near
+misses and compare the final quality vector before adopting the optimization.
+The RDL root/source-coordinate failure remains unresolved; its rejected fit is
+not packaged.
