@@ -2170,6 +2170,7 @@ def _trf_playback_run_coupled(
         row += size
     pattern = vstack([pattern.tocsr(), eye(len(x0), format='csr')], format='csr')
     best_values, best_cost = x0.copy(), float('inf')
+    best_contact_values, best_contact_cost = None, float('inf')
     # Only free frames and temporal neighbors can change during this local
     # solve. Keep global contact screening without decoding the full clip for
     # every finite-difference probe.
@@ -2201,7 +2202,7 @@ def _trf_playback_run_coupled(
         return trial
 
     def residual(values):
-        nonlocal best_values, best_cost
+        nonlocal best_values, best_cost, best_contact_values, best_contact_cost
         if deadline is not None and monotonic() >= deadline:
             raise TimeoutError
         trial = unpack(values)
@@ -2235,6 +2236,8 @@ def _trf_playback_run_coupled(
             best_values, best_cost = values.copy(), cost
         key_error = max(fixed_key_error, float(np.max(np.linalg.norm(
             (points - targets[decoded_index])[pinned[decoded_index]], axis=-1), initial=0.)))
+        if key_error < KEYFRAME_CONTACT_LIMIT_METERS and cost < best_contact_cost:
+            best_contact_values, best_contact_cost = values.copy(), cost
         if (contact_iterate_is_feasible(key_error, mid_error, floor_error)
                 and spikes_clear):
             # This run has met its playback constraints. Continuing to minimize
@@ -2256,6 +2259,10 @@ def _trf_playback_run_coupled(
     projected = unpack(solved.x)
     after_key = float(np.max(np.linalg.norm(
         (rig.decode(projected) - targets)[pinned], axis=-1), initial=0.))
+    if after_key >= KEYFRAME_CONTACT_LIMIT_METERS and best_contact_values is not None:
+        projected = unpack(best_contact_values)
+        after_key = float(np.max(np.linalg.norm(
+            (rig.decode(projected) - targets)[pinned], axis=-1), initial=0.))
     after_play = _playback_contact_sample_error(
         projected, rig, pinned, targets, cyclic=cyclic)
     # Key may rise within the gate to cancel hermite mid bows; only reject when

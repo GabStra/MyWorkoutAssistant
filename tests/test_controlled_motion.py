@@ -42,6 +42,44 @@ def test_coupled_playback_repair_preserves_stored_contact_precision(monkeypatch)
     np.testing.assert_array_equal(repaired, coordinates)
 
 
+@pytest.mark.parametrize('timeout', [False, True])
+def test_playback_repair_recovers_contact_preserving_progress(monkeypatch, timeout):
+    from types import SimpleNamespace
+    from exercise_motion_pkg import controlled_motion as motion, rig_playback
+
+    names, points = stance(8)
+    rig = FixedRig(points, names)
+    coordinates = rig.initial.copy()
+    targets = rig.decode(coordinates)
+    pinned = np.zeros(points.shape[:2], dtype=bool)
+    pinned[:, [names.index('left_ankle'), names.index('left_foot')]] = True
+
+    def bowed_samples(candidate, cursors, **options):
+        shift = np.asarray(candidate['coordinates'])[2, 0] - coordinates[2, 0]
+        sampled = np.broadcast_to(targets[0], (len(cursors), len(names), 3)).copy()
+        sampled[:, :, 0] += .01 - 5. * shift
+        return sampled
+
+    def solve(residual, initial, **options):
+        residual(initial)
+        feasible = initial.copy().reshape(-1, 3)
+        feasible[:, 0] += .0003
+        residual(feasible.ravel())
+        invalid = initial.copy().reshape(-1, 3)
+        invalid[:, 0] += .001
+        residual(invalid.ravel())
+        if timeout:
+            raise TimeoutError
+        return SimpleNamespace(x=invalid.ravel())
+
+    monkeypatch.setattr(rig_playback, 'sample_rig', bowed_samples)
+    monkeypatch.setattr(motion, 'least_squares', solve)
+    repaired = motion._trf_playback_run_coupled(
+        coordinates, [2], rig, pinned, targets, [], max_nfev=3)
+    assert repaired[2, 0] - coordinates[2, 0] == pytest.approx(.0003)
+    assert np.max(np.linalg.norm((rig.decode(repaired)-targets)[pinned], axis=-1)) < .0005
+
+
 def test_hybrid_jacobian_defaults_on_and_supports_explicit_fallback(monkeypatch):
     from exercise_motion_pkg import controlled_motion as motion
 
