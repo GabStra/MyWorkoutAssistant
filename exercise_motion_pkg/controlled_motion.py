@@ -2131,7 +2131,7 @@ def _trf_playback_run_coupled(
     before_play = _playback_contact_sample_error(
         coords, rig, pinned, targets, cyclic=cyclic)
     # Near the gate, prefer mid-sample closure over keyframe tightness (still
-    # rejected if key leaves the 0.5 mm playback contact limit).
+    # rejected if key leaves the 0.5 mm stored-frame contact limit).
     key_weight = 5000. if before_play < 0.001 else 10000.
     mid_cursors = []
     mid_meta = []  # (start, weight)
@@ -2216,9 +2216,8 @@ def _trf_playback_run_coupled(
         if cost < best_cost:
             best_values, best_cost = values.copy(), cost
         key_error = float(np.max(np.linalg.norm((points - targets)[pinned], axis=-1), initial=0.))
-        if (key_error < PLAYBACK_CONTACT_LIMIT_METERS
-                and mid_error < PLAYBACK_CONTACT_LIMIT_METERS
-                and floor_error <= PLAYBACK_FLOOR_LIMIT_METERS and spikes_clear):
+        if (contact_iterate_is_feasible(key_error, mid_error, floor_error)
+                and spikes_clear):
             # This run has met its playback constraints. Continuing to minimize
             # tiny residuals starves later failing runs of the shared deadline.
             best_values = values.copy()
@@ -2242,7 +2241,7 @@ def _trf_playback_run_coupled(
         projected, rig, pinned, targets, cyclic=cyclic)
     # Key may rise within the gate to cancel hermite mid bows; only reject when
     # key leaves the gate or mid-sample error gets worse while still failing.
-    if after_key >= PLAYBACK_CONTACT_LIMIT_METERS:
+    if after_key >= KEYFRAME_CONTACT_LIMIT_METERS:
         return coords
     if (after_play > before_play * 1.01 + 1e-9
             and after_play >= PLAYBACK_CONTACT_LIMIT_METERS):

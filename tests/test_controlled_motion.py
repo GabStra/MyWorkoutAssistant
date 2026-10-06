@@ -20,6 +20,28 @@ def test_contact_iterate_selection_distinguishes_stored_precision_from_playback_
     assert not motion.contact_iterate_is_feasible(.0005, .002, .001)
 
 
+def test_coupled_playback_repair_preserves_stored_contact_precision(monkeypatch):
+    from types import SimpleNamespace
+    from exercise_motion_pkg import controlled_motion as motion
+
+    names, points = stance(8)
+    rig = FixedRig(points, names)
+    coordinates = rig.initial.copy()
+    targets = rig.decode(coordinates)
+    pinned = np.ones(points.shape[:2], dtype=bool)
+
+    def shifted_solution(residual, initial, **options):
+        shifted = initial.copy().reshape(-1, 3)
+        shifted[:, 0] += .001
+        # All free variables are root translations in this root-only solve.
+        return SimpleNamespace(x=shifted.ravel())
+
+    monkeypatch.setattr(motion, 'least_squares', shifted_solution)
+    repaired = motion._trf_playback_run_coupled(
+        coordinates, [2], rig, pinned, targets, [], max_nfev=1)
+    np.testing.assert_array_equal(repaired, coordinates)
+
+
 def test_hybrid_jacobian_defaults_on_and_supports_explicit_fallback(monkeypatch):
     from exercise_motion_pkg import controlled_motion as motion
 
