@@ -40,7 +40,6 @@ data class MotionCaptureSensorConfig(
         MotionSensorType.HEART_RATE,
         MotionSensorType.GRAVITY,
         MotionSensorType.LINEAR_ACCELERATION,
-        MotionSensorType.STEP_COUNTER,
         MotionSensorType.PRESSURE
     ),
     // Sensors actually present/registered on the capturing device; null on records written before this field existed.
