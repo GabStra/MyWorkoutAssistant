@@ -565,6 +565,59 @@ def test_persistent_source_spine_fold_skips_only_retained_fallback(monkeypatch):
     assert report['retainedIntervalFit'] is False
 
 
+def test_repaired_source_spine_fold_keeps_retained_fit_fallback(monkeypatch):
+    from exercise_motion_pkg import controlled_motion as motion, loop_cycles
+
+    proposal = {'id': 'cycle-a'}
+    current = {'loop': {'enabled': True}, 'frames': [{}] * 80,
+               'observedCycleProposals': [proposal]}
+    calls = []
+    fake_time = [0.]
+    monkeypatch.setattr(motion, 'monotonic', lambda: fake_time[0])
+    monkeypatch.setattr(motion, 'source_spine_fold_frame_ratio', lambda _payload: 0.32)
+    monkeypatch.setattr(
+        loop_cycles,
+        'slice_loop_cycle',
+        lambda payload, selection: {**payload, 'cycleSelection': selection},
+    )
+
+    def fit_cycle_then_recover_source_fold(fit_payload, **_kwargs):
+        fake_time[0] += 12.
+        if fit_payload.get('cycleSelection'):
+            calls.append(fit_payload['cycleSelection'])
+            return fit_payload, {
+                'applied': False,
+                'reason': 'fit_validation_failed',
+                'termination': 'unreachable_conflict',
+                'checks': {'anatomy': False, 'playback': False, 'loopSeam': False},
+                'physicalReasons': ['anatomy_spine_fold'],
+                'anatomicalInitialization': {
+                    'applied': True,
+                    'passed': True,
+                    'sourceViolations': ['anatomy_spine_fold:spine1'],
+                    'remainingViolations': [],
+                },
+                'elapsedSeconds': 12.,
+            }
+        calls.append({'kind': 'retained_interval'})
+        assert fit_payload['loop']['enabled'] is False
+        return fit_payload, {
+            'applied': True,
+            'reason': 'validated_controlled_motion',
+            'checks': {},
+            'elapsedSeconds': 12.,
+        }
+
+    monkeypatch.setattr(motion, '_fit_controlled_motion', fit_cycle_then_recover_source_fold)
+
+    _, report = motion._fit_observed_cycles(current, timeout_seconds=360.)
+
+    assert calls == [proposal, {'kind': 'retained_interval'}]
+    assert report['applied'] is True
+    assert report['reason'] == 'validated_controlled_motion_open_seam'
+    assert report['cycleSelectionAttempts'][-1]['selection'] == {'kind': 'retained_interval'}
+
+
 def test_source_spine_fold_cutoff_preserves_lower_fold_retained_recovery(monkeypatch):
     from exercise_motion_pkg import controlled_motion as motion, loop_cycles
 

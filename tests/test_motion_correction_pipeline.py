@@ -94,6 +94,138 @@ def test_confirmed_body_support_replaces_sparse_foot_contacts_with_full_clip_int
     assert by_joint["left_foot"]["supportKind"] == "observed_foot_patch"
 
 
+def test_reconstructed_support_fusion_preserves_explicit_airborne_release():
+    frame_count = 60
+    frames = [
+        {"joints": {
+            "head": [0.0, 1.8, 0.0],
+            "pelvis": [0.0, 1.0, 0.0],
+            "left_ankle": [0.0, 0.1, 0.0],
+            "left_foot": [0.0, 0.0, 0.0],
+        }}
+        for _ in range(frame_count)
+    ]
+    evidence = {
+        "contacts": [
+            {"jointName": "left_ankle", "startFrame": 0, "endFrame": 27,
+             "contactMotion": "stationary"},
+            {"jointName": "left_ankle", "startFrame": 31, "endFrame": 59,
+             "contactMotion": "stationary"},
+        ],
+        "feet": {"left": {
+            "jointName": "left_ankle",
+            "continuousSupport": False,
+            "supportSplitByObservedAirborne": True,
+            "chunkCenterRangeRatio": 0.0,
+            "endpointDisplacementRatio": 0.0,
+        }},
+        "footPatchEvidence": {"feet": {"left": {
+            "states": ["full_sole"] * 28 + ["airborne"] * 3 + ["full_sole"] * 29,
+        }}},
+    }
+
+    fused, inference = bake.fuse_reconstructed_support_evidence(
+        {"frames": frames}, evidence,
+    )
+
+    assert fused is not None
+    assert fused["feet"]["left"]["continuousSupport"] is False
+    assert fused.get("supportContacts", []) == []
+    assert inference["applied"] is False
+
+    legacy_full_clip = bake.source_contact_intervals_from_evidence(
+        {
+            "feet": {"left": {
+                "jointName": "left_ankle",
+                "continuousSupport": True,
+            }},
+            "footPatchEvidence": evidence["footPatchEvidence"],
+        },
+        frame_count=frame_count,
+    )
+    assert [(row["startFrame"], row["endFrame"]) for row in legacy_full_clip] == [
+        (0, 27), (31, 59),
+    ]
+
+
+@pytest.mark.parametrize("anchor_ids", [
+    ("shared", "shared"),
+    ("before-flight", "after-flight"),
+    (None, None),
+])
+def test_explicit_airborne_epochs_split_source_correction_anchors(anchor_ids):
+    frame_count = 60
+    frames = []
+    for index in range(frame_count):
+        if index <= 27:
+            foot_x = 0.0
+        elif index >= 31:
+            foot_x = 1.0
+        else:
+            foot_x = 0.5
+        frames.append({"joints": {
+            "head": [0.0, 1.8, 0.0],
+            "pelvis": [0.0, 1.0, 0.0],
+            "left_hip": [-0.1, 1.0, 0.0],
+            "left_knee": [-0.1, 0.5, 0.0],
+            "left_ankle": [foot_x, 0.1, 0.0],
+            "left_foot": [foot_x, 0.0, 0.0],
+        }})
+    first_contact = {
+        "jointName": "left_foot", "supportKind": "foot",
+        "startFrame": 0, "endFrame": 27,
+        "contactMotion": "stationary", "contactState": "full_sole",
+        "confidence": 1.0,
+    }
+    second_contact = {
+        "jointName": "left_foot", "supportKind": "foot",
+        "startFrame": 31, "endFrame": 59,
+        "contactMotion": "stationary", "contactState": "full_sole",
+        "confidence": 1.0,
+    }
+    if anchor_ids[0] is not None:
+        first_contact["anchorGroupId"] = anchor_ids[0]
+    if anchor_ids[1] is not None:
+        second_contact["anchorGroupId"] = anchor_ids[1]
+    evidence = {
+        "contacts": [first_contact, second_contact],
+        "feet": {"left": {"continuousSupport": False}},
+        "footPatchEvidence": {"feet": {"left": {
+            "states": ["full_sole"] * 28 + ["airborne"] * 3 + ["full_sole"] * 29,
+        }}},
+    }
+    payload = {"frames": frames, "fps": 30.0}
+
+    intervals = bake.source_contact_intervals_from_evidence(
+        evidence,
+        frame_count=frame_count,
+    )
+    correction, correction_metrics = bake.apply_source_contact_sequence_correction(
+        payload,
+        evidence,
+    )
+    support_metrics = bake.source_confirmed_support_stationarity_metrics(
+        payload,
+        evidence,
+    )
+
+    foot_intervals = [row for row in intervals if row["jointName"] == "left_foot"]
+    corrected_intervals = correction_metrics["contactIntervals"]
+    assert [(row["startFrame"], row["endFrame"]) for row in foot_intervals] == [
+        (0, 27), (31, 59),
+    ]
+    assert [row["airborneEpoch"] for row in foot_intervals] == [0, 1]
+    assert corrected_intervals[0]["airborneEpoch"] == 0
+    assert corrected_intervals[1]["airborneEpoch"] == 1
+    assert corrected_intervals[0]["anchor"][0] == pytest.approx(0.0)
+    assert corrected_intervals[1]["anchor"][0] == pytest.approx(1.0)
+    assert support_metrics["passed"] is True
+    assert len(support_metrics["sides"]["left"]["anchorGroups"]) == sum(
+        anchor_id is not None for anchor_id in anchor_ids
+    )
+    assert correction["frames"][28]["joints"]["left_foot"][0] == pytest.approx(0.5)
+
+
 def test_ground_plane_uses_confirmed_support_geometry_before_drifting_reconstruction():
     frames = [
         {"joints": {"left_foot": [0.0, 0.3, 0.0], "right_foot": [0.2, 0.4, 0.0]}}

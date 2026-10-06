@@ -12442,7 +12442,7 @@ def source_confirmed_support_stationarity_metrics(
             source_foot.get("endpointDisplacementRatio")
         )
         evaluated_intervals: list[dict[str, Any]] = []
-        observed_anchor_points: dict[tuple[str, str], list[list[float]]] = {}
+        observed_anchor_points: dict[tuple[str, str, int | None], list[list[float]]] = {}
         for interval in side_intervals:
             start_frame = int(interval["startFrame"])
             end_frame = int(interval["endFrame"])
@@ -12476,7 +12476,11 @@ def source_confirmed_support_stationarity_metrics(
                 continue
             if interval.get("anchorGroupId"):
                 observed_anchor_points.setdefault(
-                    (joint_name, str(interval["anchorGroupId"])), []
+                    (
+                        joint_name,
+                        str(interval["anchorGroupId"]),
+                        interval.get("airborneEpoch"),
+                    ), []
                 ).extend(points)
             axis_ranges = [
                 max(point[axis] for point in points) - min(point[axis] for point in points)
@@ -12567,13 +12571,14 @@ def source_confirmed_support_stationarity_metrics(
                 rejection_reasons.append(f"{side}_source_confirmed_support_slides")
         evaluated_for_side = [metric for metric in evaluated_intervals if metric["evaluated"]]
         anchor_group_metrics = []
-        for (joint_name, group_id), points in observed_anchor_points.items():
+        for (joint_name, group_id, airborne_epoch), points in observed_anchor_points.items():
             spread = math.sqrt(sum(
                 (max(point[axis] for point in points) - min(point[axis] for point in points)) ** 2
                 for axis in range(3)
             )) / body_span
             passed = spread <= SOURCE_POSE_CONTACT_LOCAL_RANGE_RATIO_THRESHOLD
             anchor_group_metrics.append({"anchorGroupId": group_id, "jointName": joint_name,
+                                         "airborneEpoch": airborne_epoch,
                                          "rangeBodyRatio": spread, "passed": passed})
             if not passed:
                 rejection_reasons.append(f"{side}_source_confirmed_anchor_relocated")
@@ -29620,6 +29625,97 @@ def _reference_confirms_stationary_ankle(
     return max(math.dist(point, origin) for point in samples) / scale <= SOURCE_REFERENCE_STATIONARITY_BODY_RATIO
 
 
+def _source_foot_patch_state_track(
+    source_support_evidence: dict[str, Any] | None,
+    joint_name: str,
+    frame_count: int,
+) -> tuple[list[str], list[int]] | None:
+    """Map observed foot-patch states and release epochs onto motion frames."""
+    if frame_count <= 0:
+        return None
+    side = str(joint_name).split("_", 1)[0]
+    if side not in {"left", "right"} or not str(joint_name).endswith(
+        ("_foot", "_ankle", "_heel")
+    ):
+        return None
+    patch = (source_support_evidence or {}).get("footPatchEvidence") or {}
+    foot = (patch.get("feet") or {}).get(side)
+    states = foot.get("states") if isinstance(foot, dict) else None
+    if not isinstance(states, (list, tuple)) or not states:
+        return None
+    state_count = len(states)
+    state_track = []
+    for frame_index in range(frame_count):
+        state_index = (
+            0
+            if frame_count == 1 or state_count == 1
+            else round(frame_index * (state_count - 1) / (frame_count - 1))
+        )
+        state_track.append(str(states[state_index] or "unknown").casefold())
+    epoch = 0
+    previous_airborne = False
+    epochs = []
+    for state in state_track:
+        airborne = state == "airborne"
+        if airborne and not previous_airborne:
+            epoch += 1
+        epochs.append(epoch)
+        previous_airborne = airborne
+    return state_track, epochs
+
+
+def _scope_contacts_to_observed_airborne_epochs(
+    intervals: list[dict[str, Any]],
+    source_support_evidence: dict[str, Any] | None,
+    frame_count: int,
+) -> list[dict[str, Any]]:
+    """Split foot contacts at observed flight and keep each stance in its epoch.
+
+    Unknown patch frames remain part of independently confirmed support. Only
+    explicit airborne observations split or contradict a foot contact.
+    """
+    scoped_intervals: list[dict[str, Any]] = []
+    for interval in intervals:
+        joint_name = str(interval.get("jointName") or "")
+        state_track = _source_foot_patch_state_track(
+            source_support_evidence, joint_name, frame_count
+        )
+        if state_track is None:
+            scoped_intervals.append(interval)
+            continue
+        states, epochs = state_track
+        start = max(0, min(frame_count - 1, int(interval.get("startFrame", 0))))
+        end = max(start, min(frame_count - 1, int(interval.get("endFrame", frame_count - 1))))
+        segment_start = None
+        segment_epoch = None
+        for frame_index in range(start, end + 2):
+            in_contact = frame_index <= end and states[frame_index] != "airborne"
+            epoch = epochs[frame_index] if frame_index <= end else None
+            if in_contact and segment_start is None:
+                segment_start = frame_index
+                segment_epoch = epoch
+            if in_contact and epoch == segment_epoch:
+                continue
+            if segment_start is not None:
+                segment_end = frame_index - 1
+                scoped = {
+                    **interval,
+                    "startFrame": segment_start,
+                    "endFrame": segment_end,
+                    "airborneEpoch": segment_epoch,
+                }
+                if frame_count > 1:
+                    scoped["startRatio"] = segment_start / (frame_count - 1)
+                    scoped["endRatio"] = segment_end / (frame_count - 1)
+                scoped_intervals.append(scoped)
+                segment_start = None
+                segment_epoch = None
+            if in_contact:
+                segment_start = frame_index
+                segment_epoch = epoch
+    return scoped_intervals
+
+
 def _resolve_unknown_contact_motion(
     intervals: list[dict[str, Any]],
     source_pose_reference: dict[str, Any] | None,
@@ -29665,6 +29761,7 @@ def _resolve_unknown_contact_motion(
             gap_frames = (int(interval.get("startFrame") or 0)
                           - int(previous.get("endFrame") or 0))
             if (0 <= gap_frames <= SOURCE_REFERENCE_CONTIGUOUS_GAP_RATIO * (frame_count - 1)
+                    and interval.get("airborneEpoch") == previous.get("airborneEpoch")
                     and interval.get("contactState") == previous.get("contactState")):
                 interval["anchorGroupId"] = previous.get("anchorGroupId")
         if interval.get("anchorGroupId") is not None:
@@ -29821,6 +29918,11 @@ def source_contact_intervals_from_evidence(
             if str(interval.get("supportKind") or "contact") != "foot"
             or str(interval.get("jointName") or "") in continuous_foot_joints
         ]
+    intervals = _scope_contacts_to_observed_airborne_epochs(
+        intervals,
+        source_support_evidence,
+        frame_count,
+    )
     return _resolve_unknown_contact_motion(intervals, source_pose_reference, frame_count)
 
 
@@ -30076,7 +30178,7 @@ def apply_source_contact_sequence_correction(
     active_weights = [0.0 for _ in frames]
     frame_constraints: dict[int, list[tuple[float, list[float], list[float]]]] = {}
     interval_metrics: list[dict[str, Any]] = []
-    observed_anchors: dict[tuple[str, str], list[float]] = {}
+    observed_anchors: dict[tuple[str, str, int | None], list[float]] = {}
     support_plane_y, _support_plane_source = observed_ground_support_plane_y(
         frames,
         [interval for interval in intervals
@@ -30128,8 +30230,12 @@ def apply_source_contact_sequence_correction(
         group_id = interval.get("anchorGroupId")
         if group_id:
             # Only source-observed identity may connect episodes. A gap alone
-            # is not evidence that a travelling foot returned to the same spot.
-            anchor = observed_anchors.setdefault((joint_name, str(group_id)), anchor)
+            # is not evidence that a travelling foot returned to the same spot;
+            # explicit airborne observations also end an anchor epoch.
+            anchor = observed_anchors.setdefault(
+                (joint_name, str(group_id), interval.get("airborneEpoch")),
+                anchor,
+            )
         interval_metrics.append(
             {
                 **interval,
@@ -30167,19 +30273,23 @@ def apply_source_contact_sequence_correction(
     )
     contiguous_anchors: dict[str, list[float]] = {}
     last_end_by_joint: dict[str, int] = {}
+    last_airborne_epoch_by_joint: dict[str, int | None] = {}
     for metric in interval_metrics:
         evaluated_joint = str(metric["evaluatedJointName"])
         start = int(metric["startFrame"])
         end = int(metric["endFrame"])
+        airborne_epoch = metric.get("airborneEpoch")
         previous_end = last_end_by_joint.get(evaluated_joint)
         if (
             previous_end is not None
             and start - previous_end <= contiguous_gap_frames
+            and airborne_epoch == last_airborne_epoch_by_joint.get(evaluated_joint)
         ):
             metric["anchor"] = contiguous_anchors[evaluated_joint]
         else:
             contiguous_anchors[evaluated_joint] = metric["anchor"]
         last_end_by_joint[evaluated_joint] = end
+        last_airborne_epoch_by_joint[evaluated_joint] = airborne_epoch
     adjusted_anchors: set[int] = set()
     for metric in interval_metrics:
         anchor = metric["anchor"]
@@ -30585,6 +30695,13 @@ def fuse_reconstructed_support_evidence(
         )
     )
     inferred: list[dict[str, Any]] = []
+    explicit_airborne_sides = set()
+    for side in ("left", "right"):
+        state_track = _source_foot_patch_state_track(
+            fused, f"{side}_foot", len(frames)
+        )
+        if state_track is not None and "airborne" in state_track[0]:
+            explicit_airborne_sides.add(side)
     generic_contacts = fused.setdefault("supportContacts", [])
     if not isinstance(generic_contacts, list):
         generic_contacts = []
@@ -30592,7 +30709,12 @@ def fuse_reconstructed_support_evidence(
     source_generic_contacts = list(generic_contacts)
     for side in ("left", "right"):
         foot_evidence = fused_feet.get(side)
-        if not isinstance(foot_evidence, dict) or bool(foot_evidence.get("continuousSupport")):
+        if (
+            not isinstance(foot_evidence, dict)
+            or bool(foot_evidence.get("continuousSupport"))
+            or side in explicit_airborne_sides
+            or bool(foot_evidence.get("supportSplitByObservedAirborne"))
+        ):
             continue
         source_stationary = bool(
             isinstance(foot_evidence.get("chunkCenterRangeRatio"), (int, float))
@@ -30669,6 +30791,12 @@ def fuse_reconstructed_support_evidence(
                 or contact.get("surfaceKind") == "contract_inferred_support_surface"):
             continue
         joint_name = str(contact.get("jointName") or "")
+        side = joint_name.split("_", 1)[0]
+        if (
+            side in explicit_airborne_sides
+            and joint_name.endswith(("_foot", "_ankle", "_heel"))
+        ):
+            continue
         points = [
             point3_to_float_list(frame["joints"][joint_name])
             for frame in frames

@@ -4794,9 +4794,25 @@ def _fit_observed_cycles(payload, *, max_evaluations=None, timeout_seconds=None)
         and remaining_before_retained >= retained_interval_minimum_budget
     ):
         source_spine_fold_ratio = source_spine_fold_frame_ratio(payload)
+        source_fold_repaired_by_cycle_fit = False
+        for attempt in failed_anatomy_cycle_attempts:
+            fit_report = attempt.get('fitReport')
+            initialization = (
+                fit_report.get('anatomicalInitialization')
+                if isinstance(fit_report, dict)
+                else None
+            )
+            if (
+                isinstance(initialization, dict)
+                and initialization.get('passed') is True
+                and initialization.get('remainingViolations') == []
+            ):
+                source_fold_repaired_by_cycle_fit = True
+                break
         skip_retained_after_persistent_source_fold = (
             source_spine_fold_ratio is not None
             and source_spine_fold_ratio >= SOURCE_SPINE_FOLD_RETAINED_FIT_SKIP_FRAME_RATIO
+            and not source_fold_repaired_by_cycle_fit
         )
     else:
         skip_retained_after_persistent_source_fold = False

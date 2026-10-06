@@ -822,3 +822,36 @@ directory has a condensed version of this state; update it after the arms land.
   retained fit still fails substantial anatomy, contacts, trajectory, temporal,
   root-continuity, and playback checks. Successful RDL generation remains
   unverified; acceptance gates were not weakened.
+
+### Oct 6 retained-pair generator follow-up
+
+- Source support now preserves explicitly observed airborne epochs through
+  source-contact normalization, correction-anchor grouping, and reconstructed
+  support fusion. Previously, reconstructed foot stationarity could promote a
+  whole-clip contact over an explicit flight interval, undoing the source
+  contact split. Short-gap anchor reuse is now scoped to the same airborne
+  epoch; unknown source states remain unknown. Focused regressions cover
+  support fusion and same, different, and missing anchor-group IDs across a
+  short flight.
+- The controlled fitter's high source-spine-fold stop now distinguishes a
+  persistent source defect from a fold that its anatomical initializer has
+  explicitly repaired. When initialization reports `passed: true` with no
+  remaining violations, the fitter gets its existing bounded retained-interval
+  attempt; all physical and playback acceptance gates remain required.
+- A bounded CPU replay of the retained RDL exercised that fallback and improved
+  contact, support, trajectory, temporal, equipment, and several anatomy
+  checks, but RDL still did not pass. The retained result has a torso-bend
+  violation at spine1 frame 67, a severe left-hand discontinuity, and a loop
+  seam that still requires cycle repair. This is evidence the stop was
+  premature, not evidence of a successful RDL generation. No GPU/model calls
+  or full pair campaign were run.
+- Focused regressions passed (`6 passed`), and the edited Python modules and
+  tests compiled with `py_compile`. No throughput promotion is claimed.
+- Architecture status: reviewed render/package artifact identity is connected
+  through the production path; source-evidence-constrained fitting is in place
+  and the airborne-epoch integrity gaps above are fixed. The workspace-scoped
+  staged-wave service is a concrete long-lived serial worker, not yet a
+  generator-wide service for discovery, preview prefetch, or downloads. Queue
+  ownership, atomic state, caches, and crash recovery were audited; no new
+  persistent-infrastructure gap was found. Broader service migration remains
+  a separate phase.
