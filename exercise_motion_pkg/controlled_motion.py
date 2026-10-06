@@ -6128,6 +6128,11 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         # room to compete with pose/contact before Stage-A polish.
         grip_fit_weight = GRIP_FIT_WEIGHT_WHEN_REFERENCE_FAILS
         report['gripFitWeight'] = float(grip_fit_weight)
+    support_root_track = reference[:, rig.root]
+    if body_support.get('required') and not root_motion_quality(support_root_track, fps, scale)['passed']:
+        support_root_track = gaussian_filter1d(
+            support_root_track, max(.5, fps * .08), axis=0, mode='nearest')
+
     def keyframe_pre_rows(candidate, contact_weight):
         current_angles = np.stack([angles(*(candidate[:,i] for i in cols)) for _,cols,_ in specs],axis=1)
         artic_weight = (SUPPORT_ARTICULATION_FIT_WEIGHT if body_support.get('required') else 500.)
@@ -6140,11 +6145,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         head_penalty = head_weight*np.maximum(head_angle-np.deg2rad(14.),0.)[:,None]
         pose_error = 2. * (candidate - target) / scale
         if body_support.get('required'):
-            root_track = reference[:, rig.root]
-            if not root_motion_quality(root_track, fps, scale)['passed']:
-                root_track = gaussian_filter1d(
-                    root_track, max(.5, fps * .08), axis=0, mode='nearest')
-            pose_error[:, rig.root] = 8. * (candidate[:, rig.root] - root_track) / scale
+            pose_error[:, rig.root] = 8. * (candidate[:, rig.root] - support_root_track) / scale
         return np.concatenate([pose_error.reshape(count,-1),
                                (contact_weight*(candidate-contact_targets)*pinned[:,:,None]).reshape(count,-1),
                                (contact_weight*(candidate[:,:,1]-height_only_targets[:,:,1])
@@ -6497,24 +6498,23 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             residual_rows = (row0 + (flat // width_total) * stride
                              + np.asarray(col_offsets)[flat % width_total])
             pattern_masks = pattern_joint_support(residual_rows)
-            supports = {}
-            for start, end, array_index in ownership:
-                for j in range(joints):
-                    check_optimizer_budget()
-                    # Neither source alone is sound: the pattern can
-                    # under-declare an anatomy row's endpoint joints (which
-                    # breaks the exact translation-invariance cancellations),
-                    # and directional probes cancel on difference rows.
-                    directional = np.zeros(n_frames * width_total, dtype=bool)
-                    probes = [base.copy() for base in bases]
-                    for base in probes:
-                        base[:, j, :] += fd_step
-                    diff = (evaluate(*probes) - base_rows).ravel() != 0.
-                    np.copyto(directional, diff)
-                    supports[(array_index, j)] = pattern_masks[:, j] | directional
+            supports = []
+            for j in range(joints):
+                check_optimizer_budget()
+                # Neither source alone is sound: the pattern can
+                # under-declare an anatomy row's endpoint joints (which
+                # breaks the exact translation-invariance cancellations),
+                # and directional probes cancel on difference rows.
+                # This probe perturbs every base and is independent of row
+                # ownership, so calculate it once for all composite sections.
+                probes = [base.copy() for base in bases]
+                for base in probes:
+                    base[:, j, :] += fd_step
+                directional = (evaluate(*probes) - base_rows).ravel() != 0.
+                supports.append(pattern_masks[:, j] | directional)
             rows, columns, entries = [], [], []
             for start, end, array_index in ownership:
-                sup = [supports[(array_index, j)] for j in range(joints)]
+                sup = supports
                 for group in joint_colors(sup):
                     for comp in range(3):
                         for c in range(shifts):

@@ -1995,7 +1995,7 @@ def test_temporal_reference_is_unchanged_by_preview_noise(monkeypatch):
     from exercise_motion_pkg import controlled_motion as motion
     names, reference = stance(12)
     reference[:, names.index('head'), 0] += .0002*np.sin(np.arange(12))
-    monkeypatch.setattr(motion, 'solve_trajectory', lambda residual, initial, pattern, max_evaluations:
+    monkeypatch.setattr(motion, 'solve_trajectory', lambda residual, initial, pattern, max_evaluations, **solver_options:
                         SimpleNamespace(x=initial, nfev=1, status=0))
     reports = []
     for noise in (.0001, .002):
