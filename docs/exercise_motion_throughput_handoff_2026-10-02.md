@@ -1201,3 +1201,22 @@ The independent `audit_artifact_package_state` returns `passed=true`,
 Evidence and the copied package are under the cyclic-bake workspace's
 `packaging-checkpoint/`. This verifies the owning packaging functions and parity,
 not execution of the whole workout-plan script or the corrected OHP/RDL E2E.
+
+### Oct 6 Press fixture source-boundary correction
+
+The retained Press source (SHA-256
+`72dd58149eda88169da0955b8a03609704e6c91fd8ac4dd1d664d5538877fb15`)
+visibly contains complete dumbbell presses, but starts overhead and contains
+multiple repetitions. The prior selected interval, source frames 187–271
+(6.233–9.033 seconds), has overhead endpoints in the retained source pose evidence.
+Its fixture contract requires hands at shoulder height and bent elbows at both
+boundaries. Exclude that old selection from contract-matching acceptance evidence;
+its local solver profiles remain local computational evidence only.
+
+Observed shoulder-height extrema occur near 1.750, 4.625, and 7.375 seconds.
+Those are boundary proposals for selecting an actual contract-matching repetition,
+not newly approved clips. The full source can be retained for discovery, but
+cannot receive an unconditional whole-clip approval. Audit evidence and the
+inspected source contact sheet are retained as
+`20261006-ohp-source-fixture-audit.json` and `20261006-ohp-retained-source-audit.jpg`
+under `build/exercise_motion/replays/`. The corrected two-exercise E2E remains open.
