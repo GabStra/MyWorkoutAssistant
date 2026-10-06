@@ -114,6 +114,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Existing WHAM wham_output.pkl path inside or outside the WHAM repo. If supplied, local inference is skipped.",
     )
     generate.add_argument(
+        "--require-wham-cache",
+        action="store_true",
+        help="Require retained WHAM/GVHMR reconstruction; fail before inference on a cache miss.",
+    )
+    generate.add_argument(
         "--no-reuse-wham-cache",
         action="store_true",
         help="Run WHAM even when raw/wham/<input-video-stem>/wham_output.pkl already exists.",
@@ -710,6 +715,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--youtube-preview-cache-dir",
         type=Path,
         help="Directory for cached low-resolution YouTube previews populated by discovery.",
+    )
+    bake_and_rank.add_argument(
+        "--require-wham-cache",
+        action="store_true",
+        help="Require retained WHAM/GVHMR reconstruction; fail before inference on a cache miss.",
     )
     bake_and_rank.add_argument(
         "--no-reuse-wham-cache",
@@ -1429,6 +1439,7 @@ def main() -> None:
                 wham_repo_path=Path(args.wham_repo_path) if args.wham_repo_path else None,
                 wham_results_pkl=Path(args.wham_results_pkl) if args.wham_results_pkl else None,
                 reuse_wham_cache=not args.no_reuse_wham_cache,
+                require_wham_cache=args.require_wham_cache,
                 body_model_root=Path(args.body_model_root) if args.body_model_root else None,
                 wham_python_command=args.wham_python_command,
                 use_wham_docker=args.use_wham_docker,

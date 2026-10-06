@@ -1925,3 +1925,18 @@ def test_preflight_keeps_bounded_retry_when_repair_remains_uncertain(tmp_path, m
             contract=None, caption_images=lambda: "")
 
     assert len(validation_calls) == 2
+
+
+@pytest.mark.parametrize("cache_only", [False, True])
+def test_cli_cache_only_request_reaches_bake_and_staged_generation(tmp_path, cache_only):
+    from exercise_motion_pkg.cli import build_parser, build_bake_and_rank_request
+
+    args = build_parser().parse_args([
+        "bake-and-rank", "--candidates-json", str(tmp_path / "candidates.json"),
+        "--workspace", str(tmp_path), "--wham-repo-path", str(tmp_path / "wham"),
+        "--body-model-root", str(tmp_path / "models"),
+        *(["--require-wham-cache"] if cache_only else []),
+    ])
+    request = build_bake_and_rank_request(args)
+    assert request.require_wham_cache is cache_only
+    assert request.reuse_wham_cache is True

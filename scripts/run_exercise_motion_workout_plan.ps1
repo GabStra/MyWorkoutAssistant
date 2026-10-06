@@ -111,6 +111,7 @@ param(
     [switch]$AllowDirtyWorktree,
     [switch]$DeferAfterFirstAttempt,
     [switch]$IncludeDisabled,
+    [switch]$RequireWhamCache,
     [switch]$NoWhamDocker,
     [string]$WhamDockerImage = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1",
     [ValidateSet("wham", "gvhmr")]
@@ -6628,12 +6629,14 @@ New-Item -ItemType Directory -Force -Path (Split-Path -Parent $resolvedSourceOut
 $effectiveWarmWhamWorker = (
     $WarmWhamWorker -and
     -not $SkipWarmWhamWorker -and
+    -not $RequireWhamCache -and
     -not $NoWhamDocker -and
     $MotionReconstructor -eq "wham"
 )
 $effectiveWarmGvhmrWorker = (
     $WarmWhamWorker -and
     -not $SkipWarmWhamWorker -and
+    -not $RequireWhamCache -and
     $MotionReconstructor -eq "gvhmr"
 )
 $resolvedWhamWorkerSessionDir = $null
@@ -7106,6 +7109,9 @@ foreach ($exercise in $exerciseList.exercises) {
     }
     if ($MotionReconstructor -eq "gvhmr") {
         $bakeArgs += @("--motion-reconstructor", "gvhmr")
+    }
+    if ($RequireWhamCache) {
+        $bakeArgs += "--require-wham-cache"
     }
     if ($FastProfile) {
         $bakeArgs += @("--structural-refinement-vertical-only")
