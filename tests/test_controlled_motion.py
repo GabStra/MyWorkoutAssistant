@@ -4073,3 +4073,29 @@ def test_solver_sparsity_covers_interpolated_equipment_derivatives(monkeypatch):
     with pytest.raises(Inspected):
         motion._fit_controlled_motion(current, timeout_seconds=60.)
     assert inspected
+
+
+def test_plant_projection_preserves_observed_root_posture():
+    from exercise_motion_pkg.controlled_motion import FixedRig, project_contact_plant_coordinates
+
+    names, points = stance(1)
+    rig = FixedRig(points, names)
+    observed = rig.initial.copy()
+    feasible = observed.copy()
+    feasible[:, 1] -= 0.02
+    for side in ('left', 'right'):
+        slot = rig.slots[names.index(side + '_knee')]
+        feasible[:, slot] += 0.08
+    targets = rig.decode(feasible)
+    pinned = np.zeros((1, len(names)), dtype=bool)
+    for side in ('left', 'right'):
+        for joint in ('ankle', 'foot'):
+            pinned[:, names.index(side + '_' + joint)] = True
+    projected = project_contact_plant_coordinates(
+        observed, rig, pinned, targets, max_nfev=80, preserve_root_posture=True)
+    root = rig.parents.index(-1)
+    slot = rig.slots[root]
+    assert np.array_equal(projected[:, [0, 2]], observed[:, [0, 2]])
+    assert np.array_equal(projected[:, slot:slot + 3], observed[:, slot:slot + 3])
+    error = np.linalg.norm((rig.decode(projected) - targets)[pinned], axis=-1)
+    assert error.max() < 0.0005

@@ -513,6 +513,7 @@ ANATOMICAL_REPAIR_INPUT_REASONS = frozenset({
     'anatomy_chest_attachment', 'anatomy_spine_deviation',
     'anatomy_spine_fold', 'anatomy_neck_fold', 'anatomy_hinge_collapse',
     'anatomy_bone_length_variation', 'anatomy_span_variation',
+    'repair_head_articulation_distortion',
 })
 
 
@@ -522,10 +523,19 @@ def torso_directions(points, names):
     return directions/np.maximum(np.linalg.norm(directions, axis=-1, keepdims=True), 1e-9)
 
 
-def repair_residuals(points, names, span_targets=None, *, reference=None):
+def repair_residuals(points, names, span_targets=None, *, reference=None, head_reference=None):
     structure, labels = anatomical_structure_residuals(
         points, names, reference=reference)
     rows = [structure]
+    from .temporal_quality import body_local_head_direction
+    head_source = reference if head_reference is None else head_reference
+    if head_source is not None:
+        source_direction = body_local_head_direction(head_source, names)
+        current_direction = body_local_head_direction(points, names)
+        if source_direction is not None and current_direction is not None:
+            change = np.arccos(np.clip(np.sum(source_direction * current_direction, axis=1), -1., 1.))
+            rows.append(np.maximum(change - np.deg2rad(14.), 0.)[:, None])
+            labels.append('repair_head_articulation_distortion:head')
     for side in ('left', 'right'):
         joints = [side+'_'+n for n in ('knee', 'ankle', 'foot')]
         value = angles(*(points[:, names.index(n)] for n in joints))
@@ -624,6 +634,11 @@ def _joints_for_repair_label(label, names, parents):
 def free_rotation_columns(rig, active_labels):
     """Limit FD probes to rotations that can fix the active frame violations."""
     names = rig.names
+    if active_labels and all(label.startswith('repair_head_articulation_distortion:')
+                             for label in active_labels):
+        # Head direction is a distal neck DOF; do not re-pose torso or plants.
+        slot = rig.slots[names.index('neck')]
+        return list(range(slot, slot + 3))
     affected = {'pelvis', 'left_hip', 'right_hip', 'neck'}
     for label in active_labels:
         affected.update(_joints_for_repair_label(label, names, rig.parents))
@@ -789,7 +804,8 @@ def repair_rig_anatomy(rig, observed, *, deadline, reference=None, completion_de
             candidate = rig.decode(current[None])
             if np.max(repair_residuals(
                     candidate, names, span_targets,
-                    reference=reference_points)[0], initial=0.) > 1e-6:
+                    reference=reference_points,
+                    head_reference=(None if reference_points is None else reference_points[frame:frame + 1]))[0], initial=0.) > 1e-6:
                 return False
             lean = torso_directions(candidate, names) - torso_direction
             return float(np.max(np.abs(lean), initial=0.)) <= _ANATOMY_FEASIBLE_LEAN
@@ -808,7 +824,8 @@ def repair_rig_anatomy(rig, observed, *, deadline, reference=None, completion_de
             candidate = rig.decode(current)
             geometry = repair_residuals(
                 candidate, names, span_targets,
-                reference=reference_points)[0]
+                reference=reference_points,
+                    head_reference=(None if reference_points is None else reference_points[frame:frame + 1]))[0]
             lean = torso_directions(candidate, names)-torso_direction
             # Soft orientation polishing used to keep burning evals after the
             # initializer bounds were already met. Exit as soon as geometry and
@@ -918,7 +935,8 @@ def repair_rig_anatomy(rig, observed, *, deadline, reference=None, completion_de
         candidate = rig.decode(current[None])
         if np.max(repair_residuals(
                 candidate, names, span_targets,
-                reference=reference_points)[0], initial=0.) > 1e-6:
+                reference=reference_points,
+                    head_reference=(None if reference_points is None else reference_points[frame:frame + 1]))[0], initial=0.) > 1e-6:
             return False
         lean = torso_directions(candidate, names) - observed_torso_directions[frame]
         return float(np.max(np.abs(lean), initial=0.)) <= _ANATOMY_FEASIBLE_LEAN

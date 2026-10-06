@@ -555,3 +555,21 @@ def test_lying_press_does_not_require_moving_shoulder_anchors():
     }
     assert exact_source_validation_effectively_passed(validation)
     assert exact_source_phase_validation_rejection_reasons(validation) == []
+
+
+def test_confirmed_ground_sole_refreshes_stale_plane_without_duplicate_contacts():
+    import numpy as np
+    from exercise_motion_pkg.body_support_observation import add_ground_sole_contacts
+
+    fixture = json.loads((Path(__file__).parent / 'fixtures/sequence_stabilization_stance.json').read_text())
+    medians = {name: np.asarray(value) for name, value in fixture['joints'].items()}
+    payload = {'renderFloorY': fixture['renderFloorY']}
+    support = {'stationaryJoints': [], 'coplanarGroups': [
+        {'joints': ['right_wrist'], 'normal': [0, 1, 0], 'planeOffsetMeters': 2.}],
+        'soleContacts': []}
+    add_ground_sole_contacts(payload, support, medians, ['left', 'right'], evidence={})
+    expected = deepcopy(support)
+    support['coplanarGroups'][1]['planeOffsetMeters'] += .032
+    add_ground_sole_contacts(payload, support, medians, ['left', 'right'], evidence={})
+    assert support == expected
+    assert len(support['soleContacts']) == 2

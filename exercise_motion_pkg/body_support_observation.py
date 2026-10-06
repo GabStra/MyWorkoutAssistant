@@ -342,9 +342,20 @@ def add_ground_sole_contacts(payload, support, medians, sides, *, evidence):
         for joint in (ankle, foot):
             if joint not in support['stationaryJoints']:
                 support['stationaryJoints'].append(joint)
-        support['coplanarGroups'].append({'joints': [ankle, foot], 'normal': [0, 1, 0],
-            'planeOffsetMeters': float(payload.get('renderFloorY') or 0.)+.04*shoe_height})
-        support['soleContacts'].append({'joints': [knee, ankle, foot], 'normal': [0, 1, 0]})
+        plane_height = float(payload.get('renderFloorY') or 0.) + .04 * shoe_height
+        existing_planes = [group for group in support['coplanarGroups']
+                           if set(group['joints']) == {ankle, foot}
+                           and np.allclose(group['normal'], [0., 1., 0.])]
+        if existing_planes:
+            # Confirmed ground contact belongs to today's floor and shoe geometry,
+            # not a cached per-foot height from another placement or bake.
+            for group in existing_planes:
+                group['planeOffsetMeters'] = plane_height
+        else:
+            support['coplanarGroups'].append({'joints': [ankle, foot], 'normal': [0, 1, 0],
+                                             'planeOffsetMeters': plane_height})
+        if not any(contact['joints'] == [knee, ankle, foot] for contact in support['soleContacts']):
+            support['soleContacts'].append({'joints': [knee, ankle, foot], 'normal': [0, 1, 0]})
     _remove_superseded_ground_sole_planes(support, sides)
 
 
@@ -432,19 +443,17 @@ def _augment_confirmed_ground_sole_support(payload, evidence, source_pose, *, si
         return set()
     confirmed_sides = (_confirmed_observed_ground_sole_sides(
         evidence, source_pose, payload.get('jointNames')) if sides is None else set(sides))
-    missing_sides = [side for side in sorted(confirmed_sides)
-                     if not _body_support_has_complete_ground_sole(support, side)]
     _remove_superseded_ground_sole_planes(support, confirmed_sides)
     frames = payload.get('frames') or []
     names = payload.get('jointNames') or []
-    if not missing_sides or not frames or not set(names).issubset(
+    if not confirmed_sides or not frames or not set(names).issubset(
             set(frames[0].get('joints') or {})):
         return confirmed_sides
     medians = {
         name: np.median([frame['joints'][name] for frame in frames], axis=0)
         for name in names
     }
-    add_ground_sole_contacts(payload, support, medians, missing_sides, evidence=evidence)
+    add_ground_sole_contacts(payload, support, medians, sorted(confirmed_sides), evidence=evidence)
     return confirmed_sides
 
 

@@ -2643,7 +2643,7 @@ def _plant_projection_continuity_seed(coords, observed, frame, rig, chain, pinne
 
 
 def project_contact_plant_coordinates(coordinates, rig, pinned, contact_targets, *, max_nfev=40,
-                                      freeze_root=False, deadline=None):
+                                      freeze_root=False, preserve_root_posture=False, deadline=None):
     """Hard-project root + planted-chain DOFs onto contact targets.
 
     Root translation alone cannot clear relative plant error between two feet.
@@ -2669,6 +2669,9 @@ def project_contact_plant_coordinates(coordinates, rig, pinned, contact_targets,
             if ancestor in rig.slots:
                 chain.add(ancestor)
             ancestor = rig.parents[ancestor]
+    if preserve_root_posture:
+        # Contacts own plant placement, not a new global body orientation.
+        chain = {joint for joint in chain if rig.parents[joint] >= 0}
     chain = sorted(chain)
 
     def _project_frame(frame_coords, frame_pin, frame_targets, frame_max_nfev):
@@ -2676,7 +2679,7 @@ def project_contact_plant_coordinates(coordinates, rig, pinned, contact_targets,
             return frame_coords
         parts = []
         if not freeze_root:
-            parts.append((0, 3))
+            parts.append((1, 2) if preserve_root_posture else (0, 3))
         for joint in chain:
             slot = rig.slots[joint]
             parts.append((slot, slot + 3))
@@ -2757,6 +2760,8 @@ def project_contact_plant_coordinates(coordinates, rig, pinned, contact_targets,
                     continue
                 seed = _plant_projection_continuity_seed(
                     coords, observed, frame, rig, chain, pinned, targets, freeze_root=freeze_root)
+                if preserve_root_posture:
+                    seed[[0, 2]] = observed[frame, [0, 2]]
                 projected = _project_frame(seed, pinned[frame], targets[frame], frame_nfev)
                 after = float(np.max(np.linalg.norm(
                     (rig.decode(projected[None, :])[0] - targets[frame])[pinned[frame]],
@@ -2778,7 +2783,7 @@ def project_contact_plant_coordinates(coordinates, rig, pinned, contact_targets,
         if not pinned[frame].any():
             continue
         if not freeze_root:
-            parts.append((frame, 0, 3))
+            parts.append((frame, 1, 2) if preserve_root_posture else (frame, 0, 3))
         for joint in chain:
             slot = rig.slots[joint]
             parts.append((frame, slot, slot + 3))
@@ -5558,7 +5563,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 if plant_deadline > monotonic():
                     rig.initial[:] = project_contact_plant_coordinates(
                         rig.initial, rig, pinned, contact_targets, max_nfev=18,
-                        deadline=plant_deadline)
+                        preserve_root_posture=True, deadline=plant_deadline)
             initialized_points = rig.decode(rig.initial)
             report['supportInitializationSeconds'] = monotonic() - support_started
             report['supportInitializationStrategy'] = 'plant_projection'
@@ -5793,6 +5798,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 if plant_deadline > monotonic():
                     gripped = project_contact_plant_coordinates(
                         gripped, rig, pinned, contact_targets, max_nfev=16,
+                        preserve_root_posture=(report.get(
+                            'supportInitializationStrategy') == 'plant_projection'),
                         deadline=plant_deadline)
             gripped_reference = rig.decode(gripped)
             grip_projection_metrics = supported_reference_projection_metrics(
@@ -7263,6 +7270,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             fit_session.trajectories[trajectory_key] = best_coordinates.tolist()
     if getattr(solved, 'status', 1) == 0:
         report.setdefault('optimizerTermination', 'evaluation_limit')
+    spike_projection_inputs = set()
+
     def validate_solution(solved, *, project_playback_plants=True, repair_deadline=None):
         # A finite soft-constrained solve can cross the socket boundary again after
         # initialization. Enforce its analytic attachment on the exported coordinates
@@ -7328,11 +7337,14 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             solved.x = rig.initial.ravel().copy()
             fixed_rig_payload['coordinates'] = rig.initial.tolist()
             report['validatePlaybackPlantsApplied'] = True
-        if (not report.get('introducedSpikeProjectionAttempted')
+        spike_projection_digest = hashlib.sha256(
+            np.ascontiguousarray(result).tobytes()).hexdigest()
+        if (spike_projection_digest not in spike_projection_inputs
                 and monotonic() < repair_deadline):
             spikes = relative_motion_quality(
                 result, result, names, fps, spike_reference=spike_reference)['introducedSpikes']
             if spikes['severe'] and monotonic() < repair_deadline:
+                spike_projection_inputs.add(spike_projection_digest)
                 report['introducedSpikeProjectionAttempted'] = True
                 report['introducedSpikesBeforeProjection'] = spikes
                 rig.initial[:] = project_introduced_spikes_coordinates(

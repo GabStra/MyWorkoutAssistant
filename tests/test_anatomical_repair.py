@@ -354,3 +354,28 @@ def test_shoulder_girdle_span_swing_is_repaired_to_a_rigid_width():
     from exercise_motion_pkg.physical_validation import SPAN_TOLERANCE_METERS, SPAN_TOLERANCE_RATIO
     limit = max(SPAN_TOLERANCE_METERS, np.median(span(points))*SPAN_TOLERANCE_RATIO)
     assert np.max(np.abs(span(corrected)-np.median(span(points)))) <= limit + 1e-6
+
+
+def test_bounded_repair_preserves_source_head_direction_and_structure():
+    from exercise_motion_pkg.temporal_quality import body_local_head_direction
+
+    names, source = stance()
+    rig = FixedRig(source, names)
+    source, baseline = repair_rig_anatomy(
+        rig, rig.decode(rig.initial), deadline=monotonic() + 10.)
+    assert baseline['passed']
+    neck = rig.slots[names.index('neck')]
+    rig.initial[:, neck] += .5
+    observed = rig.decode(rig.initial)
+    before = body_local_head_direction(observed, names)
+    reference = body_local_head_direction(source, names)
+    assert np.rad2deg(np.arccos(np.clip(np.sum(before * reference, axis=1), -1., 1.))).max() > 15.25
+    corrected, report = repair_rig_anatomy(
+        rig, observed, reference=source, deadline=monotonic() + 10.)
+    assert 'repair_head_articulation_distortion:head' in report['sourceViolations']
+    assert report['passed'], report
+    after = body_local_head_direction(corrected, names)
+    assert np.rad2deg(np.arccos(np.clip(np.sum(after * reference, axis=1), -1., 1.))).max() < 15.25
+    from exercise_motion_pkg.anatomical_repair import free_rotation_columns
+    assert free_rotation_columns(rig, ['repair_head_articulation_distortion:head']) == list(range(neck, neck + 3))
+    np.testing.assert_allclose(corrected[:, names.index('pelvis')], observed[:, names.index('pelvis')], atol=1e-10)
