@@ -1,5 +1,6 @@
 import json
 import pytest
+from contextlib import nullcontext
 
 from exercise_motion_pkg import bake_and_rank as bake
 from exercise_motion_pkg import clef_systemone
@@ -127,3 +128,38 @@ def test_visual_backend_and_comparative_switch_reach_bake_request(tmp_path, back
     assert request.visual_decision_backend == backend
     assert request.final_output_review_backend == backend
     assert request.comparative_segment_selection_enabled is True
+
+
+@pytest.mark.parametrize("operation_fails", [False, True])
+def test_managed_clef_owner_releases_server_and_nested_lease(tmp_path, monkeypatch, operation_fails):
+    process = object()
+    stopped = []
+    launched = []
+    monkeypatch.setattr(clef_systemone, "GlobalGpuLock", lambda **kwargs: nullcontext())
+    monkeypatch.setattr(clef_systemone, "_endpoint_is_responding", lambda endpoint: False)
+    monkeypatch.setattr(clef_systemone, "_managed_runtime_files", lambda: (
+        tmp_path / "llama-server.exe", tmp_path / "model.gguf", tmp_path / "mmproj.gguf"))
+    monkeypatch.setattr(clef_systemone.subprocess, "Popen",
+                        lambda command, **kwargs: launched.append(command) or process)
+    monkeypatch.setattr(clef_systemone, "_wait_for_managed_server", lambda *args, **kwargs: None)
+    monkeypatch.setattr(clef_systemone, "_stop_managed_server", stopped.append)
+
+    def operation():
+        assert clef_systemone._ACTIVE_MANAGED_CLEF_ENDPOINT.get() == ("127.0.0.1", 8091)
+        if operation_fails:
+            raise RuntimeError("decision failed")
+        return clef_systemone.run_clef_visual_decision_exclusively(
+            base_url="http://127.0.0.1:8091", operation=lambda: "nested decision")
+
+    try:
+        if operation_fails:
+            with pytest.raises(RuntimeError, match="decision failed"):
+                clef_systemone.run_clef_visual_decision_exclusively(
+                    base_url="http://127.0.0.1:8091", operation=operation)
+        else:
+            assert clef_systemone.run_clef_visual_decision_exclusively(
+                base_url="http://127.0.0.1:8091", operation=operation) == "nested decision"
+    finally:
+        assert stopped == [process]
+        assert len(launched) == 1
+        assert clef_systemone._ACTIVE_MANAGED_CLEF_ENDPOINT.get() is None

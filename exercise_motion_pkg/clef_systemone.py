@@ -547,6 +547,7 @@ def _run_with_managed_clef_server(
     conflicting_base_urls: tuple[str | None, ...],
     startup_timeout_seconds: float,
 ) -> Any:
+    endpoint = _local_server_endpoint(base_url)
     with _MANAGED_SERVER_LOCK:
         endpoints_to_check = {endpoint}
         endpoints_to_check.update(
