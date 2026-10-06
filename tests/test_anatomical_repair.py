@@ -31,6 +31,54 @@ def test_feasible_rig_is_not_reposed_by_anatomical_projection():
     np.testing.assert_allclose(corrected, points, atol=1e-12)
 
 
+@pytest.mark.parametrize('remaining,completion_deadline,allowed', [
+    (5, 100., True), (5, 21., False), (100, 100., False), (75, 100., False),
+])
+def test_repair_completion_protects_downstream_budget(remaining, completion_deadline, allowed):
+    from exercise_motion_pkg.anatomical_repair import _repair_completion_deadline
+    deadline = _repair_completion_deadline(
+        started=0., now=20., deadline=20., completion_deadline=completion_deadline,
+        projected_frames=100, remaining_frames=remaining,
+    )
+    assert (deadline is not None) is allowed
+    if allowed:
+        assert 20. < deadline <= min(30., completion_deadline)
+
+
+def test_anatomy_completion_continues_partial_rig_without_restarting(monkeypatch):
+    from exercise_motion_pkg import anatomical_repair as anatomy
+    names, points = stance()
+    axis = points[0, names.index('neck')] - points[0, names.index('pelvis')]
+    lateral = points[0, names.index('right_hip')] - points[0, names.index('left_hip')]
+    forward = np.cross(axis, lateral)
+    forward /= np.linalg.norm(forward)
+    points[:, names.index('spine1')] += np.linspace(.14, .15, len(points))[:, None] * forward
+    generous_rig = FixedRig(points, names)
+    monkeypatch.setattr(anatomy, 'monotonic', lambda: 0.)
+    expected, full_report = repair_rig_anatomy(generous_rig, points, deadline=10.)
+    assert full_report['passed']
+
+    for expires_inside_frame in (False, True):
+        resumed_rig = FixedRig(points, names)
+        initial = resumed_rig.initial.copy()
+        completion_clock_calls = [0]
+        def clock():
+            repaired = np.count_nonzero(np.any(resumed_rig.initial != initial, axis=1))
+            if repaired < len(points) - 1:
+                return 0.
+            completion_clock_calls[0] += 1
+            if expires_inside_frame and completion_clock_calls[0] == 1:
+                return 0.  # Enter the last frame, then expire inside its solver.
+            return 10.
+        monkeypatch.setattr(anatomy, 'monotonic', clock)
+        actual, report = repair_rig_anatomy(
+            resumed_rig, points, deadline=10., completion_deadline=20.)
+        assert report['passed']
+        assert report['completionContinuation']['remainingFrameCount'] == 1
+        assert report['evaluations'] == full_report['evaluations']
+        np.testing.assert_array_equal(actual, expected)
+
+
 def test_repair_detects_constant_span_mismatch_against_observed_clip():
     names, points = stance()
     rig = FixedRig(points, names)

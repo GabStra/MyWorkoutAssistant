@@ -639,13 +639,31 @@ def free_rotation_columns(rig, active_labels):
     return sorted(columns) or list(range(3, rig.width))
 
 
-def repair_rig_anatomy(rig, observed, *, deadline, reference=None):
+def _repair_completion_deadline(*, started, now, deadline, completion_deadline,
+                                projected_frames, remaining_frames):
+    """Finish a progressing stage without consuming downstream fit reserves."""
+    completed = projected_frames - remaining_frames
+    elapsed = now - started
+    if (completion_deadline is None or completed <= 0 or remaining_frames <= 0
+            or elapsed <= 0 or now < deadline):
+        return None
+    # Allow twice the measured per-frame cost plus a final validation allowance.
+    # This is a small completion allowance, bounded by half the initial stage
+    # time; a largely unresolved repair does not gain another full attempt.
+    estimated = 2. * elapsed * remaining_frames / completed + 1.
+    available = min(.5 * elapsed, completion_deadline - now)
+    return now + estimated if estimated <= available else None
+
+
+def repair_rig_anatomy(rig, observed, *, deadline, reference=None, completion_deadline=None):
     """Correct curvature with fixed root positions, lengths and overall lean.
 
     This is an initializer for the contact/temporal fit, not a replacement for
     it. Already feasible frames are untouched. No exercise-specific mirroring
     or new body template is introduced. Final playback validation stays strict.
     """
+    started = monotonic()
+    completion = None
     names = rig.names
     observed_coordinates = np.asarray(rig.initial, dtype=float).copy()
     reference_points = None
@@ -653,7 +671,7 @@ def repair_rig_anatomy(rig, observed, *, deadline, reference=None):
         candidate_reference = np.asarray(reference, dtype=float)
         if candidate_reference.shape == np.asarray(observed, dtype=float).shape:
             reference_points = candidate_reference
-    from .fit_runtime import current_fit_session
+    from .fit_runtime import current_fit_session, fit_should_yield_for_priority
     session = current_fit_session()
     from .physical_validation import span_rigidity_violations
     span_targets = {label: target
@@ -697,10 +715,38 @@ def repair_rig_anatomy(rig, observed, *, deadline, reference=None):
         b'' if reference_points is None else
         hashlib.sha256(np.ascontiguousarray(reference_points).tobytes()).digest())
 
+    completion_considered = False
+
+    def repair_budget_available():
+        nonlocal deadline, completion, completion_considered
+        if fit_should_yield_for_priority():
+            return False
+        now = monotonic()
+        if now < deadline:
+            return True
+        if completion_considered or completion_deadline is None:
+            return False
+        completion_considered = True
+        current_violations, _ = repair_residuals(
+            rig.decode(rig.initial), names, span_targets, reference=reference_points)
+        remaining = int(np.count_nonzero(np.any(current_violations > 1e-6, axis=1)))
+        continued_until = _repair_completion_deadline(
+            started=started, now=now, deadline=deadline,
+            completion_deadline=completion_deadline,
+            projected_frames=int(bad.sum()), remaining_frames=remaining,
+        )
+        if continued_until is None:
+            return False
+        completion = {'completedFrameCount': int(bad.sum()) - remaining,
+                      'remainingFrameCount': remaining,
+                      'extraBudgetSeconds': continued_until - now}
+        deadline = continued_until
+        return True
+
     for frame in np.flatnonzero(bad):
         if evaluated >= evaluation_budget:
             break
-        if monotonic() >= deadline:
+        if not repair_budget_available():
             break
         base = rig.initial[frame].copy()
         target = initial_points[frame]-base[:3]
@@ -750,8 +796,7 @@ def repair_rig_anatomy(rig, observed, *, deadline, reference=None):
 
         def residual_batch(values):
             nonlocal residual_batches, residual_points, frame_nfev
-            from .fit_runtime import fit_should_yield_for_priority
-            if fit_should_yield_for_priority() or monotonic() >= deadline:
+            if not repair_budget_available():
                 raise TimeoutError
             residual_batches += 1
             residual_points += len(values)
@@ -947,4 +992,5 @@ def repair_rig_anatomy(rig, observed, *, deadline, reference=None):
         'temporalCoherenceRepairedFrameCount': coherence_frames,
         'maximumCorrectionMeters': float(displacement.max()),
         'maximumTorsoDirectionChangeDegrees': float(lean_change.max()),
+        **({'completionContinuation': completion} if completion is not None else {}),
     }

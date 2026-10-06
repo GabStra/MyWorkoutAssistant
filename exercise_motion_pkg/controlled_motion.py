@@ -5434,7 +5434,9 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             minimum_seconds=(12. if bilateral_plant_only else ANATOMY_REPAIR_MIN_SECONDS),
         )
         initialized_points, anatomy_initialization = repair_rig_anatomy(
-            rig, points, deadline=anatomy_deadline)
+            rig, points, deadline=anatomy_deadline,
+            completion_deadline=(started + timeout_seconds - reserved_polish
+                                 - validation_reserve - MIN_USEFUL_FIT_SECONDS))
         report['anatomicalInitialization'] = anatomy_initialization
         if bilateral_plant_only:
             report['anatomicalInitializationPlantOnlyBudget'] = True
