@@ -1314,3 +1314,42 @@ Both source-video and normalized-motion hashes match, and their retained
 source/raw timelines match at 87/87 and 124/124 frames at 30 fps. This confirms
 fixture integrity only; the current production-script E2E still needs to run
 with genuine source/final review, fit, production render, and packaging.
+
+### Oct 6 shared llama recovery failure and bounded fix
+
+The bounded production-script replay at
+`build/exercise_motion/retained_pair_production_e2e_cuda_retry_20261006_1805`
+ended with zero of two movements generated. Both failures occurred during
+initial discovery, before source validation, fitting, rendering, review, or
+packaging. The replay launcher selected the CUDA motion Python environment;
+however, it did not reach the source-pose prefilter, so the interpreter change
+is verified from the launch configuration but not yet by a successful CUDA
+prefilter invocation.
+
+The Press contract stage spent 240.75 seconds on two VLM calls that timed out.
+The VLM client then stopped its unresponsive shared llama server. Discovery
+spent 496.915 seconds total before failing to reattach; the later RDL discovery
+failed after 126.882 seconds. The shared session still contained the old
+`ready.json`, while the supervisor only restarted when a start request existed
+or the marker was missing. Client recovery did not publish that request, so the
+supervisor treated a stopped, owned process as ready and left both exercises
+without a source.
+
+Commit `d8b35eb5` records two bounded corrections: an observed stopped llama
+process now sets a supervisor restart requirement, and the service restarts
+when queued discovery or prefetch work needs it, but only after an active bake
+has released the GPU. A focused PowerShell-executed regression covers stale
+`ready.json`, active prefetch demand, and deferral during a bake; it passes, as
+does PowerShell parsing. The replay launcher also no longer overrides the
+production wrapper's CUDA interpreter selection with the launcher Python.
+Source review now retries one non-JSON VLM response once against the same
+frames and original schema, preserving the initial response for diagnosis;
+the focused JSON-repair regression passes. Neither recovery nor JSON repair has
+yet been observed succeeding in a complete production-script replay.
+
+At the next replay attempt the device had 10,292 MiB used, 1,708 MiB free, and
+100% reported GPU utilization, with a separate Strata inference service on
+port 8080. No additional model campaign was started. A successful corrected
+OHP/RDL production-script E2E, genuine source and final reviews, CUDA source
+validation, fitting, production render, package parity, and comparable accepted
+output throughput therefore remain unverified.

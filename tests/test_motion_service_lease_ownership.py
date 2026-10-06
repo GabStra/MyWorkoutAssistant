@@ -149,6 +149,50 @@ def test_shared_llama_restart_reuses_held_lease_only_after_runtime_stops():
     assert 'process identity is unverified' in runtime_transition
 
 
+def test_shared_llama_restart_admission_ignores_stale_ready_and_defers_for_bake():
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell is required to exercise the shared llama restart gate")
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "run_exercise_motion_workout_plan.ps1"
+    )
+    source = script_path.read_text(encoding="utf-8-sig")
+    helper = _powershell_function(source, "Test-SharedLlamaServerRestartAdmission")
+    command = f"""
+$ErrorActionPreference = 'Stop'
+{helper}
+$staleReadyRestart = Test-SharedLlamaServerRestartAdmission `
+    -RestartRequired $true -StartRequested $false -ReadyMarkerExists $true `
+    -BakeRunningJobCount 0 -PrefetchRunningJobCount 0 -PendingPrefetchCount 0 `
+    -DiscoveryRunningJobCount 1 -PendingDiscoveryCount 0 -PendingLegacyBakeCount 0
+if (-not $staleReadyRestart) {{ throw 'An observed server exit was hidden by stale ready.json.' }}
+$prefetchRestart = Test-SharedLlamaServerRestartAdmission `
+    -RestartRequired $true -StartRequested $false -ReadyMarkerExists $true `
+    -BakeRunningJobCount 0 -PrefetchRunningJobCount 1 -PendingPrefetchCount 0 `
+    -DiscoveryRunningJobCount 0 -PendingDiscoveryCount 0 -PendingLegacyBakeCount 0
+if (-not $prefetchRestart) {{ throw 'Active prefetch work did not admit a required restart.' }}
+$exclusiveBake = Test-SharedLlamaServerRestartAdmission `
+    -RestartRequired $true -StartRequested $true -ReadyMarkerExists $false `
+    -BakeRunningJobCount 1 -PrefetchRunningJobCount 0 -PendingPrefetchCount 0 `
+    -DiscoveryRunningJobCount 1 -PendingDiscoveryCount 0 -PendingLegacyBakeCount 0
+if ($exclusiveBake) {{ throw 'The shared vision server restarted during an exclusive bake.' }}
+$staleMarkerOnly = Test-SharedLlamaServerRestartAdmission `
+    -RestartRequired $false -StartRequested $false -ReadyMarkerExists $true `
+    -BakeRunningJobCount 0 -PrefetchRunningJobCount 0 -PendingPrefetchCount 0 `
+    -DiscoveryRunningJobCount 1 -PendingDiscoveryCount 0 -PendingLegacyBakeCount 0
+if ($staleMarkerOnly) {{ throw 'A stale ready marker without an observed exit triggered a restart.' }}
+"""
+    completed = subprocess.run(
+        [pwsh, "-NoProfile", "-Command", command],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
 def test_powershell_shared_llama_counter_ignores_recycled_pid_identity(tmp_path: Path):
     pwsh = shutil.which("pwsh")
     if pwsh is None:

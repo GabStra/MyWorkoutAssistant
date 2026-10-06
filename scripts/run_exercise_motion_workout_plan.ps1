@@ -2163,6 +2163,30 @@ function Update-SharedLlamaServerHeartbeat {
         ConvertTo-Json | Set-Content -LiteralPath (Join-Path $SessionDir "heartbeat.json") -Encoding UTF8
 }
 
+function Test-SharedLlamaServerRestartAdmission {
+    param(
+        [bool]$RestartRequired,
+        [bool]$StartRequested,
+        [bool]$ReadyMarkerExists,
+        [int]$BakeRunningJobCount,
+        [int]$PrefetchRunningJobCount,
+        [int]$PendingPrefetchCount,
+        [int]$DiscoveryRunningJobCount,
+        [int]$PendingDiscoveryCount,
+        [int]$PendingLegacyBakeCount
+    )
+
+    $hasWork = (
+        $PrefetchRunningJobCount -gt 0 -or
+        $PendingPrefetchCount -gt 0 -or
+        $DiscoveryRunningJobCount -gt 0 -or
+        $PendingDiscoveryCount -gt 0 -or
+        $PendingLegacyBakeCount -gt 0
+    )
+    $hasRestartSignal = $RestartRequired -or $StartRequested -or -not $ReadyMarkerExists
+    return [bool]($BakeRunningJobCount -eq 0 -and $hasWork -and $hasRestartSignal)
+}
+
 function Stop-SharedLlamaServer {
     param([object]$Server)
 
@@ -7598,13 +7622,16 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                 }
                 if (
                     $null -eq $sharedLlamaServerInstance -and
-                    $bakeRunningJobs.Count -eq 0 -and
-                    ($discoveryRunningJobs.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or $pendingLegacyBakeItems.Count -gt 0) -and
-                    (
-                        $sharedLlamaServerRestartRequired -or
-                        (Test-Path -LiteralPath (Join-Path $resolvedSharedLlamaServerSessionDir "start_requested.json")) -or
-                        -not (Test-Path -LiteralPath (Join-Path $resolvedSharedLlamaServerSessionDir "ready.json"))
-                    )
+                    (Test-SharedLlamaServerRestartAdmission `
+                        -RestartRequired $sharedLlamaServerRestartRequired `
+                        -StartRequested (Test-Path -LiteralPath (Join-Path $resolvedSharedLlamaServerSessionDir "start_requested.json")) `
+                        -ReadyMarkerExists (Test-Path -LiteralPath (Join-Path $resolvedSharedLlamaServerSessionDir "ready.json")) `
+                        -BakeRunningJobCount $bakeRunningJobs.Count `
+                        -PrefetchRunningJobCount $prefetchRunningJobs.Count `
+                        -PendingPrefetchCount $pendingPrefetchItems.Count `
+                        -DiscoveryRunningJobCount $discoveryRunningJobs.Count `
+                        -PendingDiscoveryCount $pendingDiscoveryItems.Count `
+                        -PendingLegacyBakeCount $pendingLegacyBakeItems.Count)
                 ) {
                     # Restart after an observed exit even when ready.json is
                     # stale. Defer GPU model startup while an exclusive bake
