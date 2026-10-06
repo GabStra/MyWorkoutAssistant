@@ -38,6 +38,7 @@ _PHASE_CODES = {"pause": 0, "concentric": 1, "eccentric": 2}
 # score > 0.8; below 0.4 the tempo prior is not trusted for counting at all.
 _CONFIDENCE_HIGH = 0.7
 _CONFIDENCE_MEDIUM = 0.4
+_NANOS_PER_SECOND = 1_000_000_000
 
 
 def analyze_session(session_dir: str | Path, ground_truth_reps: str | Path | None = None) -> Path:
@@ -76,9 +77,74 @@ def analyze_session(session_dir: str | Path, ground_truth_reps: str | Path | Non
         "sample_rate_hz": frames.sample_rate_hz,
         "sets": set_reports,
         "coverage": _coverage_summary(set_reports),
+        "rest_recovery": _rest_recovery_reports(segments, frames),
     }
     (analysis_dir / METRICS_FILE_NAME).write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     return analysis_dir
+
+
+# Rest spans shorter than this cannot separate an onset window from a 30 s recovery window.
+_MIN_REST_RECOVERY_SECONDS = 40.0
+_REST_ONSET_WINDOW_S = (0.0, 10.0)
+_REST_RECOVERY_WINDOWS_S = {"delta_bpm_30s": (25.0, 35.0), "delta_bpm_60s": (55.0, 65.0)}
+
+
+def _rest_recovery_reports(
+    segments: list[dict[str, Any]],
+    frames: SensorFrames,
+) -> list[dict[str, Any]]:
+    """Per-rest HR recovery: how far bpm fell from the rest onset to +30 s and +60 s.
+
+    Heart rate is the fatigue/readiness signal that works for every exercise class,
+    including the machine and static-wrist movements the IMU cannot count. All bpm
+    values are None when the session carries no HEART_RATE rows (sensor absent or
+    permission denied), so consumers can distinguish "no recovery" from "no data".
+    """
+    heart = frames.frame("HEART_RATE")
+    if heart is None or frames.timestamps_nanos.size == 0:
+        return []
+    bpm = np.asarray(heart["x"], dtype=np.float64)
+    heart_nanos = np.asarray(frames.timestamps_nanos, dtype=np.int64)
+
+    reports: list[dict[str, Any]] = []
+    for segment in segments:
+        label = segment.get("correctedLabel") or segment["autoLabel"]
+        if label.get("kind") != "REST":
+            continue
+        start_nanos = int(segment["startedAtElapsedRealtimeNanos"])
+        end_nanos = int(segment.get("endedAtElapsedRealtimeNanos") or start_nanos)
+        duration_s = (end_nanos - start_nanos) / _NANOS_PER_SECOND
+        if duration_s < _MIN_REST_RECOVERY_SECONDS:
+            continue
+        rel_times = (heart_nanos - start_nanos) / _NANOS_PER_SECOND
+        onset = _median_bpm_in_window(rel_times, bpm, *_REST_ONSET_WINDOW_S)
+        if onset is None:
+            report_bpm: dict[str, Any] = {"heart_rate_available": False}
+        else:
+            report_bpm = {"heart_rate_available": True, "onset_bpm": round(onset, 1)}
+            for name, (lo_s, hi_s) in _REST_RECOVERY_WINDOWS_S.items():
+                window_bpm = _median_bpm_in_window(rel_times, bpm, lo_s, hi_s)
+                report_bpm[name] = round(window_bpm - onset, 1) if window_bpm is not None else None
+        reports.append(
+            {
+                "segment_id": str(segment["id"]),
+                "duration_s": round(duration_s, 1),
+                **report_bpm,
+            }
+        )
+    return reports
+
+
+def _median_bpm_in_window(
+    rel_times_s: np.ndarray,
+    bpm: np.ndarray,
+    lo_s: float,
+    hi_s: float,
+) -> float | None:
+    mask = (rel_times_s >= lo_s) & (rel_times_s <= hi_s) & np.isfinite(bpm)
+    if not mask.any():
+        return None
+    return float(np.median(bpm[mask]))
 
 
 def _analyze_set(

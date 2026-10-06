@@ -801,3 +801,125 @@ def _segment(
         "reviewStatus": "CONFIRMED",
         "chunkFileNames": ["chunk_00001.csv", "chunk_00002.csv"],
     }
+
+
+def _write_rest_recovery_bundle(tmp_path: Path, include_hr: bool) -> Path:
+    """Bundle with one skipped short set, a 77 s rest, and a monotonically recovering HR.
+
+    bpm(t) holds 150 for the first 10 s then decays 0.5 bpm/s, so the onset window
+    medians exactly 150 and the +30/+60 s deltas are analytically known.
+    """
+    session_id = "rest-recovery-1"
+    export_dir = tmp_path / session_id
+    export_dir.mkdir(parents=True)
+    rest_start = _elapsed(100)  # 2 s in
+    rest_end = rest_start + 77 * 1_000_000_000
+    segments = [
+        _segment(
+            "segment-set-short",
+            0,
+            _elapsed(0),
+            _elapsed(49),
+            "exercise-rest-recovery",
+            "Rest Recovery Probe",
+            "WEIGHT",
+            False,
+            "EXERCISE",
+            "set-rest-recovery",
+            session_id=session_id,
+        ),
+        _segment(
+            "segment-rest-long",
+            1,
+            rest_start,
+            rest_end,
+            "exercise-rest-recovery",
+            "Rest Recovery Probe",
+            "WEIGHT",
+            False,
+            "REST",
+            "set-rest-recovery",
+            session_id=session_id,
+        ),
+        _segment(
+            "segment-rest-short",
+            2,
+            rest_end,
+            rest_end + 20 * 1_000_000_000,
+            "exercise-rest-recovery",
+            "Rest Recovery Probe",
+            "WEIGHT",
+            False,
+            "REST",
+            "set-rest-recovery",
+            session_id=session_id,
+        ),
+    ]
+    metadata = {
+        "schemaVersion": 2,
+        "session": {
+            "id": session_id,
+            "workoutId": str(uuid4()),
+            "workoutHistoryId": str(uuid4()),
+            "status": "COMPLETED",
+            "startedAtEpochMs": _BASE_EPOCH_MS,
+            "endedAtEpochMs": _BASE_EPOCH_MS + 100_000,
+            "deviceManufacturer": "Google",
+            "deviceModel": "Pixel Watch",
+            "deviceName": "pixel_watch",
+            "appVersion": "1.0.0",
+            "sessionDirectoryName": session_id,
+        },
+        "sensorConfig": {
+            "sampleRateHz": SAMPLE_RATE_HZ,
+            "chunkSampleCount": 500,
+            "enabledSensors": ["ACCELEROMETER", "GYROSCOPE", "ROTATION_VECTOR", "HEART_RATE"],
+        },
+        "workoutContext": {"workoutId": str(uuid4()), "workoutHistoryId": str(uuid4()), "orderedExerciseCandidates": []},
+        "coarseReviewedSegments": segments,
+        "rawSensorFiles": [{"fileName": "chunk_00001.csv"}],
+        "eventsFile": "events.csv",
+    }
+    (export_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    (export_dir / "events.csv").write_text(_EVENT_HEADER_NEW, encoding="utf-8")
+    rows: list[str] = []
+    # Static motion rows across the FULL 80 s span so the shared resampling grid
+    # covers the rest segment (the grid is built from the most frequent type).
+    for index in range(80 * SAMPLE_RATE_HZ):
+        stamp = f"{_BASE_EPOCH_MS + index * 20},{_elapsed(index)}"
+        rows.append(f"ACCELEROMETER,{stamp},3,0.0,0.0,9.81,\n")
+        rows.append(f"GYROSCOPE,{stamp},3,0.0,0.0,0.0,\n")
+        rows.append(f"ROTATION_VECTOR,{stamp},3,0.0,0.0,0.0,1.0\n")
+    if include_hr:
+        # 1 Hz bpm series: 150 flat for 10 s, then -0.5 bpm/s for 70 s.
+        for second in range(0, 80):
+            bpm = 150.0 if second <= 10 else 150.0 - 0.5 * (second - 10)
+            stamp = f"{_BASE_EPOCH_MS + second * 1000},{_BASE_NANOS + second * 1_000_000_000}"
+            rows.append(f"HEART_RATE,{stamp},3,{bpm:.1f},,,\n")
+    (export_dir / "chunk_00001.csv").write_text(_CHUNK_HEADER + "".join(rows), encoding="utf-8")
+    return export_dir
+
+
+def test_rest_recovery_reports_hr_drop_at_30_and_60_seconds(tmp_path: Path) -> None:
+    export_dir = _write_rest_recovery_bundle(tmp_path, include_hr=True)
+    analysis_dir = analyze_session(_copy_into_workspace(export_dir, tmp_path / "ws"))
+    metrics = json.loads((analysis_dir / METRICS_FILE_NAME).read_text(encoding="utf-8"))
+
+    recovery = metrics["rest_recovery"]
+    assert len(recovery) == 1, "only the 77 s rest qualifies; the 20 s rest is below the minimum"
+    entry = recovery[0]
+    assert entry["heart_rate_available"] is True
+    assert entry["onset_bpm"] == pytest.approx(150.0, abs=1.0)
+    # Rest starts at t=2 s, so rel 30 s / 60 s sample the decay at t=32 / 62:
+    # 150 - 0.5*(t-10) -> 139 / 124 bpm.
+    assert entry["delta_bpm_30s"] == pytest.approx(-11.0, abs=2.0)
+    assert entry["delta_bpm_60s"] == pytest.approx(-26.0, abs=2.0)
+    assert entry["delta_bpm_60s"] < entry["delta_bpm_30s"] < 0.0
+
+
+def test_rest_recovery_is_empty_when_session_has_no_heart_rate(tmp_path: Path) -> None:
+    export_dir = _write_rest_recovery_bundle(tmp_path, include_hr=False)
+    analysis_dir = analyze_session(_copy_into_workspace(export_dir, tmp_path / "ws"))
+    metrics = json.loads((analysis_dir / METRICS_FILE_NAME).read_text(encoding="utf-8"))
+
+    assert metrics["rest_recovery"] == []
