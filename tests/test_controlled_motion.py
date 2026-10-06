@@ -365,6 +365,14 @@ def test_fit_source_evidence_is_stable_when_cycle_selection_moves_to_artifact_li
         legacy_payload
     ) == controlled_motion_fit_source_evidence_digest(artifact_payload)
 
+    rematerialized = deepcopy(artifact_payload)
+    rematerialized['artifactState']['selectionEvidence']['cycleSelection'][
+        'interval'
+    ]['startTimeSec'] = np.nextafter(12 / fps, 0.)
+    assert controlled_motion_fit_source_evidence_digest(
+        rematerialized
+    ) == controlled_motion_fit_source_evidence_digest(artifact_payload)
+
     changed_selection = deepcopy(artifact_payload)
     changed_selection['artifactState']['selectionEvidence']['cycleSelection'][
         'interval'
@@ -424,7 +432,7 @@ def test_fit_source_evidence_is_stable_when_cycle_selection_moves_to_artifact_li
         'startFrame': 0,
         'endFrame': 119,
         'startTimeSec': 0.0,
-        'endTimeSec': 119 / fps,
+        'endTimeSec': round(119 / fps, 9),
     }
 
 

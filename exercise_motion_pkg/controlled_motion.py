@@ -951,8 +951,11 @@ def _canonical_fit_source_interval_evidence(selection, *, fps):
         'kind': selection.get('kind'),
         'startFrame': start_frame,
         'endFrame': end_frame,
-        'startTimeSec': start_time,
-        'endTimeSec': end_time,
+        # Lineage rematerialization can introduce floating-point subtraction
+        # noise. Nanosecond identity precision is finer than the microsecond
+        # provenance checks and must not invalidate an unchanged interval.
+        'startTimeSec': round(float(start_time), 9),
+        'endTimeSec': round(float(end_time), 9),
     }
 
 
