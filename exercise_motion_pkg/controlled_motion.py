@@ -2855,7 +2855,7 @@ def _playback_grip_sample_error(coordinates, rig, names, equipment, *, cyclic=Fa
 
 def project_playback_rigid_pair_grip(coordinates, rig, names, equipment, *,
                                      pinned=None, cyclic=False, max_nfev=16,
-                                     deadline=None):
+                                     deadline=None, shake_limits=None):
     """Hold rigid_pair spacing on hermite mid-samples, not only keyframes.
 
     Keyframe grip can pass while interpolated hand spacing bows past tolerance —
@@ -2926,12 +2926,28 @@ def project_playback_rigid_pair_grip(coordinates, rig, names, equipment, *,
                 mid_grip = grip_residual(mid, names, equipment).ravel()
                 arm_correction = points[:, arm_joints] - base_arm_points
                 smooth_correction = np.diff(arm_correction, n=2, axis=0).ravel()
-                return np.concatenate([
+                residual_parts = [
                     8000. * key_grip,
                     20000. * mid_grip,
                     0.02 * (values - original),
                     10000. * smooth_correction / correction_scale,
-                ])
+                ]
+                if shake_limits is not None and len(points) >= 3:
+                    limits = np.asarray(shake_limits, dtype=float)
+                    arm_limits = limits[arm_joints]
+                    acceleration = np.sqrt(np.mean(
+                        np.diff(points[:, arm_joints], n=2, axis=0) ** 2,
+                        axis=(0, 2),
+                    ))
+                    # Match the acceptance metric exactly: a per-joint RMS of
+                    # absolute second differences. This lets the bounded grip
+                    # projection trade a tiny endpoint adjustment for clearing
+                    # a shake regression it would otherwise introduce. Target
+                    # a 0.1% cushion so numerical noise does not leave a tiny
+                    # over-limit endpoint after the combined projection.
+                    residual_parts.append(18000. * np.maximum(
+                        acceleration / np.maximum(arm_limits, 1e-12) - 0.999, 0.))
+                return np.concatenate(residual_parts)
 
             try:
                 solved = least_squares(
@@ -5612,6 +5628,14 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
     target, _, evidence = controlled_target(rig.decode(rig.initial), names, fps)
     settling_basis = settling_hold_basis(temporal_reference, reference, body_support)
     _, holds, _ = controlled_target(settling_basis, names, fps)
+    # Shared basis and limits keep fit validation and playback-grip repair on
+    # the same shake authority. Previously the playback repair could fix the
+    # interpolated rigid grip while nudging wrist/hand acceleration just past
+    # the validator's limit.
+    shake_basis = settling_basis if body_support.get('required') else temporal_reference
+    acceleration_before = np.sqrt(np.mean(
+        np.diff(shake_basis, n=2, axis=0) ** 2, axis=(0, 2)))
+    shake_limits = np.maximum(acceleration_before * 1.2, .003 * (30. / fps) ** 2)
     # Same authority as settling: when support rewrites geometry, its temporal
     # content — not the unsupported source — defines the reachable jerk floor.
     jerk_basis = settling_basis if body_support.get('required') else temporal_reference
@@ -7138,10 +7162,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             range_preserved = bool(np.all(result_span[moving] >= .85*target_span[moving]))
         # Same authority as settling/jerk: under support, shake baselines belong
         # to the supported working reference, not the pre-support source.
-        shake_basis = settling_basis if body_support.get('required') else temporal_reference
-        acceleration_before = np.sqrt(np.mean(np.diff(shake_basis,n=2,axis=0)**2,axis=(0,2)))
         acceleration_after = np.sqrt(np.mean(np.diff(result,n=2,axis=0)**2,axis=(0,2)))
-        shake_limits = np.maximum(acceleration_before*1.2,.003*(30./fps)**2)
         shake_ratios = acceleration_after / np.maximum(shake_limits, 1e-12)
         no_new_shake = bool(np.all(shake_ratios <= 1.))
         settling_after = weighted_settling_speed(result, names, fps, hold_weights)
@@ -7589,7 +7610,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                     deadline=min(started + timeout_seconds, grip_deadline))
                 trial = project_playback_rigid_pair_grip(
                     trial, rig, names, equipment, pinned=pinned, cyclic=cyclic,
-                    max_nfev=16, deadline=grip_deadline)
+                    max_nfev=16, deadline=grip_deadline,
+                    shake_limits=shake_limits)
                 if playback_contact_repair_needed(
                         trial, rig, pinned, contact_targets, cyclic=cyclic):
                     trial = project_contact_plant_coordinates(
