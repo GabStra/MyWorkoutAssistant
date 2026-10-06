@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import gzip
 import json
 import shutil
 from pathlib import Path
@@ -12,8 +13,12 @@ import numpy as np
 def load_export_bundle(export_dir: str | Path) -> dict[str, Any]:
     export_path = Path(export_dir)
     metadata = json.loads((export_path / "metadata.json").read_text(encoding="utf-8"))
-    chunk_files = [entry["fileName"] for entry in metadata.get("rawSensorFiles", [])]
-    sensor_chunks = {name: _load_chunk(export_path / name) for name in chunk_files}
+    sensor_chunks: dict[str, dict[str, np.ndarray]] = {}
+    for entry in metadata.get("rawSensorFiles", []):
+        chunk_path = _resolve_chunk_file(export_path, entry["fileName"])
+        if chunk_path is None:
+            continue
+        sensor_chunks[chunk_path.name] = _load_chunk(chunk_path)
     events = _load_events(export_path / metadata.get("eventsFile", "events.csv"))
     return {
         "export_dir": export_path,
@@ -33,6 +38,17 @@ def copy_export_into_workspace(export_dir: str | Path, workspace_dir: str | Path
         if file_path.is_file():
             shutil.copy2(file_path, raw_dir / file_path.name)
     return session_dir
+
+
+def _resolve_chunk_file(export_path: Path, file_name: str) -> Path | None:
+    """Resolve a chunk reference to an existing file, tolerating plain and gzip-completed sessions."""
+    candidates = [export_path / file_name]
+    if not file_name.endswith(".gz"):
+        candidates.append(export_path / f"{file_name}.gz")
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
 
 
 def _load_events(path: Path) -> list[dict[str, Any]]:
@@ -63,16 +79,52 @@ def _load_events(path: Path) -> list[dict[str, Any]]:
 
 
 def _load_chunk(path: Path) -> dict[str, np.ndarray]:
-    with path.open("r", encoding="utf-8", newline="") as handle:
+    """Load a raw sensor chunk without assuming a fixed set of sensor types.
+
+    Rows from forward-compatible sensor types (heart rate, pressure, ...) are parsed
+    generically; rows missing required numeric fields are skipped instead of raising.
+    """
+    opener = gzip.open if path.suffix == ".gz" else open
+    with opener(path, "rt", encoding="utf-8", newline="") as handle:  # type: ignore[call-overload]
         reader = csv.DictReader(handle)
-        rows = list(reader)
+        parsed = [row for row in (_parse_sample_row(raw) for raw in reader) if row is not None]
     return {
-        "sensorType": np.array([row["sensorType"] for row in rows], dtype=str),
-        "epochTimeMs": np.array([int(row["epochTimeMs"]) for row in rows], dtype=np.int64),
-        "elapsedRealtimeNanos": np.array([int(row["elapsedRealtimeNanos"]) for row in rows], dtype=np.int64),
-        "accuracy": np.array([int(row["accuracy"]) for row in rows], dtype=np.int32),
-        "x": np.array([float(row["x"]) for row in rows], dtype=np.float32),
-        "y": np.array([float(row["y"]) for row in rows], dtype=np.float32),
-        "z": np.array([float(row["z"]) for row in rows], dtype=np.float32),
-        "w": np.array([float(row["w"]) if row["w"] else np.nan for row in rows], dtype=np.float32),
+        "sensorType": np.array([row[0] for row in parsed], dtype=str),
+        "epochTimeMs": np.array([row[1] for row in parsed], dtype=np.int64),
+        "elapsedRealtimeNanos": np.array([row[2] for row in parsed], dtype=np.int64),
+        "accuracy": np.array([row[3] for row in parsed], dtype=np.int32),
+        "x": np.array([row[4] for row in parsed], dtype=np.float32),
+        "y": np.array([row[5] for row in parsed], dtype=np.float32),
+        "z": np.array([row[6] for row in parsed], dtype=np.float32),
+        "w": np.array([row[7] for row in parsed], dtype=np.float32),
     }
+
+
+def _parse_sample_row(row: dict[str, str | None]) -> tuple[str, int, int, int, float, float, float, float] | None:
+    sensor_type = (row.get("sensorType") or "").strip()
+    if not sensor_type:
+        return None
+    try:
+        epoch_time_ms = int(row["epochTimeMs"])
+        elapsed_realtime_nanos = int(row["elapsedRealtimeNanos"])
+        accuracy = int(row["accuracy"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    # Empty numeric fields are legitimate for sensor types that do not fill all
+    # axes (e.g. heart rate): they parse as NaN. Unparsable values skip the row.
+    x = _optional_float(row.get("x"))
+    y = _optional_float(row.get("y"))
+    z = _optional_float(row.get("z"))
+    w = _optional_float(row.get("w"))
+    if x is None or y is None or z is None or w is None:
+        return None
+    return (sensor_type, epoch_time_ms, elapsed_realtime_nanos, accuracy, x, y, z, w)
+
+
+def _optional_float(value: str | None) -> float | None:
+    if value is None or value == "":
+        return np.nan
+    try:
+        return float(value)
+    except ValueError:
+        return None

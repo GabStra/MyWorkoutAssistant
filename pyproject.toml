@@ -15,6 +15,10 @@ dependencies = [
 test = [
     "pytest>=8.0.0",
 ]
+analysis = [
+    "scipy>=1.11",
+    "matplotlib>=3.8",
+]
 motion = [
     "mediapipe>=1.0.1,<2",
     "imageio-ffmpeg>=0.5",

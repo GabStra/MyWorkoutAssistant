@@ -9,6 +9,7 @@ from typing import Any
 
 import numpy as np
 
+from motion_annotation_pkg.frames import build_timeline, combine_chunks, interp_to_grid, magnitude
 from motion_annotation_pkg.loader import load_export_bundle
 
 NON_EXERCISE_KINDS = {"transition", "rest", "invalid", "ambiguous"}
@@ -111,12 +112,12 @@ def build_dataset_index(dataset_dir: str | Path, output_path: str | Path | None 
 
 
 def _build_aligned_arrays(bundle: dict[str, Any]) -> dict[str, np.ndarray]:
-    combined = _combine_chunks(bundle["sensor_chunks"])
+    combined = combine_chunks(bundle["sensor_chunks"])
     sample_rate_hz = int(bundle["metadata"]["sensorConfig"]["sampleRateHz"])
-    timeline = _build_timeline(combined["elapsedRealtimeNanos"], sample_rate_hz)
+    timeline = build_timeline(combined["elapsedRealtimeNanos"], sample_rate_hz)
     arrays = {
         "timestamps_nanos": timeline,
-        "timestamps_epoch_ms": _interp(combined["elapsedRealtimeNanos"], combined["epochTimeMs"], timeline).astype(np.int64),
+        "timestamps_epoch_ms": interp_to_grid(combined["elapsedRealtimeNanos"], combined["epochTimeMs"], timeline).astype(np.int64),
     }
     for sensor_type, prefix in {"ACCELEROMETER": "accel", "GYROSCOPE": "gyro", "ROTATION_VECTOR": "rotation"}.items():
         mask = combined["sensorType"] == sensor_type
@@ -133,9 +134,9 @@ def _build_aligned_arrays(bundle: dict[str, Any]) -> dict[str, np.ndarray]:
             if np.isnan(values).any():
                 finite = np.flatnonzero(~np.isnan(values))
                 values = np.interp(np.arange(values.size), finite, values[finite])
-            arrays[key] = _interp(sensor_elapsed, values, timeline).astype(np.float32)
-    arrays["accel_magnitude"] = _magnitude(arrays["accel_x"], arrays["accel_y"], arrays["accel_z"])
-    arrays["gyro_magnitude"] = _magnitude(arrays["gyro_x"], arrays["gyro_y"], arrays["gyro_z"])
+            arrays[key] = interp_to_grid(sensor_elapsed, values, timeline).astype(np.float32)
+    arrays["accel_magnitude"] = magnitude(arrays["accel_x"], arrays["accel_y"], arrays["accel_z"])
+    arrays["gyro_magnitude"] = magnitude(arrays["gyro_x"], arrays["gyro_y"], arrays["gyro_z"])
     arrays["movement_energy"] = _smooth(np.abs(np.gradient(arrays["accel_magnitude"])) + np.abs(np.gradient(arrays["gyro_magnitude"])))
     return arrays
 
@@ -172,26 +173,6 @@ def _build_proposals(bundle: dict[str, Any], arrays: dict[str, np.ndarray]) -> l
             }
         )
     return proposals
-
-
-def _combine_chunks(sensor_chunks: dict[str, dict[str, np.ndarray]]) -> dict[str, np.ndarray]:
-    keys = ("sensorType", "epochTimeMs", "elapsedRealtimeNanos", "accuracy", "x", "y", "z", "w")
-    combined = {key: np.concatenate([chunk[key] for chunk in sensor_chunks.values()]) for key in keys}
-    order = np.argsort(combined["elapsedRealtimeNanos"], kind="stable")
-    return {key: values[order] for key, values in combined.items()}
-
-
-def _build_timeline(elapsed_nanos: np.ndarray, sample_rate_hz: int) -> np.ndarray:
-    period = max(int(1_000_000_000 / sample_rate_hz), 1)
-    return np.arange(int(elapsed_nanos[0]), int(elapsed_nanos[-1]) + period, period, dtype=np.int64)
-
-
-def _interp(source_timestamps: np.ndarray, source_values: np.ndarray, target_timestamps: np.ndarray) -> np.ndarray:
-    return np.interp(target_timestamps.astype(np.float64), source_timestamps.astype(np.float64), source_values.astype(np.float64))
-
-
-def _magnitude(x: np.ndarray, y: np.ndarray, z: np.ndarray) -> np.ndarray:
-    return np.sqrt((x * x) + (y * y) + (z * z)).astype(np.float32)
 
 
 def _smooth(values: np.ndarray, window: int = 3) -> np.ndarray:
