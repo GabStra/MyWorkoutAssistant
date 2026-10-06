@@ -3121,7 +3121,8 @@ def project_playback_neck_clearance(coordinates, rig, *, cyclic=False, deadline=
     cursors = np.arange(intervals * 16 + (not cyclic), dtype=float) / 16.
     candidate = original.copy()
     inset = 0.
-    for attempt in range(4):
+    maximum_attempts = 8
+    for attempt in range(maximum_attempts):
         if deadline is not None and monotonic() >= deadline:
             break
         sampled = sample_rig_coordinates(_sampling_payload(rig, candidate), cursors, wrap=cyclic)
@@ -3131,7 +3132,7 @@ def project_playback_neck_clearance(coordinates, rig, *, cyclic=False, deadline=
         if maximum <= guard - ANATOMY_FIT_MARGIN:
             return candidate
         inset += max(ANATOMY_FIT_MARGIN, maximum - guard + ANATOMY_FIT_MARGIN)
-        if inset >= guard or attempt == 3:
+        if inset >= guard or attempt == maximum_attempts - 1:
             break
         candidate = project_neck_attachment_values(
             original, rig.offsets, rig.names, rig.active, guard - inset)

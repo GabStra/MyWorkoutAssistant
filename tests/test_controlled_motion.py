@@ -3836,13 +3836,17 @@ def test_fit_budget_scales_with_frames_and_preserves_explicit_limits():
     assert fit_time_budget({'frames':[None]*240},0.)==0.
 
 
-def test_neck_socket_repair_clears_interpolated_guard_without_moving_limbs():
+@pytest.mark.parametrize('fixture_name,maximum_correction', [
+    ('neck_socket_interpolation_corner.json', .0001),
+    ('neck_socket_slow_clearance_corner.json', .005),
+])
+def test_neck_socket_repair_clears_interpolated_guard_without_moving_limbs(fixture_name, maximum_correction):
     from exercise_motion_pkg.controlled_motion import (
         project_playback_neck_clearance, repair_playback_velocity_continuity, _sampling_payload)
     from exercise_motion_pkg.rig_playback import sample_rig, sample_rig_coordinates, decode_rig
     from exercise_motion_pkg.rig_interpolation import frame_boundary_velocity_jump
     fixture = json.loads((Path(__file__).parent / 'fixtures' /
-        'neck_socket_interpolation_corner.json').read_text())
+        fixture_name).read_text())
     names, points = stance(5)
     rig = FixedRig(points, names)
     for joint, offset in fixture['offsets'].items():
@@ -3867,7 +3871,7 @@ def test_neck_socket_repair_clears_interpolated_guard_without_moving_limbs():
     np.testing.assert_allclose(after, raw, atol=1e-10)
     limbs = [index for index, name in enumerate(names) if name not in ('neck', 'head')]
     np.testing.assert_array_equal(after[:, limbs], before[:, limbs])
-    assert np.max(np.linalg.norm(after - before, axis=-1)) < .0001
+    assert np.max(np.linalg.norm(after - before, axis=-1)) < maximum_correction
     np.testing.assert_array_equal(
         project_playback_neck_clearance(repaired, rig), repaired)
 
