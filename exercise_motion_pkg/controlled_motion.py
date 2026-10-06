@@ -3703,7 +3703,8 @@ def support_range_jacobian(values, rig, tracks):
 
 
 def solve_trajectory(residual, initial, pattern, max_evaluations, *,
-                     local_jacobian=None, tail_jacobian=None):
+                     local_jacobian=None, tail_jacobian=None,
+                     initial_jacobian=None):
     # Use an absolute perturbation throughout the solve. Relative steps shrink
     # toward cancellation at tiny rotations, especially under stiff penalties.
     # Reuse the coloring; one-sided grouped differences avoid doubling all FK
@@ -3711,10 +3712,23 @@ def solve_trajectory(residual, initial, pattern, max_evaluations, *,
     tail_rows = 0 if tail_jacobian is None else tail_jacobian(initial).shape[0]
     local_pattern = pattern[:-tail_rows] if tail_rows else pattern
     groups = group_columns(local_pattern)
+    initial_values = np.asarray(initial, dtype=float).reshape(-1)
+    seeded_jacobian = initial_jacobian
+    if (seeded_jacobian is not None
+            and getattr(seeded_jacobian, 'shape', None) != pattern.shape):
+        seeded_jacobian = None
+
     def local_residual(values):
         errors = residual(values)
         return errors[:-tail_rows] if tail_rows else errors
     def jacobian(values):
+        nonlocal seeded_jacobian
+        if seeded_jacobian is not None:
+            if np.array_equal(np.asarray(values, dtype=float), initial_values):
+                result = seeded_jacobian
+                seeded_jacobian = None
+                return result
+            seeded_jacobian = None
         if local_jacobian is not None:
             local = local_jacobian(values)
             return vstack([local, tail_jacobian(values)], format='csr') if tail_rows else local
@@ -6998,6 +7012,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             current = solve_start
             solved = SimpleNamespace(x=current, nfev=0, status=1)
             minimum_update_seconds = 0.
+            previous_jacobian = None
             while total_nfev < int(max_evaluations) and monotonic() < optimization_deadline:
                 solve_remaining = optimization_deadline - monotonic()
                 if minimum_update_seconds > solve_remaining:
@@ -7019,15 +7034,31 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 if chunk < 1:
                     break
                 block_started = monotonic()
-                solved = trajectory_solver(residual, current, pattern, chunk)
+                if previous_jacobian is None:
+                    solved = trajectory_solver(residual, current, pattern, chunk)
+                else:
+                    solved = trajectory_solver(
+                        residual, current, pattern, chunk,
+                        initial_jacobian=previous_jacobian)
                 block_evaluations = int(solved.nfev or chunk)
                 minimum_update_seconds = 2. * (monotonic() - block_started) / max(1, block_evaluations)
                 total_nfev += block_evaluations
                 solved.nfev = total_nfev
                 current = solved.x
-                # Evaluate after the chunk so stall detection works even when the
-                # solver stub does not call residual (tests) or returns early.
-                chunk_errors = residual(current)
+                # SciPy returns the Jacobian and residual at its terminal x.
+                # Reuse them across chunks with the same fixed objective; test
+                # doubles without these fields still take the explicit fallback.
+                candidate_jacobian = getattr(solved, 'jac', None)
+                previous_jacobian = (
+                    candidate_jacobian
+                    if getattr(candidate_jacobian, 'shape', None) == pattern.shape
+                    else None
+                )
+                chunk_errors = np.asarray(getattr(solved, 'fun', ()), dtype=float)
+                if chunk_errors.shape != (pattern.shape[0],):
+                    # Stubs and early-return adapters may not expose SciPy's
+                    # terminal residual, so retain the correctness fallback.
+                    chunk_errors = residual(current)
                 chunk_cost = float(chunk_errors @ chunk_errors)
                 improved = (
                     not np.isfinite(previous_best)

@@ -3708,6 +3708,38 @@ def test_solver_accepts_a_precomputed_local_jacobian_with_tail_rows():
     assert local_calls
 
 
+def test_solver_reuses_terminal_jacobian_at_next_block_start():
+    from scipy.sparse import eye
+    from exercise_motion_pkg.controlled_motion import solve_trajectory
+
+    initial = np.zeros(2)
+    target = np.array([10., -20.])
+    local_calls = []
+
+    def residual(values):
+        return values - target
+
+    def local_jacobian(values):
+        local_calls.append(np.asarray(values).copy())
+        return eye(2, format='csr')
+
+    pattern = eye(2, format='csr')
+    first_block = solve_trajectory(
+        residual, initial, pattern, 2, local_jacobian=local_jacobian)
+    assert not np.array_equal(first_block.x, target)
+    block_start = first_block.x.copy()
+    local_calls.clear()
+    solved = solve_trajectory(
+        residual, block_start, pattern, 2,
+        local_jacobian=local_jacobian,
+        initial_jacobian=first_block.jac)
+
+    assert np.linalg.norm(solved.x - target) < np.linalg.norm(block_start - target)
+    assert solved.jac.shape == (2, 2)
+    assert local_calls
+    assert all(not np.array_equal(values, block_start) for values in local_calls)
+
+
 def test_solver_can_move_a_tiny_nonzero_rotation():
     from exercise_motion_pkg.controlled_motion import solve_trajectory
     from scipy.sparse import csr_matrix
