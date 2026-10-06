@@ -1481,6 +1481,38 @@ single-run stage observations, not a controlled speed comparison. The RDL
 selection manifest recorded `classifySupportDominance=false`, but
 `process_ranked_candidate` still invoked CLEF and fell back to uncertain after
 finding Qwen on port 8090. The call is now gated by that request setting. A
-focused enabled/disabled regression passes; the two-exercise replay predates this
-narrow correction and has not been repeated. This removes an unrequested model
+focused enabled/disabled regression passes. The single-exercise replay below
+exercises the corrected production path; it removes an unrequested model
 operation without changing a fit, render, final-review, or package gate.
+
+### Oct 6 post-gate retained RDL production replay
+
+After the support-dominance request-flag fix, the retained RDL was run alone
+through `run_motion_retained_replay.py` and the real workout-plan script in
+`build/exercise_motion/rdl_post_gate_replay_20261006/run/`. The source MP4 hash,
+selected 3.9-second interval, and retained reconstruction hash match the
+corrected 117-frame fixture. This reused raw motion; it did not rerun GVHMR.
+The process completed in about 5m30 with exit code 0, no timeout, and
+`productionScriptE2EPassed=true`. The generator accepted one RDL and attached
+one movement reference. The terminal artifact is a 3.8-second `cyclic_rebake`
+with complete `full_clip_bake → cycle_selection → cyclic_rebake` lineage. The
+decompressed package content SHA-256 matches `movementRef.contentHash`, and
+`packagedSkeletonReviewParity.verified=true`.
+
+This replay also confirms that the model stands nearly perpendicular to its
+floor plane. In final standing frames 113–114, the pelvis-to-neck axis is 0.76°
+and 1.11° from world-up; both feet are at y≈0.0015 m above the y=0 render floor.
+The selected render contact sheet shows the upright start, hinge, bottom, return,
+and upright finish. The post-bake scene-orientation stage correctly made no
+global inversion correction (`applied=false`); the body is already upright.
+
+The stage data identifies the remaining time cost: candidate processing was
+196.6s, including 149.8s of preview bake. The bake reported 99.5s for the
+controlled fit and 105.1s aggregate source-articulation fit, plus 32.5s for the
+artifact review render. Separate counters report 24.5s to capture and 6.7s to
+write and quality-check the 180 review frames; these bake diagnostics are not
+strictly additive. Browser startup and export were 1.1s and 1.5s. Discovery took
+17.7s and selection materialization 41.1s. Thus the successful result still
+spends most candidate time in fitting and review rendering, while this run does
+not support a claim of fresh-inference savings, library-wide quality, or a
+speedup against a controlled baseline.
