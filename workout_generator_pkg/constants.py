@@ -371,6 +371,7 @@ JSON_SCHEMA = {
                 "id": {"$ref": "#/$defs/UUID"},
                 "type": {"const": "BARBELL"},
                 "name": {"type": "string"},
+                "capabilities": {"type": "array", "items": {"type": "string"}},
                 "availablePlates": {"type": "array", "items": {"$ref": "#/$defs/Plate"}},
                 "barWeight": {"type": "number"},
                 "sleeveLength": {"type": "integer"},  # in millimeters (mm)
@@ -392,6 +393,7 @@ JSON_SCHEMA = {
                 "id": {"$ref": "#/$defs/UUID"},                                                                                                                                                                                                  
                 "type": {"const": "DUMBBELLS"},                                                                                                                                                                                                  
                 "name": {"type": "string"},                                                                                                                                                                                                      
+                "capabilities": {"type": "array", "items": {"type": "string"}},
                 "maxExtraWeightsPerLoadingPoint": {"type": "integer"},                                                                                                                                                                           
                 "extraWeights": {"type": "array", "items": {"$ref": "#/$defs/BaseWeight"}},                                                                                                                                                      
                 "dumbbells": {"type": "array", "items": {"$ref": "#/$defs/BaseWeight"}}
@@ -412,6 +414,7 @@ JSON_SCHEMA = {
                 "id": {"$ref": "#/$defs/UUID"},                                                                                                                                                                                                  
                 "type": {"const": "DUMBBELL"},                                                                                                                                                                                                   
                 "name": {"type": "string"},                                                                                                                                                                                                      
+                "capabilities": {"type": "array", "items": {"type": "string"}},
                 "maxExtraWeightsPerLoadingPoint": {"type": "integer"},                                                                                                                                                                           
                 "extraWeights": {"type": "array", "items": {"$ref": "#/$defs/BaseWeight"}},                                                                                                                                                      
                 "dumbbells": {"type": "array", "items": {"$ref": "#/$defs/BaseWeight"}}                                                                                                                                                          
@@ -427,6 +430,7 @@ JSON_SCHEMA = {
                 "id": {"$ref": "#/$defs/UUID"},
                 "type": {"const": "PLATELOADEDCABLE"},
                 "name": {"type": "string"},
+                "capabilities": {"type": "array", "items": {"type": "string"}},
                 "availablePlates": {"type": "array", "items": {"$ref": "#/$defs/Plate"}},
                 "sleeveLength": {"type": "integer"},  # in millimeters (mm)
                 "barLength": {"type": "integer"}  # deprecated alias for sleeveLength
@@ -440,6 +444,7 @@ JSON_SCHEMA = {
                 "id": {"$ref": "#/$defs/UUID"},                                                                                                                                                                                                  
                 "type": {"const": "WEIGHTVEST"},                                                                                                                                                                                                 
                 "name": {"type": "string"},                                                                                                                                                                                                      
+                "capabilities": {"type": "array", "items": {"type": "string"}},
                 "availableWeights": {"type": "array", "items": {"$ref": "#/$defs/BaseWeight"}}                                                                                                                                                   
             }                                                                                                                                                                                                                                    
         },                                                                                                                                                                                                                                       
@@ -458,6 +463,7 @@ JSON_SCHEMA = {
                 "id": {"$ref": "#/$defs/UUID"},
                 "type": {"const": "MACHINE"},                                                                                                                                                                                                    
                 "name": {"type": "string"},                                                                                                                                                                                                      
+                "capabilities": {"type": "array", "items": {"type": "string"}},
                 "availableWeights": {"type": "array", "items": {"$ref": "#/$defs/BaseWeight"}},                                                                                                                                                  
                 "maxExtraWeightsPerLoadingPoint": {"type": "integer"},                                                                                                                                                                           
                 "extraWeights": {"type": "array", "items": {"$ref": "#/$defs/BaseWeight"}}                                                                                                                                                       
@@ -470,7 +476,19 @@ JSON_SCHEMA = {
             "properties": {
                 "id": {"$ref": "#/$defs/UUID"},
                 "type": {"const": "CARDIO_MACHINE"},
-                "name": {"type": "string"}
+                "name": {"type": "string"},
+                "capabilities": {"type": "array", "items": {"type": "string"}},
+            }
+        },
+        "EquipmentGeneric": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["id", "type", "name"],
+            "properties": {
+                "id": {"$ref": "#/$defs/UUID"},
+                "type": {"const": "GENERIC"},
+                "name": {"type": "string"},
+                "capabilities": {"type": "array", "items": {"type": "string"}},
             }
         },
         "EquipmentAccessory": {
@@ -480,22 +498,24 @@ JSON_SCHEMA = {
             "properties": {
                 "id": {"$ref": "#/$defs/UUID"},
                 "type": {"const": "ACCESSORY"},
-                "name": {"type": "string"}
+                "name": {"type": "string"},
+                "capabilities": {"type": "array", "items": {"type": "string"}},
             }
         },
         "Equipment": {
             "oneOf": [
                 {"$ref": "#/$defs/EquipmentBarbell"},
-                {"$ref": "#/$defs/EquipmentDumbbells"},                                                                                                                                                                                          
-                {"$ref": "#/$defs/EquipmentDumbbell"},                                                                                                                                                                                           
-                {"$ref": "#/$defs/EquipmentPlateLoadedCable"},                                                                                                                                                                                   
-                {"$ref": "#/$defs/EquipmentWeightVest"},                                                                                                                                                                                         
+                {"$ref": "#/$defs/EquipmentDumbbells"},
+                {"$ref": "#/$defs/EquipmentDumbbell"},
+                {"$ref": "#/$defs/EquipmentPlateLoadedCable"},
+                {"$ref": "#/$defs/EquipmentWeightVest"},
                 {"$ref": "#/$defs/EquipmentMachine"},
                 {"$ref": "#/$defs/EquipmentCardioMachine"},
-            ]                                                                                                                                                                                                                                    
-        }                                                                                                                                                                                                                                        
-    }                                                                                                                                                                                                                                            
-}                                                                                                                                                                                                                                                
+                {"$ref": "#/$defs/EquipmentGeneric"},
+            ]
+        }
+    }
+}
 EXAMPLE_JSON = {                                                                                                                                                                                                                                 
     "workouts": [
         {                                                                                                                                                                                                                                        

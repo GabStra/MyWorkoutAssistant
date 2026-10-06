@@ -209,6 +209,70 @@ def test_synonym_matching_prefers_existing_library_definitions():
     assert burpee.definition["name"] == "Burpee" and burpee.definition["exerciseType"] == "BODY_WEIGHT"
 
 
+def test_ensure_definitions_merges_generated_and_skips_when_covered(tmp_path):
+    from wod_importer_pkg.generators import ensure_definitions
+
+    working = {
+        "exerciseDefinitions": [_def("d-existing", "Deadlift")],
+        "equipments": [_eq("e1", "Barbell")],
+        "exerciseMovements": [{"movementRef": {"movementId": "m1"}}],
+    }
+    library_path = tmp_path / "accumulated.json"
+
+    calls = []
+
+    def fake_generation(client, equipment_file, request, max_definitions):
+        calls.append(request)
+        assert "Wall Ball" in request and "Deadlift" not in request
+        return {
+            "exerciseDefinitions": [
+                _def("d-new", "Wall Ball"),
+                _def("d-existing", "Deadlift"),  # duplicate: must be skipped
+            ],
+            "equipments": [_eq("e1", "Barbell"), _eq("e2", "Medicine Ball")],
+        }
+
+    library, created, _skipped = ensure_definitions(
+        movement_names=["Deadlift", "Wall Ball"],
+        working_library=working,
+        working_library_path=library_path,
+        equipment_file=tmp_path / "equipment.json",
+        make_client=lambda: object(),
+        generate_library=fake_generation,
+    )
+
+    names = [d["name"] for d in library["exerciseDefinitions"]]
+    assert names == ["Deadlift", "Wall Ball"]
+    assert created == ["Wall Ball"]
+    assert len(calls) == 1
+    assert library["exerciseMovements"] == working["exerciseMovements"]  # sidecar preserved
+    assert {e["id"] for e in library["equipments"]} == {"e1", "e2"}
+    assert library_path.exists()  # accumulated sidecar written
+
+    # second run: everything covered -> no generation call at all
+    calls.clear()
+    library2, created2, _ = ensure_definitions(
+        movement_names=["Deadlift", "Wall Ball"],
+        working_library=library,
+        working_library_path=library_path,
+        equipment_file=tmp_path / "equipment.json",
+        make_client=lambda: object(),
+        generate_library=fake_generation,
+    )
+    assert created2 == [] and calls == []
+    assert library2["exerciseDefinitions"][0]["id"] == "d-existing"
+
+
+def _def(id_, name):
+    return {"id": id_, "name": name, "exerciseType": "BODY_WEIGHT", "equipmentId": None,
+            "bodyWeightPercentage": None, "requiredAccessoryEquipmentIds": [],
+            "muscleGroups": [], "secondaryMuscleGroups": [], "exerciseCategory": None}
+
+
+def _eq(id_, name):
+    return {"id": id_, "type": "GENERIC", "name": name}
+
+
 def test_stable_id_determinism():
     assert stable_id("definition", "Burpee") == stable_id("definition", "Burpee")
     assert stable_id("definition", "Burpee") != stable_id("equipment", "Burpee")

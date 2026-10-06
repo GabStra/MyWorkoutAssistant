@@ -3000,7 +3000,7 @@ def EquipmentItem(equipment_dict):
         dict: Equipment item with placeholder ID
     """
     # Validate it's one of the equipment types
-    valid_types = ["BARBELL", "DUMBBELLS", "DUMBBELL", "PLATELOADEDCABLE", "WEIGHTVEST", "MACHINE", "CARDIO_MACHINE", "ACCESSORY"]
+    valid_types = ["BARBELL", "DUMBBELLS", "DUMBBELL", "PLATELOADEDCABLE", "WEIGHTVEST", "MACHINE", "CARDIO_MACHINE", "GENERIC", "ACCESSORY"]
     eq_type = equipment_dict.get("type", "")
     if eq_type not in valid_types:
         raise ValueError(f"Invalid equipment type: {eq_type}")

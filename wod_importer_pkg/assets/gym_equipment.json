@@ -1,0 +1,504 @@
+{
+  "equipments": [
+    {
+      "id": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "type": "BARBELL",
+      "name": "Barbell",
+      "availablePlates": [
+        {
+          "thickness": 20.0,
+          "weight": 2.5
+        },
+        {
+          "thickness": 20.0,
+          "weight": 1.25
+        },
+        {
+          "thickness": 16.0,
+          "weight": 1.0
+        },
+        {
+          "thickness": 25.0,
+          "weight": 5.0
+        },
+        {
+          "thickness": 25.0,
+          "weight": 5.0
+        },
+        {
+          "thickness": 25.0,
+          "weight": 5.0
+        },
+        {
+          "thickness": 33.0,
+          "weight": 10.0
+        },
+        {
+          "thickness": 42.0,
+          "weight": 20.0
+        },
+        {
+          "thickness": 10.0,
+          "weight": 0.25
+        },
+        {
+          "thickness": 15.0,
+          "weight": 0.5
+        }
+      ],
+      "barWeight": 10.0,
+      "sleeveLength": 270,
+      "capabilities": [
+        "LOADABLE_PLATES"
+      ]
+    },
+    {
+      "id": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "type": "DUMBBELLS",
+      "name": "Dumbbell Pair",
+      "maxExtraWeightsPerLoadingPoint": 1,
+      "extraWeights": [
+        {
+          "weight": 0.25
+        },
+        {
+          "weight": 0.5
+        },
+        {
+          "weight": 1.0
+        }
+      ],
+      "dumbbells": [
+        {
+          "weight": 2.5
+        },
+        {
+          "weight": 3.5
+        },
+        {
+          "weight": 4.5
+        },
+        {
+          "weight": 5.5
+        },
+        {
+          "weight": 6.5
+        },
+        {
+          "weight": 8.0
+        },
+        {
+          "weight": 9.0
+        },
+        {
+          "weight": 10.0
+        },
+        {
+          "weight": 11.5
+        },
+        {
+          "weight": 13.5
+        },
+        {
+          "weight": 16.0
+        },
+        {
+          "weight": 18.0
+        },
+        {
+          "weight": 20.5
+        },
+        {
+          "weight": 22.5
+        },
+        {
+          "weight": 24.0
+        }
+      ],
+      "capabilities": [
+        "ADJUSTABLE_WEIGHT"
+      ]
+    },
+    {
+      "id": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "type": "WEIGHTVEST",
+      "name": "Weight Vest",
+      "availableWeights": [
+        {
+          "weight": 1.0
+        },
+        {
+          "weight": 2.0
+        },
+        {
+          "weight": 3.0
+        },
+        {
+          "weight": 4.0
+        },
+        {
+          "weight": 5.0
+        },
+        {
+          "weight": 6.0
+        },
+        {
+          "weight": 7.0
+        },
+        {
+          "weight": 8.0
+        },
+        {
+          "weight": 9.0
+        },
+        {
+          "weight": 10.0
+        },
+        {
+          "weight": 11.0
+        },
+        {
+          "weight": 12.0
+        },
+        {
+          "weight": 13.0
+        },
+        {
+          "weight": 14.0
+        },
+        {
+          "weight": 15.0
+        },
+        {
+          "weight": 16.0
+        },
+        {
+          "weight": 17.0
+        },
+        {
+          "weight": 18.0
+        },
+        {
+          "weight": 19.0
+        },
+        {
+          "weight": 20.0
+        }
+      ],
+      "capabilities": [
+        "ADJUSTABLE_WEIGHT"
+      ]
+    },
+    {
+      "id": "653678c3-70bf-4425-b6b7-14bf6b752c87",
+      "type": "PLATELOADEDCABLE",
+      "name": "Cable",
+      "availablePlates": [
+        {
+          "thickness": 20.0,
+          "weight": 2.5
+        },
+        {
+          "thickness": 20.0,
+          "weight": 1.25
+        },
+        {
+          "thickness": 16.0,
+          "weight": 1.0
+        },
+        {
+          "thickness": 25.0,
+          "weight": 5.0
+        },
+        {
+          "thickness": 25.0,
+          "weight": 5.0
+        },
+        {
+          "thickness": 25.0,
+          "weight": 5.0
+        },
+        {
+          "thickness": 33.0,
+          "weight": 10.0
+        },
+        {
+          "thickness": 42.0,
+          "weight": 20.0
+        },
+        {
+          "thickness": 10.0,
+          "weight": 0.25
+        },
+        {
+          "thickness": 15.0,
+          "weight": 0.5
+        },
+        {
+          "thickness": 25.0,
+          "weight": 5.0
+        },
+        {
+          "thickness": 25.0,
+          "weight": 5.0
+        },
+        {
+          "thickness": 25.0,
+          "weight": 5.0
+        },
+        {
+          "thickness": 10.0,
+          "weight": 0.25
+        },
+        {
+          "thickness": 15.0,
+          "weight": 0.5
+        },
+        {
+          "thickness": 16.0,
+          "weight": 1.0
+        },
+        {
+          "thickness": 20.0,
+          "weight": 1.25
+        },
+        {
+          "thickness": 20.0,
+          "weight": 2.5
+        }
+      ],
+      "sleeveLength": 170,
+      "capabilities": [
+        "HIGH_PULLEY",
+        "LOADABLE_PLATES",
+        "ROPE_ATTACHMENT",
+        "SINGLE_HANDLE_ATTACHMENT"
+      ]
+    },
+    {
+      "id": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "type": "DUMBBELL",
+      "name": "Dumbbell",
+      "maxExtraWeightsPerLoadingPoint": 1,
+      "extraWeights": [
+        {
+          "weight": 0.25
+        },
+        {
+          "weight": 0.5
+        },
+        {
+          "weight": 1.0
+        }
+      ],
+      "dumbbells": [
+        {
+          "weight": 2.5
+        },
+        {
+          "weight": 3.5
+        },
+        {
+          "weight": 4.5
+        },
+        {
+          "weight": 5.5
+        },
+        {
+          "weight": 6.5
+        },
+        {
+          "weight": 8.0
+        },
+        {
+          "weight": 9.0
+        },
+        {
+          "weight": 10.0
+        },
+        {
+          "weight": 11.5
+        },
+        {
+          "weight": 13.5
+        },
+        {
+          "weight": 16.0
+        },
+        {
+          "weight": 18.0
+        },
+        {
+          "weight": 20.5
+        },
+        {
+          "weight": 22.5
+        },
+        {
+          "weight": 24.0
+        }
+      ],
+      "capabilities": [
+        "ADJUSTABLE_WEIGHT"
+      ]
+    },
+    {
+      "id": "567028fe-e672-41af-bc6d-bb1fc3089d10",
+      "type": "CARDIO_MACHINE",
+      "name": "Spin Bike",
+      "capabilities": [
+        "CARDIO_STATIONARY"
+      ]
+    },
+    {
+      "id": "f88a9577-7380-5ac4-8a83-e357c79dbd72",
+      "type": "CARDIO_MACHINE",
+      "name": "Rower",
+      "capabilities": [
+        "CARDIO_STATIONARY"
+      ]
+    },
+    {
+      "id": "25f58251-2953-57e5-89b2-7cb14f12f0d4",
+      "type": "CARDIO_MACHINE",
+      "name": "Bike Erg",
+      "capabilities": [
+        "CARDIO_STATIONARY"
+      ]
+    },
+    {
+      "id": "d3f4e231-5d2b-571a-9fdc-0ddae8a596c9",
+      "type": "CARDIO_MACHINE",
+      "name": "Assault Bike",
+      "capabilities": [
+        "CARDIO_STATIONARY"
+      ]
+    },
+    {
+      "id": "995e95fa-1db6-57a4-94ae-e13816ca5132",
+      "type": "CARDIO_MACHINE",
+      "name": "Ski Erg",
+      "capabilities": [
+        "CARDIO_STATIONARY"
+      ]
+    },
+    {
+      "id": "195e9cc4-e61f-5220-bc65-901a3fc2b3a5",
+      "type": "GENERIC",
+      "name": "Medicine Ball",
+      "capabilities": []
+    },
+    {
+      "id": "77920ea1-9d87-53a6-9b8e-151deb270b98",
+      "type": "GENERIC",
+      "name": "Sled",
+      "capabilities": []
+    },
+    {
+      "id": "89cba257-0e38-57fc-a366-27bb776c9e76",
+      "type": "GENERIC",
+      "name": "Kettlebell",
+      "capabilities": []
+    },
+    {
+      "id": "3feff12b-f48a-5164-beeb-0e87af4d0f54",
+      "type": "GENERIC",
+      "name": "Weight Plate",
+      "capabilities": []
+    }
+  ],
+  "accessoryEquipments": [
+    {
+      "id": "ef01a523-f4f3-4aa9-8e85-68fc08b73a49",
+      "type": "ACCESSORY",
+      "name": "Nordic Curl Setup",
+      "capabilities": [
+        "NORDIC_CURL_SUPPORT"
+      ]
+    },
+    {
+      "id": "0150cff2-cce4-4c45-8d8a-631f915b80fe",
+      "type": "ACCESSORY",
+      "name": "Ab Wheel",
+      "capabilities": [
+        "CORE_ROLLER"
+      ]
+    },
+    {
+      "id": "49405aae-8e6d-4364-8bd5-cb551fb97631",
+      "type": "ACCESSORY",
+      "name": "Pull-Up Station",
+      "capabilities": [
+        "PULL_UP_BAR"
+      ]
+    },
+    {
+      "id": "860fedac-30a1-40fa-bfff-269484fa246b",
+      "type": "ACCESSORY",
+      "name": "Rings",
+      "capabilities": [
+        "GYMNASTIC_RINGS"
+      ]
+    },
+    {
+      "id": "e3f0e0ee-3433-4435-bed9-c926e23a8468",
+      "type": "ACCESSORY",
+      "name": "Adjustable Bench",
+      "capabilities": [
+        "ADJUSTABLE_BENCH",
+        "BENCH",
+        "FLAT_BENCH",
+        "INCLINE_BENCH"
+      ]
+    },
+    {
+      "id": "31159650-e64d-47ba-95b3-a63ce301dbac",
+      "type": "ACCESSORY",
+      "name": "Squat Rack",
+      "capabilities": [
+        "RACKED_BAR_SUPPORT"
+      ]
+    },
+    {
+      "id": "02f9b48d-e3f5-534b-b52d-6c4a75d29203",
+      "type": "ACCESSORY",
+      "name": "Wall Ball Target",
+      "capabilities": []
+    },
+    {
+      "id": "f0b7fbee-2740-5a57-bff7-10d17d7ae483",
+      "type": "ACCESSORY",
+      "name": "Plyo Box",
+      "capabilities": []
+    },
+    {
+      "id": "9728b459-6e8a-59d1-81c7-2c542b8af8ec",
+      "type": "ACCESSORY",
+      "name": "Jump Rope",
+      "capabilities": []
+    },
+    {
+      "id": "6e4325dc-8514-5065-9467-1b14e8ac0614",
+      "type": "ACCESSORY",
+      "name": "Ab Mat",
+      "capabilities": []
+    },
+    {
+      "id": "e43888d2-1322-518e-89aa-204b5d993085",
+      "type": "ACCESSORY",
+      "name": "Pull-Up Bar",
+      "capabilities": [
+        "PULL_UP_BAR",
+        "MUSCLE_UP_CLEARANCE"
+      ]
+    },
+    {
+      "id": "7aaa4597-86aa-5c61-adcd-75e340437a33",
+      "type": "ACCESSORY",
+      "name": "Gymnastic Rings",
+      "capabilities": [
+        "GYMNASTIC_RINGS"
+      ]
+    }
+  ]
+}
