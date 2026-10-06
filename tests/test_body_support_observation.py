@@ -153,9 +153,20 @@ def test_hash_matched_confirmed_support_adds_only_observed_stationary_ground_fee
         }
 
     payload = payload_for()
+    # Unequal rig-side shoe geometry must keep its plane when source labels
+    # are swapped, whether support is prepared by production or inside fit.
+    for frame in payload['frames']:
+        frame['joints']['left_foot'][2] += .25
+    direct_support = materialize_stationary_sole_support(payload)['bodySupport']
     materialize_body_support(payload, source_pose)
     rig_evidence = materialize_stationary_sole_support(payload)
     rig_support = rig_evidence['bodySupport']
+    def sole_planes(support):
+        return {tuple(sorted(group['joints'])): group['planeOffsetMeters']
+                for group in support['coplanarGroups'] if len(group['joints']) == 2}
+
+    assert sole_planes(rig_support) == sole_planes(direct_support)
+    assert len(set(sole_planes(rig_support).values())) == 2
     assert {'left_ankle', 'left_foot', 'right_ankle', 'right_foot'}.issubset(
         set(rig_support['stationaryJoints']))
     assert {contact['joints'][2] for contact in rig_support['soleContacts']} == {

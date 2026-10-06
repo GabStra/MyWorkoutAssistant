@@ -217,7 +217,7 @@ def materialize_body_support(payload, source_pose, contract=None):
                 or not stationary_source_track(source_pose, f'{side}_ankle')):
             continue
         sides.append(side)
-    add_ground_sole_contacts(payload, support, medians, sides)
+    add_ground_sole_contacts(payload, support, medians, sides, evidence=evidence)
     evidence['bodySupport'] = support
 
 
@@ -314,16 +314,31 @@ def materialize_observed_ground_contacts(payload, source_pose):
     evidence['bodySupport'] = support
 
 
-def add_ground_sole_contacts(payload, support, medians, sides):
+def add_ground_sole_contacts(payload, support, medians, sides, *, evidence):
     """Use the same shoe dimensions for every explicitly observed ground contact."""
     hip_width = np.linalg.norm(medians['right_hip']-medians['left_hip'])
     shoulder_width = np.linalg.norm(medians['right_shoulder']-medians['left_shoulder'])
     foot_scale = max(hip_width*.98, shoulder_width*.58)
+    camera_reference = payload.get('sourcePoseCameraReference') or {}
+    camera = camera_reference.get('camera') or {}
+    source_labels_swapped = (
+        camera.get('bilateralAssignment') == 'swapped'
+        and not isinstance(evidence.get('motionSpaceMapping'), dict)
+    )
     for side in sides:
         ankle, foot, knee = [f'{side}_{part}' for part in ('ankle', 'foot', 'knee')]
         if not {ankle, foot, knee}.issubset(medians):
             continue
-        shoe_height = max(np.linalg.norm(medians[foot]-medians[ankle])*.28, foot_scale*.15)
+        # Canonical source labels can name the opposite baked rig side. Keep
+        # constraint labels canonical, but measure geometry on their rig side.
+        geometry_side = ('right' if side == 'left' else 'left') if source_labels_swapped else side
+        geometry_ankle, geometry_foot = (f'{geometry_side}_{part}' for part in ('ankle', 'foot'))
+        if not {geometry_ankle, geometry_foot}.issubset(medians):
+            continue
+        shoe_height = max(
+            np.linalg.norm(medians[geometry_foot]-medians[geometry_ankle])*.28,
+            foot_scale*.15,
+        )
         for joint in (ankle, foot):
             if joint not in support['stationaryJoints']:
                 support['stationaryJoints'].append(joint)
@@ -408,7 +423,7 @@ def _augment_confirmed_ground_sole_support(payload, evidence, source_pose, *, si
         name: np.median([frame['joints'][name] for frame in frames], axis=0)
         for name in names
     }
-    add_ground_sole_contacts(payload, support, medians, missing_sides)
+    add_ground_sole_contacts(payload, support, medians, missing_sides, evidence=evidence)
     return confirmed_sides
 
 
@@ -570,7 +585,7 @@ def materialize_stationary_sole_support(payload):
         if joints:
             groups.append({**group, 'joints': joints})
     support['coplanarGroups'] = groups
-    add_ground_sole_contacts(payload, support, medians, sides)
+    add_ground_sole_contacts(payload, support, medians, sides, evidence=evidence)
     if support['soleContacts']:
         evidence['bodySupport'] = support
     return evidence
