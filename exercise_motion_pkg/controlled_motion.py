@@ -304,6 +304,37 @@ def failed_check_names(checks):
     return [key for key, passed in checks.items() if not passed]
 
 
+def bounded_anatomy_projection_eligible(
+    failed_checks: set[str],
+    checks: dict,
+    *,
+    repairable_anatomy: bool,
+    cyclic: bool,
+) -> bool:
+    """Gate a short anatomy projection on every independent structural check."""
+    allowed_failures = {
+        'anatomy', 'playback', 'motionDiscontinuity', 'jerk',
+        'jointShake', 'relativeJointShake', 'settling',
+    }
+    if (
+        not repairable_anatomy
+        or 'anatomy' not in failed_checks
+        or not failed_checks <= allowed_failures
+    ):
+        return False
+
+    structural_gates = {
+        'contacts', 'heightOnlyContacts', 'sourceArticulation', 'trajectoryFit',
+        'rootTravel', 'jointRange', 'fixedRig', 'bodySupport', 'supportAlignment',
+        'rootContinuity', 'equipment', 'bodyRotation',
+    }
+    if not all(checks.get(name) is True for name in structural_gates):
+        return False
+    # Open motion has no seam gate. Cyclic motion must already have a valid
+    # seam before anatomy projection is allowed to spend the remaining budget.
+    return not cyclic or checks.get('loopSeam') is True
+
+
 def support_reference_grossly_invalid(report, *, tolerance_multiplier=5.):
     """Identify timed-out support references far beyond repair tolerance."""
     geometry = report.get('supportReferenceGeometry', {})
@@ -7161,18 +7192,12 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
     failed_checks = set(failed_check_names(report.get('checks')))
     repairable_anatomy = bool(
         set(report.get('physicalReasons') or []) & ANATOMICAL_REPAIR_INPUT_REASONS)
-    anatomy_projection_gates = {
-        'contacts', 'heightOnlyContacts', 'sourceArticulation', 'trajectoryFit',
-        'rootTravel', 'jointRange', 'fixedRig', 'bodySupport', 'supportAlignment',
-        'rootContinuity', 'equipment', 'motionDiscontinuity', 'bodyRotation',
-        'loopSeam',
-    }
-    if (allow_refinement and 'anatomy' in failed_checks and repairable_anatomy
-            and failed_checks <= {
-                'anatomy', 'playback', 'jerk', 'jointShake',
-                'relativeJointShake', 'settling'}
-            and all((report.get('checks') or {}).get(name) is True
-                    for name in anatomy_projection_gates)):
+    if allow_refinement and bounded_anatomy_projection_eligible(
+        failed_checks,
+        report.get('checks') or {},
+        repairable_anatomy=repairable_anatomy,
+        cyclic=cyclic,
+    ):
         remaining = started + timeout_seconds - monotonic()
         repair_budget = min(5., max(0., remaining - 3.))
         if repair_budget >= 0.5:
@@ -7201,10 +7226,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                     trial_candidate, trial_report = validate_solution(
                         trial, project_playback_plants=False)
                     trial_failed = set(failed_check_names(trial_report.get('checks')))
-                    improved = bool(
-                        trial_report.get('applied')
-                        or (trial_failed < failed_checks
-                            and trial_failed <= failed_checks))
+                    improved = bool(trial_report.get('applied') or trial_failed < failed_checks)
                     projection['failedChecksAfter'] = sorted(trial_failed)
                     projection['accepted'] = improved
                     if improved:

@@ -19,6 +19,53 @@ def test_hybrid_jacobian_defaults_on_and_supports_explicit_fallback(monkeypatch)
     assert motion._hybrid_jacobian_enabled()
 
 
+def test_bounded_anatomy_projection_allows_temporal_near_misses_only():
+    from exercise_motion_pkg import controlled_motion as motion
+
+    structural_gates = {
+        'contacts', 'heightOnlyContacts', 'sourceArticulation', 'trajectoryFit',
+        'rootTravel', 'jointRange', 'fixedRig', 'bodySupport', 'supportAlignment',
+        'rootContinuity', 'equipment', 'bodyRotation',
+    }
+    checks = {name: True for name in structural_gates}
+    checks.update({
+        'anatomy': False,
+        'motionDiscontinuity': False,
+        'playback': False,
+    })
+
+    assert motion.bounded_anatomy_projection_eligible(
+        {'anatomy', 'motionDiscontinuity', 'playback'},
+        checks,
+        repairable_anatomy=True,
+        cyclic=False,
+    )
+    assert not motion.bounded_anatomy_projection_eligible(
+        {'anatomy', 'motionDiscontinuity', 'playback'},
+        {**checks, 'sourceArticulation': False},
+        repairable_anatomy=True,
+        cyclic=False,
+    )
+    assert not motion.bounded_anatomy_projection_eligible(
+        {'anatomy', 'motionDiscontinuity', 'playback'},
+        checks,
+        repairable_anatomy=False,
+        cyclic=False,
+    )
+    assert not motion.bounded_anatomy_projection_eligible(
+        {'anatomy', 'motionDiscontinuity', 'playback'},
+        checks,
+        repairable_anatomy=True,
+        cyclic=True,
+    )
+    assert motion.bounded_anatomy_projection_eligible(
+        {'anatomy', 'motionDiscontinuity', 'playback'},
+        {**checks, 'loopSeam': True},
+        repairable_anatomy=True,
+        cyclic=True,
+    )
+
+
 def test_swapped_materialized_sole_support_reaches_fit_without_mutating_source(monkeypatch):
     from copy import deepcopy
 

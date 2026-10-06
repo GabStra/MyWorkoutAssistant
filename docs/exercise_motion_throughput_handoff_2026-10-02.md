@@ -861,6 +861,15 @@ directory has a condensed version of this state; update it after the arms land.
   semantics from the current generated contract, so re-keying it would be
   unsafe. This fix restores source evidence availability; it does not establish
   that OHP or RDL now passes fitting.
+- The fitter's bounded anatomy-projection gate now permits an attempt when
+  anatomy is the only structural failure and only playback/temporal checks
+  also fail. All source-articulation, contact, trajectory, support, rig, and
+  equipment checks must still pass; cyclic clips still need a passing seam.
+  Open clips no longer require a seam check that does not apply. The existing
+  five-second budget and strict full revalidation remain in force, and the
+  projected result is kept only when it clears checks without introducing any
+  failure. The focused eligibility regression passed. No retained RDL fit was
+  rerun, so this is a safe repair opportunity, not proof of a successful output.
 - Focused regressions passed (`6 passed`), and the edited Python modules and
   tests compiled with `py_compile`. No throughput promotion is claimed.
 - Architecture status: reviewed render/package artifact identity is connected
