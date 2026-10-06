@@ -28,6 +28,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
@@ -191,22 +193,29 @@ fun CustomHorizontalPager(
                 }
             }
         } else {
+            val hasMovingPlaceholder = movingPlaceholder != null
+            val isMoving by remember(pagerState, hasMovingPlaceholder) {
+                derivedStateOf {
+                    hasMovingPlaceholder &&
+                        (pagerState.isScrollInProgress || pagerState.currentPageOffsetFraction != 0f)
+                }
+            }
             HorizontalPager(
                 state = pagerState,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .semantics { contentDescription = "Horizontal workout pager" },
                 flingBehavior = PagerDefaults.snapFlingBehavior(state = pagerState),
                 userScrollEnabled = userScrollEnabled,
                 beyondViewportPageCount = beyondViewportPageCount,
             ) { page ->
-                val isMoving =
-                    pagerState.isScrollInProgress || pagerState.currentPageOffsetFraction != 0f
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                 ) {
-                    if (isMoving && movingPlaceholder != null) {
+                    if (isMoving) {
                         Box(modifier = Modifier.fillMaxSize()) {
-                            movingPlaceholder()
+                            movingPlaceholder?.invoke(this)
                         }
                     } else if (animatePages) {
                         CustomAnimatedPage(

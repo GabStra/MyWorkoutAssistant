@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package com.gabstra.myworkoutassistant.screens
 
 import androidx.compose.foundation.BorderStroke
@@ -43,18 +45,20 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import androidx.wear.tooling.preview.devices.WearDevices
 import com.gabstra.myworkoutassistant.composables.ControlButtonsVertical
+import com.gabstra.myworkoutassistant.composables.WEAR_CONTROL_EDIT_INACTIVITY_TIMEOUT_MILLIS
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composables.ExerciseIndicator
 import com.gabstra.myworkoutassistant.composables.ExerciseNameText
 import com.gabstra.myworkoutassistant.composables.HeartRateCircularChart
-import com.gabstra.myworkoutassistant.composables.PageButtons
-import com.gabstra.myworkoutassistant.composables.PageExercises
-import com.gabstra.myworkoutassistant.composables.PageNotes
-import com.gabstra.myworkoutassistant.composables.PagePlates
-import com.gabstra.myworkoutassistant.composables.PageProgressionComparison
+import com.gabstra.myworkoutassistant.composables.workout.pages.ControlsPage
+import com.gabstra.myworkoutassistant.composables.workout.pages.ExercisesPage
+import com.gabstra.myworkoutassistant.composables.workout.pages.NotesPage
+import com.gabstra.myworkoutassistant.composables.workout.pages.PlatesPage
+import com.gabstra.myworkoutassistant.composables.workout.pages.ProgressionComparisonPage
 import com.gabstra.myworkoutassistant.composables.SetTableRow
 import com.gabstra.myworkoutassistant.composables.SetValueSemantics
+import com.gabstra.myworkoutassistant.composables.SetValueSection
 import com.gabstra.myworkoutassistant.composables.TimeViewer
 import com.gabstra.myworkoutassistant.composables.WorkoutPagerLayoutTokens
 import com.gabstra.myworkoutassistant.composables.WorkoutPagerPageSafeAreaPadding
@@ -74,7 +78,7 @@ import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
-import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateMachine
+import com.gabstra.myworkoutassistant.preview.createPreviewWorkoutStateMachine
 import com.gabstra.myworkoutassistant.shared.workout.timer.WorkoutTimerService
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
@@ -123,6 +127,8 @@ private fun RestTimerBlock(
     val timerUiState by viewModel.workoutTimerService.timerUiState(set.id).collectAsState(initial = null)
     var isTimerInEditMode by remember { mutableStateOf(false) }
     var wasTimerRunningBeforeEditMode by remember(set.id) { mutableStateOf(false) }
+    var editInitialSeconds by remember(set.id) { mutableIntStateOf(currentSeconds) }
+    var editInitialAmountToWait by remember(set.id) { mutableIntStateOf(amountToWait) }
     var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
     val isPaused by viewModel.isPaused
 
@@ -184,6 +190,8 @@ private fun RestTimerBlock(
             val syncedSeconds = timerUiState?.displaySeconds ?: currentSetData.endTimer
             currentSeconds = syncedSeconds.coerceAtLeast(0)
             amountToWait = currentSetData.startTimer
+            editInitialSeconds = currentSeconds
+            editInitialAmountToWait = amountToWait
             currentSetData = clampRestData(currentSetData.copy(startTimer = amountToWait, endTimer = currentSeconds))
             state.currentSetData = currentSetData
             unregisterRestTimer()
@@ -227,7 +235,7 @@ private fun RestTimerBlock(
     }
     LaunchedEffect(isTimerInEditMode) {
         while (isTimerInEditMode) {
-            if (System.currentTimeMillis() - lastInteractionTime > 5000) {
+            if (System.currentTimeMillis() - lastInteractionTime > WEAR_CONTROL_EDIT_INACTIVITY_TIMEOUT_MILLIS) {
                 setTimerEditMode(false)
             }
             delay(1000)
@@ -284,8 +292,25 @@ private fun RestTimerBlock(
                 onMinusLongPress = { onMinusClick() },
                 onPlusTap = { onPlusClick() },
                 onPlusLongPress = { onPlusClick() },
+                isResetEnabled = currentSeconds != editInitialSeconds || amountToWait != editInitialAmountToWait,
                 onCloseClick = { setTimerEditMode(false) },
-                content = { textComposable(seconds = currentSeconds) }
+                onResetClick = {
+                    currentSeconds = editInitialSeconds
+                    amountToWait = editInitialAmountToWait
+                    currentSetData = clampRestData(
+                        currentSetData.copy(
+                            startTimer = editInitialAmountToWait,
+                            endTimer = editInitialSeconds,
+                        )
+                    )
+                    updateInteractionTime()
+                    hapticsViewModel.doGentleVibration()
+                },
+                content = {
+                    SetValueSection(label = "REST", headerStyle = timerHeaderStyle) {
+                        textComposable(seconds = currentSeconds)
+                    }
+                }
             )
         }
     }
@@ -313,12 +338,12 @@ private fun RestTimerBlock(
                 Text(
                     text = "UP NEXT",
                     style = timerHeaderStyle,
-                    color = MaterialTheme.colorScheme.onBackground
+                    color = MaterialTheme.colorScheme.primary
                 )
                 Spacer(modifier = Modifier.height(2.5.dp))
                 ExerciseNameText(
                     text = nextExercise.name,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 15.dp),
                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
                     textAlign = TextAlign.Center
                 )
@@ -520,6 +545,7 @@ fun RestScreen(
             modifier = Modifier.fillMaxSize(),
             pagerState = horizontalPagerState,
             userScrollEnabled = !isEditModeState.value,
+            animatePages = false,
             pageOverlay = { pageIndex ->
                 if (horizontalPageTypes[pageIndex] == RestHorizontalPage.REST_TIMER) {
                     hearthRateChart(Modifier.fillMaxSize())
@@ -541,14 +567,14 @@ fun RestScreen(
             when (horizontalPageTypes[pageIndex]) {
                 RestHorizontalPage.BUTTONS -> {
                     if (setStateForPages != null) {
-                        PageButtons(setStateForPages, viewModel, hapticsViewModel, navController, onBeforeGoHome)
+                        ControlsPage(setStateForPages, viewModel, hapticsViewModel, navController, onBeforeGoHome)
                     }
                 }
 
                 RestHorizontalPage.PLATES -> {
                     if (setStateForPages != null && equipment != null) {
                         Box(modifier = pageModifier) {
-                            PagePlates(setStateForPages, equipment, hapticsViewModel, viewModel)
+                            PlatesPage(setStateForPages, equipment, hapticsViewModel, viewModel)
                         }
                     }
                 }
@@ -579,7 +605,7 @@ fun RestScreen(
                 RestHorizontalPage.PROGRESSION_COMPARISON -> {
                     if (setStateForPages != null) {
                         Box(modifier = pageModifier) {
-                            PageProgressionComparison(
+                            ProgressionComparisonPage(
                                 viewModel = viewModel,
                                 hapticsViewModel = hapticsViewModel,
                                 exercise = exerciseForPages,
@@ -593,13 +619,13 @@ fun RestScreen(
 
                 RestHorizontalPage.NOTES -> {
                     Box(modifier = pageModifier) {
-                        PageNotes(exerciseForPages.notes)
+                        NotesPage(exerciseForPages.notes)
                     }
                 }
 
                 RestHorizontalPage.EXERCISES -> {
                     if (nextState != null) {
-                        PageExercises(
+                        ExercisesPage(
                             selectedExercise = selectedExercise,
                             selectedRestPageId = selectedRestPageId,
                             workoutState = state,
@@ -727,9 +753,9 @@ private fun buildRestPreviewFixture(): RestPreviewFixture {
     viewModel.supersetIdByExerciseId = emptyMap()
     viewModel.exercisesBySupersetId = emptyMap()
 
-    val stateMachine = WorkoutStateMachine.fromStates(
-        listOf(restState, nextState),
-        { REST_PREVIEW_FIXED_NOW },
+    val stateMachine = createPreviewWorkoutStateMachine(
+        states = listOf(restState, nextState),
+        timeProvider = { REST_PREVIEW_FIXED_NOW },
         startIndex = 0
     )
     setFieldValue(viewModel, "stateMachine", stateMachine)

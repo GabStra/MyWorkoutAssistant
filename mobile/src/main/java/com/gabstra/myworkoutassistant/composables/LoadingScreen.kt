@@ -16,6 +16,15 @@ import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 
 @Composable
+fun AppCircularLoadingIndicator(modifier: Modifier = Modifier) {
+    CircularProgressIndicator(
+        modifier = modifier,
+        color = MaterialTheme.colorScheme.primary,
+        trackColor = MediumDarkGray,
+    )
+}
+
+@Composable
 fun LoadingScreen() {
     Box(
         modifier = Modifier
@@ -24,10 +33,7 @@ fun LoadingScreen() {
         contentAlignment = Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            CircularProgressIndicator(
-                color = MaterialTheme.colorScheme.primary,
-                trackColor = MediumDarkGray,
-            )
+            AppCircularLoadingIndicator()
             Spacer(Modifier.height(Spacing.md))
             Text(
                 text = "Loading...",

@@ -20,7 +20,9 @@ def _build_type_specific_exercise_schema(
         "type": {"const": "Exercise"},
         "enabled": {"type": "boolean"},
         "name": {"type": "string"},
+        "nameOverride": {"type": ["string", "null"]},
         "notes": {"type": "string", "maxLength": 500},
+        "placementNotes": {"type": "string", "maxLength": 500},
         "sets": {
             "type": "array",
             "minItems": 1,
@@ -161,6 +163,7 @@ def _exercise_example_base(
         "enabled": True,
         "name": name,
         "notes": "",
+        "placementNotes": "",
         "sets": sets,
         "exerciseType": exercise_type,
         "equipmentId": equipment_id,
@@ -350,7 +353,8 @@ EXERCISE_EMISSION_PROFILES = {
             "- Output one Exercise object shaped exactly like the COUNTDOWN schema.\n"
             "- Work sets must be TimedDurationSet objects only.\n"
             "- RestSet is allowed only between adjacent timed work sets when the plan includes restBetweenSetsSeconds.\n"
-            "- TimedDurationSet uses timeInMillis, autoStart, and autoStop. Do not emit reps, weight, additionalWeight, or subCategory on timed work sets.\n"
+            "- TimedDurationSet uses timeInMillis, autoStart, and autoStop. It may include targetWeight only when the selected non-cardio equipment provides an external load; otherwise omit it.\n"
+            "- Do not emit reps, weight, additionalWeight, or subCategory on timed work sets.\n"
             "- Do not output minReps or maxReps.\n"
             "- bodyWeightPercentage must be present and set to null.\n"
             "- showCountDownTimer must be true.\n"
@@ -393,7 +397,8 @@ EXERCISE_EMISSION_PROFILES = {
             "- Output one Exercise object shaped exactly like the COUNTUP schema.\n"
             "- Work sets must be EnduranceSet objects only.\n"
             "- RestSet is allowed only between adjacent timed work sets when the plan includes restBetweenSetsSeconds.\n"
-            "- EnduranceSet uses timeInMillis, autoStart, and autoStop. Do not emit reps, weight, additionalWeight, or subCategory on timed work sets.\n"
+            "- EnduranceSet uses timeInMillis, autoStart, and autoStop. It may include targetWeight only when the selected non-cardio equipment provides an external load; otherwise omit it.\n"
+            "- Do not emit reps, weight, additionalWeight, or subCategory on timed work sets.\n"
             "- Do not output minReps or maxReps.\n"
             "- bodyWeightPercentage must be present and set to null.\n"
             "- exerciseCategory must be null.\n"

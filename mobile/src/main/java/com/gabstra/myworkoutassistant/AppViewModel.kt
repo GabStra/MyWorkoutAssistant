@@ -7,6 +7,7 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -32,6 +33,14 @@ import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.ExerciseDefinition
+import com.gabstra.myworkoutassistant.shared.ExerciseLibraryPackage
+import com.gabstra.myworkoutassistant.shared.deleteExerciseDefinition
+import com.gabstra.myworkoutassistant.shared.effectiveFamilyId
+import com.gabstra.myworkoutassistant.shared.addExerciseDefinition
+import com.gabstra.myworkoutassistant.shared.normalizeExerciseFamilyMovements
+import com.gabstra.myworkoutassistant.shared.normalizeExerciseFamilyMovementOwnership
+import com.gabstra.myworkoutassistant.shared.updateExerciseDefinition
 import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
@@ -100,8 +109,10 @@ sealed class ScreenData() {
         val workoutHistoryId: UUID,
     ) : ScreenData()
 
-    class NewExercise(val workoutId: UUID) : ScreenData()
+    class NewExercise(val workoutId: UUID, val exerciseDefinitionId: UUID? = null, val skipLibrary: Boolean = false) : ScreenData()
     class EditExercise(val workoutId: UUID, val selectedExerciseId: UUID) : ScreenData()
+    class NewExerciseDefinition : ScreenData()
+    class EditExerciseDefinition(val exerciseDefinitionId: UUID) : ScreenData()
 
     class NewSuperset(val workoutId: UUID) : ScreenData()
     class EditSuperset(val workoutId: UUID, val selectedSupersetId: UUID) : ScreenData()
@@ -139,8 +150,10 @@ sealed class ScreenData() {
             is ExerciseHistory -> "ExerciseHistory_${workoutId}_${selectedExerciseId}_${selectedTabIndex}_${workoutHistoryId?.toString() ?: "null"}"
             is HistoryChatExercise -> "HistoryChatExercise_${workoutId}_${exerciseId}"
             is HistoryChatWorkoutSession -> "HistoryChatWorkoutSession_${workoutId}_${workoutHistoryId}"
-            is NewExercise -> "NewExercise_${workoutId}"
+            is NewExercise -> "NewExercise_${workoutId}_${exerciseDefinitionId}_${skipLibrary}"
             is EditExercise -> "EditExercise_${workoutId}_${selectedExerciseId}"
+            is NewExerciseDefinition -> "NewExerciseDefinition"
+            is EditExerciseDefinition -> "EditExerciseDefinition_${exerciseDefinitionId}"
             is NewSuperset -> "NewSuperset_${workoutId}"
             is EditSuperset -> "EditSuperset_${workoutId}_${selectedSupersetId}"
             is NewRest -> "NewRest_${workoutId}_${parentExerciseId?.toString() ?: "null"}"
@@ -177,6 +190,8 @@ sealed class ScreenData() {
             is HistoryChatWorkoutSession -> "HistoryChatWorkoutSession_${workoutId}_${workoutHistoryId}"
             is NewExercise -> "NewExercise_${workoutId}"
             is EditExercise -> "EditExercise_${workoutId}_${selectedExerciseId}"
+            is NewExerciseDefinition -> "NewExerciseDefinition"
+            is EditExerciseDefinition -> "EditExerciseDefinition_${exerciseDefinitionId}"
             is NewSuperset -> "NewSuperset_${workoutId}"
             is EditSuperset -> "EditSuperset_${workoutId}_${selectedSupersetId}"
             is NewRest -> "NewRest_${workoutId}_${parentExerciseId?.toString() ?: "null"}"
@@ -219,10 +234,9 @@ class AppViewModel(
         private const val TAG = "AppViewModel"
         private const val DEBUG_TAG = "WorkoutHistDebug"
     }
-    private var screenDataStack = mutableListOf<ScreenData>(ScreenData.Workouts(0))
+    private val screenDataStack = mutableStateListOf<ScreenData>(ScreenData.Workouts(0))
 
     override fun onCleared() {
-        super.onCleared()
         // #region agent log
         Log.d(DEBUG_TAG, "AppViewModel.onCleared ViewModelId=${System.identityHashCode(this)} viewModelScope cancelled")
         // #endregion
@@ -232,6 +246,7 @@ class AppViewModel(
     private val _isInitialDataLoaded = MutableStateFlow(false)
     private val _workoutStoreValidationError = MutableStateFlow<String?>(null)
     private var _userAge = mutableIntStateOf(0)
+    private var pendingExternalPage: String? = null
 
     /**
      * Load workout store from disk asynchronously. Call once from the UI (e.g. NavHost).
@@ -248,13 +263,37 @@ class AppViewModel(
                 setWorkoutStoreState(store, triggerSend = false)
                 refreshWorkoutHistories(store.workouts)
                 _isInitialDataLoaded.value = true
+                openPendingExternalPage()
             } catch (e: WorkoutStoreValidationException) {
                 Log.e(TAG, "Workout store validation failed during startup load: ${e.userMessage}")
                 _workoutStoreValidationError.value = e.userMessage
                 _isInitialDataLoaded.value = true
+                openPendingExternalPage()
             } catch (e: Exception) {
                 _isInitialDataLoaded.value = true
+                openPendingExternalPage()
             }
+        }
+    }
+
+    fun openExternalPage(page: String?) {
+        if (!_isInitialDataLoaded.value) {
+            pendingExternalPage = page
+            return
+        }
+        navigateToExternalPage(page)
+    }
+
+    private fun openPendingExternalPage() {
+        val page = pendingExternalPage ?: return
+        pendingExternalPage = null
+        navigateToExternalPage(page)
+    }
+
+    private fun navigateToExternalPage(page: String?) {
+        when (page) {
+            "workouts" -> setScreenData(ScreenData.Workouts(1))
+            "settings" -> setScreenData(ScreenData.Settings())
         }
     }
 
@@ -368,6 +407,11 @@ class AppViewModel(
 
     fun setHomeTab(tabIndex: Int) {
         selectedHomeTab = tabIndex
+        if (currentScreenData is ScreenData.Workouts && screenDataStack.isNotEmpty()) {
+            val updatedRoot = ScreenData.Workouts(tabIndex)
+            screenDataStack[screenDataStack.lastIndex] = updatedRoot
+            currentScreenData = updatedRoot
+        }
     }
 
     fun initScreenData(screenData: ScreenData) {
@@ -406,6 +450,135 @@ class AppViewModel(
             return false
         }
         return false
+    }
+
+    fun navigationStack(): List<ScreenData> = screenDataStack.toList()
+
+    fun popToScreen(screen: ScreenData) {
+        // Breadcrumb items retain the exact ScreenData instance from the navigation stack.
+        // Rendering identities are intentionally shared by related pages (for example,
+        // workout detail and workout history), so they cannot identify a breadcrumb target.
+        val targetIndex = screenDataStack.indexOfLast { it === screen }
+        if (targetIndex < 0) return
+        while (screenDataStack.lastIndex > targetIndex) {
+            screenDataStack.removeAt(screenDataStack.lastIndex)
+        }
+        currentScreenData = screenDataStack.last()
+    }
+
+    fun openWorkoutPlanFromBreadcrumb(planId: UUID) {
+        setSelectedWorkoutPlanId(planId)
+        screenDataStack.clear()
+        val root = ScreenData.Workouts(1)
+        screenDataStack.add(root)
+        currentScreenData = root
+        selectedHomeTab = 1
+    }
+
+    fun addExerciseDefinition(definition: ExerciseDefinition) {
+        updateWorkoutStore(workoutStore.addExerciseDefinition(definition))
+    }
+
+    fun updateExerciseDefinition(definition: ExerciseDefinition) {
+        updateWorkoutStore(workoutStore.updateExerciseDefinition(definition))
+    }
+
+    fun deleteExerciseDefinition(definitionId: UUID) {
+        updateWorkoutStore(workoutStore.deleteExerciseDefinition(definitionId))
+    }
+
+    fun importExerciseLibrary(exerciseLibrary: ExerciseLibraryPackage): Int {
+        require(exerciseLibrary.exerciseDefinitions.isNotEmpty()) {
+            "The exercise library does not contain any definitions."
+        }
+
+        fun <T> mergeReferencesById(
+            existing: List<T>,
+            imported: List<T>,
+            idOf: (T) -> UUID,
+            kindOf: (T) -> String,
+            itemLabel: String,
+        ): List<T> {
+            val existingById = existing.associateBy(idOf)
+            imported.forEach { importedItem ->
+                val id = idOf(importedItem)
+                val existingItem = existingById[id] ?: return@forEach
+                require(kindOf(existingItem) == kindOf(importedItem)) {
+                    "$itemLabel $id changes type from ${kindOf(existingItem)} to ${kindOf(importedItem)}."
+                }
+            }
+            return existing + imported.filterNot { idOf(it) in existingById }
+        }
+
+        val existingPrimaryIds = workoutStore.equipments.mapTo(mutableSetOf()) { it.id }
+        val existingAccessoryIds = workoutStore.accessoryEquipments.mapTo(mutableSetOf()) { it.id }
+        val importedPrimaryIds = exerciseLibrary.equipments.mapTo(mutableSetOf()) { it.id }
+        val importedAccessoryIds = exerciseLibrary.accessoryEquipments.mapTo(mutableSetOf()) { it.id }
+        require((importedPrimaryIds intersect existingAccessoryIds).isEmpty()) {
+            "The library uses an existing accessory ID as primary equipment: ${importedPrimaryIds intersect existingAccessoryIds}."
+        }
+        require((importedAccessoryIds intersect existingPrimaryIds).isEmpty()) {
+            "The library uses an existing primary-equipment ID as an accessory: ${importedAccessoryIds intersect existingPrimaryIds}."
+        }
+
+        val mergedEquipment = mergeReferencesById(
+            workoutStore.equipments,
+            exerciseLibrary.equipments,
+            { it.id },
+            { it.type.name },
+            "Equipment",
+        )
+        val mergedAccessories = mergeReferencesById(
+            workoutStore.accessoryEquipments,
+            exerciseLibrary.accessoryEquipments,
+            { it.id },
+            { EquipmentType.ACCESSORY.name },
+            "Accessory equipment",
+        )
+        val importedDefinitions = exerciseLibrary.exerciseDefinitions.map { definition ->
+            definition.copy(exerciseFamilyId = definition.effectiveFamilyId())
+        }.normalizeExerciseFamilyMovements()
+        val importedDefinitionsById = importedDefinitions.associateBy { it.id }
+        importedDefinitions.forEach { importedDefinition ->
+            val existingDefinition = workoutStore.exerciseDefinitions
+                .firstOrNull { it.id == importedDefinition.id }
+                ?: return@forEach
+            require(
+                existingDefinition.copy(movementRef = importedDefinition.movementRef) ==
+                    importedDefinition
+            ) {
+                "Exercise definition ${importedDefinition.id} conflicts with an existing item."
+            }
+        }
+        val mergedDefinitions = (
+            workoutStore.exerciseDefinitions.map { existingDefinition ->
+                importedDefinitionsById[existingDefinition.id] ?: existingDefinition
+            } + importedDefinitions.filterNot { importedDefinition ->
+                workoutStore.exerciseDefinitions.any { it.id == importedDefinition.id }
+            }
+        ).normalizeExerciseFamilyMovements()
+        val equipmentIds = mergedEquipment.mapTo(mutableSetOf()) { it.id }
+        val accessoryIds = mergedAccessories.mapTo(mutableSetOf()) { it.id }
+        importedDefinitions.forEach { definition ->
+            require(definition.equipmentId == null || definition.equipmentId in equipmentIds) {
+                "${definition.name} references missing equipment ${definition.equipmentId}."
+            }
+            val missingAccessories = definition.requiredAccessoryEquipmentIds.orEmpty()
+                .filterNot { it in accessoryIds || it in equipmentIds }
+            require(missingAccessories.isEmpty()) {
+                "${definition.name} references missing accessory equipment $missingAccessories."
+            }
+        }
+
+        val addedCount = mergedDefinitions.size - workoutStore.exerciseDefinitions.size
+        updateWorkoutStore(
+            workoutStore.copy(
+                exerciseDefinitions = mergedDefinitions,
+                equipments = mergedEquipment,
+                accessoryEquipments = mergedAccessories,
+            ).normalizeExerciseFamilyMovementOwnership()
+        )
+        return addedCount
     }
     val effectiveSelectedWorkoutPlanIdFlow: StateFlow<UUID?> = combine(
         selectedWorkoutPlanIdFlow,
@@ -533,6 +706,10 @@ class AppViewModel(
 
     fun getAccessoryEquipmentById(equipmentId: UUID): AccessoryEquipment? {
         return workoutStore.accessoryEquipments.find { it.id == equipmentId }
+    }
+
+    fun getLinkedSupportName(id: UUID): String? {
+        return getAccessoryEquipmentById(id)?.name ?: getEquipmentById(id)?.name
     }
 
     fun getWorkoutById(workoutId: UUID): Workout? {
@@ -929,6 +1106,7 @@ class AppViewModel(
 
     fun updateEquipments(newEquipments: List<WeightLoadedEquipment>) {
         equipments = newEquipments
+        scheduleWorkoutSave(getApplication<Application>())
     }
 
     var accessoryEquipments: List<AccessoryEquipment>
@@ -939,6 +1117,7 @@ class AppViewModel(
 
     fun updateAccessoryEquipments(newAccessories: List<AccessoryEquipment>) {
         accessoryEquipments = newAccessories
+        scheduleWorkoutSave(getApplication<Application>())
     }
 
     fun updateWorkouts(newWorkouts: List<Workout>) {
@@ -1201,10 +1380,20 @@ class AppViewModel(
                 when (component) {
                     is Exercise -> {
                         component.equipmentId?.let { equipmentIds.add(it) }
+                        component.requiredAccessoryEquipmentIds?.forEach { supportId ->
+                            if (workoutStore.equipments.any { it.id == supportId }) {
+                                equipmentIds.add(supportId)
+                            }
+                        }
                     }
                     is Superset -> {
                         component.exercises.forEach { exercise ->
                             exercise.equipmentId?.let { equipmentIds.add(it) }
+                            exercise.requiredAccessoryEquipmentIds?.forEach { supportId ->
+                                if (workoutStore.equipments.any { it.id == supportId }) {
+                                    equipmentIds.add(supportId)
+                                }
+                            }
                         }
                     }
                     is Rest -> { /* No equipment */ }
@@ -1282,17 +1471,6 @@ class AppViewModel(
         )
     }
     
-    /**
-     * Deletes workout plans that become empty after workouts are deleted.
-     * Only deletes non-"Unassigned" plans that have no remaining workouts.
-     * 
-     * @param affectedPlanIds List of plan IDs that may have become empty (should be collected before workouts are deleted)
-     *                        This parameter is kept for backward compatibility but all plans are now checked.
-     */
-    fun deleteEmptyWorkoutPlans(@Suppress("UNUSED_PARAMETER") affectedPlanIds: List<UUID>) {
-        setWorkoutStoreState(workoutStore)
-    }
-
     /**
      * Schedules a debounced save of the workout store.
      * If a save is already scheduled, it cancels the previous one and schedules a new one.

@@ -29,6 +29,70 @@ class PlateCalculator {
             var currentPlates: MutableList<Double> = currentPlates.toMutableList()
         }
 
+        data class StartingPlateRouteOption(
+            val startingPlates: List<Double>,
+            val plateChangeResults: List<PlateChangeResult>,
+            val totalOperations: Int,
+        )
+
+        /**
+         * Finds every valid configuration for [startingWeight] that can produce a complete
+         * optimized route through all [targetWeights].
+         */
+        @JvmStatic
+        fun calculateStartingPlateRouteOptions(
+            availablePlates: List<Double>,
+            startingWeight: Double,
+            targetWeights: List<Double>,
+            barWeight: Double,
+            sidesOnBarbell: UInt = 2u,
+        ): List<StartingPlateRouteOption> {
+            if (targetWeights.isEmpty()) return emptyList()
+
+            val plateCounts = availablePlates.groupingBy { it }.eachCount()
+            val requiredStartingPlateWeight = startingWeight - barWeight
+            if (requiredStartingPlateWeight < -1e-9) return emptyList()
+
+            return generateValidCombos(
+                plateCounts = plateCounts,
+                targetTotalWeight = requiredStartingPlateWeight.coerceAtLeast(0.0),
+                sidesOnBarbell = sidesOnBarbell,
+            ).mapNotNull { startingPlates ->
+                runCatching {
+                    val results = calculatePlateChanges(
+                        availablePlates = availablePlates,
+                        sets = targetWeights,
+                        barWeight = barWeight,
+                        initialPlates = startingPlates,
+                        sidesOnBarbell = sidesOnBarbell,
+                    )
+                    StartingPlateRouteOption(
+                        startingPlates = startingPlates.sortedDescending(),
+                        plateChangeResults = results,
+                        totalOperations = results.sumOf { it.change.steps.size },
+                    )
+                }.getOrNull()
+            }.sortedWith(
+                compareBy<StartingPlateRouteOption> { it.totalOperations }
+                    .thenBy { it.plateChangeResults.firstOrNull()?.change?.steps?.size ?: 0 }
+                    .thenBy { it.startingPlates.size }
+                    .thenComparator { left, right ->
+                        comparePlateConfigurations(left.startingPlates, right.startingPlates)
+                    }
+            )
+        }
+
+        private fun comparePlateConfigurations(
+            left: List<Double>,
+            right: List<Double>,
+        ): Int {
+            left.indices.forEach { index ->
+                val comparison = right[index].compareTo(left[index])
+                if (comparison != 0) return comparison
+            }
+            return left.size.compareTo(right.size)
+        }
+
         /**
          * Calculates the most efficient sequence of plate changes for a series of weights.
          *

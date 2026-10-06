@@ -2,8 +2,8 @@ package com.gabstra.myworkoutassistant.screens
 
 import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,8 +24,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -33,21 +31,21 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.ActiveScheduleCard
+import com.gabstra.myworkoutassistant.composables.AppFilledTonalButton
+import com.gabstra.myworkoutassistant.composables.AppListFilterToggle
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
-import com.gabstra.myworkoutassistant.composables.AppDeleteButton
 import com.gabstra.myworkoutassistant.composables.AppPrimaryOutlinedButton
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
@@ -66,10 +64,9 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import com.gabstra.myworkoutassistant.ui.theme.MyWorkoutAssistantTheme
+import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
-import java.util.Locale
 import java.util.UUID
 
 @Composable
@@ -83,6 +80,8 @@ fun WorkoutOverviewTab(
     currentSelectedWorkoutId: UUID?,
     showRest: Boolean,
     onShowRestChange: (Boolean) -> Unit,
+    hideDisabledWorkoutComponents: Boolean,
+    onHideDisabledWorkoutComponentsChange: (Boolean) -> Unit,
     selectedWorkoutComponents: List<WorkoutComponent>,
     isSelectionModeActive: Boolean,
     onEnableSelection: () -> Unit,
@@ -95,31 +94,33 @@ fun WorkoutOverviewTab(
     onRequestDeleteIncompleteWorkout: () -> Unit,
     onRequestClearAllIncompleteSessions: () -> Unit,
     onWorkoutComponentsReordered: (List<WorkoutComponent>) -> Unit,
-    workoutScheduleDao: com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao,
+    workoutSchedules: List<WorkoutSchedule>,
+    modifier: Modifier = Modifier,
     workoutHistoryIdForExerciseNavigation: UUID? = null,
-    modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
-    val currentLocale = Locale.getDefault()
+    val disabledWorkoutComponentCount = remember(workout.workoutComponents) {
+        workout.workoutComponents.count { !it.enabled }
+    }
+    val displayComponents = remember(
+        workout.workoutComponents,
+        showRest,
+        hideDisabledWorkoutComponents
+    ) {
+        workout.workoutComponents.filter { component ->
+            (showRest || component !is Rest) &&
+                (!hideDisabledWorkoutComponents || component.enabled)
+        }
+    }
+    val currentLocale = LocalLocale.current.platformLocale
     val resumeTimeFormatter = remember(currentLocale) {
         DateTimeFormatter.ofPattern("dd/MM/yy HH:mm", currentLocale)
     }
-    var workoutSchedules by remember {
-        mutableStateOf<List<WorkoutSchedule>>(emptyList())
-    }
-
-    LaunchedEffect(workout.globalId) {
-        withContext(Dispatchers.IO) {
-            workoutSchedules = workoutScheduleDao.getSchedulesByWorkoutId(workout.globalId)
-        }
-    }
-
     Column(
         modifier = modifier
             .fillMaxSize()
             .fillMaxWidth()
-            .padding(top = 10.dp)
-            .padding(bottom = 10.dp)
+            .padding(vertical = Spacing.md)
             .verticalScroll(scrollState)
             .padding(horizontal = Spacing.md)
     ) {
@@ -127,7 +128,7 @@ fun WorkoutOverviewTab(
             Row(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(5.dp),
+                    .padding(vertical = Spacing.xs),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -173,8 +174,8 @@ fun WorkoutOverviewTab(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(15.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                            .padding(Spacing.md),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.sm)
                     ) {
                         Text(
                             text = "Alarms",
@@ -191,7 +192,7 @@ fun WorkoutOverviewTab(
                             if (index < workoutSchedules.size - 1) {
                                 HorizontalDivider(
                                     color = MaterialTheme.colorScheme.outlineVariant,
-                                    modifier = Modifier.padding(vertical = 5.dp)
+                                    modifier = Modifier.padding(vertical = Spacing.xs)
                                 )
                             }
                         }
@@ -201,37 +202,23 @@ fun WorkoutOverviewTab(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.End,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp)
-            ) {
-                Row(
-                    modifier = Modifier.padding(vertical = 15.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(15.dp)
-                ) {
-                    Checkbox(
-                        modifier = Modifier.size(10.dp),
-                        checked = showRest,
-                        onCheckedChange = onShowRestChange,
-                        colors = CheckboxDefaults.colors().copy(
-                            checkedCheckmarkColor = MaterialTheme.colorScheme.onPrimary,
-                            uncheckedBorderColor = MaterialTheme.colorScheme.primary
-                        )
-                    )
-                    Text(
-                        text = "Show rests",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
+            AppListFilterToggle(
+                label = "Show rests",
+                checked = showRest,
+                onCheckedChange = onShowRestChange,
+            )
+
+            if (disabledWorkoutComponentCount > 0) {
+                AppListFilterToggle(
+                    label = "Hide disabled",
+                    checked = hideDisabledWorkoutComponents,
+                    onCheckedChange = onHideDisabledWorkoutComponentsChange,
+                )
             }
 
             GenericSelectableList(
                 it = null,
-                items = if (!showRest) workout.workoutComponents.filter { it !is Rest } else workout.workoutComponents,
+                items = displayComponents,
                 selectedItems = selectedWorkoutComponents,
                 isSelectionModeActive = isSelectionModeActive,
                 onItemClick = {
@@ -248,7 +235,7 @@ fun WorkoutOverviewTab(
                     onSelectedComponentIdsChange(newSelection.map { it.id }.toSet())
                 },
                 onOrderChange = { newWorkoutComponents ->
-                    if (!showRest) return@GenericSelectableList
+                    if (!showRest || hideDisabledWorkoutComponents) return@GenericSelectableList
                     val adjustedComponents = ensureRestSeparatedByExercises(newWorkoutComponents)
                     onWorkoutComponentsReordered(adjustedComponents)
                 },
@@ -361,6 +348,7 @@ private fun WorkoutSessionActionCard(
         WorkoutSessionStatus.STOPPED_ON_WEAR,
         WorkoutSessionStatus.STALE_ON_WEAR,
         WorkoutSessionStatus.IN_PROGRESS_ON_PHONE -> true
+        WorkoutSessionStatus.INTERRUPTED -> false
         WorkoutSessionStatus.COMPLETED,
         null -> false
     }
@@ -373,6 +361,7 @@ private fun WorkoutSessionActionCard(
             workoutSessionDisplayLabel(WorkoutSessionStatus.STALE_ON_WEAR)
                 ?: WorkoutSessionDisplayLabels.STALE_ON_WATCH
         WorkoutSessionStatus.IN_PROGRESS_ON_PHONE -> IncompleteWorkoutStrings.SINGULAR
+        WorkoutSessionStatus.INTERRUPTED -> WorkoutSessionDisplayLabels.INTERRUPTED
         WorkoutSessionStatus.COMPLETED,
         null -> IncompleteWorkoutStrings.SINGULAR
     }
@@ -381,6 +370,7 @@ private fun WorkoutSessionActionCard(
         WorkoutSessionStatus.STOPPED_ON_WEAR,
         WorkoutSessionStatus.STALE_ON_WEAR -> "Resume on phone"
         WorkoutSessionStatus.IN_PROGRESS_ON_PHONE -> "Resume workout"
+        WorkoutSessionStatus.INTERRUPTED -> "Resume workout"
         WorkoutSessionStatus.COMPLETED,
         null -> "Resume workout"
     }
@@ -483,29 +473,33 @@ private fun WorkoutSessionActionCard(
                     AppPrimaryButton(
                         modifier = Modifier.fillMaxWidth(),
                         text = primaryActionText,
-                        onClick = onResumeWorkout
+                        onClick = onResumeWorkout,
+                        textAlign = TextAlign.Center
                     )
-                    AppPrimaryOutlinedButton(
+                    AppFilledTonalButton(
                         modifier = Modifier.fillMaxWidth(),
                         text = "Start over",
-                        onClick = onRequestStartWorkout
+                        onClick = onRequestStartWorkout,
+                        textAlign = TextAlign.Center
                     )
-                    AppDeleteButton(
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = Spacing.sm),
+                        color = MaterialTheme.colorScheme.outlineVariant
+                    )
+
+                    AppFilledTonalButton(
                         modifier = Modifier.fillMaxWidth(),
                         text = IncompleteWorkoutStrings.DISCARD_BUTTON,
-                        onClick = onRequestDeleteIncompleteWorkout
+                        onClick = onRequestDeleteIncompleteWorkout,
+                        textAlign = TextAlign.Center
                     )
-                    Box(
+                    AppFilledTonalButton(
                         modifier = Modifier.fillMaxWidth(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = IncompleteWorkoutStrings.CLEAR_MENU_LABEL,
-                            modifier = Modifier.clickable(onClick = onRequestClearAllIncompleteSessions),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                        text = IncompleteWorkoutStrings.CLEAR_MENU_LABEL,
+                        onClick = onRequestClearAllIncompleteSessions,
+                        textAlign = TextAlign.Center
+                    )
                 }
             }
 
@@ -557,6 +551,40 @@ private fun WorkoutSessionActionCard(
     }
 }
 
+@Preview(
+    name = "Resume workout card",
+    showBackground = true,
+    widthDp = 412,
+    heightDp = 620
+)
+@Composable
+private fun WorkoutSessionActionCardPreview() {
+    MyWorkoutAssistantTheme {
+        Box(
+            modifier = Modifier
+                .background(MaterialTheme.colorScheme.background)
+                .padding(16.dp)
+        ) {
+            WorkoutSessionActionCard(
+                isCheckingWorkoutRecord = false,
+                hasWorkoutRecord = true,
+                workoutResumeInfo = WorkoutResumeInfo(
+                    exerciseName = "Barbell bench press",
+                    setLabel = "Work set 2",
+                    startedAt = LocalDateTime.of(2026, 8, 3, 18, 30),
+                    sessionStatus = WorkoutSessionStatus.IN_PROGRESS_ON_PHONE,
+                    lastActiveSyncAt = null
+                ),
+                timeFormatter = DateTimeFormatter.ofPattern("dd/MM/yy HH:mm"),
+                onRequestStartWorkout = {},
+                onResumeWorkout = {},
+                onRequestDeleteIncompleteWorkout = {},
+                onRequestClearAllIncompleteSessions = {}
+            )
+        }
+    }
+}
+
 private fun buildResumeDescription(
     workoutResumeInfo: WorkoutResumeInfo?,
     timeFormatter: DateTimeFormatter
@@ -568,24 +596,25 @@ private fun buildResumeDescription(
     val sessionTime = workoutResumeInfo.startedAt?.format(timeFormatter)
     val staleTime = workoutResumeInfo.lastActiveSyncAt?.format(timeFormatter)
 
-    return buildString {
-        when (workoutResumeInfo.sessionStatus) {
-            WorkoutSessionStatus.IN_PROGRESS_ON_WEAR -> append("This workout is still running on your watch. Resume on phone at ")
-            WorkoutSessionStatus.STOPPED_ON_WEAR -> append("You returned home on your watch. Resume on phone at ")
-            WorkoutSessionStatus.STALE_ON_WEAR -> append("Your watch stopped communicating. Resume on phone at ")
-            WorkoutSessionStatus.IN_PROGRESS_ON_PHONE,
-            WorkoutSessionStatus.COMPLETED -> append("Resume at ")
-        }
-        append(workoutResumeInfo.exerciseName)
-        append(", set ")
-        append(workoutResumeInfo.setNumber)
+    return buildList {
+        add(
+            when (workoutResumeInfo.sessionStatus) {
+                WorkoutSessionStatus.IN_PROGRESS_ON_WEAR -> "This workout is still active on your watch."
+                WorkoutSessionStatus.STOPPED_ON_WEAR -> "This workout was left from the watch home screen."
+                WorkoutSessionStatus.STALE_ON_WEAR -> "The watch has stopped sending workout updates."
+                WorkoutSessionStatus.IN_PROGRESS_ON_PHONE,
+                WorkoutSessionStatus.INTERRUPTED,
+                WorkoutSessionStatus.COMPLETED -> "Continue where you left off."
+            }
+        )
+        add("Resume from:")
+        add(workoutResumeInfo.exerciseName)
+        add(workoutResumeInfo.setLabel)
         if (sessionTime != null) {
-            append(". Started ")
-            append(sessionTime)
+            add("Started: $sessionTime")
         }
         if (workoutResumeInfo.sessionStatus == WorkoutSessionStatus.STALE_ON_WEAR && staleTime != null) {
-            append(". Last watch update ")
-            append(staleTime)
+            add("Last watch update: $staleTime")
         }
-    }
+    }.joinToString(separator = "\n")
 }

@@ -8,11 +8,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -20,6 +23,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.role
@@ -36,6 +40,7 @@ import com.gabstra.myworkoutassistant.presentation.theme.darkScheme
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.Red
 
+internal const val WEAR_CONTROL_EDIT_INACTIVITY_TIMEOUT_MILLIS = 10_000L
 
 @Composable
 fun ControlButtonsVertical(
@@ -46,11 +51,13 @@ fun ControlButtonsVertical(
     onPlusLongPress: () -> Unit,
     isMinusEnabled: Boolean = true,
     isPlusEnabled: Boolean = true,
-    onCloseClick: () -> Unit,
+    isResetEnabled: Boolean = true,
+    onCloseClick: (() -> Unit)? = null,
+    onResetClick: (() -> Unit)? = null,
     content: @Composable () -> Unit
 ){
-    BackHandler {
-        onCloseClick()
+    BackHandler(enabled = onCloseClick != null) {
+        onCloseClick?.invoke()
     }
 
     Column(
@@ -60,105 +67,109 @@ fun ControlButtonsVertical(
     ) {
         Box(
             modifier = Modifier
-                .size(50.dp)
-                .background(Color.Transparent)
-                .alpha(if (isPlusEnabled) 1f else 0.45f)
-                .semantics(mergeDescendants = true) {
-                    contentDescription = "Add"
-                    role = Role.Button
-                    onClick(
-                        label = "Add"
-                    ) {
-                        if (!isPlusEnabled) return@onClick false
-                        onPlusTap()
-                        true
-                    }
-                    onLongClick(
-                        label = "Add"
-                    ) {
-                        if (!isPlusEnabled) return@onLongClick false
-                        onPlusLongPress()
-                        true
-                    }
-                }
-                .repeatActionOnLongPressOrTap(
-                    thresholdMillis = 1000,
-                    intervalMillis = 150,
-                    enabled = isPlusEnabled,
-                    onAction = onPlusLongPress,
-                    onTap = onPlusTap
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Green,CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    modifier = Modifier.size(30.dp),
-                    imageVector = Icons.Filled.ArrowUpward,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onBackground
-                )
-            }
-        }
-
-        Box(
-            modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 2.5.dp),
+                .weight(1f)
+                .padding(horizontal = 20.dp),
             contentAlignment = Alignment.Center
         ) {
             content()
         }
 
-        Box(
+        Column(
             modifier = Modifier
-                .size(50.dp)
-                .background(Color.Transparent)
-                .alpha(if (isMinusEnabled) 1f else 0.45f)
-                .semantics(mergeDescendants = true) {
-                    contentDescription = "Subtract"
-                    role = Role.Button
-                    onClick(
-                        label = "Subtract"
-                    ) {
-                        if (!isMinusEnabled) return@onClick false
-                        onMinusTap()
-                        true
+                .fillMaxWidth()
+                .padding(bottom = 10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally),
+            ) {
+                ControlButton(Icons.Filled.ArrowDownward, "Subtract", Red, isMinusEnabled, onMinusTap, onMinusLongPress)
+                ControlButton(Icons.Filled.ArrowUpward, "Add", Green, isPlusEnabled, onPlusTap, onPlusLongPress)
+            }
+            if (onCloseClick != null || onResetClick != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
+                ) {
+                    onCloseClick?.let { closeClick ->
+                        ControlButton(
+                            Icons.AutoMirrored.Filled.ArrowBack, "Back",
+                            MaterialTheme.colorScheme.surfaceContainerHigh, true,
+                            closeClick, closeClick, 48.dp, 40.dp, 20.dp,
+                        )
                     }
-                    onLongClick(
-                        label = "Subtract"
-                    ) {
-                        if (!isMinusEnabled) return@onLongClick false
-                        onMinusLongPress()
-                        true
+                    onResetClick?.let { resetClick ->
+                        ControlButton(
+                            Icons.Filled.RestartAlt, "Reset",
+                            MaterialTheme.colorScheme.surfaceContainerHigh, isResetEnabled,
+                            resetClick, resetClick, 48.dp, 40.dp, 20.dp,
+                        )
                     }
                 }
-                .repeatActionOnLongPressOrTap(
-                    thresholdMillis = 1000,
-                    intervalMillis = 150,
-                    enabled = isMinusEnabled,
-                    onAction = onMinusLongPress,
-                    onTap = onMinusTap
-                ),
+            }
+        }
+    }
+}
+
+@Composable
+private fun ControlButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    backgroundColor: Color,
+    enabled: Boolean,
+    onTap: () -> Unit,
+    onLongPress: () -> Unit,
+    hitBoxSize: androidx.compose.ui.unit.Dp = WearStandardIconButtonHitBoxSize,
+    buttonSize: androidx.compose.ui.unit.Dp = WearStandardIconButtonSize,
+    iconSize: androidx.compose.ui.unit.Dp = WearStandardIconButtonIconSize,
+) {
+    Box(
+        modifier = Modifier
+            .size(hitBoxSize)
+            .alpha(if (enabled) 1f else 0.45f)
+            .semantics(mergeDescendants = true) {
+                this.contentDescription = contentDescription
+                role = Role.Button
+                if (!enabled) disabled()
+                onClick(
+                    label = contentDescription
+                ) {
+                    if (!enabled) return@onClick false
+                    onTap()
+                    true
+                }
+                onLongClick(
+                    label = contentDescription
+                ) {
+                    if (!enabled) return@onLongClick false
+                    onLongPress()
+                    true
+                }
+            }
+            .repeatActionOnLongPressOrTap(
+                thresholdMillis = 1000,
+                intervalMillis = 150,
+                enabled = enabled,
+                onAction = onLongPress,
+                onTap = onTap
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .size(buttonSize)
+                .background(backgroundColor, CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Red,CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    modifier = Modifier.size(30.dp),
-                    imageVector = Icons.Filled.ArrowDownward,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onBackground
-                )
-            }
+            Icon(
+                modifier = Modifier.size(iconSize),
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onBackground,
+            )
         }
     }
 }
@@ -183,6 +194,8 @@ private fun ControlButtonsVerticalPreview() {
                 onPlusTap = {},
                 onPlusLongPress = {},
                 onCloseClick = {},
+                onResetClick = {},
+                isResetEnabled = true,
             ) {
                 Text(
                     text = "12",

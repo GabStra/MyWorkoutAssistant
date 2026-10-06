@@ -9,6 +9,7 @@ import androidx.navigation.NavController
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
+import com.gabstra.myworkoutassistant.shared.datalayer.SyncPhase
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -47,6 +48,7 @@ internal class WearDataLayerReceiver(
         }
         Log.d("DataLayerSync", "Received APP_BACKUP_START_JSON - triggering loading screen")
         appViewModel.setBackupProgress(0f)
+        appViewModel.setBackupSyncPhase(SyncPhase.TRANSFERRING)
 
         val currentRoute = navController.currentBackStackEntry?.destination?.route
         if (currentRoute != Screen.Workout.route) {
@@ -88,12 +90,16 @@ internal class WearDataLayerReceiver(
             intent.getStringExtra(DataLayerListenerService.APP_BACKUP_PROGRESS_UPDATE)
         val progress = appBackupProgress?.toFloatOrNull() ?: return
         appViewModel.setBackupProgress(progress)
+        SyncPhase.fromWireValue(
+            intent.getStringExtra(DataLayerListenerService.APP_BACKUP_PHASE_UPDATE)
+        )?.let(appViewModel::setBackupSyncPhase)
     }
 
     private fun handleSyncComplete(intent: Intent, context: Context) {
         val syncComplete = intent.getStringExtra(DataLayerListenerService.SYNC_COMPLETE) ?: return
         val transactionId = intent.getStringExtra(DataLayerListenerService.TRANSACTION_ID)
         appViewModel.markHistorySyncedForTransaction(transactionId)
+        appViewModel.setBackupSyncPhase(SyncPhase.COMPLETED)
         Log.d("DataLayerSync", "Received SYNC_COMPLETE - checking syncStatus before showing toast")
         val workoutState = appViewModel.workoutState.value
         val isWorkoutActive = workoutState !is WorkoutState.Completed
@@ -107,6 +113,7 @@ internal class WearDataLayerReceiver(
             intent.getStringExtra(DataLayerListenerService.APP_BACKUP_FAILED) ?: return
         Log.d("DataLayerSync", "Received APP_BACKUP_FAILED - sync failed")
         appViewModel.setBackupProgress(0f)
+        appViewModel.setBackupSyncPhase(SyncPhase.CONNECTING)
         appViewModel.resetSyncStatus()
 
         val currentRoute = navController.currentBackStackEntry?.destination?.route

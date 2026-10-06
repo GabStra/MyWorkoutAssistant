@@ -5,11 +5,14 @@ import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.Until
 import com.gabstra.myworkoutassistant.composables.SetValueSemantics
+import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.e2e.driver.WearWorkoutDriver
 import com.gabstra.myworkoutassistant.e2e.fixtures.CalibrationRequiredWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.e2e.fixtures.CompletionWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.e2e.fixtures.MultipleSetsAndRestsWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.e2e.fixtures.TimedDurationSetWorkoutStoreFixture
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -41,19 +44,47 @@ class WearWorkoutFlowE2ETest : WearBaseE2ETest() {
     }
 
     @Test
-    fun completeWorkout_showsCompletionScreen() {
+    fun completeWorkout_persistsCompletedHistory() = runBlocking {
         CompletionWorkoutStoreFixture.setupWorkoutStore(context)
         launchAppFromHome()
         startWorkout(CompletionWorkoutStoreFixture.getWorkoutName())
 
         workoutDriver.completeCurrentSet()
-        workoutDriver.waitForWorkoutCompletion(timeoutMs = 20_000)
+        val workoutHistoryDao = AppDatabase.getDatabase(context).workoutHistoryDao()
+        val deadline = System.currentTimeMillis() + 20_000
+        while (System.currentTimeMillis() < deadline) {
+            val completedHistory = workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(
+                workoutId = CompletionWorkoutStoreFixture.getWorkoutId(),
+                isDone = true
+            )
+            if (completedHistory != null) {
+                return@runBlocking
+            }
+            delay(250)
+        }
+        error("Completed workout history was not persisted")
+    }
 
-        val workoutNameVisible = device.wait(
-            Until.hasObject(By.text(CompletionWorkoutStoreFixture.getWorkoutName())),
-            3_000
+    @Test
+    fun completeSetDialog_closeDismissesWithoutAdvancingSet() {
+        CompletionWorkoutStoreFixture.setupWorkoutStore(context)
+        launchAppFromHome()
+        startWorkout(CompletionWorkoutStoreFixture.getWorkoutName())
+
+        device.pressBack()
+        val closeButton = device.wait(Until.findObject(By.desc("Close")), 5_000)
+        require(closeButton != null) { "Complete Set dialog did not show its Close button" }
+
+        closeButton.click()
+
+        val dialogDismissed = device.wait(Until.gone(By.desc("Done")), 5_000)
+        require(dialogDismissed) { "Complete Set dialog remained visible after tapping Close" }
+
+        val setStillVisible = device.wait(
+            Until.hasObject(By.text("Simple Exercise")),
+            5_000
         )
-        require(workoutNameVisible) { "Workout name not visible on completion screen" }
+        require(setStillVisible) { "Close advanced away from the current set instead of dismissing the dialog" }
     }
 
     @Test

@@ -14,6 +14,7 @@ import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
+import com.gabstra.myworkoutassistant.shared.running.RunningResult
 import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.replaceSetsInExerciseRecursively
@@ -44,6 +45,7 @@ import com.gabstra.myworkoutassistant.shared.utils.compareSetListsUnordered
 import com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState
 import com.gabstra.myworkoutassistant.shared.workout.persistence.WorkoutRestHistoryOps
 import com.gabstra.myworkoutassistant.shared.workout.persistence.WorkoutSetHistoryOps
+import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionEndReason
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateQueries
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -85,6 +87,8 @@ internal class WorkoutPersistenceCoordinator(
         val startWorkoutTime: LocalDateTime,
         val selectedWorkout: Workout,
         val currentWorkoutHistory: WorkoutHistory?,
+        val runningResults: List<RunningResult>,
+        val endReason: WorkoutSessionEndReason,
         val heartBeatRecords: List<Int>,
         val executedSetsHistory: List<SetHistory>,
         val executedRestHistories: List<RestHistory>,
@@ -99,29 +103,23 @@ internal class WorkoutPersistenceCoordinator(
         supersetIdByExerciseId: Map<UUID, UUID>,
         exercisesBySupersetId: Map<UUID, List<Exercise>>
     ): SetHistorySnapshot? {
+        if (currentState !is WorkoutState.Set) return null
         val historyIdentity = WorkoutStateQueries.stateHistoryIdentity(currentState) ?: return null
         if (WorkoutSetHistoryOps.shouldSkipPersistingState(currentState, exercisesById)) return null
 
-        val setData = when (currentState) {
-            is WorkoutState.Set -> currentState.currentSetData
-            else -> return null
-        }
+        val setData = currentState.currentSetData
         val setDataSnapshot = copySetData(setData)
-        val startTime = when (currentState) {
-            is WorkoutState.Set -> currentState.startTime ?: LocalDateTime.now()
-            else -> return null
-        }
+        val startTime = currentState.startTime ?: LocalDateTime.now()
 
-        if (currentState is WorkoutState.Set && (setData is TimedDurationSetData || setData is EnduranceSetData)) {
+        if (setData is TimedDurationSetData || setData is EnduranceSetData) {
             val timerInfo = when (setData) {
                 is TimedDurationSetData -> "TimedDurationSet: startTimer=${setData.startTimer}ms, endTimer=${setData.endTimer}ms, startTime=$startTime"
                 is EnduranceSetData -> "EnduranceSet: startTimer=${setData.startTimer}ms, endTimer=${setData.endTimer}ms, startTime=$startTime"
-                else -> ""
             }
             Log.d(tag, "Storing timer state: $timerInfo")
         }
 
-        val skipped = (currentState as? WorkoutState.Set)?.skipped ?: false
+        val skipped = currentState.skipped
         val supersetMetadata = resolveSupersetMetadata(
             exerciseId = historyIdentity.exerciseId,
             order = historyIdentity.order,
@@ -133,7 +131,7 @@ internal class WorkoutPersistenceCoordinator(
         // Resolve equipment snapshot at record time so later equipment edits do not
         // change how this historical set is labeled or interpreted.
         val exercise = historyIdentity.exerciseId?.let { exercisesById[it] }
-        val equipmentIdFromState = (currentState as? WorkoutState.Set)?.equipmentId ?: exercise?.equipmentId
+        val equipmentIdFromState = currentState.equipmentId ?: exercise?.equipmentId
         val workoutStore = workoutStoreRepository().getWorkoutStore()
         val equipmentSnapshot = equipmentIdFromState?.let { equipmentId ->
             workoutStore.equipments.find { it.id == equipmentId }
@@ -263,6 +261,8 @@ internal class WorkoutPersistenceCoordinator(
         startWorkoutTime: LocalDateTime?,
         selectedWorkout: Workout,
         currentWorkoutHistory: WorkoutHistory?,
+        runningResults: List<RunningResult> = emptyList(),
+        endReason: WorkoutSessionEndReason,
         heartBeatRecords: List<Int>,
         progressionByExerciseId: Map<UUID, Pair<DoubleProgressionHelper.Plan, ProgressionState>>,
         comparisonBaselineByExerciseId: Map<UUID, List<SimpleSet>>
@@ -274,6 +274,8 @@ internal class WorkoutPersistenceCoordinator(
             startWorkoutTime = startTime,
             selectedWorkout = selectedWorkout,
             currentWorkoutHistory = currentWorkoutHistory,
+            runningResults = runningResults,
+            endReason = endReason,
             heartBeatRecords = heartBeatRecords,
             executedSetsHistory = executedSetsSnapshot,
             executedRestHistories = executedRestSnapshot,
@@ -300,6 +302,11 @@ internal class WorkoutPersistenceCoordinator(
         val workoutStoreRepositoryRef = workoutStoreRepository()
 
         var currentWorkoutHistorySnapshot = snapshot.currentWorkoutHistory
+        val resolvedEndReason = when {
+            !isDone -> WorkoutSessionEndReason.COMPLETED
+            currentWorkoutHistorySnapshot?.isDone == true -> currentWorkoutHistorySnapshot.endReason
+            else -> snapshot.endReason
+        }
 
         if (currentWorkoutHistorySnapshot == null) {
             currentWorkoutHistorySnapshot = WorkoutHistory(
@@ -312,7 +319,9 @@ internal class WorkoutPersistenceCoordinator(
                 startTime = snapshot.startWorkoutTime,
                 isDone = isDone,
                 hasBeenSentToHealth = false,
-                globalId = selectedWorkoutSnapshot.globalId
+                globalId = selectedWorkoutSnapshot.globalId,
+                endReason = resolvedEndReason,
+                runningResults = snapshot.runningResults
             )
         } else {
             currentWorkoutHistorySnapshot = currentWorkoutHistorySnapshot.copy(
@@ -321,10 +330,15 @@ internal class WorkoutPersistenceCoordinator(
                 time = snapshot.capturedAt.toLocalTime(),
                 isDone = isDone,
                 hasBeenSentToHealth = false,
-                version = currentWorkoutHistorySnapshot.version.inc()
+                version = currentWorkoutHistorySnapshot.version.inc(),
+                endReason = resolvedEndReason,
+                runningResults = (currentWorkoutHistorySnapshot.runningResults + snapshot.runningResults)
+                    .associateBy { it.exerciseId }
+                    .values
+                    .toList()
             )
         }
-        val workoutHistoryForThisPush = currentWorkoutHistorySnapshot ?: error("WorkoutHistory snapshot is null")
+        val workoutHistoryForThisPush = currentWorkoutHistorySnapshot
 
         val newExecutedSetsHistory = snapshot.executedSetsHistory
             .asSequence()
@@ -346,10 +360,14 @@ internal class WorkoutPersistenceCoordinator(
         executedSetStore.replaceAll(newExecutedSetsHistory)
         executedRestStore.replaceAll(newExecutedRestHistories)
         workoutHistoryDaoRef.insertWithVersionCheck(workoutHistoryForThisPush)
-        setHistoryDaoRef.deleteByWorkoutHistoryId(workoutHistoryForThisPush.id)
-        setHistoryDaoRef.insertAllWithVersionCheck(*newExecutedSetsHistory.toTypedArray())
-        restHistoryDaoRef.deleteByWorkoutHistoryId(workoutHistoryForThisPush.id)
-        restHistoryDaoRef.insertAllWithVersionCheck(*newExecutedRestHistories.toTypedArray())
+        setHistoryDaoRef.replaceAllForWorkoutHistory(
+            workoutHistoryForThisPush.id,
+            newExecutedSetsHistory
+        )
+        restHistoryDaoRef.replaceAllForWorkoutHistory(
+            workoutHistoryForThisPush.id,
+            newExecutedRestHistories
+        )
 
         if (isDone) {
             workoutRecordDao().deleteByWorkoutId(selectedWorkoutSnapshot.id)
@@ -387,6 +405,15 @@ internal class WorkoutPersistenceCoordinator(
                 val sessionMerge = mergeByExerciseId.getValue(exercise.id)
                 val currentSessionSnapshot = sessionMerge.snapshot
                 val preparedSetHistories = sessionMerge.preparedSetHistories
+
+                if (!hasCompletedAllTrackableWorkSets(currentSessionSnapshot)) {
+                    Log.d(
+                        tag,
+                        "Skipping progression update for incomplete exercise ${exercise.id} " +
+                            "in workout history ${workoutHistoryForThisPush.id}"
+                    )
+                    return@forEach
+                }
 
                 val exerciseId = entry.key
                 val exerciseInfo = exerciseInfoDaoRef.getExerciseInfoById(exerciseId)
@@ -670,6 +697,23 @@ internal class WorkoutPersistenceCoordinator(
         }
 
         return emptyList()
+    }
+
+    private fun hasCompletedAllTrackableWorkSets(snapshot: ExerciseSessionSnapshot): Boolean {
+        val workSets = snapshot.sets.filter { sessionSet ->
+            isTrackableWorkSet(sessionSet.set)
+        }
+        return workSets.isNotEmpty() && workSets.all { it.wasExecuted && !it.wasSkipped }
+    }
+
+    private fun isTrackableWorkSet(set: com.gabstra.myworkoutassistant.shared.sets.Set): Boolean = when (set) {
+        is WeightSet -> set.subCategory != SetSubCategory.RestPauseSet &&
+            set.subCategory != SetSubCategory.CalibrationSet &&
+            set.subCategory != SetSubCategory.WarmupSet
+        is BodyWeightSet -> set.subCategory != SetSubCategory.RestPauseSet &&
+            set.subCategory != SetSubCategory.CalibrationSet &&
+            set.subCategory != SetSubCategory.WarmupSet
+        else -> false
     }
 
     private fun cloneSetHistories(setHistories: List<SetHistory>): List<SetHistory> {

@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.animation.core.Animatable
+import com.gabstra.myworkoutassistant.presentation.theme.tertiaryContent
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -35,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -53,6 +55,12 @@ import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+private val ConfirmationCancelButtonSize = 42.dp
+private val ConfirmationCancelIconSize = 22.dp
+private val ConfirmationButtonSize = ConfirmationCancelButtonSize
+private val ConfirmationButtonIconSize = ConfirmationCancelIconSize
+private val ConfirmationIndicatorSize = 56.dp
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -76,21 +84,60 @@ fun CustomDialogYesOnLongPress(
     var confirmHoldJob by remember { mutableStateOf<Job?>(null) }
     val coroutineScope = rememberWearCoroutineScope()
     val holdProgress = remember { Animatable(0f) }
+    val latestHandleNoClick by rememberUpdatedState(handleNoClick)
     val latestHandleYesClick by rememberUpdatedState(handleYesClick)
+    val latestHandleOnAutomaticClose by rememberUpdatedState(handleOnAutomaticClose)
 
     var hasBeenPressedLongEnough by remember { mutableStateOf(false) }
+    var hasHandledDialogAction by remember { mutableStateOf(false) }
+
+    fun cancelAutomaticCloseTimer() {
+        closeDialogJob?.cancel()
+        closeDialogJob = null
+    }
+
+    fun cancelConfirmHold() {
+        confirmHoldJob?.cancel()
+        confirmHoldJob = null
+    }
+
+    fun runNoClick() {
+        if (hasHandledDialogAction) return
+        hasHandledDialogAction = true
+        cancelAutomaticCloseTimer()
+        cancelConfirmHold()
+        latestHandleNoClick()
+    }
+
+    fun runAutomaticClose() {
+        if (hasHandledDialogAction) return
+        hasHandledDialogAction = true
+        cancelConfirmHold()
+        latestHandleOnAutomaticClose()
+    }
+
+    fun runYesClick() {
+        if (hasHandledDialogAction) return
+        hasHandledDialogAction = true
+        cancelAutomaticCloseTimer()
+        latestHandleYesClick()
+    }
 
     fun startAutomaticCloseTimer() {
-        closeDialogJob?.cancel()
+        cancelAutomaticCloseTimer()
         closeDialogJob = coroutineScope.launch {
             delay(closeTimerInMillis)
-            handleOnAutomaticClose()
+            runAutomaticClose()
         }
     }
 
     LaunchedEffect(show) {
         if (show) {
             hasBeenShownOnce = true
+            hasHandledDialogAction = false
+        } else {
+            cancelAutomaticCloseTimer()
+            cancelConfirmHold()
         }
 
         if (hasBeenShownOnce) {
@@ -107,8 +154,8 @@ fun CustomDialogYesOnLongPress(
     }
 
     fun startConfirmHold() {
-        closeDialogJob?.cancel()
-        confirmHoldJob?.cancel()
+        cancelAutomaticCloseTimer()
+        cancelConfirmHold()
         hasBeenPressedLongEnough = false
         confirmHoldJob = coroutineScope.launch {
             holdProgress.snapTo(0f)
@@ -122,7 +169,7 @@ fun CustomDialogYesOnLongPress(
 
             if (show && !hasBeenPressedLongEnough) {
                 hasBeenPressedLongEnough = true
-                latestHandleYesClick()
+                runYesClick()
                 holdProgress.snapTo(0f)
             }
         }
@@ -145,7 +192,11 @@ fun CustomDialogYesOnLongPress(
     if (show) {
         Dialog(
             onDismissRequest = { },
-            properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false)
+            properties = DialogProperties(
+                dismissOnBackPress = false,
+                dismissOnClickOutside = false,
+                usePlatformDefaultWidth = false,
+            )
         ) {
             Box(
                 modifier = Modifier
@@ -159,34 +210,34 @@ fun CustomDialogYesOnLongPress(
                     scrollState = scrollState,
                     overscrollEffect = null,
                     scrollIndicator = {
-                        if (holdProgress.value == 0f) {
-                            ScrollIndicator(
-                                state = scrollState,
-                                colors = ScrollIndicatorDefaults.colors(
-                                    indicatorColor = MaterialTheme.colorScheme.onBackground,
-                                    trackColor = MediumDarkGray
-                                )
+                        ScrollIndicator(
+                            state = scrollState,
+                            colors = ScrollIndicatorDefaults.colors(
+                                indicatorColor = MaterialTheme.colorScheme.onBackground,
+                                trackColor = MediumDarkGray
                             )
-                        }
+                        )
                     }
                 ) { contentPadding ->
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(top = contentPadding.calculateTopPadding())
-                            .padding(horizontal = 30.dp)
-                            .padding(top = 10.dp),
+                            .padding(horizontal = 24.dp)
+                            .padding(top = 6.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
                         Text(
                             text = title,
                             textAlign = TextAlign.Center,
-                            style = MaterialTheme.typography.titleLarge,
+                            style = MaterialTheme.typography.titleLarge.copy(
+                                fontWeight = FontWeight.SemiBold,
+                            ),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 20.dp)
+                                .padding(horizontal = 12.dp)
                         )
-                        Spacer(modifier = Modifier.height(5.dp))
+                        Spacer(modifier = Modifier.height(7.dp))
 
                         Column(
                             modifier = Modifier
@@ -202,32 +253,40 @@ fun CustomDialogYesOnLongPress(
                                 modifier = Modifier.fillMaxWidth()
                             )
                         }
-                        Spacer(modifier = Modifier.height(5.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Hold check to confirm",
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.tertiaryContent,
+                            style = MaterialTheme.typography.labelMedium,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
                         val contentColor = MaterialTheme.colorScheme.onSurface
                         Row(
                             horizontalArrangement = Arrangement.Center,
-                            modifier = Modifier.fillMaxWidth().padding(bottom = 22.5.dp)
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
                         ) {
                             EnhancedIconButton(
-                                buttonSize = 50.dp,
-                                hitBoxScale = 1.25f,
+                                buttonSize = ConfirmationCancelButtonSize,
+                                hitBoxScale = 1.2f,
                                 onClick = {
-                                    closeDialogJob?.cancel()
-                                    handleNoClick()
+                                    runNoClick()
                                 },
                                 buttonModifier = Modifier.clip(CircleShape)
                             ) {
                                 Icon(
-                                    modifier = Modifier.size(30.dp),
+                                    modifier = Modifier.size(ConfirmationCancelIconSize),
                                     imageVector = Icons.Default.Close,
                                     contentDescription = "Close",
                                     tint = contentColor
                                 )
                             }
-                            Spacer(modifier = Modifier.width(15.dp))
+                            Spacer(modifier = Modifier.width(14.dp))
                             Box(
                                 modifier = Modifier
-                                    .size(62.5.dp)
+                                    .size(ConfirmationIndicatorSize)
                                     .pointerInput(show, holdDurationMillis) {
                                         detectTapGestures(
                                             onPress = {
@@ -242,15 +301,24 @@ fun CustomDialogYesOnLongPress(
                                     },
                                 contentAlignment = Alignment.Center
                             ) {
+                                if (holdProgress.value > 0f) {
+                                    androidx.wear.compose.material.CircularProgressIndicator(
+                                        progress = holdProgress.value,
+                                        modifier = Modifier.size(ConfirmationIndicatorSize),
+                                        strokeWidth = 4.dp,
+                                        indicatorColor = MaterialTheme.colorScheme.primary,
+                                        trackColor = MediumDarkGray
+                                    )
+                                }
                                 Box(
                                     modifier = Modifier
-                                        .size(50.dp)
+                                        .size(ConfirmationButtonSize)
                                         .clip(CircleShape)
                                         .background(MaterialTheme.colorScheme.primary),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Icon(
-                                        modifier = Modifier.size(30.dp),
+                                        modifier = Modifier.size(ConfirmationButtonIconSize),
                                         imageVector = Icons.Default.Check,
                                         contentDescription = "Done",
                                         tint = MaterialTheme.colorScheme.onPrimary
@@ -259,17 +327,6 @@ fun CustomDialogYesOnLongPress(
                             }
                         }
                     }
-                }
-
-                if (holdProgress.value > 0f) {
-                    androidx.wear.compose.material.CircularProgressIndicator(
-                        progress = holdProgress.value,
-                        modifier = Modifier
-                            .fillMaxSize(),
-                        strokeWidth = 4.dp,
-                        indicatorColor = MaterialTheme.colorScheme.primary,
-                        trackColor = MediumDarkGray
-                    )
                 }
             }
         }

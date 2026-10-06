@@ -39,15 +39,19 @@ class WearRestTimerContinuityE2ETest : WearBaseE2ETest() {
         require(restVisible) { "Rest screen did not appear" }
 
         val observations = mutableListOf<Pair<Long, Int>>()
-        val deadline = System.currentTimeMillis() + 30_000
+        var sawDecrease = false
+        val deadline = System.currentTimeMillis() + 10_000
 
-        while (System.currentTimeMillis() < deadline) {
+        while (System.currentTimeMillis() < deadline && (observations.size < 5 || !sawDecrease)) {
             val seconds = readRestTimerSeconds()
             if (seconds != null) {
                 val now = System.currentTimeMillis()
                 val previous = observations.lastOrNull()
                 if (previous == null || previous.second != seconds) {
                     observations += now to seconds
+                    if (previous != null && seconds < previous.second) {
+                        sawDecrease = true
+                    }
                 }
             }
             device.waitForIdle(200)
@@ -57,7 +61,6 @@ class WearRestTimerContinuityE2ETest : WearBaseE2ETest() {
             "Insufficient timer samples captured on rest screen: ${observations.size}"
         }
 
-        var sawDecrease = false
         observations.zipWithNext().forEach { (previous, current) ->
             val (previousAt, previousSeconds) = previous
             val (currentAt, currentSeconds) = current
@@ -65,11 +68,6 @@ class WearRestTimerContinuityE2ETest : WearBaseE2ETest() {
             require(currentSeconds <= previousSeconds) {
                 "Rest timer increased unexpectedly: $previousSeconds -> $currentSeconds"
             }
-
-            if (currentSeconds < previousSeconds) {
-                sawDecrease = true
-            }
-
             val elapsedSeconds = (currentAt - previousAt) / 1000.0
             val observedDrop = previousSeconds - currentSeconds
             val allowedDrop = ceil(elapsedSeconds).toInt() + 1

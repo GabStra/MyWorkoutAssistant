@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.healthconnect.external
 
 import com.gabstra.myworkoutassistant.WorkoutTypes
+import java.security.MessageDigest
 import java.time.Duration
 import java.time.LocalDateTime
 
@@ -22,15 +23,17 @@ fun buildExternalHealthConnectSessionEntities(
         .sortedBy { it.time }
         .toList()
 
-    return sessions
-        .sortedByDescending { it.startTime }
-        .mapNotNull { session ->
+    val externalSessions = sessions.filterNot { session ->
             val isAppOwned =
                 session.clientRecordId in appOwnedWorkoutHistoryIds ||
                     session.sourcePackageName == appPackageName
-            if (isAppOwned || overlapsAppOwnedSession(session, appOwnedSessionWindows)) {
-                return@mapNotNull null
-            }
+            isAppOwned || overlapsAppOwnedSession(session, appOwnedSessionWindows)
+        }
+
+    return mergeOverlappingExternalSessions(externalSessions, resolveSourceAppLabel)
+        .sortedByDescending { it.session.startTime }
+        .map { mergedSession ->
+            val session = mergedSession.session
 
             val durationSeconds = Duration.between(session.startTime, session.endTime)
                 .seconds
@@ -71,7 +74,7 @@ fun buildExternalHealthConnectSessionEntities(
                 exerciseTypeLabel = resolveExerciseTypeLabel(session.exerciseType),
                 title = session.title?.trim()?.takeIf { it.isNotEmpty() },
                 sourcePackageName = session.sourcePackageName,
-                sourceAppLabel = resolveSourceAppLabel(session.sourcePackageName),
+                sourceAppLabel = mergedSession.sourceAppLabel,
                 isAppOwned = false,
                 lastSyncedAt = syncedAt,
                 averageHeartRate = validSeries.average().takeIf { !it.isNaN() }?.toInt(),
@@ -82,6 +85,88 @@ fun buildExternalHealthConnectSessionEntities(
                 heartRateSamples = sessionSamples,
             )
         }
+}
+
+private data class MergedExternalExerciseSession(
+    val session: RawExternalExerciseSession,
+    val sourceAppLabel: String?,
+)
+
+private fun mergeOverlappingExternalSessions(
+    sessions: List<RawExternalExerciseSession>,
+    resolveSourceAppLabel: (String?) -> String?,
+): List<MergedExternalExerciseSession> {
+    if (sessions.isEmpty()) return emptyList()
+
+    val sortedSessions = sessions.sortedWith(
+        compareBy<RawExternalExerciseSession> { it.startTime }
+            .thenBy { it.endTime }
+            .thenBy { it.id }
+    )
+    val groups = mutableListOf<MutableList<RawExternalExerciseSession>>()
+    var currentGroup = mutableListOf(sortedSessions.first())
+    var currentGroupEnd = sortedSessions.first().endTime
+
+    sortedSessions.drop(1).forEach { session ->
+        val overlapsCurrentGroup =
+            session.startTime.isBefore(currentGroupEnd) &&
+                session.endTime.isAfter(currentGroup.minOf { it.startTime })
+
+        if (overlapsCurrentGroup) {
+            currentGroup += session
+            currentGroupEnd = maxOf(currentGroupEnd, session.endTime)
+        } else {
+            groups += currentGroup
+            currentGroup = mutableListOf(session)
+            currentGroupEnd = session.endTime
+        }
+    }
+    groups += currentGroup
+
+    return groups.map { group ->
+        val representative = group.maxWithOrNull(
+            compareBy<RawExternalExerciseSession> {
+                Duration.between(it.startTime, it.endTime).seconds
+            }.thenBy { it.title?.isNotBlank() == true }
+        ) ?: group.first()
+        val sourcePackages = group.map { it.sourcePackageName }.distinct()
+        val sourcePackageName = sourcePackages.singleOrNull()
+        val sourceAppLabel = when {
+            sourcePackages.size > 1 -> "Multiple sources"
+            else -> resolveSourceAppLabel(sourcePackageName)
+        }
+        val mergedTitle = sequenceOf(representative)
+            .plus(group.asSequence())
+            .mapNotNull { it.title?.trim()?.takeIf(String::isNotEmpty) }
+            .firstOrNull()
+        val mergedId = if (group.size == 1) {
+            representative.id
+        } else {
+            stableMergedSessionId(group.map { it.id })
+        }
+
+        MergedExternalExerciseSession(
+            session = representative.copy(
+                id = mergedId,
+                clientRecordId = null,
+                title = mergedTitle,
+                startTime = group.minOf { it.startTime },
+                endTime = group.maxOf { it.endTime },
+                sourcePackageName = sourcePackageName,
+            ),
+            sourceAppLabel = sourceAppLabel,
+        )
+    }
+}
+
+private fun stableMergedSessionId(sourceIds: List<String>): String {
+    val canonicalIds = sourceIds.sorted().joinToString(separator = "\u0000")
+    val digest = MessageDigest.getInstance("SHA-256")
+        .digest(canonicalIds.toByteArray(Charsets.UTF_8))
+        .joinToString(separator = "") { byte ->
+            (byte.toInt() and 0xff).toString(16).padStart(2, '0')
+        }
+    return "merged:$digest"
 }
 
 data class AppOwnedSessionWindow(

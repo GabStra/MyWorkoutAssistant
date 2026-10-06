@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -46,12 +47,17 @@ fun BodyWeightSetScreen(
     onEditModeDisabled: () -> Unit,
     extraInfo: (@Composable (WorkoutState.Set) -> Unit)? = null,
     exerciseTitleComposable:  @Composable () -> Unit,
+    targetRepRange: String? = null,
     customComponentWrapper: @Composable (@Composable () -> Unit) -> Unit,
 ) {
     val context = LocalContext.current
 
     val previousSetData = state.previousSetData as BodyWeightSetData
-    var currentSetData by remember { mutableStateOf(state.currentSetData as BodyWeightSetData) }
+    val comparisonSetData = (state.historicalSetData as? BodyWeightSetData) ?: previousSetData
+    val initialSetData = state.previousSetData as BodyWeightSetData
+    var currentSetData by remember(state.set.id, state.equipmentId) {
+        mutableStateOf(state.currentSetData as BodyWeightSetData)
+    }
 
     val equipment = state.equipmentId?.let { viewModel.getEquipmentById(it) }
     val shouldLockCalibrationEdits = remember(state.isCalibrationSet, equipment) {
@@ -97,7 +103,7 @@ fun BodyWeightSetScreen(
     val isInEditMode = isRepsInEditMode || isWeightInEditMode
 
     val typography = MaterialTheme.typography
-    val headerStyle = MaterialTheme.typography.titleSmall
+    val headerStyle = MaterialTheme.typography.titleMedium
     val itemStyle = remember(typography) { typography.displayLarge.copy(fontWeight = FontWeight.Bold) }
 
     LaunchedEffect(currentSetData) {
@@ -115,7 +121,7 @@ fun BodyWeightSetScreen(
         if (isInEditMode) {
             onEditModeEnabled()
             while (isInEditMode) {
-                if (System.currentTimeMillis() - lastInteractionTime > 2000) {
+                if (System.currentTimeMillis() - lastInteractionTime >= CONTROL_EDIT_INACTIVITY_TIMEOUT_MILLIS) {
                     isRepsInEditMode = false
                     isWeightInEditMode = false
                 }
@@ -230,7 +236,7 @@ fun BodyWeightSetScreen(
                         if (shouldLockCalibrationEdits) return@combinedClickable
                         if (isRepsInEditMode) {
                             val newSetData = currentSetData.copy(
-                                actualReps = previousSetData.actualReps,
+                                actualReps = comparisonSetData.actualReps,
                             )
 
                             currentSetData = currentSetData.copy(
@@ -244,17 +250,11 @@ fun BodyWeightSetScreen(
                 ),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            val textColor  = when {
-                currentSetData.actualReps == previousSetData.actualReps -> MaterialTheme.colorScheme.onBackground
-                currentSetData.actualReps < previousSetData.actualReps  -> MaterialTheme.colorScheme.error
-                else -> MaterialTheme.colorScheme.secondary
-            }
-
             ScalableText(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.height(68.dp),
                 text = "${currentSetData.actualReps}",
                 style = style,
-                color = textColor,
+                color = MaterialTheme.colorScheme.onBackground,
                 textAlign = TextAlign.Center
             )
         }
@@ -280,11 +280,11 @@ fun BodyWeightSetScreen(
                         if (shouldLockCalibrationEdits) return@combinedClickable
                         if (isWeightInEditMode) {
                             val newSetData = currentSetData.copy(
-                                additionalWeight = previousSetData.additionalWeight,
+                                additionalWeight = comparisonSetData.additionalWeight,
                             )
 
                             currentSetData = currentSetData.copy(
-                                additionalWeight = previousSetData.additionalWeight,
+                                additionalWeight = comparisonSetData.additionalWeight,
                                 volume = newSetData.calculateVolume()
                             )
 
@@ -294,19 +294,13 @@ fun BodyWeightSetScreen(
                 ),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            val textColor = when {
-                currentSetData.additionalWeight == previousSetData.additionalWeight -> MaterialTheme.colorScheme.onBackground
-                currentSetData.additionalWeight < previousSetData.additionalWeight  -> MaterialTheme.colorScheme.error
-                else -> MaterialTheme.colorScheme.secondary
-            }
-
             val weightText = if(currentSetData.additionalWeight != 0.0) equipment!!.formatWeight(currentSetData.additionalWeight) else "-"
 
             ScalableText(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.height(68.dp),
                 text = weightText,
                 style = style,
-                color =  textColor,
+                color = MaterialTheme.colorScheme.onBackground,
                 textAlign = TextAlign.Center
             )
         }
@@ -322,37 +316,21 @@ fun BodyWeightSetScreen(
             modifier = customModifier,
             verticalArrangement = Arrangement.Center
         ){
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(5.dp)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(
+                    SET_VALUE_HORIZONTAL_SPACING,
+                    Alignment.CenterHorizontally,
+                ),
             ) {
                 if(shouldShowWeights) {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(2.5.dp)
-                    ) {
-                        Text(
-                            text = "WEIGHT (KG)",
-                            style = headerStyle,
-                            textAlign = TextAlign.Center,
-                            color =  MaterialTheme.colorScheme.onBackground,
-                        )
-                        WeightRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
+                    SetValueSection(label = "WEIGHT (KG)", headerStyle = headerStyle) {
+                        WeightRow(style = itemStyle)
                     }
                 }
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(2.5.dp)
-                ) {
-                    Text(
-                        text = "REPS",
-                        style = headerStyle,
-                        textAlign = TextAlign.Center,
-                        color =  MaterialTheme.colorScheme.onBackground,
-                    )
-                    RepsRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
+                SetValueSection(label = "REPS", headerStyle = headerStyle) {
+                    RepsRow(style = itemStyle)
                 }
             }
         }
@@ -378,13 +356,44 @@ fun BodyWeightSetScreen(
                     onMinusLongPress = { onMinusClick() },
                     onPlusTap = { onPlusClick() },
                     onPlusLongPress = { onPlusClick() },
+                    isMinusEnabled = if (isRepsInEditMode) currentSetData.actualReps > 1 else selectedWeightIndex?.let { it > 0 } == true,
+                    isPlusEnabled = if (isRepsInEditMode) true else selectedWeightIndex?.let { it < availableWeights.size - 1 } == true,
+                    isResetEnabled = if (isRepsInEditMode) {
+                        currentSetData.actualReps != initialSetData.actualReps
+                    } else {
+                        currentSetData.additionalWeight != initialSetData.additionalWeight
+                    },
+                    onCloseClick = {
+                        isRepsInEditMode = false
+                        isWeightInEditMode = false
+                    },
+                    onResetClick = {
+                        val resetSetData = currentSetData.copy(
+                            actualReps = if (isRepsInEditMode) initialSetData.actualReps else currentSetData.actualReps,
+                            additionalWeight = if (isWeightInEditMode) initialSetData.additionalWeight else currentSetData.additionalWeight,
+                        )
+                        currentSetData = resetSetData.copy(volume = resetSetData.calculateVolume())
+                        if (isWeightInEditMode) {
+                            viewModel.schedulePlateRecalculation(initialSetData.getWeight())
+                        }
+                        updateInteractionTime()
+                        hapticsViewModel.doGentleVibration()
+                    },
                     content = {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
+                            horizontalArrangement = Arrangement.spacedBy(15.dp, Alignment.CenterHorizontally)
                         ) {
-                            if (isRepsInEditMode) RepsRow(modifier = Modifier.fillMaxWidth(),style = itemStyle)
-                            if (isWeightInEditMode) WeightRow(modifier = Modifier.fillMaxWidth(),style = itemStyle)
+                            if (isWeightInEditMode) {
+                                SetValueSection(label = "WEIGHT (KG)", headerStyle = headerStyle) {
+                                    WeightRow(style = itemStyle)
+                                }
+                            }
+                            if (isRepsInEditMode) {
+                                SetValueSection(label = "REPS", headerStyle = headerStyle) {
+                                    RepsRow(style = itemStyle)
+                                }
+                            }
                         }
                     }
                 )
@@ -392,7 +401,7 @@ fun BodyWeightSetScreen(
             }else{
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                    verticalArrangement = Arrangement.spacedBy(20.dp)
                 ) {
                     exerciseTitleComposable()
                     if (extraInfo != null) {
@@ -400,6 +409,7 @@ fun BodyWeightSetScreen(
                         extraInfo(state)
                     }
                     SetScreen(customModifier = Modifier)
+                    targetRepRange?.let { TargetRepRangeLabel(it) }
                 }
             }
         }

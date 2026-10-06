@@ -1,5 +1,8 @@
 package com.gabstra.myworkoutassistant.screens
 
+import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
+import com.gabstra.myworkoutassistant.ui.theme.tertiaryContent
+
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -63,17 +66,9 @@ fun RestSetForm(
 
     val outlineVariant = MaterialTheme.colorScheme.outlineVariant
     Box(modifier = Modifier.fillMaxSize()) {
-        Scaffold(
+        BreadcrumbScaffold(
         topBar = {
             TopAppBar(
-                modifier = Modifier.drawBehind {
-                    drawLine(
-                        color = outlineVariant,
-                        start = Offset(0f, size.height),
-                        end = Offset(size.width, size.height),
-                        strokeWidth = 1.dp.toPx()
-                    )
-                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = Color.Transparent,
                     navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
@@ -137,7 +132,7 @@ fun RestSetForm(
                     Text(
                         text = "Same time between each pair of sets; existing between-set rests are replaced.",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = MaterialTheme.colorScheme.tertiaryContent,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }

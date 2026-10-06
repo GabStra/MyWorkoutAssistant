@@ -57,7 +57,7 @@ fun buildWorkoutPlanMarkdown(workoutStore: WorkoutStore): String {
                 
                 is Dumbbells -> {
                     if (equipment.availableDumbbells.isNotEmpty()) {
-                        markdown.append("- **Available Dumbbells**: ")
+                        markdown.append("- **Available Dumbbell Pairs**: ")
                         val dumbbellsStr = equipment.availableDumbbells
                             .sortedByDescending { it.weight }
                             .joinToString(", ") { "${formatNumber(it.weight)} kg x 2" }
@@ -356,7 +356,8 @@ private fun appendExerciseDetails(
     } else {
         markdown.append("  - **Sets**:\n")
         var workSetNumber = 0
-        val hasIntraSetRest = exercise.intraSetRestInSeconds != null && exercise.intraSetRestInSeconds!! > 0
+        val intraSetRestInSeconds = exercise.intraSetRestInSeconds
+        val hasIntraSetRest = intraSetRestInSeconds != null && intraSetRestInSeconds > 0
         
         exercise.sets.forEachIndexed { index, set ->
             if (set !is RestSet) {
@@ -422,7 +423,8 @@ private fun appendSupersetDetails(markdown: StringBuilder, superset: Superset, i
                     workoutStore.equipments.find { it.id == equipmentId }
                 }
                 val setStr = formatSetInline(set, equipment)
-                val hasIntraSetRest = exercise.intraSetRestInSeconds != null && exercise.intraSetRestInSeconds!! > 0
+                val intraSetRestInSeconds = exercise.intraSetRestInSeconds
+                val hasIntraSetRest = intraSetRestInSeconds != null && intraSetRestInSeconds > 0
                 
                 if (hasIntraSetRest) {
                     markdown.append("    ${exercise.name} (Side A): $setStr\n")
@@ -463,11 +465,12 @@ private fun EquipmentType.toDisplayText(): String {
     return when (this) {
         EquipmentType.GENERIC -> "Generic"
         EquipmentType.BARBELL -> "Barbell"
-        EquipmentType.DUMBBELLS -> "Dumbbells"
+        EquipmentType.DUMBBELLS -> "Dumbbell Pair"
         EquipmentType.DUMBBELL -> "Dumbbell"
         EquipmentType.PLATELOADEDCABLE -> "Plate Loaded Cable"
         EquipmentType.WEIGHTVEST -> "Weight Vest"
         EquipmentType.MACHINE -> "Machine"
+        EquipmentType.CARDIO_MACHINE -> "Cardio Machine"
         EquipmentType.IRONNECK -> "Iron Neck"
         EquipmentType.ACCESSORY -> "Accessory"
     }

@@ -20,17 +20,8 @@
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
 
-# Keep annotations needed by Room and Gson.
+# Keep annotations needed by Gson.
 -keepattributes Signature,RuntimeVisibleAnnotations,RuntimeVisibleParameterAnnotations,AnnotationDefault
-
-# Room (database/DAO/entity annotations + generated references).
--keep class * extends androidx.room.RoomDatabase { *; }
--keep @androidx.room.Database class * { *; }
--keep @androidx.room.Entity class * { *; }
--keep @androidx.room.Dao class * { *; }
--keepclassmembers class * {
-    @androidx.room.* <fields>;
-}
 
 # Gson (reflection + TypeToken).
 -keep class com.google.gson.reflect.TypeToken { *; }

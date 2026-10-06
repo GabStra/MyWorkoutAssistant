@@ -1,5 +1,8 @@
 package com.gabstra.myworkoutassistant.screens
 
+import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
+import com.gabstra.myworkoutassistant.ui.theme.tertiaryContent
+
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -7,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -43,6 +47,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -51,6 +56,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -62,6 +68,7 @@ import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.AppPrimaryOutlinedButton
 import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
 import com.gabstra.myworkoutassistant.composables.CollapsibleSection
+import com.gabstra.myworkoutassistant.composables.ContentSubtitle
 import com.gabstra.myworkoutassistant.composables.FormSectionTitle
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.MinMaxStepperRow
@@ -74,14 +81,23 @@ import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.round
 import com.gabstra.myworkoutassistant.shared.ExerciseCategory
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.equipments.isCompatibleWith
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
 import com.gabstra.myworkoutassistant.shared.ProgressionMode
 import com.gabstra.myworkoutassistant.shared.resolveDeloadConfig
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
+import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.running.DistanceUnit
+import com.gabstra.myworkoutassistant.shared.running.RunningEnvironment
+import com.gabstra.myworkoutassistant.shared.running.RunningPrescription
+import com.gabstra.myworkoutassistant.shared.running.RunningTargetType
 import com.gabstra.myworkoutassistant.shared.zoneRanges
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Locale
 import java.util.UUID
 
@@ -93,6 +109,15 @@ private fun ExerciseType.toReadableString(): String {
 
 private fun getExerciseTypeDescriptions(): List<String> {
     return ExerciseType.values().map { it.toReadableString() }
+}
+
+private fun formatPercentage(value: Double): String {
+    val roundedValue = value.round(2)
+    return if (roundedValue % 1.0 == 0.0) {
+        roundedValue.toInt().toString()
+    } else {
+        roundedValue.toString()
+    }
 }
 
 @Composable
@@ -119,7 +144,7 @@ private fun SwitchSettingRow(
                 Text(
                     text = subtitle,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.tertiaryContent
                 )
             }
         }
@@ -140,9 +165,19 @@ fun ExerciseForm(
     exercise: Exercise? = null,
     isSaving: Boolean = false
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val linkedDefinition = exercise?.exerciseDefinitionId?.let { definitionId ->
+        viewModel.workoutStore.exerciseDefinitions.firstOrNull { it.id == definitionId }
+    }
     // ----- state -----
     val nameState = rememberSaveable { mutableStateOf(exercise?.name ?: "") }
-    val notesState = rememberSaveable { mutableStateOf(exercise?.notes ?: "") }
+    val notesState = rememberSaveable {
+        mutableStateOf(
+            if (exercise?.exerciseDefinitionId != null) exercise.placementNotes.orEmpty()
+            else exercise?.notes.orEmpty()
+        )
+    }
 
     val hms = rememberSaveable {
         mutableStateOf(TimeConverter.secondsToHms(exercise?.intraSetRestInSeconds ?: 0))
@@ -151,6 +186,25 @@ fun ExerciseForm(
 
     val exerciseTypeDescriptions = rememberSaveable { getExerciseTypeDescriptions() }
     val selectedExerciseType = rememberSaveable { mutableStateOf(exercise?.exerciseType ?: ExerciseType.WEIGHT) }
+    val runningEnvironment = rememberSaveable {
+        mutableStateOf(exercise?.runningPrescription?.environment ?: RunningEnvironment.OUTDOOR)
+    }
+    val runningTargetType = rememberSaveable {
+        mutableStateOf(exercise?.runningPrescription?.targetType ?: RunningTargetType.TIME)
+    }
+    val runningTargetInput = rememberSaveable {
+        mutableStateOf(
+            exercise?.runningPrescription?.let { prescription ->
+                when (prescription.targetType) {
+                    RunningTargetType.TIME -> (prescription.targetValue / 60.0).toString()
+                    RunningTargetType.DISTANCE -> when (viewModel.workoutStore.distanceUnit) {
+                        DistanceUnit.KILOMETERS -> (prescription.targetValue / 1000.0).toString()
+                        DistanceUnit.MILES -> (prescription.targetValue / 1609.344).toString()
+                    }
+                }
+            } ?: "30"
+        )
+    }
     val exerciseTypeItems = remember(exerciseTypeDescriptions) {
         ExerciseType.values().zip(exerciseTypeDescriptions).map { (type, label) ->
             StandardFilterDropdownItem(
@@ -169,6 +223,7 @@ fun ExerciseForm(
     val keepScreenOn = rememberSaveable { mutableStateOf(exercise?.keepScreenOn ?: false) }
     val showCountDownTimer = rememberSaveable { mutableStateOf(exercise?.showCountDownTimer ?: false) }
     val requiresLoadCalibration = rememberSaveable { mutableStateOf(exercise?.requiresLoadCalibration ?: false) }
+    var expandedMovement by rememberSaveable { mutableStateOf(false) }
 
     // Unilateral toggle: derived from intraSetRestInSeconds domain contract (> 0 means unilateral)
     val isUnilateral = rememberSaveable {
@@ -207,7 +262,7 @@ fun ExerciseForm(
         mutableStateOf(exercise?.deloadWeightFactor == null)
     }
     val deloadWeightFactorState = rememberSaveable {
-        mutableStateOf(exercise?.deloadWeightFactor?.toString() ?: "")
+        mutableStateOf(exercise?.deloadWeightFactor?.let { formatPercentage(it * 100) } ?: "")
     }
     val useGlobalDeloadRepsDrop = rememberSaveable {
         mutableStateOf(exercise?.deloadRepsDrop == null)
@@ -254,9 +309,12 @@ fun ExerciseForm(
             exercise?.equipmentId ?: (if (exercise?.exerciseType == ExerciseType.WEIGHT) viewModel.GENERIC_ID else null)
         )
     }
-    val equipmentItems: List<StandardFilterDropdownItem<UUID?>> = remember(equipments) {
+    val equipmentItems: List<StandardFilterDropdownItem<UUID?>> = remember(
+        equipments,
+        selectedExerciseType.value,
+    ) {
         listOf(StandardFilterDropdownItem<UUID?>(value = null, label = "None")) +
-            equipments.map { equipment ->
+            equipments.filter { it.isCompatibleWith(selectedExerciseType.value) }.map { equipment ->
                 StandardFilterDropdownItem(value = equipment.id, label = equipment.name)
             }
     }
@@ -317,7 +375,11 @@ fun ExerciseForm(
             )).copy(
                 deloadFailedSessionsThreshold = if (useGlobalDeloadFailedThreshold.value) null else deloadFailedSessionsThresholdState.value.toIntOrNull(),
                 deloadCompletedSessionsInterval = if (useGlobalDeloadCompletedInterval.value) null else deloadCompletedSessionsIntervalState.value.toIntOrNull(),
-                deloadWeightFactor = if (useGlobalDeloadWeightFactor.value) null else deloadWeightFactorState.value.toDoubleOrNull(),
+                deloadWeightFactor = if (useGlobalDeloadWeightFactor.value) {
+                    null
+                } else {
+                    deloadWeightFactorState.value.toDoubleOrNull()?.div(100)
+                },
                 deloadRepsDrop = if (useGlobalDeloadRepsDrop.value) null else deloadRepsDropState.value.toIntOrNull(),
                 deloadCutSetsTo = if (useGlobalDeloadCutSetsTo.value) null else deloadCutSetsToState.value.toIntOrNull()
             )
@@ -328,8 +390,10 @@ fun ExerciseForm(
     LaunchedEffect(equipments, exercise?.id) {
         val currentEquipmentId = selectedEquipmentId.value
         if (currentEquipmentId != null) {
-            val equipmentExists = equipments.any { it.id == currentEquipmentId }
-            if (!equipmentExists) {
+            val equipmentIsCompatible = equipments.any {
+                it.id == currentEquipmentId && it.isCompatibleWith(selectedExerciseType.value)
+            }
+            if (!equipmentIsCompatible) {
                 // Equipment was deleted, reset to appropriate default
                 selectedEquipmentId.value = if (selectedExerciseType.value == ExerciseType.WEIGHT) {
                     viewModel.GENERIC_ID
@@ -347,9 +411,10 @@ fun ExerciseForm(
         mutableStateOf(exercise?.secondaryMuscleGroups ?: emptySet<MuscleGroup>())
     }
     var isSelectingSecondary by rememberSaveable { mutableStateOf(false) }
-    var resetMuscleMapTrigger by remember { mutableStateOf(0) }
+    var resetMuscleMapTrigger by remember { mutableIntStateOf(0) }
 
     var expandedWarmupProgression by rememberSaveable { mutableStateOf(false) }
+    var expandedDeloadOverrides by rememberSaveable { mutableStateOf(false) }
     var expandedCalibration by rememberSaveable { mutableStateOf(false) }
     var expandedEquipment by rememberSaveable { mutableStateOf(false) }
     var expandedTargetMuscles by rememberSaveable { mutableStateOf(false) }
@@ -357,19 +422,10 @@ fun ExerciseForm(
     val scrollState = rememberScrollState()
 
     val outlineColor = MaterialTheme.colorScheme.outlineVariant
-
     Box(modifier = Modifier.fillMaxSize()) {
-        Scaffold(
+        BreadcrumbScaffold(
         topBar = {
             TopAppBar(
-                modifier = Modifier.drawBehind {
-                    drawLine(
-                        color = outlineColor,
-                        start = Offset(0f, size.height),
-                        end = Offset(size.width, size.height),
-                        strokeWidth = 1.dp.toPx()
-                    )
-                },
                 title = {
                     Text(
                         modifier = Modifier
@@ -423,8 +479,11 @@ fun ExerciseForm(
                         value = nameState.value,
                         onValueChange = { nameState.value = it },
                         label = { Text("Exercise name", style = MaterialTheme.typography.labelLarge) },
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
                     )
+                    if (exercise?.exerciseDefinitionId != null) {
+                        ContentSubtitle("Workout-specific name. Use the library name to follow future library renames.")
+                    }
                     if (exercise == null) {
                         StandardFilterDropdown(
                             label = "Exercise type",
@@ -435,6 +494,7 @@ fun ExerciseForm(
                                 selectedEquipmentId.value =
                                     if (type == ExerciseType.WEIGHT) viewModel.GENERIC_ID else null
                             },
+                            selectedValue = selectedExerciseType.value,
                             modifier = Modifier.fillMaxWidth(),
                             isItemSelected = { it == selectedExerciseType.value }
                         )
@@ -453,6 +513,75 @@ fun ExerciseForm(
                         singleLine = false
                     )
                 }
+            }
+
+            Spacer(Modifier.height(Spacing.md))
+            if (selectedExerciseType.value == ExerciseType.RUNNING) {
+                FormSectionTitle(text = "Running target")
+                StyledCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.padding(Spacing.md),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.md)
+                    ) {
+                        StandardFilterDropdown(
+                            label = "Environment",
+                            selectedText = if (runningEnvironment.value == RunningEnvironment.OUTDOOR) "Outdoor" else "Treadmill",
+                            items = listOf(
+                                StandardFilterDropdownItem(RunningEnvironment.OUTDOOR, "Outdoor"),
+                                StandardFilterDropdownItem(RunningEnvironment.TREADMILL, "Treadmill")
+                            ),
+                            onItemSelected = { runningEnvironment.value = it },
+                            selectedValue = runningEnvironment.value,
+                            modifier = Modifier.fillMaxWidth(),
+                            isItemSelected = { it == runningEnvironment.value }
+                        )
+                        StandardFilterDropdown(
+                            label = "Target",
+                            selectedText = if (runningTargetType.value == RunningTargetType.TIME) "Time" else "Distance",
+                            items = listOf(
+                                StandardFilterDropdownItem(RunningTargetType.TIME, "Time"),
+                                StandardFilterDropdownItem(RunningTargetType.DISTANCE, "Distance")
+                            ),
+                            onItemSelected = { runningTargetType.value = it },
+                            selectedValue = runningTargetType.value,
+                            modifier = Modifier.fillMaxWidth(),
+                            isItemSelected = { it == runningTargetType.value }
+                        )
+                        OutlinedTextField(
+                            value = runningTargetInput.value,
+                            onValueChange = { input ->
+                                if (input.matches(Regex("^\\d{0,5}(\\.\\d{0,3})?$"))) runningTargetInput.value = input
+                            },
+                            label = {
+                                Text(
+                                    if (runningTargetType.value == RunningTargetType.TIME) "Minutes" else
+                                        if (viewModel.workoutStore.distanceUnit == DistanceUnit.KILOMETERS) "Kilometers" else "Miles"
+                                )
+                            },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true
+                        )
+                        Text(
+                            "The watch alerts at the target; finish the run step when you are ready.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.tertiaryContent
+                        )
+                    }
+                }
+                Spacer(Modifier.height(Spacing.md))
+            }
+            CollapsibleSection(
+                title = "Movement",
+                summary = exercise?.movementRef?.movementId?.let { "Movement: $it" }
+                    ?: "No movement in exercise library",
+                expanded = expandedMovement,
+                onToggle = { expandedMovement = !expandedMovement }
+            ) {
+                ExerciseMovementPreviewPage(
+                    movementRef = exercise?.movementRef,
+                    modifier = Modifier.fillMaxWidth().height(240.dp),
+                )
             }
 
             if (nameState.value.isNotBlank()) {
@@ -477,7 +606,13 @@ fun ExerciseForm(
                 }
 
                 // ----- Equipment -----
-                if (selectedExerciseType.value == ExerciseType.BODY_WEIGHT || selectedExerciseType.value == ExerciseType.WEIGHT) {
+                if (selectedExerciseType.value in setOf(
+                        ExerciseType.WEIGHT,
+                        ExerciseType.BODY_WEIGHT,
+                        ExerciseType.COUNTUP,
+                        ExerciseType.COUNTDOWN,
+                    )
+                ) {
                     val selectedEquipmentName = remember(equipmentItems, selectedEquipmentId.value) {
                         equipmentItems.firstOrNull { it.value == selectedEquipmentId.value }?.label ?: "None"
                     }
@@ -498,6 +633,7 @@ fun ExerciseForm(
                                 selectedText = selectedEquipmentName,
                                 items = equipmentItems,
                                 onItemSelected = { selectedEquipmentId.value = it },
+                                selectedValue = selectedEquipmentId.value,
                                 modifier = Modifier.fillMaxWidth(),
                                 isItemSelected = { it == selectedEquipmentId.value }
                             )
@@ -618,51 +754,39 @@ fun ExerciseForm(
                         Text(
                             text = "Choose how taps on the map are saved:",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.tertiaryContent
                         )
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(Spacing.md)
                         ) {
-                            Button(
+                            if (!isSelectingSecondary) AppPrimaryButton(
+                                text = "Primary muscles",
                                 onClick = { isSelectingSecondary = false },
                                 modifier = Modifier.weight(1f),
-                                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                                    containerColor = if (!isSelectingSecondary)
-                                        MaterialTheme.colorScheme.primary
-                                    else
-                                        MaterialTheme.colorScheme.surfaceVariant
-                                )
-                            ) {
-                                Text(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    text = "Primary muscles",
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    textAlign = TextAlign.Center
-                                )
-                            }
-                            Button(
+                                textAlign = TextAlign.Center,
+                            ) else AppSecondaryButton(
+                                text = "Primary muscles",
+                                onClick = { isSelectingSecondary = false },
+                                modifier = Modifier.weight(1f),
+                                textAlign = TextAlign.Center,
+                            )
+                            if (isSelectingSecondary) AppPrimaryButton(
+                                text = "Secondary muscles",
                                 onClick = { isSelectingSecondary = true },
                                 modifier = Modifier.weight(1f),
-                                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                                    containerColor = if (isSelectingSecondary)
-                                        MaterialTheme.colorScheme.primary
-                                    else
-                                        MaterialTheme.colorScheme.surfaceVariant
-                                )
-                            ) {
-                                Text(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    text = "Secondary muscles",
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    textAlign = TextAlign.Center
-                                )
-                            }
+                                textAlign = TextAlign.Center,
+                            ) else AppSecondaryButton(
+                                text = "Secondary muscles",
+                                onClick = { isSelectingSecondary = true },
+                                modifier = Modifier.weight(1f),
+                                textAlign = TextAlign.Center,
+                            )
                         }
                         Text(
                             text = "Primary muscles are the main muscles worked. Secondary muscles are assisting muscles.",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.tertiaryContent
                         )
                     }
                 }
@@ -750,6 +874,7 @@ fun ExerciseForm(
                             selectedText = selectedExerciseCategoryLabel,
                             items = exerciseCategoryOptions,
                             onItemSelected = { selectedExerciseCategory.value = it },
+                            selectedValue = selectedExerciseCategory.value,
                             modifier = Modifier.fillMaxWidth(),
                             isItemSelected = { it == selectedExerciseCategory.value }
                         )
@@ -768,6 +893,7 @@ fun ExerciseForm(
                                     requiresLoadCalibration.value = false
                                 }
                             },
+                            selectedValue = progressionMode.value,
                             modifier = Modifier.fillMaxWidth(),
                             isItemSelected = { it == progressionMode.value }
                         )
@@ -820,133 +946,6 @@ fun ExerciseForm(
                                 )
                             }
 
-                            StyledCard(modifier = Modifier.fillMaxWidth()) {
-                                Column(
-                                    modifier = Modifier.padding(Spacing.md),
-                                    verticalArrangement = Arrangement.spacedBy(Spacing.md)
-                                ) {
-                                    Text(
-                                        text = "Deload",
-                                        style = MaterialTheme.typography.titleMedium
-                                    )
-                                    Text(
-                                        text = "Resolved: fail ${resolvedDeloadConfig.failedSessionsThreshold ?: "off"}, complete ${resolvedDeloadConfig.completedSessionsInterval ?: "off"}, weight ${resolvedDeloadConfig.weightFactor}, reps -${resolvedDeloadConfig.repsDrop}, sets ${resolvedDeloadConfig.cutSetsTo ?: "keep all"}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-
-                                    SwitchSettingRow(
-                                        title = "Use global failed-session threshold",
-                                        subtitle = "Global: ${globalDeloadConfig.failedSessionsThreshold ?: "disabled"}",
-                                        checked = useGlobalDeloadFailedThreshold.value,
-                                        onCheckedChange = { useGlobalDeloadFailedThreshold.value = it }
-                                    )
-                                    if (!useGlobalDeloadFailedThreshold.value) {
-                                        OutlinedTextField(
-                                            value = deloadFailedSessionsThresholdState.value,
-                                            onValueChange = { input ->
-                                                if (input.isEmpty() || input.all { it.isDigit() }) {
-                                                    deloadFailedSessionsThresholdState.value = input
-                                                }
-                                            },
-                                            label = { Text("Failed sessions threshold") },
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                    }
-
-                                    SwitchSettingRow(
-                                        title = "Use global completed-session interval",
-                                        subtitle = "Global: ${globalDeloadConfig.completedSessionsInterval ?: "disabled"}",
-                                        checked = useGlobalDeloadCompletedInterval.value,
-                                        onCheckedChange = { useGlobalDeloadCompletedInterval.value = it }
-                                    )
-                                    if (!useGlobalDeloadCompletedInterval.value) {
-                                        OutlinedTextField(
-                                            value = deloadCompletedSessionsIntervalState.value,
-                                            onValueChange = { input ->
-                                                if (input.isEmpty() || input.all { it.isDigit() }) {
-                                                    deloadCompletedSessionsIntervalState.value = input
-                                                }
-                                            },
-                                            label = { Text("Completed sessions interval") },
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                    }
-
-                                    SwitchSettingRow(
-                                        title = "Use global deload weight factor",
-                                        subtitle = "Global: ${globalDeloadConfig.weightFactor}",
-                                        checked = useGlobalDeloadWeightFactor.value,
-                                        onCheckedChange = { useGlobalDeloadWeightFactor.value = it }
-                                    )
-                                    if (!useGlobalDeloadWeightFactor.value) {
-                                        OutlinedTextField(
-                                            value = deloadWeightFactorState.value,
-                                            onValueChange = { input ->
-                                                if (
-                                                    input.isEmpty() ||
-                                                    (input.count { it == '.' } <= 1 &&
-                                                        input.all { it.isDigit() || it == '.' } &&
-                                                        !input.startsWith("."))
-                                                ) {
-                                                    deloadWeightFactorState.value = input
-                                                }
-                                            },
-                                            label = { Text("Deload weight factor") },
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                    }
-
-                                    SwitchSettingRow(
-                                        title = "Use global deload reps drop",
-                                        subtitle = "Global: ${globalDeloadConfig.repsDrop}",
-                                        checked = useGlobalDeloadRepsDrop.value,
-                                        onCheckedChange = { useGlobalDeloadRepsDrop.value = it }
-                                    )
-                                    if (!useGlobalDeloadRepsDrop.value) {
-                                        OutlinedTextField(
-                                            value = deloadRepsDropState.value,
-                                            onValueChange = { input ->
-                                                if (input.isEmpty() || input.all { it.isDigit() }) {
-                                                    deloadRepsDropState.value = input
-                                                }
-                                            },
-                                            label = { Text("Deload reps drop") },
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                    }
-
-                                    SwitchSettingRow(
-                                        title = "Use global cut-sets target",
-                                        subtitle = "Global: ${globalDeloadConfig.cutSetsTo ?: "keep all"}",
-                                        checked = useGlobalDeloadCutSetsTo.value,
-                                        onCheckedChange = { useGlobalDeloadCutSetsTo.value = it }
-                                    )
-                                    if (!useGlobalDeloadCutSetsTo.value) {
-                                        OutlinedTextField(
-                                            value = deloadCutSetsToState.value,
-                                            onValueChange = { input ->
-                                                if (input.isEmpty() || input.all { it.isDigit() }) {
-                                                    deloadCutSetsToState.value = input
-                                                }
-                                            },
-                                            label = { Text("Cut sets to") },
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                    }
-
-                                    Text(
-                                        text = "If both trigger thresholds resolve to blank, automatic deload is disabled for this exercise.",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
                         }
                     }
                 }
@@ -1023,6 +1022,7 @@ fun ExerciseForm(
                                     }
                                 }
                             },
+                            selectedValue = selectedHeartRateZoneIndex,
                             modifier = Modifier.fillMaxWidth(),
                             isItemSelected = { it == selectedHeartRateZoneIndex }
                         )
@@ -1049,28 +1049,196 @@ fun ExerciseForm(
                 Spacer(Modifier.height(Spacing.md))
             }
 
-                FormSectionTitle(text = "Advanced")
-                Spacer(Modifier.height(Spacing.xs))
+                val showDeloadOverrides =
+                    progressionMode.value != ProgressionMode.OFF &&
+                        (selectedExerciseType.value == ExerciseType.WEIGHT ||
+                            selectedExerciseType.value == ExerciseType.BODY_WEIGHT)
+                val showCalibration =
+                    selectedExerciseType.value == ExerciseType.WEIGHT ||
+                        (selectedExerciseType.value == ExerciseType.BODY_WEIGHT &&
+                            selectedEquipmentId.value != null &&
+                            selectedEquipmentId.value != viewModel.GENERIC_ID)
+
+                if (showDeloadOverrides || showCalibration) {
+                    FormSectionTitle(text = "Advanced")
+                    Spacer(Modifier.height(Spacing.xs))
+                }
+
+                if (showDeloadOverrides) {
+                    val deloadSummary =
+                        "Failed sessions before deload: ${resolvedDeloadConfig.failedSessionsThreshold ?: "Off"}\n" +
+                            "Completed sessions between deloads: ${resolvedDeloadConfig.completedSessionsInterval ?: "Off"}\n" +
+                            "Deload weight: ${formatPercentage(resolvedDeloadConfig.weightFactor * 100)}%\n" +
+                            "Reps removed from each set: ${resolvedDeloadConfig.repsDrop}\n" +
+                            "Work sets performed: ${resolvedDeloadConfig.cutSetsTo ?: "All"}"
+                    CollapsibleSection(
+                        title = "Deload overrides",
+                        summary = deloadSummary,
+                        expanded = expandedDeloadOverrides,
+                        onToggle = { expandedDeloadOverrides = !expandedDeloadOverrides }
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
+                            Text(
+                                text = "Override the global deload defaults for this exercise only.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.tertiaryContent
+                            )
+
+                            Text(
+                                text = "When to deload",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+
+                            SwitchSettingRow(
+                                title = "Use global default",
+                                subtitle = "Failed sessions before deload: ${globalDeloadConfig.failedSessionsThreshold ?: "Off"}",
+                                checked = useGlobalDeloadFailedThreshold.value,
+                                onCheckedChange = { useGlobalDeloadFailedThreshold.value = it }
+                            )
+                            if (!useGlobalDeloadFailedThreshold.value) {
+                                OutlinedTextField(
+                                    value = deloadFailedSessionsThresholdState.value,
+                                    onValueChange = { input ->
+                                        if (input.isEmpty() || input.all { it.isDigit() }) {
+                                            deloadFailedSessionsThresholdState.value = input
+                                        }
+                                    },
+                                    label = { Text("Failed sessions before deload") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+
+                            SwitchSettingRow(
+                                title = "Use global default",
+                                subtitle = "Completed sessions between deloads: ${globalDeloadConfig.completedSessionsInterval ?: "Off"}",
+                                checked = useGlobalDeloadCompletedInterval.value,
+                                onCheckedChange = { useGlobalDeloadCompletedInterval.value = it }
+                            )
+                            if (!useGlobalDeloadCompletedInterval.value) {
+                                OutlinedTextField(
+                                    value = deloadCompletedSessionsIntervalState.value,
+                                    onValueChange = { input ->
+                                        if (input.isEmpty() || input.all { it.isDigit() }) {
+                                            deloadCompletedSessionsIntervalState.value = input
+                                        }
+                                    },
+                                    label = { Text("Completed sessions between deloads") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                            Text(
+                                text = "Deload adjustments",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+
+                            SwitchSettingRow(
+                                title = "Use global default",
+                                subtitle = "Deload weight: ${formatPercentage(globalDeloadConfig.weightFactor * 100)}%",
+                                checked = useGlobalDeloadWeightFactor.value,
+                                onCheckedChange = { useGlobalDeloadWeightFactor.value = it }
+                            )
+                            if (!useGlobalDeloadWeightFactor.value) {
+                                OutlinedTextField(
+                                    value = deloadWeightFactorState.value,
+                                    onValueChange = { input ->
+                                        if (
+                                            input.isEmpty() ||
+                                            (input.count { it == '.' } <= 1 &&
+                                                input.all { it.isDigit() || it == '.' } &&
+                                                !input.startsWith(".") &&
+                                                (input.toDoubleOrNull() ?: 0.0) <= 100.0)
+                                        ) {
+                                            deloadWeightFactorState.value = input
+                                        }
+                                    },
+                                    label = { Text("Deload weight (%)") },
+                                    supportingText = { Text("Percentage of the normal working weight.") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+
+                            SwitchSettingRow(
+                                title = "Use global default",
+                                subtitle = "Reps removed from each set: ${globalDeloadConfig.repsDrop}",
+                                checked = useGlobalDeloadRepsDrop.value,
+                                onCheckedChange = { useGlobalDeloadRepsDrop.value = it }
+                            )
+                            if (!useGlobalDeloadRepsDrop.value) {
+                                OutlinedTextField(
+                                    value = deloadRepsDropState.value,
+                                    onValueChange = { input ->
+                                        if (input.isEmpty() || input.all { it.isDigit() }) {
+                                            deloadRepsDropState.value = input
+                                        }
+                                    },
+                                    label = { Text("Reps removed from each set") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+
+                            SwitchSettingRow(
+                                title = "Use global default",
+                                subtitle = "Work sets performed: ${globalDeloadConfig.cutSetsTo ?: "All"}",
+                                checked = useGlobalDeloadCutSetsTo.value,
+                                onCheckedChange = { useGlobalDeloadCutSetsTo.value = it }
+                            )
+                            if (!useGlobalDeloadCutSetsTo.value) {
+                                OutlinedTextField(
+                                    value = deloadCutSetsToState.value,
+                                    onValueChange = { input ->
+                                        if (input.isEmpty() || input.all { it.isDigit() }) {
+                                            deloadCutSetsToState.value = input
+                                        }
+                                    },
+                                    label = { Text("Work sets performed during deload") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+
+                            Text(
+                                text = "A deload starts when either trigger shown above is reached. If both show Off, automatic deload is off for this exercise.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.tertiaryContent
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(Spacing.md))
+                }
+
                 // ----- Calibration -----
-                if (selectedExerciseType.value == ExerciseType.WEIGHT ||
-                    (selectedExerciseType.value == ExerciseType.BODY_WEIGHT && selectedEquipmentId.value != null && selectedEquipmentId.value != viewModel.GENERIC_ID)) {
+                if (showCalibration) {
                     CollapsibleSection(
                         title = "Calibration",
                         summary = "Calibration mode: ${if (requiresLoadCalibration.value) "On" else "Off"}",
                         expanded = expandedCalibration,
                         onToggle = { expandedCalibration = !expandedCalibration }
                     ) {
-                        SwitchSettingRow(
-                            title = "Use Calibration mode",
-                            subtitle = "Weight will be determined by a calibration set before the first work set.",
-                            checked = requiresLoadCalibration.value,
-                            onCheckedChange = {
-                                requiresLoadCalibration.value = it
-                                if (it) {
-                                    progressionMode.value = ProgressionMode.OFF
+                        Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
+                            Text(
+                                text = "Use calibration when you do not yet know a reliable working weight for this exercise. At the start of the workout, the watch asks you to choose a load, complete a calibration set, and report your reps in reserve (RIR). It then adjusts the load for the remaining work sets and turns calibration off for future sessions.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.tertiaryContent
+                            )
+                            SwitchSettingRow(
+                                title = "Use Calibration mode",
+                                subtitle = "Run this setup once before the first work set.",
+                                checked = requiresLoadCalibration.value,
+                                onCheckedChange = {
+                                    requiresLoadCalibration.value = it
+                                    if (it) {
+                                        progressionMode.value = ProgressionMode.OFF
+                                    }
                                 }
-                            }
-                        )
+                            )
+                        }
                     }
                     Spacer(Modifier.height(Spacing.md))
                 }
@@ -1080,7 +1248,7 @@ fun ExerciseForm(
                 Text(
                     text = "Set a name above to configure training and advanced options.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = MaterialTheme.colorScheme.tertiaryContent,
                     modifier = Modifier.padding(top = Spacing.md)
                 )
             }
@@ -1091,6 +1259,8 @@ fun ExerciseForm(
             val canBeSaved =
                 nameState.value.isNotBlank() &&
                         (if (selectedExerciseType.value == ExerciseType.WEIGHT) selectedEquipmentId.value != null else true) &&
+                        (selectedExerciseType.value != ExerciseType.RUNNING ||
+                            (runningTargetInput.value.toDoubleOrNull()?.let { it > 0.0 } == true)) &&
                         (!isUnilateral.value || intraSetRestSeconds > 0)
 
             Row(
@@ -1128,7 +1298,12 @@ fun ExerciseForm(
                                 }
                             }
                         }
-                        val normalizedSets = (exercise?.sets ?: emptyList()).map { set ->
+                        val equipmentAdjustedSets = reconcileSetsForEquipmentChange(
+                            sets = exercise?.sets ?: emptyList(),
+                            previousEquipmentId = exercise?.equipmentId,
+                            selectedEquipment = selectedEquipmentId.value?.let(viewModel::getEquipmentById)
+                        )
+                        val normalizedSets = equipmentAdjustedSets.map { set ->
                             when (set) {
                                 is WeightSet -> set.copy(
                                     subCategory = normalizeSetSubCategory(set.subCategory)
@@ -1138,6 +1313,20 @@ fun ExerciseForm(
                                 )
 
                                 else -> set
+                            }
+                        }.ifEmpty {
+                            if (selectedExerciseType.value == ExerciseType.RUNNING) {
+                                listOf(
+                                    EnduranceSet(
+                                        id = UUID.randomUUID(),
+                                        timeInMillis = 0,
+                                        autoStart = false,
+                                        autoStop = false,
+                                        shouldReapplyHistoryToSet = false
+                                    )
+                                )
+                            } else {
+                                emptyList()
                             }
                         }
                         val deloadFailedSessionsThreshold = if (useGlobalDeloadFailedThreshold.value) {
@@ -1153,7 +1342,7 @@ fun ExerciseForm(
                         val deloadWeightFactor = if (useGlobalDeloadWeightFactor.value) {
                             null
                         } else {
-                            deloadWeightFactorState.value.toDoubleOrNull()
+                            deloadWeightFactorState.value.toDoubleOrNull()?.div(100)
                         }
                         val deloadRepsDrop = if (useGlobalDeloadRepsDrop.value) {
                             null
@@ -1169,17 +1358,25 @@ fun ExerciseForm(
                             id = exercise?.id ?: UUID.randomUUID(),
                             enabled = exercise?.enabled ?: true,
                             name = nameState.value.trim(),
-                            notes = notesState.value.trim(),
+                            notes = if (exercise?.exerciseDefinitionId != null) {
+                                exercise.notes
+                            } else {
+                                notesState.value.trim()
+                            },
                             sets = normalizedSets,
                             exerciseType = selectedExerciseType.value,
                             minReps = minReps.floatValue.toInt(),
                             maxReps = maxReps.floatValue.toInt(),
                             lowerBoundMaxHRPercent = selectedLowerBoundMaxHRPercent.value?.round(2),
                             upperBoundMaxHRPercent = selectedUpperBoundMaxHRPercent.value?.round(2),
-                            equipmentId = selectedEquipmentId.value,
+                            equipmentId = selectedEquipmentId.value?.takeIf { selectedId ->
+                                equipments.any {
+                                    it.id == selectedId && it.isCompatibleWith(selectedExerciseType.value)
+                                }
+                            },
                             bodyWeightPercentage = bodyWeightPercentageValue ?: 0.0,
                             generateWarmUpSets = generateWarmupSets.value,
-                            progressionMode = if (requiresLoadCalibration.value) ProgressionMode.OFF else progressionMode.value,
+                            progressionMode = progressionMode.value,
                             keepScreenOn = keepScreenOn.value,
                             showCountDownTimer = showCountDownTimer.value,
                             intraSetRestInSeconds = if (isUnilateral.value && intraSetRestSeconds > 0) {
@@ -1199,7 +1396,28 @@ fun ExerciseForm(
                             deloadCompletedSessionsInterval = deloadCompletedSessionsInterval,
                             deloadWeightFactor = deloadWeightFactor,
                             deloadRepsDrop = deloadRepsDrop,
-                            deloadCutSetsTo = deloadCutSetsTo
+                            deloadCutSetsTo = deloadCutSetsTo,
+                            movementRef = exercise?.movementRef,
+                            runningPrescription = if (selectedExerciseType.value == ExerciseType.RUNNING) {
+                                val enteredTarget = runningTargetInput.value.toDoubleOrNull() ?: 0.0
+                                val canonicalValue = when (runningTargetType.value) {
+                                    RunningTargetType.TIME -> enteredTarget * 60.0
+                                    RunningTargetType.DISTANCE -> enteredTarget * when (viewModel.workoutStore.distanceUnit) {
+                                        DistanceUnit.KILOMETERS -> 1000.0
+                                        DistanceUnit.MILES -> 1609.344
+                                    }
+                                }
+                                RunningPrescription(runningEnvironment.value, runningTargetType.value, canonicalValue)
+                            } else null,
+                            exerciseDefinitionId = exercise?.exerciseDefinitionId,
+                            nameOverride = linkedDefinition?.let { definition ->
+                                nameState.value.trim().takeIf { it != definition.name }
+                            },
+                            placementNotes = if (exercise?.exerciseDefinitionId != null) {
+                                notesState.value.trim()
+                            } else {
+                                exercise?.placementNotes
+                            },
                         )
                         onExerciseUpsert(newExercise)
                     },
@@ -1214,7 +1432,5 @@ fun ExerciseForm(
     LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
     }
 }
-
-
 
 

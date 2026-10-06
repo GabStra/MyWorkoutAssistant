@@ -3,49 +3,30 @@ import os
 import sys
 import threading
 import time
-import atexit
 import uuid
 import copy
-import hashlib
-import glob
-import random
-import traceback
-import argparse
 import re
-from types import SimpleNamespace
 from datetime import date, datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from openai import OpenAI
 import httpx
 from workout_generator_pkg.constants import (
     JSON_SCHEMA,
-    EXAMPLE_JSON,
     PARALLEL_LOG_REQUEST_TRUNCATE,
-    DEEPSEEK_CHAT_DEFAULT_TOKENS,
-    DEEPSEEK_CHAT_MAX_TOKENS,
-    DEEPSEEK_REASONER_DEFAULT_TOKENS,
-    DEEPSEEK_REASONER_MAX_TOKENS,
     BASE_SYSTEM_PROMPT,
     SUMMARIZATION_SYSTEM_PROMPT,
-    JSON_SYSTEM_PROMPT,
     SELF_HEAL_SYSTEM_PROMPT,
     GENERATE_WORKOUT_TOOL,
-    MUSCLE_GROUP_FIXES,
 )
 from workout_generator_pkg.exercise_contracts import get_exercise_emission_profile
 from workout_generator_pkg.stage_prompts import (
-    EQUIPMENT_EXAMPLE,
-    EQUIPMENT_SCHEMA,
     EQUIPMENT_SYSTEM_PROMPT,
     EXERCISE_SYSTEM_PROMPT,
     JSON_PATCH_REPAIR_SYSTEM_PROMPT,
-    PLAN_INDEX_EXAMPLE,
     PLAN_INDEX_SYSTEM_PROMPT,
-    WORKOUT_STRUCTURE_EXAMPLE,
     WORKOUT_STRUCTURE_SYSTEM_PROMPT,
 )
 from workout_generator_pkg.plan_contract import (
-    ContractValidationError,
     _load_field_for_exercise_type,
     validate_single_exercise_definition_contract,
 )
@@ -320,9 +301,6 @@ class PlaceholderIdManager:
                     except (ValueError, IndexError):
                         pass
 
-def generate_uuid():
-    """Generate a new UUID string."""
-    return str(uuid.uuid4())
 
 def validate_equipment_immutability(provided_equipment, plan_index_equipment):
     """
@@ -467,49 +445,6 @@ def apply_accessory_id_rewrite(workout_store, duplicate_id_to_provided):
                     ]
 
 
-def merge_equipment(provided_equipment, plan_index_equipment, id_manager):
-    """
-    Merge provided equipment with newly created equipment from plan_index.
-    Provided equipment remains unchanged, new equipment is added.
-    
-    Args:
-        provided_equipment: Dict with 'equipments' and 'accessoryEquipments' lists (from file)
-        plan_index_equipment: Dict with 'equipments' and 'accessoryEquipments' lists (from plan_index)
-        id_manager: PlaceholderIdManager instance
-    
-    Returns:
-        dict: Merged equipment with 'equipments' and 'accessoryEquipments' lists
-    """
-    # Start with provided equipment (unchanged)
-    merged_equipments = list(provided_equipment.get("equipments", [])) if provided_equipment else []
-    merged_accessories = list(provided_equipment.get("accessoryEquipments", [])) if provided_equipment else []
-    
-    # Create sets of existing IDs to avoid duplicates
-    existing_equipment_ids = {eq.get("id") for eq in merged_equipments if eq.get("id")}
-    existing_accessory_ids = {acc.get("id") for acc in merged_accessories if acc.get("id")}
-    
-    # Add new equipment from plan_index that doesn't exist in provided equipment
-    for eq in plan_index_equipment.get("equipments", []):
-        eq_id = eq.get("id")
-        if eq_id and eq_id not in existing_equipment_ids:
-            # This is new equipment - register its ID and add it
-            id_manager.extract_placeholders_from_json(eq)
-            merged_equipments.append(eq)
-            existing_equipment_ids.add(eq_id)
-    
-    # Add new accessories from plan_index that don't exist in provided equipment
-    for acc in plan_index_equipment.get("accessoryEquipments", []):
-        acc_id = acc.get("id")
-        if acc_id and acc_id not in existing_accessory_ids:
-            # This is new accessory - register its ID and add it
-            id_manager.extract_placeholders_from_json(acc)
-            merged_accessories.append(acc)
-            existing_accessory_ids.add(acc_id)
-    
-    return {
-        "equipments": merged_equipments,
-        "accessoryEquipments": merged_accessories
-    }
 
 # Progress management functions for resume capability
 PROGRESS_DIR = "workouts/generation_progress"
@@ -813,111 +748,8 @@ class ParallelLoadingIndicator:
 
 
 
-def generate_equipment(client, messages, id_manager):
-    """Generate equipment list with placeholder IDs."""
-    equipment_messages = messages + [
-        {"role": "system", "content": EQUIPMENT_SYSTEM_PROMPT},
-        {"role": "user", "content": "Generate all equipment needed for the workout based on our conversation."}
-    ]
-    
-    content = json_call_with_loading(client, equipment_messages)
-    if content is None:
-        return None
-    
-    if not content:
-        raise ValueError("Model returned empty equipment JSON content.")
-    
-    try:
-        data = json.loads(content)
-        if "equipments" not in data or not isinstance(data["equipments"], list):
-            raise ValueError("Invalid equipment JSON format: missing 'equipments' array")
-        
-        # Extract and register all placeholder IDs
-        for equipment in data["equipments"]:
-            id_manager.extract_placeholders_from_json(equipment)
-        
-        # Normalize equipment immediately after generation
-        normalized_equipments = fix_equipment_errors(data["equipments"])
-        
-        return normalized_equipments
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Failed to parse equipment JSON: {e}")
 
-def generate_exercises(client, messages, equipment_list, id_manager, provided_equipment=None):
-    """Generate exercise list with placeholder IDs, referencing equipment placeholders."""
-    if provided_equipment:
-        # Use formatted equipment text showing total weight combinations
-        formatted_equipment = format_equipment_for_llm(
-            provided_equipment.get("equipments", []),
-            provided_equipment.get("accessoryEquipments", [])
-        )
-        equipment_json = json.dumps(provided_equipment, indent=2)
-        equipment_content = (
-            f"{formatted_equipment}\n\n"
-            f"Use only equipment from the list above. "
-            f"All WeightSet weights and BodyWeightSet additionalWeight values must match valid combinations shown.\n\n"
-            f"Equipment JSON (for reference):\n{equipment_json}"
-        )
-    else:
-        # Fallback to original format (for Step 1 before equipment is generated)
-        equipment_json = json.dumps({"equipments": equipment_list}, indent=2)
-        equipment_content = f"Available equipment:\n{equipment_json}"
-    
-    exercise_messages = messages + [
-        {"role": "system", "content": EXERCISE_SYSTEM_PROMPT},
-        {"role": "user", "content": f"{equipment_content}\n\nGenerate all exercises needed for the workout based on our conversation. Reference equipment using their placeholder IDs (EQUIPMENT_0, EQUIPMENT_1, etc.)."}
-    ]
-    
-    content = json_call_with_loading(client, exercise_messages)
-    if content is None:
-        return None
-    
-    if not content:
-        raise ValueError("Model returned empty exercise JSON content.")
-    
-    try:
-        data = json.loads(content)
-        if "exercises" not in data or not isinstance(data["exercises"], list):
-            raise ValueError("Invalid exercise JSON format: missing 'exercises' array")
-        
-        # Extract and register all placeholder IDs (exercises and sets)
-        for exercise in data["exercises"]:
-            id_manager.extract_placeholders_from_json(exercise)
-        
-        # Normalize exercises immediately after generation
-        normalized_exercises = fix_exercise_errors(data["exercises"])
-        
-        return normalized_exercises
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Failed to parse exercise JSON: {e}")
 
-def generate_workout_structure(client, messages, exercise_list, id_manager):
-    """Generate workout structure with placeholder IDs, referencing exercise placeholders."""
-    exercise_json = json.dumps({"exercises": exercise_list}, indent=2)
-    
-    workout_messages = messages + [
-        {"role": "system", "content": WORKOUT_STRUCTURE_SYSTEM_PROMPT},
-        {"role": "user", "content": f"Available exercises:\n{exercise_json}\n\nGenerate the workout structure based on our conversation. Reference exercises using their placeholder IDs (EXERCISE_0, EXERCISE_1, etc.).\n\nIMPORTANT: Generate a specific description for workoutMetadata.description based on the actual exercises provided above. Make it specific to the exercises in this workout (e.g., muscle groups, primary exercises, or training focus), not a generic description. Keep it under 50 characters. Make it a compact training-focus summary, not an exhaustive exercise list. Prefer at most 2 to 4 short focus terms or movement themes. Before finalizing, count the characters; if it exceeds 50, rewrite it until it is within the limit."}
-    ]
-    
-    content = json_call_with_loading(client, workout_messages)
-    if content is None:
-        return None
-    
-    if not content:
-        raise ValueError("Model returned empty workout structure JSON content.")
-    
-    try:
-        data = json.loads(content)
-        if "workoutMetadata" not in data or "workoutComponents" not in data:
-            raise ValueError("Invalid workout structure JSON format: missing 'workoutMetadata' or 'workoutComponents'")
-        
-        # Extract and register all placeholder IDs
-        id_manager.extract_placeholders_from_json(data)
-        
-        return data
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Failed to parse workout structure JSON: {e}")
 
 # Chunked emitters for planner/emitter architecture
 def emit_equipment_item(equipment_id, client, context_summary, plan_index, use_reasoner=True, logger=None):
@@ -1116,7 +948,8 @@ def emit_exercise_definition(
     provided_equipment=None,
     logger=None,
     contract_error_context=None,
-    allow_educated_load_guesses=False,
+    allow_educated_load_guesses=True,
+    max_attempts=4,
 ):
     """
     Emit a single exercise definition using either deepseek-reasoner @ 64K or deepseek-chat @ 8K.
@@ -1132,10 +965,14 @@ def emit_exercise_definition(
                      If False, use chat model (faster, 8K max tokens).
         provided_equipment: Optional dict with 'equipments' and 'accessoryEquipments' keys
         logger: Optional ConversationLogger for debug logging
+        max_attempts: Maximum emissions before returning a validation/parsing error
     
     Returns:
         dict: Single ExerciseDefinition with placeholder IDs, or None if cancelled
     """
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be at least one")
+
     exercise_entry = None
     for ex in plan_index.get("exercises", []):
         if ex.get("id") == exercise_id:
@@ -1165,7 +1002,7 @@ def emit_exercise_definition(
     profile = get_exercise_emission_profile(exercise_entry.get("exerciseType"))
     load_field = _load_field_for_exercise_type(exercise_entry.get("exerciseType"))
     exact_load_instruction = ""
-    if isinstance(exercise_entry.get("targetSetPrescriptions"), list) and load_field:
+    if isinstance(exercise_entry.get("targetSetPrescriptions"), list) and exercise_entry["targetSetPrescriptions"] and load_field:
         exact_load_instruction = (
             f"- Copy targetSetPrescriptions exactly into the emitted work sets using `{load_field}` and `reps`.\n"
             "- Emit exactly one work set per targetSetPrescriptions item in workSetIndex order.\n"
@@ -1230,7 +1067,6 @@ def emit_exercise_definition(
         "Output only the exercise object JSON, not a wrapper."
     )
 
-    max_attempts = 4
     attempt = 1
     last_error = None
     last_content = None
@@ -1401,7 +1237,9 @@ def emit_workout_structure(
         rest_to_next_instruction = (
             "CRITICAL - Rest between exercises: Use these EXACT rest durations (in seconds) after each exercise, in order: "
             + ", ".join(pairs) + ". "
-            "Do NOT use 180 or 120 unless listed. After the last exercise the value is 0: do NOT add a Rest component after the last exercise.\n\n"
+            "Do NOT use 180 or 120 unless listed. A 0 value means no rest after that exercise. "
+            "For standalone exercises, emit a Rest component only when the listed value is positive. "
+            "For grouped exercises, follow the Superset rules below instead.\n\n"
         )
     superset_instruction = ""
     superset_groups = workout_entry.get("supersetGroups")
@@ -1439,7 +1277,9 @@ def emit_workout_structure(
                 "- For each listed group, emit exactly one componentType='Superset' containing those exerciseIds in the same order.\n"
                 "- Do NOT emit grouped exercises as standalone Exercise components.\n"
                 "- Do NOT insert Rest components between exercises that belong to the same superset group.\n"
-                "- Use restToNextSeconds to populate restSecondsByExercise for the grouped exercises.\n"
+                "- Populate restSecondsByExercise with exactly one entry for every grouped exercise, using its exact restToNextSeconds value.\n"
+                "- Each map value is rest immediately AFTER its keyed exercise during every round. For [A, B, C], A is rest before B, B is rest before C, and C is rest before A in the next round.\n"
+                "- The last grouped exercise's value is the between-round rest even if it is the final exercise in the workout. The runtime omits it after the final round.\n"
                 "- Keep all non-superset exercises as normal Exercise components in the original workout.exerciseIds order.\n\n"
             )
     retry_instruction = ""
@@ -2110,9 +1950,15 @@ def generate_index(
     
     # Include provided equipment if available with planner-specific constraints
     if provided_equipment:
+        exercise_library = provided_equipment.get("exerciseDefinitions") or []
         formatted_equipment = format_planner_equipment_context(
             provided_equipment.get("equipments", []),
             provided_equipment.get("accessoryEquipments", [])
+        )
+        gear_creation_constraint = (
+            "Strict exercise-library mode is active: you MUST NOT create equipment or accessories.\n"
+            if exercise_library
+            else "If necessary gear is missing, you MAY create new equipment or accessories with non-conflicting EQUIPMENT_X/ACCESSORY_X IDs.\n"
         )
         user_content += (
             f"{formatted_equipment}\n\n"
@@ -2122,10 +1968,33 @@ def generate_index(
             f"requiredAccessoryEquipmentIds may reference only Accessory Equipment IDs (ACCESSORY_X). Never put an EQUIPMENT_X there.\n"
             f"When exact target loads are requested, choose an equipmentId whose listed selectable app loads can represent those exact values. Do not approximate or pick the nearest load.\n"
             f"When an exercise requires an accessory that is already in the list above (same name), you MUST use that existing ID. Do NOT create a new accessory with a new ID for the same item.\n"
-            f"If necessary equipment or accessories are missing from the list above, you MAY create new equipment or accessory entries with new placeholder IDs.\n"
-            f"When creating new equipment or accessories, use new placeholder IDs (EQUIPMENT_X, ACCESSORY_X) that don't conflict with the IDs shown above.\n"
-            f"Ensure all equipmentId and requiredAccessoryEquipmentIds values match equipment/accessories from either the provided list OR newly created entries.\n\n"
+            f"{gear_creation_constraint}"
+            f"Ensure all equipmentId and requiredAccessoryEquipmentIds values reference valid entries under that gear policy.\n\n"
         )
+        if exercise_library:
+            compact_library = [[
+                definition.get("id"),
+                definition.get("name"),
+                definition.get("exerciseType"),
+                definition.get("equipmentId"),
+            ] for definition in exercise_library]
+            user_content += (
+                "Exercise library compact selection catalog. Each row is "
+                "[libraryDefinitionId,name,exerciseType,equipmentId]:\n"
+                f"{json.dumps(compact_library, separators=(',', ':'))}\n"
+                "The catalog is the sole allowed source of movements. Every planned exercise "
+                "must copy one listed libraryDefinitionId. Do not invent or infer a movement that "
+                "is absent from this catalog. The generator will resolve the selected ID to the "
+                "full immutable definition after planning. You may optionally set nameOverride to "
+                "a workout-local alias, but name must remain the canonical catalog name. "
+                "Periodized phases may and should use separate EXERCISE_X entries for independent "
+                "sets, reps, loads, rests, and progression while selecting the same libraryDefinitionId. "
+                "If the request cannot be satisfied from the catalog, do not substitute a new exercise.\n\n"
+            )
+            user_content += (
+                "Strict library mode also forbids creating equipment or accessories. Use only gear "
+                "from the supplied file, because every selected definition already declares its setup.\n\n"
+            )
     
     user_content += (
         "If workout/day names appear in both Context summary and Additional request with different formatting, "
@@ -2654,6 +2523,7 @@ from workout_generator_pkg.domain_ops import (
     fix_timed_sets as _mod_fix_timed_sets,
     create_placeholder_schema as _mod_create_placeholder_schema,
     ensure_unique_ids as _mod_ensure_unique_ids,
+    apply_exercise_library_schema_v2 as _mod_apply_exercise_library_schema_v2,
     _dedupe_sets_in_exercise as _mod__dedupe_sets_in_exercise,
     convert_placeholders_to_uuids as _mod_convert_placeholders_to_uuids,
     remove_none_from_workout_components as _mod_remove_none_from_workout_components,
@@ -2751,6 +2621,7 @@ has_equipment_in_messages = _mod_has_equipment_in_messages
 fix_timed_sets = _mod_fix_timed_sets
 create_placeholder_schema = _mod_create_placeholder_schema
 ensure_unique_ids = _mod_ensure_unique_ids
+apply_exercise_library_schema_v2 = _mod_apply_exercise_library_schema_v2
 _dedupe_sets_in_exercise = _mod__dedupe_sets_in_exercise
 convert_placeholders_to_uuids = _mod_convert_placeholders_to_uuids
 remove_none_from_workout_components = _mod_remove_none_from_workout_components

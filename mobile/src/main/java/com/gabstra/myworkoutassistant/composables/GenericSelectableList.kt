@@ -18,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableFloatState
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -81,8 +82,7 @@ fun <T, K> GenericSelectableList(
     keySelector: (T) -> K
 ) {
     val centerPointByIndex = remember { mutableMapOf<Int, Pair<Float, Float>>() }
-    val itemToRenderByIndex =
-        remember { mutableStateOf(mutableMapOf<Int, @Composable () -> Unit>()) }
+    val itemToRenderByIndex = remember { mutableStateMapOf<Int, @Composable () -> Unit>() }
     val draggedItem = remember { mutableStateOf<T?>(null) }
     val tempDragChanges = remember { mutableMapOf<Int, T>() }
     val listState = rememberLazyListState() // LazyListState for controlling scrolling
@@ -145,40 +145,37 @@ fun <T, K> GenericSelectableList(
                             val newItemAtIndex = tempDragChanges[newIndex]!!
                             tempDragChanges[currentIndex] = newItemAtIndex
 
-                            itemToRenderByIndex.value =
-                                itemToRenderByIndex.value.toMutableMap().apply {
-                                    val capturedIndex = currentIndex
+                            itemToRenderByIndex.apply {
+                                val capturedIndex = currentIndex
 
-                                    if (newIndex == index) this.remove(capturedIndex)
-                                    else {
-                                        this[capturedIndex] = {
-                                            val itemToDisplay = newItemAtIndex
-                                            Card(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(5.dp)
-                                            ) {
-                                                itemContent(itemToDisplay, { }, { })
-                                            }
-                                        }
-                                    }
-
-                                    this[newIndex] = {
-                                        Box(
+                                if (newIndex == index) remove(capturedIndex)
+                                else {
+                                    this[capturedIndex] = {
+                                        val itemToDisplay = newItemAtIndex
+                                        Card(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .height(50.dp),
-                                        )
+                                                .padding(5.dp)
+                                        ) {
+                                            itemContent(itemToDisplay, { }, { })
+                                        }
                                     }
                                 }
+
+                                this[newIndex] = {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(50.dp),
+                                    )
+                                }
+                            }
 
                             tempDragChanges[newIndex] = item
                             currentIndex = newIndex
                         }
                     }, onDragEnd = {
-                        itemToRenderByIndex.value = itemToRenderByIndex.value.toMutableMap().apply {
-                            this.clear()
-                        }
+                        itemToRenderByIndex.clear()
                         val newList = items.toMutableList().apply {
                             tempDragChanges.forEach { (oldIndex, newItem) ->
                                 val newIndex = items.indexOf(newItem)
@@ -195,9 +192,7 @@ fun <T, K> GenericSelectableList(
                     },
                     onDragCancel = {
                         // Handle drag cancellation
-                        itemToRenderByIndex.value = itemToRenderByIndex.value.toMutableMap().apply {
-                            this.clear()
-                        }
+                        itemToRenderByIndex.clear()
                         tempDragChanges.clear()
                         offsetY.floatValue = 0f
                         draggedItem.value = null
@@ -241,11 +236,11 @@ fun <T, K> GenericSelectableList(
                 contentAlignment = Alignment.Center
             ) {
 
-                if (itemToRenderByIndex.value.containsKey(index)) {
-                    itemToRenderByIndex.value[index]!!.invoke()
+                if (itemToRenderByIndex.containsKey(index)) {
+                    itemToRenderByIndex[index]!!.invoke()
                 }
 
-                if (draggedItem.value === item || !itemToRenderByIndex.value.containsKey(index)) {
+                if (draggedItem.value === item || !itemToRenderByIndex.containsKey(index)) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()

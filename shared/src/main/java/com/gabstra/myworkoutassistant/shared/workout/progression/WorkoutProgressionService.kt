@@ -29,6 +29,7 @@ import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
+import com.gabstra.myworkoutassistant.shared.workout.model.isNormallyCompleted
 import java.util.UUID
 
 data class SessionDecision(
@@ -242,7 +243,7 @@ class WorkoutProgressionService(
         val setHistories = setHistoryDao().getSetHistoriesByExerciseId(exercise.id)
         val workoutHistoryIds = setHistories.mapNotNull { it.workoutHistoryId }.toSet()
         val workoutHistories = workoutHistoryDao().getAllWorkoutHistories()
-            .filter { it.id in workoutHistoryIds && it.isDone }
+            .filter { it.id in workoutHistoryIds && it.isNormallyCompleted() }
             .associateBy { it.id }
         val exerciseProgressions = exerciseSessionProgressionDao().getByExerciseId(exercise.id)
         val progressionStatesByWorkoutHistoryId = exerciseProgressions

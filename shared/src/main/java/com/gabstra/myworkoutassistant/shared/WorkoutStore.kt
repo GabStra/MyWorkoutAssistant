@@ -2,8 +2,13 @@ package com.gabstra.myworkoutassistant.shared
 
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
+import java.util.UUID
+import com.gabstra.myworkoutassistant.shared.running.DistanceUnit
+import com.gabstra.myworkoutassistant.shared.running.defaultDistanceUnit
 
 data class WorkoutStore(
+    val schemaVersion: Int = CURRENT_SCHEMA_VERSION,
+    val exerciseDefinitions: List<ExerciseDefinition> = emptyList(),
     val workouts: List<Workout> = emptyList(),
     val equipments: List<WeightLoadedEquipment> = emptyList(), // List of available equipment
     val accessoryEquipments: List<AccessoryEquipment> = emptyList(), // List of accessory equipment
@@ -16,4 +21,13 @@ data class WorkoutStore(
     val measuredMaxHeartRate: Int? = null,
     val restingHeartRate: Int? = null,
     val deloadConfig: DeloadConfig = DeloadConfig(),
-)
+    val distanceUnit: DistanceUnit = defaultDistanceUnit(),
+) {
+    companion object {
+        const val CURRENT_SCHEMA_VERSION = 3
+    }
+}
+
+fun WorkoutStore.linkedSupportName(id: UUID): String? =
+    accessoryEquipments.firstOrNull { it.id == id }?.name
+        ?: equipments.firstOrNull { it.id == id }?.name

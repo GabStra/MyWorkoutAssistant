@@ -68,7 +68,6 @@ class SensorDataViewModel(
     }
 
     override fun onCleared() {
-        super.onCleared()
         stopMeasuringHeartRate()
     }
 }

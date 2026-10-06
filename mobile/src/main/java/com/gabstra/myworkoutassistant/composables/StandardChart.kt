@@ -198,6 +198,7 @@ internal class BottomPaddedStartVerticalAxis(
     size = size,
     titleComponent = titleComponent,
     title = title,
+    titlePosition = BaseAxis.TitlePosition.Side,
     tickPosition = tickPosition,
     lineDrawingOrder = lineDrawingOrder,
 ) {
@@ -499,7 +500,7 @@ fun StandardChart(
                                 listOf(
                                     LineCartesianLayer.rememberLine(
                                         fill = LineCartesianLayer.LineFill.single(Fill(Color(0xFFff6700))),
-                                        pointConnector =  LineCartesianLayer.PointConnector.cubic(),
+                                        interpolator = LineCartesianLayer.Interpolator.cubic(),
                                         areaFill = null,
                                         pointProvider = null,
                                     )

@@ -21,3 +21,4 @@ rootProject.name = "My Workout Assistant"
 include(":wearos")
 include(":mobile")
 include(":shared")
+include(":motion-renderer")

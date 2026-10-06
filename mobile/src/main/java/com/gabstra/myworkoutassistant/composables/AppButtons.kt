@@ -2,11 +2,17 @@ package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -80,6 +86,35 @@ fun AppPrimaryContentButton(
         )
     ) {
         content()
+    }
+}
+
+@Composable
+fun AppAddButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    label: String? = null,
+    enabled: Boolean = true,
+) {
+    AppPrimaryContentButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier,
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Add,
+            contentDescription = if (label == null) "Add" else null,
+            modifier = Modifier.size(24.dp),
+            tint = MaterialTheme.colorScheme.onPrimary,
+        )
+        if (label != null) {
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onPrimary,
+            )
+        }
     }
 }
 

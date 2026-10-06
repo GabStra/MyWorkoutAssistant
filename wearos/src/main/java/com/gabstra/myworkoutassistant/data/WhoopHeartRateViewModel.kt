@@ -6,6 +6,7 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattConnectionSettings
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
@@ -20,7 +21,9 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
+import androidx.core.util.size
 import com.gabstra.myworkoutassistant.shared.ExternalHeartRateConfig
 import com.gabstra.myworkoutassistant.shared.HeartRateSource
 import com.gabstra.myworkoutassistant.shared.WhoopHeartRateConfig
@@ -128,6 +131,7 @@ private class WhoopBleClient(
 ) : HrBpmSource {
     companion object {
         private const val TAG = "WhoopBleClient"
+        private const val GATT_CONNECTION_SETTINGS_API = 37
         private val HEART_RATE_SERVICE_UUID =
             UUID.fromString("0000180D-0000-1000-8000-00805F9B34FB")
         private val HEART_RATE_MEASUREMENT_UUID =
@@ -148,17 +152,11 @@ private class WhoopBleClient(
         ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
 
     private fun hasBluetoothScanPermission(): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            hasPermission(Manifest.permission.BLUETOOTH_SCAN)
-        } else {
-            hasPermission(Manifest.permission.ACCESS_FINE_LOCATION) ||
-                hasPermission(Manifest.permission.ACCESS_COARSE_LOCATION)
-        }
+        return hasPermission(Manifest.permission.BLUETOOTH_SCAN)
     }
 
     private fun hasBluetoothConnectPermission(): Boolean {
-        return Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
-            hasPermission(Manifest.permission.BLUETOOTH_CONNECT)
+        return hasPermission(Manifest.permission.BLUETOOTH_CONNECT)
     }
 
     private fun ensureBluetoothScanPermission(): Boolean {
@@ -252,11 +250,34 @@ private class WhoopBleClient(
 
     @SuppressLint("MissingPermission")
     private fun connectGatt(device: BluetoothDevice): BluetoothGatt? {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+        return if (Build.VERSION.SDK_INT >= GATT_CONNECTION_SETTINGS_API) {
+            connectGattWithConnectionSettings(device)
         } else {
-            device.connectGatt(context, false, gattCallback)
+            connectGattLegacy(device)
         }
+    }
+
+    @RequiresApi(GATT_CONNECTION_SETTINGS_API)
+    @SuppressLint("MissingPermission")
+    private fun connectGattWithConnectionSettings(device: BluetoothDevice): BluetoothGatt? {
+        val settings = BluetoothGattConnectionSettings.Builder()
+            .setAutoConnectEnabled(false)
+            .setTransport(BluetoothDevice.TRANSPORT_LE)
+            .build()
+        return device.connectGatt(settings, context.mainExecutor, gattCallback)
+    }
+
+    @Suppress("DEPRECATION")
+    @SuppressLint("MissingPermission")
+    private fun connectGattLegacy(device: BluetoothDevice): BluetoothGatt? {
+        return device.connectGatt(
+            context,
+            false,
+            gattCallback,
+            BluetoothDevice.TRANSPORT_LE,
+            BluetoothDevice.PHY_LE_1M_MASK,
+            handler
+        )
     }
 
     @SuppressLint("MissingPermission")
@@ -271,17 +292,10 @@ private class WhoopBleClient(
         gatt: BluetoothGatt,
         descriptor: BluetoothGattDescriptor,
     ) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            gatt.writeDescriptor(
-                descriptor,
-                BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-            )
-        } else {
-            @Suppress("DEPRECATION")
-            descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-            @Suppress("DEPRECATION")
-            gatt.writeDescriptor(descriptor)
-        }
+        gatt.writeDescriptor(
+            descriptor,
+            BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+        )
     }
 
     @SuppressLint("MissingPermission")
@@ -426,7 +440,7 @@ private class WhoopBleClient(
             ?.joinToString(prefix = "[", postfix = "]") { it.uuid.toString() }
             ?: "[]"
         val manufacturerDataKeys = result.scanRecord?.manufacturerSpecificData
-            ?.let { data -> (0 until data.size()).joinToString(prefix = "[", postfix = "]") { index -> data.keyAt(index).toString() } }
+            ?.let { data -> (0 until data.size).joinToString(prefix = "[", postfix = "]") { index -> data.keyAt(index).toString() } }
             ?: "[]"
         val configuredAddress = config.deviceId?.trim().orEmpty()
         val configuredName = config.displayName?.trim().orEmpty()

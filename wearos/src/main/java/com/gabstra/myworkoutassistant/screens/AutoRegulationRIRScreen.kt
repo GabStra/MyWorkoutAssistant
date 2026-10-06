@@ -15,7 +15,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.navigation.NavController
@@ -23,9 +23,9 @@ import androidx.wear.compose.foundation.pager.rememberPagerState
 import com.gabstra.myworkoutassistant.composables.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composables.ExerciseIndicator
 import com.gabstra.myworkoutassistant.composables.ExerciseNameText
-import com.gabstra.myworkoutassistant.composables.PageButtons
-import com.gabstra.myworkoutassistant.composables.PageCalibrationRIR
-import com.gabstra.myworkoutassistant.composables.PageExercises
+import com.gabstra.myworkoutassistant.composables.workout.pages.ControlsPage
+import com.gabstra.myworkoutassistant.composables.workout.pages.CalibrationRirPage
+import com.gabstra.myworkoutassistant.composables.workout.pages.ExercisesPage
 import com.gabstra.myworkoutassistant.composables.WorkoutPagerLayoutTokens
 import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import com.gabstra.myworkoutassistant.data.AppViewModel
@@ -59,8 +59,10 @@ fun AutoRegulationRIRScreen(
     val pageTypes = remember {
         mutableListOf<CalibrationPageType>().apply {
             add(CalibrationPageType.BUTTONS)
+            add(CalibrationPageType.INFO)
             add(CalibrationPageType.CALIBRATION_RIR)
             add(CalibrationPageType.EXERCISES)
+            if (exercise.movementRef != null) add(CalibrationPageType.MOVEMENT)
         }
     }
 
@@ -113,7 +115,7 @@ fun AutoRegulationRIRScreen(
             text = exercise.name,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = WorkoutPagerLayoutTokens.ExerciseTitleHorizontalPadding),
+                .padding(horizontal = WorkoutPagerLayoutTokens.ExerciseTitleHorizontalPadding + 15.dp),
             style = androidx.wear.compose.material3.MaterialTheme.typography.titleLarge.copy(
                 fontWeight = FontWeight.SemiBold
             ),
@@ -126,6 +128,7 @@ fun AutoRegulationRIRScreen(
             modifier = Modifier.fillMaxSize(),
             pagerState = pagerState,
             userScrollEnabled = allowHorizontalScrolling,
+            animatePages = false,
             pageOverlay = { pageIndex ->
                 if (pageTypes[pageIndex] == CalibrationPageType.CALIBRATION_RIR) {
                     hearthRateChart(Modifier.fillMaxSize())
@@ -140,10 +143,7 @@ fun AutoRegulationRIRScreen(
         ) { pageIndex ->
             val pageType = pageTypes[pageIndex]
             Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(WorkoutPagerLayoutTokens.OverlayContentHorizontalPadding)
-                    .clipToBounds()
+                modifier = Modifier.calibrationPageContent(pageType)
             ) {
                 when (pageType) {
                     CalibrationPageType.BUTTONS -> {
@@ -174,7 +174,7 @@ fun AutoRegulationRIRScreen(
                                 )
                             }
                             Box(modifier = Modifier.fillMaxSize()) {
-                                PageButtons(
+                                ControlsPage(
                                     updatedState = mockSetState,
                                     viewModel = viewModel,
                                     hapticsViewModel = hapticsViewModel,
@@ -187,7 +187,7 @@ fun AutoRegulationRIRScreen(
                     CalibrationPageType.EXERCISES -> {
                         key(pageType, pageIndex) {
                             Box(modifier = Modifier.fillMaxSize()) {
-                                PageExercises(
+                                ExercisesPage(
                                     selectedExercise = selectedExercise,
                                     selectedRestPageId = null,
                                     workoutState = state,
@@ -199,15 +199,31 @@ fun AutoRegulationRIRScreen(
                             }
                         }
                     }
+                    CalibrationPageType.INFO -> {
+                        CalibrationExerciseInfoPage(
+                            sections = buildCalibrationExerciseInfoSections(
+                                viewModel = viewModel,
+                                exercise = exercise,
+                                equipmentId = state.equipmentId,
+                                status = "Auto-regulation",
+                            ),
+                        )
+                    }
+                    CalibrationPageType.MOVEMENT -> {
+                        CalibrationExerciseMovementPage(
+                            exercise = exercise,
+                            isActive = pagerState.currentPage == pageIndex &&
+                                !pagerState.isScrollInProgress,
+                        )
+                    }
                     CalibrationPageType.CALIBRATION_RIR -> {
                         key(pageType, pageIndex) {
                             Box(modifier = Modifier.fillMaxSize()) {
                                 Box(
                                     modifier = Modifier
                                         .fillMaxSize()
-                                        .padding(horizontal = WorkoutPagerLayoutTokens.OverlayContentHorizontalPadding)
                                 ) {
-                                    PageCalibrationRIR(
+                                    CalibrationRirPage(
                                         modifier = Modifier.fillMaxSize(),
                                         viewModel = viewModel,
                                         hapticsViewModel = hapticsViewModel,

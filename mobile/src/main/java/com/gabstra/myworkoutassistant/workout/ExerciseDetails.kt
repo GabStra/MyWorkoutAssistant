@@ -4,17 +4,22 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.HapticsViewModel
+import com.gabstra.myworkoutassistant.notifications.isAppInForeground
+import com.gabstra.myworkoutassistant.notifications.showTimerCompletedNotification
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
@@ -37,10 +42,21 @@ fun ExerciseDetail(
     onTimerEnabled: () -> Unit,
     extraInfo: (@Composable (WorkoutState.Set) -> Unit)? = null,
     exerciseTitleComposable: @Composable (onLongClick: () -> Unit) -> Unit,
+    targetRepRange: String? = null,
+    heartRateChart: @Composable () -> Unit = {},
 
     customComponentWrapper: @Composable (@Composable () -> Unit) -> Unit,
 ) {
     val context = LocalContext.current
+    var isValueEditorVisible by remember(updatedState.set.id) { mutableStateOf(false) }
+    val handleEditModeEnabled = {
+        isValueEditorVisible = true
+        onEditModeEnabled()
+    }
+    val handleEditModeDisabled = {
+        isValueEditorVisible = false
+        onEditModeDisabled()
+    }
 
     when (updatedState.set) {
         is WeightSet -> {
@@ -50,40 +66,34 @@ fun ExerciseDetail(
                 }
             }
 
-            Column(modifier = modifier, verticalArrangement = Arrangement.Center) {
+            Column(modifier = modifier.fillMaxSize()) {
                 WeightSetScreen(
                     viewModel = viewModel,
                     hapticsViewModel = hapticsViewModel,
-                    modifier = Modifier,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
                     state = updatedState,
                     forceStopEditMode = false,
-                    onEditModeDisabled = onEditModeDisabled,
-                    onEditModeEnabled = onEditModeEnabled,
+                    onEditModeDisabled = handleEditModeDisabled,
+                    onEditModeEnabled = handleEditModeEnabled,
                     extraInfo = extraInfo,
                     exerciseTitleComposable = {
                         exerciseTitleComposable {
                             hapticsViewModel.doGentleVibration()
                         }
                     },
+                    targetRepRange = targetRepRange,
                     customComponentWrapper = customComponentWrapper
                 )
 
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 100.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center
-                ) {
-                    AppPrimaryButton(
-                        text = "Done",
-                        onClick = {
-                            hapticsViewModel.doGentleVibration()
-                            viewModel.openCustomDialog()
-                            viewModel.lightScreenUp()
-                        },
-                    )
-                }
+                heartRateChart()
+
+                ExerciseDoneButton(
+                    visible = !isValueEditorVisible,
+                    hapticsViewModel = hapticsViewModel,
+                    viewModel = viewModel,
+                )
             }
         }
 
@@ -94,36 +104,30 @@ fun ExerciseDetail(
                 }
             }
 
-            Column(modifier = modifier, verticalArrangement = Arrangement.Center) {
+            Column(modifier = modifier.fillMaxSize()) {
                 BodyWeightSetScreen(
                     viewModel = viewModel,
                     hapticsViewModel = hapticsViewModel,
-                    modifier = Modifier,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
                     state = updatedState,
                     forceStopEditMode = false,
-                    onEditModeDisabled = onEditModeDisabled,
-                    onEditModeEnabled = onEditModeEnabled,
+                    onEditModeDisabled = handleEditModeDisabled,
+                    onEditModeEnabled = handleEditModeEnabled,
                     extraInfo = extraInfo,
                     exerciseTitleComposable = { exerciseTitleComposable {} },
+                    targetRepRange = targetRepRange,
                     customComponentWrapper = customComponentWrapper
                 )
 
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 100.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center
-                ) {
-                    AppPrimaryButton(
-                        text = "Done",
-                        onClick = {
-                            hapticsViewModel.doGentleVibration()
-                            viewModel.openCustomDialog()
-                            viewModel.lightScreenUp()
-                        },
-                    )
-                }
+                heartRateChart()
+
+                ExerciseDoneButton(
+                    visible = !isValueEditorVisible,
+                    hapticsViewModel = hapticsViewModel,
+                    viewModel = viewModel,
+                )
             }
         }
 
@@ -134,6 +138,13 @@ fun ExerciseDetail(
                 modifier = modifier,
                 state = updatedState,
                 onTimerEnd = {
+                    if (!isAppInForeground()) {
+                        showTimerCompletedNotification(
+                            context = context,
+                            title = "Set timer finished",
+                            message = "Time for your next set",
+                        )
+                    }
                     viewModel.storeSetData()
                     viewModel.pushAndStoreWorkoutData(false, context) {
                         viewModel.goToNextState()
@@ -144,6 +155,7 @@ fun ExerciseDetail(
                 onTimerEnabled = onTimerEnabled,
                 extraInfo = extraInfo,
                 exerciseTitleComposable = { exerciseTitleComposable {} },
+                heartRateChart = heartRateChart,
                 customComponentWrapper = customComponentWrapper
             )
         }
@@ -154,6 +166,13 @@ fun ExerciseDetail(
             modifier = modifier,
             state = updatedState,
             onTimerEnd = {
+                if (!isAppInForeground()) {
+                    showTimerCompletedNotification(
+                        context = context,
+                        title = "Set timer finished",
+                        message = "Time for your next set",
+                    )
+                }
                 viewModel.storeSetData()
                 viewModel.pushAndStoreWorkoutData(false, context) {
                     viewModel.goToNextState()
@@ -164,10 +183,42 @@ fun ExerciseDetail(
             onTimerEnabled = onTimerEnabled,
             extraInfo = extraInfo,
             exerciseTitleComposable = { exerciseTitleComposable {} },
+            heartRateChart = heartRateChart,
             customComponentWrapper = customComponentWrapper
         )
 
         is RestSet -> throw IllegalStateException("Rest set should not be here")
+    }
+}
+
+@Composable
+private fun ExerciseDoneButton(
+    visible: Boolean,
+    hapticsViewModel: HapticsViewModel,
+    viewModel: WorkoutViewModel,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(
+                start = 100.dp,
+                end = 100.dp,
+                top = 32.dp,
+                bottom = 40.dp,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        AppPrimaryButton(
+            modifier = Modifier.alpha(if (visible) 1f else 0f),
+            text = "Done",
+            enabled = visible,
+            onClick = {
+                hapticsViewModel.doGentleVibration()
+                viewModel.openCustomDialog()
+                viewModel.lightScreenUp()
+            },
+        )
     }
 }
 

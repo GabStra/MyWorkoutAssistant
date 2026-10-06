@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 import android.annotation.SuppressLint
+import com.gabstra.myworkoutassistant.presentation.theme.tertiaryContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -56,7 +58,6 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
-import java.util.Locale.getDefault
 import java.util.UUID
 
 @Composable
@@ -209,9 +210,6 @@ internal fun RecoveryDialog(
                                 transformation = SurfaceTransformation(spec),
                                 contentDescription = "Recovery timer continue option",
                                 text = "Continue",
-                                colors = selectedRecoveryButtonColors(
-                                    selected = timerChoice == TimerRecoveryChoice.CONTINUE
-                                ),
                                 onClick = {
                                     timerChoice = TimerRecoveryChoice.CONTINUE
                                     resumeWithChoices(TimerRecoveryChoice.CONTINUE, calibrationChoice)
@@ -224,9 +222,6 @@ internal fun RecoveryDialog(
                                 transformation = SurfaceTransformation(spec),
                                 contentDescription = "Recovery timer restart option",
                                 text = "Restart",
-                                colors = selectedRecoveryButtonColors(
-                                    selected = timerChoice == TimerRecoveryChoice.RESTART
-                                ),
                                 onClick = {
                                     timerChoice = TimerRecoveryChoice.RESTART
                                     resumeWithChoices(TimerRecoveryChoice.RESTART, calibrationChoice)
@@ -259,9 +254,6 @@ internal fun RecoveryDialog(
                                 transformation = SurfaceTransformation(spec),
                                 contentDescription = "Recovery calibration continue option",
                                 text = "Continue",
-                                colors = selectedRecoveryButtonColors(
-                                    selected = calibrationChoice == CalibrationRecoveryChoice.CONTINUE
-                                ),
                                 onClick = {
                                     calibrationChoice = CalibrationRecoveryChoice.CONTINUE
                                     resumeWithChoices(timerChoice, CalibrationRecoveryChoice.CONTINUE)
@@ -274,9 +266,6 @@ internal fun RecoveryDialog(
                                 transformation = SurfaceTransformation(spec),
                                 contentDescription = "Recovery calibration restart option",
                                 text = "Restart",
-                                colors = selectedRecoveryButtonColors(
-                                    selected = calibrationChoice == CalibrationRecoveryChoice.RESTART
-                                ),
                                 onClick = {
                                     calibrationChoice = CalibrationRecoveryChoice.RESTART
                                     resumeWithChoices(timerChoice, CalibrationRecoveryChoice.RESTART)
@@ -337,6 +326,7 @@ private fun RecoveryInfoBlock(
     entries: List<Pair<String, String>>,
     modifier: Modifier = Modifier
 ) {
+    val currentLocale = LocalLocale.current.platformLocale
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -352,7 +342,7 @@ private fun RecoveryInfoBlock(
                 verticalArrangement = Arrangement.spacedBy(2.5.dp)
             ) {
                 Text(
-                    text = label.uppercase(getDefault()),
+                    text = label.uppercase(currentLocale),
                     modifier = Modifier.fillMaxWidth(),
                     style = workoutPagerTitleTextStyle(),
                     color = MaterialTheme.colorScheme.onBackground,
@@ -382,7 +372,7 @@ private fun RecoveryBodyText(
             text = text,
             textAlign = TextAlign.Center,
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = MaterialTheme.colorScheme.tertiaryContent,
         )
     }
 }
@@ -392,8 +382,9 @@ private fun RecoverySectionHeader(
     text: String,
     modifier: Modifier = Modifier
 ) {
+    val currentLocale = LocalLocale.current.platformLocale
     Text(
-        text = text.uppercase(getDefault()),
+        text = text.uppercase(currentLocale),
         modifier = modifier.padding(horizontal = 25.dp),
         style = workoutPagerTitleTextStyle(),
         color = MaterialTheme.colorScheme.onBackground,
@@ -441,15 +432,6 @@ private fun OutlinedRecoveryChoiceButton(
         textColor = textColor,
         onClick = onClick
     )
-}
-
-@Composable
-private fun selectedRecoveryButtonColors(selected: Boolean): androidx.wear.compose.material3.ButtonColors {
-    return if (selected){
-        androidx.wear.compose.material3.ButtonDefaults.buttonColors()
-    } else {
-        androidx.wear.compose.material3.ButtonDefaults.filledTonalButtonColors()
-    }
 }
 
 @SuppressLint("DefaultLocale")

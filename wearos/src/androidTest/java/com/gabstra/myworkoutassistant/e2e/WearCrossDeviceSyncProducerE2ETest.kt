@@ -1,6 +1,8 @@
 package com.gabstra.myworkoutassistant.e2e
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import com.gabstra.myworkoutassistant.e2e.helpers.CrossDeviceCheckpointAcknowledgments
 import com.gabstra.myworkoutassistant.e2e.driver.WearWorkoutDriver
 import com.gabstra.myworkoutassistant.e2e.fixtures.CrossDeviceSyncWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.e2e.helpers.CrossDeviceWearSyncStateHelper
@@ -28,12 +30,27 @@ class WearCrossDeviceSyncProducerE2ETest : WearBaseE2ETest() {
 
     @Test
     fun completeWorkout_syncsHistoryToPhone() {
-        startWorkout(CrossDeviceSyncWorkoutStoreFixture.getWorkoutName())
-        flowHelper.waitForIntermediateSyncObservationWindow()
-        flowHelper.completeComplexWorkoutWithDeterministicModifications()
-        workoutDriver.waitForWorkoutCompletion(timeoutMs = 30_000)
-        CrossDeviceWearSyncStateHelper.waitForCompletedHistoryAndEnqueueSync(context)
-        CrossDeviceWearSyncStateHelper.waitForWearSyncMarker(context)
+        val requireAcknowledgments = InstrumentationRegistry.getArguments()
+            .getString("wait_for_checkpoint_acknowledgments") == "true"
+        val acknowledgments = if (requireAcknowledgments) CrossDeviceCheckpointAcknowledgments(context) else null
+        try {
+            startWorkout(CrossDeviceSyncWorkoutStoreFixture.getWorkoutName())
+            if (acknowledgments != null) {
+                acknowledgments.awaitCheckpoint("started")
+            } else {
+                flowHelper.waitForIntermediateSyncObservationWindow()
+            }
+            flowHelper.completeComplexWorkoutWithDeterministicModifications(
+                onIntermediateSetCompleted = acknowledgments?.let { observer ->
+                    { setId -> observer.awaitCheckpoint(setId.toString()) }
+                }
+            )
+            workoutDriver.waitForWorkoutCompletion(timeoutMs = 30_000)
+            CrossDeviceWearSyncStateHelper.waitForCompletedHistoryAndEnqueueSync(context)
+            CrossDeviceWearSyncStateHelper.waitForWearSyncMarker(context)
+        } finally {
+            acknowledgments?.close()
+        }
     }
 }
 

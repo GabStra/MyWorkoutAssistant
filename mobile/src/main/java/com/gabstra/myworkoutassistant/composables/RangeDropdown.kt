@@ -8,6 +8,15 @@ import androidx.compose.ui.Modifier
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.shared.FilterRange
 
+fun FilterRange.historyDisplayLabel(): String = when (this) {
+    FilterRange.LAST_WEEK -> "Last week"
+    FilterRange.LAST_7_DAYS -> "Last 7 days"
+    FilterRange.LAST_30_DAYS -> "Last 30 days"
+    FilterRange.THIS_MONTH -> "This month"
+    FilterRange.LAST_3_MONTHS -> "Last 3 months"
+    FilterRange.ALL -> "All"
+}
+
 @Composable
 fun RangeDropdown(
     selectedRange: FilterRange,
@@ -24,15 +33,14 @@ fun RangeDropdown(
         )
     }
 
-    val selectedLabel = remember(selectedRange) {
-        items.firstOrNull { it.value == selectedRange }?.label ?: "All"
-    }
+    val selectedLabel = remember(selectedRange) { selectedRange.historyDisplayLabel() }
 
     StandardFilterDropdown(
         label = "Date range:",
         selectedText = selectedLabel,
         items = items,
         onItemSelected = onSelectedRangeChange,
+        selectedValue = selectedRange,
         modifier = Modifier
             .fillMaxWidth().padding(horizontal = Spacing.md),
         isItemSelected = { it == selectedRange }

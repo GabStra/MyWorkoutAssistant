@@ -19,6 +19,7 @@ enum class WorkoutSessionStatus {
     IN_PROGRESS_ON_PHONE,
     STOPPED_ON_WEAR,
     STALE_ON_WEAR,
+    INTERRUPTED,
 }
 
 fun WorkoutRecord.ownerDeviceOrDefault(): SessionOwnerDevice = runCatching {
@@ -50,8 +51,7 @@ fun resolveWorkoutSessionStatus(
         return WorkoutSessionStatus.COMPLETED
     }
 
-    val record = workoutRecord
-        ?: error("Incomplete workout history ${workoutHistory.id} requires a matching workout record")
+    val record = workoutRecord ?: return WorkoutSessionStatus.INTERRUPTED
     check(record.workoutHistoryId == workoutHistory.id) {
         "Workout record ${record.id} does not match workout history ${workoutHistory.id}"
     }
@@ -72,10 +72,22 @@ fun resolveWorkoutSessionStatus(
 
 /** User-visible strings for compact session labels (Status tab, history headers). */
 object WorkoutSessionDisplayLabels {
+    const val FINISHED_EARLY = "Finished early"
     const val IN_PROGRESS = "In progress"
     const val STOPPED_ON_WATCH = "Stopped"
     /** Watch-owned session with no recent sync (e.g. lost connection or watch idle). */
     const val STALE_ON_WATCH = "Watch disconnected"
+    const val INTERRUPTED = "Interrupted"
+}
+
+fun WorkoutHistory.isNormallyCompleted(): Boolean {
+    return isDone && endReason == WorkoutSessionEndReason.COMPLETED
+}
+
+fun completedWorkoutEndDisplayLabel(workoutHistory: WorkoutHistory): String? = when {
+    !workoutHistory.isDone -> null
+    workoutHistory.endReason == WorkoutSessionEndReason.FINISHED_EARLY -> WorkoutSessionDisplayLabels.FINISHED_EARLY
+    else -> null
 }
 
 /**
@@ -89,4 +101,5 @@ fun workoutSessionDisplayLabel(status: WorkoutSessionStatus?): String? = when (s
         WorkoutSessionDisplayLabels.IN_PROGRESS
     WorkoutSessionStatus.STOPPED_ON_WEAR -> WorkoutSessionDisplayLabels.STOPPED_ON_WATCH
     WorkoutSessionStatus.STALE_ON_WEAR -> WorkoutSessionDisplayLabels.STALE_ON_WATCH
+    WorkoutSessionStatus.INTERRUPTED -> WorkoutSessionDisplayLabels.INTERRUPTED
 }

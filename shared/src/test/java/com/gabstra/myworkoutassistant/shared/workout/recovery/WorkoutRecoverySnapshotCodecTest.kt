@@ -57,6 +57,7 @@ class WorkoutRecoverySnapshotCodecTest {
                                 upperBoundMaxHRPercent = null,
                                 currentBodyWeight = 0.0,
                                 plateChangeResult = null,
+                                loadedPlateConfigurationOverride = listOf(20.0, 10.0, 10.0),
                                 streak = 0,
                                 progressionState = ProgressionState.PROGRESS,
                                 isWarmupSet = false,
@@ -89,5 +90,6 @@ class WorkoutRecoverySnapshotCodecTest {
         assertNotNull(current)
         assertEquals(50.0, previous?.actualWeight ?: 0.0, 0.0)
         assertEquals(55.0, current?.actualWeight ?: 0.0, 0.0)
+        assertEquals(listOf(20.0, 10.0, 10.0), decodedSet?.loadedPlateConfigurationOverride)
     }
 }

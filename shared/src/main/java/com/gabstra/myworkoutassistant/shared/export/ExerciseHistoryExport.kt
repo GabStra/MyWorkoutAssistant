@@ -17,6 +17,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.workout.history.elapsedSecondsFromHistoryBounds
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.workout.model.isNormallyCompleted
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import java.time.LocalDate
 import java.util.Calendar
@@ -71,7 +72,7 @@ suspend fun buildExerciseHistoryMarkdown(
 
     val completedWorkoutHistories = workoutsContainingExercise
         .flatMap { workout -> workoutHistoryDao.getWorkoutsByWorkoutId(workout.id) }
-        .filter { it.isDone }
+        .filter { it.isNormallyCompleted() }
         .filter { historyStartDate == null || !it.date.isBefore(historyStartDate) }
         .filter { historyEndDate == null || !it.date.isAfter(historyEndDate) }
         .sortedWith(compareBy({ it.date }, { it.time }))

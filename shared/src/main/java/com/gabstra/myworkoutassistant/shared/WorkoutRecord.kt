@@ -1,11 +1,15 @@
 package com.gabstra.myworkoutassistant.shared
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import java.time.LocalDateTime
 import java.util.UUID
 
-@Entity(tableName = "workout_record")
+@Entity(
+    tableName = "workout_record",
+    indices = [Index(value = ["workoutId"], unique = true)]
+)
 data class WorkoutRecord (
     @PrimaryKey(autoGenerate = false)
     val id: UUID,

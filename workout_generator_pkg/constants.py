@@ -1,6 +1,5 @@
 """Large constant definitions for workout generator."""
 
-import copy
 import json
 
 PLACEHOLDER_OR_UUID_PATTERN = (
@@ -138,7 +137,8 @@ JSON_SCHEMA = {
                 "type": {"const": "TimedDurationSet"},                                                                                                                                                                                           
                 "timeInMillis": {"type": "integer"},                                                                                                                                                                                             
                 "autoStart": {"type": "boolean"},                                                                                                                                                                                                
-                "autoStop": {"type": "boolean"}                                                                                                                                                                                                  
+                "autoStop": {"type": "boolean"},
+                "targetWeight": {"type": ["number", "null"], "minimum": 0}
             }                                                                                                                                                                                                                                    
         },                                                                                                                                                                                                                                       
         "EnduranceSet": {                                                                                                                                                                                                                        
@@ -150,7 +150,8 @@ JSON_SCHEMA = {
                 "type": {"const": "EnduranceSet"},                                                                                                                                                                                               
                 "timeInMillis": {"type": "integer"},                                                                                                                                                                                             
                 "autoStart": {"type": "boolean"},                                                                                                                                                                                                
-                "autoStop": {"type": "boolean"}                                                                                                                                                                                                  
+                "autoStop": {"type": "boolean"},
+                "targetWeight": {"type": ["number", "null"], "minimum": 0}
             }                                                                                                                                                                                                                                    
         },                                                                                                                                                                                                                                       
         "RestSet": {                                                                                                                                                                                                                             
@@ -195,7 +196,9 @@ JSON_SCHEMA = {
                 "type": {"const": "Exercise"},                                                                                                                                                                                                   
                 "enabled": {"type": "boolean"},                                                                                                                                                                                                  
                 "name": {"type": "string"},                                                                                                                                                                                                      
+                "nameOverride": {"type": ["string", "null"]},
                 "notes": {"type": "string", "maxLength": 500},                                                                                                                                                                                                     
+                "placementNotes": {"type": "string", "maxLength": 500},
                 "sets": {"type": "array", "items": {"$ref": "#/$defs/Set"}},                                                                                                                                                                     
                 "exerciseType": {"$ref": "#/$defs/ExerciseType"},                                                                                                                                                                                
                 "minReps": {"type": "integer"},                                                                                                                                                                                                  
@@ -460,6 +463,16 @@ JSON_SCHEMA = {
                 "extraWeights": {"type": "array", "items": {"$ref": "#/$defs/BaseWeight"}}                                                                                                                                                       
             }                                                                                                                                                                                                                                    
         },
+        "EquipmentCardioMachine": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["id", "type", "name"],
+            "properties": {
+                "id": {"$ref": "#/$defs/UUID"},
+                "type": {"const": "CARDIO_MACHINE"},
+                "name": {"type": "string"}
+            }
+        },
         "EquipmentAccessory": {
             "type": "object",
             "additionalProperties": False,
@@ -477,7 +490,8 @@ JSON_SCHEMA = {
                 {"$ref": "#/$defs/EquipmentDumbbell"},                                                                                                                                                                                           
                 {"$ref": "#/$defs/EquipmentPlateLoadedCable"},                                                                                                                                                                                   
                 {"$ref": "#/$defs/EquipmentWeightVest"},                                                                                                                                                                                         
-                {"$ref": "#/$defs/EquipmentMachine"}                                                                                                                                                                                             
+                {"$ref": "#/$defs/EquipmentMachine"},
+                {"$ref": "#/$defs/EquipmentCardioMachine"},
             ]                                                                                                                                                                                                                                    
         }                                                                                                                                                                                                                                        
     }                                                                                                                                                                                                                                            
@@ -495,6 +509,7 @@ EXAMPLE_JSON = {
                     "enabled": True,                                                                                                                                                                                                             
                     "name": "Back Squat",                                                                                                                                                                                                        
                     "notes": "",
+                    "placementNotes": "",
                     "sets": [                                                                                                                                                                                                                    
                         {                                                                                                                                                                                                                        
                             "id": "33333333-3333-3333-3333-333333333333",                                                                                                                                                                        

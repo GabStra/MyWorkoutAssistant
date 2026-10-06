@@ -24,6 +24,7 @@ import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.utils.Ternary
 import com.gabstra.myworkoutassistant.shared.utils.compareSetListsUnordered
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.workout.model.isNormallyCompleted
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import java.time.LocalDate
 import java.util.UUID
@@ -68,7 +69,7 @@ internal suspend fun loadComparableExerciseSessions(
     val workoutsById = workoutsContainingExercise.associateBy { it.id }
     val completedWorkoutHistories = workoutsContainingExercise
         .flatMap { workout -> workoutHistoryDao.getWorkoutsByWorkoutId(workout.id) }
-        .filter { it.isDone }
+        .filter { it.isNormallyCompleted() }
         .filter { historyStartDate == null || !it.date.isBefore(historyStartDate) }
         .filter { historyEndDate == null || !it.date.isAfter(historyEndDate) }
         .sortedWith(compareBy<WorkoutHistory> { it.date }.thenBy { it.time })

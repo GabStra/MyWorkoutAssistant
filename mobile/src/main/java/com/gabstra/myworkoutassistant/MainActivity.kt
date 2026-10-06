@@ -21,7 +21,9 @@ import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Checkbox
@@ -30,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -44,6 +47,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
 import androidx.health.connect.client.HealthConnectClient
@@ -62,6 +66,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import com.gabstra.myworkoutassistant.composables.LoadingScreen
 import com.gabstra.myworkoutassistant.composables.StandardDialog
+import com.gabstra.myworkoutassistant.composables.SyncStatusBadge
+import com.gabstra.myworkoutassistant.composables.LocalBreadcrumbContent
 import com.gabstra.myworkoutassistant.insights.LiteRtLmModelStore
 import com.gabstra.myworkoutassistant.insights.LiteRtLmBackendPreference
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsMode
@@ -70,6 +76,14 @@ import com.gabstra.myworkoutassistant.screens.ErrorLogsScreen
 import com.gabstra.myworkoutassistant.screens.ExternalWorkoutSessionDetailScreen
 import com.gabstra.myworkoutassistant.screens.ExerciseDetailScreen
 import com.gabstra.myworkoutassistant.screens.ExerciseForm
+import com.gabstra.myworkoutassistant.screens.ExerciseLibraryPickerScreen
+import com.gabstra.myworkoutassistant.screens.ExerciseDefinitionForm
+import com.gabstra.myworkoutassistant.shared.ExerciseDefinition
+import com.gabstra.myworkoutassistant.shared.allExercisePrescriptions
+import com.gabstra.myworkoutassistant.shared.duplicatePrescription
+import com.gabstra.myworkoutassistant.shared.effectiveFamilyId
+import com.gabstra.myworkoutassistant.shared.materializeDefinition
+import com.gabstra.myworkoutassistant.shared.resolveExerciseVariation
 import com.gabstra.myworkoutassistant.screens.HistoryChatScreen
 import com.gabstra.myworkoutassistant.screens.HistoryChatScreenMode
 import com.gabstra.myworkoutassistant.screens.RestForm
@@ -83,6 +97,7 @@ import com.gabstra.myworkoutassistant.screens.WorkoutScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutsScreen
 import com.gabstra.myworkoutassistant.screens.equipments.AccessoryForm
 import com.gabstra.myworkoutassistant.screens.equipments.BarbellForm
+import com.gabstra.myworkoutassistant.screens.equipments.CardioMachineForm
 import com.gabstra.myworkoutassistant.screens.equipments.DumbbellForm
 import com.gabstra.myworkoutassistant.screens.equipments.DumbbellsForm
 import com.gabstra.myworkoutassistant.screens.equipments.MachineForm
@@ -101,6 +116,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.detectBackupFileType
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
+import com.gabstra.myworkoutassistant.shared.equipments.CardioMachine
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
@@ -112,6 +128,8 @@ import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
 import com.gabstra.myworkoutassistant.shared.fromBackupJsonToAppBackup
 import com.gabstra.myworkoutassistant.shared.fromJSONToWorkoutPlanPackage
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
+import com.gabstra.myworkoutassistant.shared.motion.restoreExerciseMovementBackups
+import com.gabstra.myworkoutassistant.shared.motion.requireExerciseMovementPayloads
 import com.gabstra.myworkoutassistant.shared.sanitizeRestPlacementInSetHistoriesByWorkoutAndExercise
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.validateWorkoutStoreForRuntimeUse
@@ -400,6 +418,12 @@ fun MyWorkoutAssistantNavHost(
 
     var hasHealthPermissions by remember { mutableStateOf(false) }
     var showPrerequisitesDialog by remember { mutableStateOf(false) }
+    var deferHealthPermissionPrompt by remember { mutableStateOf(true) }
+    var showStartupRestorePickerPrompt by remember { mutableStateOf(false) }
+    var isRestoringBackup by remember { mutableStateOf(false) }
+    val manualSyncUiState by PhoneToWatchSyncCoordinator.manualSyncUiState.collectAsState()
+    val isSyncing = manualSyncUiState != null
+    val isSyncingToWatch by PhoneToWatchSyncCoordinator.isSyncingToWatch.collectAsState()
 
     suspend fun refreshPermissionState(showDialogWhenMissing: Boolean) {
         val grantedPermissions = try {
@@ -412,8 +436,8 @@ fun MyWorkoutAssistantNavHost(
         appViewModel.setHealthPermissions(hasHealthPermissions)
         appViewModel.setHealthPermissionsChecked()
 
-        if (showDialogWhenMissing) {
-            showPrerequisitesDialog = !hasHealthPermissions
+        if (hasHealthPermissions) {
+            showPrerequisitesDialog = false
         }
     }
 
@@ -481,11 +505,26 @@ fun MyWorkoutAssistantNavHost(
         }
     }
 
-    var isSyncing by remember { mutableStateOf(false) }
     var isExportingWorkoutDataForLlm by remember { mutableStateOf(false) }
     var workoutDataExportStatus by remember { mutableStateOf("Exporting workout data...") }
 
-    if (showPrerequisitesDialog) {
+    LaunchedEffect(
+        hasHealthPermissions,
+        deferHealthPermissionPrompt,
+        showStartupRestorePickerPrompt,
+        isRestoringBackup,
+        isSyncing,
+    ) {
+        showPrerequisitesDialog = shouldShowStartupPrerequisitesDialog(
+            hasHealthPermissions = hasHealthPermissions,
+            deferHealthPermissionPrompt = deferHealthPermissionPrompt,
+            isRestorePromptVisible = showStartupRestorePickerPrompt,
+            isRestoringBackup = isRestoringBackup,
+            isSyncingWithWatch = isSyncing,
+        )
+    }
+
+    if (showPrerequisitesDialog && !isSyncing && !isRestoringBackup) {
         StandardDialog(
             onDismissRequest = {},
             title = "Permissions required",
@@ -523,17 +562,6 @@ fun MyWorkoutAssistantNavHost(
         )
     }
     
-    // Timeout mechanism to clear stuck sync state after 10 seconds
-    LaunchedEffect(isSyncing) {
-        if (isSyncing) {
-            delay(10000L) // 10 seconds timeout
-            if (isSyncing) {
-                // Only reset if still syncing (sync didn't complete)
-                isSyncing = false
-            }
-        }
-    }
-    
     var importPlanResultMessage by remember { mutableStateOf<String?>(null) }
 
     val workoutStorePickerLauncher =
@@ -558,6 +586,14 @@ fun MyWorkoutAssistantNavHost(
                                 Toast.makeText(
                                     context,
                                     "That file is a full workout export, not a workout plan package.",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                return@let
+                            }
+                            BackupFileType.EXERCISE_LIBRARY_PACKAGE -> {
+                                Toast.makeText(
+                                    context,
+                                    "That file is an exercise library. Import it from the Exercise Library tab.",
                                     Toast.LENGTH_SHORT
                                 ).show()
                                 return@let
@@ -597,6 +633,7 @@ fun MyWorkoutAssistantNavHost(
                                 val existingWorkoutsCount = appViewModel.workouts.size
                                 val existingEquipmentCount = appViewModel.equipments.size
                                 val existingAccessoriesCount = appViewModel.accessoryEquipments.size
+                                val importedMovementCount = importedWorkoutPlanPackage.exerciseMovements.size
 
                                 val newPlanId = java.util.UUID.randomUUID()
                                 val nextOrder =
@@ -612,12 +649,34 @@ fun MyWorkoutAssistantNavHost(
                                     workout.copy(workoutPlanId = newPlanId)
                                 }
                                 val currentWorkoutStore = appViewModel.workoutStore
+                                val importedDefinitions = importedWorkoutPlanPackage.exerciseDefinitions.map {
+                                    it.copy(exerciseFamilyId = it.effectiveFamilyId())
+                                }
+                                val existingDefinitionsById = currentWorkoutStore.exerciseDefinitions.associateBy { it.id }
+                                importedDefinitions.forEach { importedDefinition ->
+                                    val existingDefinition = existingDefinitionsById[importedDefinition.id]
+                                    require(existingDefinition == null || existingDefinition == importedDefinition) {
+                                        "Exercise definition ${importedDefinition.id} conflicts with an existing library entry."
+                                    }
+                                }
                                 val importedWorkoutStoreWithPlan = currentWorkoutStore.copy(
                                     workouts = workoutsWithPlanId,
+                                    exerciseDefinitions = (
+                                        currentWorkoutStore.exerciseDefinitions +
+                                            importedDefinitions
+                                        ).distinctBy { it.id },
                                     equipments = importedWorkoutPlanPackage.equipments,
                                     accessoryEquipments = importedWorkoutPlanPackage.accessoryEquipments,
                                     workoutPlans = listOf(newPlan)
                                 )
+
+                                withContext(Dispatchers.IO) {
+                                    restoreExerciseMovementBackups(
+                                        context = context,
+                                        movementBackups = importedWorkoutPlanPackage.exerciseMovements
+                                    )
+                                    requireExerciseMovementPayloads(context, importedWorkoutStoreWithPlan)
+                                }
 
                                 appViewModel.importWorkoutStore(importedWorkoutStoreWithPlan)
 
@@ -635,6 +694,7 @@ fun MyWorkoutAssistantNavHost(
                                     append("\n$addedWorkouts workout(s)")
                                     if (addedEquipment > 0) append(", $addedEquipment equipment item(s)")
                                     if (addedAccessories > 0) append(", $addedAccessories accessory item(s)")
+                                    if (importedMovementCount > 0) append(", $importedMovementCount movement(s)")
                                 }
 
                                 importPlanResultMessage = message
@@ -715,6 +775,11 @@ fun MyWorkoutAssistantNavHost(
             val newWorkoutStore = appBackup.WorkoutStore.copy(
                 workouts = allowedWorkouts
             )
+            restoreExerciseMovementBackups(
+                context = context,
+                movementBackups = appBackup.ExerciseMovements.orEmpty()
+            )
+            requireExerciseMovementPayloads(context, newWorkoutStore)
 
             val deleteAndInsertJob = coroutineScope {
                 async {
@@ -866,10 +931,10 @@ fun MyWorkoutAssistantNavHost(
                         // Show the success toast after all operations are complete
                         Toast.makeText(context, successToastMessage, Toast.LENGTH_SHORT).show()
                     }
-                    // Ensure any pending save is persisted, then force the same manual
-                    // "Sync with watch" path (AppBackup worker), not passive debounce flow.
+                    // Persist the restored state and enqueue the normal non-blocking sync path.
+                    // Only an explicit user action should opt into the blocking manual-sync UI.
                     appViewModel.flushWorkoutSave(context)
-                    PhoneToWatchSyncCoordinator.requestManualSyncToWatch(context)
+                    PhoneToWatchSyncCoordinator.onPhoneDataPersisted(context)
                     true
                 } catch (e: Exception) {
                     Log.e("MainActivity", "Error during restore migration: ${e.javaClass.simpleName}. " +
@@ -922,15 +987,19 @@ fun MyWorkoutAssistantNavHost(
         }
     }
 
-    var showStartupRestorePickerPrompt by remember { mutableStateOf(false) }
-    var isRestoringBackup by remember { mutableStateOf(false) }
+    fun resolveStartupRestoreGate() {
+        deferHealthPermissionPrompt = false
+    }
 
     LaunchedEffect(initialDataLoaded) {
         if (!initialDataLoaded) return@LaunchedEffect
 
         val prefs = context.getSharedPreferences("startup_restore", Context.MODE_PRIVATE)
         val alreadyChecked = prefs.getBoolean("auto_restore_checked", false)
-        if (alreadyChecked) return@LaunchedEffect
+        if (alreadyChecked) {
+            resolveStartupRestoreGate()
+            return@LaunchedEffect
+        }
 
         val hasCurrentData =
             appViewModel.workoutStore.workouts.isNotEmpty() ||
@@ -940,6 +1009,7 @@ fun MyWorkoutAssistantNavHost(
 
         if (hasCurrentData) {
             prefs.edit { putBoolean("auto_restore_checked", true) }
+            resolveStartupRestoreGate()
             return@LaunchedEffect
         }
 
@@ -949,6 +1019,8 @@ fun MyWorkoutAssistantNavHost(
             if (!alreadyPrompted) {
                 prefs.edit { putBoolean("restore_picker_prompt_shown", true) }
                 showStartupRestorePickerPrompt = true
+            } else {
+                resolveStartupRestoreGate()
             }
             return@LaunchedEffect
         }
@@ -972,11 +1044,15 @@ fun MyWorkoutAssistantNavHost(
         if (restored) {
             prefs.edit { putBoolean("auto_restore_checked", true) }
         }
+        resolveStartupRestoreGate()
     }
 
     val jsonPickerLauncher =
         rememberLauncherForActivityResult(contract = ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-            val selectedUri = uri ?: return@rememberLauncherForActivityResult
+            val selectedUri = uri ?: run {
+                resolveStartupRestoreGate()
+                return@rememberLauncherForActivityResult
+            }
             if (isRestoringBackup) return@rememberLauncherForActivityResult
 
             // Use restoreScope so restore completes even if activity is destroyed/recreated (e.g. rotation).
@@ -1009,6 +1085,17 @@ fun MyWorkoutAssistantNavHost(
                                 Toast.makeText(
                                     context,
                                     "That file is a workout export, not a backup.",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                            return@launch
+                        }
+
+                        BackupFileType.EXERCISE_LIBRARY_PACKAGE -> {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(
+                                    context,
+                                    "That file is an exercise library. Import it from the Exercise Library tab.",
                                     Toast.LENGTH_LONG
                                 ).show()
                             }
@@ -1065,16 +1152,23 @@ fun MyWorkoutAssistantNavHost(
                     }
                 } finally {
                     isRestoringBackup = false
+                    resolveStartupRestoreGate()
                 }
             }
         }
 
     if (showStartupRestorePickerPrompt) {
         StandardDialog(
-            onDismissRequest = { showStartupRestorePickerPrompt = false },
+            onDismissRequest = {
+                showStartupRestorePickerPrompt = false
+                resolveStartupRestoreGate()
+            },
             title = "Restore backup?",
             body = {
-                Text("Your local data is empty. Choose a backup file to restore your workouts.")
+                Text(
+                    text = "Your local data is empty. Choose a backup file to restore your workouts.",
+                    style = MaterialTheme.typography.bodyLarge,
+                )
             },
             confirmText = "Choose file",
             onConfirm = {
@@ -1082,7 +1176,10 @@ fun MyWorkoutAssistantNavHost(
                 jsonPickerLauncher.launch(arrayOf("application/json"))
             },
             dismissText = "Not now",
-            onDismissButton = { showStartupRestorePickerPrompt = false }
+            onDismissButton = {
+                showStartupRestorePickerPrompt = false
+                resolveStartupRestoreGate()
+            }
         )
     }
 
@@ -1144,7 +1241,7 @@ fun MyWorkoutAssistantNavHost(
                 scope.launch {
                     try {
                         withContext(Dispatchers.IO) {
-                            val appBackup = createAppBackup(appViewModel.workoutStore, db)
+                            val appBackup = createAppBackup(appViewModel.workoutStore, db, context)
                             if (appBackup == null) {
                                 withContext(Dispatchers.Main) {
                                     Toast.makeText(
@@ -1181,8 +1278,14 @@ fun MyWorkoutAssistantNavHost(
     val syncWithWatch = {
         scope.launch {
             appViewModel.flushWorkoutSave(context)
-            PhoneToWatchSyncCoordinator.requestManualSyncToWatch(context)
-            isSyncing = true
+            val syncStarted = PhoneToWatchSyncCoordinator.requestManualSyncToWatch(context)
+            if (!syncStarted) {
+                Toast.makeText(
+                    context,
+                    "Wear app is not installed or reachable. Sync will retry in the background.",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
         }
     }
 
@@ -1222,11 +1325,15 @@ fun MyWorkoutAssistantNavHost(
     if (!isInitialDataLoaded || isRestoringBackup) {
         LoadingScreen()
     } else {
-        AnimatedContent(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background),
-            targetState = appViewModel.currentScreenData,
+        CompositionLocalProvider(
+            LocalBreadcrumbContent provides { NavigationBreadcrumbs(appViewModel) }
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                AnimatedContent(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background),
+                targetState = appViewModel.currentScreenData,
             // Keep AnimatedContent's notion of screen identity aligned with SaveableStateHolder.
             // Equivalent ScreenData instances can be new objects, but they must not register
             // duplicate saveable-state buckets while both old/new content are composed.
@@ -1246,10 +1353,15 @@ fun MyWorkoutAssistantNavHost(
                             workoutScheduleDao,
                             healthConnectClient,
                             isSyncing = isSyncing,
+                            syncPhase = manualSyncUiState?.phase,
+                            syncProgress = manualSyncUiState?.progress,
                             isExportingWorkoutDataForLlm = isExportingWorkoutDataForLlm,
                             workoutDataExportStatus = workoutDataExportStatus,
                             onSyncClick = {
                                 syncWithWatch()
+                            },
+                            onCancelSync = {
+                                PhoneToWatchSyncCoordinator.cancelManualSyncToWatch(context)
                             },
                             onOpenSettingsClick = {
                                 appViewModel.setScreenData(ScreenData.Settings())
@@ -1866,7 +1978,8 @@ fun MyWorkoutAssistantNavHost(
                                     setHistoryDao = setHistoryDao,
                                     restHistoryDao = restHistoryDao,
                                     exercise = selectedExercise,
-                                    initialSelectedTabIndex = screenData.selectedTabIndex + 1,
+                                    initialSelectedTabIndex = screenData.selectedTabIndex +
+                                        if (selectedExercise.movementRef == null) 1 else 2,
                                     initialWorkoutHistoryId = screenData.workoutHistoryId,
                                 ) {
                                     appViewModel.goBack()
@@ -1927,6 +2040,45 @@ fun MyWorkoutAssistantNavHost(
                         val screenData = currentScreen
                         val workouts by appViewModel.workoutsFlow.collectAsState()
 
+                        if (screenData.exerciseDefinitionId == null && !screenData.skipLibrary) {
+                            ExerciseLibraryPickerScreen(
+                                definitions = appViewModel.workoutStore.exerciseDefinitions,
+                                onSelect = { definition ->
+                                    appViewModel.setScreenData(
+                                        ScreenData.NewExercise(screenData.workoutId, definition.id)
+                                    )
+                                },
+                                onCreate = {
+                                    appViewModel.setScreenData(
+                                        ScreenData.NewExercise(screenData.workoutId, skipLibrary = true)
+                                    )
+                                },
+                                onCancel = { appViewModel.goBack() },
+                            )
+                            return@SaveableStateProvider
+                        }
+
+                        val selectedDefinition = screenData.exerciseDefinitionId?.let { definitionId ->
+                            appViewModel.workoutStore.exerciseDefinitions.firstOrNull { it.id == definitionId }
+                        }
+                        val definitionTemplate = selectedDefinition?.let { definition ->
+                            Exercise(
+                                id = java.util.UUID.randomUUID(), enabled = true,
+                                name = definition.name, notes = "", sets = emptyList(),
+                                exerciseType = definition.exerciseType, minReps = 0, maxReps = 0,
+                                lowerBoundMaxHRPercent = null, upperBoundMaxHRPercent = null,
+                                equipmentId = definition.equipmentId,
+                                bodyWeightPercentage = definition.bodyWeightPercentage,
+                                muscleGroups = definition.muscleGroups,
+                                secondaryMuscleGroups = definition.secondaryMuscleGroups,
+                                requiredAccessoryEquipmentIds = definition.requiredAccessoryEquipmentIds,
+                                exerciseCategory = definition.exerciseCategory,
+                                movementRef = definition.movementRef,
+                                exerciseDefinitionId = definition.id,
+                                placementNotes = "",
+                            )
+                        }
+
                         var selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
                         var currentWorkout = selectedWorkout
 
@@ -1946,6 +2098,26 @@ fun MyWorkoutAssistantNavHost(
                                 isSaving = true
                                 scope.launch {
                                     try {
+                                        val definition = selectedDefinition ?: ExerciseDefinition(
+                                            id = java.util.UUID.randomUUID(),
+                                            exerciseFamilyId = null,
+                                            name = newExercise.name,
+                                            exerciseType = newExercise.exerciseType,
+                                            equipmentId = newExercise.equipmentId,
+                                            bodyWeightPercentage = newExercise.bodyWeightPercentage,
+                                            muscleGroups = newExercise.muscleGroups,
+                                            secondaryMuscleGroups = newExercise.secondaryMuscleGroups,
+                                            requiredAccessoryEquipmentIds = newExercise.requiredAccessoryEquipmentIds,
+                                            exerciseCategory = newExercise.exerciseCategory,
+                                            movementRef = newExercise.movementRef,
+                                        )
+                                        if (selectedDefinition == null) {
+                                            appViewModel.addExerciseDefinition(definition)
+                                        }
+                                        val storedDefinition = appViewModel.workoutStore.exerciseDefinitions
+                                            .firstOrNull { it.id == definition.id }
+                                            ?: definition
+                                        val linkedExercise = newExercise.materializeDefinition(storedDefinition)
                                         val hasHistory = withContext(Dispatchers.IO) {
                                             workoutHistoryDao.workoutHistoryExistsByWorkoutId(
                                                 selectedWorkout.id
@@ -1953,7 +2125,7 @@ fun MyWorkoutAssistantNavHost(
                                         }
                                         appViewModel.addWorkoutComponentVersioned(
                                             selectedWorkout,
-                                            newExercise,
+                                            linkedExercise,
                                             hasHistory
                                         )
                                         appViewModel.scheduleWorkoutSave(
@@ -1982,8 +2154,61 @@ fun MyWorkoutAssistantNavHost(
                                     appViewModel.goBack()
                                 }
                             },
+                            exercise = definitionTemplate,
                             isSaving = isSaving
                         )
+                    }
+
+                    is ScreenData.NewExerciseDefinition -> {
+                        ExerciseDefinitionForm(
+                            definition = null,
+                            equipments = appViewModel.workoutStore.equipments,
+                            accessories = appViewModel.workoutStore.accessoryEquipments,
+                            isReferenced = false,
+                            onSave = { definition ->
+                                appViewModel.addExerciseDefinition(definition)
+                                appViewModel.scheduleWorkoutSave(context)
+                                appViewModel.goBack()
+                            },
+                            onCancel = { appViewModel.goBack() },
+                            breadcrumbContent = {
+                                NavigationBreadcrumbs(
+                                    appViewModel = appViewModel,
+                                    showOnDefinitionEditor = true,
+                                )
+                            },
+                        )
+                    }
+
+                    is ScreenData.EditExerciseDefinition -> {
+                        val definition = appViewModel.workoutStore.exerciseDefinitions
+                            .firstOrNull { it.id == currentScreen.exerciseDefinitionId }
+                        if (definition == null) {
+                            LaunchedEffect(currentScreen.exerciseDefinitionId) {
+                                appViewModel.goBack()
+                            }
+                        } else {
+                            val isReferenced = appViewModel.workoutStore.allExercisePrescriptions()
+                                .any { it.exerciseDefinitionId == definition.id }
+                            ExerciseDefinitionForm(
+                                definition = definition,
+                                equipments = appViewModel.workoutStore.equipments,
+                                accessories = appViewModel.workoutStore.accessoryEquipments,
+                                isReferenced = isReferenced,
+                                onSave = { updatedDefinition ->
+                                    appViewModel.updateExerciseDefinition(updatedDefinition)
+                                    appViewModel.scheduleWorkoutSave(context)
+                                    appViewModel.goBack()
+                                },
+                                onCancel = { appViewModel.goBack() },
+                                breadcrumbContent = {
+                                    NavigationBreadcrumbs(
+                                        appViewModel = appViewModel,
+                                        showOnDefinitionEditor = true,
+                                    )
+                                },
+                            )
+                        }
                     }
 
                     is ScreenData.NewSuperset -> {
@@ -2003,6 +2228,7 @@ fun MyWorkoutAssistantNavHost(
 
                         var isSaving by remember { mutableStateOf(false) }
                         SupersetForm(
+                            viewModel = appViewModel,
                             onSupersetUpsert = { newSuperset ->
                                 if (isSaving) return@SupersetForm
                                 isSaving = true
@@ -2100,10 +2326,31 @@ fun MyWorkoutAssistantNavHost(
                                                     selectedWorkout.id
                                                 )
                                             }
+                                            val sourceDefinitionId = selectedExercise.exerciseDefinitionId
+                                            val resolvedExercise = if (sourceDefinitionId != null) {
+                                                val resolution = appViewModel.workoutStore.resolveExerciseVariation(
+                                                    sourceDefinitionId = sourceDefinitionId,
+                                                    candidate = updatedExercise,
+                                                )
+                                                appViewModel.updateWorkoutStore(resolution.workoutStore)
+                                                val materialized = updatedExercise.materializeDefinition(
+                                                    resolution.definition,
+                                                )
+                                                if (
+                                                    hasHistory &&
+                                                    resolution.definition.id != sourceDefinitionId
+                                                ) {
+                                                    materialized.duplicatePrescription()
+                                                } else {
+                                                    materialized
+                                                }
+                                            } else {
+                                                updatedExercise
+                                            }
                                             appViewModel.updateWorkoutComponentVersioned(
                                                 selectedWorkout,
                                                 selectedExercise,
-                                                updatedExercise,
+                                                resolvedExercise,
                                                 hasHistory
                                             )
                                             appViewModel.scheduleWorkoutSave(
@@ -2162,6 +2409,7 @@ fun MyWorkoutAssistantNavHost(
                         } else {
                             var isSaving by remember { mutableStateOf(false) }
                             SupersetForm(
+                                viewModel = appViewModel,
                                 onSupersetUpsert = { updatedSuperset ->
                                     if (isSaving) return@SupersetForm
                                     isSaving = true
@@ -2199,6 +2447,14 @@ fun MyWorkoutAssistantNavHost(
                                 },
                                 availableExercises = selectedWorkout.workoutComponents.filterIsInstance<Exercise>(),
                                 superset = selectedSuperset,
+                                onExerciseSettingsClick = { exercise ->
+                                    appViewModel.setScreenData(
+                                        ScreenData.EditExercise(
+                                            workoutId = selectedWorkout.id,
+                                            selectedExerciseId = exercise.id
+                                        )
+                                    )
+                                },
                                 isSaving = isSaving
                             )
                         }
@@ -2892,6 +3148,11 @@ fun MyWorkoutAssistantNavHost(
                                 appViewModel.goBack()
                             }, onCancel = { appViewModel.goBack() })
 
+                            EquipmentType.CARDIO_MACHINE -> CardioMachineForm(onUpsert = { new ->
+                                appViewModel.updateEquipments(equipments + new)
+                                appViewModel.goBack()
+                            }, onCancel = { appViewModel.goBack() })
+
                             EquipmentType.ACCESSORY -> {
                                 val accessories by appViewModel.accessoryEquipmentsFlow.collectAsState()
                                 AccessoryForm(onUpsert = { new ->
@@ -2996,6 +3257,27 @@ fun MyWorkoutAssistantNavHost(
                                 }, onCancel = { appViewModel.goBack() }, machine = selectedMachine)
                             }
 
+                            EquipmentType.CARDIO_MACHINE -> {
+                                val selectedCardioMachine =
+                                    equipments.find { it.id == screenData.equipmentId } as CardioMachine
+                                CardioMachineForm(
+                                    onUpsert = { updatedCardioMachine ->
+                                        appViewModel.updateEquipments(
+                                            equipments.map { equipment ->
+                                                if (equipment.id == selectedCardioMachine.id) {
+                                                    updatedCardioMachine
+                                                } else {
+                                                    equipment
+                                                }
+                                            }
+                                        )
+                                        appViewModel.goBack()
+                                    },
+                                    onCancel = { appViewModel.goBack() },
+                                    cardioMachine = selectedCardioMachine,
+                                )
+                            }
+
                             EquipmentType.ACCESSORY -> {
                                 val selectedAccessory =
                                     accessories.find { it.id == screenData.equipmentId }!!
@@ -3018,6 +3300,14 @@ fun MyWorkoutAssistantNavHost(
                 }
             }
 
+            }
+            SyncStatusBadge(
+                visible = isSyncingToWatch && !isSyncing,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .zIndex(2f),
+            )
+            }
         }
     }
 }

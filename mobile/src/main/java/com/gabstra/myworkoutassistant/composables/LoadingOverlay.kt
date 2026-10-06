@@ -10,18 +10,23 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
+import com.gabstra.myworkoutassistant.workout.LoadingText
 import kotlinx.coroutines.delay
 
 @Composable
@@ -31,7 +36,7 @@ fun rememberMinimumLoadingVisibility(
     showDelayMs: Long = 0L,
 ): Boolean {
     var show by remember { mutableStateOf(false) }
-    var visibleSinceMs by remember { mutableStateOf(0L) }
+    var visibleSinceMs by remember { mutableLongStateOf(0L) }
 
     LaunchedEffect(isLoading) {
         if (isLoading) {
@@ -78,6 +83,8 @@ fun LoadingOverlay(
     isVisible: Boolean,
     text: String = "Loading...",
     useOpaqueBackground: Boolean = false,
+    progress: Float? = null,
+    onCancel: (() -> Unit)? = null,
 ) {
     if (isVisible) {
         val interactionSource = remember { MutableInteractionSource() }
@@ -98,14 +105,36 @@ fun LoadingOverlay(
             contentAlignment = Alignment.Center
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                CircularProgressIndicator(
-                    color = MaterialTheme.colorScheme.primary,
-                    trackColor = MediumDarkGray,
-                )
+                if (progress == null) {
+                    CircularProgressIndicator(
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MediumDarkGray,
+                    )
+                } else {
+                    CircularProgressIndicator(
+                        progress = { progress.coerceIn(0f, 1f) },
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MediumDarkGray,
+                    )
+                }
                 Spacer(Modifier.height(Spacing.md))
-                Text(text = text, style = MaterialTheme.typography.bodyLarge)
+                LoadingText(
+                    baseText = text.trimEnd('.'),
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                if (onCancel != null) {
+                    Spacer(Modifier.height(Spacing.sm))
+                    Button(
+                        onClick = onCancel,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = Color.Black,
+                        ),
+                    ) {
+                        Text("Cancel")
+                    }
+                }
             }
         }
     }
 }
-

@@ -7,6 +7,7 @@ import com.gabstra.myworkoutassistant.shared.adapters.AccessoryEquipmentAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.EquipmentAdapter
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
+import com.gabstra.myworkoutassistant.shared.equipments.CardioMachine
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
 import com.gabstra.myworkoutassistant.shared.equipments.Generic
@@ -67,9 +68,13 @@ fun extractEquipmentFromWorkouts(
 ): Pair<List<WeightLoadedEquipment>, List<AccessoryEquipment>> {
     val workouts = workoutStore.workouts.filter { it.id in workoutIds }
     val (equipmentIds, accessoryEquipmentIds) = extractEquipmentIdsFromWorkouts(workouts)
-    
-    val filteredEquipments = workoutStore.equipments.filter { it.id in equipmentIds }
-    val filteredAccessoryEquipments = workoutStore.accessoryEquipments.filter { it.id in accessoryEquipmentIds }
+    val extraLoadEquipmentIds = accessoryEquipmentIds.filter { id ->
+        workoutStore.equipments.any { it.id == id }
+    }.toSet()
+    val filteredEquipments = workoutStore.equipments.filter { it.id in equipmentIds || it.id in extraLoadEquipmentIds }
+    val filteredAccessoryEquipments = workoutStore.accessoryEquipments.filter {
+        it.id in accessoryEquipmentIds && it.id !in extraLoadEquipmentIds
+    }
     
     return Pair(filteredEquipments, filteredAccessoryEquipments)
 }
@@ -118,6 +123,7 @@ fun equipmentToJSON(
         .registerTypeAdapter(Dumbbells::class.java, EquipmentAdapter())
         .registerTypeAdapter(Dumbbell::class.java, EquipmentAdapter())
         .registerTypeAdapter(Machine::class.java, EquipmentAdapter())
+        .registerTypeAdapter(CardioMachine::class.java, EquipmentAdapter())
         .registerTypeAdapter(PlateLoadedCable::class.java, EquipmentAdapter())
         .registerTypeAdapter(Barbell::class.java, EquipmentAdapter())
         .registerTypeAdapter(WeightVest::class.java, EquipmentAdapter())

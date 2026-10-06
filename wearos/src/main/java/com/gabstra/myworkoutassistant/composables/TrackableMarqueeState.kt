@@ -43,6 +43,7 @@ import androidx.compose.ui.node.LayoutModifierNode
 import androidx.compose.ui.node.ModifierNodeElement
 import androidx.compose.ui.node.requireDensity
 import androidx.compose.ui.node.requireGraphicsContext
+import androidx.compose.ui.platform.InspectorInfo
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
@@ -151,6 +152,19 @@ private data class TrackableMarqueeElement(
             edgeFadeWidth = edgeFadeWidth,
             edgeFadeColor = edgeFadeColor,
         )
+    }
+
+    override fun InspectorInfo.inspectableProperties() {
+        name = "trackableMarquee"
+        properties["state"] = state
+        properties["iterations"] = iterations
+        properties["animationMode"] = animationMode
+        properties["delayMillis"] = delayMillis
+        properties["initialDelayMillis"] = initialDelayMillis
+        properties["spacing"] = spacing
+        properties["velocity"] = velocity
+        properties["edgeFadeWidth"] = edgeFadeWidth
+        properties["edgeFadeColor"] = edgeFadeColor
     }
 }
 

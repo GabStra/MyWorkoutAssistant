@@ -1,0 +1,1133 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from exercise_motion_pkg import bake_and_rank, youtube
+
+
+def test_two_scale_uses_structured_required_accessory_and_marks_generated_contract_advisory():
+    contract = {
+        "status": "generated",
+        "source": "llm",
+        "motionContext": {
+            "requiredAccessories": [{"name": "Rings", "type": "ACCESSORY"}],
+        },
+    }
+    equipment = bake_and_rank.two_scale_named_equipment("Ring Fallout", contract)
+    assert equipment == "rings"
+    assert bake_and_rank.two_scale_identity_equipment_consistent(
+        {"visibleEquipment": ["gymnastic rings"]}, equipment=equipment
+    )
+    multi_equipment_contract = {
+        "motionContext": {
+            "primaryEquipment": {"name": "Barbell", "type": "BARBELL"},
+            "requiredAccessories": [{"name": "Bench", "type": "ACCESSORY"}],
+        },
+    }
+    required = bake_and_rank.two_scale_required_equipment_names(
+        "Supported Press", multi_equipment_contract
+    )
+    assert required == ["barbell", "bench"]
+    assert bake_and_rank.two_scale_required_equipment_observed(
+        {"visibleEquipment": ["barbell", "bench"]}, equipment=", ".join(required)
+    )
+    assert not bake_and_rank.two_scale_required_equipment_observed(
+        {"visibleEquipment": ["barbell"]}, equipment=", ".join(required)
+    )
+    box_jump_requirements = bake_and_rank.two_scale_required_equipment_names(
+        "Box Jump",
+        {"motionContext": {"requiredAccessories": [{"name": "Adjustable Bench"}]}},
+    )
+    assert box_jump_requirements == ["box", "bench"]
+    assert bake_and_rank.two_scale_identity_equipment_consistent(
+        {"visibleEquipment": ["box"]}, equipment=", ".join(box_jump_requirements)
+    )
+    guidance = bake_and_rank.two_scale_contract_authority_guidance(contract)
+    assert "model-generated advisory" in guidance
+    assert "do not reject based only on generated posture" in guidance
+    explicit_guidance = bake_and_rank.two_scale_contract_authority_guidance(
+        {"status": "explicit", "source": "exercise_definition"}
+    )
+    assert "explicit exercise definition" in explicit_guidance
+
+
+def test_contract_generation_does_not_infer_suspension_from_accessory_name():
+    exercise = youtube.ExerciseEntry(
+        exercise_id="ring-fallout",
+        slug="ring-fallout",
+        name="Ring Fallout",
+        motion_context={
+            "requiredAccessories": [{"name": "Rings", "type": "ACCESSORY"}],
+        },
+    )
+    prompt = youtube.build_exercise_motion_contract_prompt(exercise)
+    assert "Do not infer suspension, hanging, or a body-support posture from the accessory name alone" in prompt
+    assert "use supportMode any" in prompt
+
+
+@pytest.mark.parametrize("visible,evidence,expected", [
+    (["none"], "standing upright with arms extended straight up holding a bar", False),
+    ([], "The hands are raised, not holding a bar across the shoulders.", False),
+    (None, "possibly holding a bar", False),
+    (["barbell"], "both hands grip the implement", True),
+])
+def test_required_equipment_is_not_inferred_from_ambiguous_narrative(visible, evidence, expected):
+    assert bake_and_rank.two_scale_required_equipment_observed(
+        {"visibleEquipment": visible, "evidence": evidence}, equipment="barbell") is expected
+
+
+@pytest.mark.parametrize("uncertain,complete,conflict,malformed", [
+    (False, True, False, False), (True, True, False, False),
+    (False, False, False, False), (False, True, True, False), (False, False, False, True),
+    (False, True, False, "identity_missing"), (False, True, False, "identity_uncertain"),
+    (False, True, False, "identity_mismatch"),
+])
+def test_full_resolution_equipment_evidence_preserves_action_gates(
+    tmp_path, monkeypatch, uncertain, complete, conflict, malformed,
+):
+    sheets = [tmp_path / "sheet.jpg"]
+    sheets[0].write_bytes(b"sheet")
+    frames = [tmp_path / f"frame-{index}.jpg" for index in range(16)]
+    for frame in frames:
+        frame.write_bytes(b"original")
+    (tmp_path / "contact_sheet_crop.json").write_text(
+        json.dumps({"framePaths": [str(frame) for frame in frames]}), encoding="utf-8")
+    detail_frames = [frames[0], frames[8], frames[-1]]
+    assert bake_and_rank.source_equipment_detail_frames(sheets) == detail_frames
+    monkeypatch.setattr(bake_and_rank, "final_output_motion_contact_sheets", lambda *a, **k: sheets)
+    detail = {"heldEquipment": ["dumbbell"], "objectCount": 1, "visibleShape": "two weighted ends",
+              "holdingPattern": "one end in each hand", "uncertain": uncertain}
+    observation = {"visibleEquipment": [], "orderedPhases": ["raise", "lower"],
+                   "startStateVisible": True, "actionPhaseVisible": True,
+                   "turningPointVisible": True, "returnOrFinishVisible": complete, "complete": complete}
+    completeness_observation = dict(observation)
+    if malformed is True:
+        completeness_observation["actionPhaseVisible"] = False  # Contradicts the nonempty action phases.
+    def run_questions(jobs, callback):
+        # Execute these jobs to verify production wiring, not just the evidence reducer.
+        identity = jobs["identity"]()
+        topology = jobs["topology"]()
+        return {"identity": identity, "topology": topology,
+                "uniform-0": ("", {"unrelatedActionVisible": False, "unrelatedTileNumbers": []}),
+                "motion-0": ("", {"targetExerciseActionVisible": True, "namedEquipmentEngagedStatus": "engaged"}),
+                "completeness": ("", completeness_observation), "observation": ("", observation)}
+    monkeypatch.setattr("exercise_motion_pkg.review_questions.run_questions", run_questions)
+    def caption_images(*, frame_paths, prompt, **kwargs):
+        if prompt.startswith("Inspect only equipment"):
+            assert frame_paths == detail_frames
+            assert "Dumbbell Shrug" not in prompt
+            return json.dumps(detail)
+        if prompt.startswith("Audit only"):
+            assert '"targetBlindFullResolutionEquipment"' in prompt
+            return json.dumps({"corroboratedConflict": conflict,
+                               "corroboratedContradictions": ["incompatible action"] if conflict else [],
+                               "requiredEquipmentSupported": "true"})
+        assert all(path in sheets for path in frame_paths)
+        assert "original full-resolution frames" in prompt
+        assert json.dumps(detail) in prompt
+        if prompt.startswith("You verify only exercise identity"):
+            if malformed == "identity_missing":
+                return '{"verdict":"match","evidence":"unfinished'
+            if malformed in {"identity_uncertain", "identity_mismatch"}:
+                return json.dumps({"verdict": malformed.removeprefix("identity_"), "visibleEquipment": ["dumbbell"]})
+            return json.dumps({"verdict": "match", "visibleEquipment": ["dumbbell"]})
+        return json.dumps(topology_response())
+    result = bake_and_rank.validate_two_scale_source_with_caption_images(
+        make_review_item(tmp_path), uniform_sheet_paths=sheets, output_dir=tmp_path / "review",
+        caption_images=caption_images)
+    assert result["passed"] is (not uncertain and complete and not conflict and not malformed)
+    assert result["gates"]["targetBlindEquipmentDetail"]["clear"] is (not uncertain)
+    if malformed in {"identity_missing", "identity_uncertain"}:
+        assert result["reviewStatus"] == "incomplete"
+        assert result["missingEvidenceReasons"] == ["two_scale_source_identity_review_incomplete"]
+        _, claims = bake_and_rank.build_two_scale_disagreement_repair_prompt(result, exercise_name="Dumbbell Shrug")
+        assert claims == ["target_identity"]
+    elif malformed == "identity_mismatch":
+        assert result["reviewStatus"] == "rejected"
+        assert result["missingEvidenceReasons"] == []
+    elif malformed is True:
+        assert result["reviewStatus"] == "incomplete"
+        assert result["missingEvidenceReasons"] == ["two_scale_source_completeness_observation_inconsistent"]
+        assert bake_and_rank.two_scale_source_validation_needs_repair(result)
+        _, claims = bake_and_rank.build_two_scale_disagreement_repair_prompt(result, exercise_name="Dumbbell Shrug")
+        assert claims == ["complete_action"]
+    elif not complete:
+        assert result["reviewStatus"] == "rejected"
+        assert result["missingEvidenceReasons"] == []
+
+
+def test_source_repair_stops_on_clear_target_blind_equipment_mismatch() -> None:
+    validation = {
+        "passed": False,
+        "rejectionReasons": [
+            "two_scale_source_identity_failed",
+            "two_scale_source_required_equipment_not_observed",
+            "two_scale_source_topology_not_verified",
+        ],
+        "exerciseMotionContract": {
+            "status": "generated",
+            "exerciseName": "Single Dumbbell Woodchopper",
+            "motionContext": {
+                "primaryEquipment": {"name": "Dumbbell", "type": "DUMBBELL"},
+            },
+        },
+        "gates": {
+            "identity": {
+                "passed": False,
+                "response": {"verdict": "mismatch", "visibleEquipment": ["kettlebell"]},
+            },
+            "targetBlindEquipmentDetail": {
+                "clear": True,
+                "requiredEquipmentObserved": False,
+                "response": {
+                    "heldEquipment": ["kettlebell"],
+                    "objectCount": 1,
+                    "visibleShape": "bell-shaped weight with a handle",
+                    "holdingPattern": "held with both hands",
+                    "uncertain": False,
+                },
+            },
+            "topology": {
+                "passed": False,
+                "response": {"complete": False, "requiredEquipmentMatch": "mismatch"},
+            },
+        },
+    }
+
+    assert not bake_and_rank.two_scale_source_validation_needs_repair(validation)
+
+    # Without a clear equipment contradiction, a separate positive topology
+    # observation can still enter the existing bounded disagreement repair.
+    validation["gates"]["targetBlindEquipmentDetail"]["response"]["uncertain"] = True
+    validation["gates"]["topology"]["response"]["complete"] = True
+    assert bake_and_rank.two_scale_source_validation_needs_repair(validation)
+
+    cable_validation = {
+        "passed": False,
+        "rejectionReasons": [
+            "two_scale_source_identity_failed",
+            "two_scale_source_required_equipment_not_observed",
+        ],
+        "exerciseMotionContract": {
+            "status": "generated",
+            "exerciseName": "Cable Crunch",
+            "motionContext": {"primaryEquipment": {"name": "Cable", "type": "PLATELOADEDCABLE"}},
+        },
+        "gates": {
+            "identity": {
+                "passed": False,
+                "response": {
+                    "verdict": "match",
+                    "visibleEquipment": ["cable machine handle"],
+                },
+            },
+            "targetBlindEquipmentDetail": {
+                "clear": True,
+                "response": {
+                    "heldEquipment": ["cable machine handle"],
+                    "objectCount": 1,
+                    "visibleShape": "long handle with a cable attached",
+                    "holdingPattern": "held with both hands",
+                    "uncertain": False,
+                },
+            },
+        },
+    }
+    assert bake_and_rank.two_scale_source_validation_needs_repair(cable_validation)
+
+
+def make_review_item(tmp_path: Path, exercise_name: str = "Dumbbell Shrug") -> bake_and_rank.ReviewItem:
+    placeholder = tmp_path / "placeholder"
+    contract = {
+        "status": "generated",
+        "contractPolicyVersion": youtube.EXERCISE_MOTION_CONTRACT_POLICY_VERSION,
+        "exerciseName": exercise_name,
+        "advisoryText": "Source: exercise-specific start. Complete: phase one; phase two.",
+        "movementType": "repetition",
+        "groundContactMode": "continuous",
+        "completionMode": "return_to_start",
+        "requiresReturnToStart": True,
+        "requiredPhases": ["perform the outward phase", "return to the starting posture"],
+        "observableMotionSpec": {
+            "schemaVersion": 1,
+            "primaryMovingRegions": ["hands"],
+            "referenceRegions": ["torso"],
+            "primaryAxis": "vertical",
+            "motionPattern": "joint_travel",
+            "requiresReturnToStart": True,
+            "oneWayPartialIsInvalid": True,
+            "mustShowFullCycle": True,
+            "mustBeVisibleRegions": ["hands", "torso"],
+        },
+        "startPoseConstraints": {
+            "supportMode": "standing",
+            "handHeight": "hip",
+            "torsoOrientation": "upright",
+            "kneeState": "extended",
+            "stance": "shoulder_width",
+        },
+        "endPoseConstraints": {
+            "supportMode": "standing",
+            "handHeight": "hip",
+            "torsoOrientation": "upright",
+            "kneeState": "extended",
+            "stance": "shoulder_width",
+        },
+        "movementTopology": {
+            "schemaVersion": 1,
+            "completionMode": "return_to_start",
+            "startState": {"id": "start_state", "label": "exercise-specific start posture"},
+            "phases": [
+                {"id": "phase_01", "label": "exercise-specific outward phase"},
+                {"id": "phase_02", "label": "exercise-specific return phase"},
+            ],
+            "endState": {"id": "end_state", "label": "exercise-specific start posture"},
+        },
+    }
+    if "Lying" in exercise_name:
+        for endpoint in ("startPoseConstraints", "endPoseConstraints"):
+            contract[endpoint]["supportMode"] = "lying"
+    return bake_and_rank.ReviewItem(
+        exercise_index=0,
+        candidate_rank=0,
+        loop_index=-1,
+        exercise_name=exercise_name,
+        candidate_title=exercise_name,
+        candidate_workspace=tmp_path,
+        preview_html_path=placeholder,
+        skeleton_path=placeholder,
+        review_video_path=placeholder,
+        duration_sec=4.0,
+        loop_start_seconds=0.0,
+        loop_end_seconds=4.0,
+        candidate={"exerciseMotionContract": contract},
+    )
+
+
+def test_two_scale_peak_selector_captures_single_frame_spike_deterministically() -> None:
+    scores = [0.0] * 300
+    scores[20] = 10.0
+    scores[137] = 100.0
+    scores[260] = 8.0
+
+    first = bake_and_rank.select_two_scale_motion_peak_indices(scores, 60.0)
+    second = bake_and_rank.select_two_scale_motion_peak_indices(scores, 60.0)
+
+    assert 137 in first
+    assert first == second
+
+
+def test_two_scale_source_gate_rejects_when_any_uniform_sheet_has_contamination(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    uniform_sheets = [tmp_path / "uniform-1.jpg", tmp_path / "uniform-2.jpg"]
+    motion_sheets = [tmp_path / "motion-1.jpg", tmp_path / "motion-2.jpg"]
+    for path in [*uniform_sheets, *motion_sheets]:
+        path.write_bytes(b"image")
+    monkeypatch.setattr(
+        bake_and_rank,
+        "final_output_motion_contact_sheets",
+        lambda *_args, **_kwargs: motion_sheets,
+    )
+    responses = iter(
+        [
+            {"verdict": "match", "observedAction": "shrug", "evidence": "visible"},
+            {"unrelatedActionVisible": False, "unrelatedTileNumbers": [], "evidence": "clean"},
+            {"unrelatedActionVisible": True, "unrelatedTileNumbers": [9], "evidence": "gesture"},
+            {"targetExerciseActionVisible": True, "namedEquipmentEngagedStatus": "engaged", "evidence": "visible"},
+            {"targetExerciseActionVisible": False, "namedEquipmentEngagedStatus": "absent", "evidence": "absent"},
+            {
+                "observedExercise": "dumbbell shrug",
+                "visibleEquipment": ["dumbbell"],
+                "startStateVisible": True,
+                "actionPhaseVisible": True,
+                "turningPointVisible": True,
+                "returnOrFinishVisible": True,
+                "complete": True,
+                "evidence": "complete",
+            },
+            {
+                "visibleEquipment": ["dumbbell"],
+                "orderedPhases": ["shoulders rise", "shoulders lower"],
+                "evidence": "dumbbells move with the shoulders",
+            },
+            topology_response(),
+            {
+                "corroboratedConflict": False,
+                "targetIdentitySupported": "false",
+                "requiredEquipmentSupported": "true",
+                "completeExecutionSupported": "false",
+                "corroboratedContradictions": [],
+            },
+        ]
+    )
+
+    def caption_images(**_kwargs: object) -> str:
+        return json.dumps(next(responses))
+
+    result = bake_and_rank.validate_two_scale_source_with_caption_images(
+        make_review_item(tmp_path),
+        uniform_sheet_paths=uniform_sheets,
+        output_dir=tmp_path / "validation",
+        caption_images=caption_images,
+    )
+
+    assert result["passed"] is False
+    assert "two_scale_source_contamination_detected" in result["rejectionReasons"]
+
+
+def test_two_scale_source_routes_corroborated_negative_to_next_source(tmp_path: Path, monkeypatch) -> None:
+    uniform_sheet = tmp_path / "uniform.jpg"
+    motion_sheets = [tmp_path / f"motion-{index}.jpg" for index in range(3)]
+    for path in [uniform_sheet, *motion_sheets]:
+        path.write_bytes(b"image")
+    monkeypatch.setattr(
+        bake_and_rank,
+        "final_output_motion_contact_sheets",
+        lambda *_args, **_kwargs: motion_sheets,
+    )
+
+    def run_questions(jobs, _callback):
+        answers = {
+            "identity": ("", None),
+            "uniform-0": ("", {"unrelatedActionVisible": False, "unrelatedTileNumbers": []}),
+            "motion-0": ("", {"targetExerciseActionVisible": False, "namedEquipmentEngagedStatus": "absent"}),
+            "motion-1": ("", {"targetExerciseActionVisible": False, "namedEquipmentEngagedStatus": "absent"}),
+            "motion-2": ("", {"targetExerciseActionVisible": True, "namedEquipmentEngagedStatus": "engaged"}),
+            "completeness": ("", {
+                "visibleEquipment": ["dumbbell"],
+                "orderedPhases": ["standing with arms at sides"],
+                "startStateVisible": True,
+                "actionPhaseVisible": False,
+                "turningPointVisible": False,
+                "returnOrFinishVisible": False,
+                "complete": False,
+            }),
+            "observation": ("", {
+                "visibleEquipment": ["dumbbell"],
+                "orderedPhases": ["standing still"],
+                "startStateVisible": True,
+                "actionPhaseVisible": False,
+                "turningPointVisible": False,
+                "returnOrFinishVisible": False,
+                "complete": False,
+            }),
+            "topology": ("", topology_response()),
+        }
+        assert set(answers) == set(jobs)
+        return answers
+
+    monkeypatch.setattr("exercise_motion_pkg.review_questions.run_questions", run_questions)
+    result = bake_and_rank.validate_two_scale_source_with_caption_images(
+        make_review_item(tmp_path, "Dumbbell Shrug"),
+        uniform_sheet_paths=[uniform_sheet],
+        output_dir=tmp_path / "validation",
+        caption_images=lambda **_kwargs: "{}",
+    )
+
+    assert result["passed"] is False
+    assert result["reviewStatus"] == "rejected"
+    assert result["missingEvidenceReasons"] == []
+    assert result["resolvedMissingEvidenceReasons"]
+    assert result["gates"]["motion"]["passed"] is False
+
+
+
+def test_two_scale_source_gate_rejects_vlm_approval_that_contradicts_pose_endpoints(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    uniform_sheet = tmp_path / "uniform.jpg"
+    motion_sheet = tmp_path / "motion.jpg"
+    uniform_sheet.write_bytes(b"image")
+    motion_sheet.write_bytes(b"image")
+    monkeypatch.setattr(
+        bake_and_rank,
+        "final_output_motion_contact_sheets",
+        lambda *_args, **_kwargs: [motion_sheet],
+    )
+
+    responses = iter(
+        [
+            {"verdict": "match", "observedAction": "curl", "evidence": "visible"},
+            {"unrelatedActionVisible": False, "unrelatedTileNumbers": [], "evidence": "clean"},
+            {"targetExerciseActionVisible": True, "namedEquipmentEngagedStatus": "engaged", "evidence": "visible"},
+            {"visibleEquipment": ["barbell"], "startState": "start", "orderedPhases": ["phase", "return"], "endState": "end", "startStateVisible": True, "actionPhaseVisible": True, "turningPointVisible": True, "returnOrFinishVisible": True, "complete": True, "evidence": "complete"},
+            {"visibleEquipment": ["barbell"], "orderedPhases": ["phase", "return"], "evidence": "complete"},
+            {
+                "startStateMatch": "match",
+                "phaseEvidence": [
+                    {"phaseId": "phase_01", "visible": True, "position": 0.25, "evidence": "phase one"},
+                    {"phaseId": "phase_02", "visible": True, "position": 0.75, "evidence": "phase two"},
+                ],
+                "endStateMatch": "match",
+                "requiredEquipmentMatch": "match",
+                "complete": True,
+                "evidence": "complete ordered movement",
+            },
+            {"corroboratedConflict": False, "targetIdentitySupported": "true", "requiredEquipmentSupported": "true", "completeExecutionSupported": "true", "corroboratedContradictions": []},
+        ]
+    )
+    endpoint_features = {
+        "available": True,
+        "start": {"available": True, "supportMode": "kneeling", "handHeight": "hip", "torsoOrientation": "upright", "kneeState": "flexed", "stance": "shoulder_width"},
+        "end": {"available": True, "supportMode": "standing", "handHeight": "hip", "torsoOrientation": "upright", "kneeState": "extended", "stance": "shoulder_width"},
+    }
+    result = bake_and_rank.validate_two_scale_source_with_caption_images(
+        make_review_item(tmp_path, "Barbell Standing Curl"),
+        uniform_sheet_paths=[uniform_sheet],
+        output_dir=tmp_path / "validation",
+        caption_images=lambda **_kwargs: json.dumps(next(responses)),
+        source_pose_endpoint_features=endpoint_features,
+    )
+
+    assert result["gates"]["topology"]["passed"] is True
+    assert result["gates"]["deterministicPoseEndpoints"]["passed"] is False
+    assert "two_scale_source_pose_contract_mismatch" in result["rejectionReasons"]
+
+
+def topology_response(*, equipment_match: str = "match", complete: bool = True) -> dict[str, object]:
+    return {
+        "startStateMatch": "match" if complete else "mismatch",
+        "phaseEvidence": [
+            {"phaseId": "phase_01", "visible": complete, "position": 0.25, "evidence": "phase one"},
+            {"phaseId": "phase_02", "visible": complete, "position": 0.75, "evidence": "phase two"},
+        ],
+        "endStateMatch": "match" if complete else "mismatch",
+        "requiredEquipmentMatch": equipment_match,
+        "complete": complete,
+        "evidence": "complete ordered movement" if complete else "required phases are missing",
+    }
+
+
+@pytest.mark.parametrize("complete_observations", [False, True])
+def test_two_scale_source_gate_does_not_let_one_blind_outlier_override_corroborated_match(
+    tmp_path: Path,
+    monkeypatch,
+    complete_observations: bool,
+) -> None:
+    uniform_sheets = [tmp_path / "uniform.jpg"]
+    motion_sheets = [tmp_path / "motion.jpg"]
+    for path in [*uniform_sheets, *motion_sheets]:
+        path.write_bytes(b"image")
+    monkeypatch.setattr(
+        bake_and_rank,
+        "final_output_motion_contact_sheets",
+        lambda *_args, **_kwargs: motion_sheets,
+    )
+
+
+    identity = {"verdict": "match", "observedAction": "rack pull", "evidence": "bar rises to thighs"}
+    observation = {
+        "visibleEquipment": ["barbell"],
+        "orderedPhases": ["bar rises from below knees", "body stands", "bar lowers"],
+        "evidence": "bar remains below the hips",
+    }
+    if complete_observations:
+        identity["visibleEquipment"] = ["barbell"]
+        observation.update(startStateVisible=True, actionPhaseVisible=True,
+                           turningPointVisible=True, returnOrFinishVisible=True, complete=True)
+    responses = iter(
+        [
+            identity,
+            {"unrelatedActionVisible": False, "unrelatedTileNumbers": [], "evidence": "rack pull"},
+            {
+                "targetExerciseActionVisible": True,
+                "namedEquipmentEngagedStatus": "engaged",
+                "evidence": "barbell rises from rack height to standing",
+            },
+            {
+                "visibleEquipment": ["barbell"],
+                "orderedPhases": ["bar moves overhead"],
+                "startStateVisible": True,
+                "actionPhaseVisible": True,
+                "turningPointVisible": True,
+                "returnOrFinishVisible": True,
+                "complete": True,
+                "evidence": "outlying clean and jerk description",
+            },
+            observation,
+            topology_response(),
+            {
+                "corroboratedConflict": False,
+                "targetIdentitySupported": "false",
+                "requiredEquipmentSupported": "true",
+                "completeExecutionSupported": "false",
+                "corroboratedContradictions": [],
+            },
+        ]
+    )
+
+    result = bake_and_rank.validate_two_scale_source_with_caption_images(
+        make_review_item(tmp_path, "Barbell Rack Pull"),
+        uniform_sheet_paths=uniform_sheets,
+        output_dir=tmp_path / "validation",
+        caption_images=lambda **_kwargs: json.dumps(next(responses)),
+    )
+
+    assert result["passed"] is complete_observations
+    if not complete_observations:
+        assert result["reviewStatus"] == "incomplete"
+        assert "two_scale_source_target_blind_motion_observation_inconsistent" in result["missingEvidenceReasons"]
+
+
+def test_two_scale_source_gate_rejects_conflicting_exercise_evidence(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    uniform_sheets = [tmp_path / "uniform.jpg"]
+    motion_sheets = [tmp_path / "motion.jpg"]
+    for path in [*uniform_sheets, *motion_sheets]:
+        path.write_bytes(b"image")
+    monkeypatch.setattr(
+        bake_and_rank,
+        "final_output_motion_contact_sheets",
+        lambda *_args, **_kwargs: motion_sheets,
+    )
+    responses = iter(
+        [
+            {
+                "verdict": "match",
+                "observedAction": "barbell split jerk",
+                "evidence": "athlete recovers from a split stance",
+            },
+            {"unrelatedActionVisible": False, "unrelatedTileNumbers": [], "evidence": "clean"},
+            {
+                "targetExerciseActionVisible": True,
+                "namedEquipmentEngagedStatus": "engaged",
+                "evidence": "bar held overhead during recovery",
+            },
+            {
+                "observedExercise": "overhead squat to snatch transition",
+                "visibleEquipment": ["barbell"],
+                "startStateVisible": True,
+                "actionPhaseVisible": True,
+                "turningPointVisible": True,
+                "returnOrFinishVisible": True,
+                "complete": True,
+                "evidence": "overhead squat to snatch transition",
+            },
+            {
+                "visibleEquipment": ["barbell"],
+                "orderedPhases": ["overhead split recovery", "bar lowers"],
+                "evidence": "No front-rack dip or drive is visible.",
+            },
+            topology_response(complete=False),
+            {
+                "corroboratedConflict": True,
+                "targetIdentitySupported": "uncertain",
+                "requiredEquipmentSupported": "true",
+                "completeExecutionSupported": "false",
+                "corroboratedContradictions": [
+                    "Two observations lack the split-jerk dip and drive."
+                ],
+            },
+        ]
+    )
+
+    result = bake_and_rank.validate_two_scale_source_with_caption_images(
+        make_review_item(tmp_path, "Barbell Split Jerk"),
+        uniform_sheet_paths=uniform_sheets,
+        output_dir=tmp_path / "validation",
+        caption_images=lambda **_kwargs: json.dumps(next(responses)),
+    )
+
+    assert result["passed"] is False
+    assert "two_scale_source_topology_not_verified" in result["rejectionReasons"]
+
+
+def test_two_scale_source_gate_requires_target_blind_equipment_observation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    uniform_sheets = [tmp_path / "uniform.jpg"]
+    motion_sheets = [tmp_path / "motion.jpg"]
+    for path in [*uniform_sheets, *motion_sheets]:
+        path.write_bytes(b"image")
+    monkeypatch.setattr(
+        bake_and_rank,
+        "final_output_motion_contact_sheets",
+        lambda *_args, **_kwargs: motion_sheets,
+    )
+    responses = iter(
+        [
+            {"verdict": "match", "observedAction": "push press", "evidence": "arms press overhead"},
+            {"unrelatedActionVisible": False, "unrelatedTileNumbers": [], "evidence": "clean"},
+            {
+                "targetExerciseActionVisible": True,
+                "namedEquipmentEngagedStatus": "engaged",
+                "evidence": "hands move as if pressing",
+            },
+            {
+                "observedExercise": "unloaded overhead press demonstration",
+                "visibleEquipment": ["none"],
+                "startState": "standing with empty hands at shoulders",
+                "orderedPhases": ["arms extend overhead", "arms lower"],
+                "endState": "standing with empty hands at shoulders",
+                "startStateVisible": True,
+                "actionPhaseVisible": True,
+                "turningPointVisible": True,
+                "returnOrFinishVisible": True,
+                "complete": True,
+                "evidence": "No implement is visibly held.",
+            },
+            {
+                "visibleEquipment": ["none"],
+                "orderedPhases": ["empty arms extend", "empty arms lower"],
+                "evidence": "Hands remain empty.",
+            },
+            topology_response(equipment_match="mismatch", complete=False),
+            {
+                "corroboratedConflict": True,
+                "targetIdentitySupported": "uncertain",
+                "requiredEquipmentSupported": "false",
+                "completeExecutionSupported": "true",
+                "corroboratedContradictions": [
+                    "Both target-blind observations show empty hands."
+                ],
+            },
+        ]
+    )
+
+    result = bake_and_rank.validate_two_scale_source_with_caption_images(
+        make_review_item(tmp_path, "Barbell Push Press"),
+        uniform_sheet_paths=uniform_sheets,
+        output_dir=tmp_path / "validation",
+        caption_images=lambda **_kwargs: json.dumps(next(responses)),
+    )
+
+    assert result["passed"] is False
+    assert "two_scale_source_required_equipment_not_observed" in result["rejectionReasons"]
+
+
+def test_two_scale_source_gate_accepts_corroborated_target_aware_equipment(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    uniform_sheets = [tmp_path / "uniform.jpg"]
+    motion_sheets = [tmp_path / "motion-1.jpg", tmp_path / "motion-2.jpg"]
+    for path in [*uniform_sheets, *motion_sheets]:
+        path.write_bytes(b"image")
+    monkeypatch.setattr(
+        bake_and_rank,
+        "final_output_motion_contact_sheets",
+        lambda *_args, **_kwargs: motion_sheets,
+    )
+    responses = iter(
+        [
+            {
+                "verdict": "match",
+                "observedAction": "barbell lying triceps extension",
+                "visibleEquipment": ["barbell"],
+                "evidence": "elbows extend while the bar moves above the face",
+            },
+            {
+                "unrelatedActionVisible": False,
+                "unrelatedTileNumbers": [],
+                "evidence": "single exercise only",
+            },
+            {
+                "targetExerciseActionVisible": True,
+                "namedEquipmentEngagedStatus": "engaged",
+                "evidence": "both hands hold one rigid bar",
+            },
+            {
+                "targetExerciseActionVisible": True,
+                "namedEquipmentEngagedStatus": "engaged",
+                "evidence": "the same rigid bar moves through elbow extension",
+            },
+            {
+                "observedExercise": "lying triceps extension",
+                "visibleEquipment": ["dumbbells"],
+                "startStateVisible": True,
+                "actionPhaseVisible": True,
+                "turningPointVisible": True,
+                "returnOrFinishVisible": True,
+                "complete": True,
+                "evidence": "full extension and return are visible",
+            },
+            {
+                "visibleEquipment": ["dumbbells"],
+                "orderedPhases": ["elbows flex", "elbows extend"],
+                "startStateVisible": True, "actionPhaseVisible": True,
+                "turningPointVisible": True, "returnOrFinishVisible": True, "complete": True,
+                "evidence": "the low-resolution sheet makes the implement ends ambiguous",
+            },
+            topology_response(equipment_match="match", complete=True),
+            {
+                "corroboratedConflict": False,
+                "targetIdentitySupported": "true",
+                "requiredEquipmentSupported": "true",
+                "completeExecutionSupported": "true",
+                "corroboratedContradictions": [],
+            },
+        ]
+    )
+
+    result = bake_and_rank.validate_two_scale_source_with_caption_images(
+        make_review_item(tmp_path, "Barbell Lying Triceps Extension"),
+        uniform_sheet_paths=uniform_sheets,
+        output_dir=tmp_path / "validation",
+        caption_images=lambda **_kwargs: json.dumps(next(responses)),
+    )
+
+    completeness_gate = result["gates"]["completeness"]
+    assert completeness_gate["blindRequiredEquipmentObserved"] is False
+    assert completeness_gate["targetAwareEquipmentSupportCount"] == 2
+    assert completeness_gate["corroboratedTargetAwareEquipmentObserved"] is True
+    assert "two_scale_source_required_equipment_not_observed" not in result["rejectionReasons"]
+    assert result["passed"] is True
+
+
+def test_two_scale_endpoint_gate_uses_deterministic_return_cycle_when_identity_is_outlier(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    uniform_sheet = tmp_path / "uniform.jpg"
+    motion_sheet = tmp_path / "motion.jpg"
+    uniform_sheet.write_bytes(b"image")
+    motion_sheet.write_bytes(b"image")
+    monkeypatch.setattr(
+        bake_and_rank,
+        "final_output_motion_contact_sheets",
+        lambda *_args, **_kwargs: [motion_sheet],
+    )
+    responses = iter(
+        [
+            {
+                "verdict": "mismatch",
+                "observedAction": "hip bridge with a dumbbell",
+                "evidence": "implement was misclassified",
+            },
+            {
+                "unrelatedActionVisible": False,
+                "unrelatedTileNumbers": [],
+                "evidence": "clean",
+            },
+            {
+                "targetExerciseActionVisible": True,
+                "namedEquipmentEngagedStatus": "engaged",
+                "evidence": "hips lift while the barbell remains on the hips",
+            },
+            {
+                "visibleEquipment": ["barbell"],
+                "startState": "hips low",
+                "orderedPhases": ["hips rise", "hips lower"],
+                "endState": "hips low",
+                "startStateVisible": True,
+                "actionPhaseVisible": True,
+                "turningPointVisible": True,
+                "returnOrFinishVisible": True,
+                "complete": True,
+                "evidence": "complete return cycle",
+            },
+            {
+                "visibleEquipment": ["barbell"],
+                "orderedPhases": ["hips rise", "hips lower"],
+                "evidence": "complete return cycle",
+                "startStateVisible": True, "actionPhaseVisible": True,
+                "turningPointVisible": True, "returnOrFinishVisible": True, "complete": True,
+            },
+            topology_response(),
+            {
+                "corroboratedConflict": False,
+                "targetIdentitySupported": "true",
+                "requiredEquipmentSupported": "true",
+                "completeExecutionSupported": "true",
+                "corroboratedContradictions": [],
+            },
+        ]
+    )
+    endpoint_features = {
+        "available": True,
+        "start": {
+            "available": True,
+            "supportMode": "standing",
+            "handHeight": "hip",
+            "torsoOrientation": "upright",
+            "kneeState": "extended",
+            "stance": "wide",
+        },
+        "end": {
+            "available": True,
+            "supportMode": "standing",
+            "handHeight": "hip",
+            "torsoOrientation": "upright",
+            "kneeState": "extended",
+            "stance": "wide",
+        },
+    }
+
+    result = bake_and_rank.validate_two_scale_source_with_caption_images(
+        make_review_item(tmp_path, "Barbell Glute Bridge"),
+        uniform_sheet_paths=[uniform_sheet],
+        output_dir=tmp_path / "validation",
+        caption_images=lambda **_kwargs: json.dumps(next(responses)),
+        source_pose_endpoint_features=endpoint_features,
+        source_phase_metrics={
+            "required": True,
+            "passed": True,
+            "hasCompleteMajorCycle": True,
+            "hasSingleMajorCycle": True,
+        },
+    )
+
+    assert result["gates"]["deterministicPoseEndpoints"]["passed"] is True
+    assert result["rejectionReasons"] == ["two_scale_source_identity_failed"]
+
+
+def test_two_scale_hold_prompts_preserve_static_effort_and_bound_observation_size(tmp_path, monkeypatch):
+    import pytest
+    from exercise_motion_pkg import review_questions
+
+    class PromptsCaptured(Exception):
+        pass
+
+    def capture_jobs(jobs, callback):
+        for operation in jobs.values():
+            operation()
+        raise PromptsCaptured()
+
+    monkeypatch.setattr(review_questions, "run_questions", capture_jobs)
+    monkeypatch.setattr(bake_and_rank, "final_output_motion_contact_sheets", lambda *a, **k: [tmp_path / "motion.jpg"])
+    monkeypatch.setattr(bake_and_rank, "resolve_two_scale_exercise_motion_contract", lambda item, **kw: (kw["contract"], None, None))
+    for mode in ("stable_hold", "return_to_start"):
+        item = make_review_item(tmp_path, "Target Identity")
+        contract = item.candidate["exerciseMotionContract"]
+        contract["completionMode"] = mode
+        contract["movementTopology"]["completionMode"] = mode
+        contract['advisoryText'] = 'Hold one implement in one hand during the prescribed action.'
+        prompts = []
+        def caption(**kwargs):
+            prompts.append(kwargs["prompt"])
+            return "{}"
+        with pytest.raises(PromptsCaptured):
+            bake_and_rank._validate_two_scale_source_uncached(item,
+                uniform_sheet_paths=[tmp_path / "uniform.jpg"], output_dir=tmp_path,
+                caption_images=caption, exercise_motion_contract=contract)
+        observations = [p for p in prompts if "Make a target-blind observation" in p]
+        assert len(observations) == 2
+        for prompt in observations:
+            assert "Target Identity" not in prompt
+            assert "at most eight distinct phases" in prompt
+            assert "never one entry per tile" in prompt
+            assert "complete true exactly when all four visibility fields are true" in prompt
+            assert '"startStateVisible":false' not in prompt
+            assert 'There are no default boolean answers' in prompt
+            assert 'orderedPhases must be an empty array' in prompt
+            assert ("sustained static hold" in prompt) is (mode == "stable_hold")
+        identity = next(p for p in prompts if 'You verify only exercise identity' in p)
+        assert contract['advisoryText'] in identity
+        assert "model-generated advisory" in identity
+        assert "structured library motion/equipment context are authoritative" in identity
+        assert 'holding limbs, moving limbs, stance and support are separate properties' in identity
+        assert 'Do not invent an extra variant requirement' in identity
+        motion = next(p for p in prompts if "You inspect one motion-focused" in p)
+        uniform = next(p for p in prompts if "You inspect one uniformly sampled" in p)
+        assert ("not merely a static pose" in motion) is (mode != "stable_hold")
+        assert ("not waiting or setup" in uniform) is (mode == "stable_hold")
+
+
+def test_two_scale_source_caches_complete_rejection_for_exact_review_inputs(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    from types import SimpleNamespace
+
+    source = tmp_path / "source.mp4"
+    uniform_sheet = tmp_path / "uniform.jpg"
+    source.write_bytes(b"source")
+    uniform_sheet.write_bytes(b"sheet")
+    motion_sheet = tmp_path / "motion.jpg"
+    motion_sheet.write_bytes(b"motion")
+    item = make_review_item(tmp_path)
+    monkeypatch.setattr(
+        bake_and_rank,
+        "final_output_source_video_window",
+        lambda _item: (source, bake_and_rank.DetectionWindow(index=0, start_seconds=1.0, end_seconds=5.0)),
+    )
+    class Captioner:
+        settings = SimpleNamespace(llama_cpp_model="model", llama_cpp_mmproj="project")
+
+        def caption_images(self, **_kwargs: object) -> str:
+            return "{}"
+
+    captioner = Captioner()
+    calls = 0
+
+    def validate(_item: object, **_kwargs: object) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return {
+            "passed": False,
+            "reviewStatus": "rejected",
+            "missingEvidenceReasons": [],
+            "rejectionReasons": ["two_scale_source_identity_failed"],
+            "uniformContactSheetPaths": [str(uniform_sheet)],
+            "motionContactSheetPaths": [str(motion_sheet)],
+        }
+
+    monkeypatch.setattr(bake_and_rank, "_validate_two_scale_source_uncached", validate)
+    kwargs = {
+        "item": item,
+        "uniform_sheet_paths": [uniform_sheet],
+        "output_dir": tmp_path / "review",
+        "caption_images": captioner.caption_images,
+    }
+
+    first = bake_and_rank.validate_two_scale_source_with_caption_images(**kwargs)
+    second = bake_and_rank.validate_two_scale_source_with_caption_images(**kwargs)
+
+    assert calls == 1
+    assert first["rejectionReasons"] == second["rejectionReasons"]
+    assert second["reviewStatus"] == "rejected"
+    assert first["sourceReviewCache"]["cacheHit"] is False
+    assert second["sourceReviewCache"]["cacheHit"] is True
+
+
+def test_two_scale_source_does_not_cache_incomplete_reviews(tmp_path: Path, monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    source = tmp_path / "source.mp4"
+    uniform_sheet = tmp_path / "uniform.jpg"
+    source.write_bytes(b"source")
+    uniform_sheet.write_bytes(b"sheet")
+    item = make_review_item(tmp_path)
+    monkeypatch.setattr(
+        bake_and_rank,
+        "final_output_source_video_window",
+        lambda _item: (source, bake_and_rank.DetectionWindow(index=0, start_seconds=1.0, end_seconds=5.0)),
+    )
+    class Captioner:
+        settings = SimpleNamespace(llama_cpp_model="model", llama_cpp_mmproj="project")
+
+        def caption_images(self, **_kwargs: object) -> str:
+            return "{}"
+
+    captioner = Captioner()
+    calls = 0
+
+    def validate(_item: object, **_kwargs: object) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return {
+            "passed": False,
+            "reviewStatus": "incomplete",
+            "missingEvidenceReasons": ["two_scale_source_identity_review_incomplete"],
+            "rejectionReasons": [],
+            "uniformContactSheetPaths": [],
+            "motionContactSheetPaths": [],
+        }
+
+    monkeypatch.setattr(bake_and_rank, "_validate_two_scale_source_uncached", validate)
+    kwargs = {
+        "item": item,
+        "uniform_sheet_paths": [uniform_sheet],
+        "output_dir": tmp_path / "review",
+        "caption_images": captioner.caption_images,
+    }
+
+    bake_and_rank.validate_two_scale_source_with_caption_images(**kwargs)
+    bake_and_rank.validate_two_scale_source_with_caption_images(**kwargs)
+
+    assert calls == 2
+
+
+def test_source_question_cache_production_routing(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    uniform_sheets = [tmp_path / "uniform.jpg"]
+    motion_sheets = [tmp_path / "motion.jpg"]
+    for path in [*uniform_sheets, *motion_sheets]:
+        path.write_bytes(b"image")
+    monkeypatch.setattr(
+        bake_and_rank,
+        "final_output_motion_contact_sheets",
+        lambda *_args, **_kwargs: motion_sheets,
+    )
+    responses = iter(
+        [
+                {"verdict": "match", "visibleEquipment": ["dumbbell", "bench"], "observedAction": "press", "evidence": "visible"},
+            {"unrelatedActionVisible": False, "unrelatedTileNumbers": [], "evidence": "clean"},
+            {"targetExerciseActionVisible": True, "namedEquipmentEngagedStatus": "engaged", "evidence": "visible"},
+            {
+                "observedExercise": "dumbbell bench press",
+                    "visibleEquipment": ["dumbbell", "bench"],
+                "startStateVisible": True,
+                "actionPhaseVisible": True,
+                "turningPointVisible": True,
+                "returnOrFinishVisible": True,
+                "complete": True,
+                "evidence": "complete",
+            },
+            {
+                    "visibleEquipment": ["dumbbell", "bench"],
+                "orderedPhases": ["weights lower", "weights press upward"],
+                "startStateVisible": True, "actionPhaseVisible": True,
+                "turningPointVisible": True, "returnOrFinishVisible": True, "complete": True,
+                "evidence": "dumbbells move above the torso",
+            },
+            topology_response(),
+            {
+                "corroboratedConflict": False,
+                "targetIdentitySupported": "true",
+                "requiredEquipmentSupported": "true",
+                "completeExecutionSupported": "true",
+                "corroboratedContradictions": [],
+            },
+        ]
+    )
+
+    from types import SimpleNamespace
+
+    class Captioner:
+        settings = SimpleNamespace(llama_cpp_model="model-a", llama_cpp_mmproj="project")
+
+        def __init__(self):
+            self.prompts = {}
+            self.calls = []
+
+        def caption_images(self, **kwargs):
+            prompt = kwargs["prompt"]
+            self.calls.append(prompt)
+            if prompt not in self.prompts:
+                self.prompts[prompt] = next(responses)
+            return json.dumps(self.prompts[prompt])
+
+    captioner = Captioner()
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    item = make_review_item(tmp_path, "Dumbbell Bench Press")
+    monkeypatch.setattr(bake_and_rank, "final_output_source_video_window",
+        lambda _item: (source, bake_and_rank.DetectionWindow(index=0,
+            start_seconds=1.0, end_seconds=5.0)))
+    kwargs = dict(item=item, uniform_sheet_paths=uniform_sheets,
+        output_dir=tmp_path / "validation", caption_images=captioner.caption_images,
+        exercise_motion_contract=bake_and_rank.exercise_motion_contract_from_candidate(item.candidate))
+    first = bake_and_rank.validate_two_scale_source_with_caption_images(
+        **kwargs, source_phase_metrics={"required": False, "passed": True})
+    initial_calls = list(captioner.calls)
+    second = bake_and_rank.validate_two_scale_source_with_caption_images(
+        **kwargs, source_phase_metrics={"required": False, "passed": False})
+    # The aggregate context changed, but the actual review questions did not.
+    assert first["sourceReviewCache"]["key"] != second["sourceReviewCache"]["key"]
+    assert not second["sourceReviewCache"]["cacheHit"]
+    assert first["passed"] is second["passed"] is True
+    assert first["rejectionReasons"] == second["rejectionReasons"] == []
+    question_prompts = [prompt for prompt in initial_calls if
+        "Independently" not in prompt and "corroboratedConflict" not in prompt]
+    assert all(captioner.calls.count(prompt) == 1 for prompt in question_prompts)
+    before_model = len(captioner.calls)
+    captioner.settings.llama_cpp_model = "model-b"
+    third = bake_and_rank.validate_two_scale_source_with_caption_images(**kwargs)
+    assert third["passed"] is True
+    assert len(captioner.calls) > before_model
+    before_contract = len(captioner.calls)
+    kwargs["exercise_motion_contract"]["cacheBoundaryMarker"] = "changed"
+    fourth = bake_and_rank.validate_two_scale_source_with_caption_images(**kwargs)
+    assert fourth["passed"] is True
+    assert len(captioner.calls) > before_contract

@@ -5,8 +5,10 @@ import android.content.pm.PackageManager
 import android.util.Log
 import androidx.compose.ui.graphics.Color
 import com.gabstra.myworkoutassistant.shared.adapters.AccessoryEquipmentAdapter
+import com.gabstra.myworkoutassistant.shared.adapters.AppBackupAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.EquipmentAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.ExerciseSessionSnapshotAdapter
+import com.gabstra.myworkoutassistant.shared.adapters.ExerciseLibraryPackageAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.ExternalHeartRateConfigAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateTimeAdapter
@@ -15,11 +17,13 @@ import com.gabstra.myworkoutassistant.shared.adapters.SetAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.WorkoutAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.WorkoutComponentAdapter
+import com.gabstra.myworkoutassistant.shared.adapters.WorkoutHistoryAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.WorkoutPlanPackageAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.WorkoutRecordAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.WorkoutStoreAdapter
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
+import com.gabstra.myworkoutassistant.shared.equipments.CardioMachine
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
 import com.gabstra.myworkoutassistant.shared.equipments.Machine
@@ -75,6 +79,7 @@ fun fromWorkoutStoreToJSON(workoutStore: WorkoutStore): String {
         .registerTypeAdapter(Dumbbells::class.java, EquipmentAdapter())
         .registerTypeAdapter(Dumbbell::class.java, EquipmentAdapter())
         .registerTypeAdapter(Machine::class.java, EquipmentAdapter())
+        .registerTypeAdapter(CardioMachine::class.java, EquipmentAdapter())
         .registerTypeAdapter(PlateLoadedCable::class.java, EquipmentAdapter())
         .registerTypeAdapter(Barbell::class.java, EquipmentAdapter())
         .registerTypeAdapter(AccessoryEquipment::class.java, AccessoryEquipmentAdapter())
@@ -120,6 +125,7 @@ fun fromWorkoutPlanPackageToJSON(workoutPlanPackage: WorkoutPlanPackage): String
         .registerTypeAdapter(Dumbbells::class.java, EquipmentAdapter())
         .registerTypeAdapter(Dumbbell::class.java, EquipmentAdapter())
         .registerTypeAdapter(Machine::class.java, EquipmentAdapter())
+        .registerTypeAdapter(CardioMachine::class.java, EquipmentAdapter())
         .registerTypeAdapter(PlateLoadedCable::class.java, EquipmentAdapter())
         .registerTypeAdapter(Barbell::class.java, EquipmentAdapter())
         .registerTypeAdapter(AccessoryEquipment::class.java, AccessoryEquipmentAdapter())
@@ -132,8 +138,18 @@ fun fromWorkoutPlanPackageToJSON(workoutPlanPackage: WorkoutPlanPackage): String
         .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
         .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
         .registerTypeAdapter(ExternalHeartRateConfig::class.java, ExternalHeartRateConfigAdapter())
+        .registerTypeAdapter(WorkoutHistory::class.java, WorkoutHistoryAdapter())
         .create()
     return gson.toJson(workoutPlanPackage)
+}
+
+fun fromJSONToExerciseLibraryPackage(json: String): ExerciseLibraryPackage {
+    val gson = GsonBuilder()
+        .registerTypeAdapter(ExerciseLibraryPackage::class.java, ExerciseLibraryPackageAdapter())
+        .registerTypeAdapter(WeightLoadedEquipment::class.java, EquipmentAdapter())
+        .registerTypeAdapter(AccessoryEquipment::class.java, AccessoryEquipmentAdapter())
+        .create()
+    return gson.fromJson(json, ExerciseLibraryPackage::class.java)
 }
 
 fun fromJSONToWorkoutPlanPackage(json: String): WorkoutPlanPackage {
@@ -171,6 +187,7 @@ fun fromAppBackupToJSON(appBackup: AppBackup) : String {
         .registerTypeAdapter(Dumbbells::class.java, EquipmentAdapter())
         .registerTypeAdapter(Dumbbell::class.java, EquipmentAdapter())
         .registerTypeAdapter(Machine::class.java, EquipmentAdapter())
+        .registerTypeAdapter(CardioMachine::class.java, EquipmentAdapter())
         .registerTypeAdapter(PlateLoadedCable::class.java, EquipmentAdapter())
         .registerTypeAdapter(Barbell::class.java, EquipmentAdapter())
         .registerTypeAdapter(WeightSet::class.java, SetAdapter())
@@ -201,6 +218,7 @@ fun fromAppBackupToJSONPrettyPrint(appBackup: AppBackup) : String {
         .registerTypeAdapter(Dumbbells::class.java, EquipmentAdapter())
         .registerTypeAdapter(Dumbbell::class.java, EquipmentAdapter())
         .registerTypeAdapter(Machine::class.java, EquipmentAdapter())
+        .registerTypeAdapter(CardioMachine::class.java, EquipmentAdapter())
         .registerTypeAdapter(PlateLoadedCable::class.java, EquipmentAdapter())
         .registerTypeAdapter(Barbell::class.java, EquipmentAdapter())
         .registerTypeAdapter(WeightSet::class.java, SetAdapter())
@@ -219,6 +237,7 @@ fun fromAppBackupToJSONPrettyPrint(appBackup: AppBackup) : String {
         .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
         .registerTypeAdapter(ExternalHeartRateConfig::class.java, ExternalHeartRateConfigAdapter())
         .registerTypeAdapter(WorkoutRecord::class.java, WorkoutRecordAdapter())
+        .registerTypeAdapter(WorkoutHistory::class.java, WorkoutHistoryAdapter())
         .setPrettyPrinting()
         .create()
 
@@ -228,6 +247,7 @@ fun fromAppBackupToJSONPrettyPrint(appBackup: AppBackup) : String {
 enum class BackupFileType {
     APP_BACKUP,
     INCREMENTAL_APP_BACKUP,
+    EXERCISE_LIBRARY_PACKAGE,
     WORKOUT_PLAN_PACKAGE,
     WORKOUT_STORE,
     UNKNOWN
@@ -254,6 +274,9 @@ fun detectBackupFileType(json: String): BackupFileType {
         val format = jsonObject.get("format")?.takeIf { it.isJsonPrimitive }?.asString
         if (format == APP_BACKUP_ARCHIVE_FORMAT) {
             return BackupFileType.INCREMENTAL_APP_BACKUP
+        }
+        if (format == EXERCISE_LIBRARY_PACKAGE_FORMAT) {
+            return BackupFileType.EXERCISE_LIBRARY_PACKAGE
         }
 
         // Check for AppBackup structure (has "WorkoutStore" field)
@@ -289,6 +312,7 @@ fun detectBackupFileType(json: String): BackupFileType {
 
 fun fromJSONtoAppBackup(json: String) : AppBackup {
     val gson = GsonBuilder()
+        .registerTypeAdapter(AppBackup::class.java, AppBackupAdapter())
         .registerTypeAdapter(WorkoutStore::class.java, WorkoutStoreAdapter())
         .registerTypeAdapter(WorkoutComponent::class.java, WorkoutComponentAdapter())
         .registerTypeAdapter(Exercise::class.java, WorkoutComponentAdapter())
@@ -305,6 +329,7 @@ fun fromJSONtoAppBackup(json: String) : AppBackup {
         .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
         .registerTypeAdapter(SetData::class.java, SetDataAdapter())
         .registerTypeAdapter(WorkoutRecord::class.java, WorkoutRecordAdapter())
+        .registerTypeAdapter(WorkoutHistory::class.java, WorkoutHistoryAdapter())
         .create()
     return gson.fromJson(json, AppBackup::class.java)
 }
@@ -400,6 +425,10 @@ fun buildAppBackupDelta(
             currentBackup.ExerciseSessionProgressions
         ) { it.id.toString() },
         errorLogs = buildListDelta(previousBackup.ErrorLogs.orEmpty(), currentBackup.ErrorLogs.orEmpty()) { it.id },
+        exerciseMovements = buildListDelta(
+            previousBackup.ExerciseMovements.orEmpty(),
+            currentBackup.ExerciseMovements.orEmpty()
+        ) { "${it.movementRef.movementId}:${it.movementRef.contentHash}" },
     )
 }
 
@@ -437,6 +466,12 @@ fun calculateAppBackupHash(appBackup: AppBackup): String {
     return hashBytes.joinToString("") { "%02x".format(it) }
 }
 
+fun calculateWorkoutStoreHash(workoutStore: WorkoutStore): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    val hashBytes = digest.digest(fromWorkoutStoreToJSON(workoutStore).toByteArray(Charsets.UTF_8))
+    return hashBytes.joinToString("") { "%02x".format(it) }
+}
+
 private fun appBackupArchiveGsonBuilder(): GsonBuilder {
     return GsonBuilder()
         .registerTypeAdapter(WorkoutStore::class.java, WorkoutStoreAdapter())
@@ -447,6 +482,7 @@ private fun appBackupArchiveGsonBuilder(): GsonBuilder {
         .registerTypeAdapter(Dumbbells::class.java, EquipmentAdapter())
         .registerTypeAdapter(Dumbbell::class.java, EquipmentAdapter())
         .registerTypeAdapter(Machine::class.java, EquipmentAdapter())
+        .registerTypeAdapter(CardioMachine::class.java, EquipmentAdapter())
         .registerTypeAdapter(PlateLoadedCable::class.java, EquipmentAdapter())
         .registerTypeAdapter(Barbell::class.java, EquipmentAdapter())
         .registerTypeAdapter(WeightLoadedEquipment::class.java, EquipmentAdapter())
@@ -470,6 +506,7 @@ private fun appBackupArchiveGsonBuilder(): GsonBuilder {
         .registerTypeAdapter(ExternalHeartRateConfig::class.java, ExternalHeartRateConfigAdapter())
         .registerTypeAdapter(Workout::class.java, WorkoutAdapter())
         .registerTypeAdapter(WorkoutRecord::class.java, WorkoutRecordAdapter())
+        .registerTypeAdapter(WorkoutHistory::class.java, WorkoutHistoryAdapter())
 }
 
 private fun applyAppBackupDelta(
@@ -486,6 +523,13 @@ private fun applyAppBackupDelta(
     } else {
         applyListDelta(appBackup.ErrorLogs.orEmpty(), delta.errorLogs) { it.id }.takeIf { it.isNotEmpty() }
     }
+    val exerciseMovements = if (appBackup.ExerciseMovements == null && delta.exerciseMovements.isEmpty()) {
+        null
+    } else {
+        applyListDelta(appBackup.ExerciseMovements.orEmpty(), delta.exerciseMovements) {
+            "${it.movementRef.movementId}:${it.movementRef.contentHash}"
+        }.takeIf { it.isNotEmpty() }
+    }
     return appBackup.copy(
         WorkoutStore = delta.workoutStore ?: appBackup.WorkoutStore,
         WorkoutHistories = applyListDelta(appBackup.WorkoutHistories, delta.workoutHistories) { it.id.toString() },
@@ -499,6 +543,7 @@ private fun applyAppBackupDelta(
             delta.exerciseSessionProgressions
         ) { it.id.toString() },
         ErrorLogs = errorLogs,
+        ExerciseMovements = exerciseMovements,
     )
 }
 
@@ -538,16 +583,16 @@ private fun <T> applyListDelta(
 fun initializeSetData(set: Set): SetData = when (set) {
     is WeightSet -> WeightSetData(set.reps, set.weight,0.0,set.subCategory)
     is BodyWeightSet -> BodyWeightSetData(set.reps,set.additionalWeight,0.0,0.0,set.subCategory)
-    is TimedDurationSet -> TimedDurationSetData(set.timeInMillis,set.timeInMillis,set.autoStart,set.autoStop)
-    is EnduranceSet -> EnduranceSetData(set.timeInMillis,0,set.autoStart,set.autoStop)
+    is TimedDurationSet -> TimedDurationSetData(set.timeInMillis,set.timeInMillis,set.autoStart,set.autoStop, actualWeight = set.targetWeight)
+    is EnduranceSet -> EnduranceSetData(set.timeInMillis,0,set.autoStart,set.autoStop, actualWeight = set.targetWeight)
     is RestSet -> RestSetData(set.timeInSeconds,set.timeInSeconds,set.subCategory)
 }
 
 fun getNewSet(set: Set): Set = when (set) {
     is WeightSet -> WeightSet(UUID.randomUUID(),set.reps, set.weight,set.subCategory, set.shouldReapplyHistoryToSet)
     is BodyWeightSet -> BodyWeightSet(UUID.randomUUID(),set.reps,set.additionalWeight,set.subCategory, set.shouldReapplyHistoryToSet)
-    is TimedDurationSet -> TimedDurationSet(UUID.randomUUID(),set.timeInMillis,set.autoStart,set.autoStop, set.shouldReapplyHistoryToSet)
-    is EnduranceSet -> EnduranceSet(UUID.randomUUID(),set.timeInMillis,set.autoStart,set.autoStop, set.shouldReapplyHistoryToSet)
+    is TimedDurationSet -> TimedDurationSet(UUID.randomUUID(),set.timeInMillis,set.autoStart,set.autoStop, set.shouldReapplyHistoryToSet, set.targetWeight)
+    is EnduranceSet -> EnduranceSet(UUID.randomUUID(),set.timeInMillis,set.autoStart,set.autoStop, set.shouldReapplyHistoryToSet, set.targetWeight)
     is RestSet -> RestSet(UUID.randomUUID(),set.timeInSeconds,set.subCategory, set.shouldReapplyHistoryToSet)
 }
 
@@ -615,7 +660,8 @@ fun getNewSetFromSetHistory(
                 timeInMillis = setData.startTimer,
                 autoStart = setData.autoStart,
                 autoStop = setData.autoStop,
-                shouldReapplyHistoryToSet = shouldReapplyHistoryToSet ?: true
+                shouldReapplyHistoryToSet = shouldReapplyHistoryToSet ?: true,
+                targetWeight = setData.actualWeight
             )
         }
 
@@ -625,7 +671,8 @@ fun getNewSetFromSetHistory(
                 timeInMillis = setData.startTimer,
                 autoStart = setData.autoStart,
                 autoStop = setData.autoStop,
-                shouldReapplyHistoryToSet = shouldReapplyHistoryToSet ?: true
+                shouldReapplyHistoryToSet = shouldReapplyHistoryToSet ?: true,
+                targetWeight = setData.actualWeight
             )
         }
 
@@ -1108,7 +1155,7 @@ enum class SetType {
 }
 
 enum class ExerciseType {
-    COUNTUP, BODY_WEIGHT, COUNTDOWN, WEIGHT
+    COUNTUP, BODY_WEIGHT, COUNTDOWN, WEIGHT, RUNNING
 }
 
 /**

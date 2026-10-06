@@ -6,6 +6,7 @@ import androidx.room.Insert;
 import androidx.room.OnConflictStrategy;
 import androidx.room.Query;
 import androidx.room.Transaction
+import androidx.room.Update
 import java.time.LocalDate
 import java.time.LocalTime
 import java.util.UUID
@@ -60,6 +61,9 @@ interface WorkoutHistoryDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(vararg workoutHistories: WorkoutHistory)
 
+    @Update
+    suspend fun update(workoutHistory: WorkoutHistory)
+
     @Query("SELECT * FROM workout_history WHERE workoutId = :workoutId")
     suspend fun getWorkoutsByWorkoutId(workoutId: UUID): List<WorkoutHistory>
 
@@ -105,14 +109,14 @@ interface WorkoutHistoryDao {
         } else {
             // If incoming is complete and existing is incomplete, always update
             if (!existingWorkoutHistory.isDone && workoutHistory.isDone) {
-                insert(workoutHistory)
+                update(workoutHistory)
                 return
             }
             // Otherwise, use version check regardless of completion status.
             // This allows newer incoming phone state (including reopen/resume)
             // to replace stale completed snapshots on peers.
             if (workoutHistory.version >= existingWorkoutHistory.version) {
-                insert(workoutHistory)
+                update(workoutHistory)
             }
         }
     }
@@ -126,14 +130,14 @@ interface WorkoutHistoryDao {
             } else {
                 // If incoming is complete and existing is incomplete, always update
                 if (!existingWorkoutHistory.isDone && workoutHistory.isDone) {
-                    insert(workoutHistory)
+                    update(workoutHistory)
                     return@forEach
                 }
                 // Otherwise, use version check regardless of completion status.
                 // This allows newer incoming phone state (including reopen/resume)
                 // to replace stale completed snapshots on peers.
                 if (workoutHistory.version >= existingWorkoutHistory.version) {
-                    insert(workoutHistory)
+                    update(workoutHistory)
                 }
             }
         }

@@ -389,3 +389,14 @@ def test_server_dict_wrapper_returns_error_for_missing_backup(monkeypatch, tmp_p
     assert out["ok"] is False
     assert "error" in out
     assert "hint" in out
+
+
+def test_server_dict_wrapper_returns_error_for_unconfigured_backup(monkeypatch) -> None:
+    monkeypatch.delenv("MYWORKOUT_BACKUP_PATH", raising=False)
+    from workout_history_mcp import server as server_mod
+
+    out = server_mod._with_store_dict(lambda store: store.athlete_profile(), label="get_athlete_profile")
+
+    assert out["ok"] is False
+    assert "MYWORKOUT_BACKUP_PATH is not set" in out["error"]
+    assert "-BackupPath" in out["hint"]

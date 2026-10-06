@@ -10,6 +10,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -88,8 +89,8 @@ fun ScalableFadingText(
     
     // Use text measurer to detect overflow
     val measurer = rememberTextMeasurer()
-    var containerWidth: Float by remember { mutableStateOf(0f) }
-    var containerHeight: Float by remember { mutableStateOf(0f) }
+    var containerWidth by remember { mutableFloatStateOf(0f) }
+    var containerHeight by remember { mutableFloatStateOf(0f) }
     
     val baseSize = style.fontSize
     val upperBound = if (scaleDownOnly) baseSize

@@ -4,6 +4,9 @@ import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.workout.display.buildUnilateralSideLabel
 import java.util.UUID
 
+internal fun completedSetHistories(setHistories: List<SetHistory>): List<SetHistory> =
+    setHistories.filterNot(SetHistory::skipped)
+
 internal class HistoricalSetDisplayIdentifierResolver(
     setHistories: List<SetHistory>,
 ) {

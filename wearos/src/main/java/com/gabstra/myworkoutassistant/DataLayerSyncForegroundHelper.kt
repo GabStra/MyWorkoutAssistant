@@ -6,7 +6,6 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -47,7 +46,6 @@ internal object DataLayerSyncForegroundHelper {
     }
 
     private fun ensureChannel(service: Service) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val nm = service.getSystemService(NotificationManager::class.java)
         val channel = NotificationChannel(
             CHANNEL_ID,
@@ -66,7 +64,6 @@ internal object DataLayerSyncForegroundHelper {
                 setPackage(service.packageName)
                 addCategory(Intent.CATEGORY_LAUNCHER)
             }
-        launchIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         return PendingIntent.getActivity(
             service,
             0,

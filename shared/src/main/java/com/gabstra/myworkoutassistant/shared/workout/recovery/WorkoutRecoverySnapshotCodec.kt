@@ -90,6 +90,7 @@ internal data class StateDto(
     val isCalibrationManagedWorkSet: Boolean? = null,
     val isAutoRegulationWorkSet: Boolean? = null,
     val equipmentId: String? = null,
+    val loadedPlateConfigurationOverride: List<Double>? = null,
     val isIntraSetRest: Boolean? = null,
     val isLoadConfirmed: Boolean? = null
 )
@@ -219,7 +220,8 @@ object WorkoutRecoverySnapshotCodec {
             isCalibrationSet = isCalibrationSet,
             isCalibrationManagedWorkSet = isCalibrationManagedWorkSet,
             isAutoRegulationWorkSet = isAutoRegulationWorkSet,
-            equipmentId = equipmentId?.toString()
+            equipmentId = equipmentId?.toString(),
+            loadedPlateConfigurationOverride = loadedPlateConfigurationOverride,
         )
         is WorkoutState.CalibrationLoadSelection -> StateDto(
             type = "CALIBRATION_LOAD",
@@ -330,6 +332,7 @@ object WorkoutRecoverySnapshotCodec {
                     upperBoundMaxHRPercent = upperBoundMaxHRPercent,
                     currentBodyWeight = currentBodyWeight ?: 0.0,
                     plateChangeResult = null,
+                    loadedPlateConfigurationOverride = loadedPlateConfigurationOverride,
                     streak = streak ?: 0,
                     progressionState = progressionState?.let { runCatching { ProgressionState.valueOf(it) }.getOrNull() },
                     isWarmupSet = isWarmupSet ?: false,

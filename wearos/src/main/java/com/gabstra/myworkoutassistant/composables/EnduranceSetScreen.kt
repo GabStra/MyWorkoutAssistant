@@ -4,6 +4,8 @@ import android.os.SystemClock
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -71,6 +73,7 @@ fun EnduranceSetScreen (
 ) {
     val context = LocalContext.current
     val scope = rememberWearCoroutineScope()
+    val equipment = remember(state.equipmentId) { state.equipmentId?.let(viewModel::getEquipmentById) }
     var autoStartJob by remember(state.set.id) { mutableStateOf<Job?>(null) }
     val topOverlayController = LocalTopOverlayController.current
 
@@ -131,6 +134,23 @@ fun EnduranceSetScreen (
         val setData = state.currentSetData as? EnduranceSetData
         mutableStateOf(setData ?: EnduranceSetData(0, 0, false, false))
     }
+    val initialActualWeight = remember(set.id) { currentSet.actualWeight }
+    val availableWeights = remember(equipment) { viewModel.getWeightByEquipment(equipment).sorted() }
+    var isWeightInEditMode by remember(set.id) { mutableStateOf(false) }
+
+    fun changeWeight(offset: Int) {
+        val currentWeight = currentSet.actualWeight ?: return
+        if (availableWeights.isEmpty()) return
+        val currentIndex = availableWeights.indices.minByOrNull {
+            kotlin.math.abs(availableWeights[it] - currentWeight)
+        } ?: return
+        val nextIndex = (currentIndex + offset).coerceIn(availableWeights.indices)
+        currentSet = currentSet.copy(actualWeight = availableWeights[nextIndex])
+        state.currentSetData = currentSet
+        hapticsViewModel.doGentleVibration()
+    }
+    val initialStartTimer = (state.previousSetData as? EnduranceSetData)?.startTimer
+        ?: currentSet.startTimer
     var lastLiveDisplayMillis by remember(set.id) { mutableIntStateOf(0) }
 
     var isTimerInEditMode by remember { mutableStateOf(false) }
@@ -144,7 +164,9 @@ fun EnduranceSetScreen (
 
     val typography = MaterialTheme.typography
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
-    val itemStyle =  MaterialTheme.typography.numeralSmall
+    val itemStyle = remember(typography) {
+        typography.numeralSmall.exerciseTimerValueStyle()
+    }
 
     fun pauseRunningTimerForEditMode() {
         val setData = state.currentSetData as? EnduranceSetData ?: return
@@ -179,7 +201,7 @@ fun EnduranceSetScreen (
                 callbacks = WorkoutTimerService.TimerCallbacks(
                     onTimerEnd = {
                         markSetExecuted()
-                        hapticsViewModel.doHardVibrationTwice()
+                        hapticsViewModel.doHardVibrationTwiceWithBeep()
                         onTimerEnd()
                     },
                     onTimerEnabled = onTimerEnabled,
@@ -205,7 +227,7 @@ fun EnduranceSetScreen (
 
     LaunchedEffect(isTimerInEditMode) {
         while (isTimerInEditMode) {
-            if (System.currentTimeMillis() - lastInteractionTime > 5000) {
+            if (System.currentTimeMillis() - lastInteractionTime > WEAR_CONTROL_EDIT_INACTIVITY_TIMEOUT_MILLIS) {
                 setTimerEditMode(false)
             }
             delay(1000) // Check every second
@@ -375,7 +397,7 @@ fun EnduranceSetScreen (
             callbacks = WorkoutTimerService.TimerCallbacks(
                 onTimerEnd = {
                     markSetExecuted()
-                    hapticsViewModel.doHardVibrationTwice()
+                    hapticsViewModel.doHardVibrationTwiceWithBeep()
                     onTimerEnd()
                 },
                 onTimerEnabled = onTimerEnabled,
@@ -461,20 +483,17 @@ fun EnduranceSetScreen (
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(2.5.dp, alignment = Alignment.Top)
         ) {
-            Text(
-                text = "TIMER",
-                style = headerStyle,
-                textAlign = TextAlign.Center,
-            )
-            if (isTimerInEditMode) {
-                textComposable()
-            } else {
-                EnduranceRunningDisplay(initialMillis = 0)
+            SetValueSection(label = "TIMER", headerStyle = headerStyle) {
+                if (isTimerInEditMode) {
+                    textComposable()
+                } else {
+                    EnduranceRunningDisplay(initialMillis = 0)
+                }
             }
 
             if (showStartButton) {
                 IconButton(
-                    modifier = Modifier.size(50.dp),
+                    modifier = Modifier.size(WearStandardIconButtonSize),
                     onClick = {
                         autoStartJob?.cancel()
                         scope.launch {
@@ -495,7 +514,7 @@ fun EnduranceSetScreen (
                     colors = IconButtonDefaults.iconButtonColors(containerColor = Green),
                 ) {
                     Icon(
-                        modifier = Modifier.size(30.dp),
+                        modifier = Modifier.size(WearStandardIconButtonIconSize),
                         imageVector = Icons.Default.PlayArrow,
                         contentDescription = "Start",
                         tint = MaterialTheme.colorScheme.onBackground
@@ -506,7 +525,7 @@ fun EnduranceSetScreen (
             if (showRepeatButton) {
                 IconButton(
                     modifier = Modifier
-                        .size(50.dp)
+                        .size(WearStandardIconButtonSize)
                         .semantics { contentDescription = "Repeat set" },
                     colors = IconButtonDefaults.iconButtonColors(containerColor = MaterialTheme.colorScheme.primary),
                     onClick = {
@@ -538,7 +557,7 @@ fun EnduranceSetScreen (
                     }
                 ) {
                     Icon(
-                        modifier = Modifier.size(26.dp),
+                        modifier = Modifier.size(WearStandardIconButtonIconSize),
                         imageVector = Icons.Default.Replay,
                         contentDescription = "Repeat set",
                         tint = MaterialTheme.colorScheme.onBackground
@@ -548,7 +567,7 @@ fun EnduranceSetScreen (
 
             if (viewModel.workoutTimerService.isTimerRegistered(set.id)) {
                 IconButton(
-                    modifier = Modifier.size(50.dp),
+                    modifier = Modifier.size(WearStandardIconButtonSize),
                     onClick = {
                         hapticsViewModel.doGentleVibration()
                         viewModel.workoutTimerService.unregisterTimer(set.id)
@@ -557,7 +576,7 @@ fun EnduranceSetScreen (
                     colors = IconButtonDefaults.iconButtonColors(containerColor = Red),
                 ) {
                     Icon(
-                        modifier = Modifier.size(30.dp),
+                        modifier = Modifier.size(WearStandardIconButtonIconSize),
                         imageVector = Icons.Default.Stop,
                         contentDescription = "Stop",
                         tint = MaterialTheme.colorScheme.onBackground
@@ -575,7 +594,35 @@ fun EnduranceSetScreen (
                 contentDescription = SetValueSemantics.EnduranceSetTypeDescription
             }
         ) {
-            if (isTimerInEditMode) {
+            if (isWeightInEditMode) {
+                val currentWeight = currentSet.actualWeight
+                val currentIndex = currentWeight?.let { weight ->
+                    availableWeights.indices.minByOrNull { kotlin.math.abs(availableWeights[it] - weight) }
+                }
+                ControlButtonsVertical(
+                    modifier = Modifier.fillMaxSize(),
+                    onMinusTap = { changeWeight(-1) },
+                    onMinusLongPress = { changeWeight(-1) },
+                    onPlusTap = { changeWeight(1) },
+                    onPlusLongPress = { changeWeight(1) },
+                    isMinusEnabled = currentIndex?.let { it > 0 } == true,
+                    isPlusEnabled = currentIndex?.let { it < availableWeights.lastIndex } == true,
+                    isResetEnabled = currentSet.actualWeight != initialActualWeight,
+                    onCloseClick = { isWeightInEditMode = false },
+                    onResetClick = {
+                        currentSet = currentSet.copy(actualWeight = initialActualWeight)
+                        state.currentSetData = currentSet
+                    },
+                    content = {
+                        SetValueSection(label = "LOAD", headerStyle = headerStyle) {
+                            Text(
+                                text = currentSet.actualWeight?.let { equipment?.formatWeight(it) ?: "$it kg" } ?: "-",
+                                style = itemStyle,
+                            )
+                        }
+                    },
+                )
+            } else if (isTimerInEditMode) {
                 ControlButtonsVertical(
                     modifier = Modifier
                         .fillMaxSize()
@@ -589,22 +636,47 @@ fun EnduranceSetScreen (
                     onMinusLongPress = { onMinusClick() },
                     onPlusTap = { onPlusClick() },
                     onPlusLongPress = { onPlusClick() },
+                    isResetEnabled = currentSet.startTimer != initialStartTimer,
                     onCloseClick = {
                         setTimerEditMode(false)
                     },
+                    onResetClick = {
+                        currentSet = currentSet.copy(startTimer = initialStartTimer)
+                        updateInteractionTime()
+                        hapticsViewModel.doGentleVibration()
+                    },
                     content = {
-                        textComposable()
+                        SetValueSection(label = "TIMER", headerStyle = headerStyle) {
+                            textComposable()
+                        }
                     }
                 )
             } else {
                 Column(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState()),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Column(
                         verticalArrangement = Arrangement.spacedBy(5.dp)
                     ) {
                         exerciseTitleComposable()
+                        currentSet.actualWeight?.let { weight ->
+                            Text(
+                                text = "Load ${equipment?.formatWeight(weight) ?: "$weight kg"}",
+                                style = MaterialTheme.typography.labelMedium,
+                                modifier = Modifier.combinedClickable(
+                                    onClick = {},
+                                    onLongClick = {
+                                        if (!set.autoStart && state.startTime == null && !state.hasBeenExecuted && availableWeights.isNotEmpty()) {
+                                            isWeightInEditMode = true
+                                            hapticsViewModel.doGentleVibration()
+                                        }
+                                    },
+                                ),
+                            )
+                        }
                         if (extraInfo != null) {
                             //HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
                             extraInfo(state)
@@ -622,6 +694,7 @@ fun EnduranceSetScreen (
             message = "End this timed set now?",
             handleYesClick = {
                 hapticsViewModel.doGentleVibration()
+                showStopDialog = false
                 markSetExecuted()
                 onTimerDisabled()
                 onTimerEnd()
@@ -631,7 +704,11 @@ fun EnduranceSetScreen (
                 showStopDialog = false
                 startTimer()
             },
-            handleOnAutomaticClose = {},
+            closeTimerInMillis = 5000,
+            handleOnAutomaticClose = {
+                showStopDialog = false
+                startTimer()
+            },
             onVisibilityChange = { isVisible ->
                 if (isVisible) {
                     viewModel.setDimming(false)

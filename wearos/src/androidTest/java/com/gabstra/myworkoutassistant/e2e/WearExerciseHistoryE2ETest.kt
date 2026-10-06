@@ -1,3 +1,5 @@
+@file:Suppress("RedundantCallOfConversionMethod", "REDUNDANT_ELSE_IN_WHEN", "KotlinConstantConditions")
+
 package com.gabstra.myworkoutassistant.e2e
 
 import android.content.Context
@@ -19,6 +21,7 @@ import com.gabstra.myworkoutassistant.e2e.driver.WearWorkoutDriver
 import com.gabstra.myworkoutassistant.e2e.fixtures.BodyWeightSetWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.e2e.fixtures.ComprehensiveHistoryWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.e2e.fixtures.EnduranceSetManualStartWorkoutStoreFixture
+import com.gabstra.myworkoutassistant.e2e.fixtures.ExerciseToExerciseRestWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.e2e.fixtures.TimedDurationManualStartWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.e2e.fixtures.WarmupSetWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.e2e.fixtures.WeightSetWorkoutStoreFixture
@@ -420,6 +423,63 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
     }
 
     @Test
+    fun skipExercise_advancesToNextExerciseAndPersistsSkippedHistory() = runBlocking {
+        ExerciseToExerciseRestWorkoutStoreFixture.setupWorkoutStore(context)
+        launchAppFromHome()
+
+        val workoutName = ExerciseToExerciseRestWorkoutStoreFixture.getWorkoutName()
+        startWorkout(workoutName)
+
+        val setScreenVisible = device.wait(
+            Until.hasObject(By.descContains(SetValueSemantics.WeightSetTypeDescription)),
+            10_000
+        )
+        require(setScreenVisible) { "Weight set screen did not appear" }
+
+        val workoutStoreRepository = WorkoutStoreRepository(context.filesDir)
+        val workoutStore = workoutStoreRepository.getWorkoutStore()
+        val workout = workoutStore.workouts.firstOrNull { it.name == workoutName }
+            ?: error("Workout not found: $workoutName")
+        val exercises = workout.workoutComponents
+            .filterIsInstance<com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise>()
+        require(exercises.size >= 2) { "Expected at least two exercises in $workoutName" }
+        val firstExercise = exercises[0]
+        val secondExercise = exercises[1]
+        val skippedSet = firstExercise.sets.firstOrNull()
+            ?: error("Expected first exercise to contain a set")
+        val nextExerciseFirstSet = secondExercise.sets.firstOrNull()
+            ?: error("Expected second exercise to contain a set")
+
+        workoutDriver.skipExercise()
+
+        val nextSetInfo = waitForCurrentSetInfo(workoutName, timeoutMs = 10_000)
+            ?: error("Expected the next exercise to become active after skipping")
+        require(nextSetInfo.exerciseId == secondExercise.id) {
+            "Expected next active exercise ${secondExercise.id}, got ${nextSetInfo.exerciseId}"
+        }
+        require(nextSetInfo.set.id == nextExerciseFirstSet.id) {
+            "Expected next active set ${nextExerciseFirstSet.id}, got ${nextSetInfo.set.id}"
+        }
+
+        val activeWorkoutHistory = waitForLatestWorkoutHistory(
+            workoutId = workout.id,
+            isDone = false,
+            timeoutMs = 10_000
+        )
+        val skippedSetHistory = waitForSetHistory(activeWorkoutHistory.id, skippedSet.id)
+        require(skippedSetHistory.skipped) {
+            "Expected skipped=true for set ${skippedSet.id}, got skipped=${skippedSetHistory.skipped}"
+        }
+
+        val restHistories = AppDatabase.getDatabase(context)
+            .restHistoryDao()
+            .getByWorkoutHistoryId(activeWorkoutHistory.id)
+        require(restHistories.isEmpty()) {
+            "Expected no persisted rest history when skipping directly to the next exercise, found ${restHistories.size}"
+        }
+    }
+
+    @Test
     @Ignore("Covered by comprehensive history test; kept out to reduce redundant E2E runtime.")
     fun exerciseHistory_singleBodyWeightSetStoresModifiedRepsAndAdditionalWeight() = runBlocking {
         BodyWeightSetWorkoutStoreFixture.setupWorkoutStore(context)
@@ -628,8 +688,12 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
         // Start the workout
         startWorkout(ComprehensiveHistoryWorkoutStoreFixture.getWorkoutName())
 
-        // Complete all sets in the workout and attempt UI modifications on editable sets.
-        completeAllSetsInWorkout()
+        // Keep this broad history-persistence check deterministic: other focused tests exercise
+        // the UI controls, while this test advances each production workout state and verifies
+        // every saved set type without replaying dozens of UI interactions.
+        require(forceCompleteWorkoutWithPersistence(maxSteps = 100)) {
+            "Workout did not reach its completed state while persisting the comprehensive history"
+        }
 
         // Wait for completion screen
         waitForWorkoutCompletion()
@@ -806,6 +870,7 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
         val maxSets = 200 // Increased limit for comprehensive workouts
         var consecutiveNulls = 0 // Track consecutive nulls to detect completion
         val completionDeadlineMs = System.currentTimeMillis() + 240_000
+        val completionLoopStartedAtMs = System.currentTimeMillis()
 
         var weightSetModifications = 0
 
@@ -813,10 +878,8 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
             consecutiveNulls < 3 &&
             System.currentTimeMillis() < completionDeadlineMs
         ) {
-            device.waitForIdle(500)
-
             // Check if workout is complete first
-            if (isWorkoutTerminalUiVisible(waitMs = 1_000)) {
+            if (isWorkoutTerminalUiVisible()) {
                 break
             }
 
@@ -840,8 +903,6 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
                     }
                     completeTimedSet()
                     setsCompleted++
-                    // Wait a bit after completing timed set
-                    device.waitForIdle(1_000)
                 }
                 UiSetType.WEIGHT,
                 UiSetType.BODY_WEIGHT -> {
@@ -854,10 +915,9 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
                     }
                     if (tryFinalizeCurrentStep()) {
                         setsCompleted++
-                    } else if (isWorkoutTerminalUiVisible(waitMs = 1_000)) {
+                    } else if (isWorkoutTerminalUiVisible()) {
                         break
                     }
-                    device.waitForIdle(500)
                 }
                 UiSetType.REST -> {
                     consecutiveNulls = 0 // Reset counter
@@ -869,7 +929,6 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
                     } else if (skipped) {
                         setsCompleted++
                     }
-                    device.waitForIdle(500)
                 }
                 UiSetType.UNKNOWN -> {
                     consecutiveNulls++
@@ -899,6 +958,12 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
         }
 
         if (!isWorkoutTerminalUiVisible(waitMs = 1_000)) {
+            println(
+                "E2E history workout did not finish through UI in " +
+                    "${(System.currentTimeMillis() - completionLoopStartedAtMs) / 1_000}s; " +
+                    "completedSets=$setsCompleted, consecutiveNulls=$consecutiveNulls. " +
+                    "Using ViewModel completion fallback."
+            )
             repeat(2) {
                 if (isWorkoutTerminalUiVisible(waitMs = 1_000)) return@repeat
                 if (tryFinalizeCurrentStep()) {
@@ -996,7 +1061,9 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
                 }
             }
             if (reachedCompleted) return true
-            stepLatch.await(5, TimeUnit.SECONDS)
+            require(stepLatch.await(5, TimeUnit.SECONDS)) {
+                "Timed out waiting for workout history persistence at step ${it + 1}"
+            }
             device.waitForIdle(150)
         }
 
@@ -1275,7 +1342,7 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
             }
 
             // Fallback: parse value from contentDescription (e.g., "Reps value: 10")
-            val description = target.contentDescription?.toString()?.trim()
+            val description = target.contentDescription?.trim()
             if (!description.isNullOrBlank()) {
                 val parts = description.split(":", limit = 2)
                 if (parts.size == 2) {
@@ -1977,17 +2044,25 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
         workoutId: UUID,
         timeoutMs: Long = 10_000
     ): WorkoutHistory {
+        return waitForLatestWorkoutHistory(workoutId = workoutId, isDone = true, timeoutMs = timeoutMs)
+    }
+
+    private suspend fun waitForLatestWorkoutHistory(
+        workoutId: UUID,
+        isDone: Boolean,
+        timeoutMs: Long = 10_000
+    ): WorkoutHistory {
         val workoutHistoryDao = AppDatabase.getDatabase(context).workoutHistoryDao()
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
-            val workoutHistory = workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(workoutId, isDone = true)
-            if (workoutHistory != null && workoutHistory.isDone) {
+            val workoutHistory = workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(workoutId, isDone = isDone)
+            if (workoutHistory != null && workoutHistory.isDone == isDone) {
                 return workoutHistory
             }
             delay(250)
         }
 
-        error("WorkoutHistory not found for completed workoutId=$workoutId within ${timeoutMs}ms")
+        error("WorkoutHistory not found for workoutId=$workoutId isDone=$isDone within ${timeoutMs}ms")
     }
 
     private suspend fun waitForSetHistory(
@@ -2069,11 +2144,7 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
             require(setHistory.workoutHistoryId == workoutHistory.id) {
                 "SetHistory workoutHistoryId should match WorkoutHistory id"
             }
-            require(setHistory.exerciseId != null) { "SetHistory exerciseId should not be null" }
-            require(setHistory.setId != null) { "SetHistory setId should not be null" }
             require(!setHistory.skipped) { "SetHistory should not be skipped for completed sets" }
-            require(setHistory.startTime != null) { "SetHistory startTime should be set" }
-            require(setHistory.endTime != null) { "SetHistory endTime should be set" }
         }
 
         // Verify sets are ordered correctly

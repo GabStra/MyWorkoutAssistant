@@ -11,7 +11,7 @@ enum class MotionSensorType {
 
 fun ExerciseType.supportsRepAnnotations(): Boolean = when (this) {
     ExerciseType.WEIGHT, ExerciseType.BODY_WEIGHT -> true
-    ExerciseType.COUNTUP, ExerciseType.COUNTDOWN -> false
+    ExerciseType.COUNTUP, ExerciseType.COUNTDOWN, ExerciseType.RUNNING -> false
 }
 
 data class MotionSensorSample(

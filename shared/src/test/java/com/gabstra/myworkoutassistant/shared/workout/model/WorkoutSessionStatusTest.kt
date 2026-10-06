@@ -4,6 +4,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutRecord
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -111,6 +112,22 @@ class WorkoutSessionStatusTest {
     }
 
     @Test
+    fun `finished early closed session gets explicit label`() {
+        val history = workoutHistory(isDone = true).copy(
+            endReason = WorkoutSessionEndReason.FINISHED_EARLY
+        )
+
+        assertEquals("Finished early", completedWorkoutEndDisplayLabel(history))
+    }
+
+    @Test
+    fun `normal completed session has no extra closed-session label`() {
+        val history = workoutHistory(isDone = true)
+
+        assertNull(completedWorkoutEndDisplayLabel(history))
+    }
+
+    @Test
     fun `returned home watch record resolves to stopped on wear`() {
         val history = workoutHistory(isDone = false)
         val record = workoutRecord(
@@ -126,11 +143,12 @@ class WorkoutSessionStatusTest {
     }
 
     @Test
-    fun `missing active record throws`() {
+    fun `missing active record is interrupted`() {
         val history = workoutHistory(isDone = false)
 
-        assertThrows(IllegalStateException::class.java) {
-            resolveWorkoutSessionStatus(history, null, now = now)
-        }
+        assertEquals(
+            WorkoutSessionStatus.INTERRUPTED,
+            resolveWorkoutSessionStatus(history, null, now = now),
+        )
     }
 }

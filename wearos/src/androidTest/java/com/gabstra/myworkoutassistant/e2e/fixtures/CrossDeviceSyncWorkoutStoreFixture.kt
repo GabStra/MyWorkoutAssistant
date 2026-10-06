@@ -5,6 +5,7 @@ import com.gabstra.myworkoutassistant.e2e.helpers.TestWorkoutStoreSeeder
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
+import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementRef
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import java.time.LocalDate
@@ -45,9 +46,41 @@ object CrossDeviceSyncWorkoutStoreFixture {
     const val PHONE_TO_WEAR_HISTORY_A2_REPS = 9
     const val PHONE_TO_WEAR_HISTORY_A2_WEIGHT = 52.5
     const val PHONE_TO_WEAR_WEIGHT_TOLERANCE = 0.01
+    const val MOVEMENT_ID = "cross-device-complex-a-motion"
+    const val MOVEMENT_JSON = """
+        {
+          "fps": 30,
+          "bounds": { "minX": -0.5, "maxX": 0.5, "minY": 0.0, "maxY": 1.8, "minZ": -0.3, "maxZ": 0.3 },
+          "frames": [
+            {
+              "joints": {
+                "pelvis": [0.0, 0.9, 0.0],
+                "neck": [0.0, 1.45, 0.0],
+                "head": [0.0, 1.68, 0.02],
+                "left_shoulder": [-0.22, 1.36, 0.0],
+                "right_shoulder": [0.22, 1.36, 0.0],
+                "left_elbow": [-0.32, 1.05, 0.0],
+                "right_elbow": [0.32, 1.05, 0.0],
+                "left_wrist": [-0.34, 0.78, 0.0],
+                "right_wrist": [0.34, 0.78, 0.0],
+                "left_hip": [-0.13, 0.82, 0.0],
+                "right_hip": [0.13, 0.82, 0.0],
+                "left_knee": [-0.14, 0.44, 0.02],
+                "right_knee": [0.14, 0.44, 0.02],
+                "left_ankle": [-0.14, 0.08, 0.0],
+                "right_ankle": [0.14, 0.08, 0.0]
+              }
+            }
+          ]
+        }
+    """
+
+    fun movementRef(): ExerciseMovementRef =
+        ExerciseMovementRef.forWearSkeletonJson(MOVEMENT_ID, MOVEMENT_JSON.trimIndent())
 
     fun setupWorkoutStore(context: Context) {
         val equipment = TestBarbellFactory.createTestBarbell()
+        val movementRef = movementRef()
 
         val exerciseA = Exercise(
             id = EXERCISE_A_ID,
@@ -72,7 +105,8 @@ object CrossDeviceSyncWorkoutStoreFixture {
             intraSetRestInSeconds = null,
             loadJumpDefaultPct = null,
             loadJumpMaxPct = null,
-            loadJumpOvercapUntil = null
+            loadJumpOvercapUntil = null,
+            movementRef = movementRef
         )
 
         val exerciseB = Exercise(

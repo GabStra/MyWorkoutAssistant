@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
-import androidx.compose.foundation.basicMarquee
+import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,7 +23,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -35,6 +35,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -52,7 +53,6 @@ import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.format.DateTimeFormatter
-import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -63,7 +63,7 @@ fun ExternalWorkoutSessionDetailScreen(
 ) {
     val context = LocalContext.current
     val database = remember(context) { ExternalHealthConnectSessionDatabase.getDatabase(context) }
-    val currentLocale = Locale.getDefault()
+    val currentLocale = LocalLocale.current.platformLocale
     val dateFormatter = remember(currentLocale) {
         DateTimeFormatter.ofPattern("dd/MM/yy", currentLocale)
     }
@@ -102,7 +102,7 @@ fun ExternalWorkoutSessionDetailScreen(
         }
     }
 
-    Scaffold(
+    BreadcrumbScaffold(
         topBar = {
             TopAppBar(
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -113,11 +113,9 @@ fun ExternalWorkoutSessionDetailScreen(
                 ),
                 title = {
                     Text(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .basicMarquee(),
+                        modifier = Modifier.fillMaxWidth(),
                         textAlign = TextAlign.Center,
-                        text = session?.let { it.title ?: it.exerciseTypeLabel } ?: "External session",
+                        text = "External session",
                         maxLines = 2,
                         style = MaterialTheme.typography.titleLarge,
                         color = MaterialTheme.colorScheme.onBackground,

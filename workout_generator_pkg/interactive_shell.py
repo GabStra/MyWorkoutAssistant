@@ -90,6 +90,7 @@ def _build_initial_messages(
     base_system_prompt: str,
     provided_equipment: Optional[Dict[str, Any]],
     format_equipment_for_conversation,
+    exercise_definitions: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
     messages = [_message("system", content=base_system_prompt)]
     if provided_equipment:
@@ -99,7 +100,54 @@ def _build_initial_messages(
                 content=format_equipment_for_conversation(provided_equipment),
             )
         )
+    if exercise_definitions:
+        messages.append(_message(
+            "system",
+            content=(
+                f"A strict exercise library with {len(exercise_definitions)} definitions is loaded. "
+                "It is the sole allowed movement source. Its compact selection catalog is supplied "
+                "only to the workout-planning stage to avoid duplicating the full library in chat context."
+            ),
+        ))
     return messages
+
+
+def _load_exercise_library_payload(filepath: str) -> Dict[str, Any]:
+    with open(filepath, "r", encoding="utf-8") as source:
+        root = json.load(source)
+    payload = root
+    if isinstance(root, dict) and isinstance(root.get("WorkoutStore"), dict):
+        payload = root["WorkoutStore"]
+    definitions = payload.get("exerciseDefinitions") if isinstance(payload, dict) else None
+    if not isinstance(definitions, list):
+        raise ValueError("expected a schema-v2 store or object containing exerciseDefinitions")
+    if any(not isinstance(item, dict) or not item.get("id") for item in definitions):
+        raise ValueError("every exercise definition must be an object with an id")
+    movements = []
+    if isinstance(root, dict):
+        movements = root.get("exerciseMovements") or root.get("ExerciseMovements") or []
+    return {
+        "exerciseDefinitions": definitions,
+        "equipments": payload.get("equipments", []) if isinstance(payload, dict) else [],
+        "accessoryEquipments": payload.get("accessoryEquipments", []) if isinstance(payload, dict) else [],
+        "exerciseMovements": movements,
+    }
+
+
+def _load_exercise_definitions(filepath: str) -> List[Dict[str, Any]]:
+    return _load_exercise_library_payload(filepath)["exerciseDefinitions"]
+
+
+def _merge_library_items(existing: List[Dict[str, Any]], imported: List[Dict[str, Any]], label: str):
+    merged = {item.get("id"): item for item in existing if isinstance(item, dict)}
+    for item in imported:
+        item_id = item.get("id") if isinstance(item, dict) else None
+        if not item_id:
+            raise ValueError(f"every {label} item must have an id")
+        if item_id in merged and merged[item_id] != item:
+            raise ValueError(f"conflicting {label} content for id {item_id}")
+        merged[item_id] = item
+    return list(merged.values())
 
 
 def _conversation_log_path(script_dir: str, conversation_id: str) -> str:
@@ -229,7 +277,7 @@ def handle_function_call(
     script_dir=None,
     deps=None,
     force_use_reasoner=None,
-    allow_educated_load_guesses=False,
+    allow_educated_load_guesses=True,
 ):
     deps = deps or resolve_shell_deps()
     execute_workout_generation = deps.execute_workout_generation
@@ -336,6 +384,11 @@ def main(deps=None):
         type=str,
         help="Path to JSON file containing available equipment (with 'equipments' and optionally 'accessoryEquipments' arrays)",
     )
+    parser.add_argument(
+        "--exercise-library-file",
+        type=str,
+        help="Path to a schema-v2 WorkoutStore or JSON object containing exerciseDefinitions",
+    )
     reasoner_group = parser.add_mutually_exclusive_group()
     reasoner_group.add_argument(
         "--use-reasoner",
@@ -352,11 +405,20 @@ def main(deps=None):
         action="store_true",
         help="Use reasoner for plan index and chat model for emitters (faster overall)",
     )
-    parser.add_argument(
+    calibration_group = parser.add_mutually_exclusive_group()
+    calibration_group.add_argument(
         "--allow-educated-load-guesses",
+        dest="allow_educated_load_guesses",
         action="store_true",
-        help="Allow the generator to keep requiresLoadCalibration=false for load-based exercises when you explicitly want educated starting-load guesses",
+        help="Use emitted starting loads when complete (default; retained for command compatibility)",
     )
+    calibration_group.add_argument(
+        "--require-load-calibration",
+        dest="allow_educated_load_guesses",
+        action="store_false",
+        help="Require calibration for every weight-loaded exercise",
+    )
+    parser.set_defaults(allow_educated_load_guesses=True)
     args = parser.parse_args()
     force_use_reasoner = (
         "hybrid"
@@ -381,6 +443,27 @@ def main(deps=None):
             print(f"Error loading equipment file: {e}", file=sys.stderr)
             sys.exit(1)
 
+    exercise_definitions = None
+    if args.exercise_library_file:
+        try:
+            library_payload = _load_exercise_library_payload(args.exercise_library_file)
+            exercise_definitions = library_payload["exerciseDefinitions"]
+            print(f"Loaded {len(exercise_definitions)} exercise definition(s) from: {args.exercise_library_file}")
+        except Exception as e:
+            print(f"Error loading exercise library file: {e}", file=sys.stderr)
+            sys.exit(1)
+        provided_equipment = dict(provided_equipment or {})
+        provided_equipment["equipments"] = _merge_library_items(
+            provided_equipment.get("equipments", []), library_payload["equipments"], "equipment"
+        )
+        provided_equipment["accessoryEquipments"] = _merge_library_items(
+            provided_equipment.get("accessoryEquipments", []),
+            library_payload["accessoryEquipments"],
+            "accessory equipment",
+        )
+        provided_equipment["exerciseDefinitions"] = exercise_definitions
+        provided_equipment["exerciseMovements"] = library_payload["exerciseMovements"]
+
     api_key = _resolve_api_key()
     timeout = httpx.Timeout(1200.0, connect=60.0)
     http_client = httpx.Client(timeout=timeout)
@@ -392,6 +475,7 @@ def main(deps=None):
         BASE_SYSTEM_PROMPT,
         provided_equipment,
         format_equipment_for_conversation,
+        exercise_definitions,
     )
     metadata = {}
 
@@ -566,6 +650,7 @@ def main(deps=None):
                 BASE_SYSTEM_PROMPT,
                 provided_equipment,
                 format_equipment_for_conversation,
+                exercise_definitions,
             )
             next_conversation_id = str(uuid.uuid4())
             switch_conversation(

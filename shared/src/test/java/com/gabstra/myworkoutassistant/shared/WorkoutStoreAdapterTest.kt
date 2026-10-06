@@ -1,12 +1,190 @@
 package com.gabstra.myworkoutassistant.shared
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.gabstra.myworkoutassistant.shared.equipments.CardioMachine
+import com.gabstra.myworkoutassistant.shared.equipments.Generic
+import com.gabstra.myworkoutassistant.shared.equipments.isCompatibleWith
+import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementRef
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import java.time.LocalDate
 import java.util.UUID
 
 class WorkoutStoreAdapterTest {
+
+    @Test
+    fun linkedExerciseNameOverride_roundTripsAndSurvivesDefinitionRename() {
+        val definition = ExerciseDefinition(
+            id = UUID.randomUUID(),
+            name = "Barbell bench press",
+            exerciseType = ExerciseType.WEIGHT,
+        )
+        val prescription = legacyExercise(UUID.randomUUID(), UUID.randomUUID()).copy(
+            name = "Heavy bench",
+            exerciseDefinitionId = definition.id,
+            nameOverride = "Heavy bench",
+        )
+        val store = storeWith(definition, prescription)
+
+        val roundTripped = fromJSONToWorkoutStore(fromWorkoutStoreToJSON(store))
+        val renamed = roundTripped.updateExerciseDefinition(definition.copy(name = "Bench press"))
+        val renamedPrescription = renamed.allExercisePrescriptions().single()
+
+        assertEquals("Heavy bench", renamedPrescription.nameOverride)
+        assertEquals("Heavy bench", renamedPrescription.name)
+        assertEquals("Heavy bench", renamed.resolveExercise(renamedPrescription).displayName)
+    }
+
+    @Test
+    fun linkedExerciseWithoutNameOverride_followsDefinitionRename() {
+        val definition = ExerciseDefinition(
+            id = UUID.randomUUID(),
+            name = "Barbell bench press",
+            exerciseType = ExerciseType.WEIGHT,
+        )
+        val prescription = legacyExercise(UUID.randomUUID(), UUID.randomUUID()).copy(
+            name = definition.name,
+            exerciseDefinitionId = definition.id,
+        )
+
+        val renamed = storeWith(definition, prescription)
+            .updateExerciseDefinition(definition.copy(name = "Bench press"))
+        val renamedPrescription = renamed.allExercisePrescriptions().single()
+
+        assertNull(renamedPrescription.nameOverride)
+        assertEquals("Bench press", renamedPrescription.name)
+        assertEquals("Bench press", renamed.resolveExercise(renamedPrescription).displayName)
+    }
+
+    @Test
+    fun legacyExercises_migrateDeterministicallyAndIdempotently() {
+        val prescriptionId = UUID.randomUUID()
+        val supersetPrescriptionId = UUID.randomUUID()
+        val equipmentId = UUID.randomUUID()
+        val workout = Workout(
+            id = UUID.randomUUID(), name = "A", description = "",
+            workoutComponents = listOf(
+                legacyExercise(prescriptionId, equipmentId),
+                Superset(
+                    id = UUID.randomUUID(), enabled = true,
+                    exercises = listOf(legacyExercise(supersetPrescriptionId, equipmentId)),
+                    restSecondsByExercise = mapOf(supersetPrescriptionId to 60),
+                ),
+            ),
+            order = 0, creationDate = LocalDate.of(2025, 1, 1),
+            globalId = UUID.randomUUID(), type = 0,
+        )
+        val legacy = WorkoutStore(
+            schemaVersion = 1, workouts = listOf(workout), birthDateYear = 1990,
+            weightKg = 80.0, progressionPercentageAmount = 0.05,
+        )
+
+        val first = fromJSONToWorkoutStore(fromWorkoutStoreToJSON(legacy))
+        val second = fromJSONToWorkoutStore(fromWorkoutStoreToJSON(first))
+
+        assertEquals(WorkoutStore.CURRENT_SCHEMA_VERSION, first.schemaVersion)
+        assertEquals(1, first.exerciseDefinitions.size)
+        assertTrue(first.exerciseDefinitions.all { it.exerciseFamilyId != null })
+        assertEquals(first, second)
+        assertEquals(listOf(prescriptionId, supersetPrescriptionId), first.allExercisePrescriptions().map { it.id })
+        assertTrue(first.allExercisePrescriptions().all {
+            it.exerciseDefinitionId == first.exerciseDefinitions.single().id &&
+                it.placementNotes == "Shared instructions"
+        })
+    }
+
+    @Test
+    fun legacyExercises_keepEquipmentAndTypeVariationsSeparate() {
+        val equipmentA = UUID.randomUUID()
+        val workout = Workout(
+            id = UUID.randomUUID(), name = "A", description = "",
+            workoutComponents = listOf(
+                legacyExercise(UUID.randomUUID(), equipmentA),
+                legacyExercise(UUID.randomUUID(), UUID.randomUUID()),
+                legacyExercise(UUID.randomUUID(), equipmentA).copy(exerciseType = ExerciseType.BODY_WEIGHT),
+            ),
+            order = 0, creationDate = LocalDate.of(2025, 1, 1),
+            globalId = UUID.randomUUID(), type = 0,
+        )
+        val migrated = WorkoutStore(
+            schemaVersion = 1, workouts = listOf(workout), birthDateYear = 1990,
+            weightKg = 80.0, progressionPercentageAmount = 0.05,
+        ).migrateExerciseLibrary()
+
+        assertEquals(3, migrated.exerciseDefinitions.size)
+        assertEquals(3, migrated.allExercisePrescriptions().mapNotNull { it.exerciseDefinitionId }.distinct().size)
+        assertEquals(1, migrated.exerciseDefinitions.map { it.exerciseFamilyId }.distinct().size)
+    }
+
+    @Test
+    fun familyMovement_isSharedAcrossWeightAndTimedVariations() {
+        val familyId = UUID.randomUUID()
+        val movement = ExerciseMovementRef.forWearSkeletonJson("bench", "{}")
+        val weight = ExerciseDefinition(
+            id = UUID.randomUUID(), exerciseFamilyId = familyId, name = "Bench press",
+            exerciseType = ExerciseType.WEIGHT, movementRef = movement,
+        )
+        val timed = ExerciseDefinition(
+            id = UUID.randomUUID(), exerciseFamilyId = familyId, name = "Bench press",
+            exerciseType = ExerciseType.COUNTDOWN,
+        )
+
+        val normalized = listOf(weight, timed).normalizeExerciseFamilyMovements()
+
+        assertEquals(setOf(ExerciseType.WEIGHT, ExerciseType.COUNTDOWN), normalized.map { it.exerciseType }.toSet())
+        assertTrue(normalized.all { it.movementRef == movement })
+    }
+
+    @Test
+    fun updatingFamilyMovement_propagatesToEveryVariationAndPrescription() {
+        val familyId = UUID.randomUUID()
+        val originalMovement = ExerciseMovementRef.forWearSkeletonJson("old", "old")
+        val updatedMovement = ExerciseMovementRef.forWearSkeletonJson("new", "new")
+        val weight = ExerciseDefinition(
+            id = UUID.randomUUID(), exerciseFamilyId = familyId, name = "Bench press",
+            exerciseType = ExerciseType.WEIGHT, movementRef = originalMovement,
+        )
+        val timed = ExerciseDefinition(
+            id = UUID.randomUUID(), exerciseFamilyId = familyId, name = "Bench press",
+            exerciseType = ExerciseType.COUNTDOWN, movementRef = originalMovement,
+        )
+        val prescription = legacyExercise(UUID.randomUUID(), UUID.randomUUID()).copy(
+            exerciseDefinitionId = timed.id,
+            movementRef = originalMovement,
+        )
+        val store = storeWith(timed, prescription).copy(exerciseDefinitions = listOf(weight, timed))
+
+        val updated = store.updateExerciseDefinition(weight.copy(movementRef = updatedMovement))
+
+        assertTrue(updated.exerciseDefinitions.all { it.movementRef == updatedMovement })
+        assertEquals(updatedMovement, updated.allExercisePrescriptions().single().movementRef)
+    }
+
+    private fun legacyExercise(id: UUID, equipmentId: UUID) = Exercise(
+        id = id, enabled = true, name = "Bench press", notes = "Shared instructions",
+        sets = emptyList(), exerciseType = ExerciseType.WEIGHT, minReps = 5, maxReps = 8,
+        lowerBoundMaxHRPercent = null, upperBoundMaxHRPercent = null,
+        equipmentId = equipmentId, bodyWeightPercentage = null,
+    )
+
+    private fun storeWith(definition: ExerciseDefinition, prescription: Exercise): WorkoutStore =
+        WorkoutStore(
+            workouts = listOf(
+                Workout(
+                    id = UUID.randomUUID(), name = "A", description = "",
+                    workoutComponents = listOf(prescription), order = 0,
+                    creationDate = LocalDate.of(2025, 1, 1),
+                    globalId = UUID.randomUUID(), type = 0,
+                )
+            ),
+            exerciseDefinitions = listOf(definition),
+            birthDateYear = 1990,
+            weightKg = 80.0,
+            progressionPercentageAmount = 0.05,
+        )
 
     @Test
     fun missingWeeklyProgressOverrides_defaultsToEmptyList() {
@@ -162,5 +340,69 @@ class WorkoutStoreAdapterTest {
         """.trimIndent()
 
         assertEquals(BackupFileType.INCREMENTAL_APP_BACKUP, detectBackupFileType(json))
+    }
+
+    @Test
+    fun exerciseLibraryPackage_isDetectedAndParsedWithoutPrescriptions() {
+        val definitionId = UUID.randomUUID()
+        val json = """
+            {
+              "format": "$EXERCISE_LIBRARY_PACKAGE_FORMAT",
+              "schemaVersion": 2,
+              "exerciseDefinitions": [{
+                "id": "$definitionId",
+                "name": "Push-Up",
+                "instructions": "Keep the trunk braced.",
+                "exerciseType": "BODY_WEIGHT",
+                "equipmentId": null,
+                "bodyWeightPercentage": 100.0,
+                "muscleGroups": ["FRONT_CHEST"],
+                "secondaryMuscleGroups": ["FRONT_TRICEPS"],
+                "requiredAccessoryEquipmentIds": [],
+                "exerciseCategory": "MODERATE_COMPOUND"
+              }],
+              "exerciseMovements": [],
+              "equipments": [],
+              "accessoryEquipments": []
+            }
+        """.trimIndent()
+
+        assertEquals(BackupFileType.EXERCISE_LIBRARY_PACKAGE, detectBackupFileType(json))
+        val parsed = fromJSONToExerciseLibraryPackage(json)
+        assertEquals(EXERCISE_LIBRARY_PACKAGE_FORMAT, parsed.format)
+        assertEquals(definitionId, parsed.exerciseDefinitions.single().id)
+        assertEquals("Push-Up", parsed.exerciseDefinitions.single().name)
+    }
+
+    @Test
+    fun cardioMachine_isParsedAndOnlyCompatibleWithTimedExercises() {
+        val equipmentId = UUID.randomUUID()
+        val json = """
+            {
+              "format": "$EXERCISE_LIBRARY_PACKAGE_FORMAT",
+              "schemaVersion": 2,
+              "exerciseDefinitions": [],
+              "exerciseMovements": [],
+              "equipments": [{
+                "id": "$equipmentId",
+                "type": "CARDIO_MACHINE",
+                "name": "Spin Bike"
+              }],
+              "accessoryEquipments": []
+            }
+        """.trimIndent()
+
+        val cardioMachine = fromJSONToExerciseLibraryPackage(json).equipments.single()
+
+        assertTrue(cardioMachine is CardioMachine)
+        assertTrue(cardioMachine.isCompatibleWith(ExerciseType.COUNTUP))
+        assertTrue(cardioMachine.isCompatibleWith(ExerciseType.COUNTDOWN))
+        assertTrue(!cardioMachine.isCompatibleWith(ExerciseType.WEIGHT))
+        assertTrue(!cardioMachine.isCompatibleWith(ExerciseType.BODY_WEIGHT))
+
+        val weightedEquipment = Generic(UUID.randomUUID(), "Generic")
+        assertTrue(weightedEquipment.isCompatibleWith(ExerciseType.WEIGHT))
+        assertTrue(weightedEquipment.isCompatibleWith(ExerciseType.BODY_WEIGHT))
+        assertTrue(!weightedEquipment.isCompatibleWith(ExerciseType.COUNTUP))
     }
 }

@@ -5,11 +5,15 @@ import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
 import com.gabstra.myworkoutassistant.shared.ProgressionMode
 import com.gabstra.myworkoutassistant.shared.getExerciseTypeFromSet
+import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementRef
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
+import com.gabstra.myworkoutassistant.shared.running.RunningEnvironment
+import com.gabstra.myworkoutassistant.shared.running.RunningPrescription
+import com.gabstra.myworkoutassistant.shared.running.RunningTargetType
 import com.google.gson.JsonDeserializationContext
 import com.google.gson.JsonDeserializer
 import com.google.gson.JsonElement
@@ -32,7 +36,6 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
             is Exercise -> "Exercise"
             is Rest -> "Rest"
             is Superset -> "Superset"
-            else -> throw RuntimeException("Unsupported workout component type")
         }
 
         jsonObject.addProperty("id", src.id.toString())
@@ -44,6 +47,11 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                 jsonObject.addProperty("enabled", src.enabled)
                 jsonObject.addProperty("name", src.name)
                 jsonObject.addProperty("notes", src.notes)
+                src.exerciseDefinitionId?.let {
+                    jsonObject.addProperty("exerciseDefinitionId", it.toString())
+                }
+                src.placementNotes?.let { jsonObject.addProperty("placementNotes", it) }
+                src.nameOverride?.let { jsonObject.addProperty("nameOverride", it) }
                 jsonObject.add("sets", context.serialize(src.sets))
                 jsonObject.addProperty("exerciseType", src.exerciseType.name)
 
@@ -108,6 +116,10 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                 if (src.deloadCutSetsTo != null) {
                     jsonObject.addProperty("deloadCutSetsTo", src.deloadCutSetsTo)
                 }
+                if (src.movementRef != null) {
+                    jsonObject.add("movementRef", context.serialize(src.movementRef))
+                }
+                src.runningPrescription?.let { jsonObject.add("runningPrescription", context.serialize(it)) }
             }
 
             is Rest -> {
@@ -323,6 +335,37 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     }
                     else -> null
                 }
+                val movementRef = if (jsonObject.has("movementRef") && !jsonObject.get("movementRef").isJsonNull) {
+                    context.deserialize<ExerciseMovementRef>(
+                        jsonObject.get("movementRef"),
+                        ExerciseMovementRef::class.java
+                    )
+                } else {
+                    null
+                }
+                val exerciseDefinitionId = jsonObject.get("exerciseDefinitionId")?.let {
+                    if (it.isJsonNull) null else UUID.fromString(it.asString)
+                }
+                val placementNotes = jsonObject.get("placementNotes")?.let {
+                    if (it.isJsonNull) null else it.asString
+                }
+                val nameOverride = jsonObject.get("nameOverride")?.let {
+                    if (it.isJsonNull) null else it.asString
+                }
+                val runningPrescription = jsonObject.get("runningPrescription")
+                    ?.takeUnless { it.isJsonNull }
+                    ?.let { prescriptionJson ->
+                        val value = prescriptionJson.asJsonObject
+                        val environment = runCatching {
+                            RunningEnvironment.valueOf(value.get("environment").asString)
+                        }.getOrNull()
+                        val targetType = runCatching {
+                            RunningTargetType.valueOf(value.get("targetType").asString)
+                        }.getOrNull()
+                        if (environment != null && targetType != null && value.has("targetValue")) {
+                            RunningPrescription(environment, targetType, value.get("targetValue").asDouble)
+                        } else null
+                    }
 
                 Exercise(
                     id,
@@ -354,7 +397,12 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     deloadCompletedSessionsInterval,
                     deloadWeightFactor,
                     deloadRepsDrop,
-                    deloadCutSetsTo
+                    deloadCutSetsTo,
+                    movementRef,
+                    exerciseDefinitionId,
+                    placementNotes,
+                    nameOverride,
+                    runningPrescription,
                 )
             }
 

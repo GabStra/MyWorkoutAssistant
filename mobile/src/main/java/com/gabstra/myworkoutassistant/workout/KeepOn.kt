@@ -40,6 +40,7 @@ fun Context.findActivity(): Activity? {
 fun KeepOn(
     appViewModel: WorkoutViewModel,
     enableDimming: Boolean = false,
+    dimmedScreenBrightness: Float = DefaultDimmedScreenBrightness,
     dimDelay: Long = 15000L, // Delay before dimming the screen
     content: @Composable () -> Unit
 ) {
@@ -54,6 +55,7 @@ fun KeepOn(
 
     val updatedEnableDimming by rememberUpdatedState(enableDimming)
     val updatedDimDelay by rememberUpdatedState(dimDelay)
+    val updatedDimmedScreenBrightness by rememberUpdatedState(dimmedScreenBrightness)
 
     fun setScreenBrightness(brightness: Float) {
         window?.attributes = window.attributes.apply {
@@ -74,7 +76,12 @@ fun KeepOn(
         if (updatedEnableDimming) {
             dimmingJob = scope.launch {
                 delay(updatedDimDelay)
-                setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_OFF) // Use OFF for minimal brightness
+                setScreenBrightness(
+                    updatedDimmedScreenBrightness.coerceIn(
+                        MinimumDimmedScreenBrightness,
+                        MaximumDimmedScreenBrightness,
+                    )
+                )
                 isDimmed = true
             }
         }

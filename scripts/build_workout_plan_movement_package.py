@@ -1,0 +1,507 @@
+from __future__ import annotations
+
+import argparse
+import base64
+import gzip
+import hashlib
+import io
+import json
+import os
+import re
+import sys
+from collections import defaultdict
+from pathlib import Path
+from typing import Any
+
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
+
+from exercise_motion_pkg.artifact_state import validate_artifact_state
+
+
+MOVEMENT_FORMAT = "wear_skeleton_json_v1"
+MOVEMENT_COMPRESSION = "gzip+base64"
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Attach generated wear skeleton movement JSON files to a workout-plan or exercise-library package "
+            "using a workout motion summary or exercise-library revalidation report."
+        )
+    )
+    parser.add_argument(
+        "--workout-plan-package-json",
+        required=True,
+        help="Source WorkoutPlanPackage JSON to enrich.",
+    )
+    parser.add_argument(
+        "--motion-summary-json",
+        required=True,
+        help=(
+            "workout_motion_generation_summary.json or exercise_library_revalidation_report.json "
+            "produced by the movement pipeline."
+        ),
+    )
+    parser.add_argument(
+        "--output-json",
+        required=True,
+        help="Destination WorkoutPlanPackage JSON with movement refs and movement backups.",
+    )
+    parser.add_argument(
+        "--movement-id-prefix",
+        default="exercise-motion",
+        help="Prefix used when creating ExerciseMovementRef movementId values.",
+    )
+    parser.add_argument(
+        "--strict-id-match",
+        action="store_true",
+        help="Do not fall back to normalized exercise-name matching when exercise ids do not match.",
+    )
+    parser.add_argument(
+        "--allow-empty",
+        action="store_true",
+        help="Write the package even when no generated movements can be attached.",
+    )
+    return parser
+
+
+def load_json_file(path: Path) -> Any:
+    with path.open("r", encoding="utf-8-sig") as handle:
+        return json.load(handle)
+
+
+def read_text_file(path: Path) -> str:
+    with path.open("r", encoding="utf-8-sig") as handle:
+        return handle.read()
+
+
+def normalize_key(value: Any) -> str:
+    return str(value).strip().lower()
+
+
+def normalize_name(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value).strip().lower())
+
+
+def is_approved_summary_item(summary_item: dict[str, Any]) -> bool:
+    """Only attach movements with an explicit successful pipeline status."""
+    status = summary_item.get("status")
+    return isinstance(status, str) and normalize_key(status) in {"completed", "valid"}
+
+
+def iter_motion_summary_items(summary: dict[str, Any]):
+    items = summary.get("exercises")
+    if not isinstance(items, list):
+        items = summary.get("results")
+    return items if isinstance(items, list) else []
+
+
+def revalidated_selection_motion_path(
+    summary_item: dict[str, Any],
+    *,
+    summary_path: Path,
+    summary: dict[str, Any],
+) -> Path | None:
+    selected_path = resolve_motion_path(
+        summary_item.get("selectedWearSkeletonPath"),
+        summary_path,
+        summary,
+    )
+    if selected_path is not None:
+        return selected_path
+    workspace = resolve_motion_path(summary_item.get("workspace"), summary_path, summary)
+    if workspace is None or not workspace.is_dir():
+        return None
+    selected_dir = workspace / "selected"
+    selected_manifest_path = selected_dir / "selection_manifest.json"
+    if selected_manifest_path.exists():
+        try:
+            selected_manifest = load_json_file(selected_manifest_path)
+            selected = selected_manifest.get("selected") if isinstance(selected_manifest, dict) else None
+            if isinstance(selected, dict):
+                selected_path = resolve_motion_path(
+                    selected.get("selectedWearSkeletonPath"),
+                    summary_path,
+                    summary,
+                )
+                if selected_path is not None:
+                    return selected_path
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass
+    copied_skeletons = sorted(selected_dir.glob("*_wear_skeleton.json"))
+    return copied_skeletons[0].resolve() if len(copied_skeletons) == 1 else None
+
+
+def selection_manifest_path_for_summary_item(
+    summary_item: dict[str, Any],
+    *,
+    summary_path: Path,
+    summary: dict[str, Any],
+) -> Path | None:
+    manifest_path = resolve_motion_path(
+        summary_item.get("selectionManifestPath"),
+        summary_path,
+        summary,
+    )
+    if manifest_path is not None:
+        return manifest_path
+
+    workspace = resolve_motion_path(summary_item.get("workspace"), summary_path, summary)
+    if workspace is None or not workspace.is_dir():
+        return None
+    candidate = workspace / "selected" / "selection_manifest.json"
+    return candidate.resolve() if candidate.is_file() else None
+
+
+def selected_review_identity(selected: dict[str, Any]) -> dict[str, Any] | None:
+    identity = selected.get("selectedSkeletonIdentity")
+    if isinstance(identity, dict):
+        return identity
+
+    ranking = selected.get("ranking")
+    ranking_payload = ranking.get("payload") if isinstance(ranking, dict) else None
+    final_validation = (
+        ranking_payload.get("finalOutputValidation")
+        if isinstance(ranking_payload, dict)
+        else None
+    )
+    render_evidence = (
+        final_validation.get("renderEvidence")
+        if isinstance(final_validation, dict)
+        else None
+    )
+    identity = (
+        render_evidence.get("skeletonIdentity")
+        if isinstance(render_evidence, dict)
+        else None
+    )
+    return identity if isinstance(identity, dict) else None
+
+
+def successful_final_validation(selected: dict[str, Any], artifact_class: str) -> dict[str, Any] | None:
+    ranking = selected.get("ranking")
+    ranking_payload = ranking.get("payload") if isinstance(ranking, dict) else None
+    final_validation = (
+        ranking_payload.get("finalOutputValidation")
+        if isinstance(ranking_payload, dict)
+        else None
+    )
+    if not isinstance(final_validation, dict) or final_validation.get("passed") is not True:
+        return None
+    artifact_class_gate = final_validation.get("artifactClassGate")
+    if (
+        not isinstance(artifact_class_gate, dict)
+        or artifact_class_gate.get("passed") is not True
+        or artifact_class_gate.get("artifactClass") != artifact_class
+    ):
+        return None
+    render_evidence = final_validation.get("renderEvidence")
+    if (
+        not isinstance(render_evidence, dict)
+        or render_evidence.get("available") is not True
+        or render_evidence.get("passed") is not True
+    ):
+        return None
+    return render_evidence
+
+
+def validate_selected_movement(
+    selected_path: Path,
+    summary_item: dict[str, Any],
+    *,
+    summary_path: Path,
+    summary: dict[str, Any],
+) -> dict[str, Any]:
+    try:
+        movement_json = read_text_file(selected_path)
+        movement_payload = json.loads(movement_json)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Selected wear skeleton is not valid JSON: {selected_path}") from exc
+    if not isinstance(movement_payload, dict) or not isinstance(movement_payload.get("frames"), list):
+        raise ValueError(f"Selected wear skeleton has no frame array: {selected_path}")
+
+    try:
+        movement_state = validate_artifact_state(
+            movement_payload.get("artifactState"),
+            movement_payload=movement_payload,
+        )
+    except ValueError as exc:
+        raise ValueError(f"Selected wear skeleton has invalid artifact state: {selected_path}: {exc}") from exc
+    if movement_state["terminal"] is not True:
+        raise ValueError(f"Selected wear skeleton is not a terminal artifact: {selected_path}")
+
+    manifest_path = selection_manifest_path_for_summary_item(
+        summary_item,
+        summary_path=summary_path,
+        summary=summary,
+    )
+    if manifest_path is None:
+        raise ValueError(
+            f"Selected wear skeleton has no selection manifest for review parity: {selected_path}"
+        )
+    try:
+        selection_manifest = load_json_file(manifest_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Could not load selected movement manifest: {manifest_path}") from exc
+    if (
+        not isinstance(selection_manifest, dict)
+        or selection_manifest.get("selectionStatus") != "selected"
+    ):
+        raise ValueError(f"Selection manifest does not approve a selected movement: {manifest_path}")
+    selected = selection_manifest.get("selected") if isinstance(selection_manifest, dict) else None
+    if not isinstance(selected, dict):
+        raise ValueError(f"Selected movement manifest has no selected artifact: {manifest_path}")
+    if selected.get("artifactState") != movement_state:
+        raise ValueError(
+            f"Selected skeleton artifact state differs from its selection manifest: {selected_path}"
+        )
+
+    render_evidence = successful_final_validation(selected, movement_state["artifactClass"])
+    if render_evidence is None:
+        raise ValueError(f"Selection manifest has no passing final render validation: {manifest_path}")
+
+    review_identity = selected_review_identity(selected)
+    if not isinstance(review_identity, dict):
+        raise ValueError(f"Selection manifest has no final review identity: {manifest_path}")
+    rendered_identity = render_evidence.get("skeletonIdentity")
+    if not isinstance(rendered_identity, dict):
+        raise ValueError(f"Final render validation has no skeleton identity: {manifest_path}")
+    if any(
+        review_identity.get(key) != rendered_identity.get(key)
+        for key in ("sha256", "frameCount")
+    ):
+        raise ValueError(f"Selection identity differs from final render review: {manifest_path}")
+    expected_hash = review_identity.get("sha256")
+    expected_frame_count = review_identity.get("frameCount")
+    actual_hash = hashlib.sha256(selected_path.read_bytes()).hexdigest()
+    if expected_hash != actual_hash or expected_frame_count != len(movement_payload["frames"]):
+        raise ValueError(
+            f"Selected skeleton differs from the final reviewed artifact: {selected_path}"
+        )
+    return movement_payload
+
+
+def movement_id_for(prefix: str, exercise_id: Any, exercise_name: Any) -> str:
+    raw_key = str(exercise_id).strip() if exercise_id is not None and str(exercise_id).strip() else ""
+    if not raw_key:
+        raw_key = normalize_name(exercise_name) or "movement"
+    return f"{prefix}:{raw_key}"
+
+
+def gzip_base64(data: str) -> str:
+    output = io.BytesIO()
+    with gzip.GzipFile(fileobj=output, mode="wb", mtime=0) as gzip_file:
+        gzip_file.write(data.encode("utf-8"))
+    return base64.b64encode(output.getvalue()).decode("ascii")
+
+
+def iter_package_exercises(workout_plan_package: dict[str, Any]):
+    for definition_index, definition in enumerate(
+        workout_plan_package.get("exerciseDefinitions") or []
+    ):
+        if isinstance(definition, dict):
+            yield definition, f"exerciseDefinitions[{definition_index}]"
+
+    for workout_index, workout in enumerate(workout_plan_package.get("workouts") or []):
+        if not isinstance(workout, dict):
+            continue
+        for component_index, component in enumerate(workout.get("workoutComponents") or []):
+            yield from iter_component_exercises(
+                component,
+                f"workouts[{workout_index}].workoutComponents[{component_index}]",
+            )
+
+
+def iter_component_exercises(component: Any, location: str):
+    if not isinstance(component, dict):
+        return
+
+    component_type = component.get("type")
+    if component_type == "Exercise":
+        yield component, location
+        return
+
+    if component_type == "Superset":
+        for exercise_index, exercise in enumerate(component.get("exercises") or []):
+            if isinstance(exercise, dict):
+                yield exercise, f"{location}.exercises[{exercise_index}]"
+        return
+
+    if "sets" in component and "name" in component:
+        yield component, location
+
+
+def resolve_motion_path(path_value: Any, summary_path: Path, summary: dict[str, Any]) -> Path | None:
+    if path_value is None:
+        return None
+
+    raw_path = str(path_value).strip()
+    if not raw_path:
+        return None
+
+    path = Path(raw_path)
+    candidates = [path]
+
+    if not path.is_absolute():
+        candidates.append(summary_path.parent / path)
+        workspace_root = summary.get("workspaceRoot")
+        if workspace_root:
+            candidates.append(Path(str(workspace_root)) / path)
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+
+    return None
+
+
+def existing_backups_by_key(workout_plan_package: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
+    backups: dict[tuple[str, str], dict[str, Any]] = {}
+    for field_name in ("exerciseMovements", "ExerciseMovements"):
+        for backup in workout_plan_package.get(field_name) or []:
+            if not isinstance(backup, dict):
+                continue
+            movement_ref = backup.get("movementRef")
+            if not isinstance(movement_ref, dict):
+                continue
+            movement_id = str(movement_ref.get("movementId") or "").strip()
+            content_hash = str(movement_ref.get("contentHash") or "").strip().lower()
+            if movement_id and content_hash:
+                backups[(movement_id, content_hash)] = backup
+    return backups
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+
+    package_path = Path(args.workout_plan_package_json).resolve()
+    summary_path = Path(args.motion_summary_json).resolve()
+    output_path = Path(args.output_json).resolve()
+
+    workout_plan_package = load_json_file(package_path)
+    if not isinstance(workout_plan_package, dict):
+        raise ValueError("Workout-plan package JSON root must be an object.")
+
+    summary = load_json_file(summary_path)
+    if not isinstance(summary, dict):
+        raise ValueError("Motion summary JSON root must be an object.")
+
+    id_index: dict[str, list[tuple[dict[str, Any], str]]] = defaultdict(list)
+    name_index: dict[str, list[tuple[dict[str, Any], str]]] = defaultdict(list)
+    for exercise, location in iter_package_exercises(workout_plan_package):
+        exercise_id = exercise.get("id")
+        if exercise_id is not None and str(exercise_id).strip():
+            id_index[normalize_key(exercise_id)].append((exercise, location))
+
+        exercise_name = exercise.get("name")
+        normalized_name = normalize_name(exercise_name)
+        if normalized_name:
+            name_index[normalized_name].append((exercise, location))
+
+    movement_backups = existing_backups_by_key(workout_plan_package)
+    attached_count = 0
+    skipped_unapproved_count = 0
+    warning_count = 0
+
+    for summary_item in iter_motion_summary_items(summary):
+        if not isinstance(summary_item, dict):
+            continue
+        if not is_approved_summary_item(summary_item):
+            skipped_unapproved_count += 1
+            continue
+
+        exercise_id = summary_item.get("exerciseId")
+        exercise_name = summary_item.get("exerciseName")
+        selected_path = revalidated_selection_motion_path(
+            summary_item,
+            summary_path=summary_path,
+            summary=summary,
+        )
+        if selected_path is None:
+            continue
+
+        matches = []
+        match_source = ""
+        if exercise_id is not None and str(exercise_id).strip():
+            matches = id_index.get(normalize_key(exercise_id), [])
+            match_source = "id"
+
+        if not matches and not args.strict_id_match:
+            normalized_name = normalize_name(exercise_name)
+            if normalized_name:
+                matches = name_index.get(normalized_name, [])
+                match_source = "name"
+
+        if not matches:
+            warning_count += 1
+            print(
+                f"warning: no package exercise matched summary exercise "
+                f"id={exercise_id!r} name={exercise_name!r}",
+                file=sys.stderr,
+            )
+            continue
+
+        validate_selected_movement(
+            selected_path,
+            summary_item,
+            summary_path=summary_path,
+            summary=summary,
+        )
+        movement_json = read_text_file(selected_path)
+
+        content_hash = hashlib.sha256(movement_json.encode("utf-8")).hexdigest()
+        movement_id = movement_id_for(args.movement_id_prefix, exercise_id, exercise_name)
+        movement_ref = {
+            "movementId": movement_id,
+            "contentHash": content_hash,
+            "format": MOVEMENT_FORMAT,
+            "version": 1,
+        }
+
+        for exercise, _location in matches:
+            exercise["movementRef"] = movement_ref
+            attached_count += 1
+
+        movement_backups[(movement_id, content_hash)] = {
+            "movementRef": movement_ref,
+            "compressedJsonBase64": gzip_base64(movement_json),
+            "compression": MOVEMENT_COMPRESSION,
+        }
+
+        print(
+            f"attached {match_source}: {exercise_name or exercise_id} -> "
+            f"{len(matches)} exercise(s), {selected_path}"
+        )
+
+    workout_plan_package["exerciseMovements"] = list(movement_backups.values())
+    workout_plan_package.pop("ExerciseMovements", None)
+
+    if attached_count == 0 and not args.allow_empty:
+        raise RuntimeError(
+            "No generated movements were attached. Check that the summary has selectedWearSkeletonPath "
+            "entries and that exercise ids or names match the workout-plan package."
+        )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_output_path = output_path.with_name(f".{output_path.name}.{os.getpid()}.tmp")
+    try:
+        with temporary_output_path.open("w", encoding="utf-8") as handle:
+            json.dump(workout_plan_package, handle, indent=2, ensure_ascii=False)
+            handle.write("\n")
+        os.replace(temporary_output_path, output_path)
+    finally:
+        temporary_output_path.unlink(missing_ok=True)
+
+    print(
+        f"wrote {output_path} with {attached_count} exercise movement ref attachment(s), "
+        f"{len(movement_backups)} movement backup(s), "
+        f"{skipped_unapproved_count} unapproved result(s) skipped, {warning_count} warning(s)"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

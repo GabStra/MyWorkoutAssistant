@@ -18,6 +18,8 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.util.Log
+import android.view.KeyEvent
+import androidx.core.content.edit
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -31,12 +33,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.lifecycle.Lifecycle
@@ -46,7 +50,6 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.currentBackStackEntryAsState
-import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.navigation.SwipeDismissableNavHost
 import androidx.wear.compose.navigation.composable
@@ -54,6 +57,8 @@ import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import com.gabstra.myworkoutassistant.composables.EdgeSwipeBackHandler
 import com.gabstra.myworkoutassistant.composables.KeepOn
 import com.gabstra.myworkoutassistant.composables.RecoveryDialog
+import com.gabstra.myworkoutassistant.composables.SyncStatusBadge
+import com.gabstra.myworkoutassistant.composables.FullScreenLoadingIndicator
 import com.gabstra.myworkoutassistant.composables.TutorialOverlay
 import com.gabstra.myworkoutassistant.composables.TutorialStep
 import com.gabstra.myworkoutassistant.data.AppViewModel
@@ -67,6 +72,7 @@ import com.gabstra.myworkoutassistant.data.SensorDataViewModelFactory
 import com.gabstra.myworkoutassistant.data.TutorialPreferences
 import com.gabstra.myworkoutassistant.data.TutorialState
 import com.gabstra.myworkoutassistant.data.WhoopHeartRateViewModel
+import com.gabstra.myworkoutassistant.services.RunningTrackingService
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.data.findActivity
 import com.gabstra.myworkoutassistant.data.sendErrorLogsToMobile
@@ -76,9 +82,13 @@ import com.gabstra.myworkoutassistant.repository.SensorDataRepository
 import com.gabstra.myworkoutassistant.scheduling.WorkoutAlarmScheduler
 import com.gabstra.myworkoutassistant.screens.LoadingScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutDetailScreen
+import com.gabstra.myworkoutassistant.screens.WorkoutExercisesScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutSelectionScreen
-import com.gabstra.myworkoutassistant.shared.MediumDarkGray
+import com.gabstra.myworkoutassistant.shared.datalayer.SyncPhase
+import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
+import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutSessionPhase
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.google.android.gms.wearable.DataClient
@@ -114,6 +124,22 @@ class MainActivity : ComponentActivity() {
 
     @OptIn(ExperimentalHorologistApi::class)
     private lateinit var appHelper: WearDataLayerAppHelper
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_STEM_1 && event?.repeatCount == 0) {
+            val workoutState = appViewModel.screenState.value
+            val activeSet = workoutState.workoutState as? WorkoutState.Set
+            val isTrackingRun = workoutState.sessionPhase == WorkoutSessionPhase.ACTIVE &&
+                activeSet != null &&
+                appViewModel.exercisesById[activeSet.exerciseId]?.exerciseType == ExerciseType.RUNNING &&
+                RunningTrackingService.state.value.running
+            if (isTrackingRun) {
+                appViewModel.openRunningControlsDialog()
+                return true
+            }
+        }
+        return super.onKeyDown(keyCode, event)
+    }
 
     override fun onDestroy() {
         super.onDestroy()
@@ -160,7 +186,6 @@ class MainActivity : ComponentActivity() {
             this.startActivity(
                 Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT)
                     .setData("package:${this.packageName}".toUri())
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             )
         }
 
@@ -294,7 +319,6 @@ fun WearApp(
         var initialized by remember { mutableStateOf(false) }
 
         var startDestination by remember { mutableStateOf<String?>(null) }
-
         var tutorialState by remember { mutableStateOf(TutorialState()) }
 
         var showWorkoutSelectionTutorial by remember { mutableStateOf(false) }
@@ -484,121 +508,155 @@ fun WearApp(
                         }
                     }
                 ) {
-                    SwipeDismissableNavHost(
-                        modifier = Modifier.fillMaxSize(),
-                        navController = navController,
-                        startDestination = startDestination!!,
-                        userSwipeEnabled = userSwipeEnabled
-                    ) {
-                        composable(Screen.WorkoutSelection.route) {
-                            Box(modifier = Modifier.fillMaxSize()) {
-                                WorkoutSelectionScreen(
-                                    alarmManager,
-                                    dataClient,
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        SwipeDismissableNavHost(
+                            modifier = Modifier.fillMaxSize(),
+                            navController = navController,
+                            startDestination = startDestination!!,
+                            userSwipeEnabled = userSwipeEnabled
+                        ) {
+                            composable(Screen.WorkoutSelection.route) {
+                                Box(modifier = Modifier.fillMaxSize()) {
+                                    WorkoutSelectionScreen(
+                                        alarmManager,
+                                        dataClient,
+                                        navController,
+                                        appViewModel,
+                                        hapticsViewModel,
+                                        appHelper,
+                                    )
+                                    TutorialOverlay(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .zIndex(1f),
+                                        visible = showWorkoutSelectionTutorial,
+                                        steps = listOf(
+                                            TutorialStep("Choose a workout", "Tap a workout to open it, review the details, and start when you're ready."),
+                                            TutorialStep("Watch sync status", "The small indicator at the top shows whether the watch is syncing. If something looks outdated, let sync finish first.")
+                                        ),
+                                        onDismiss = {
+                                            showWorkoutSelectionTutorial = false
+                                            tutorialState = TutorialPreferences.update(
+                                                localContext,
+                                                tutorialState
+                                            ) {
+                                                it.copy(hasSeenWorkoutSelectionTutorial = true)
+                                            }
+                                        },
+                                        hapticsViewModel = hapticsViewModel,
+                                        onVisibilityChange = { isVisible ->
+                                            if (isVisible) {
+                                                appViewModel.setDimming(false)
+                                            } else {
+                                                appViewModel.reEvaluateDimmingForCurrentState()
+                                            }
+                                        }
+                                    )
+                                }
+                            }
+                            composable(Screen.WorkoutDetail.route) {
+                                WorkoutDetailScreen(
                                     navController,
                                     appViewModel,
                                     hapticsViewModel,
-                                    appHelper,
+                                    hrViewModel
                                 )
-                                TutorialOverlay(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .zIndex(1f),
-                                    visible = showWorkoutSelectionTutorial,
-                                    steps = listOf(
-                                        TutorialStep("Start a workout", "Tap a workout to open its details, then start from that screen."),
-                                        TutorialStep("List header", "Long press the header for app info and options.\nDouble tap the header for sync tools.")
-                                    ),
-                                    onDismiss = {
-                                        showWorkoutSelectionTutorial = false
-                                        tutorialState = TutorialPreferences.update(
-                                            localContext,
-                                            tutorialState
-                                        ) {
-                                            it.copy(hasSeenWorkoutSelectionTutorial = true)
-                                        }
-                                    },
+                            }
+                            composable(Screen.WorkoutExercises.route) {
+                                WorkoutExercisesScreen(
+                                    navController = navController,
+                                    sourceViewModel = appViewModel,
                                     hapticsViewModel = hapticsViewModel,
-                                    onVisibilityChange = { isVisible ->
-                                        if (isVisible) {
-                                            appViewModel.setDimming(false)
-                                        } else {
-                                            appViewModel.reEvaluateDimmingForCurrentState()
+                                )
+                            }
+                            composable(Screen.Workout.route) {
+                                WorkoutScreen(
+                                    navController,
+                                    appViewModel,
+                                    hapticsViewModel,
+                                    heartRateChangeViewModel,
+                                    hrViewModel,
+                                    polarViewModel,
+                                    whoopHeartRateViewModel,
+                                    showHeartRateTutorial = showWorkoutHeartRateTutorial,
+                                    onDismissHeartRateTutorial = {
+                                        showWorkoutHeartRateTutorial = false
+                                        tutorialState =
+                                            TutorialPreferences.update(
+                                                localContext,
+                                                tutorialState
+                                            ) {
+                                                it.copy(hasSeenWorkoutHeartRateTutorial = true)
+                                            }
+                                    },
+                                    showSetScreenTutorial = showSetScreenTutorial,
+                                    onDismissSetScreenTutorial = {
+                                        showSetScreenTutorial = false
+                                        tutorialState =
+                                            TutorialPreferences.update(
+                                                localContext,
+                                                tutorialState
+                                            ) {
+                                                it.copy(hasSeenSetScreenTutorial = true)
+                                            }
+                                    },
+                                    showRestScreenTutorial = showRestScreenTutorial,
+                                    onDismissRestScreenTutorial = {
+                                        showRestScreenTutorial = false
+                                        tutorialState =
+                                            TutorialPreferences.update(
+                                                localContext,
+                                                tutorialState
+                                            ) {
+                                                it.copy(hasSeenRestScreenTutorial = true)
+                                            }
+                                    },
+                                )
+                            }
+                            composable(Screen.Loading.route) {
+                                val progress by appViewModel.backupProgress
+                                val syncPhase by appViewModel.backupSyncPhase
+                                val animatedProgress by animateFloatAsState(
+                                    targetValue = progress,
+                                    animationSpec = tween(durationMillis = 400)
+                                )
+                                // Processing is the longest silent stage; a live elapsed
+                                // counter keeps it from reading as a hung spinner.
+                                val processingElapsedSeconds by produceState(0, syncPhase) {
+                                    if (syncPhase == SyncPhase.PROCESSING) {
+                                        while (true) {
+                                            delay(1000)
+                                            value++
                                         }
+                                    } else {
+                                        value = 0
                                     }
+                                }
+
+                                val syncStageText = when (syncPhase) {
+                                    SyncPhase.CONNECTING -> "Connecting to phone"
+                                    SyncPhase.TRANSFERRING -> "Receiving data"
+                                    SyncPhase.PROCESSING -> "Processing data · ${processingElapsedSeconds}s"
+                                    SyncPhase.COMPLETED -> "Sync complete"
+                                }
+                                FullScreenLoadingIndicator(
+                                    text = syncStageText,
+                                    // Only the chunk transfer has a known fraction;
+                                    // processing duration is unknown, so it stays
+                                    // indeterminate (the elapsed counter shows liveness).
+                                    progress = animatedProgress.takeIf {
+                                        syncPhase == SyncPhase.TRANSFERRING
+                                    },
+                                    completed = syncPhase == SyncPhase.COMPLETED,
                                 )
                             }
                         }
-                        composable(Screen.WorkoutDetail.route) {
-                            WorkoutDetailScreen(
-                                navController,
-                                appViewModel,
-                                hapticsViewModel,
-                                hrViewModel
-                            )
-                        }
-                        composable(Screen.Workout.route) {
-                            WorkoutScreen(
-                                navController,
-                                appViewModel,
-                                hapticsViewModel,
-                                heartRateChangeViewModel,
-                                hrViewModel,
-                                polarViewModel,
-                                whoopHeartRateViewModel,
-                                showHeartRateTutorial = showWorkoutHeartRateTutorial,
-                                onDismissHeartRateTutorial = {
-                                    showWorkoutHeartRateTutorial = false
-                                    tutorialState =
-                                        TutorialPreferences.update(
-                                            localContext,
-                                            tutorialState
-                                        ) {
-                                            it.copy(hasSeenWorkoutHeartRateTutorial = true)
-                                        }
-                                },
-                                showSetScreenTutorial = showSetScreenTutorial,
-                                onDismissSetScreenTutorial = {
-                                    showSetScreenTutorial = false
-                                    tutorialState =
-                                        TutorialPreferences.update(
-                                            localContext,
-                                            tutorialState
-                                        ) {
-                                            it.copy(hasSeenSetScreenTutorial = true)
-                                        }
-                                },
-                                showRestScreenTutorial = showRestScreenTutorial,
-                                onDismissRestScreenTutorial = {
-                                    showRestScreenTutorial = false
-                                    tutorialState =
-                                        TutorialPreferences.update(
-                                            localContext,
-                                            tutorialState
-                                        ) {
-                                            it.copy(hasSeenRestScreenTutorial = true)
-                                        }
-                                },
-                            )
-                        }
-                        composable(Screen.Loading.route) {
-                            val progress by appViewModel.backupProgress
-                            val animatedProgress by animateFloatAsState(
-                                targetValue = progress,
-                                animationSpec = tween(durationMillis = 400)
-                            )
-
-                            CircularProgressIndicator(
-                                progress = animatedProgress,
-                                modifier = Modifier
-                                    .fillMaxSize(),
-                                strokeWidth = 4.dp,
-                                indicatorColor = MaterialTheme.colorScheme.primary,
-                                trackColor = MediumDarkGray,
-                            )
-
-                            LoadingScreen(appViewModel, "Syncing with phone")
-                        }
+                        SyncStatusBadge(
+                            viewModel = appViewModel,
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .zIndex(2f)
+                        )
                     }
                 }
             }
@@ -612,8 +670,6 @@ fun WearApp(
                 android.Manifest.permission.BODY_SENSORS,
                 android.Manifest.permission.BLUETOOTH_SCAN,
                 android.Manifest.permission.BLUETOOTH_CONNECT,
-                android.Manifest.permission.ACCESS_FINE_LOCATION,
-                android.Manifest.permission.ACCESS_COARSE_LOCATION,
                 android.Manifest.permission.POST_NOTIFICATIONS
             )
             val resumeRecoveredWorkout = {
@@ -623,9 +679,9 @@ fun WearApp(
                         "workout_state",
                         Context.MODE_PRIVATE
                     )
-                    prefs.edit()
-                        .putBoolean("isWorkoutInProgress", true)
-                        .apply()
+                    prefs.edit {
+                        putBoolean("isWorkoutInProgress", true)
+                    }
                     // Navigate before hydration: resumeWorkoutFromRecord does heavy IO first; showing
                     // WorkoutScreen immediately avoids a dead air gap after the recovery dialog closes.
                     navController.navigate(Screen.Workout.route) {
@@ -645,10 +701,10 @@ fun WearApp(
             val permissionLauncherResume =
                 androidx.activity.compose.rememberLauncherForActivityResult(
                     androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
-                ) { result ->
-                    if (result.all { it.value }) {
-                        resumeRecoveredWorkout()
-                    }
+                ) {
+                    // Recovery resume must not silently die on partial permission denial.
+                    // External-HR preparation can still surface the missing requirement and allow skip.
+                    resumeRecoveredWorkout()
                 }
 
             LaunchedEffect(showRecoveredNotice) {

@@ -13,8 +13,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Warning
@@ -59,8 +62,6 @@ import java.time.LocalDateTime
 import java.time.temporal.ChronoUnit
 
 private const val TAG = "BodyWeightSetScreen"
-private val DeltaTextSlotHeight = 16.dp
-
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun BodyWeightSetScreen(
@@ -73,6 +74,7 @@ fun BodyWeightSetScreen(
     onEditModeDisabled: () -> Unit,
     extraInfo: (@Composable (WorkoutState.Set) -> Unit)? = null,
     exerciseTitleComposable:  @Composable () -> Unit,
+    targetRepRange: String? = null,
     customComponentWrapper: @Composable (@Composable () -> Unit) -> Unit,
 ) {
     val context = LocalContext.current
@@ -80,7 +82,8 @@ fun BodyWeightSetScreen(
     val previousSetData = state.previousSetData as BodyWeightSetData
     val historicalSetData = state.historicalSetData as? BodyWeightSetData
     val comparisonSetData = historicalSetData ?: previousSetData
-    var currentSetData by remember(state.set.id) {
+    val initialSetData = state.previousSetData as BodyWeightSetData
+    var currentSetData by remember(state.set.id, state.equipmentId) {
         mutableStateOf(state.currentSetData as BodyWeightSetData)
     }
     val exercise = remember(state.exerciseId) {
@@ -170,9 +173,9 @@ fun BodyWeightSetScreen(
     }
     var availableWeights by remember(state.equipmentId) { mutableStateOf<Set<Double>>(emptySet()) }
 
-    var closestWeight by remember(state.set.id) { mutableStateOf<Double?>(null) }
-    var closestWeightIndex by remember(state.set.id) { mutableStateOf<Int?>(null) }
-    var selectedWeightIndex by remember(state.set.id) { mutableStateOf<Int?>(null) }
+    var closestWeight by remember(state.set.id, state.equipmentId) { mutableStateOf<Double?>(null) }
+    var closestWeightIndex by remember(state.set.id, state.equipmentId) { mutableStateOf<Int?>(null) }
+    var selectedWeightIndex by remember(state.set.id, state.equipmentId) { mutableStateOf<Int?>(null) }
 
     LaunchedEffect(equipment) {
         availableWeights = if (equipment == null) {
@@ -219,7 +222,11 @@ fun BodyWeightSetScreen(
 
     val typography = MaterialTheme.typography
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
-    val itemStyle = remember(typography) { typography.numeralSmall.copy(fontWeight = FontWeight.Medium) }
+    val itemStyle = remember(typography) {
+        typography.numeralSmall
+            .compactExerciseSetValueStyle()
+            .copy(fontWeight = FontWeight.Medium)
+    }
 
     LaunchedEffect(currentSetData) {
         state.currentSetData = currentSetData
@@ -237,7 +244,7 @@ fun BodyWeightSetScreen(
         if (isInEditMode) {
             onEditModeEnabled()
             while (isInEditMode) {
-                if (System.currentTimeMillis() - lastInteractionTime > 5000) {
+                if (System.currentTimeMillis() - lastInteractionTime > WEAR_CONTROL_EDIT_INACTIVITY_TIMEOUT_MILLIS) {
                     isRepsInEditMode = false
                     isWeightInEditMode = false
                 }
@@ -395,25 +402,12 @@ fun BodyWeightSetScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             ScalableText(
-                modifier = Modifier.height(35.dp),
+                modifier = Modifier.height(32.dp),
                 text = repsText,
                 style = style,
                 color = MaterialTheme.colorScheme.onBackground,
                 textAlign = TextAlign.Center,
             )
-            Box(
-                modifier = Modifier.height(DeltaTextSlotHeight),
-                contentAlignment = Alignment.TopCenter,
-            ) {
-                if (repsDeltaText != null) {
-                    ScalableText(
-                        text = repsDeltaText,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colorForSetSegmentTrend(historicalSetDifference.repsTrend),
-                        textAlign = TextAlign.Center,
-                    )
-                }
-            }
         }
     }
 
@@ -484,25 +478,12 @@ fun BodyWeightSetScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             ScalableText(
-                modifier = Modifier.height(35.dp),
+                modifier = Modifier.height(32.dp),
                 text = weightText,
                 style = style,
                 color = MaterialTheme.colorScheme.onBackground,
                 textAlign = TextAlign.Center,
             )
-            Box(
-                modifier = Modifier.height(DeltaTextSlotHeight),
-                contentAlignment = Alignment.TopCenter,
-            ) {
-                if (weightDeltaText != null) {
-                    ScalableText(
-                        text = weightDeltaText,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colorForSetSegmentTrend(historicalSetDifference.weightTrend),
-                        textAlign = TextAlign.Center,
-                    )
-                }
-            }
         }
     }
 
@@ -516,7 +497,9 @@ fun BodyWeightSetScreen(
             verticalArrangement = Arrangement.Top
         ){
             Box(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Row(
@@ -524,29 +507,11 @@ fun BodyWeightSetScreen(
                     horizontalArrangement = Arrangement.spacedBy(15.dp,Alignment.CenterHorizontally)
                 ) {
                     if(shouldShowWeights) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(2.5.dp, Alignment.Bottom)
-                        ) {
-                            Text(
-                                text = "WEIGHT (KG)",
-                                style = headerStyle,
-                                textAlign = TextAlign.Center,
-                                color =  MaterialTheme.colorScheme.onBackground,
-                            )
+                        SetValueSection(label = "WEIGHT (KG)", headerStyle = headerStyle) {
                             WeightRow(style = itemStyle)
                         }
                     }
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(2.5.dp, Alignment.Bottom)
-                    ) {
-                        Text(
-                            text = "REPS",
-                            style = headerStyle,
-                            textAlign = TextAlign.Center,
-                            color =  MaterialTheme.colorScheme.onBackground,
-                        )
+                    SetValueSection(label = "REPS", headerStyle = headerStyle) {
                         RepsRow(style = itemStyle)
                     }
                 }
@@ -568,7 +533,8 @@ fun BodyWeightSetScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .alpha(if (isInEditMode) 0f else 1f),
+                    .alpha(if (isInEditMode) 0f else 1f)
+                    .verticalScroll(rememberScrollState(), enabled = !isInEditMode),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Top
             ) {
@@ -616,10 +582,14 @@ fun BodyWeightSetScreen(
                         }
                     }
                 }
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(5.dp))
                 SetScreen(
                     customModifier = Modifier
                 )
+                targetRepRange?.let {
+                    Spacer(modifier = Modifier.height(7.5.dp))
+                    TargetRepRangeLabel(targetRepRange = it)
+                }
             }
 
             if (isRepsInEditMode || isWeightInEditMode) {
@@ -638,17 +608,34 @@ fun BodyWeightSetScreen(
                     onPlusLongPress = { onPlusClick() },
                     isMinusEnabled = canDecrease,
                     isPlusEnabled = canIncrease,
+                    isResetEnabled = currentSetData != initialSetData,
                     onCloseClick = {
                         isRepsInEditMode = false
                         isWeightInEditMode = false
                     },
+                    onResetClick = {
+                        currentSetData = initialSetData
+                        if (isWeightInEditMode) {
+                            viewModel.schedulePlateRecalculation(initialSetData.additionalWeight)
+                        }
+                        updateInteractionTime()
+                        hapticsViewModel.doGentleVibration()
+                    },
                     content = {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
+                            horizontalArrangement = Arrangement.spacedBy(15.dp, Alignment.CenterHorizontally)
                         ) {
-                            if (isRepsInEditMode) RepsRow(style = itemStyle)
-                            if (isWeightInEditMode) WeightRow(style = itemStyle)
+                            if (isWeightInEditMode) {
+                                SetValueSection(label = "WEIGHT (KG)", headerStyle = headerStyle) {
+                                    WeightRow(style = itemStyle)
+                                }
+                            }
+                            if (isRepsInEditMode) {
+                                SetValueSection(label = "REPS", headerStyle = headerStyle) {
+                                    RepsRow(style = itemStyle)
+                                }
+                            }
                         }
                     }
                 )

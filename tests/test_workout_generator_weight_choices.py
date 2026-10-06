@@ -10,6 +10,7 @@ from workout_generator_pkg.constants import BASE_SYSTEM_PROMPT
 from workout_generator_pkg.constants import JSON_SYSTEM_PROMPT
 from workout_generator_pkg.constants import SUMMARIZATION_SYSTEM_PROMPT
 from workout_generator_pkg.cli import PlaceholderIdManager
+from workout_generator_pkg.domain_ops import EquipmentItem
 from workout_generator_pkg.domain_ops import calculate_equipment_weight_combinations
 from workout_generator_pkg.domain_ops import create_placeholder_schema
 from workout_generator_pkg.domain_ops import fix_set_errors
@@ -33,10 +34,71 @@ from workout_generator_pkg.plan_contract import validate_plan_index_contract
 from workout_generator_pkg.plan_contract import validate_exercise_definitions_contract
 from workout_generator_pkg.plan_contract import validate_workout_structures_contract
 from workout_generator_pkg.stage_prompts import (
+    EQUIPMENT_SCHEMA,
+    EQUIPMENT_SYSTEM_PROMPT,
     EXERCISE_SYSTEM_PROMPT,
     PLAN_INDEX_SYSTEM_PROMPT,
     WORKOUT_STRUCTURE_SYSTEM_PROMPT,
 )
+
+
+def test_cardio_machine_is_a_supported_load_free_primary_equipment_type():
+    cardio = EquipmentItem({
+        "id": "EQUIPMENT_0",
+        "type": "CARDIO_MACHINE",
+        "name": "Spin Bike",
+    })
+
+    assert cardio == {
+        "id": "EQUIPMENT_0",
+        "type": "CARDIO_MACHINE",
+        "name": "Spin Bike",
+    }
+    equipment_refs = EQUIPMENT_SCHEMA["properties"]["equipments"]["items"]["oneOf"]
+    assert {"$ref": "#/$defs/EquipmentCardioMachine"} in equipment_refs
+    assert "CARDIO_MACHINE" in EQUIPMENT_SYSTEM_PROMPT
+
+
+def test_planner_context_explains_cardio_machine_compatibility():
+    formatted = format_planner_equipment_context([
+        {"id": "EQUIPMENT_0", "type": "CARDIO_MACHINE", "name": "Spin Bike"},
+    ])
+
+    assert "Compatible exercise types: COUNTUP, COUNTDOWN only." in formatted
+
+
+def test_plan_contract_enforces_primary_equipment_exercise_type_compatibility():
+    base_plan = {
+        "planName": "Cardio Plan",
+        "equipments": [{"id": "EQUIPMENT_0", "type": "CARDIO_MACHINE", "name": "Spin Bike"}],
+        "accessoryEquipments": [],
+        "exercises": [{
+            "id": "EXERCISE_0",
+            "name": "Stationary Cycling",
+            "exerciseType": "COUNTUP",
+            "equipmentId": "EQUIPMENT_0",
+            "requiredAccessoryEquipmentIds": [],
+        }],
+        "workouts": [],
+    }
+    validate_plan_index_contract(base_plan)
+
+    invalid_weight_plan = copy.deepcopy(base_plan)
+    invalid_weight_plan["exercises"][0].update({
+        "exerciseType": "WEIGHT",
+        "minReps": 8,
+        "maxReps": 10,
+    })
+    with pytest.raises(ContractValidationError, match="incompatible_equipment_exercise_type"):
+        validate_plan_index_contract(invalid_weight_plan)
+
+    loaded_timed_plan = copy.deepcopy(base_plan)
+    loaded_timed_plan["equipments"][0] = {
+        "id": "EQUIPMENT_0",
+        "type": "MACHINE",
+        "name": "Weight Machine",
+    }
+    validate_plan_index_contract(loaded_timed_plan)
 
 
 def test_summarization_prompt_preserves_bodyweight_load_semantics():
@@ -59,6 +121,8 @@ def test_superset_prompts_require_structured_group_preservation():
     assert "supersetGroups" in PLAN_INDEX_SYSTEM_PROMPT
     assert "Superset rules:" in WORKOUT_STRUCTURE_SYSTEM_PROMPT
     assert "exerciseIds and restSecondsByExercise mapping" in WORKOUT_STRUCTURE_SYSTEM_PROMPT
+    assert "rest inserted immediately after that exercise during every work round" in WORKOUT_STRUCTURE_SYSTEM_PROMPT
+    assert "last grouped exercise therefore carries the between-round rest" in PLAN_INDEX_SYSTEM_PROMPT
 
 
 def test_exercise_prompt_includes_generate_warmup_sets_guidance():
@@ -247,6 +311,127 @@ def test_validate_equipment_weights_reports_nearest_selectable_total_without_mut
     assert invalid_weights == [(0, 55.0, "WeightSet")]
     assert exercise["sets"][0]["weight"] == 55.0
     assert "nearest selectable weight: 60.0kg" in error_message
+
+
+def test_validate_equipment_weights_allows_zero_load_when_calibration_is_required():
+    equipment = {
+        "id": "EQUIPMENT_0",
+        "type": "BARBELL",
+        "name": "Test Barbell",
+        "availablePlates": [{"weight": 20.0, "thickness": 10.0}],
+        "sleeveLength": 100,
+        "barWeight": 20.0,
+    }
+    exercise = {
+        "id": "EXERCISE_0",
+        "type": "Exercise",
+        "name": "Bench Press",
+        "exerciseType": "WEIGHT",
+        "equipmentId": "EQUIPMENT_0",
+        "requiresLoadCalibration": True,
+        "sets": [
+            {
+                "id": "SET_0",
+                "type": "WeightSet",
+                "reps": 8,
+                "weight": 0.0,
+                "subCategory": "WorkSet",
+            },
+        ],
+    }
+
+    is_valid, error_message, invalid_weights = validate_equipment_weight_combinations(
+        exercise,
+        {"EQUIPMENT_0": equipment},
+    )
+
+    assert is_valid is True
+    assert error_message is None
+    assert invalid_weights == []
+
+
+def test_validate_equipment_weights_checks_loaded_timed_target_weight():
+    equipment = {
+        "id": "EQUIPMENT_0",
+        "type": "DUMBBELLS",
+        "name": "Dumbbells",
+        "dumbbells": [{"weight": 10.0}, {"weight": 12.5}],
+    }
+    exercise = {
+        "name": "Dumbbell Farmer Carry",
+        "exerciseType": "COUNTUP",
+        "equipmentId": "EQUIPMENT_0",
+        "sets": [{
+            "id": "SET_0",
+            "type": "EnduranceSet",
+            "timeInMillis": 60000,
+            "autoStart": False,
+            "autoStop": False,
+            "targetWeight": 22.0,
+        }],
+    }
+
+    is_valid, error_message, invalid_weights = validate_equipment_weight_combinations(
+        exercise,
+        {"EQUIPMENT_0": equipment},
+    )
+
+    assert is_valid is False
+    assert invalid_weights == [(0, 22.0, "EnduranceSet")]
+    assert "nearest selectable weight" in error_message
+
+
+def test_contract_allows_empty_target_prescriptions_without_exact_loads():
+    plan_index = {
+        "planName": "Test Plan",
+        "equipments": [],
+        "accessoryEquipments": [],
+        "exercises": [
+            {
+                "id": "EXERCISE_0",
+                "name": "Bench Press",
+                "exerciseType": "WEIGHT",
+                "requiredAccessoryEquipmentIds": [],
+                "targetSetPrescriptions": [],
+            }
+        ],
+        "workouts": [],
+    }
+    exercise_definitions = {
+        "EXERCISE_0": {
+            "id": "EXERCISE_0",
+            "type": "Exercise",
+            "enabled": True,
+            "name": "Bench Press",
+            "notes": "",
+            "exerciseType": "WEIGHT",
+            "minReps": 6,
+            "maxReps": 8,
+            "equipmentId": "EQUIPMENT_0",
+            "bodyWeightPercentage": None,
+            "generateWarmUpSets": False,
+            "progressionMode": "AUTO_REGULATION",
+            "keepScreenOn": False,
+            "showCountDownTimer": False,
+            "intraSetRestInSeconds": None,
+            "muscleGroups": ["FRONT_CHEST"],
+            "secondaryMuscleGroups": [],
+            "requiresLoadCalibration": True,
+            "requiredAccessoryEquipmentIds": [],
+            "exerciseCategory": "MODERATE_COMPOUND",
+            "sets": [
+                {
+                    "id": "SET_0",
+                    "type": "WeightSet",
+                    "reps": 8,
+                    "weight": 0.0,
+                    "subCategory": "CalibrationPendingSet",
+                }
+            ],
+        }
+    }
+
+    validate_exercise_definitions_contract(plan_index, exercise_definitions)
 
 
 def test_fix_set_errors_backfills_rest_set_subcategory_for_legacy_payloads():
@@ -1008,6 +1193,11 @@ def test_plan_index_requires_intra_set_rest_for_unilateral_exercise():
     assert "must include a positive intraSetRestInSeconds in the PlanIndex" in str(exc_info.value)
 
 
+def test_plan_index_prompt_requires_llm_selected_unilateral_rest():
+    assert "never rely on a generator default" in PLAN_INDEX_SYSTEM_PROMPT
+    assert "null, 0, and omission are invalid" in PLAN_INDEX_SYSTEM_PROMPT
+
+
 def test_plan_index_accepts_exercise_ids_and_rest_on_workout_entries():
     plan_index = {
         "planName": "Test Plan",
@@ -1039,6 +1229,29 @@ def test_plan_index_accepts_explicit_superset_groups_when_contiguous():
         }],
     }
     validate_plan_index_contract(plan_index)
+
+
+def test_plan_index_requires_explicit_rests_for_superset_groups():
+    plan_index = {
+        "planName": "Test Plan",
+        "equipments": [],
+        "accessoryEquipments": [],
+        "exercises": [
+            {"id": "EXERCISE_0", "name": "Press", "exerciseType": "WEIGHT"},
+            {"id": "EXERCISE_1", "name": "Row", "exerciseType": "WEIGHT"},
+        ],
+        "workouts": [{
+            "id": "WORKOUT_0",
+            "name": "Day 1",
+            "exerciseIds": ["EXERCISE_0", "EXERCISE_1"],
+            "supersetGroups": [{"exerciseIds": ["EXERCISE_0", "EXERCISE_1"]}],
+        }],
+    }
+
+    with pytest.raises(ContractValidationError) as exc_info:
+        validate_plan_index_contract(plan_index)
+
+    assert "must provide one restToNextSeconds value per exercise" in str(exc_info.value)
 
 
 def test_plan_index_rejects_non_contiguous_superset_groups():
@@ -1359,6 +1572,15 @@ def test_workout_structure_contract_accepts_matching_superset_group():
     }
 
     validate_workout_structures_contract(plan_index, workout_structures, exercise_definitions)
+
+    rest_map = workout_structures["WORKOUT_0"]["workoutComponents"][1]["restSecondsByExercise"]
+    rest_map["EXERCISE_0"] = 60
+    rest_map["EXERCISE_1"] = 0
+
+    with pytest.raises(ContractValidationError) as exc_info:
+        validate_workout_structures_contract(plan_index, workout_structures, exercise_definitions)
+
+    assert "rest map mismatch" in str(exc_info.value)
 
 
 def test_placeholder_id_manager_converts_rest_seconds_by_exercise_map_keys_to_uuids():

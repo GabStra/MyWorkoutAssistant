@@ -8,6 +8,7 @@ package com.gabstra.myworkoutassistant.shared.workout.ui
 enum class WorkoutSessionPhase {
     PREPARING,
     READY,
+    RESUMING,
     ACTIVE,
     COMPLETED
 }

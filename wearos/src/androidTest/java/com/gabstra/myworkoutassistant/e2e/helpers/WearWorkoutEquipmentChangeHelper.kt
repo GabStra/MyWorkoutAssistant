@@ -79,6 +79,26 @@ object WearWorkoutEquipmentChangeHelper {
         }
     }
 
+    fun waitForEquipmentChangeCompletion(
+        exerciseName: String,
+        expectedEquipmentName: String?,
+        timeoutMs: Long
+    ): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            val snapshot = readForegroundExerciseEquipmentSnapshot(exerciseName)
+            if (
+                snapshot != null &&
+                !snapshot.isRefreshing &&
+                snapshot.equipmentName == expectedEquipmentName
+            ) {
+                return true
+            }
+            Thread.sleep(150)
+        }
+        return false
+    }
+
     fun waitForObservedExerciseEquipment(
         context: Context,
         exerciseName: String,

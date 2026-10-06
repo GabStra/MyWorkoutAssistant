@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -42,24 +43,30 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.ScreenData
-import com.gabstra.myworkoutassistant.composables.EquipmentAccessoryMetadata
 import com.gabstra.myworkoutassistant.composables.HistoryGraphEmptyState
 import com.gabstra.myworkoutassistant.composables.HistoryGraphTabColumn
+import com.gabstra.myworkoutassistant.composables.HistoryFiltersBlock
+import com.gabstra.myworkoutassistant.composables.HistoryNavigationCard
 import com.gabstra.myworkoutassistant.composables.HistorySetsTabColumn
 import com.gabstra.myworkoutassistant.composables.rememberHistoryFilterRangeSelection
+import com.gabstra.myworkoutassistant.composables.rememberMinimumLoadingVisibility
+import com.gabstra.myworkoutassistant.composables.historyDisplayLabel
 import com.gabstra.myworkoutassistant.composables.PrimarySurface
 import com.gabstra.myworkoutassistant.composables.RangeDropdown
 import com.gabstra.myworkoutassistant.composables.SetHistoriesRenderer
 import com.gabstra.myworkoutassistant.composables.TargetHrProgressSection
 import com.gabstra.myworkoutassistant.composables.StandardChart
 import com.gabstra.myworkoutassistant.composables.SupersetSetHistoriesRenderer
+import com.gabstra.myworkoutassistant.composables.buildSupersetDisplayTitle
 import com.gabstra.myworkoutassistant.shared.FilterRange
 import com.gabstra.myworkoutassistant.shared.filterBy
 import com.gabstra.myworkoutassistant.formatTime
@@ -87,11 +94,9 @@ import com.patrykandpatrick.vico.compose.cartesian.data.CartesianChartModel
 import com.patrykandpatrick.vico.compose.cartesian.data.CartesianValueFormatter
 import com.patrykandpatrick.vico.compose.cartesian.data.LineCartesianLayerModel
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.time.Duration
 import java.time.format.DateTimeFormatter
-import java.util.Locale
 import java.util.UUID
 
 private data class ExerciseHistoryDisplayData(
@@ -115,6 +120,8 @@ fun ExerciseHistoryScreen(
     selectedHistoryMode: Int = 0,
     historyFilterRange: FilterRange? = null,
     onHistoryFilterRangeChange: ((FilterRange) -> Unit)? = null,
+    isHistoryFiltersExpanded: Boolean,
+    onHistoryFiltersExpandedChange: (Boolean) -> Unit,
     onGoBack: () -> Unit,
     onSelectedWorkoutHistoryIdChanged: (UUID?) -> Unit = {},
 ) {
@@ -143,7 +150,7 @@ fun ExerciseHistoryScreen(
     val measuredMaxHeartRate = appViewModel.workoutStore.measuredMaxHeartRate
     val restingHeartRate = appViewModel.workoutStore.restingHeartRate
 
-    val currentLocale = Locale.getDefault()
+    val currentLocale = LocalLocale.current.platformLocale
 
     val volumeAxisValueFormatter = CartesianValueFormatter { _, value, _ ->
         formatNumber(value)
@@ -188,31 +195,10 @@ fun ExerciseHistoryScreen(
             ?: availableWorkoutHistories.lastOrNull()
     }
 
-    suspend fun ensureMinimumLoadingDuration(
-        startedAtMillis: Long,
-        minimumDurationMillis: Long = 1_000L,
-    ) {
-        val elapsed = System.currentTimeMillis() - startedAtMillis
-        val remaining = minimumDurationMillis - elapsed
-        if (remaining > 0) {
-            delay(remaining)
-        }
-    }
-
     suspend fun setCharts(workoutHistories: List<WorkoutHistory>){
         volumes.clear()
         durations.clear()
         oneRepMaxes.clear()
-
-        volumeEntryModel = null
-        durationEntryModel = null
-        oneRepMaxEntryModel = null
-        volumeMarkerTarget = null
-        durationMarkerTarget = null
-        oneRepMaxMarkerTarget = null
-        selectedWorkoutHistory = null
-        setHistoriesByWorkoutHistoryId = emptyMap()
-        chartWorkoutHistories = emptyList()
 
         if(workoutHistories.isEmpty()) return
 
@@ -232,14 +218,15 @@ fun ExerciseHistoryScreen(
                 exercise.id
             )
 
-            if (setHistories.isEmpty()) {
+            val completedExerciseSetHistories = setHistories.filterNot(SetHistory::skipped)
+            if (completedExerciseSetHistories.none { it.setData !is RestSetData }) {
                 continue
             }
 
             var volume = 0.0
             var duration = 0f
 
-            val oneRepMax = setHistories.maxOf {
+            val oneRepMax = completedExerciseSetHistories.maxOf {
                 when (it.setData) {
                     is BodyWeightSetData -> {
                         val setData = it.setData as BodyWeightSetData
@@ -273,7 +260,7 @@ fun ExerciseHistoryScreen(
                 emptyList()
             }
             mutableMap[workoutHistory.id] = ExerciseHistoryDisplayData(
-                selectedExerciseSetHistories = setHistories,
+                selectedExerciseSetHistories = completedExerciseSetHistories,
                 renderSetHistories = if (supersetSetHistories.isNotEmpty()) supersetSetHistories else setHistories,
                 renderRestHistories = if (supersetSetHistories.isNotEmpty()) supersetRestHistories else exerciseRestHistories,
                 isSupersetSession = supersetSetHistories.isNotEmpty()
@@ -309,36 +296,35 @@ fun ExerciseHistoryScreen(
             oneRepMaxes.add(Pair(pointIndex, oneRepMax.round(2)))
         }
 
-        setHistoriesByWorkoutHistoryId = mutableMap
-        chartWorkoutHistories = pointsWorkoutHistories
-
-        if(setHistoriesByWorkoutHistoryId.isEmpty()) return
-
-        selectedWorkoutHistory = resolveSelectedWorkoutHistory(
+        val resolvedSelection = resolveSelectedWorkoutHistory(
             requestedWorkoutHistoryId = workoutHistoryId,
             availableWorkoutHistories = pointsWorkoutHistories,
         )
-
-        if (volumes.any { it.second != 0.0 }) {
-            volumeEntryModel =
+        val loadedVolumeModel = volumes.takeIf { values -> values.any { it.second != 0.0 } }
+            ?.let { values ->
                 CartesianChartModel(LineCartesianLayerModel.build {
-                    series(volumes.map { it.first },volumes.map { it.second })
+                    series(values.map { it.first }, values.map { it.second })
                 })
-        }
-
-        if (durations.any { it.second != 0f }) {
-            durationEntryModel =
+            }
+        val loadedDurationModel = durations.takeIf { values -> values.any { it.second != 0f } }
+            ?.let { values ->
                 CartesianChartModel(LineCartesianLayerModel.build {
-                    series(durations.map { it.first },durations.map { it.second })
+                    series(values.map { it.first }, values.map { it.second })
                 })
-        }
-
-        if (oneRepMaxes.any { it.second != 0.0 }) {
-            oneRepMaxEntryModel =
+            }
+        val loadedOneRepMaxModel = oneRepMaxes.takeIf { values -> values.any { it.second != 0.0 } }
+            ?.let { values ->
                 CartesianChartModel(LineCartesianLayerModel.build {
-                    series(oneRepMaxes.map { it.first },oneRepMaxes.map { it.second })
+                    series(values.map { it.first }, values.map { it.second })
                 })
-        }
+            }
+
+        setHistoriesByWorkoutHistoryId = mutableMap
+        chartWorkoutHistories = pointsWorkoutHistories
+        selectedWorkoutHistory = resolvedSelection
+        volumeEntryModel = loadedVolumeModel
+        durationEntryModel = loadedDurationModel
+        oneRepMaxEntryModel = loadedOneRepMaxModel
     }
 
     LaunchedEffect(
@@ -367,7 +353,6 @@ fun ExerciseHistoryScreen(
         if (!hasLoadedWorkoutHistories) {
             return@LaunchedEffect
         }
-        val loadingStartedAt = System.currentTimeMillis()
         isLoading = true
         if (historiesToShow.isEmpty()) {
             volumeEntryModel = null
@@ -379,12 +364,10 @@ fun ExerciseHistoryScreen(
             selectedWorkoutHistory = null
             setHistoriesByWorkoutHistoryId = emptyMap()
             chartWorkoutHistories = emptyList()
-            ensureMinimumLoadingDuration(loadingStartedAt, minimumDurationMillis = 450L)
             isLoading = false
             return@LaunchedEffect
         }
         setCharts(historiesToShow)
-        ensureMinimumLoadingDuration(loadingStartedAt, minimumDurationMillis = 450L)
         isLoading = false
     }
 
@@ -456,74 +439,31 @@ fun ExerciseHistoryScreen(
         val canGoForward = selectableWorkoutHistories.size > 1 &&
             selectedWorkoutHistory != selectableWorkoutHistories.last()
         
-        val navIconColors = IconButtonDefaults.iconButtonColors(
-            contentColor = MaterialTheme.colorScheme.onBackground,
-            disabledContentColor = DisabledContentGray
-        )
-        
-        PrimarySurface(
-            modifier = Modifier.fillMaxWidth()
+        HistoryNavigationCard(
+            canGoBack = canGoBack,
+            onGoBack = {
+                val index = selectableWorkoutHistories.indexOf(selectedWorkoutHistory)
+                if (index > 0) selectedWorkoutHistory = selectableWorkoutHistories[index - 1]
+            },
+            canGoForward = canGoForward,
+            onGoForward = {
+                val index = selectableWorkoutHistories.indexOf(selectedWorkoutHistory)
+                if (index < selectableWorkoutHistories.lastIndex) {
+                    selectedWorkoutHistory = selectableWorkoutHistories[index + 1]
+                }
+            },
+            contentPadding = PaddingValues(
+                horizontal = Spacing.xs,
+                vertical = Spacing.sm,
+            ),
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier.size(25.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    IconButton(
-                        modifier = Modifier.size(25.dp),
-                        onClick = {
-                            val index = selectableWorkoutHistories.indexOf(selectedWorkoutHistory)
-                            if (index > 0) {
-                                selectedWorkoutHistory = selectableWorkoutHistories[index - 1]
-                            }
-                        },
-                        enabled = canGoBack,
-                        colors = navIconColors
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Previous"
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.width(10.dp))
-                Text(
-                    modifier = Modifier
-                        .weight(1f),
-                    text = selectedWorkoutHistory!!.date.format(dateFormatter) + " " +
-                        selectedWorkoutHistory!!.time.format(timeFormatter),
-                    textAlign = TextAlign.Center,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                Spacer(modifier = Modifier.width(10.dp))
-                Box(
-                    modifier = Modifier.size(25.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    IconButton(
-                        modifier = Modifier.size(25.dp),
-                        onClick = {
-                            val index = selectableWorkoutHistories.indexOf(selectedWorkoutHistory)
-                            if (index < selectableWorkoutHistories.size - 1) {
-                                selectedWorkoutHistory = selectableWorkoutHistories[index + 1]
-                            }
-                        },
-                        enabled = canGoForward,
-                        colors = navIconColors
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                            contentDescription = "Next"
-                        )
-                    }
-                }
-            }
+            Text(
+                text = selectedWorkoutHistory!!.date.format(dateFormatter) + " " +
+                    selectedWorkoutHistory!!.time.format(timeFormatter),
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.onBackground,
+                style = MaterialTheme.typography.titleMedium,
+            )
         }
     }
 
@@ -537,29 +477,43 @@ fun ExerciseHistoryScreen(
             selectedHistoryMode.coerceIn(0, 1) == 1 &&
                     setHistoriesByWorkoutHistoryId.isNotEmpty() &&
                     selectedWorkoutHistory == null
+        val showHistoryLoading = rememberMinimumLoadingVisibility(
+            isLoading = isLoading || isSetHistorySelectionPending,
+            showDelayMs = 150L,
+            minVisibleMs = 300L,
+        )
 
-        Column(
-            modifier = Modifier
-                .zIndex(1f)
-                .fillMaxWidth(),
-        ) {
-            Spacer(modifier = Modifier.height(10.dp))
-            RangeDropdown(selectedRange, onHistoryRangeSelected)
-            Spacer(modifier = Modifier.height(12.dp))
-
-            if (hasLoadedWorkoutHistories &&
-                selectedWorkoutHistory != null &&
-                setHistoriesByWorkoutHistoryId.isNotEmpty()
+        if (!showHistoryLoading) {
+            Column(
+                modifier = Modifier
+                    .zIndex(1f)
+                    .fillMaxWidth(),
             ) {
-                Column(modifier = Modifier.padding(horizontal = Spacing.md)) {
-                    workoutSelector()
+                Spacer(modifier = Modifier.height(Spacing.md))
+                if (hasLoadedWorkoutHistories &&
+                    selectedWorkoutHistory != null &&
+                    setHistoriesByWorkoutHistoryId.isNotEmpty()
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = Spacing.md)) {
+                        val sessionLabel = selectedWorkoutHistory!!.date.format(dateFormatter) + " " +
+                            selectedWorkoutHistory!!.time.format(timeFormatter)
+                        HistoryFiltersBlock(
+                            isExpanded = isHistoryFiltersExpanded,
+                            onExpandedChange = onHistoryFiltersExpandedChange,
+                            collapsedSummary = selectedRange.historyDisplayLabel() + " · " + sessionLabel,
+                        ) {
+                            RangeDropdown(selectedRange, onHistoryRangeSelected)
+                            Spacer(modifier = Modifier.height(Spacing.xs))
+                            workoutSelector()
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
                 }
-                Spacer(modifier = Modifier.height(12.dp))
             }
         }
 
         when {
-            isLoading || isSetHistorySelectionPending -> {
+            showHistoryLoading -> {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -580,9 +534,9 @@ fun ExerciseHistoryScreen(
                         .weight(1f),
                     contentAlignment = Alignment.Center,
                 ) {
-                    PrimarySurface(modifier = Modifier.padding(15.dp)) {
+                    PrimarySurface(modifier = Modifier.padding(Spacing.md)) {
                         Text(
-                            modifier = Modifier.padding(15.dp),
+                            modifier = Modifier.padding(Spacing.md),
                             text = "No history found",
                             textAlign = TextAlign.Center,
                             color = MaterialTheme.colorScheme.onSurface,
@@ -713,59 +667,70 @@ fun ExerciseHistoryScreen(
                         HistorySetsTabColumn(
                             state = lazyListState,
                         ) {
-                            if (hasTarget) {
-                                item {
-                                    PrimarySurface {
-                                        val lowHr = getHeartRateFromPercentage(
-                                            exercise.lowerBoundMaxHRPercent!!,
-                                            userAge,
-                                            measuredMaxHeartRate,
-                                            restingHeartRate
-                                        )
-                                        val highHr = getHeartRateFromPercentage(
-                                            exercise.upperBoundMaxHRPercent!!,
-                                            userAge,
-                                            measuredMaxHeartRate,
-                                            restingHeartRate
-                                        )
-                                        TargetHrProgressSection(
-                                            targetCounter = targetCounter,
-                                            targetTotal = targetTotal,
-                                            lowHrBpm = lowHr,
-                                            highHrBpm = highHr,
-                                        )
-                                    }
-                                }
-                            }
                             item {
                                 PrimarySurface {
                                     Column(
-                                        modifier = Modifier.padding(vertical = Spacing.md),
-                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(16.dp),
+                                        verticalArrangement = Arrangement.spacedBy(Spacing.lg),
                                     ) {
-                                        val historicalEquipmentName = setHistories.selectedExerciseSetHistories
-                                            .firstOrNull()
-                                            ?.equipmentNameSnapshot
-                                        val historicalEquipmentId = setHistories.selectedExerciseSetHistories
-                                            .firstOrNull()
-                                            ?.equipmentIdSnapshot
-                                        val equipmentName = when {
-                                            !historicalEquipmentName.isNullOrBlank() -> historicalEquipmentName
-                                            historicalEquipmentId != null -> appViewModel.getEquipmentById(historicalEquipmentId)?.name
-                                            else -> exercise.equipmentId?.let { appViewModel.getEquipmentById(it)?.name }
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            Text(
+                                                text = if (setHistories.isSupersetSession) {
+                                                    val superset = workout.workoutComponents
+                                                        .filterIsInstance<Superset>()
+                                                        .firstOrNull { candidate ->
+                                                            candidate.exercises.any { it.id == exercise.id }
+                                                        }
+                                                    superset?.let { buildSupersetDisplayTitle(it.exercises) }
+                                                        ?: exercise.name
+                                                } else {
+                                                    "Session performance"
+                                                },
+                                                modifier = Modifier.weight(1f),
+                                                maxLines = 2,
+                                                style = MaterialTheme.typography.titleMedium,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                            )
                                         }
-                                        val accessoryNames = (exercise.requiredAccessoryEquipmentIds ?: emptyList())
-                                            .mapNotNull { id -> appViewModel.getAccessoryEquipmentById(id)?.name }
-                                        EquipmentAccessoryMetadata(
-                                            equipmentName = equipmentName,
-                                            accessoryNames = accessoryNames,
-                                        )
+
+                                        if (hasTarget) {
+                                            ExerciseHistorySection(title = "Targets") {
+                                                val lowHr = getHeartRateFromPercentage(
+                                                    exercise.lowerBoundMaxHRPercent!!,
+                                                    userAge,
+                                                    measuredMaxHeartRate,
+                                                    restingHeartRate,
+                                                )
+                                                val highHr = getHeartRateFromPercentage(
+                                                    exercise.upperBoundMaxHRPercent!!,
+                                                    userAge,
+                                                    measuredMaxHeartRate,
+                                                    restingHeartRate,
+                                                )
+                                                TargetHrProgressSection(
+                                                    targetCounter = targetCounter,
+                                                    targetTotal = targetTotal,
+                                                    lowHrBpm = lowHr,
+                                                    highHrBpm = highHr,
+                                                    contentPadding = PaddingValues(0.dp),
+                                                )
+                                            }
+                                        }
                                         if (setHistories.isSupersetSession) {
                                             SupersetSetHistoriesRenderer(
                                                 setHistories = setHistories.renderSetHistories,
                                                 restHistories = setHistories.renderRestHistories,
                                                 workout = workout,
-                                                getEquipmentById = { appViewModel.getEquipmentById(it) }
+                                                getEquipmentById = { appViewModel.getEquipmentById(it) },
+                                                contentPadding = PaddingValues(0.dp),
+                                                focusedExerciseId = exercise.id,
                                             )
                                         } else {
                                             SetHistoriesRenderer(
@@ -774,6 +739,7 @@ fun ExerciseHistoryScreen(
                                                 appViewModel = appViewModel,
                                                 workout = workout,
                                                 showMetadata = false,
+                                                contentPadding = PaddingValues(0.dp),
                                             )
                                         }
                                     }
@@ -784,5 +750,24 @@ fun ExerciseHistoryScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ExerciseHistorySection(
+    title: String,
+    content: @Composable () -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        content()
     }
 }

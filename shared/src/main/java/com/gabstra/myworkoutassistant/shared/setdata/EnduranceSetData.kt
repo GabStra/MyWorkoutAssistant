@@ -4,5 +4,6 @@ data class EnduranceSetData(
     val endTimer: Int,
     val autoStart: Boolean,
     val autoStop: Boolean,
-    val hasBeenExecuted: Boolean = false
+    val hasBeenExecuted: Boolean = false,
+    val actualWeight: Double? = null
 ) : SetData()

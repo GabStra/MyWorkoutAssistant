@@ -102,7 +102,6 @@ class PhoneToWearVsLastComparisonE2ETest : WearBaseE2ETest() {
         repeat(4) {
             val status = container?.findObject(By.descStartsWith("LAST:"))
                 ?.contentDescription
-                ?.toString()
                 ?.substringAfter("LAST:")
             if (!status.isNullOrBlank()) return status
             container = container?.parent

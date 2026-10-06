@@ -14,6 +14,9 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.e2e.E2ETestTimings
 import com.gabstra.myworkoutassistant.e2e.driver.WearWorkoutDriver
 import com.gabstra.myworkoutassistant.e2e.fixtures.CrossDeviceSyncWorkoutStoreFixture
+import com.gabstra.myworkoutassistant.shared.workout.calibration.applyCalibrationRIR
+import com.gabstra.myworkoutassistant.shared.workout.calibration.confirmCalibrationLoad
+import com.gabstra.myworkoutassistant.shared.workout.rir.applyAutoRegulationRIR
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import java.util.UUID
 
@@ -31,7 +34,8 @@ class CrossDeviceWorkoutFlowHelper(
 
     fun completeComplexWorkoutWithDeterministicModifications(
         timeoutMs: Long = E2ETestTimings.CROSS_DEVICE_WORKOUT_TIMEOUT_MS,
-        perSettleMs: Long = E2ETestTimings.CROSS_DEVICE_INTERMEDIATE_SYNC_SETTLE_MS
+        perSettleMs: Long = E2ETestTimings.CROSS_DEVICE_INTERMEDIATE_SYNC_SETTLE_MS,
+        onIntermediateSetCompleted: ((UUID) -> Unit)? = null
     ) {
         val modifiedSetIds = mutableSetOf<UUID>()
         val targetModifiedSetIds = setOf(
@@ -41,63 +45,63 @@ class CrossDeviceWorkoutFlowHelper(
         val deadline = System.currentTimeMillis() + timeoutMs
 
         while (System.currentTimeMillis() < deadline) {
-            if (isCompletionVisible() || isCompletionStateFromViewModel()) {
-                runCatching {
-                    workoutDriver.confirmLongPressDialog(timeoutMs = 3_000)
-                }
-                break
-            }
-
-            if (isRestScreenVisible()) {
-                val skipped = WearWorkoutStateMutationHelper.skipCurrentRest(
-                    device = device,
-                    timeoutMs = 5_000
-                ) || runCatching {
-                    workoutDriver.skipRest(timeoutMs = 4_000)
-                    true
-                }.getOrElse { false }
-                if (!skipped) {
-                    waitForRestAutoAdvance(timeoutMs = E2ETestTimings.CROSS_DEVICE_REST_AUTO_ADVANCE_TIMEOUT_MS)
-                }
-                continue
-            }
-
-            if (isCalibrationRirScreenVisible()) {
-                runCatching {
-                    workoutDriver.selectRIRAndConfirm(targetRir = 2, timeoutMs = 8_000)
-                }
-                continue
-            }
-
-            if (isCalibrationLoadScreenVisible()) {
-                device.pressBack()
-                runCatching {
-                    workoutDriver.confirmLongPressDialog(timeoutMs = 5_000)
-                }
-                continue
-            }
-
-            if (isWeightSetScreenVisible()) {
-                val currentSetId = getCurrentSetIdFromViewModel()
-                if (currentSetId != null &&
-                    currentSetId in targetModifiedSetIds &&
-                    currentSetId !in modifiedSetIds
-                ) {
-                    val modified = modifyRepsByPlusOne()
-                    require(modified) { "Failed to modify reps for target set $currentSetId" }
-                    modifiedSetIds.add(currentSetId)
-                }
-                val completed = WearWorkoutStateMutationHelper.completeCurrentSet(
-                    device = device,
-                    context = InstrumentationRegistry.getInstrumentation().targetContext,
-                    timeoutMs = 20_000
-                )
-                require(completed) { "Failed to advance past set $currentSetId" }
-                if (waitForCompletionState(timeoutMs = 8_000)) {
+            when (val workoutState = readCurrentWorkoutState()) {
+                is WorkoutState.Completed -> {
+                    runCatching {
+                        workoutDriver.confirmLongPressDialog(timeoutMs = 3_000)
+                    }
                     break
                 }
-                waitForIntermediateSyncObservationWindow(durationMs = perSettleMs)
-                continue
+                is WorkoutState.Rest -> {
+                    val skipped = WearWorkoutStateMutationHelper.skipCurrentRest(
+                        device = device,
+                        timeoutMs = 5_000
+                    ) || runCatching {
+                        workoutDriver.skipRest(timeoutMs = 4_000)
+                        true
+                    }.getOrElse { false }
+                    if (!skipped) {
+                        waitForRestAutoAdvance(
+                            timeoutMs = E2ETestTimings.CROSS_DEVICE_REST_AUTO_ADVANCE_TIMEOUT_MS
+                        )
+                    }
+                    continue
+                }
+                is WorkoutState.CalibrationRIRSelection -> {
+                    runCatching {
+                        workoutDriver.selectRIRAndConfirm(targetRir = 2, timeoutMs = 8_000)
+                    }
+                    continue
+                }
+                is WorkoutState.CalibrationLoadSelection -> {
+                    device.pressBack()
+                    runCatching {
+                        workoutDriver.confirmLongPressDialog(timeoutMs = 5_000)
+                    }
+                    continue
+                }
+                is WorkoutState.Set -> {
+                    val currentSetId = workoutState.set.id
+                    if (currentSetId in targetModifiedSetIds && currentSetId !in modifiedSetIds) {
+                        val modified = modifyRepsByPlusOne()
+                        require(modified) { "Failed to modify reps for target set $currentSetId" }
+                        modifiedSetIds.add(currentSetId)
+                    }
+                    val completed = WearWorkoutStateMutationHelper.completeCurrentSet(
+                        device = device,
+                        context = InstrumentationRegistry.getInstrumentation().targetContext,
+                        timeoutMs = 20_000
+                    )
+                    require(completed) { "Failed to advance past set $currentSetId" }
+                    if (readCurrentWorkoutState() is WorkoutState.Completed) break
+                    if (onIntermediateSetCompleted != null) {
+                        onIntermediateSetCompleted(currentSetId)
+                    } else {
+                        waitForIntermediateSyncObservationWindow(durationMs = perSettleMs)
+                    }
+                    continue
+                }
+                else -> Unit
             }
 
             // If a confirmation dialog is already visible, clear it so progression can continue.
@@ -184,6 +188,152 @@ class CrossDeviceWorkoutFlowHelper(
         require(progressedAfterCalibrationRir) {
             "Calibration workout flow did not progress after confirming calibration RIR."
         }
+    }
+
+    fun completeCalibrationSupersetWorkoutFlow(
+        expectedCalibrationCount: Int,
+        timeoutMs: Long = E2ETestTimings.CROSS_DEVICE_WORKOUT_TIMEOUT_MS
+    ) {
+        var calibrationLoadCount = 0
+        var calibrationRirCount = 0
+        var completedSetCount = 0
+        val deadline = System.currentTimeMillis() + timeoutMs
+
+        while (System.currentTimeMillis() < deadline) {
+            if (isCompletionVisible() || isCompletionStateFromViewModel()) break
+
+            when {
+                isCalibrationLoadScreenVisible() -> {
+                    calibrationLoadCount++
+                    device.pressBack()
+                    workoutDriver.confirmLongPressDialog(timeoutMs = 5_000)
+                }
+                isCalibrationRirScreenVisible() -> {
+                    calibrationRirCount++
+                    device.pressBack()
+                    workoutDriver.confirmLongPressDialog(timeoutMs = 5_000)
+                }
+                isRestScreenVisible() -> {
+                    if (!runCatching {
+                            workoutDriver.skipRest(timeoutMs = 4_000)
+                            true
+                        }.getOrDefault(false)
+                    ) {
+                        waitForRestAutoAdvance(E2ETestTimings.CROSS_DEVICE_REST_AUTO_ADVANCE_TIMEOUT_MS)
+                    }
+                }
+                isWeightSetScreenVisible() -> {
+                    workoutDriver.completeCurrentSet(timeoutMs = 10_000)
+                    completedSetCount++
+                }
+                else -> sleepForPoll(E2ETestTimings.SHORT_IDLE_MS)
+            }
+        }
+
+        require(isCompletionVisible() || isCompletionStateFromViewModel()) {
+            "Calibration superset did not complete. loads=$calibrationLoadCount " +
+                "rirs=$calibrationRirCount sets=$completedSetCount"
+        }
+        require(calibrationLoadCount == expectedCalibrationCount) {
+            "Expected $expectedCalibrationCount load selections, saw $calibrationLoadCount."
+        }
+        require(calibrationRirCount == expectedCalibrationCount) {
+            "Expected $expectedCalibrationCount RIR selections, saw $calibrationRirCount."
+        }
+        require(completedSetCount == expectedCalibrationCount * 2) {
+            "Expected ${expectedCalibrationCount * 2} completed sets, saw $completedSetCount."
+        }
+    }
+
+    fun completeWorkoutWithCalibrationEndToEnd(
+        expectedCalibrationCount: Int,
+        expectedCompletedSetCount: Int,
+        activeViewModel: AppViewModel,
+        timeoutMs: Long = E2ETestTimings.CROSS_DEVICE_WORKOUT_TIMEOUT_MS
+    ) {
+        val calibrationLoadExerciseIds = mutableSetOf<UUID>()
+        val calibrationRirExerciseIds = mutableSetOf<UUID>()
+        val completedSetIds = mutableSetOf<UUID>()
+        val deadline = System.currentTimeMillis() + timeoutMs
+
+        while (System.currentTimeMillis() < deadline) {
+            if (isCompletionVisible() || isCompletionStateFromViewModel()) break
+
+            when (val currentState = activeViewModel.workoutState.value) {
+                is WorkoutState.CalibrationLoadSelection -> {
+                    calibrationLoadExerciseIds += currentState.exerciseId
+                    runOnMain { activeViewModel.confirmCalibrationLoad() }
+                }
+                is WorkoutState.CalibrationRIRSelection -> {
+                    calibrationRirExerciseIds += currentState.exerciseId
+                    runOnMain { activeViewModel.applyCalibrationRIR(rir = 2.0) }
+                }
+                is WorkoutState.AutoRegulationRIRSelection -> {
+                    runOnMain { activeViewModel.applyAutoRegulationRIR(rir = 2.0) }
+                }
+                is WorkoutState.Rest -> {
+                    if (!WearWorkoutStateMutationHelper.skipCurrentRest(
+                            device = device,
+                            timeoutMs = 15_000
+                        )
+                    ) {
+                        waitForRestAutoAdvance(E2ETestTimings.CROSS_DEVICE_REST_AUTO_ADVANCE_TIMEOUT_MS)
+                    }
+                }
+                is WorkoutState.Set -> {
+                    when {
+                        currentState.isCalibrationSet -> runOnMain {
+                            activeViewModel.storeSetData()
+                            activeViewModel.completeCalibrationSet()
+                        }
+                        currentState.isAutoRegulationWorkSet -> runOnMain {
+                            activeViewModel.storeSetData()
+                            activeViewModel.completeAutoRegulationSet()
+                        }
+                        else -> {
+                            val completed = WearWorkoutStateMutationHelper.completeCurrentSet(
+                                device = device,
+                                context = InstrumentationRegistry.getInstrumentation().targetContext,
+                                timeoutMs = 20_000
+                            )
+                            require(completed) { "Failed to complete set ${currentState.set.id}." }
+                        }
+                    }
+                    completedSetIds += currentState.set.id
+                    device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+                }
+                else -> sleepForPoll(E2ETestTimings.SHORT_IDLE_MS)
+            }
+        }
+
+        require(isCompletionVisible() || isCompletionStateFromViewModel()) {
+            "Workout did not complete. loads=${calibrationLoadExerciseIds.size} " +
+                "rirs=${calibrationRirExerciseIds.size} sets=${completedSetIds.size}"
+        }
+        require(calibrationLoadExerciseIds.size == expectedCalibrationCount) {
+            "Expected $expectedCalibrationCount calibration loads, saw ${calibrationLoadExerciseIds.size}."
+        }
+        require(calibrationRirExerciseIds.size == expectedCalibrationCount) {
+            "Expected $expectedCalibrationCount calibration RIR entries, saw ${calibrationRirExerciseIds.size}."
+        }
+        require(completedSetIds.size == expectedCompletedSetCount) {
+            "Expected $expectedCompletedSetCount completed sets, saw ${completedSetIds.size}."
+        }
+    }
+
+    private fun runOnMain(block: () -> Unit) =
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(block)
+
+    private fun readCurrentWorkoutState(): WorkoutState? {
+        var state: WorkoutState? = null
+        runOnMain {
+            val activity = ActivityLifecycleMonitorRegistry.getInstance()
+                .getActivitiesInStage(Stage.RESUMED)
+                .firstOrNull() as? ComponentActivity
+                ?: return@runOnMain
+            state = ViewModelProvider(activity)[AppViewModel::class.java].workoutState.value
+        }
+        return state
     }
 
     private fun isWeightSetScreenVisible(): Boolean {

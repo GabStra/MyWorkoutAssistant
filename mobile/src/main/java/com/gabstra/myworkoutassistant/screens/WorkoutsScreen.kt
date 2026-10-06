@@ -1,11 +1,15 @@
 package com.gabstra.myworkoutassistant.screens
 
+import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
+
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Box
@@ -35,6 +39,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,12 +48,16 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.HealthConnectClient
+import androidx.health.connect.client.permission.HealthPermission
+import androidx.health.connect.client.records.ExerciseSessionRecord
+import androidx.health.connect.client.records.HeartRateRecord
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.AccessoriesBottomBar
 import com.gabstra.myworkoutassistant.composables.EditPlanNameDialog
 import com.gabstra.myworkoutassistant.composables.EquipmentsBottomBar
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
+import com.gabstra.myworkoutassistant.composables.SyncStatusCard
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.composables.MoveWorkoutDialog
 import com.gabstra.myworkoutassistant.composables.StandardFilterDropdown
@@ -71,6 +80,10 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutPlan
 import com.gabstra.myworkoutassistant.shared.WeeklyProgressResolver
 import com.gabstra.myworkoutassistant.shared.WeeklyProgressSnapshot
+import com.gabstra.myworkoutassistant.shared.fromJSONToExerciseLibraryPackage
+import com.gabstra.myworkoutassistant.shared.motion.restoreExerciseMovementBackups
+import com.gabstra.myworkoutassistant.shared.motion.requireExerciseMovementPayloads
+import com.gabstra.myworkoutassistant.shared.datalayer.SyncPhase
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.export.WorkoutDataExportRange
@@ -84,6 +97,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import android.util.Log
+import android.widget.Toast
 import java.util.UUID
 
 private const val TAG = "WorkoutHistDebug"
@@ -97,9 +111,12 @@ fun WorkoutsScreen(
     workoutScheduleDao: com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao,
     healthConnectClient: HealthConnectClient,
     isSyncing: Boolean = false,
+    syncPhase: SyncPhase? = null,
+    syncProgress: Float? = null,
     isExportingWorkoutDataForLlm: Boolean = false,
     workoutDataExportStatus: String = "Exporting workout data...",
     onSyncClick: () -> Unit,
+    onCancelSync: () -> Unit,
     onBackupClick: () -> Unit,
     onRestoreClick: () -> Unit,
     onImportWorkoutsClick: () -> Unit,
@@ -114,6 +131,11 @@ fun WorkoutsScreen(
     onViewErrorLogs: () -> Unit,
     selectedTabIndex: Int
 ) {
+    val animatedSyncProgress by animateFloatAsState(
+        targetValue = syncProgress ?: 0f,
+        animationSpec = tween(durationMillis = 400),
+        label = "Wear-acknowledged sync progress"
+    )
     val updateMessage by appViewModel.updateNotificationFlow.collectAsState(initial = null)
     val context = LocalContext.current
     val externalSessionDatabase = remember(context) {
@@ -128,6 +150,7 @@ fun WorkoutsScreen(
     var hasInitializedSelectedDate by remember { mutableStateOf(false) }
 
     val workouts by appViewModel.workoutsFlow.collectAsState()
+    val workoutStore by appViewModel.workoutStoreFlow.collectAsState()
 
     val equipments by appViewModel.equipmentsFlow.collectAsState()
     val accessories by appViewModel.accessoryEquipmentsFlow.collectAsState()
@@ -168,6 +191,18 @@ fun WorkoutsScreen(
 
     val activeWorkouts = remember(filteredWorkouts) {
         filteredWorkouts.filter { it.isActive }.sortedBy { it.order }
+    }
+
+    var hideDisabledWorkouts by rememberSaveable { mutableStateOf(true) }
+    val visibleActiveWorkouts = remember(
+        activeWorkouts,
+        activeAndEnabledWorkouts,
+        hideDisabledWorkouts
+    ) {
+        if (hideDisabledWorkouts) activeAndEnabledWorkouts else activeWorkouts
+    }
+    val disabledActiveWorkoutCount = remember(activeWorkouts) {
+        activeWorkouts.count { !it.enabled }
     }
 
     val workoutsByPlan = remember(activeWorkouts, allPlans, selectedPlanFilter) {
@@ -218,6 +253,23 @@ fun WorkoutsScreen(
 
     var selectedWorkouts by remember { mutableStateOf(listOf<Workout>()) }
     var isWorkoutSelectionModeActive by remember { mutableStateOf(false) }
+
+    fun selectWorkoutPlan(planId: UUID) {
+        selectedWorkouts = emptyList()
+        isWorkoutSelectionModeActive = false
+        appViewModel.setSelectedWorkoutPlanId(planId)
+    }
+
+    LaunchedEffect(visibleActiveWorkouts.map { it.id }) {
+        val visibleIds = visibleActiveWorkouts.mapTo(mutableSetOf()) { it.id }
+        val visibleSelection = selectedWorkouts.filter { it.id in visibleIds }
+        if (visibleSelection.size != selectedWorkouts.size) {
+            selectedWorkouts = visibleSelection
+            if (visibleSelection.isEmpty()) {
+                isWorkoutSelectionModeActive = false
+            }
+        }
+    }
 
     var selectedEquipments by remember { mutableStateOf(listOf<WeightLoadedEquipment>()) }
     var isEquipmentSelectionModeActive by remember { mutableStateOf(false) }
@@ -349,7 +401,7 @@ fun WorkoutsScreen(
         }
     }
 
-    val tabTitles = listOf("Status", "Workouts", "Gear", "Alarms")
+    val tabTitles = listOf("Status", "Workouts", "Exercise Library", "Alarms", "Gear")
 
     var selectedDate by remember {
         mutableStateOf<CalendarDay>(
@@ -390,13 +442,32 @@ fun WorkoutsScreen(
         if (!appViewModel.checkedHealthPermission || !appViewModel.hasHealthPermissions) {
             return@LaunchedEffect
         }
-        withContext(Dispatchers.IO) {
-            ExternalHealthConnectSessionSyncService(
-                context = context,
-                healthConnectClient = healthConnectClient,
-                externalDatabase = externalSessionDatabase,
-                appDatabase = AppDatabase.getDatabase(context),
-            ).refreshRecentSessions()
+        val requiredReadPermissions = setOf(
+            HealthPermission.getReadPermission(ExerciseSessionRecord::class),
+            HealthPermission.getReadPermission(HeartRateRecord::class),
+        )
+        val grantedPermissions = runCatching {
+            healthConnectClient.permissionController.getGrantedPermissions()
+        }.getOrElse {
+            appViewModel.setHealthPermissions(false)
+            return@LaunchedEffect
+        }
+        if (!grantedPermissions.containsAll(requiredReadPermissions)) {
+            appViewModel.setHealthPermissions(false)
+            return@LaunchedEffect
+        }
+        try {
+            withContext(Dispatchers.IO) {
+                ExternalHealthConnectSessionSyncService(
+                    context = context,
+                    healthConnectClient = healthConnectClient,
+                    externalDatabase = externalSessionDatabase,
+                    appDatabase = AppDatabase.getDatabase(context),
+                ).refreshRecentSessions()
+            }
+        } catch (error: SecurityException) {
+            appViewModel.setHealthPermissions(false)
+            Log.w(TAG, "Health Connect permissions changed during session refresh", error)
         }
     }
 
@@ -486,31 +557,52 @@ fun WorkoutsScreen(
         }
     }
 
+    fun activeWorkoutOrderWithVisibleOrder(
+        visibleOrderedWorkouts: List<Workout>,
+        allActiveWorkouts: List<Workout>
+    ): List<Workout> {
+        val visibleIds = visibleOrderedWorkouts.mapTo(mutableSetOf()) { it.id }
+        var visibleIndex = 0
+        return allActiveWorkouts.map { workout ->
+            if (workout.id in visibleIds) {
+                visibleOrderedWorkouts[visibleIndex++]
+            } else {
+                workout
+            }
+        }
+    }
+
     fun onMoveWorkoutUp() {
         if (selectedWorkouts.size != 1) return
         val selected = selectedWorkouts.first()
-        val index = activeWorkouts.indexOfFirst { it.id == selected.id }
-        if (index <= 0 || index >= activeWorkouts.size) return
-        val newList = activeWorkouts.toMutableList().apply {
+        val index = visibleActiveWorkouts.indexOfFirst { it.id == selected.id }
+        if (index <= 0 || index >= visibleActiveWorkouts.size) return
+        val newVisibleList = visibleActiveWorkouts.toMutableList().apply {
             val prev = this[index - 1]
             this[index - 1] = this[index]
             this[index] = prev
         }
-        appViewModel.reorderWorkoutsInPlan(selectedPlanFilter, newList)
+        appViewModel.reorderWorkoutsInPlan(
+            selectedPlanFilter,
+            activeWorkoutOrderWithVisibleOrder(newVisibleList, activeWorkouts)
+        )
         appViewModel.scheduleWorkoutSave(context)
     }
 
     fun onMoveWorkoutDown() {
         if (selectedWorkouts.size != 1) return
         val selected = selectedWorkouts.first()
-        val index = activeWorkouts.indexOfFirst { it.id == selected.id }
-        if (index < 0 || index >= activeWorkouts.size - 1) return
-        val newList = activeWorkouts.toMutableList().apply {
+        val index = visibleActiveWorkouts.indexOfFirst { it.id == selected.id }
+        if (index < 0 || index >= visibleActiveWorkouts.size - 1) return
+        val newVisibleList = visibleActiveWorkouts.toMutableList().apply {
             val next = this[index + 1]
             this[index + 1] = this[index]
             this[index] = next
         }
-        appViewModel.reorderWorkoutsInPlan(selectedPlanFilter, newList)
+        appViewModel.reorderWorkoutsInPlan(
+            selectedPlanFilter,
+            activeWorkoutOrderWithVisibleOrder(newVisibleList, activeWorkouts)
+        )
         appViewModel.scheduleWorkoutSave(context)
     }
 
@@ -522,6 +614,7 @@ fun WorkoutsScreen(
                     drawerContainerColor = DarkGray
                 ) {
                     WorkoutsMenu(
+                        isDrawerOpen = drawerState.isOpen,
                         onSyncClick = onSyncClick,
                         onOpenSettingsClick = onOpenSettingsClick,
                         onBackupClick = onBackupClick,
@@ -545,7 +638,8 @@ fun WorkoutsScreen(
                 }
             }
         ) {
-            Scaffold(
+            BreadcrumbScaffold(
+                showTopBarDivider = false,
                 topBar = {
                     TopAppBar(
                         colors = TopAppBarDefaults.topAppBarColors(
@@ -590,7 +684,7 @@ fun WorkoutsScreen(
                     when (selectedTabIndex) {
                         1 -> WorkoutsBottomBar(
                             selectedWorkouts = selectedWorkouts,
-                            activeWorkouts = activeWorkouts,
+                            activeWorkouts = visibleActiveWorkouts,
                             appViewModel = appViewModel,
                             workoutHistoryDao = workoutHistoryDao,
                             setHistoryDao = setHistoryDao,
@@ -610,7 +704,7 @@ fun WorkoutsScreen(
                             isSelectionModeActive = isWorkoutSelectionModeActive
                         )
 
-                        2 -> {
+                        4 -> {
                             EquipmentsBottomBar(
                                 selectedEquipments = selectedEquipments,
                                 equipments = equipments,
@@ -650,6 +744,7 @@ fun WorkoutsScreen(
                         contentColor = MaterialTheme.colorScheme.onBackground,
                         selectedContentColor = MaterialTheme.colorScheme.primary,
                         unselectedContentColor = MaterialTheme.colorScheme.onBackground,
+                        compactNavigation = true,
                         modifier = Modifier
                             .fillMaxSize()
                             .background(MaterialTheme.colorScheme.background),
@@ -660,18 +755,7 @@ fun WorkoutsScreen(
                                 .background(MaterialTheme.colorScheme.background),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            AnimatedContent(
-                                modifier = Modifier.background(MaterialTheme.colorScheme.background),
-                                targetState = pageIndex,
-                                transitionSpec = {
-                                    fadeIn(animationSpec = tween(500)) togetherWith fadeOut(
-                                        animationSpec = tween(
-                                            500
-                                        )
-                                    )
-                                }, label = ""
-                            ) { updatedSelectedTab ->
-                                when (updatedSelectedTab) {
+                            when (pageIndex) {
                                     0 -> {
                                         WorkoutsStatusTab(
                                             isLoading = isLoading,
@@ -711,15 +795,27 @@ fun WorkoutsScreen(
                                             WorkoutPlanFilterPicker(
                                                 allPlans = allPlans,
                                                 selectedPlanFilter = selectedPlanFilter,
-                                                onPlanSelected = { planId ->
-                                                    appViewModel.setSelectedWorkoutPlanId(planId)
-                                                }
+                                                onPlanSelected = ::selectWorkoutPlan,
                                             )
                                             WorkoutsListTab(
-                                                workouts = activeWorkouts,
+                                                workouts = visibleActiveWorkouts,
                                                 selectedWorkouts = selectedWorkouts,
                                                 isSelectionModeActive = isWorkoutSelectionModeActive,
                                                 appViewModel = appViewModel,
+                                                hideDisabledWorkouts = hideDisabledWorkouts,
+                                                disabledWorkoutCount = disabledActiveWorkoutCount,
+                                                emptyMessage = if (
+                                                    hideDisabledWorkouts &&
+                                                    disabledActiveWorkoutCount > 0 &&
+                                                    activeWorkouts.isNotEmpty()
+                                                ) {
+                                                    "No enabled workouts in this plan."
+                                                } else {
+                                                    "No workouts in this plan yet."
+                                                },
+                                                onHideDisabledWorkoutsChange = {
+                                                    hideDisabledWorkouts = it
+                                                },
                                                 onWorkoutClick = { workout ->
                                                     appViewModel.setScreenData(
                                                         ScreenData.WorkoutDetail(workout.id)
@@ -734,7 +830,7 @@ fun WorkoutsScreen(
                                         }
                                     }
 
-                                    2 -> {
+                                    4 -> {
                                         WorkoutsGearTab(
                                             equipments = equipments,
                                             accessories = accessories,
@@ -763,9 +859,7 @@ fun WorkoutsScreen(
                                             WorkoutPlanFilterPicker(
                                                 allPlans = allPlans,
                                                 selectedPlanFilter = selectedPlanFilter,
-                                                onPlanSelected = { planId ->
-                                                    appViewModel.setSelectedWorkoutPlanId(planId)
-                                                }
+                                                onPlanSelected = ::selectWorkoutPlan,
                                             )
                                             WorkoutsAlarmsTab(
                                                 workouts = filteredWorkouts,
@@ -777,9 +871,73 @@ fun WorkoutsScreen(
                                             )
                                         }
                                     }
-                                }
-                            }
 
+                                    2 -> {
+                                        ExerciseLibraryScreen(
+                                            definitions = workoutStore.exerciseDefinitions,
+                                            workouts = workouts,
+                                            plans = allPlans,
+                                            equipmentNamesById = equipments.associate { it.id to it.name },
+                                            accessoryNamesById = accessories.associate { it.id to it.name },
+                                            onAdd = {
+                                                appViewModel.setScreenData(ScreenData.NewExerciseDefinition())
+                                            },
+                                            onImport = { content ->
+                                                scope.launch {
+                                                    runCatching {
+                                                        val importedLibrary = fromJSONToExerciseLibraryPackage(content)
+                                                        withContext(Dispatchers.IO) {
+                                                            restoreExerciseMovementBackups(
+                                                                context,
+                                                                importedLibrary.exerciseMovements,
+                                                            )
+                                                            requireExerciseMovementPayloads(
+                                                                context,
+                                                                workoutStore.copy(
+                                                                    exerciseDefinitions = importedLibrary.exerciseDefinitions,
+                                                                    workouts = emptyList(),
+                                                                ),
+                                                            )
+                                                        }
+                                                        val addedDefinitions = appViewModel
+                                                            .importExerciseLibrary(importedLibrary)
+                                                        appViewModel.scheduleWorkoutSave(context)
+                                                        addedDefinitions
+                                                    }.onSuccess { addedDefinitions ->
+                                                        Toast.makeText(
+                                                            context,
+                                                            "Imported $addedDefinitions exercise definition(s).",
+                                                            Toast.LENGTH_LONG,
+                                                        ).show()
+                                                    }.onFailure { error ->
+                                                        Toast.makeText(
+                                                            context,
+                                                            error.message ?: "Couldn't import that exercise library.",
+                                                            Toast.LENGTH_LONG,
+                                                        ).show()
+                                                    }
+                                                }
+                                            },
+                                            onEdit = { definition ->
+                                                appViewModel.setScreenData(
+                                                    ScreenData.EditExerciseDefinition(definition.id)
+                                                )
+                                            },
+                                            onDelete = { definition ->
+                                                appViewModel.deleteExerciseDefinition(definition.id)
+                                                appViewModel.scheduleWorkoutSave(context)
+                                            },
+                                            onOpenPlan = { planId ->
+                                                appViewModel.openWorkoutPlanFromBreadcrumb(planId)
+                                            },
+                                            onOpenWorkout = { workoutId ->
+                                                appViewModel.setScreenData(
+                                                    ScreenData.WorkoutDetail(workoutId)
+                                                )
+                                            },
+                                        )
+                                    }
+                            }
                         }
                     }
                 }
@@ -873,11 +1031,22 @@ fun WorkoutsScreen(
         )
 
         LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
-        LoadingOverlay(
-            isVisible = isSyncing,
-            text = "Syncing...",
-            useOpaqueBackground = true
-        )
+        // Manual sync never modifies phone data, so it runs as a non-modal banner
+        // and the rest of the screen stays interactive.
+        AnimatedVisibility(
+            visible = isSyncing,
+            modifier = Modifier.align(Alignment.TopCenter),
+            enter = fadeIn() + expandVertically(),
+            exit = fadeOut() + shrinkVertically(),
+        ) {
+            SyncStatusCard(
+                phase = syncPhase,
+                // Determinate only while chunks are transferring; the progress
+                // value is stale/meaningless in the other phases.
+                progress = animatedSyncProgress.takeIf { syncPhase == SyncPhase.TRANSFERRING },
+                onCancel = onCancelSync,
+            )
+        }
         LoadingOverlay(
             isVisible = rememberMinimumLoadingVisibility(
                 isLoading = isExportingWorkoutDataForLlm,
@@ -909,8 +1078,7 @@ private fun WorkoutPlanFilterPicker(
         planItems
             .firstOrNull { it.value == selectedPlanFilter }
             ?.label
-            ?: planItems.firstOrNull()?.label
-            ?: "Workout Plan"
+            ?: "Select workout plan"
     }
 
     StandardFilterDropdown(
@@ -918,9 +1086,13 @@ private fun WorkoutPlanFilterPicker(
         selectedText = selectedPlanLabel,
         items = planItems,
         onItemSelected = onPlanSelected,
+        selectedValue = selectedPlanFilter,
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 15.dp, vertical = 8.dp),
-        isItemSelected = { it == selectedPlanFilter }
+        isItemSelected = { it == selectedPlanFilter },
+        marqueeSelectedText = false,
+        marqueeItems = false,
+        itemMaxLines = 3,
     )
 }

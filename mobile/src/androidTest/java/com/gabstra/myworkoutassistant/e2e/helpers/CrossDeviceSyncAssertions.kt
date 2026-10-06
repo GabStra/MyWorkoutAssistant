@@ -18,13 +18,10 @@ import com.gabstra.myworkoutassistant.shared.workout.model.ownerDeviceOrDefault
 import com.gabstra.myworkoutassistant.shared.workout.model.resolveWorkoutSessionStatus
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import kotlinx.coroutines.delay
-import java.time.Duration
-import java.time.LocalDateTime
 import java.util.UUID
 import kotlin.math.abs
 
 object CrossDeviceSyncAssertions {
-    private const val HISTORY_RECENCY_MINUTES = 120L
 
     data class ExpectedSetSpec(
         val setId: UUID,
@@ -374,14 +371,14 @@ object CrossDeviceSyncAssertions {
         db: AppDatabase,
         requiresCompletedHistory: Boolean
     ): WorkoutHistory {
-        val matchingHistories = resolveRecentMatchingHistories(db)
+        val matchingHistories = resolveMatchingHistories(db)
 
         return if (requiresCompletedHistory) {
             val completedHistories = matchingHistories.filter { it.isDone }
             val unfinishedHistories = matchingHistories.filterNot { it.isDone }
             if (completedHistories.size != 1) {
                 fail(
-                    "Expected exactly one recent completed workout history for " +
+                    "Expected exactly one completed workout history for " +
                         "workoutId=${CrossDeviceSyncPhoneWorkoutStoreFixture.WORKOUT_ID}, " +
                         "but found completed=${completedHistories.map { it.id }} " +
                         "all=${matchingHistories.map { "${it.id}:${it.isDone}" }}."
@@ -389,7 +386,7 @@ object CrossDeviceSyncAssertions {
             }
             if (unfinishedHistories.isNotEmpty()) {
                 fail(
-                    "Expected no unfinished recent workout histories after completion sync, " +
+                    "Expected no unfinished workout histories after completion sync, " +
                         "but found ${unfinishedHistories.map { it.id }}."
                 )
             }
@@ -398,7 +395,7 @@ object CrossDeviceSyncAssertions {
             val unfinishedHistories = matchingHistories.filterNot { it.isDone }
             if (unfinishedHistories.size != 1 || matchingHistories.size != 1) {
                 fail(
-                    "Expected exactly one recent unfinished workout history during live sync, " +
+                    "Expected exactly one unfinished workout history during live sync, " +
                         "but found ${matchingHistories.map { "${it.id}:${it.isDone}" }}."
                 )
             }
@@ -406,19 +403,18 @@ object CrossDeviceSyncAssertions {
         }
     }
 
-    private suspend fun resolveRecentMatchingHistories(db: AppDatabase): List<WorkoutHistory> {
+    private suspend fun resolveMatchingHistories(db: AppDatabase): List<WorkoutHistory> {
         val matchingHistories = db.workoutHistoryDao()
             .getAllWorkoutHistories()
             .filter {
                 it.workoutId == CrossDeviceSyncPhoneWorkoutStoreFixture.WORKOUT_ID &&
-                    it.globalId == CrossDeviceSyncPhoneWorkoutStoreFixture.WORKOUT_GLOBAL_ID &&
-                    isHistoryRecent(it)
+                    it.globalId == CrossDeviceSyncPhoneWorkoutStoreFixture.WORKOUT_GLOBAL_ID
             }
             .sortedByDescending { it.version.toLong() }
 
         if (matchingHistories.isEmpty()) {
             fail(
-                "No recent workout histories found for " +
+                "No workout histories found for " +
                     "workoutId=${CrossDeviceSyncPhoneWorkoutStoreFixture.WORKOUT_ID}."
             )
         }
@@ -548,11 +544,6 @@ object CrossDeviceSyncAssertions {
                     "but found ${weightData.actualWeight}."
             )
         }
-    }
-
-    private fun isHistoryRecent(workoutHistory: WorkoutHistory): Boolean {
-        val ageMinutes = Duration.between(workoutHistory.startTime, LocalDateTime.now()).toMinutes()
-        return ageMinutes in 0..HISTORY_RECENCY_MINUTES
     }
 
     private fun assertWearOwnedWorkoutRecord(

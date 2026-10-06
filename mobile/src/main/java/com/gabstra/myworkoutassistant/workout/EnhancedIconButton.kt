@@ -1,8 +1,9 @@
 package com.gabstra.myworkoutassistant.workout
 
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.PressInteraction
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.IconButtonColors
@@ -15,13 +16,11 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.MaterialTheme
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.launch
 
 @Composable
 fun EnhancedIconButton(
     onClick: () -> Unit,
-    boxModifier: Modifier = Modifier,
+    modifier: Modifier = Modifier,
     buttonModifier: Modifier = Modifier,
     enabled: Boolean = true,
     colors: IconButtonColors? = null,
@@ -37,33 +36,22 @@ fun EnhancedIconButton(
     val buttonColors = colors ?: defaultColors
 
     Box(
-        modifier = boxModifier
+        modifier = modifier
             .size(hitBoxSize)
-            .pointerInput(enabled) {
-                coroutineScope {
-                    while (true) {
-                        val event = awaitPointerEventScope {
-                            awaitPointerEvent()
-                        }
-                        when {
-                            event.changes.any { it.pressed } -> {
-                                launch {
-                                    interactionSource.emit(PressInteraction.Press(event.changes.first().position))
-                                    if (enabled) onClick()
-                                }
-                            }
-                            event.changes.any { !it.pressed } -> {
-                                launch {
-                                    interactionSource.emit(PressInteraction.Release(PressInteraction.Press(event.changes.first().position)))
-                                }
-                            }
-                        }
-                    }
-                }
-            }
     ) {
+        // This sibling sits behind the visual button and owns only the expanded area.
+        // Taps inside the visual bounds are handled by FilledTonalIconButton itself.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(enabled, onClick) {
+                    if (enabled) {
+                        detectTapGestures(onTap = { onClick() })
+                    }
+                },
+        )
         FilledTonalIconButton(
-            onClick = { /* Handled by Box */ },
+            onClick = onClick,
             modifier = buttonModifier
                 .size(buttonSize)
                 .align(Alignment.Center),

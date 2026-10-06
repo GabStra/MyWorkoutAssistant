@@ -471,7 +471,8 @@ object ComprehensiveHistoryWorkoutStoreFixture {
             name = "Plank Hold",
             notes = "",
             sets = listOf(
-                TimedDurationSet(setId, 60_000, autoStart = true, autoStop = true) // 60 seconds
+                // History persistence needs a real timer completion, not a full workout-length wait.
+                TimedDurationSet(setId, 5_000, autoStart = true, autoStop = true)
             ),
             exerciseType = ExerciseType.COUNTDOWN,
             minReps = 0,
@@ -551,5 +552,4 @@ object ComprehensiveHistoryWorkoutStoreFixture {
         )
     }
 }
-
 

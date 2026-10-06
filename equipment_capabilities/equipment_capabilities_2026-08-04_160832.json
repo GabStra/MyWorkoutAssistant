@@ -1,0 +1,47 @@
+{
+  "capabilitiesByEquipmentId": {
+    "a247d19d-e625-4c84-af6a-f643bb1d076c": [
+      "SUPPORTS_PLATES",
+      "LOADABLE_BAR"
+    ],
+    "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c": [
+      "ADJUSTABLE_WEIGHT"
+    ],
+    "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0": [
+      "ADJUSTABLE_WEIGHT"
+    ],
+    "653678c3-70bf-4425-b6b7-14bf6b752c87": [
+      "SUPPORTS_PLATES",
+      "LOADABLE_BAR",
+      "ADJUSTABLE_PULLEY",
+      "HIGH_PULLEY",
+      "LOW_PULLEY",
+      "ROPE_ATTACHMENT",
+      "SINGLE_HANDLE_ATTACHMENT"
+    ],
+    "f145a180-eaae-4fe1-b7b4-5527ec8adb04": [
+      "ADJUSTABLE_WEIGHT"
+    ],
+    "1bbc8e63-a0d0-4d98-809a-928a337644e1": [
+      "CARDIO_STATIONARY"
+    ],
+    "ef01a523-f4f3-4aa9-8e85-68fc08b73a49": [
+      "NORDIC_CURL_SUPPORT"
+    ],
+    "0150cff2-cce4-4c45-8d8a-631f915b80fe": [
+      "CORE_ROLLER"
+    ],
+    "49405aae-8e6d-4364-8bd5-cb551fb97631": [
+      "PULL_UP_BAR"
+    ],
+    "860fedac-30a1-40fa-bfff-269484fa246b": [
+      "GYMNASTIC_RINGS"
+    ],
+    "e3f0e0ee-3433-4435-bed9-c926e23a8468": [
+      "BENCH",
+      "ADJUSTABLE_BENCH",
+      "FLAT_BENCH",
+      "INCLINE_BENCH"
+    ]
+  }
+}

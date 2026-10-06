@@ -95,7 +95,11 @@ class ExerciseHistoryMarkdownExportTest {
 
         val markdown = (result as ExerciseHistoryMarkdownResult.Success).markdown
 
-        assertTrue(markdown.contains("#### Equipment\n- Weighted Vest | Weights: 5,10,15\n- Dip Dumbbell | Weights: 10,12.50,15"))
+        assertTrue(
+            markdown.contains(
+                "#### Equipment\n- Weighted Vest | Weights: 5.0 kg,10.0 kg,15.0 kg\n- Dip Dumbbell | Weights: 10.0 kg,12.5 kg,15.0 kg"
+            )
+        )
         assertTrue(markdown.contains("#### Body Weight Load"))
         assertTrue(markdown.contains("Relative BW = session BW x 75%"))
         assertTrue(markdown.contains("Set load = relative BW +/- equipment weight"))

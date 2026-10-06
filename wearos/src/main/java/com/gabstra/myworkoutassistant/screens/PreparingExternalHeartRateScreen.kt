@@ -1,11 +1,9 @@
 package com.gabstra.myworkoutassistant.screens
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
+import com.gabstra.myworkoutassistant.presentation.theme.tertiaryContent
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -14,7 +12,6 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
@@ -22,7 +19,6 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
-import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.ListHeader
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
@@ -35,7 +31,7 @@ import androidx.wear.compose.material3.lazy.TransformationVariableSpec
 import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import com.gabstra.myworkoutassistant.composables.ButtonWithText
-import com.gabstra.myworkoutassistant.composables.LoadingText
+import com.gabstra.myworkoutassistant.composables.FullScreenLoadingIndicator
 import com.gabstra.myworkoutassistant.composables.WearPrimaryButton
 import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import com.gabstra.myworkoutassistant.data.AppViewModel
@@ -66,16 +62,25 @@ fun PreparingExternalHeartRateScreen(
 
     val selectedWorkout by viewModel.selectedWorkout
     val hasWorkoutRecord by viewModel.hasWorkoutRecord.collectAsState()
+    val isSessionHydrationInFlight by viewModel.isSessionHydrationInFlightFlow.collectAsState()
     val connectionState by externalHeartRateController.connectionState.collectAsState()
     val source = selectedWorkout.heartRateSource
     val scope = rememberWearCoroutineScope()
     val context = LocalContext.current
 
     var currentMillis by remember { mutableIntStateOf(0) }
-    var canSkip by remember { mutableStateOf(false) }
     var hasTriggeredNextState by remember { mutableStateOf(false) }
+    val canSkip = !connectionState.isReady && (
+        currentMillis >= EXTERNAL_HR_SKIP_DELAY_MS ||
+            connectionState is ExternalHeartRateConnectionState.Error ||
+            connectionState is ExternalHeartRateConnectionState.MissingConfiguration
+        )
 
-    LaunchedEffect(source) {
+    LaunchedEffect(source, isSessionHydrationInFlight) {
+        if (isSessionHydrationInFlight) {
+            return@LaunchedEffect
+        }
+        currentMillis = 0
         val config = viewModel.getExternalHeartRateConfig(source)
         externalHeartRateController.initialize(context, config)
         externalHeartRateController.connectToDevice()
@@ -84,16 +89,22 @@ fun PreparingExternalHeartRateScreen(
             while (true) {
                 delay(1000)
                 currentMillis += 1000
-                if (currentMillis >= EXTERNAL_HR_SKIP_DELAY_MS && !hasTriggeredNextState && !connectionState.isReady) {
-                    canSkip = true
+                if (currentMillis >= EXTERNAL_HR_SKIP_DELAY_MS) {
                     break
                 }
             }
         }
     }
 
-    LaunchedEffect(connectionState, state.dataLoaded, currentMillis, hasWorkoutRecord, hasTriggeredNextState) {
-        if (hasTriggeredNextState) return@LaunchedEffect
+    LaunchedEffect(
+        connectionState,
+        state.dataLoaded,
+        currentMillis,
+        hasWorkoutRecord,
+        hasTriggeredNextState,
+        isSessionHydrationInFlight
+    ) {
+        if (hasTriggeredNextState || isSessionHydrationInFlight) return@LaunchedEffect
 
         val isReady = connectionState.isReady && state.dataLoaded && currentMillis >= 3000
         if (isReady) {
@@ -105,7 +116,7 @@ fun PreparingExternalHeartRateScreen(
             viewModel.lightScreenUp()
             if (hasWorkoutRecord) {
                 if (viewModel.consumeSkipNextResumeLastState()) {
-                    viewModel.resumeWorkout()
+                    viewModel.finishPreparedResume()
                 } else {
                     viewModel.resumeLastState()
                 }
@@ -131,6 +142,23 @@ fun PreparingExternalHeartRateScreen(
             (connectionState as ExternalHeartRateConnectionState.Skipped).message
         ExternalHeartRateConnectionState.Idle -> "Preparing ${source.displayName()}"
     }.trimEnd('.')
+
+    if (!canSkip || connectionState.isReady) {
+        FullScreenLoadingIndicator(
+            text = "Getting your ${source.displayName()} ready",
+        ) {
+            Text(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 5.dp),
+                text = statusMessage,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.tertiaryContent,
+                textAlign = TextAlign.Center,
+            )
+        }
+        return
+    }
 
     val transformingLazyColumnState = rememberTransformingLazyColumnState()
     val spec = rememberTransformationSpec(
@@ -178,54 +206,35 @@ fun PreparingExternalHeartRateScreen(
                 }
             }
 
-            if (!canSkip || connectionState.isReady) {
-                item {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.Center,
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        CircularProgressIndicator()
-                        Spacer(Modifier.height(8.dp))
-                        LoadingText(baseText = "Connecting")
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            modifier = Modifier.fillMaxWidth(),
-                            text = statusMessage,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center
-                        )
-                    }
-                }
-            } else {
-                item {
-                    Text(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .transformedHeight(this, spec),
-                        text = statusMessage,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center
-                    )
-                }
-                item {
-                    WearPrimaryButton(
+            item {
+                Text(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .transformedHeight(this, spec),
+                    text = statusMessage,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.tertiaryContent,
+                    textAlign = TextAlign.Center
+                )
+            }
+            item {
+                WearPrimaryButton(
                         modifier = Modifier
                             .fillMaxWidth()
                             .transformedHeight(this, spec),
                         transformation = SurfaceTransformation(spec),
                         text = "Skip",
                         onClick = {
-                            if (hasTriggeredNextState) return@WearPrimaryButton
+                            if (hasTriggeredNextState || isSessionHydrationInFlight) {
+                                return@WearPrimaryButton
+                            }
                             hasTriggeredNextState = true
                             externalHeartRateController.skipConnectionForSession()
                             hapticsViewModel.doGentleVibration()
 
                             if (hasWorkoutRecord) {
                                 if (viewModel.consumeSkipNextResumeLastState()) {
-                                    viewModel.resumeWorkout()
+                                    viewModel.finishPreparedResume()
                                 } else {
                                     viewModel.resumeLastState()
                                 }
@@ -236,10 +245,10 @@ fun PreparingExternalHeartRateScreen(
                             viewModel.lightScreenUp()
                             onReady()
                         },
-                    )
-                }
-                item {
-                    ButtonWithText(
+                )
+            }
+            item {
+                ButtonWithText(
                         modifier = Modifier
                             .fillMaxWidth()
                             .transformedHeight(this, spec),
@@ -253,8 +262,7 @@ fun PreparingExternalHeartRateScreen(
                                 popUpTo(0) { inclusive = true }
                             }
                         }
-                    )
-                }
+                )
             }
         }
     }

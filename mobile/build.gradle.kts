@@ -28,6 +28,9 @@ val e2eTestBuildType = providers.gradleProperty("e2eTestBuildType").orElse("debu
 val isReleaseBuild = gradle.startParameter.taskNames.any { taskName ->
     taskName.contains("Release", ignoreCase = true)
 }
+val isCiBuild = providers.environmentVariable("CI").orElse("false").get().equals("true", ignoreCase = true)
+val shouldRunReleaseLint = isReleaseBuild || isCiBuild
+val shouldRunReleaseOptimizations = isReleaseBuild || isCiBuild
 if (isReleaseBuild && !hasReleaseSigning) {
     throw GradleException(
         "Missing release signing configuration. Provide keystore.properties or MWA_* env vars."
@@ -47,13 +50,13 @@ android {
         }
     }
     namespace = "com.gabstra.myworkoutassistant"
-    compileSdk = 36
+    compileSdk = 37
     testBuildType = e2eTestBuildType
 
     defaultConfig {
         applicationId = "com.gabstra.myworkoutassistant"
         minSdk = 34
-        targetSdk = 35
+        targetSdk = 37
         versionCode = appVersionCode
         versionName = appVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -64,12 +67,12 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = true
-            isShrinkResources = false
+            isMinifyEnabled = shouldRunReleaseOptimizations
+            isShrinkResources = shouldRunReleaseOptimizations
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
-                "proguard-release-fast.pro"
+                rootProject.file("proguard-gson-reflection.pro")
             )
             testProguardFiles(rootProject.file("proguard-android-test.pro"))
             if (hasReleaseSigning) {
@@ -90,6 +93,9 @@ android {
         compose = true
         buildConfig = false
     }
+    lint {
+        checkReleaseBuilds = shouldRunReleaseLint
+    }
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -109,6 +115,7 @@ android {
         }
         named("androidTest") {
             kotlin.directories.add("src/androidTest/java")
+            assets.directories.add(rootProject.file("testdata/e2e-movement-assets").path)
         }
         named("test") {
             kotlin.directories.add("src/test/java")
@@ -118,6 +125,7 @@ android {
 
 dependencies {
     implementation(project(":shared"))
+    implementation(project(":motion-renderer"))
     implementation("androidx.documentfile:documentfile:1.1.0")
 
     // Compose BOM (Dec 2025)
@@ -139,18 +147,21 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
 
     // Navigation
-    implementation("androidx.navigation:navigation-compose:2.9.8")
+    implementation("androidx.navigation:navigation-compose:2.10.2")
 
     // AndroidX core
-    implementation("androidx.core:core-ktx:1.18.0")
+    implementation("androidx.core:core-ktx:1.19.1")
     implementation("androidx.activity:activity-compose:1.13.0")
-    implementation("androidx.work:work-runtime-ktx:2.11.2")
+    // Keep concurrent-futures aligned with the AndroidTest graph, which includes AndroidX Test 1.3.
+    implementation("androidx.concurrent:concurrent-futures:1.3.0")
+    implementation("androidx.concurrent:concurrent-futures-ktx:1.3.0")
+    implementation("androidx.work:work-runtime-ktx:2.12.0")
 
     // Lifecycle
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.10.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.10.0")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.10.0")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.11.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.11.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.11.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0")
 
     // Google / Wear
     implementation("com.google.android.gms:play-services-wearable:20.0.1")
@@ -160,15 +171,19 @@ dependencies {
     // Accompanist (permissions only; system UI controller replaced by enableEdgeToEdge)
     implementation("com.google.accompanist:accompanist-permissions:0.37.3")
 
-    implementation("androidx.room:room-runtime:2.8.4")
-    ksp("androidx.room:room-compiler:2.8.4")
-    implementation("com.google.ai.edge.litertlm:litertlm-android:0.12.0")
-    implementation("com.openai:openai-java:4.35.0")
+    implementation("androidx.room:room-runtime:2.8.5")
+    ksp("androidx.room:room-compiler:2.8.5")
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.17.1")
+    implementation("com.openai:openai-java:4.70.0")
     implementation("com.github.jeziellago:compose-markdown:0.5.8")
+
+    // Polar SDK + Rx
+    implementation("com.github.polarofficial:polar-ble-sdk:6.8.0")
+    implementation("io.reactivex.rxjava3:rxjava:3.1.12")
 
     // Misc
     implementation("com.google.code.gson:gson:2.14.0")
-    implementation("com.patrykandpatrick.vico:compose:3.1.0")
+    implementation("com.patrykandpatrick.vico:compose:3.3.1")
     implementation("com.kizitonwose.calendar:compose:2.10.1")
     implementation("androidx.health.connect:connect-client:1.1.0")
     implementation("com.github.kevinnzou:compose-progressindicator:1.0.0")
@@ -177,8 +192,7 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
-    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.4.0-beta02")
-
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.4.0")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 }
 

@@ -2,6 +2,8 @@ package com.gabstra.myworkoutassistant.shared.viewmodels
 
 import android.content.Context
 import android.util.Log
+import androidx.compose.runtime.mutableDoubleStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -23,6 +25,7 @@ import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.HeartRateSource
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
+import com.gabstra.myworkoutassistant.shared.running.RunningResult
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.addSetToExerciseRecursively
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.removeSetsFromExerciseRecursively
@@ -36,9 +39,11 @@ import com.gabstra.myworkoutassistant.shared.copySetData
 import com.gabstra.myworkoutassistant.shared.latestWorkoutHistoryComparator
 import com.gabstra.myworkoutassistant.shared.coroutines.DefaultDispatcherProvider
 import com.gabstra.myworkoutassistant.shared.coroutines.DispatcherProvider
+import com.gabstra.myworkoutassistant.shared.datalayer.SyncPhase
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
+import com.gabstra.myworkoutassistant.shared.equipments.isCompatibleWith
 import com.gabstra.myworkoutassistant.shared.getNewSet
 import com.gabstra.myworkoutassistant.shared.initializeSetData
 import com.gabstra.myworkoutassistant.shared.isSetDataValid
@@ -65,6 +70,7 @@ import com.gabstra.myworkoutassistant.shared.workout.assembly.WorkoutSupersetAss
 import com.gabstra.myworkoutassistant.shared.workout.plates.PlateRecalculationDebouncer
 import com.gabstra.myworkoutassistant.shared.workout.model.SessionOwnerDevice
 import com.gabstra.myworkoutassistant.shared.workout.model.WATCH_SESSION_STATE_RETURNED_HOME
+import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionEndReason
 import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionStatus
 import com.gabstra.myworkoutassistant.shared.workout.model.ownerDeviceOrDefault
 import com.gabstra.myworkoutassistant.shared.workout.model.resolveWorkoutSessionStatus
@@ -114,6 +120,7 @@ import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -121,6 +128,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -202,7 +210,10 @@ open class WorkoutViewModel(
 
     private var storeSetDataJob: Job? = null
     private val workoutRecordMutex = Mutex()
+    private val workoutPersistenceMutex = Mutex()
     private val activeSessionHydrationTrigger = AtomicReference<SessionHydrationTrigger?>(null)
+    private val _isSessionHydrationInFlight = MutableStateFlow(false)
+    val isSessionHydrationInFlightFlow = _isSessionHydrationInFlight.asStateFlow()
     private val workoutPersistenceCoordinator by lazy {
         WorkoutPersistenceCoordinator(
             executedSetStore = executedSetStore,
@@ -280,6 +291,9 @@ open class WorkoutViewModel(
     private val _keepScreenOn = mutableStateOf(false)
     val keepScreenOn: State<Boolean> = _keepScreenOn
 
+    private val _dimmedScreenBrightness = mutableFloatStateOf(0.15f)
+    val dimmedScreenBrightness: State<Float> = _dimmedScreenBrightness
+
     private val _currentScreenDimmingState = mutableStateOf(false)
 
     val currentScreenDimmingState: State<Boolean> = _currentScreenDimmingState
@@ -344,6 +358,10 @@ open class WorkoutViewModel(
         rebuildScreenState()
     }
 
+    fun setDimmedScreenBrightness(brightness: Float) {
+        _dimmedScreenBrightness.floatValue = brightness.coerceIn(0.05f, 0.50f)
+    }
+
     fun setDimming(shouldDim: Boolean) {
         if (_currentScreenDimmingState.value != shouldDim) {
             _currentScreenDimmingState.value = shouldDim
@@ -400,6 +418,10 @@ open class WorkoutViewModel(
         return currentWorkoutStore.accessoryEquipments.find { it.id == id }
     }
 
+    fun getLinkedSupportName(id: UUID): String? {
+        return getAccessoryEquipmentById(id)?.name ?: getEquipmentById(id)?.name
+    }
+
     private val _isPaused = mutableStateOf(false) // Private mutable state
     open val isPaused: State<Boolean> = _isPaused // read-only State access
 
@@ -421,12 +443,24 @@ open class WorkoutViewModel(
         rebuildScreenState()
     }
 
+    open fun finishPreparedResume() {
+        if (isSessionHydrationInFlight()) return
+        if (stateMachine != null) {
+            updateStateFlowsFromMachine()
+            return
+        }
+        enterResumingPhase()
+        resumeWorkout()
+    }
+
     /**
      * Guards delayed UI actions from stale Preparing compositions. Recovery can replace the
      * active screen state before an outgoing Preparing screen finishes its timers/animations.
      */
     fun isCurrentPreparingState(expectedState: WorkoutState.Preparing): Boolean {
-        return _workoutState.value === expectedState
+        val phase = _sessionPhase.value
+        return (phase == WorkoutSessionPhase.PREPARING || phase == WorkoutSessionPhase.READY) &&
+            _workoutState.value === expectedState
     }
 
     private val _workouts = MutableStateFlow<List<Workout>>(emptyList())
@@ -435,7 +469,7 @@ open class WorkoutViewModel(
     private var _userAge = mutableIntStateOf(0)
     val userAge: State<Int> = _userAge
 
-    private var _bodyWeight = mutableStateOf(0.0)
+    private var _bodyWeight = mutableDoubleStateOf(0.0)
     val bodyWeight: State<Double> = _bodyWeight
 
     // Plate recalculation debouncer and state
@@ -444,15 +478,21 @@ open class WorkoutViewModel(
     private val _isPlateRecalculationInProgress = MutableStateFlow(false)
     val isPlateRecalculationInProgress = _isPlateRecalculationInProgress.asStateFlow()
 
-    private var _backupProgress = mutableStateOf(0f)
+    private var _backupProgress = mutableFloatStateOf(0f)
     val backupProgress: State<Float> = _backupProgress
+    private var _backupSyncPhase = mutableStateOf(SyncPhase.CONNECTING)
+    val backupSyncPhase: State<SyncPhase> = _backupSyncPhase
 
     private var _selectedWorkoutId = mutableStateOf<UUID?>(null)
     val selectedWorkoutId: State<UUID?> get() = _selectedWorkoutId
 
     // Create a function to update the backup progress
     fun setBackupProgress(progress: Float) {
-        _backupProgress.value = progress
+        _backupProgress.floatValue = progress
+    }
+
+    fun setBackupSyncPhase(phase: SyncPhase) {
+        _backupSyncPhase.value = phase
     }
 
     val allWorkoutStates: List<WorkoutState>
@@ -482,7 +522,7 @@ open class WorkoutViewModel(
         _workouts.value = newWorkoutStore.workouts.filter { it.enabled && it.isActive }
         val currentYear = Calendar.getInstance().get(Calendar.YEAR)
         _userAge.intValue = currentYear - newWorkoutStore.birthDateYear
-        _bodyWeight.value = newWorkoutStore.weightKg.toDouble()
+        _bodyWeight.doubleValue = newWorkoutStore.weightKg
         rebuildScreenState()
     }
 
@@ -495,6 +535,7 @@ open class WorkoutViewModel(
             currentWorkoutHistory == null &&
             hadActiveSession &&
             !isSessionHydrationInFlight() &&
+            _sessionPhase.value != WorkoutSessionPhase.ACTIVE &&
             recordState.workoutRecord?.ownerDeviceOrDefault() == activeSessionOwnerDevice()
     }
 
@@ -555,15 +596,21 @@ open class WorkoutViewModel(
         }
 
         if (hadActiveSession && previousState !is WorkoutState.Completed) {
-            loadWorkoutHistory()
+            hydrateSelectedWorkoutTemplateForSession()
             if (previousMachine != null && refreshRequest != null) {
                 val currentSetState = previousState as? WorkoutState.Set
                 val preservedSetData = currentSetState?.currentSetData?.let(::copySetData)
+                val preservedPreviousSetData = currentSetState?.previousSetData?.let(::copySetData)
                 val preservedStartTime = currentSetState?.startTime
                 val preservedSkipped = currentSetState?.skipped
 
                 val workoutSequence = generateWorkoutStates()
-                val initialMachine = initializeStateMachine(workoutSequence, 0)
+                val executedSetsHistorySnapshot = executedSetStore.executedSets.value
+                val refreshedSequence = applyExecutedSetDataToSequence(
+                    workoutSequence,
+                    executedSetsHistorySnapshot
+                )
+                val initialMachine = initializeStateMachine(refreshedSequence, 0)
                 populateNextStateForRest(initialMachine)
 
                 val targetIndex = workoutRefreshService.findTargetIndex(
@@ -576,7 +623,7 @@ open class WorkoutViewModel(
                     previousMachine.currentIndex.coerceIn(0, initialMachine.allStates.lastIndex)
                 }
 
-                var rebuiltMachine = initializeStateMachine(workoutSequence, repositionIndex)
+                var rebuiltMachine = initializeStateMachine(refreshedSequence, repositionIndex)
                 populateNextStateForRest(rebuiltMachine)
 
                 val rebuiltCurrentSet = rebuiltMachine.currentState as? WorkoutState.Set
@@ -585,10 +632,14 @@ open class WorkoutViewModel(
                     rebuiltCurrentSet.exerciseId == currentSetState.exerciseId &&
                     rebuiltCurrentSet.set.id == currentSetState.set.id
                 ) {
-                    rebuiltCurrentSet.currentSetData = preservedSetData ?: rebuiltCurrentSet.currentSetData
-                    rebuiltCurrentSet.startTime = preservedStartTime
-                    rebuiltCurrentSet.skipped = preservedSkipped ?: rebuiltCurrentSet.skipped
-                    rebuiltMachine = rebuiltMachine.updateCurrentState(rebuiltCurrentSet)
+                    val refreshedCurrentSet = rebuiltCurrentSet.copy(
+                        previousSetData = preservedPreviousSetData ?: rebuiltCurrentSet.previousSetData
+                    )
+                    refreshedCurrentSet.currentSetData =
+                        preservedSetData ?: refreshedCurrentSet.currentSetData
+                    refreshedCurrentSet.startTime = preservedStartTime
+                    refreshedCurrentSet.skipped = preservedSkipped ?: refreshedCurrentSet.skipped
+                    rebuiltMachine = rebuiltMachine.updateCurrentState(refreshedCurrentSet)
                 }
 
                 stateMachine = rebuiltMachine
@@ -744,6 +795,8 @@ open class WorkoutViewModel(
 
     private val _completionPushCompleted = MutableStateFlow(false)
     val completionPushCompleted: StateFlow<Boolean> = _completionPushCompleted.asStateFlow()
+    private var pendingCompletionEndReason: WorkoutSessionEndReason =
+        WorkoutSessionEndReason.COMPLETED
 
     internal val setStates: LinkedList<WorkoutState.Set> = LinkedList()
 
@@ -791,13 +844,15 @@ open class WorkoutViewModel(
      * Updates the state flows from the current state machine.
      * Also updates [calibrationContext] from the current state so UI and apply logic can use it without scanning.
      */
-    internal fun updateStateFlowsFromMachine() {
+    internal fun updateStateFlowsFromMachine(activateSession: Boolean = true) {
         val machine = stateMachine
         if (machine != null) {
             _workoutState.value = machine.currentState
             _nextWorkoutState.value = machine.upcomingNext
             _isHistoryEmpty.value = machine.isHistoryEmpty
-            _sessionPhase.value = WorkoutSessionPhase.ACTIVE
+            if (activateSession) {
+                _sessionPhase.value = WorkoutSessionPhase.ACTIVE
+            }
             _calibrationContext.value = calibrationContextFromState(machine)
         } else {
             _calibrationContext.value = null
@@ -881,6 +936,13 @@ open class WorkoutViewModel(
     protected fun enterPreparingPhase() {
         _sessionPhase.value = WorkoutSessionPhase.PREPARING
         _workoutState.value = WorkoutState.Preparing(dataLoaded = false)
+        _nextWorkoutState.value = null
+    }
+
+    protected fun enterResumingPhase() {
+        _sessionPhase.value = WorkoutSessionPhase.RESUMING
+        _workoutState.value = WorkoutState.Preparing(dataLoaded = true)
+        _nextWorkoutState.value = null
     }
 
     protected fun markSessionReady() {
@@ -888,7 +950,12 @@ open class WorkoutViewModel(
         _workoutState.value = WorkoutState.Preparing(dataLoaded = true)
     }
 
-    protected fun isSessionHydrationInFlight(): Boolean =
+    protected fun markPreparingDataLoaded() {
+        _sessionPhase.value = WorkoutSessionPhase.PREPARING
+        _workoutState.value = WorkoutState.Preparing(dataLoaded = true)
+    }
+
+    fun isSessionHydrationInFlight(): Boolean =
         activeSessionHydrationTrigger.get() != null
 
     protected fun launchSessionHydration(
@@ -903,11 +970,13 @@ open class WorkoutViewModel(
             return
         }
 
+        _isSessionHydrationInFlight.value = true
         launchMain {
             try {
                 block()
             } finally {
                 activeSessionHydrationTrigger.compareAndSet(trigger, null)
+                _isSessionHydrationInFlight.value = false
             }
         }
     }
@@ -926,7 +995,6 @@ open class WorkoutViewModel(
             selectedWorkout = _selectedWorkout.value,
             isPaused = _isPaused.value,
             hasWorkoutRecord = _hasWorkoutRecord.value,
-            isResuming = _isResuming.value,
             isRefreshing = _isRefreshing.value,
             isCustomDialogOpen = _isCustomDialogOpen.value,
             enableWorkoutNotificationFlow = _enableWorkoutNotificationFlow.value,
@@ -983,6 +1051,7 @@ open class WorkoutViewModel(
         mutableMapOf()
 
     protected var currentWorkoutHistory by mutableStateOf<WorkoutHistory?>(null)
+    private val pendingRunningResults = linkedMapOf<String, RunningResult>()
 
     var startWorkoutTime by mutableStateOf<LocalDateTime?>(null)
 
@@ -1027,9 +1096,6 @@ open class WorkoutViewModel(
 
     protected var _workoutRecord by mutableStateOf<WorkoutRecord?>(null)
     protected var pendingResumeWorkoutHistoryId: UUID? = null
-
-    private val _isResuming = MutableStateFlow<Boolean>(false)
-    val isResuming = _isResuming.asStateFlow()
 
     private val _isRefreshing = MutableStateFlow<Boolean>(false)
     val isRefreshing = _isRefreshing.asStateFlow()
@@ -1205,7 +1271,7 @@ open class WorkoutViewModel(
                     _hasWorkoutRecord.value = true
                     _workoutResumeInfo.value = WorkoutResumeInfo(
                         exerciseName = exercisesById[exerciseId]?.name ?: "Current exercise",
-                        setNumber = setIndex.toInt() + 1,
+                        setLabel = resolveWorkoutResumeSetLabel(exercisesById[exerciseId], setIndex),
                         startedAt = currentWorkoutHistory?.startTime,
                         sessionStatus = when (ownerDevice) {
                             SessionOwnerDevice.PHONE -> WorkoutSessionStatus.IN_PROGRESS_ON_PHONE
@@ -1217,12 +1283,62 @@ open class WorkoutViewModel(
                                 }
                             }
                         },
-                        lastActiveSyncAt = updatedRecord?.lastActiveSyncAt,
+                        lastActiveSyncAt = updatedRecord.lastActiveSyncAt,
                     )
                 }
                 rebuildScreenState()
             }
         }
+    }
+
+    protected suspend fun upsertWorkoutRecordNow(
+        exerciseId: UUID,
+        setIndex: UInt,
+        lastKnownSessionStateOverride: String? = null
+    ): WorkoutRecord? {
+        val selectedWorkoutIdSnapshot = selectedWorkout.value.id
+        val workoutHistoryIdSnapshot = currentWorkoutHistory?.id
+        val existingRecordSnapshot = _workoutRecord
+        val ownerDevice = activeSessionOwnerDevice()
+        val lastKnownSessionState =
+            lastKnownSessionStateOverride ?: workoutState.value::class.simpleName
+
+        val updatedRecord = workoutRecordMutex.withLock {
+            workoutRecordService.upsertWorkoutRecord(
+                existingRecord = existingRecordSnapshot,
+                workoutId = selectedWorkoutIdSnapshot,
+                workoutHistoryId = workoutHistoryIdSnapshot,
+                exerciseId = exerciseId,
+                setIndex = setIndex,
+                ownerDevice = ownerDevice,
+                lastActiveSyncAt = LocalDateTime.now(),
+                lastKnownSessionState = lastKnownSessionState,
+            )
+        }
+
+        if (updatedRecord != null) {
+            _workoutRecord = updatedRecord
+            _hasWorkoutRecord.value = true
+            _workoutResumeInfo.value = WorkoutResumeInfo(
+                exerciseName = exercisesById[exerciseId]?.name ?: "Current exercise",
+                setLabel = resolveWorkoutResumeSetLabel(exercisesById[exerciseId], setIndex),
+                startedAt = currentWorkoutHistory?.startTime,
+                sessionStatus = when (ownerDevice) {
+                    SessionOwnerDevice.PHONE -> WorkoutSessionStatus.IN_PROGRESS_ON_PHONE
+                    SessionOwnerDevice.WEAR -> {
+                        if (lastKnownSessionState == WATCH_SESSION_STATE_RETURNED_HOME) {
+                            WorkoutSessionStatus.STOPPED_ON_WEAR
+                        } else {
+                            WorkoutSessionStatus.IN_PROGRESS_ON_WEAR
+                        }
+                    }
+                },
+                lastActiveSyncAt = updatedRecord.lastActiveSyncAt,
+            )
+            rebuildScreenState()
+        }
+
+        return updatedRecord
     }
 
     fun deleteWorkoutRecord() {
@@ -1269,7 +1385,7 @@ open class WorkoutViewModel(
         workout: Workout,
         workoutRecord: WorkoutRecord
     ): WorkoutResumeInfo {
-        val resumeExerciseName = exercisesById[workoutRecord.exerciseId]?.name
+        val resumeExercise = exercisesById[workoutRecord.exerciseId]
             ?: workout.workoutComponents
                 .flatMap { component ->
                     when (component) {
@@ -1279,7 +1395,7 @@ open class WorkoutViewModel(
                     }
                 }
                 .firstOrNull { it.id == workoutRecord.exerciseId }
-                ?.name
+        val resumeExerciseName = resumeExercise?.name
             ?: "Current exercise"
 
         val workoutHistory = workoutHistoryDao.getWorkoutHistoryById(workoutRecord.workoutHistoryId)
@@ -1288,11 +1404,43 @@ open class WorkoutViewModel(
 
         return WorkoutResumeInfo(
             exerciseName = resumeExerciseName,
-            setNumber = workoutRecord.setIndex.toInt() + 1,
+            setLabel = resolveWorkoutResumeSetLabel(resumeExercise, workoutRecord.setIndex),
             startedAt = workoutHistory.startTime,
             sessionStatus = sessionStatus,
             lastActiveSyncAt = workoutRecord.lastActiveSyncAt,
         )
+    }
+
+    private fun resolveWorkoutResumeSetLabel(exercise: Exercise?, setIndex: UInt): String {
+        val sets = exercise?.sets ?: return "Work set 1"
+        val currentSetIndex = setIndex.toInt()
+        val set = sets.getOrNull(currentSetIndex) ?: return "Work set 1"
+        val baseLabel = workoutResumeSetTypeLabel(set)
+        if (set is RestSet) return baseLabel
+
+        val setNumberWithinType = sets
+            .take(currentSetIndex + 1)
+            .count { candidate -> workoutResumeSetTypeLabel(candidate) == baseLabel }
+            .coerceAtLeast(1)
+        return "$baseLabel $setNumberWithinType"
+    }
+
+    private fun workoutResumeSetTypeLabel(set: Set): String {
+        if (set is RestSet) return "Rest"
+
+        val subCategory = when (set) {
+            is WeightSet -> set.subCategory
+            is BodyWeightSet -> set.subCategory
+            else -> SetSubCategory.WorkSet
+        }
+        return when (subCategory) {
+            SetSubCategory.WarmupSet -> "Warm-up set"
+            SetSubCategory.BackOffSet -> "Back-off set"
+            SetSubCategory.RestPauseSet -> "Rest-pause set"
+            SetSubCategory.CalibrationPendingSet,
+            SetSubCategory.CalibrationSet -> "Calibration set"
+            SetSubCategory.WorkSet -> "Work set"
+        }
     }
 
     /**
@@ -1333,11 +1481,6 @@ open class WorkoutViewModel(
             _enableWorkoutNotificationFlow.value = null
             _currentScreenDimmingState.value = false
 
-            enterPreparingPhase()
-            stateMachine = null
-            setStates.clear()
-            weightsByEquipment.clear()
-            _isPaused.value = false
             val resumeSelectedWorkout =
                 resolveWorkoutTemplateForSession(_selectedWorkoutId.value)
                     ?: run {
@@ -1348,6 +1491,15 @@ open class WorkoutViewModel(
                         )
                         return@withContext
                     }
+            if (resumeSelectedWorkout.usesExternalHeartRateDevice) {
+                enterPreparingPhase()
+            } else {
+                enterResumingPhase()
+            }
+            stateMachine = null
+            setStates.clear()
+            weightsByEquipment.clear()
+            _isPaused.value = false
             _selectedWorkout.value = resumeSelectedWorkout
             initializeExercisesMaps(resumeSelectedWorkout)
             if (_workoutRecord == null) {
@@ -1416,11 +1568,7 @@ open class WorkoutViewModel(
             startWorkoutTime = workoutSessionOrchestrator.deriveStartWorkoutTimeFromCompletedSetHistories(setHistories)
 
             restoreExecutedSets()
-            loadWorkoutHistory()
-
-            preProcessExercises()
-            generateProgressions()
-            applyProgressions()
+            hydrateSelectedWorkoutTemplateForSession()
             val workoutSequence = generateWorkoutStates()
 
             val executedSetsHistorySnapshot = executedSetStore.executedSets.value
@@ -1525,6 +1673,17 @@ open class WorkoutViewModel(
         if (total == 0) return null
         val currentIndex = orderedSetIds.indexOf(currentSetState.set.id)
         return if (currentIndex >= 0) Pair(currentIndex + 1, total) else null
+    }
+
+    /**
+     * True when the exercise's flow actually contains warm-up sets. Exercises without
+     * warm-up generation (and calibration flows that skip them) have none, so the
+     * warm-up/work labeling distinction does not apply.
+     */
+    fun hasWarmupSetsForExercise(exerciseId: UUID): Boolean {
+        return getStatesForExercise(exerciseId)
+            .filterIsInstance<WorkoutState.Set>()
+            .any { it.isWarmupSet }
     }
 
     /**
@@ -1785,10 +1944,14 @@ open class WorkoutViewModel(
      * [resumeWorkoutFromRecord] when the session is ready (e.g. after Preparing screen).
      */
     fun resumeLastState() {
+        if (isSessionHydrationInFlight()) {
+            return
+        }
+
         val executedSetHistories = executedSetStore.executedSets.value
 
         if (_workoutRecord == null) {
-            if (_workoutState.value is WorkoutState.Preparing && stateMachine != null) {
+            if (stateMachine != null) {
                 updateStateFlowsFromMachine()
             }
             return
@@ -1805,13 +1968,14 @@ open class WorkoutViewModel(
 
         // When we land on Preparing before resuming, the state machine already knows the real state.
         // Sync the UI-facing state so comparisons run against the latest value.
-        if (_workoutState.value is WorkoutState.Preparing && stateMachine != null) {
-            updateStateFlowsFromMachine()
-        }
-
         val currentState = _workoutState.value
         if (isTargetResumeState(currentState) && currentState is WorkoutState.Set) {
             workoutTimerRestoreService.restoreTimerForTimeSet(currentState, executedSetHistories, TAG)
+            if (_sessionPhase.value == WorkoutSessionPhase.RESUMING ||
+                _sessionPhase.value == WorkoutSessionPhase.READY
+            ) {
+                updateStateFlowsFromMachine()
+            }
             return
         }
 
@@ -1829,32 +1993,51 @@ open class WorkoutViewModel(
                     )
                 ) {
                     Log.d(TAG, "Resume on Rest after set matching record: staying on Rest")
+                    if (_sessionPhase.value == WorkoutSessionPhase.RESUMING ||
+                        _sessionPhase.value == WorkoutSessionPhase.READY
+                    ) {
+                        updateStateFlowsFromMachine()
+                    }
                     return
                 }
             }
         }
 
-        launchIO {
-            _isResuming.value = true
-            while (true) {
-                if (_workoutState.value is WorkoutState.Completed) break
-                val machineState = stateMachine?.currentState ?: break
-
-                if (isTargetResumeState(machineState) && machineState is WorkoutState.Set) {
-                    workoutTimerRestoreService.restoreTimerForTimeSet(machineState, executedSetHistories, TAG)
-                    //go to the next set after the target set which is not rest
-                    do{
-                        goToNextState()
-                    } while (_workoutState.value is WorkoutState.Rest)
-                    break
+        enterResumingPhase()
+        launchMain {
+            try {
+                if (_workoutState.value is WorkoutState.Preparing && stateMachine != null) {
+                    updateStateFlowsFromMachine()
                 }
 
-                goToNextState()
-            }
+                while (true) {
+                    if (_workoutState.value is WorkoutState.Completed) break
+                    val machineState = stateMachine?.currentState ?: break
 
-            delay(2000)
-            _isResuming.value = false
-            rebuildScreenState()
+                    if (isTargetResumeState(machineState) && machineState is WorkoutState.Set) {
+                        workoutTimerRestoreService.restoreTimerForTimeSet(machineState, executedSetHistories, TAG)
+                        // Go to the next non-rest state after the target set.
+                        do {
+                            goToNextState()
+                        } while (_workoutState.value is WorkoutState.Rest)
+                        break
+                    }
+
+                    goToNextState()
+                }
+            } finally {
+                if (stateMachine != null) {
+                    updateStateFlowsFromMachine()
+                } else if (
+                    _sessionPhase.value == WorkoutSessionPhase.RESUMING &&
+                    !isSessionHydrationInFlight()
+                ) {
+                    markPreparingDataLoaded()
+                    rebuildScreenState()
+                } else {
+                    rebuildScreenState()
+                }
+            }
         }
     }
 
@@ -1867,7 +2050,8 @@ open class WorkoutViewModel(
         exerciseId: UUID?,
         setId: UUID?,
         setIndex: UInt?,
-        restOrder: UInt?
+        restOrder: UInt?,
+        activateSession: Boolean = true
     ): Boolean {
         val machine = stateMachine ?: return false
         if (machine.allStates.isEmpty()) return false
@@ -1882,7 +2066,7 @@ open class WorkoutViewModel(
         ) ?: return false
 
         stateMachine = machine.withCurrentIndex(targetIndex)
-        updateStateFlowsFromMachine()
+        updateStateFlowsFromMachine(activateSession = activateSession)
 
         val setState = _workoutState.value as? WorkoutState.Set
         if (setState != null) {
@@ -1900,7 +2084,8 @@ open class WorkoutViewModel(
 
     protected fun restoreRecoveryStateMachine(
         sequence: List<WorkoutStateSequenceItem>,
-        currentIndex: Int
+        currentIndex: Int,
+        activateSession: Boolean = true
     ): Boolean {
         if (sequence.isEmpty()) return false
         val machine = runCatching {
@@ -1910,7 +2095,7 @@ open class WorkoutViewModel(
         populateNextStateForRest(machine)
         stateMachine = machine
         populateNextStateSets()
-        updateStateFlowsFromMachine()
+        updateStateFlowsFromMachine(activateSession = activateSession)
         return true
     }
 
@@ -1929,10 +2114,7 @@ open class WorkoutViewModel(
     private suspend fun prepareWorkoutForStart(foundWorkout: Workout) {
         _selectedWorkout.value = foundWorkout
         rebuildScreenState()
-        loadWorkoutHistory()
-        preProcessExercises()
-        generateProgressions()
-        applyProgressions()
+        hydrateSelectedWorkoutTemplateForSession()
 
         val workoutSequence = generateWorkoutStates()
         val machine = initializeStateMachine(workoutSequence, 0)
@@ -1947,13 +2129,17 @@ open class WorkoutViewModel(
         val selectedWorkoutIdSnapshot = _selectedWorkoutId.value
         val workoutsSnapshot = _workouts.value
         launchSessionHydration(SessionHydrationTrigger.START) {
+            // Publish Preparing before moving hydration to the IO dispatcher. Otherwise the
+            // workout destination can initially compose the previous session state and never
+            // visibly enter its minimum-duration preparation UI.
+            enterPreparingPhase()
+            rebuildScreenState()
+
             withContext(dispatchers.io) {
                 try {
                     clearCompletionPushCompleted()
                     _enableWorkoutNotificationFlow.value = null
                     _currentScreenDimmingState.value = false
-
-                    enterPreparingPhase()
 
                     resetWorkoutRuntimeState()
 
@@ -1998,6 +2184,13 @@ open class WorkoutViewModel(
         }
     }
 
+    private suspend fun hydrateSelectedWorkoutTemplateForSession() {
+        loadWorkoutHistory()
+        preProcessExercises()
+        generateProgressions()
+        applyProgressions()
+    }
+
     open fun registerHeartBeat(heartBeat: Int) {
         heartBeatHistory.add(heartBeat)
     }
@@ -2014,9 +2207,29 @@ open class WorkoutViewModel(
         rebuildScreenState()
     }
 
+    internal suspend fun persistSelectedWorkoutDefinition() {
+        val updatedWorkout = _selectedWorkout.value
+        val updatedWorkoutStore = workoutStore.copy(
+            workouts = workoutStore.workouts.map { workout ->
+                if (workout.id == updatedWorkout.id) updatedWorkout else workout
+            }
+        )
+        updateWorkoutStore(updatedWorkoutStore)
+        workoutStoreRepository.saveWorkoutStore(updatedWorkoutStore)
+        onWorkoutDefinitionChanged(updatedWorkoutStore)
+    }
+
     protected open suspend fun onWorkoutDefinitionChanged(updatedWorkoutStore: WorkoutStore) = Unit
 
     suspend fun updateExerciseEquipmentForCurrentWorkout(
+        exerciseId: UUID,
+        equipmentId: UUID?
+    ): Boolean = viewModelScope.async(exceptionContext() + dispatchers.main) {
+        // Refresh replaces the initiating screen; its disposal must not cancel the rebuild.
+        updateExerciseEquipmentForCurrentWorkoutOwned(exerciseId, equipmentId)
+    }.await()
+
+    private suspend fun updateExerciseEquipmentForCurrentWorkoutOwned(
         exerciseId: UUID,
         equipmentId: UUID?
     ): Boolean {
@@ -2033,7 +2246,11 @@ open class WorkoutViewModel(
             return false
         }
         if (currentExercise.exerciseType == ExerciseType.WEIGHT && equipmentId == null) return false
-        if (equipmentId != null && getEquipmentById(equipmentId) == null) return false
+        val requestedEquipment = equipmentId?.let(::getEquipmentById)
+        if (equipmentId != null && requestedEquipment == null) return false
+        if (requestedEquipment != null && !requestedEquipment.isCompatibleWith(currentExercise.exerciseType)) {
+            return false
+        }
         if (currentExercise.equipmentId == equipmentId) return true
 
         val oldMachine = stateMachine ?: return false
@@ -2043,12 +2260,32 @@ open class WorkoutViewModel(
             oldHistory = oldMachine.history
         ) ?: return false
 
+        val selectedEquipment = requestedEquipment
+        val selectedEquipmentWeights = getWeightByEquipment(selectedEquipment)
         val preservedSetData = copySetData(currentState.currentSetData).let { setData ->
             when {
                 setData is BodyWeightSetData && equipmentId == null -> {
                     setData.copy(
                         additionalWeight = 0.0,
                         volume = setData.copy(additionalWeight = 0.0).calculateVolume()
+                    )
+                }
+                setData is BodyWeightSetData && selectedEquipmentWeights.isNotEmpty() -> {
+                    val closestWeight = selectedEquipmentWeights.minByOrNull {
+                        kotlin.math.abs(it - setData.additionalWeight)
+                    } ?: setData.additionalWeight
+                    setData.copy(
+                        additionalWeight = closestWeight,
+                        volume = setData.copy(additionalWeight = closestWeight).calculateVolume()
+                    )
+                }
+                setData is WeightSetData && selectedEquipmentWeights.isNotEmpty() -> {
+                    val closestWeight = selectedEquipmentWeights.minByOrNull {
+                        kotlin.math.abs(it - setData.actualWeight)
+                    } ?: setData.actualWeight
+                    setData.copy(
+                        actualWeight = closestWeight,
+                        volume = setData.copy(actualWeight = closestWeight).calculateVolume()
                     )
                 }
                 else -> setData
@@ -2077,6 +2314,7 @@ open class WorkoutViewModel(
             _selectedWorkout.value = updatedWorkout
             initializeExercisesMaps(updatedWorkout)
             workoutStoreRepository.saveWorkoutStore(updatedWorkoutStore)
+            onWorkoutDefinitionChanged(updatedWorkoutStore)
 
             val workoutSequence = generateWorkoutStates()
             val initialMachine = initializeStateMachine(workoutSequence, 0)
@@ -2130,7 +2368,6 @@ open class WorkoutViewModel(
             updateStateFlowsFromMachine()
             rebuildScreenState()
             recalculatePlatesForCurrentExerciseAfterRecoveryIfNeeded()
-            onWorkoutDefinitionChanged(updatedWorkoutStore)
             return true
         } finally {
             setRefreshing(false)
@@ -2248,40 +2485,74 @@ open class WorkoutViewModel(
         isDone: Boolean,
         context: Context? = null,
         forceNotSend: Boolean = false,
+        endReason: WorkoutSessionEndReason = WorkoutSessionEndReason.COMPLETED,
         onEnd: suspend () -> Unit = {}
     ) {
+        if (isDone) {
+            pendingCompletionEndReason = endReason
+        }
         launchIO {
-            storeSetDataJob?.join()
-            val snapshot = workoutPersistenceCoordinator.capturePushWorkoutDataSnapshot(
-                startWorkoutTime = startWorkoutTime,
-                selectedWorkout = selectedWorkout.value,
-                currentWorkoutHistory = currentWorkoutHistory,
-                heartBeatRecords = heartBeatHistory.toList(),
-                progressionByExerciseId = exerciseProgressionByExerciseId.toMap(),
-                comparisonBaselineByExerciseId = exercisesById.keys.associateWith { exerciseId ->
-                    getProgressionComparisonBaselineSets(exerciseId).orEmpty()
+            workoutPersistenceMutex.withLock {
+                storeSetDataJob?.join()
+                val snapshot = workoutPersistenceCoordinator.capturePushWorkoutDataSnapshot(
+                    startWorkoutTime = startWorkoutTime,
+                    selectedWorkout = selectedWorkout.value,
+                    currentWorkoutHistory = currentWorkoutHistory,
+                    runningResults = pendingRunningResults.values.toList(),
+                    endReason = endReason,
+                    heartBeatRecords = heartBeatHistory.toList(),
+                    progressionByExerciseId = exerciseProgressionByExerciseId.toMap(),
+                    comparisonBaselineByExerciseId = exercisesById.keys.associateWith { exerciseId ->
+                        getProgressionComparisonBaselineSets(exerciseId).orEmpty()
+                    }
+                ) ?: return@withLock
+                val workoutHistoryForThisPush = workoutPersistenceCoordinator.pushWorkoutData(
+                    snapshot = snapshot,
+                    isDone = isDone,
+                    updateWorkoutStore = ::updateWorkoutStore
+                )
+                val completionContext = if (isDone) {
+                    NonCancellable + dispatchers.main
+                } else {
+                    dispatchers.main
                 }
-            ) ?: return@launchIO
-            val workoutHistoryForThisPush = workoutPersistenceCoordinator.pushWorkoutData(
-                snapshot = snapshot,
-                isDone = isDone,
-                updateWorkoutStore = ::updateWorkoutStore
-            )
-            withContext(dispatchers.main) {
-                currentWorkoutHistory = workoutHistoryForThisPush
-                if (isDone) {
-                    workoutRecordMutex.withLock {
-                        _workoutRecord = null
-                        _hasWorkoutRecord.value = false
-                        _workoutResumeInfo.value = null
+                withContext(completionContext) {
+                    currentWorkoutHistory = workoutHistoryForThisPush
+                    if (isDone) {
+                        pendingCompletionEndReason = workoutHistoryForThisPush.endReason
+                        workoutRecordMutex.withLock {
+                            _workoutRecord = null
+                            _hasWorkoutRecord.value = false
+                            _workoutResumeInfo.value = null
+                        }
+                    }
+                    onEnd()
+                    if (isDone) {
+                        _completionPushCompleted.value = true
                     }
                 }
             }
-            onEnd()
-            if (isDone) {
-                _completionPushCompleted.value = true
-            }
         }
+    }
+
+    fun recordRunningResult(result: RunningResult) {
+        pendingRunningResults[result.exerciseId] = result
+        currentWorkoutHistory = currentWorkoutHistory?.let { history ->
+            history.copy(
+                runningResults = (history.runningResults + result)
+                    .associateBy { it.exerciseId }
+                    .values
+                    .toList(),
+                version = history.version.inc(),
+            )
+        }
+    }
+
+    fun resolveCompletionEndReasonForPersistence(): WorkoutSessionEndReason {
+        return currentWorkoutHistory
+            ?.takeIf { it.isDone }
+            ?.endReason
+            ?: pendingCompletionEndReason
     }
 
     fun clearCompletionPushCompleted() {
@@ -2502,6 +2773,79 @@ open class WorkoutViewModel(
         }
     }
 
+    fun getLoadedPlateRouteOptionsForCurrentSet():
+        List<PlateCalculator.Companion.StartingPlateRouteOption> {
+        val machine = stateMachine ?: return emptyList()
+        val currentState = machine.currentState as? WorkoutState.Set ?: return emptyList()
+        val plateChangeResult = currentState.plateChangeResult ?: return emptyList()
+        val equipment = currentState.equipmentId?.let(::getEquipmentById) as? Barbell
+            ?: return emptyList()
+        val exercise = exercisesById[currentState.exerciseId] ?: return emptyList()
+        val remainingStates = WorkoutStateQueries.remainingSetStatesForExercise(
+            machine = machine,
+            fromIndexInclusive = machine.currentIndex,
+            exerciseId = currentState.exerciseId,
+        )
+        val remainingWeights = remainingStates.mapNotNull { state ->
+            plateTargetWeightForState(state, exercise)
+        }
+        if (remainingWeights.size != remainingStates.size) return emptyList()
+
+        return PlateCalculator.calculateStartingPlateRouteOptions(
+            availablePlates = equipment.availablePlates.map { it.weight },
+            startingWeight = plateChangeResult.change.from,
+            targetWeights = remainingWeights,
+            barWeight = equipment.barWeight,
+        )
+    }
+
+    fun selectLoadedPlateConfiguration(startingPlates: List<Double>): Job = launchDefault {
+        val machine = stateMachine ?: return@launchDefault
+        val currentState = machine.currentState as? WorkoutState.Set ?: return@launchDefault
+        val normalizedStartingPlates = startingPlates.sortedDescending()
+        val selectedRoute = getLoadedPlateRouteOptionsForCurrentSet().firstOrNull { option ->
+            option.startingPlates == normalizedStartingPlates
+        } ?: return@launchDefault
+        val remainingStates = WorkoutStateQueries.remainingSetStatesForExercise(
+            machine = machine,
+            fromIndexInclusive = machine.currentIndex,
+            exerciseId = currentState.exerciseId,
+        )
+        if (selectedRoute.plateChangeResults.size != remainingStates.size) return@launchDefault
+
+        _isPlateRecalculationInProgress.value = true
+        try {
+            withContext(dispatchers.main) {
+                val replacements = remainingStates.mapIndexed { index, state ->
+                    val replacement = state.copy(
+                        plateChangeResult = selectedRoute.plateChangeResults[index],
+                        loadedPlateConfigurationOverride = if (index == 0) {
+                            normalizedStartingPlates
+                        } else {
+                            null
+                        },
+                    )
+                    (WorkoutStateQueries.stateSetId(state) ?: state.set.id) to replacement
+                }.toMap()
+                replaceSetStatesAndRefreshRestReferences(machine, replacements)
+            }
+        } finally {
+            _isPlateRecalculationInProgress.value = false
+        }
+    }
+
+    private fun plateTargetWeightForState(
+        state: WorkoutState.Set,
+        exercise: Exercise,
+    ): Double? = when (val set = state.set) {
+        is WeightSet -> (state.currentSetData as? WeightSetData)?.actualWeight ?: set.weight
+        is BodyWeightSet -> {
+            val relativeBodyWeight = bodyWeight.value * ((exercise.bodyWeightPercentage ?: 0.0) / 100)
+            relativeBodyWeight + set.additionalWeight
+        }
+        else -> null
+    }
+
     /**
      * Returns [ExerciseChildItem] list for an exercise: calibration blocks when [Exercise.requiresLoadCalibration],
      * otherwise [ExerciseChildItem.Normal] for each state.
@@ -2626,7 +2970,7 @@ open class WorkoutViewModel(
                         )
                     )
                 } else if (isCalibrationSet) {
-                    // Calibration set but no hasCalibration (shouldn't happen) – treat as normal
+                    // Calibration set but no hasCalibration (shouldn't happen) ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ treat as normal
                     val setState = workoutSetStateFactory.buildWorkoutSetState(
                         exercise = exercise,
                         set = set,
@@ -2672,7 +3016,7 @@ open class WorkoutViewModel(
                         getEquipmentById = ::getEquipmentById
                     )
 
-                    val unilateralBlock = if (!isWarmupSet && isUnilateralExercise) {
+                    val unilateralBlock = if (isUnilateralExercise) {
                         workoutSetStateFactory.buildUnilateralSetBlock(exercise, setState, index)
                     } else {
                         null
@@ -2996,11 +3340,13 @@ open class WorkoutViewModel(
             if (weights.isEmpty()) return
 
             // Determine initialPlates: the currentPlates from the previous set's plateChangeResult, or empty if this is the first set
-            val initialPlates = WorkoutStateQueries.previousSetStateForExercise(
-                machine = machine,
-                beforeIndexExclusive = currentIndex,
-                exerciseId = currentState.exerciseId
-            )?.plateChangeResult?.currentPlates ?: emptyList()
+            val initialPlates = currentState.loadedPlateConfigurationOverride
+                ?: WorkoutStateQueries.previousSetStateForExercise(
+                    machine = machine,
+                    beforeIndexExclusive = currentIndex,
+                    exerciseId = currentState.exerciseId
+                )?.plateChangeResult?.currentPlates
+                ?: emptyList()
 
             // Recalculate plateChangeResults using the new overload (on background thread)
             val plateChangeResults = withContext(dispatchers.default) {
@@ -3018,8 +3364,7 @@ open class WorkoutViewModel(
                     (WorkoutStateQueries.stateSetId(state) ?: state.set.id) to
                         state.copy(plateChangeResult = plateChangeResults[idx])
                 }.toMap()
-                stateMachine = WorkoutStateEditor.replaceBySetId(machine, replacements)
-                updateStateFlowsFromMachine()
+                replaceSetStatesAndRefreshRestReferences(machine, replacements)
             }
         } finally {
             _isPlateRecalculationInProgress.value = false
@@ -3054,11 +3399,13 @@ open class WorkoutViewModel(
             return
         }
 
-        val initialPlates = WorkoutStateQueries.previousSetStateForExercise(
-            machine = machine,
-            beforeIndexExclusive = firstWorkSetStateIndex,
-            exerciseId = exerciseId
-        )?.plateChangeResult?.currentPlates ?: emptyList()
+        val initialPlates = remainingStates.first().loadedPlateConfigurationOverride
+            ?: WorkoutStateQueries.previousSetStateForExercise(
+                machine = machine,
+                beforeIndexExclusive = firstWorkSetStateIndex,
+                exerciseId = exerciseId
+            )?.plateChangeResult?.currentPlates
+            ?: emptyList()
 
         val plateChangeResults = withContext(dispatchers.default) {
             getPlateChangeResults(weights, equipment, initialPlates)
@@ -3074,9 +3421,18 @@ open class WorkoutViewModel(
                 (WorkoutStateQueries.stateSetId(state) ?: state.set.id) to
                     state.copy(plateChangeResult = plateChangeResults[idx])
             }.toMap()
-            stateMachine = WorkoutStateEditor.replaceBySetId(machine, replacements)
-            updateStateFlowsFromMachine()
+            replaceSetStatesAndRefreshRestReferences(machine, replacements)
         }
+    }
+
+    private fun replaceSetStatesAndRefreshRestReferences(
+        machine: WorkoutStateMachine,
+        replacements: Map<UUID, WorkoutState>,
+    ) {
+        val updatedMachine = WorkoutStateEditor.replaceBySetId(machine, replacements)
+        WorkoutStateEditor.populateRestNextState(updatedMachine)
+        stateMachine = updatedMachine
+        updateStateFlowsFromMachine()
     }
 
     /**
@@ -3097,15 +3453,24 @@ open class WorkoutViewModel(
         val exerciseId = setState.exerciseId
         val equipment = setState.equipmentId?.let { getEquipmentById(it) } as? Barbell ?: return
         val allStates = machine.allStates
+        val targetStateIndex = allStates.indexOf(setState)
         val firstWorkSetStateIndex = allStates.indexOfFirst { s ->
             s is WorkoutState.Set &&
                 s.exerciseId == exerciseId &&
                 (s.set is WeightSet || s.set is BodyWeightSet)
         }
         if (firstWorkSetStateIndex < 0) return
+        val persistedOverrideStateIndex = allStates.indices
+            .filter { index -> index <= targetStateIndex }
+            .lastOrNull { index ->
+                val state = allStates[index] as? WorkoutState.Set
+                state?.exerciseId == exerciseId &&
+                    state.loadedPlateConfigurationOverride != null
+            }
+        val recalculationStartIndex = persistedOverrideStateIndex ?: firstWorkSetStateIndex
         val remainingStates = WorkoutStateQueries.remainingSetStatesForExercise(
             machine = machine,
-            fromIndexInclusive = firstWorkSetStateIndex,
+            fromIndexInclusive = recalculationStartIndex,
             exerciseId = exerciseId
         )
         if (remainingStates.isEmpty()) return
@@ -3124,7 +3489,7 @@ open class WorkoutViewModel(
         }
         recalculatePlatesForExerciseFromIndex(
             exerciseId = exerciseId,
-            firstWorkSetStateIndex = firstWorkSetStateIndex,
+            firstWorkSetStateIndex = recalculationStartIndex,
             weights = weights,
             equipment = equipment
         )
@@ -3232,5 +3597,203 @@ open class WorkoutViewModel(
 
         stateMachine = newMachine
         updateStateFlowsFromMachine()
+    }
+
+    private data class ExerciseSkipPlan(
+        val exerciseId: UUID,
+        val skippedSetStates: List<WorkoutState.Set>,
+        val nextSetIndex: Int?
+    )
+
+    private data class FinishEarlyPlan(
+        val skippedSetStates: List<WorkoutState.Set>
+    )
+
+    private fun buildExerciseSkipPlan(machine: WorkoutStateMachine): ExerciseSkipPlan? {
+        val currentState = machine.currentState as? WorkoutState.Set ?: return null
+        val exerciseId = currentState.exerciseId
+        val skippedSetStates = machine.allStates
+            .subList(machine.currentIndex, machine.allStates.size)
+            .filterIsInstance<WorkoutState.Set>()
+            .filter { it.exerciseId == exerciseId }
+        if (skippedSetStates.isEmpty()) return null
+
+        val nextSetIndex = WorkoutStateQueries.findNextIndex(machine) { state ->
+            state is WorkoutState.Set && state.exerciseId != exerciseId
+        }
+
+        return ExerciseSkipPlan(
+            exerciseId = exerciseId,
+            skippedSetStates = skippedSetStates,
+            nextSetIndex = nextSetIndex
+        )
+    }
+
+    fun shouldCompleteAfterSkippingCurrentExercise(): Boolean {
+        val machine = stateMachine ?: return false
+        val plan = buildExerciseSkipPlan(machine) ?: return false
+        return plan.nextSetIndex == null
+    }
+
+    private fun buildFinishEarlyPlan(machine: WorkoutStateMachine): FinishEarlyPlan {
+        val skippedSetStates = machine.allStates
+            .subList(machine.currentIndex, machine.allStates.size)
+            .filterIsInstance<WorkoutState.Set>()
+        return FinishEarlyPlan(skippedSetStates = skippedSetStates)
+    }
+
+    open fun finishWorkoutEarly(
+        context: Context? = null,
+        onEnd: suspend () -> Unit = {}
+    ) {
+        val machineSnapshot = stateMachine ?: return
+        val finishPlan = buildFinishEarlyPlan(machineSnapshot)
+
+        launchIO {
+            val skippedSetStates = finishPlan.skippedSetStates.map { setState ->
+                setState.copy(
+                    startTime = setState.startTime ?: LocalDateTime.now(),
+                    skipped = true,
+                    hasBeenExecuted = true
+                ).also { copiedState ->
+                    copiedState.currentSetData = copySetData(setState.currentSetData)
+                }
+            }
+
+            skippedSetStates.forEach { skippedState ->
+                val snapshot = workoutPersistenceCoordinator.captureSetHistorySnapshot(
+                    currentState = skippedState,
+                    exercisesById = exercisesById,
+                    supersetIdByExerciseId = supersetIdByExerciseId,
+                    exercisesBySupersetId = exercisesBySupersetId
+                ) ?: return@forEach
+                workoutPersistenceCoordinator.upsertSetHistorySnapshot(snapshot)
+            }
+
+            withContext(dispatchers.main) {
+                val activeMachine = stateMachine ?: return@withContext
+                val currentIndexSnapshot = activeMachine.currentIndex
+                val updatedMachine = activeMachine.mapStatesIndexed { index, state ->
+                    val setState = state as? WorkoutState.Set ?: return@mapStatesIndexed state
+                    if (index < currentIndexSnapshot) {
+                        return@mapStatesIndexed state
+                    }
+
+                    skippedSetStates.firstOrNull {
+                        it.set.id == setState.set.id &&
+                            it.setIndex == setState.setIndex &&
+                            it.exerciseId == setState.exerciseId
+                    } ?: setState.copy(
+                        startTime = setState.startTime ?: LocalDateTime.now(),
+                        skipped = true,
+                        hasBeenExecuted = true
+                    ).also { copiedState ->
+                        copiedState.currentSetData = copySetData(setState.currentSetData)
+                    }
+                }
+                populateNextStateForRest(updatedMachine)
+                stateMachine = updatedMachine
+
+                val workoutStart = startWorkoutTime ?: LocalDateTime.now().also {
+                    startWorkoutTime = it
+                }
+                val completedState = WorkoutState.Completed(workoutStart).apply {
+                    endWorkoutTime = LocalDateTime.now()
+                }
+                _workoutState.value = completedState
+                _nextWorkoutState.value = null
+                _sessionPhase.value = WorkoutSessionPhase.COMPLETED
+                _isHistoryEmpty.value = updatedMachine.isHistoryEmpty
+                workoutTimerService.unregisterAll()
+                rebuildScreenState()
+
+                pushAndStoreWorkoutData(
+                    isDone = true,
+                    context = context,
+                    endReason = WorkoutSessionEndReason.FINISHED_EARLY,
+                    onEnd = onEnd
+                )
+            }
+        }
+    }
+
+    open fun skipCurrentExercise(
+        context: Context? = null,
+        onEnd: suspend () -> Unit = {}
+    ) {
+        val machineSnapshot = stateMachine ?: return
+        val skipPlan = buildExerciseSkipPlan(machineSnapshot) ?: return
+
+        launchIO {
+            val skippedSetStates = skipPlan.skippedSetStates.map { setState ->
+                setState.copy(
+                    startTime = setState.startTime ?: LocalDateTime.now(),
+                    skipped = true,
+                    hasBeenExecuted = true
+                ).also { copiedState ->
+                    copiedState.currentSetData = copySetData(setState.currentSetData)
+                }
+            }
+
+            skippedSetStates.forEach { skippedState ->
+                val snapshot = workoutPersistenceCoordinator.captureSetHistorySnapshot(
+                    currentState = skippedState,
+                    exercisesById = exercisesById,
+                    supersetIdByExerciseId = supersetIdByExerciseId,
+                    exercisesBySupersetId = exercisesBySupersetId
+                ) ?: return@forEach
+                workoutPersistenceCoordinator.upsertSetHistorySnapshot(snapshot)
+            }
+
+            withContext(dispatchers.main) {
+                val activeMachine = stateMachine ?: return@withContext
+                val currentIndexSnapshot = activeMachine.currentIndex
+                val updatedMachine = activeMachine.mapStatesIndexed { index, state ->
+                    val setState = state as? WorkoutState.Set ?: return@mapStatesIndexed state
+                    if (index < currentIndexSnapshot || setState.exerciseId != skipPlan.exerciseId) {
+                        return@mapStatesIndexed state
+                    }
+
+                    skippedSetStates.firstOrNull {
+                        it.exerciseId == setState.exerciseId &&
+                            it.set.id == setState.set.id &&
+                            it.setIndex == setState.setIndex
+                    } ?: setState.copy(
+                        startTime = setState.startTime ?: LocalDateTime.now(),
+                        skipped = true,
+                        hasBeenExecuted = true
+                    ).also { copiedState ->
+                        copiedState.currentSetData = copySetData(setState.currentSetData)
+                    }
+                }
+                populateNextStateForRest(updatedMachine)
+
+                if (skipPlan.nextSetIndex == null) {
+                    stateMachine = updatedMachine
+                    val workoutStart = startWorkoutTime ?: LocalDateTime.now().also {
+                        startWorkoutTime = it
+                    }
+                    val completedState = WorkoutState.Completed(workoutStart).apply {
+                        endWorkoutTime = LocalDateTime.now()
+                    }
+                    _workoutState.value = completedState
+                    _nextWorkoutState.value = null
+                    _sessionPhase.value = WorkoutSessionPhase.COMPLETED
+                    _isHistoryEmpty.value = updatedMachine.isHistoryEmpty
+                    workoutTimerService.unregisterAll()
+                    rebuildScreenState()
+                } else {
+                    stateMachine = updatedMachine.withCurrentIndex(skipPlan.nextSetIndex)
+                    updateStateFlowsFromMachine()
+                }
+
+                pushAndStoreWorkoutData(
+                    isDone = skipPlan.nextSetIndex == null,
+                    context = context,
+                    endReason = WorkoutSessionEndReason.COMPLETED,
+                    onEnd = onEnd
+                )
+            }
+        }
     }
 }

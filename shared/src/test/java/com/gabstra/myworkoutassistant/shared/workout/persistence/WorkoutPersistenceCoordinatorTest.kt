@@ -9,6 +9,7 @@ import com.gabstra.myworkoutassistant.shared.HeartRateSource
 import com.gabstra.myworkoutassistant.shared.ProgressionMode
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.Workout
+import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
@@ -16,10 +17,12 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.stores.DefaultExecutedRestStore
 import com.gabstra.myworkoutassistant.shared.stores.DefaultExecutedSetStore
+import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionEndReason
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import java.io.File
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.LocalTime
 import java.util.UUID
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -129,6 +132,7 @@ class WorkoutPersistenceCoordinatorTest {
             startWorkoutTime = sessionStart,
             selectedWorkout = workout,
             currentWorkoutHistory = null,
+            endReason = com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionEndReason.COMPLETED,
             heartBeatRecords = emptyList(),
             progressionByExerciseId = emptyMap(),
             comparisonBaselineByExerciseId = emptyMap()
@@ -155,6 +159,62 @@ class WorkoutPersistenceCoordinatorTest {
             executedSetStore.executedSets.value.any {
                 (it.setData as? WeightSetData)?.subCategory == SetSubCategory.WarmupSet
             }
+        )
+    }
+
+    @Test
+    fun pushWorkoutData_repushOfFinishedEarlyWorkout_preservesExistingEndReason() = runBlocking {
+        val exerciseId = UUID.randomUUID()
+        val workSetId = UUID.randomUUID()
+        val workout = workout(
+            exerciseId = exerciseId,
+            workSetId = workSetId
+        )
+        workoutStoreRepository.saveWorkoutStore(
+            WorkoutStore(
+                workouts = listOf(workout),
+                birthDateYear = 1990,
+                weightKg = 75.0,
+                progressionPercentageAmount = 0.0
+            )
+        )
+
+        val sessionStart = LocalDateTime.of(2026, 3, 30, 10, 0, 0)
+        val existingHistory = WorkoutHistory(
+            id = UUID.randomUUID(),
+            workoutId = workout.id,
+            date = sessionStart.toLocalDate(),
+            time = LocalTime.of(10, 10),
+            startTime = sessionStart,
+            duration = 600,
+            heartBeatRecords = listOf(100, 105),
+            isDone = true,
+            hasBeenSentToHealth = false,
+            globalId = workout.globalId,
+            version = 1u,
+            endReason = WorkoutSessionEndReason.FINISHED_EARLY
+        )
+
+        val snapshot = coordinator.capturePushWorkoutDataSnapshot(
+            startWorkoutTime = sessionStart,
+            selectedWorkout = workout,
+            currentWorkoutHistory = existingHistory,
+            endReason = WorkoutSessionEndReason.COMPLETED,
+            heartBeatRecords = listOf(100, 105, 110),
+            progressionByExerciseId = emptyMap(),
+            comparisonBaselineByExerciseId = emptyMap()
+        ) ?: error("Expected snapshot")
+
+        val persistedWorkoutHistory = coordinator.pushWorkoutData(
+            snapshot = snapshot,
+            isDone = true,
+            updateWorkoutStore = {}
+        )
+
+        assertEquals(WorkoutSessionEndReason.FINISHED_EARLY, persistedWorkoutHistory.endReason)
+        assertEquals(
+            WorkoutSessionEndReason.FINISHED_EARLY,
+            database.workoutHistoryDao().getWorkoutHistoryById(persistedWorkoutHistory.id)?.endReason
         )
     }
 

@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
+import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
+
 import android.annotation.SuppressLint
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
@@ -33,7 +35,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.VerticalDivider
@@ -70,7 +71,7 @@ fun <T> DetailScreen(
     var selectionMode by remember { mutableStateOf(false) }
     var selectedItems by remember { mutableStateOf(listOf<T>()) }
 
-    Scaffold(
+    BreadcrumbScaffold(
         topBar = {
             TopAppBar(
                 title = { Text(modifier = Modifier.fillMaxWidth(),text= title, textAlign = TextAlign.Center) },
@@ -256,4 +257,3 @@ fun <T> DetailScreen(
         }
     }
 }
-

@@ -28,6 +28,7 @@ data class AppBackupDelta(
     val workoutRecords: BackupListDelta<WorkoutRecord> = BackupListDelta(),
     val exerciseSessionProgressions: BackupListDelta<ExerciseSessionProgression> = BackupListDelta(),
     val errorLogs: BackupListDelta<ErrorLog> = BackupListDelta(),
+    val exerciseMovements: BackupListDelta<ExerciseMovementBackup> = BackupListDelta(),
 ) {
     fun isEmpty(): Boolean =
         workoutStore == null &&
@@ -38,7 +39,8 @@ data class AppBackupDelta(
             workoutSchedules.isEmpty() &&
             workoutRecords.isEmpty() &&
             exerciseSessionProgressions.isEmpty() &&
-            errorLogs.isEmpty()
+            errorLogs.isEmpty() &&
+            exerciseMovements.isEmpty()
 }
 
 data class BackupListDelta<T>(
@@ -47,4 +49,3 @@ data class BackupListDelta<T>(
 ) {
     fun isEmpty(): Boolean = upserts.isEmpty() && deletes.isEmpty()
 }
-

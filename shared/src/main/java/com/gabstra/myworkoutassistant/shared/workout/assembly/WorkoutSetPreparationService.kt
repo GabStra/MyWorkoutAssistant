@@ -1,6 +1,5 @@
 package com.gabstra.myworkoutassistant.shared.workout.assembly
 
-import com.gabstra.myworkoutassistant.shared.ProgressionMode
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
@@ -41,35 +40,30 @@ class WorkoutSetPreparationService {
                 }
             }
 
-            val availableTotals: kotlin.collections.Set<Double> = when (exercise.exerciseType) {
-                ExerciseType.WEIGHT -> getAvailableTotals(equipment)
-                ExerciseType.BODY_WEIGHT -> {
+            val availableTotals: kotlin.collections.Set<Double> =
+                if (exercise.exerciseType == ExerciseType.WEIGHT) {
+                    getAvailableTotals(equipment)
+                } else {
                     val relativeBodyWeight = bodyWeightKg * (exercise.bodyWeightPercentage!! / 100)
                     val extraTotals = getAvailableTotals(equipment)
                     extraTotals.map { relativeBodyWeight + it }.toSet() + setOf(relativeBodyWeight)
                 }
 
-                else -> throw IllegalArgumentException("Unknown exercise type")
-            }
-
             fun toSetInternalWeight(desiredTotal: Double): Double {
-                return when (exercise.exerciseType) {
-                    ExerciseType.BODY_WEIGHT -> {
-                        val relativeBodyWeight = bodyWeightKg * (exercise.bodyWeightPercentage!! / 100)
-                        desiredTotal - relativeBodyWeight
-                    }
-
-                    ExerciseType.WEIGHT -> desiredTotal
-                    else -> throw IllegalArgumentException("Unknown exercise type")
+                return if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
+                    val relativeBodyWeight = bodyWeightKg * (exercise.bodyWeightPercentage!! / 100)
+                    desiredTotal - relativeBodyWeight
+                } else {
+                    desiredTotal
                 }
             }
 
             fun makeWarmupSet(id: UUID, total: Double, reps: Int): Set {
                 val internalWeight = toSetInternalWeight(total)
-                return when (exercise.exerciseType) {
-                    ExerciseType.BODY_WEIGHT -> BodyWeightSet(id, reps, internalWeight, subCategory = SetSubCategory.WarmupSet)
-                    ExerciseType.WEIGHT -> WeightSet(id, reps, internalWeight, subCategory = SetSubCategory.WarmupSet)
-                    else -> throw IllegalArgumentException("Unknown exercise type")
+                return if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
+                    BodyWeightSet(id, reps, internalWeight, subCategory = SetSubCategory.WarmupSet)
+                } else {
+                    WeightSet(id, reps, internalWeight, subCategory = SetSubCategory.WarmupSet)
                 }
             }
 
@@ -135,7 +129,6 @@ class WorkoutSetPreparationService {
         exerciseAllSets: MutableList<Set>
     ) {
         if (!exercise.requiresLoadCalibration) return
-        if (exercise.progressionMode == ProgressionMode.AUTO_REGULATION) return
         val supportsCalibration =
             exercise.exerciseType == ExerciseType.WEIGHT ||
                 (exercise.exerciseType == ExerciseType.BODY_WEIGHT && equipment != null)

@@ -25,8 +25,31 @@
 - Handle errors appropriately - use try-catch blocks, nullable types, and Result types where appropriate.
 - Maintain consistency with existing codebase patterns and conventions.
 
+## Codebase Memory MCP
+
+- When codebase-memory is available, start with its graph tools for symbol ownership, call paths, dependencies, and architecture. Use `search_graph`, `trace_path`, `query_graph`, and `get_architecture` as appropriate, then retrieve relevant indexed source with `get_code_snippet`.
+- Check `check_index_coverage` for the exact files before relying on graph results. If coverage is partial, unusable, or reports changed metadata, inspect the current files directly. Reindex when source content is newer than the index; if the same freshness warning remains after a completed refresh, do not loop reindexing—use direct source for that path.
+- Use `rg` or direct source reads for exact text, recent edits, and parser gaps. Treat the graph as a navigation aid; verify behavior and line references against the current working tree.
+- Keep machine-specific MCP executable paths and allowed-root settings in local Codex configuration; do not commit absolute paths tied to one developer's installation.
+
+## Exercise Movement Generator Working Principles
+
+- Optimize for the highest practical movement quality across the widest possible range of exercises, with the shortest time and fewest attempts needed to produce a genuinely usable result. Evaluate speed and quality together; neither faster rejection nor a higher automated acceptance count is sufficient evidence of improvement.
+- Prefer generic fixes to shared logic over exercise-name branches, hardcoded poses, camera-specific assumptions, or per-exercise tuning. Derive constraints from observed motion, support contacts, and explicit requirements. Distinguish clip-specific evidence from reusable logic, and introduce exceptions only when the exercise actually requires different behavior.
+- Start with the actual source, generated artifact, rendered playback, failure evidence, and stage timings. Identify the owning failure layer before changing code or launching another expensive attempt. Do not repeatedly regenerate to compensate for a reproducible processing or validation bug.
+- Keep both test additions and test runs to the minimum that provides meaningful confidence. Reuse existing coverage and add a focused regression only for a concrete failure or material risk that is not already covered. Avoid duplicate tests, tests that merely mirror the implementation, and accumulating checks or rerunning passing checks without new evidence. Batch related changes and perform the smallest sufficient final verification.
+- Use the agreed two-exercise test base for controlled iteration, reusing retained inputs and valid cached stages. Expand testing only to answer a specific unresolved generalization risk. A passing result for those two exercises is not proof that every exercise works.
+- Measure bottlenecks and prioritize changes that reduce total time to a good result: avoid redundant model calls, repeated rendering, unnecessary solver work, and unbounded retries. Keep attempts bounded and inspect their evidence before deciding what to run next.
+- Judge success from the actual production-rendered movement as well as appropriate automated checks. Preserve legitimate articulation, motion range, support geometry, and temporal quality. Do not obtain acceptance by freezing valid motion, weakening validation to hide a defect, or tailoring a test to make a failing result pass. Report verified quality, runtime, and remaining limitations honestly.
+
 ## Build and Compilation
 
+- Keep verification scoped to the change. Do not run broad or full Python test files/suites by default when a targeted test, parser check, or compile check covers the edited path.
+- During active iteration, batch related edits and run verification once the user has settled the requested behavior or a natural implementation checkpoint has been reached. Do not start a build or compile after every individual tweak.
+- If the user changes a value or requests another closely related adjustment while verification is pending, incorporate the adjustment and verify the final combined state rather than treating each intermediate state as a separate build checkpoint.
+- A final scoped verification is still required before reporting the implementation complete; batching changes delays verification but does not remove it.
+- For `exercise_motion_pkg` changes, prefer the smallest relevant `pytest -k ...` subset plus `python -m py_compile` for edited Python files. Run `tests/test_exercise_motion_pkg.py` in full only when explicitly requested or when the change is broad enough that focused tests cannot give meaningful coverage.
+- If a focused test failure suggests wider fallout, fix the specific issue and rerun the focused test first; ask before escalating to long-running broad suites unless the user has already requested comprehensive verification.
 - Run a build when changes can affect app binaries or compilation outputs, including:
   - Kotlin/Java source files
   - Android resources (`res/`), manifests, or Gradle build scripts
@@ -35,13 +58,16 @@
 - A build is NOT required for non-runtime/non-compilation changes only, such as:
   - Documentation (`*.md`), comments-only edits, or planning notes
   - Pure formatting/text changes that do not alter code/resource semantics
-- Prefer the fastest sufficient verification command first (to keep iteration fast):
-  - Kotlin/Java-only changes in mobile/shared code: `./gradlew :mobile:compileDebugKotlin :shared:compileDebugKotlin --parallel --build-cache`
-  - Kotlin/Java-only changes in wear/shared code: `./gradlew :wearos:compileDebugKotlin :shared:compileDebugKotlin --parallel --build-cache`
-  - Kotlin/Java changes affecting both apps (mobile + wear + shared): `./gradlew :mobile:compileDebugKotlin :wearos:compileDebugKotlin :shared:compileDebugKotlin --parallel --build-cache`
-  - Mobile app changes affecting resources/manifests/packaging: `./gradlew :mobile:assembleDebug --parallel --build-cache`
-  - Wear app changes affecting resources/manifests/packaging: `./gradlew :wearos:assembleDebug --parallel --build-cache`
-  - Changes affecting both apps' resources/manifests/packaging: `./gradlew :mobile:assembleDebug :wearos:assembleDebug --parallel --build-cache`
+- Prefer the fastest sufficient verification command first (to keep iteration fast). Request only the owning app task; Gradle builds required `shared` dependencies transitively:
+  - Kotlin/Java-only changes limited to mobile: `./gradlew :mobile:compileDebugKotlin`
+  - Kotlin/Java-only changes limited to Wear: `./gradlew :wearos:compileDebugKotlin`
+  - Shared Kotlin/Java changes used by only one app path: compile that affected app with `./gradlew :mobile:compileDebugKotlin` or `./gradlew :wearos:compileDebugKotlin`
+  - Kotlin/Java changes affecting both apps, including shared changes consumed by both: `./gradlew :mobile:compileDebugKotlin :wearos:compileDebugKotlin`
+  - Mobile app changes affecting resources/manifests/packaging: `./gradlew :mobile:assembleDebug`
+  - Wear app changes affecting resources/manifests/packaging: `./gradlew :wearos:assembleDebug`
+  - Changes affecting both apps' resources/manifests/packaging: `./gradlew :mobile:assembleDebug :wearos:assembleDebug`
+- Do not add `--parallel` or `--build-cache` routinely because both are already enabled in `gradle.properties`. Add command-line overrides only when intentionally differing from the project defaults.
+- Keep the Gradle daemon warm across an active editing session; do not stop it between ordinary verification runs.
 - Use full builds (`./gradlew :mobile:build` or `./gradlew build`) only when explicitly requested, for release-critical validation, or when changes span multiple modules with potential integration impact.
 - For specific modules, prefer debug variants before full build:
   - `./gradlew :module:compileDebugKotlin` (code-only)

@@ -29,10 +29,6 @@ class PhoneLlmOperationClient(
     private val dataClient: DataClient = Wearable.getDataClient(context),
     private val gson: Gson = Gson(),
 ) {
-    private companion object {
-        const val PHONE_APP_CAPABILITY = "data_layer_app_helper_device_phone"
-    }
-
     private val appContext = context.applicationContext
 
     suspend fun request(
@@ -124,7 +120,7 @@ class PhoneLlmOperationClient(
         return runCatching {
             Tasks.await(
                 Wearable.getCapabilityClient(appContext).getCapability(
-                    PHONE_APP_CAPABILITY,
+                    DataLayerPaths.PHONE_APP_CAPABILITY,
                     CapabilityClient.FILTER_REACHABLE
                 ),
                 10,

@@ -145,7 +145,8 @@ class ExerciseSessionSnapshotAdapter :
                 timeInMillis = setObject.get("timeInMillis").asInt,
                 autoStart = setObject.get("autoStart")?.takeIf { !it.isJsonNull }?.asBoolean ?: false,
                 autoStop = setObject.get("autoStop")?.takeIf { !it.isJsonNull }?.asBoolean ?: false,
-                shouldReapplyHistoryToSet = shouldReapplyHistoryToSet ?: true
+                shouldReapplyHistoryToSet = shouldReapplyHistoryToSet ?: true,
+                targetWeight = setObject.get("targetWeight")?.takeIf { !it.isJsonNull }?.asDouble,
             )
         }
 

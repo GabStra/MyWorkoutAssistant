@@ -23,6 +23,9 @@ val e2eTestBuildType = providers.gradleProperty("e2eTestBuildType").orElse("debu
 val isReleaseBuild = gradle.startParameter.taskNames.any { taskName ->
     taskName.contains("Release", ignoreCase = true)
 }
+val isCiBuild = providers.environmentVariable("CI").orElse("false").get().equals("true", ignoreCase = true)
+val shouldRunReleaseLint = isReleaseBuild || isCiBuild
+val shouldRunReleaseOptimizations = isReleaseBuild || isCiBuild
 if (isReleaseBuild && !hasReleaseSigning) {
     throw GradleException(
         "Missing release signing configuration. Provide keystore.properties or MWA_* env vars."
@@ -41,13 +44,13 @@ android {
         }
     }
     namespace = "com.gabstra.myworkoutassistant"
-    compileSdk = 36
+    compileSdk = 37
     testBuildType = e2eTestBuildType
 
     defaultConfig {
         applicationId = "com.gabstra.myworkoutassistant"
         minSdk = 34
-        targetSdk = 35
+        targetSdk = 36
         versionCode = appVersionCode
         versionName = appVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -58,13 +61,16 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = true
-            isShrinkResources = false
+            isMinifyEnabled = shouldRunReleaseOptimizations
+            isShrinkResources = shouldRunReleaseOptimizations
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
-                "proguard-release-fast.pro"
+                rootProject.file("proguard-gson-reflection.pro")
             )
+            if (e2eTestBuildType == "release") {
+                proguardFile("proguard-release-e2e.pro")
+            }
             testProguardFiles(rootProject.file("proguard-android-test.pro"))
             if (hasReleaseSigning) {
                 signingConfig = signingConfigs.getByName("release")
@@ -81,6 +87,9 @@ android {
     buildFeatures {
         compose = true
         buildConfig = false
+    }
+    lint {
+        checkReleaseBuilds = shouldRunReleaseLint
     }
     packaging {
         resources {
@@ -100,6 +109,8 @@ android {
         }
         named("androidTest") {
             kotlin.directories.add("src/androidTest/java")
+            assets.directories.add(rootProject.file("testdata/e2e-movement-assets").path)
+            assets.directories.add(file("src/main/res/raw").path)
         }
         named("test") {
             kotlin.directories.add("src/test/java")
@@ -109,9 +120,10 @@ android {
 
 dependencies {
     implementation(project(":shared"))
-    implementation("androidx.wear.compose:compose-material-core:1.6.2")
-    implementation("androidx.navigation:navigation-compose:2.9.8")
-    implementation("androidx.compose.ui:ui-graphics:1.11.2")
+    implementation(project(":motion-renderer"))
+    implementation("androidx.wear.compose:compose-material-core:1.7.0")
+    implementation("androidx.navigation:navigation-compose:2.10.2")
+    implementation("androidx.compose.ui:ui-graphics:1.12.1")
 
     // Compose BOM (don't specify versions for androidx.compose.* artifacts)
     val composeBom = platform("androidx.compose:compose-bom:2025.12.01")
@@ -130,22 +142,22 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 
     // Wear Compose
-    implementation("androidx.wear.compose:compose-material3:1.6.2")
-    implementation("androidx.wear.compose:compose-navigation:1.6.2")
-    implementation("androidx.wear.compose:compose-ui-tooling:1.6.2")
-    implementation("androidx.wear.compose:compose-foundation:1.6.2")
+    implementation("androidx.wear.compose:compose-material3:1.7.0")
+    implementation("androidx.wear.compose:compose-navigation:1.7.0")
+    implementation("androidx.wear.compose:compose-ui-tooling:1.7.0")
+    implementation("androidx.wear.compose:compose-foundation:1.7.0")
 
     // AndroidX / Google
-    implementation("androidx.core:core-ktx:1.18.0")
-    implementation("androidx.lifecycle:lifecycle-process:2.10.0")
+    implementation("androidx.core:core-ktx:1.19.1")
+    implementation("androidx.lifecycle:lifecycle-process:2.11.0")
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.concurrent:concurrent-futures-ktx:1.3.0")
-    implementation("androidx.work:work-runtime-ktx:2.11.2")
+    implementation("androidx.health:health-services-client:1.1.0")
+    implementation("androidx.work:work-runtime-ktx:2.12.0")
     implementation("com.google.accompanist:accompanist-permissions:0.37.3")
     implementation("androidx.wear:wear-tooling-preview:1.0.0")
     implementation("androidx.wear:wear-ongoing:1.1.0")
     implementation("com.google.android.gms:play-services-wearable:20.0.1")
-
     //Horologist
     implementation("com.google.android.horologist:horologist-datalayer:0.8.2-alpha")
     implementation("com.google.android.horologist:horologist-datalayer-watch:0.8.2-alpha")
@@ -153,8 +165,8 @@ dependencies {
     implementation("com.google.android.horologist:horologist-compose-layout:0.8.2-alpha")
 
     // Data / utils
-    implementation("androidx.room:room-ktx:2.8.4")
-    implementation("com.google.guava:guava:33.6.0-android")
+    implementation("androidx.room:room-ktx:2.8.5")
+    implementation("com.google.guava:guava:33.7.1-android")
     implementation("com.google.code.gson:gson:2.14.0")
 
     // Polar SDK + Rx
@@ -168,19 +180,19 @@ dependencies {
     // Misc
     implementation("com.github.kevinnzou:compose-progressindicator:1.0.0")
     implementation("dev.shreyaspatil:capturable:3.0.1")
-    implementation("com.airbnb.android:lottie-compose:6.7.1")
     // Test
     testImplementation("junit:junit:4.13.2")
-    testImplementation("org.mockito:mockito-core:5.23.0")
+    testImplementation("org.mockito:mockito-core:5.24.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
-    testImplementation("io.mockk:mockk:1.14.9")
+    testImplementation("io.mockk:mockk:1.14.11")
     testImplementation("androidx.arch.core:core-testing:2.2.0")
-    testImplementation("org.robolectric:robolectric:4.16.1")
+    testImplementation("org.robolectric:robolectric:4.17")
     testImplementation("com.google.truth:truth:1.4.5")
     // Instrumented / E2E Android tests
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.test:rules:1.7.0")
     androidTestImplementation("androidx.test:core:1.7.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
-    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.4.0-beta02")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.4.0")
+    androidTestImplementation(kotlin("stdlib"))
 }

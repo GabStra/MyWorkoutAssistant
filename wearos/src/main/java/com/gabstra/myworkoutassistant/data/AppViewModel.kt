@@ -6,6 +6,7 @@ import android.widget.Toast
 import androidx.compose.runtime.State
 import androidx.compose.runtime.asIntState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.viewModelScope
@@ -42,6 +43,7 @@ import com.gabstra.myworkoutassistant.shared.datalayer.WorkoutSessionHeartbeatKe
 import com.gabstra.myworkoutassistant.shared.workout.model.WATCH_SESSION_STATE_RETURNED_HOME
 import com.gabstra.myworkoutassistant.sync.PendingWorkoutHistorySyncTracker
 import com.gabstra.myworkoutassistant.sync.WearCompletedHistorySyncSender
+import com.gabstra.myworkoutassistant.sync.WearCompletedHistorySyncResult
 import com.gabstra.myworkoutassistant.sync.WearDirectHistorySyncClaim
 import com.gabstra.myworkoutassistant.sync.WearOutboundWorkoutHistorySyncCoordinator
 import com.gabstra.myworkoutassistant.sync.WearWorkoutHistorySyncDecision
@@ -95,13 +97,54 @@ internal fun resolveWorkoutHistorySyncRequestMode(
     else -> null
 }
 
+internal data class WearActiveSessionSyncState(
+    val exerciseId: UUID,
+    val setIndex: UInt,
+    val sessionState: String
+)
+
+internal fun resolveWearActiveSessionSyncState(
+    currentState: WorkoutState,
+    existingRecord: com.gabstra.myworkoutassistant.shared.WorkoutRecord?
+): WearActiveSessionSyncState? = when (currentState) {
+    is WorkoutState.Set -> WearActiveSessionSyncState(
+        exerciseId = currentState.exerciseId,
+        setIndex = currentState.setIndex,
+        sessionState = currentState::class.simpleName ?: "Set"
+    )
+    is WorkoutState.CalibrationLoadSelection -> WearActiveSessionSyncState(
+        exerciseId = currentState.exerciseId,
+        setIndex = currentState.setIndex,
+        sessionState = currentState::class.simpleName ?: "CalibrationLoadSelection"
+    )
+    is WorkoutState.CalibrationRIRSelection -> WearActiveSessionSyncState(
+        exerciseId = currentState.exerciseId,
+        setIndex = currentState.setIndex,
+        sessionState = currentState::class.simpleName ?: "CalibrationRIRSelection"
+    )
+    is WorkoutState.AutoRegulationRIRSelection -> WearActiveSessionSyncState(
+        exerciseId = currentState.exerciseId,
+        setIndex = currentState.setIndex,
+        sessionState = currentState::class.simpleName ?: "AutoRegulationRIRSelection"
+    )
+    is WorkoutState.Rest -> {
+        val fallbackRecord = existingRecord ?: return null
+        WearActiveSessionSyncState(
+            exerciseId = currentState.exerciseId ?: fallbackRecord.exerciseId,
+            setIndex = fallbackRecord.setIndex,
+            sessionState = currentState::class.simpleName ?: "Rest"
+        )
+    }
+    else -> null
+}
+
 open class AppViewModel : WorkoutViewModel() {
 
     companion object {
         private const val TAG = "AppViewModel"
         private const val WORKOUT_SYNC_LOG_TAG = "WorkoutSync"
         private const val SYNC_TIMEOUT_MS = 10_000L
-        private const val DEFAULT_WORKOUT_HISTORY_SYNC_DEBOUNCE_MS = 5_000L
+        private const val DEFAULT_WORKOUT_HISTORY_SYNC_DEBOUNCE_MS = 1_000L
     }
 
     private var applicationContext: android.content.Context? = null
@@ -118,8 +161,20 @@ open class AppViewModel : WorkoutViewModel() {
     /** Pending sync: transactionId -> workoutHistoryId. Cleared on process death; those histories stay unsynced and retry at start. */
     private val pendingSyncTransactions = mutableMapOf<String, UUID>()
 
+    private val _isRunningControlsDialogOpen = MutableStateFlow(false)
+    val isRunningControlsDialogOpen = _isRunningControlsDialogOpen.asStateFlow()
+
+    fun openRunningControlsDialog() {
+        _isRunningControlsDialogOpen.value = true
+    }
+
+    fun closeRunningControlsDialog() {
+        _isRunningControlsDialogOpen.value = false
+    }
+
     fun initApplicationContext(context: android.content.Context) {
         applicationContext = context.applicationContext
+        _alertSoundEnabled.value = AlertSoundPreferences.isEnabled(context.applicationContext)
         (context.applicationContext as? MyApplication)?.coroutineExceptionHandler?.let {
             coroutineExceptionHandler = it
         }
@@ -178,6 +233,13 @@ open class AppViewModel : WorkoutViewModel() {
     suspend fun exportLatestMotionCaptureSession(): String? =
         motionCaptureCoordinator?.exportLatestReviewSession()
 
+    fun setAlertSoundEnabled(enabled: Boolean) {
+        val context = applicationContext ?: return
+        if (_alertSoundEnabled.value == enabled) return
+        AlertSoundPreferences.setEnabled(context, enabled)
+        _alertSoundEnabled.value = enabled
+        rebuildScreenState()
+    }
     private fun checkpointStore(): WorkoutRecoveryCheckpointStore? {
         val context = applicationContext ?: return null
         return WorkoutRecoveryCheckpointStore(context)
@@ -200,6 +262,16 @@ open class AppViewModel : WorkoutViewModel() {
 
     private fun retainPendingWorkoutHistoryIds(context: Context, validIds: Set<UUID>) {
         PendingWorkoutHistorySyncTracker.retain(context, validIds)
+    }
+
+    private fun dequeueSuccessfullySyncedWorkoutHistories(
+        context: Context,
+        result: WearCompletedHistorySyncResult
+    ) {
+        PendingWorkoutHistorySyncTracker.dequeue(
+            context,
+            result.attemptedHistoryIds - result.failedHistoryIds
+        )
     }
 
     /** Call before sending a completed history so SYNC_COMPLETE can clear it from the pending queue. */
@@ -268,6 +340,8 @@ open class AppViewModel : WorkoutViewModel() {
     private val _showRecoveredWorkoutNotice = mutableStateOf(false)
     val showRecoveredWorkoutNotice: State<Boolean> = _showRecoveredWorkoutNotice
     private var skipNextResumeLastState = false
+    private val _alertSoundEnabled = mutableStateOf(AlertSoundPreferences.DEFAULT_ALERT_SOUND_ENABLED)
+    val alertSoundEnabled: State<Boolean> = _alertSoundEnabled
 
     fun consumeRecoveredWorkoutNotice() {
         _showRecoveredWorkoutNotice.value = false
@@ -314,6 +388,12 @@ open class AppViewModel : WorkoutViewModel() {
 
     override fun prepareResumeWorkout(workoutId: UUID, workoutHistoryId: UUID) {
         super.prepareResumeWorkout(workoutId, workoutHistoryId)
+        if (selectedWorkout.value.usesExternalHeartRateDevice) {
+            markPreparingDataLoaded()
+        } else {
+            enterResumingPhase()
+        }
+        rebuildScreenState()
         clearRecoveryPromptUiState()
     }
 
@@ -638,9 +718,9 @@ open class AppViewModel : WorkoutViewModel() {
         }
     }
 
-    private val _hrDisplayMode = mutableStateOf(0)
+    private val _hrDisplayMode = mutableIntStateOf(0)
     val hrDisplayMode: State<Int> = _hrDisplayMode.asIntState()
-    private val _headerDisplayMode = mutableStateOf(0)
+    private val _headerDisplayMode = mutableIntStateOf(0)
     val headerDisplayMode: State<Int> = _headerDisplayMode.asIntState()
     private val _isRestTimerPageVisible = mutableStateOf(true)
     val isRestTimerPageVisible: State<Boolean> = _isRestTimerPageVisible
@@ -706,12 +786,12 @@ open class AppViewModel : WorkoutViewModel() {
     }
 
     fun switchHrDisplayMode() {
-        _hrDisplayMode.value = (_hrDisplayMode.value + 1) % 2
+        _hrDisplayMode.intValue = (_hrDisplayMode.intValue + 1) % 2
         rebuildScreenState()
     }
 
     fun switchHeaderDisplayMode() {
-        _headerDisplayMode.value = (_headerDisplayMode.value + 1) % 2
+        _headerDisplayMode.intValue = (_headerDisplayMode.intValue + 1) % 2
         rebuildScreenState()
     }
 
@@ -746,7 +826,6 @@ open class AppViewModel : WorkoutViewModel() {
             selectedWorkout = selectedWorkout.value,
             isPaused = isPaused.value,
             hasWorkoutRecord = hasWorkoutRecord.value,
-            isResuming = isResuming.value,
             isRefreshing = isRefreshing.value,
             isCustomDialogOpen = isCustomDialogOpen.value,
             enableWorkoutNotificationFlow = enableWorkoutNotificationFlow.value,
@@ -756,9 +835,10 @@ open class AppViewModel : WorkoutViewModel() {
             startWorkoutTime = startWorkoutTime,
             enableDimming = enableDimming.value,
             keepScreenOn = keepScreenOn.value,
+            isAlertSoundEnabled = alertSoundEnabled.value,
             currentScreenDimmingState = currentScreenDimmingState.value,
-            headerDisplayMode = headerDisplayMode.value,
-            hrDisplayMode = hrDisplayMode.value,
+            headerDisplayMode = _headerDisplayMode.intValue,
+            hrDisplayMode = _hrDisplayMode.intValue,
             isRestTimerPageVisible = isRestTimerPageVisible.value,
             isExerciseDetailPageVisible = isExerciseDetailPageVisible.value,
         )
@@ -1278,8 +1358,8 @@ open class AppViewModel : WorkoutViewModel() {
     }
 
     override fun startWorkout() {
-        _headerDisplayMode.value = 0
-        _hrDisplayMode.value = 0
+        _headerDisplayMode.intValue = 0
+        _hrDisplayMode.intValue = 0
         _isRestTimerPageVisible.value = true
         super.startWorkout()
     }
@@ -1289,6 +1369,7 @@ open class AppViewModel : WorkoutViewModel() {
         super.goToNextState()
         restartCurrentRestStateForManualNavigation()
         reEvaluateDimmingForCurrentState()
+        syncWearActiveStateAfterTransition()
     }
 
     /**
@@ -1311,6 +1392,23 @@ open class AppViewModel : WorkoutViewModel() {
         goToPreviousNonRestState()
         restartCurrentRestStateForManualNavigation()
         reEvaluateDimmingForCurrentState()
+    }
+
+    fun skipCurrentExerciseWear(context: Context? = null, onEnd: suspend () -> Unit = {}) {
+        stopActiveTimerForCurrentState()
+        skipCurrentExercise(context) {
+            restartCurrentRestStateForManualNavigation()
+            reEvaluateDimmingForCurrentState()
+            onEnd()
+        }
+    }
+
+    fun finishWorkoutEarlyWear(context: Context? = null, onEnd: suspend () -> Unit = {}) {
+        stopActiveTimerForCurrentState()
+        finishWorkoutEarly(context) {
+            reEvaluateDimmingForCurrentState()
+            onEnd()
+        }
     }
 
     private fun stopActiveTimerForCurrentState() {
@@ -1351,8 +1449,8 @@ open class AppViewModel : WorkoutViewModel() {
      * state machine from snapshot or move to checkpoint state, timer/calibration options).
      */
     override fun resumeWorkoutFromRecord(onEnd: suspend () -> Unit) {
-        _headerDisplayMode.value = 0
-        _hrDisplayMode.value = 0
+        _headerDisplayMode.intValue = 0
+        _hrDisplayMode.intValue = 0
         _isRestTimerPageVisible.value = true
         skipNextResumeLastState = false
         val checkpoint = pendingRecoveryCheckpoint ?: getSavedRecoveryCheckpoint()
@@ -1401,7 +1499,8 @@ open class AppViewModel : WorkoutViewModel() {
         ) {
             recoveryApplied = restoreRecoveryStateMachine(
                 sequence = runtimeSnapshot.sequenceItems,
-                currentIndex = runtimeSnapshot.currentIndex
+                currentIndex = runtimeSnapshot.currentIndex,
+                activateSession = false,
             )
         }
 
@@ -1416,19 +1515,26 @@ open class AppViewModel : WorkoutViewModel() {
                 exerciseId = checkpoint.exerciseId,
                 setId = checkpoint.setId,
                 setIndex = checkpoint.setIndex,
-                restOrder = checkpoint.restOrder
+                restOrder = checkpoint.restOrder,
+                activateSession = false,
             )
         }
 
         if (recoveryApplied && checkpoint != null && checkpoint.workoutId == selectedWorkoutId) {
-            val stateAligned = doesCurrentStateMatchCheckpointType(checkpoint)
+            val expectedStateType = if (shouldRestartCalibration) {
+                RecoveryStateType.CALIBRATION_LOAD
+            } else {
+                checkpoint.stateType
+            }
+            val stateAligned = doesCurrentStateMatchRecoveryType(expectedStateType)
             if (!stateAligned) {
                 recoveryApplied = moveToRecoveredState(
-                    stateType = checkpoint.stateType.name,
+                    stateType = expectedStateType.name,
                     exerciseId = checkpoint.exerciseId,
                     setId = checkpoint.setId,
                     setIndex = checkpoint.setIndex,
-                    restOrder = checkpoint.restOrder
+                    restOrder = checkpoint.restOrder,
+                    activateSession = false,
                 )
             }
         }
@@ -1442,9 +1548,10 @@ open class AppViewModel : WorkoutViewModel() {
             recalculatePlatesForCurrentExerciseAfterRecoveryIfNeeded()
             if (selectedWorkout.value.usesExternalHeartRateDevice) {
                 // Leave user on the external heart-rate prep screen so they can connect or skip
-                markSessionReady()
+                markPreparingDataLoaded()
                 rebuildScreenState()
             } else {
+                enterResumingPhase()
                 resumeWorkout()
             }
             skipNextResumeLastState = true
@@ -1460,9 +1567,9 @@ open class AppViewModel : WorkoutViewModel() {
         onEnd()
     }
 
-    private fun doesCurrentStateMatchCheckpointType(checkpoint: WorkoutRecoveryCheckpoint): Boolean {
+    private fun doesCurrentStateMatchRecoveryType(stateType: RecoveryStateType): Boolean {
         val state = workoutState.value
-        return when (checkpoint.stateType) {
+        return when (stateType) {
             RecoveryStateType.SET -> state is WorkoutState.Set
             RecoveryStateType.REST -> state is WorkoutState.Rest
             RecoveryStateType.CALIBRATION_LOAD -> state is WorkoutState.CalibrationLoadSelection
@@ -1595,10 +1702,11 @@ open class AppViewModel : WorkoutViewModel() {
         isDone: Boolean,
         context: Context?,
         forceNotSend: Boolean,
+        endReason: com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionEndReason,
         onEnd: suspend () -> Unit
     ) {
         Log.d(WORKOUT_SYNC_LOG_TAG, "pushAndStoreWorkoutData called: isDone=$isDone, forceNotSend=$forceNotSend")
-        super.pushAndStoreWorkoutData(isDone, context, forceNotSend) {
+        super.pushAndStoreWorkoutData(isDone, context, forceNotSend, endReason) {
             val currentState = workoutState.value
             val completedHistoryId = currentWorkoutHistory?.takeIf { it.isDone }?.id
             if (isDone) {
@@ -1639,16 +1747,16 @@ open class AppViewModel : WorkoutViewModel() {
     }
 
     override suspend fun onWorkoutDefinitionChanged(updatedWorkoutStore: WorkoutStore) {
-        withContext(Dispatchers.Main) {
-            rebuildScreenState()
-        }
+        Log.d(WORKOUT_SYNC_LOG_TAG, "Syncing workout definition change to phone")
         val client = dataClient ?: return
-        runCatching {
-            WorkoutHistoryTransferCoordinator.sendMutex.withLock {
-                sendWorkoutStore(client, updatedWorkoutStore)
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                WorkoutHistoryTransferCoordinator.sendMutex.withLock {
+                    sendWorkoutStore(client, updatedWorkoutStore)
+                }
+            }.onFailure { exception ->
+                Log.e(WORKOUT_SYNC_LOG_TAG, "Failed to sync updated workout store after equipment change", exception)
             }
-        }.onFailure { exception ->
-            Log.e(WORKOUT_SYNC_LOG_TAG, "Failed to sync updated workout store after equipment change", exception)
         }
     }
 
@@ -1725,6 +1833,25 @@ open class AppViewModel : WorkoutViewModel() {
         )
     }
 
+    private fun syncWearActiveStateAfterTransition() {
+        if (sessionPhase.value != com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutSessionPhase.ACTIVE) {
+            return
+        }
+        val syncState = resolveWearActiveSessionSyncState(
+            currentState = workoutState.value,
+            existingRecord = _workoutRecord
+        ) ?: return
+
+        launchIO {
+            upsertWorkoutRecordNow(
+                exerciseId = syncState.exerciseId,
+                setIndex = syncState.setIndex,
+                lastKnownSessionStateOverride = syncState.sessionState
+            )
+            sendImmediateWorkoutSessionHeartbeatIfPossible()
+        }
+    }
+
     private fun startDirectWorkoutHistorySync(
         syncContext: Context?,
         claim: WearDirectHistorySyncClaim
@@ -1757,6 +1884,7 @@ open class AppViewModel : WorkoutViewModel() {
                             reason = claim.reason,
                             transactionRegistrar = ::registerPendingSyncTransaction
                         )
+                        dequeueSuccessfullySyncedWorkoutHistories(syncContext, result)
                         result.failedHistoryIds.isEmpty() &&
                             result.attemptedHistoryIds == claim.claimedHistoryIds
                     }
@@ -1777,6 +1905,7 @@ open class AppViewModel : WorkoutViewModel() {
                             reason = claim.reason,
                             transactionRegistrar = ::registerPendingSyncTransaction
                         )
+                        dequeueSuccessfullySyncedWorkoutHistories(syncContext, result)
                         result.failedHistoryIds.isEmpty() &&
                             result.attemptedHistoryIds == claim.claimedHistoryIds
                     }

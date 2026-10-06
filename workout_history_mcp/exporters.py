@@ -563,15 +563,6 @@ def exercise_history_markdown(store: WorkoutHistoryStore, exercise_id: str) -> s
     return "\n".join(lines).rstrip() + "\n"
 
 
-def is_active_set(set_history: dict[str, Any]) -> bool:
-    if set_history.get("skipped") is True:
-        return False
-    return (set_history.get("setData") or {}).get("type") in {
-        "WeightSetData",
-        "BodyWeightSetData",
-        "TimedDurationSetData",
-        "EnduranceSetData",
-    }
 
 
 def is_insight_comparison_set(set_history: dict[str, Any]) -> bool:

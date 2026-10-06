@@ -53,7 +53,7 @@ fun StandardDialog(
                 .fillMaxWidth()
                 .widthIn(max = maxWidth),
             shape = MaterialTheme.shapes.small,
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            color = MaterialTheme.colorScheme.surface,
             tonalElevation = 0.dp
         ) {
             Column(
@@ -95,7 +95,7 @@ fun StandardDialog(
                         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
                     ){
                         if (hasDismissButton) {
-                            DialogOutlinedButton(
+                            DialogDismissButton(
                                 text = dismissText.orEmpty(),
                                 onClick = onDismissButton ?: onDismissRequest,
                                 modifier = Modifier.heightIn(min = 48.dp),

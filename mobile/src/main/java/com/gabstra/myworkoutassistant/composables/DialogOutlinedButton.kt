@@ -22,3 +22,21 @@ fun DialogOutlinedButton(
         minHeight = minHeight
     )
 }
+
+/** Low-emphasis dismiss action for dialog rows. */
+@Composable
+fun DialogDismissButton(
+    modifier: Modifier = Modifier,
+    text: String,
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+    minHeight: Dp = 32.dp
+) {
+    AppTextButton(
+        modifier = modifier,
+        text = text,
+        onClick = onClick,
+        enabled = enabled,
+        minHeight = minHeight
+    )
+}

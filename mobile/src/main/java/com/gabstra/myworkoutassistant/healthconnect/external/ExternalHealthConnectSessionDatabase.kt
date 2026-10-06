@@ -43,7 +43,7 @@ abstract class ExternalHealthConnectSessionDatabase : RoomDatabase() {
                         ExternalHealthConnectSessionDatabase::class.java,
                         "external_health_connect_session_cache",
                     )
-                        .fallbackToDestructiveMigration()
+                        .fallbackToDestructiveMigration(dropAllTables = true)
                         .build()
                         .also { INSTANCE = it }
                 }

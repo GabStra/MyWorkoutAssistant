@@ -2,7 +2,6 @@ package com.gabstra.myworkoutassistant.composables
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import android.view.WindowManager
@@ -48,7 +47,8 @@ private fun readSystemBrightnessAsWindowOverride(context: Context): Float {
 }
 
 @Composable
-@SuppressLint("WakelockTimeout")
+@SuppressLint("Wakelock", "WakelockTimeout")
+@Suppress("DEPRECATION")
 fun KeepOn(
     appViewModel: AppViewModel,
     keepInteractive: Boolean = true,
@@ -77,8 +77,10 @@ fun KeepOn(
     val updatedKeepInteractive by rememberUpdatedState(keepInteractive)
 
     fun setScreenBrightness(brightness: Float) {
-        window?.attributes = window?.attributes?.apply {
-            screenBrightness = brightness
+        window?.let { currentWindow ->
+            currentWindow.attributes = currentWindow.attributes.apply {
+                screenBrightness = brightness
+            }
         }
     }
 
@@ -94,10 +96,8 @@ fun KeepOn(
                     WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
                     WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
         )
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-            activity?.setShowWhenLocked(true)
-            activity?.setTurnScreenOn(true)
-        }
+        activity?.setShowWhenLocked(true)
+        activity?.setTurnScreenOn(true)
     }
 
     fun clearWindowFlags() {
@@ -107,10 +107,8 @@ fun KeepOn(
                     WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
                     WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
         )
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-            activity?.setShowWhenLocked(false)
-            activity?.setTurnScreenOn(false)
-        }
+        activity?.setShowWhenLocked(false)
+        activity?.setTurnScreenOn(false)
     }
 
     fun acquireWakeLock() {
@@ -168,7 +166,12 @@ fun KeepOn(
 
         applyWindowFlags()
         acquireWakeLock()
-        wakeUpAndResetTimer()
+        try {
+            wakeUpAndResetTimer()
+        } catch (t: Throwable) {
+            deactivateInteractiveMode()
+            throw t
+        }
     }
 
     LifecycleObserver(

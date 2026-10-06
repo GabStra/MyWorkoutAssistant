@@ -1,5 +1,8 @@
 package com.gabstra.myworkoutassistant.shared.adapters
 
+import com.gabstra.myworkoutassistant.shared.ExerciseMovementBackup
+import com.gabstra.myworkoutassistant.shared.ExerciseDefinition
+import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutPlanPackage
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
@@ -21,8 +24,14 @@ class WorkoutPlanPackageAdapter : JsonDeserializer<WorkoutPlanPackage> {
         val workoutsType = object : TypeToken<List<Workout>>() {}.type
         val equipmentsType = object : TypeToken<List<WeightLoadedEquipment>>() {}.type
         val accessoryEquipmentsType = object : TypeToken<List<AccessoryEquipment>>() {}.type
+        val exerciseMovementsType = object : TypeToken<List<ExerciseMovementBackup>>() {}.type
+        val exerciseDefinitionsType = object : TypeToken<List<ExerciseDefinition>>() {}.type
 
         val name = jsonObject.get("name")?.takeUnless { it.isJsonNull }?.asString ?: ""
+        val schemaVersion = jsonObject.get("schemaVersion")?.takeUnless { it.isJsonNull }?.asInt ?: 1
+        val exerciseDefinitions = jsonObject.get("exerciseDefinitions")?.let {
+            if (it.isJsonNull) emptyList<ExerciseDefinition>() else context.deserialize(it, exerciseDefinitionsType)
+        } ?: emptyList()
         val workouts = jsonObject.get("workouts")?.let {
             if (it.isJsonNull) emptyList<Workout>() else context.deserialize(it, workoutsType)
         } ?: emptyList()
@@ -32,12 +41,23 @@ class WorkoutPlanPackageAdapter : JsonDeserializer<WorkoutPlanPackage> {
         val accessoryEquipments = jsonObject.get("accessoryEquipments")?.let {
             if (it.isJsonNull) emptyList<AccessoryEquipment>() else context.deserialize(it, accessoryEquipmentsType)
         } ?: emptyList()
+        val exerciseMovementsElement = when {
+            jsonObject.has("exerciseMovements") -> jsonObject.get("exerciseMovements")
+            jsonObject.has("ExerciseMovements") -> jsonObject.get("ExerciseMovements")
+            else -> null
+        }
+        val exerciseMovements = exerciseMovementsElement?.let {
+            if (it.isJsonNull) emptyList<ExerciseMovementBackup>() else context.deserialize(it, exerciseMovementsType)
+        } ?: emptyList()
 
         return WorkoutPlanPackage(
             name = name,
+            schemaVersion = if (schemaVersion < 1) 1 else schemaVersion,
+            exerciseDefinitions = exerciseDefinitions,
             workouts = workouts,
             equipments = equipments,
             accessoryEquipments = accessoryEquipments,
+            exerciseMovements = exerciseMovements,
         )
     }
 }

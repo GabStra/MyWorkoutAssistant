@@ -26,8 +26,10 @@ fun ExerciseDetail(
     onEditModeEnabled: () -> Unit,
     onTimerDisabled: () -> Unit,
     onTimerEnabled: () -> Unit,
+    showPlateauWarning: Boolean = true,
     extraInfo: (@Composable (WorkoutState.Set) -> Unit)? = null,
     exerciseTitleComposable: @Composable () -> Unit,
+    targetRepRange: String? = null,
     customComponentWrapper: @Composable (@Composable () -> Unit) -> Unit,
 ) {
     val context = LocalContext.current
@@ -48,8 +50,10 @@ fun ExerciseDetail(
                 forceStopEditMode = false,
                 onEditModeDisabled = onEditModeDisabled,
                 onEditModeEnabled = onEditModeEnabled,
+                showPlateauWarning = showPlateauWarning,
                 extraInfo = extraInfo,
                 exerciseTitleComposable = exerciseTitleComposable,
+                targetRepRange = targetRepRange,
                 customComponentWrapper = customComponentWrapper
             )
 
@@ -72,6 +76,7 @@ fun ExerciseDetail(
                 onEditModeEnabled = onEditModeEnabled,
                 extraInfo = extraInfo,
                 exerciseTitleComposable = exerciseTitleComposable,
+                targetRepRange = targetRepRange,
                 customComponentWrapper = customComponentWrapper
             )
         }
@@ -105,7 +110,23 @@ fun ExerciseDetail(
             )
         }
 
-        is EnduranceSet -> EnduranceSetScreen(
+        is EnduranceSet -> {
+            val runningPrescription = viewModel.exercisesById[updatedState.exerciseId]?.runningPrescription
+            if (runningPrescription != null) {
+                RunningSetScreen(
+                    viewModel = viewModel,
+                    hapticsViewModel = hapticsViewModel,
+                    modifier = Modifier.fillMaxSize(),
+                    state = updatedState,
+                    prescription = runningPrescription,
+                    onComplete = {
+                        viewModel.goToNextState()
+                        viewModel.lightScreenUp()
+                    },
+                    exerciseTitleComposable = exerciseTitleComposable,
+                    customComponentWrapper = customComponentWrapper,
+                )
+            } else EnduranceSetScreen(
             viewModel = viewModel,
             hapticsViewModel = hapticsViewModel,
             modifier = Modifier.fillMaxSize(),
@@ -131,6 +152,7 @@ fun ExerciseDetail(
             exerciseTitleComposable = exerciseTitleComposable,
             customComponentWrapper = customComponentWrapper
         )
+        }
 
         is RestSet -> throw IllegalStateException("Rest set should not be here")
     }

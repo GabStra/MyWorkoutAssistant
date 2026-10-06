@@ -42,15 +42,10 @@ abstract class WearBaseE2ETest {
         // Grant all required runtime permissions before launching the app.
         // This prevents permission dialogs from appearing during tests.
         // Keep this list in sync with runtime permissions declared in AndroidManifest.xml.
-        grantPermissions(
-            android.Manifest.permission.BODY_SENSORS,
-            android.Manifest.permission.ACTIVITY_RECOGNITION,
-            android.Manifest.permission.POST_NOTIFICATIONS,
-            android.Manifest.permission.ACCESS_FINE_LOCATION,
-            android.Manifest.permission.ACCESS_COARSE_LOCATION,
-            android.Manifest.permission.BLUETOOTH_SCAN,
-            android.Manifest.permission.BLUETOOTH_CONNECT
-        )
+        grantPermissions(*runtimePermissionsToGrant().toTypedArray())
+        if (android.os.Build.VERSION.SDK_INT >= 36) {
+            grantPermissions("android.permission.health.READ_HEART_RATE")
+        }
 
         if (shouldClearPersistedE2eState()) {
             clearPersistedE2eState()
@@ -112,6 +107,16 @@ abstract class WearBaseE2ETest {
     protected open fun prepareAppStateBeforeLaunch() {
         seedWorkoutStore()
     }
+
+    protected open fun runtimePermissionsToGrant(): List<String> = listOf(
+        android.Manifest.permission.BODY_SENSORS,
+        android.Manifest.permission.ACTIVITY_RECOGNITION,
+        android.Manifest.permission.POST_NOTIFICATIONS,
+        android.Manifest.permission.ACCESS_FINE_LOCATION,
+        android.Manifest.permission.ACCESS_COARSE_LOCATION,
+        android.Manifest.permission.BLUETOOTH_SCAN,
+        android.Manifest.permission.BLUETOOTH_CONNECT,
+    )
 
     protected open fun shouldClearPersistedE2eState(): Boolean = true
 
@@ -281,7 +286,11 @@ abstract class WearBaseE2ETest {
             device.hasObject(By.textContains("Set load for")) ||
             device.hasObject(By.text("0 = Form Breaks")) ||
             device.hasObject(By.text("Start")) ||
-            device.hasObject(By.text("Stop"))
+            device.hasObject(By.text("Stop")) ||
+            device.hasObject(By.desc("Start run")) ||
+            device.hasObject(By.desc("Pause run")) ||
+            device.hasObject(By.desc("Resume run")) ||
+            device.hasObject(By.desc("Finish run"))
     }
 
     private fun isExternalHeartRatePrepVisible(): Boolean {

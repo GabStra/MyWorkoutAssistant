@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
+import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
+
 import android.annotation.SuppressLint
 import android.net.Uri
 import android.util.Log
@@ -7,7 +9,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -54,6 +55,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -171,7 +173,9 @@ fun ExerciseDetailScreen(
     var showDeleteSetsDialog by remember { mutableStateOf(false) }
     var showRest by remember { mutableStateOf(true) }
     var pendingSetBringIntoViewId by remember { mutableStateOf<UUID?>(null) }
-    val tabTitles = remember { listOf("Overview", "Graph History", "Set History") }
+    val tabTitles = remember { listOf("Overview", "Charts", "Histories") }
+    val historyTabStartIndex = 1
+    val historyTabRange = historyTabStartIndex..(historyTabStartIndex + 1)
     var selectedTopTab by remember(exercise.id, initialSelectedTabIndex) {
         mutableIntStateOf(initialSelectedTabIndex.coerceIn(0, tabTitles.lastIndex))
     }
@@ -183,6 +187,9 @@ fun ExerciseDetailScreen(
     }
     var historyFilterRange by remember(workout.id, exercise.id) {
         mutableStateOf(FilterRange.ALL)
+    }
+    var isHistoryFiltersExpanded by rememberSaveable(workout.id, exercise.id) {
+        mutableStateOf(true)
     }
 
     val equipments by appViewModel.equipmentsFlow.collectAsState()
@@ -334,15 +341,16 @@ fun ExerciseDetailScreen(
     }
 
     LaunchedEffect(selectedTopTab) {
-        if (selectedTopTab !in 1..2) {
+        if (selectedTopTab !in historyTabRange) {
             historyActionsLoading = false
         }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        val showHistoryActions = MobileLlmFeatureFlags.isEnabled(context) && selectedTopTab in 1..2
+        val showHistoryActions = MobileLlmFeatureFlags.isEnabled(context) && selectedTopTab in historyTabRange
         val enableHistoryActions = showHistoryActions && !historyActionsLoading
-        Scaffold(
+        BreadcrumbScaffold(
+            showTopBarDivider = false,
             topBar = {
                 TopAppBar(
                     colors = TopAppBarDefaults.topAppBarColors(
@@ -353,12 +361,11 @@ fun ExerciseDetailScreen(
                     ),
                     title = {
                         Text(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .basicMarquee(),
+                            modifier = Modifier.fillMaxWidth(),
                             textAlign = TextAlign.Center,
                             text = exercise.name,
                             maxLines = 2,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                             style = MaterialTheme.typography.titleLarge,
                             color = MaterialTheme.colorScheme.onBackground
                         )
@@ -720,17 +727,18 @@ fun ExerciseDetailScreen(
                     selectedTabIndex = selectedTopTab,
                     onTabSelected = { index ->
                         selectedTopTab = index
-                        historyActionsLoading = index in 1..2
+                        historyActionsLoading = index in historyTabRange
                         val targetScreenData = ScreenData.ExerciseDetail(
                             workoutId = workout.id,
                             selectedExerciseId = exercise.id,
                             selectedTabIndex = index,
-                            workoutHistoryId = if (index in 1..2) displayedWorkoutHistoryId else null,
+                            workoutHistoryId = if (index in historyTabRange) displayedWorkoutHistoryId else null,
                         )
                         appViewModel.updateScreenDataIfChanged(targetScreenData)
                     },
                     tabEnabled = { true },
                     unselectedContentColor = MaterialTheme.colorScheme.onBackground,
+                    beyondViewportPageCount = 1,
                     modifier = Modifier.fillMaxSize(),
                     pagerModifier = Modifier.fillMaxSize(),
                 ) { pageIndex ->
@@ -771,9 +779,11 @@ fun ExerciseDetailScreen(
                             restHistoryDao = restHistoryDao,
                             exercise = exercise,
                             workoutHistoryId = displayedWorkoutHistoryId,
-                            selectedHistoryMode = pageIndex - 1,
+                            selectedHistoryMode = pageIndex - historyTabStartIndex,
                             historyFilterRange = historyFilterRange,
                             onHistoryFilterRangeChange = { historyFilterRange = it },
+                            isHistoryFiltersExpanded = isHistoryFiltersExpanded,
+                            onHistoryFiltersExpandedChange = { isHistoryFiltersExpanded = it },
                             onGoBack = onGoBack,
                             onSelectedWorkoutHistoryIdChanged = { id ->
                                 if (pageIndex == selectedTopTab) {
@@ -799,7 +809,7 @@ fun ExerciseDetailScreen(
                         workoutId = workout.id,
                         selectedExerciseId = exercise.id,
                         selectedTabIndex = selectedTopTab,
-                        workoutHistoryId = if (selectedTopTab in 1..2) displayedWorkoutHistoryId else null,
+                        workoutHistoryId = if (selectedTopTab in historyTabRange) displayedWorkoutHistoryId else null,
                     )
                     appViewModel.updateScreenDataIfChanged(targetScreenData)
                 }

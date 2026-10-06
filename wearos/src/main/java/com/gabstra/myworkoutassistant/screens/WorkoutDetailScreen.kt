@@ -1,7 +1,9 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.Manifest
+import com.gabstra.myworkoutassistant.presentation.theme.tertiaryContent
 import android.content.Context
+import android.content.pm.PackageManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -16,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -25,9 +28,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
+import androidx.core.content.ContextCompat
 import androidx.navigation.NavController
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumnState
@@ -45,9 +48,11 @@ import androidx.wear.compose.material3.lazy.TransformationVariableSpec
 import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import com.gabstra.myworkoutassistant.composables.ButtonWithText
+import com.gabstra.myworkoutassistant.composables.FullScreenLoadingIndicator
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.LoadingText
 import com.gabstra.myworkoutassistant.composables.WearPrimaryButton
+import com.gabstra.myworkoutassistant.composables.WorkoutNameText
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.Screen
@@ -82,7 +87,7 @@ fun WorkoutDetailScreen(
     val motionCaptureUiState by viewModel.motionCaptureUiState.collectAsState()
     // Track when checking started and ensure minimum display time to prevent flashing
     var showLoading by remember(selectedWorkoutId) { mutableStateOf(true) }
-    var checkStartTime by remember(selectedWorkoutId) { mutableStateOf(System.currentTimeMillis()) }
+    var checkStartTime by remember(selectedWorkoutId) { mutableLongStateOf(System.currentTimeMillis()) }
     
     LaunchedEffect(selectedWorkoutId) {
         showLoading = true
@@ -103,36 +108,66 @@ fun WorkoutDetailScreen(
         Manifest.permission.BODY_SENSORS,
         Manifest.permission.BLUETOOTH_SCAN,
         Manifest.permission.BLUETOOTH_CONNECT,
-        Manifest.permission.ACCESS_FINE_LOCATION,
-        Manifest.permission.ACCESS_COARSE_LOCATION,
         Manifest.permission.POST_NOTIFICATIONS
     )
 
+    fun hasAllWorkoutPermissions(): Boolean =
+        basePermissions.all { permission ->
+            ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+        }
+
+    fun navigateToWorkout() {
+        navController.navigate(Screen.Workout.route) {
+            popUpTo(0) { inclusive = true }
+            launchSingleTop = true
+        }
+    }
+
+    fun startWorkoutAfterPermissions() {
+        if (hasWorkoutRecord) viewModel.deleteWorkoutRecord()
+        viewModel.startWorkout()
+        val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+        prefs.edit { putBoolean("isWorkoutInProgress", true) }
+        viewModel.clearRecoveryCheckpoint()
+
+        navigateToWorkout()
+        viewModel.consumeStartWorkout()
+    }
+
+    fun resumeWorkoutAfterPermissions() {
+        viewModel.resumeWorkoutFromRecord()
+        val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+        prefs.edit { putBoolean("isWorkoutInProgress", true) }
+
+        navigateToWorkout()
+        viewModel.consumeStartWorkout()
+    }
+
     val permissionLauncherStart = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { result ->
-        if (result.all { it.value }) {
-            if(hasWorkoutRecord) viewModel.deleteWorkoutRecord()
-            viewModel.startWorkout()
-            val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
-            prefs.edit { putBoolean("isWorkoutInProgress", true) }
-            viewModel.clearRecoveryCheckpoint()
-
-            navController.navigate(Screen.Workout.route)
-            viewModel.consumeStartWorkout()
-        }
+    ) {
+        startWorkoutAfterPermissions()
     }
 
     val permissionLauncherResume = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { result ->
-        if (result.all { it.value }) {
-            viewModel.resumeWorkoutFromRecord()
-            val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
-            prefs.edit { putBoolean("isWorkoutInProgress", true) }
+    ) {
+        resumeWorkoutAfterPermissions()
+    }
 
-            navController.navigate(Screen.Workout.route)
-            viewModel.consumeStartWorkout()
+    fun requestPermissionsOrStartWorkout() {
+        if (hasAllWorkoutPermissions()) {
+            startWorkoutAfterPermissions()
+        } else {
+            permissionLauncherStart.launch(basePermissions.toTypedArray())
+        }
+    }
+
+    fun requestPermissionsOrResumeWorkout() {
+        if (hasAllWorkoutPermissions()) {
+            resumeWorkoutAfterPermissions()
+        } else {
+            permissionLauncherResume.launch(basePermissions.toTypedArray())
         }
     }
 
@@ -144,24 +179,18 @@ fun WorkoutDetailScreen(
     ) {
         if (viewModel.executeStartWorkout.value != null && !showLoading && !isCheckingWorkoutRecord) {
             if (hasWorkoutRecord) {
-                permissionLauncherResume.launch(basePermissions.toTypedArray())
+                requestPermissionsOrResumeWorkout()
             } else {
-                permissionLauncherStart.launch(basePermissions.toTypedArray())
+                requestPermissionsOrStartWorkout()
             }
         }
     }
 
     // Show loading screen while checking workout record (with minimum display time to prevent flashing)
     if (showLoading || isCheckingWorkoutRecord) {
-        Column(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            CircularProgressIndicator()
-            Spacer(Modifier.height(8.dp))
-            LoadingText(baseText = IncompleteWorkoutStrings.CHECKING_SESSION_PROGRESS)
-        }
+        FullScreenLoadingIndicator(
+            text = IncompleteWorkoutStrings.CHECKING_SESSION_PROGRESS,
+        )
         return
     }
 
@@ -208,15 +237,7 @@ fun WorkoutDetailScreen(
                                 .transformedHeight(this, spec),
                             transformation = SurfaceTransformation(spec),
                         ) {
-                            Text(
-                                text = workout.name,
-                                modifier = Modifier,
-                                textAlign = TextAlign.Center,
-                                style = MaterialTheme.typography.titleMedium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                color = MaterialTheme.colorScheme.onBackground
-                            )
+                            WorkoutNameText(text = workout.name)
                         }
                     }
 
@@ -229,7 +250,7 @@ fun WorkoutDetailScreen(
                                     .transformedHeight(this, spec),
                                 textAlign = TextAlign.Center,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.tertiaryContent
                             )
                         }
                     }
@@ -253,25 +274,6 @@ fun WorkoutDetailScreen(
                         )
                     }
 
-                    item {
-                        WearPrimaryButton(
-                            modifier = Modifier
-                                .semantics { contentDescription = "Start workout" }
-                                .fillMaxWidth()
-                                .transformedHeight(this, spec),
-                            transformation = SurfaceTransformation(spec),
-                            text = "Start",
-                            onClick = {
-                                hapticsViewModel.doGentleVibration()
-                                if (hasWorkoutRecord) {
-                                    showStartConfirmationDialog = true
-                                } else {
-                                    permissionLauncherStart.launch(basePermissions.toTypedArray())
-                                }
-                            },
-                        )
-                    }
-
                     if (hasWorkoutRecord) {
                         item {
                             WearPrimaryButton(
@@ -283,11 +285,63 @@ fun WorkoutDetailScreen(
                                 text = "Resume",
                                 onClick = {
                                     hapticsViewModel.doGentleVibration()
-                                    permissionLauncherResume.launch(basePermissions.toTypedArray())
+                                    requestPermissionsOrResumeWorkout()
                                 }
                             )
                         }
+                    }
 
+                    item {
+                        val startModifier = Modifier
+                            .semantics { contentDescription = "Start workout" }
+                            .fillMaxWidth()
+                            .transformedHeight(this, spec)
+                        val onStartClick = {
+                            hapticsViewModel.doGentleVibration()
+                            if (hasWorkoutRecord) {
+                                showStartConfirmationDialog = true
+                            } else {
+                                requestPermissionsOrStartWorkout()
+                            }
+                        }
+                        if (hasWorkoutRecord) {
+                            ButtonWithText(
+                                modifier = startModifier,
+                                transformation = SurfaceTransformation(spec),
+                                text = "Start new",
+                                onClick = onStartClick,
+                            )
+                        } else {
+                            WearPrimaryButton(
+                                modifier = startModifier,
+                                transformation = SurfaceTransformation(spec),
+                                text = "Start",
+                                onClick = onStartClick,
+                            )
+                        }
+                    }
+
+                    if (hasExercises) {
+                        item {
+                            Spacer(modifier = Modifier.height(10.dp))
+                        }
+                        item {
+                            ButtonWithText(
+                                modifier = Modifier
+                                    .semantics { contentDescription = "View workout exercises" }
+                                    .fillMaxWidth()
+                                    .transformedHeight(this, spec),
+                                transformation = SurfaceTransformation(spec),
+                                text = "Exercises",
+                                onClick = {
+                                    hapticsViewModel.doGentleVibration()
+                                    navController.navigate(Screen.WorkoutExercises.route)
+                                }
+                            )
+                        }
+                    }
+
+                    if (hasWorkoutRecord) {
                         item {
                             ButtonWithText(
                                 modifier = Modifier
@@ -352,13 +406,17 @@ fun WorkoutDetailScreen(
         message = IncompleteWorkoutStrings.START_NEW_WORKOUT_MESSAGE,
         handleYesClick = {
             hapticsViewModel.doGentleVibration()
-            permissionLauncherStart.launch(basePermissions.toTypedArray())
+            showStartConfirmationDialog = false
+            requestPermissionsOrStartWorkout()
         },
         handleNoClick = {
             showStartConfirmationDialog = false
             hapticsViewModel.doGentleVibration()
         },
-        handleOnAutomaticClose = { },
+        closeTimerInMillis = 5000,
+        handleOnAutomaticClose = {
+            showStartConfirmationDialog = false
+        },
         onVisibilityChange = { isVisible ->
             if (isVisible) {
                 viewModel.setDimming(false)

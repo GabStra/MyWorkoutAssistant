@@ -12,8 +12,8 @@ class SetRowIdentifiersTest {
     }
 
     @Test
-    fun `buildSetRowIdentifier keeps calibration rows labeled as Cal`() {
-        assertEquals("Cal", buildSetRowIdentifier(2, SetSubCategory.CalibrationSet))
+    fun `buildSetRowIdentifier matches workout calibration label`() {
+        assertEquals("CAL", buildSetRowIdentifier(2, SetSubCategory.CalibrationSet))
     }
 
     @Test

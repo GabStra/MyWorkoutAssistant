@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.screens.equipments
 
+import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
@@ -39,8 +41,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -86,19 +86,10 @@ fun MachineForm(
     var expandedExtraWeights by remember { mutableStateOf(false) }
 
     val scrollState = rememberScrollState()
-    val outlineVariant = MaterialTheme.colorScheme.outlineVariant
 
-    Scaffold(
+    BreadcrumbScaffold(
         topBar = {
             TopAppBar(
-                modifier = Modifier.drawBehind {
-                    drawLine(
-                        color = outlineVariant,
-                        start = Offset(0f, size.height),
-                        end = Offset(size.width, size.height),
-                        strokeWidth = 1.dp.toPx()
-                    )
-                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = Color.Transparent,
                     navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
@@ -143,20 +134,17 @@ fun MachineForm(
                 .padding(vertical = Spacing.sm)
                 .verticalScroll(scrollState)
                 .padding(horizontal = Spacing.md),
-            verticalArrangement = Arrangement.spacedBy(Spacing.md)
+            verticalArrangement = Arrangement.spacedBy(Spacing.sm)
         ) {
-            FormSectionTitle(text = "Essentials")
-            StyledCard(modifier = Modifier.fillMaxWidth()) {
+            EquipmentFormSection(title = "Details") {
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(Spacing.md),
+                    modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(Spacing.sm)
                 ) {
                     OutlinedTextField(
                         value = nameState.value,
                         onValueChange = { nameState.value = it },
-                        label = { Text("Machine Name", style = MaterialTheme.typography.labelLarge) },
+                        label = { Text("Name", style = MaterialTheme.typography.labelLarge) },
                         modifier = Modifier.fillMaxWidth()
                     )
 
@@ -174,36 +162,18 @@ fun MachineForm(
                 }
             }
 
-            FormSectionTitle(text = "Weights")
             CollapsibleSection(
                 title = "Available Weights",
                 summary = "${availableWeightsState.value.size} weights",
                 expanded = expandedAvailableWeights,
-                onToggle = { expandedAvailableWeights = !expandedAvailableWeights }
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Available Weights",
-                        style = MaterialTheme.typography.titleMedium
+                onToggle = { expandedAvailableWeights = !expandedAvailableWeights },
+                expandedContentSpacing = Spacing.sm,
+                footerAction = {
+                    EquipmentAddButton(
+                        onClick = { showAvailableWeightsDialog.value = true },
                     )
-                    IconButton(
-                        modifier = Modifier.clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary)
-                            .size(35.dp),
-                        onClick = { showAvailableWeightsDialog.value = true }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = "Add Weight",
-                            tint = MaterialTheme.colorScheme.background
-                        )
-                    }
-                }
-
+                },
+            ) {
                 availableWeightsState.value.sortedBy { it.weight }.forEachIndexed { index, weight ->
                     Row(
                         modifier = Modifier
@@ -214,7 +184,7 @@ fun MachineForm(
                     ) {
                         Text("${index+1}) ${weight.weight}kg", style = MaterialTheme.typography.bodyMedium)
                         IconButton(
-                            modifier = Modifier.size(35.dp),
+                            modifier = Modifier.size(32.dp),
                             onClick = {
                                 availableWeightsState.value = availableWeightsState.value - weight
                             }
@@ -229,31 +199,14 @@ fun MachineForm(
                 title = "Extra Weights",
                 summary = "${extraWeightsState.value.size} weights",
                 expanded = expandedExtraWeights,
-                onToggle = { expandedExtraWeights = !expandedExtraWeights }
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Extra Weights",
-                        style = MaterialTheme.typography.titleMedium
+                onToggle = { expandedExtraWeights = !expandedExtraWeights },
+                expandedContentSpacing = Spacing.sm,
+                footerAction = {
+                    EquipmentAddButton(
+                        onClick = { showExtraWeightDialog.value = true },
                     )
-                    IconButton(
-                        modifier = Modifier.clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary)
-                            .size(35.dp),
-                        onClick = { showExtraWeightDialog.value = true }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = "Add Extra Weight",
-                            tint = MaterialTheme.colorScheme.background
-                        )
-                    }
-                }
-
+                },
+            ) {
                 extraWeightsState.value.sortedBy { it.weight }.forEachIndexed { index, plate ->
                     Row(
                         modifier = Modifier
@@ -266,7 +219,7 @@ fun MachineForm(
                             style = MaterialTheme.typography.bodyMedium
                         )
                         IconButton(
-                            modifier = Modifier.size(35.dp),
+                            modifier = Modifier.size(32.dp),
                             onClick = {
                                 extraWeightsState.value =
                                     extraWeightsState.value - plate
@@ -278,10 +231,10 @@ fun MachineForm(
                 }
             }
 
-            Spacer(Modifier.height(Spacing.xl))
-
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = Spacing.sm),
                 horizontalArrangement = Arrangement.spacedBy(Spacing.md),
                 verticalAlignment = Alignment.CenterVertically
             ) {

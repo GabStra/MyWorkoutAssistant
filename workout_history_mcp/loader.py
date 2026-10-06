@@ -9,12 +9,14 @@ from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_BACKUP_PATH = REPO_ROOT / "merged_workout_store_backup.json"
+BACKUP_PATH_ENV = "MYWORKOUT_BACKUP_PATH"
 
 
 def backup_path_from_env() -> Path:
-    configured = os.environ.get("MYWORKOUT_BACKUP_PATH")
-    return Path(configured).expanduser() if configured else DEFAULT_BACKUP_PATH
+    configured = os.environ.get(BACKUP_PATH_ENV)
+    if not configured:
+        raise FileNotFoundError(f"{BACKUP_PATH_ENV} is not set")
+    return Path(configured).expanduser()
 
 
 def load_backup(path: str | os.PathLike[str] | None = None) -> dict[str, Any]:

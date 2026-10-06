@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.basicMarquee
+import com.gabstra.myworkoutassistant.ui.theme.tertiaryContent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
@@ -50,9 +52,11 @@ fun GenericButtonWithMenu(
 ) {
     var expanded by remember { mutableStateOf(false) }
     val scrollState = rememberScrollState()
-    val configuration = LocalConfiguration.current
     val density = LocalDensity.current
-    val maxPopupWidth = (configuration.screenWidthDp.dp - 32.dp).coerceAtLeast(160.dp)
+    val containerWidth = LocalWindowInfo.current.containerSize.width
+    val maxPopupWidth = with(density) {
+        (containerWidth.toDp() - 32.dp).coerceAtLeast(160.dp)
+    }
     val popupPositionProvider = remember(density) {
         TopCenterMenuPositionProvider(
             verticalMarginPx = with(density) { 4.dp.roundToPx() }
@@ -115,7 +119,7 @@ fun GenericButtonWithMenu(
                                         Text(
                                             text = description,
                                             style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            color = MaterialTheme.colorScheme.tertiaryContent,
                                             modifier = Modifier.fillMaxWidth()
                                         )
                                     }

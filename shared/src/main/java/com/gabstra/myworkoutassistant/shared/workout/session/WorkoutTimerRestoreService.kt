@@ -45,9 +45,7 @@ class WorkoutTimerRestoreService {
         now: LocalDateTime,
         logTag: String
     ) {
-        val setData = if (setHistory?.setData is TimedDurationSetData) {
-            setHistory.setData as TimedDurationSetData
-        } else {
+        val setData = (setHistory?.setData as? TimedDurationSetData) ?: run {
             val currentSetData = state.currentSetData as? TimedDurationSetData
             if (currentSetData != null && currentSetData.endTimer < currentSetData.startTimer && currentSetData.endTimer > 0) {
                 Log.d(
@@ -64,7 +62,7 @@ class WorkoutTimerRestoreService {
         if (setData.endTimer < setData.startTimer && setData.endTimer > 0) {
             val elapsedMillis = setData.startTimer - setData.endTimer
             if (elapsedMillis > 0 && elapsedMillis <= setData.startTimer) {
-                state.startTime = now.minusNanos((elapsedMillis * 1_000_000L).toLong())
+                state.startTime = now.minusNanos(elapsedMillis * 1_000_000L)
                 Log.d(logTag, "Restored TimedDurationSet timer: elapsed=${elapsedMillis}ms, remaining=${setData.endTimer}ms")
             } else {
                 Log.w(logTag, "Invalid elapsed time calculated: ${elapsedMillis}ms for timer with startTimer=${setData.startTimer}ms")
@@ -81,9 +79,7 @@ class WorkoutTimerRestoreService {
         logTag: String
     ) {
         val set = state.set as? EnduranceSet ?: return
-        val setData = if (setHistory?.setData is EnduranceSetData) {
-            setHistory.setData as EnduranceSetData
-        } else {
+        val setData = (setHistory?.setData as? EnduranceSetData) ?: run {
             val currentSetData = state.currentSetData as? EnduranceSetData
             if (currentSetData != null && currentSetData.endTimer > 0) {
                 Log.d(logTag, "Restoring timer from current state (no SetHistory): endTimer=${currentSetData.endTimer}")

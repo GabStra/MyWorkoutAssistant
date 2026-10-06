@@ -9,6 +9,7 @@ import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
+import java.util.Locale
 import java.util.UUID
 
 /**
@@ -26,10 +27,55 @@ fun toSupersetLetter(index: Int): String {
     return builder.reverse().toString()
 }
 
+fun buildSupersetAwareRowLabel(
+    supersetPrefix: String?,
+    label: String,
+): String = supersetPrefix?.let { "$it · $label" } ?: label
+
+fun resolveSupersetExercisePrefix(
+    viewModel: WorkoutViewModel,
+    exerciseId: UUID,
+): String? = viewModel.supersetIdByExerciseId[exerciseId]
+    ?.let { supersetId -> viewModel.exercisesBySupersetId[supersetId] }
+    ?.indexOfFirst { it.id == exerciseId }
+    ?.takeIf { it >= 0 }
+    ?.let(::toSupersetLetter)
+
 enum class SetDisplayCounterKind {
     Work,
     Warmup,
     Calibration,
+}
+
+fun buildSetDisplayIdentifier(
+    current: Int,
+    supersetPrefix: String?,
+    counterKind: SetDisplayCounterKind,
+): String = when (counterKind) {
+    SetDisplayCounterKind.Work -> "${supersetPrefix.orEmpty()}$current"
+    SetDisplayCounterKind.Warmup -> buildSupersetAwareRowLabel(
+        supersetPrefix = supersetPrefix,
+        label = "W$current"
+    )
+    SetDisplayCounterKind.Calibration -> buildSupersetAwareRowLabel(
+        supersetPrefix = supersetPrefix,
+        label = "CAL"
+    )
+}
+
+/**
+ * Label for the active set counter shown next to the exercise name. The warm-up/work
+ * distinction is only meaningful when the exercise actually has warm-up sets; otherwise
+ * every non-calibration set is just "SET".
+ */
+fun buildActiveSetCounterLabel(
+    counterKind: SetDisplayCounterKind?,
+    hasWarmupSets: Boolean,
+): String = when (counterKind) {
+    SetDisplayCounterKind.Warmup -> "WARM-UP"
+    SetDisplayCounterKind.Work -> if (hasWarmupSets) "WORK SET" else "SET"
+    SetDisplayCounterKind.Calibration -> "CALIBRATION"
+    null -> "SET"
 }
 
 fun displayCounterKindForSet(set: Set): SetDisplayCounterKind? {
@@ -68,24 +114,14 @@ fun buildWorkoutSetDisplayIdentifier(
 ): String? {
     val (current, _) = viewModel.getSetCounterForExercise(exerciseId, setState) ?: return null
 
-    val supersetPrefix = viewModel.supersetIdByExerciseId[exerciseId]
-        ?.let { supersetId -> viewModel.exercisesBySupersetId[supersetId] }
-        ?.indexOfFirst { it.id == exerciseId }
-        ?.takeIf { it >= 0 }
-        ?.let(::toSupersetLetter)
+    val supersetPrefix = resolveSupersetExercisePrefix(viewModel, exerciseId)
 
-    val baseIdentifier = if (supersetPrefix != null) {
-        "$supersetPrefix$current"
-    } else {
-        current.toString()
-    }
-
-    return when (displayCounterKindForSetState(setState)) {
-        SetDisplayCounterKind.Warmup -> "W$baseIdentifier"
-        SetDisplayCounterKind.Calibration -> "Cal"
-        SetDisplayCounterKind.Work -> baseIdentifier
-        null -> null
-    }
+    val counterKind = displayCounterKindForSetState(setState) ?: return null
+    return buildSetDisplayIdentifier(
+        current = current,
+        supersetPrefix = supersetPrefix,
+        counterKind = counterKind
+    )
 }
 
 fun buildUnilateralSideLabel(
@@ -111,9 +147,9 @@ fun formatWorkoutDurationSecondsForDisplay(seconds: Int): String {
     val minutes = (seconds % 3600) / 60
     val remainingSeconds = seconds % 60
     return if (hours > 0) {
-        String.format("%02d:%02d:%02d", hours, minutes, remainingSeconds)
+        String.format(Locale.US, "%02d:%02d:%02d", hours, minutes, remainingSeconds)
     } else {
-        String.format("%02d:%02d", minutes, remainingSeconds)
+        String.format(Locale.US, "%02d:%02d", minutes, remainingSeconds)
     }
 }
 

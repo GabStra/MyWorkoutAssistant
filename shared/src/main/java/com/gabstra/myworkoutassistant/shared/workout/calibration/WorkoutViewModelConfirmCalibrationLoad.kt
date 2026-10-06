@@ -151,14 +151,14 @@ private suspend fun WorkoutViewModel.generateWarmupStates(
     }
     warmups.forEachIndexed { warmupIndex, (total, reps) ->
         val internalWeight = toSetInternalWeight(exercise, total)
-        val warmupSet: Set = when (exercise.exerciseType) {
-            ExerciseType.BODY_WEIGHT -> BodyWeightSet(
+        val warmupSet: Set = if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
+            BodyWeightSet(
                 UUID.randomUUID(), reps, internalWeight, subCategory = SetSubCategory.WarmupSet
             )
-            ExerciseType.WEIGHT -> WeightSet(
+        } else {
+            WeightSet(
                 UUID.randomUUID(), reps, internalWeight, subCategory = SetSubCategory.WarmupSet
             )
-            else -> return emptyList()
         }
         var warmupSetData = initializeSetData(warmupSet)
         if (warmupSetData is BodyWeightSetData) {

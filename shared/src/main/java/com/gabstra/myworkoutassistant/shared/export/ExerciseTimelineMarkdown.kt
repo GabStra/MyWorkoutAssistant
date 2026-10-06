@@ -19,6 +19,7 @@ import com.gabstra.myworkoutassistant.shared.workout.display.SetDisplayCounterKi
 import com.gabstra.myworkoutassistant.shared.workout.display.displayCounterKindForSubCategory
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import java.time.LocalDateTime
+import java.util.Locale
 import kotlin.math.roundToInt
 
 /**
@@ -175,8 +176,8 @@ internal fun formatDurationForExport(seconds: Int): String {
     val minutes = (seconds % 3600) / 60
     val remainingSeconds = seconds % 60
     return if (hours > 0) {
-        String.format("%02d:%02d:%02d", hours, minutes, remainingSeconds)
+        String.format(Locale.US, "%02d:%02d:%02d", hours, minutes, remainingSeconds)
     } else {
-        String.format("%02d:%02d", minutes, remainingSeconds)
+        String.format(Locale.US, "%02d:%02d", minutes, remainingSeconds)
     }
 }

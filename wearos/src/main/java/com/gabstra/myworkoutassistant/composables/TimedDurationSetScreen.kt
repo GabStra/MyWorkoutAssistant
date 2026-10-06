@@ -5,6 +5,8 @@ import android.os.SystemClock
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -69,6 +71,7 @@ fun TimedDurationSetScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberWearCoroutineScope()
+    val equipment = remember(state.equipmentId) { state.equipmentId?.let(viewModel::getEquipmentById) }
     var autoStartJob by remember(state.set.id) { mutableStateOf<Job?>(null) }
     val topOverlayController = LocalTopOverlayController.current
 
@@ -136,6 +139,23 @@ fun TimedDurationSetScreen(
         val setData = state.currentSetData as? TimedDurationSetData
         mutableStateOf(setData ?: TimedDurationSetData(0, 0, false, false))
     }
+    val initialActualWeight = remember(set.id) { currentSet.actualWeight }
+    val availableWeights = remember(equipment) { viewModel.getWeightByEquipment(equipment).sorted() }
+    var isWeightInEditMode by remember(set.id) { mutableStateOf(false) }
+
+    fun changeWeight(offset: Int) {
+        val currentWeight = currentSet.actualWeight ?: return
+        if (availableWeights.isEmpty()) return
+        val currentIndex = availableWeights.indices.minByOrNull {
+            kotlin.math.abs(availableWeights[it] - currentWeight)
+        } ?: return
+        val nextIndex = (currentIndex + offset).coerceIn(availableWeights.indices)
+        currentSet = currentSet.copy(actualWeight = availableWeights[nextIndex])
+        state.currentSetData = currentSet
+        hapticsViewModel.doGentleVibration()
+    }
+    val initialStartTimer = (state.previousSetData as? TimedDurationSetData)?.startTimer
+        ?: currentSet.startTimer
     var lastLiveDisplayMillis by remember(set.id) { mutableIntStateOf(currentSet.startTimer) }
 
     val isPaused by viewModel.isPaused
@@ -166,7 +186,7 @@ fun TimedDurationSetScreen(
                     callbacks = WorkoutTimerService.TimerCallbacks(
                         onTimerEnd = {
                             markSetExecuted()
-                            hapticsViewModel.doHardVibrationTwice()
+                            hapticsViewModel.doHardVibrationTwiceWithBeep()
                             onTimerEnd()
                         },
                         onTimerEnabled = onTimerEnabled,
@@ -182,11 +202,17 @@ fun TimedDurationSetScreen(
     val updateInteractionTime = { timerEditModeController.recordInteraction() }
 
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
-    val itemStyle =  MaterialTheme.typography.numeralSmall
+    val typography = MaterialTheme.typography
+    val itemStyle = remember(typography) {
+        typography.numeralSmall.exerciseTimerValueStyle()
+    }
 
     LaunchedEffect(isTimerInEditMode) {
         while (isTimerInEditMode) {
-            if (timerEditModeController.shouldAutoClose(timeoutMillis = 5000L)) {
+            if (timerEditModeController.shouldAutoClose(
+                    timeoutMillis = WEAR_CONTROL_EDIT_INACTIVITY_TIMEOUT_MILLIS
+                )
+            ) {
                 timerEditModeController.updateEditMode(false)
             }
             delay(1000) // Check every second
@@ -289,7 +315,7 @@ fun TimedDurationSetScreen(
             callbacks = WorkoutTimerService.TimerCallbacks(
                 onTimerEnd = {
                     markSetExecuted()
-                    hapticsViewModel.doHardVibrationTwice()
+                    hapticsViewModel.doHardVibrationTwiceWithBeep()
                     onTimerEnd()
                 },
                 onTimerEnabled = onTimerEnabled,
@@ -481,20 +507,17 @@ fun TimedDurationSetScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(2.5.dp, alignment = Alignment.Top)
         ) {
-            Text(
-                text = "TIMER",
-                style = headerStyle,
-                textAlign = TextAlign.Center,
-            )
-            if (isTimerInEditMode) {
-                textComposable()
-            } else {
-                TimedDurationRunningDisplay(initialMillis = currentSet.startTimer)
+            SetValueSection(label = "TIMER", headerStyle = headerStyle) {
+                if (isTimerInEditMode) {
+                    textComposable()
+                } else {
+                    TimedDurationRunningDisplay(initialMillis = currentSet.startTimer)
+                }
             }
 
             if (showStartButton) {
                 IconButton(
-                    modifier = Modifier.size(50.dp),
+                    modifier = Modifier.size(WearStandardIconButtonSize),
                     onClick = {
                         autoStartJob?.cancel()
                         scope.launch {
@@ -515,7 +538,7 @@ fun TimedDurationSetScreen(
                     colors = IconButtonDefaults.iconButtonColors(containerColor = Green),
                 ) {
                     Icon(
-                        modifier = Modifier.size(30.dp),
+                        modifier = Modifier.size(WearStandardIconButtonIconSize),
                         imageVector = Icons.Default.PlayArrow,
                         contentDescription = "Start",
                         tint = MaterialTheme.colorScheme.onBackground
@@ -526,7 +549,7 @@ fun TimedDurationSetScreen(
             if (showRepeatButton) {
                 IconButton(
                     modifier = Modifier
-                        .size(50.dp)
+                        .size(WearStandardIconButtonSize)
                         .semantics { contentDescription = "Repeat set" },
                     colors = IconButtonDefaults.iconButtonColors(containerColor = MaterialTheme.colorScheme.primary),
                     onClick = {
@@ -557,17 +580,17 @@ fun TimedDurationSetScreen(
                     }
                 ) {
                     Icon(
-                        modifier = Modifier.size(26.dp),
+                        modifier = Modifier.size(WearStandardIconButtonIconSize),
                         imageVector = Icons.Default.Replay,
                         contentDescription = "Repeat set",
-                        tint = MaterialTheme.colorScheme.onBackground
+                        tint = MaterialTheme.colorScheme.onPrimary
                     )
                 }
             }
 
             if (viewModel.workoutTimerService.isTimerRegistered(set.id)) {
                 IconButton(
-                    modifier = Modifier.size(50.dp),
+                    modifier = Modifier.size(WearStandardIconButtonSize),
                     onClick = {
                         hapticsViewModel.doGentleVibration()
                         viewModel.workoutTimerService.unregisterTimer(set.id)
@@ -576,7 +599,7 @@ fun TimedDurationSetScreen(
                     colors = IconButtonDefaults.iconButtonColors(containerColor = Red),
                 ) {
                     Icon(
-                        modifier = Modifier.size(30.dp),
+                        modifier = Modifier.size(WearStandardIconButtonIconSize),
                         imageVector = Icons.Default.Stop,
                         contentDescription = "Stop",
                         tint = MaterialTheme.colorScheme.onBackground
@@ -594,7 +617,35 @@ fun TimedDurationSetScreen(
                 contentDescription = SetValueSemantics.TimedDurationSetTypeDescription
             }
         ) {
-            if (isTimerInEditMode) {
+            if (isWeightInEditMode) {
+                val currentWeight = currentSet.actualWeight
+                val currentIndex = currentWeight?.let { weight ->
+                    availableWeights.indices.minByOrNull { kotlin.math.abs(availableWeights[it] - weight) }
+                }
+                ControlButtonsVertical(
+                    modifier = Modifier.fillMaxSize(),
+                    onMinusTap = { changeWeight(-1) },
+                    onMinusLongPress = { changeWeight(-1) },
+                    onPlusTap = { changeWeight(1) },
+                    onPlusLongPress = { changeWeight(1) },
+                    isMinusEnabled = currentIndex?.let { it > 0 } == true,
+                    isPlusEnabled = currentIndex?.let { it < availableWeights.lastIndex } == true,
+                    isResetEnabled = currentSet.actualWeight != initialActualWeight,
+                    onCloseClick = { isWeightInEditMode = false },
+                    onResetClick = {
+                        currentSet = currentSet.copy(actualWeight = initialActualWeight)
+                        state.currentSetData = currentSet
+                    },
+                    content = {
+                        SetValueSection(label = "LOAD", headerStyle = headerStyle) {
+                            Text(
+                                text = currentSet.actualWeight?.let { equipment?.formatWeight(it) ?: "$it kg" } ?: "-",
+                                style = itemStyle,
+                            )
+                        }
+                    },
+                )
+            } else if (isTimerInEditMode) {
                 ControlButtonsVertical(
                     modifier = Modifier
                         .fillMaxSize()
@@ -608,16 +659,27 @@ fun TimedDurationSetScreen(
                     onMinusLongPress = { onMinusClick() },
                     onPlusTap = { onPlusClick() },
                     onPlusLongPress = { onPlusClick() },
+                    isResetEnabled = currentSet.startTimer != initialStartTimer,
                     onCloseClick = {
                         timerEditModeController.updateEditMode(false)
                     },
+                    onResetClick = {
+                        currentSet = currentSet.copy(startTimer = initialStartTimer)
+                        currentMillis = initialStartTimer
+                        updateInteractionTime()
+                        hapticsViewModel.doGentleVibration()
+                    },
                     content = {
-                        textComposable()
+                        SetValueSection(label = "TIMER", headerStyle = headerStyle) {
+                            textComposable()
+                        }
                     }
                 )
             } else {
                 Column(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState()),
                     horizontalAlignment = Alignment.CenterHorizontally,
 
                 ) {
@@ -625,6 +687,21 @@ fun TimedDurationSetScreen(
                         verticalArrangement = Arrangement.spacedBy(5.dp)
                     ) {
                         exerciseTitleComposable()
+                        currentSet.actualWeight?.let { weight ->
+                            Text(
+                                text = "Load ${equipment?.formatWeight(weight) ?: "$weight kg"}",
+                                style = MaterialTheme.typography.labelMedium,
+                                modifier = Modifier.combinedClickable(
+                                    onClick = {},
+                                    onLongClick = {
+                                        if (!set.autoStart && state.startTime == null && !state.hasBeenExecuted && availableWeights.isNotEmpty()) {
+                                            isWeightInEditMode = true
+                                            hapticsViewModel.doGentleVibration()
+                                        }
+                                    },
+                                ),
+                            )
+                        }
                         if (extraInfo != null) {
                             //HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
                             extraInfo(state)
@@ -642,6 +719,7 @@ fun TimedDurationSetScreen(
             message = "End this timed set now?",
             handleYesClick = {
                 hapticsViewModel.doGentleVibration()
+                showStopDialog = false
                 markSetExecuted()
                 onTimerDisabled()
                 onTimerEnd()
@@ -652,7 +730,10 @@ fun TimedDurationSetScreen(
                 startTimer()
             },
             closeTimerInMillis = 5000,
-            handleOnAutomaticClose = {},
+            handleOnAutomaticClose = {
+                showStopDialog = false
+                startTimer()
+            },
             onVisibilityChange = { isVisible ->
                 if (isVisible) {
                     viewModel.setDimming(false)

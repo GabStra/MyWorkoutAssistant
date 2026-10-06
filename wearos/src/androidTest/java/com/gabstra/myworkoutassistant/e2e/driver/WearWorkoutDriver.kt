@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.e2e.driver
 
 import android.content.Intent
 import android.os.SystemClock
+import android.view.KeyEvent
 import androidx.test.platform.app.InstrumentationRegistry
 import android.content.Context
 import androidx.test.uiautomator.By
@@ -68,6 +69,13 @@ class WearWorkoutDriver(
         device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
     }
 
+    fun openRunningControls(timeoutMs: Long = 5_000) {
+        device.pressKeyCode(KeyEvent.KEYCODE_STEM_1)
+        require(device.wait(Until.hasObject(By.text("RUN CONTROLS")), timeoutMs)) {
+            "Hardware button did not open running controls"
+        }
+    }
+
     fun scrollUntilFound(
         selector: BySelector,
         direction: Direction,
@@ -111,22 +119,23 @@ class WearWorkoutDriver(
     fun navigateToPagerPage(direction: Direction) {
         val width = device.displayWidth
         val height = device.displayHeight
-        val swipeY = (height * 0.20).toInt().coerceAtLeast(1)
+        val swipeY = (height * 0.50).toInt().coerceAtLeast(1)
 
         if (direction == Direction.LEFT) {
             val startX = (width * 0.8).toInt().coerceAtMost(width - 1)
             val endX = (width * 0.2).toInt().coerceAtLeast(0)
-            device.swipe(startX, swipeY, endX, swipeY, 5)
+            device.swipe(startX, swipeY, endX, swipeY, 20)
         } else {
             val startX = (width * 0.2).toInt().coerceAtLeast(0)
             val endX = (width * 0.8).toInt().coerceAtMost(width - 1)
-            device.swipe(startX, swipeY, endX, swipeY, 5)
+            device.swipe(startX, swipeY, endX, swipeY, 20)
         }
-        device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+        SystemClock.sleep(750)
+        device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
     }
 
     /**
-     * Navigates to the Exercises page (PageExercises) by swiping left until it is visible.
+     * Navigates to the Exercises page (ExercisesPage) by swiping left until it is visible.
      * Works from RestScreen or ExerciseScreen where the pager includes an exercises tab.
      *
      * @param maxSwipes Maximum number of swipes to attempt
@@ -179,6 +188,34 @@ class WearWorkoutDriver(
         }
 
         error("Could not find workout action '$actionText' within bidirectional pager scan.")
+    }
+
+    private fun navigateToButtonsPage(
+        isOnButtonsPage: () -> Boolean,
+        canProceed: (() -> Boolean)? = null,
+        maxSwipesPerDirection: Int = 4
+    ): Boolean {
+        fun probe(): Boolean = isOnButtonsPage() || (canProceed?.invoke() == true)
+
+        if (probe()) {
+            return true
+        }
+
+        repeat(maxSwipesPerDirection) {
+            navigateToPagerPage(Direction.RIGHT)
+            if (probe()) {
+                return true
+            }
+        }
+
+        repeat(maxSwipesPerDirection * 2) {
+            navigateToPagerPage(Direction.LEFT)
+            if (probe()) {
+                return true
+            }
+        }
+
+        return probe()
     }
 
     /**
@@ -294,7 +331,8 @@ class WearWorkoutDriver(
         while (System.currentTimeMillis() < deadline) {
             if (!isRecoveryDialogVisible()) return
 
-            val dismiss = scrollUntilFound(
+            val dismiss = device.wait(Until.findObject(By.text("Dismiss")), 400)
+                ?: scrollUntilFound(
                 selector = By.desc("Recovery dismiss action"),
                 direction = Direction.DOWN,
                 initialWaitMs = 400
@@ -309,7 +347,22 @@ class WearWorkoutDriver(
                 ?: device.findObject(By.textContains("Dismiss"))
 
             if (dismiss != null) {
-                clickObjectOrAncestorInternal(dismiss)
+                val textTarget = if (dismiss.text.equals("Dismiss", ignoreCase = true)) {
+                    dismiss
+                } else {
+                    device.findObject(By.text("Dismiss")) ?: dismiss
+                }
+                val bounds = textTarget.visibleBounds
+                val centerX = bounds.centerX()
+                val centerY = minOf(bounds.centerY(), (device.displayHeight * 0.8f).toInt())
+                if (centerX in 0 until device.displayWidth && centerY in 0 until device.displayHeight) {
+                    // A partially clipped Wear button can report a clickable ancestor whose raw
+                    // center lies below the display. Tap the visible semantic node instead.
+                    device.click(centerX, centerY)
+                } else {
+                    scrollRecoveryDialogDown()
+                    continue
+                }
                 device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
                 if (device.wait(Until.gone(By.desc("Recovery dismiss action")), 1_500) ||
                     !isRecoveryDialogVisible()
@@ -342,6 +395,18 @@ class WearWorkoutDriver(
         var lastDetailVisible = false
 
         while (System.currentTimeMillis() < deadline) {
+            if (device.hasObject(By.desc(detailDesc))) {
+                lastDetailVisible = true
+                val action = findWorkoutDetailPrimaryAction(
+                    timeoutMs = (deadline - System.currentTimeMillis()).coerceAtMost(2_000L)
+                )
+                if (action != null) {
+                    clickObjectOrAncestorInternal(action.second)
+                    return action.first
+                }
+                continue
+            }
+
             val openWorkout = device.wait(Until.findObject(By.desc(openWorkoutDesc)), 1_000)
                 ?: device.wait(Until.findObject(By.text(workoutName)), 1_000)
             require(openWorkout != null) { "Workout '$workoutName' not visible to tap" }
@@ -359,17 +424,16 @@ class WearWorkoutDriver(
             }
 
             val action = findWorkoutDetailPrimaryAction(
-                timeoutMs = (deadline - System.currentTimeMillis()).coerceAtMost(5_000L)
+                timeoutMs = (deadline - System.currentTimeMillis()).coerceAtMost(8_000L)
             )
             if (action != null) {
                 clickObjectOrAncestorInternal(action.second)
                 return action.first
             }
 
-            // Back out and retry reopening the detail page. Wear detail screens can transiently
-            // render without the primary action after sync-driven recomposition.
-            device.pressBack()
-            device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+            // Keep the detail page open while its record check and recomposition settle. Backing
+            // out here restarts the same loading work and can hide the action until the deadline.
+            continue
         }
 
         if (!lastDetailVisible) {
@@ -589,33 +653,41 @@ class WearWorkoutDriver(
         if (!waitForWeightSetScreen(timeoutMs)) {
             return readWeightFromScreenFallback(timeoutMs)
         }
-        val deadline = System.currentTimeMillis() + 3_000
-        repeat(5) {
-            if (System.currentTimeMillis() >= deadline) return null
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
             val target = device.findObject(By.descContains(SetValueSemantics.WeightValueDescription))
                 ?: device.findObject(By.descContains(SetValueSemantics.WeightSetTypeDescription))
             if (target != null) {
                 val raw = readValueTextFromNode(target)
-                raw?.replace(",", ".")?.toDoubleOrNull()?.let { return it }
+                raw?.let(::parseLeadingNumber)?.let { return it }
             }
             device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
         }
-        return readWeightFromScreenFallback(1_000)
+        return readWeightFromScreenFallback(E2ETestTimings.SHORT_IDLE_MS)
+    }
+
+    private fun parseLeadingNumber(value: String): Double? {
+        return Regex("""[-+]?\d+(?:[.,]\d+)?""")
+            .find(value)
+            ?.value
+            ?.replace(",", ".")
+            ?.toDoubleOrNull()
     }
 
     /**
-     * Fallback: find visible text that looks like a weight value (integer in 50..150 kg).
+     * Fallback: find visible text that looks like a weight value.
      * Used when semantics are not exposed (e.g. on a pager page).
      */
     private fun readWeightFromScreenFallback(timeoutMs: Long): Double? {
         device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
         val deadline = System.currentTimeMillis() + timeoutMs
+        val weightPattern = Pattern.compile("^[0-9]+([.,][0-9]+)?$")
         while (System.currentTimeMillis() < deadline) {
-            val nodes = device.findObjects(By.text(Pattern.compile("^[0-9]+$")))
+            val nodes = device.findObjects(By.text(weightPattern))
             for (node in nodes) {
-                val text = node.text?.trim() ?: continue
+                val text = node.text?.trim()?.replace(",", ".") ?: continue
                 val value = text.toDoubleOrNull() ?: continue
-                if (value in 50.0..150.0) return value
+                if (value in 0.0..500.0) return value
             }
             device.waitForIdle(300)
         }
@@ -647,7 +719,7 @@ class WearWorkoutDriver(
                 if (!nodeText.isNullOrBlank()) return nodeText
                 runCatching { node.children }.getOrDefault(emptyList()).forEach { queue.addLast(it) }
             }
-            val desc = target.contentDescription?.toString()?.trim()
+            val desc = target.contentDescription?.trim()
             if (!desc.isNullOrBlank()) {
                 val parts = desc.split(":", limit = 2)
                 if (parts.size == 2) {
@@ -711,6 +783,143 @@ class WearWorkoutDriver(
         val dialogAppeared = waitForAnyObject(timeoutMs = timeoutMs, selectors = arrayOf(By.text("Skip rest?")))
         require(dialogAppeared) { "Skip rest dialog did not appear" }
         longPressByDesc("Done", timeoutMs)
+    }
+
+    fun skipExercise(timeoutMs: Long = 5_000) {
+        val skipActionSelectors = arrayOf(
+            By.desc("Skip exercise action"),
+            By.text("Skip exercise"),
+            By.desc("Skip exercise")
+        )
+        fun findSkipExerciseAction(waitMs: Long = 400): UiObject2? {
+            return device.wait(Until.findObject(By.desc("Skip exercise action")), waitMs)
+                ?: device.wait(Until.findObject(By.text("Skip exercise")), waitMs)
+                ?: device.wait(Until.findObject(By.desc("Skip exercise")), waitMs)
+        }
+
+        fun scrollButtonsPageDownUntilSkipVisible(): UiObject2? {
+            findSkipExerciseAction()?.let { return it }
+
+            val scrollable = device.findObject(By.desc("Workout controls page"))
+                ?: device.findObjects(By.scrollable(true)).firstOrNull { candidate ->
+                    candidate.contentDescription != "Horizontal workout pager"
+                }
+            if (scrollable != null) {
+                skipActionSelectors.forEach { selector ->
+                    runCatching {
+                        scrollable.scrollUntil(Direction.DOWN, Until.findObject(selector))
+                    }.getOrNull()?.let { return it }
+                }
+            }
+
+            repeat(20) {
+                verticalSwipe(Direction.DOWN)
+                device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+                findSkipExerciseAction()?.let { return it }
+            }
+
+            return null
+        }
+
+        fun openSkipExerciseDialog(action: UiObject2) {
+            clickObjectOrAncestorInternal(action)
+            device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+
+            val dialogAppeared = waitForAnyObject(
+                timeoutMs = timeoutMs,
+                selectors = arrayOf(
+                    By.text("Skip exercise"),
+                    By.text("Skip all remaining sets for this exercise?")
+                )
+            )
+            require(dialogAppeared) { "Skip exercise dialog did not appear" }
+        }
+
+        navigateToPagerPage(Direction.RIGHT)
+        navigateToPagerPage(Direction.RIGHT)
+        navigateToPagerPage(Direction.RIGHT)
+        val skipAction = scrollButtonsPageDownUntilSkipVisible()
+        require(skipAction != null) {
+            val visibleTexts = device.findObjects(By.text(Pattern.compile(".+")))
+                .mapNotNull { it.text }
+                .distinct()
+            val visibleDescriptions = device.findObjects(By.desc(Pattern.compile(".+")))
+                .mapNotNull { it.contentDescription }
+                .distinct()
+            "Could not find 'Skip exercise' after navigating to and scrolling the controls page. " +
+                "visibleTexts=$visibleTexts visibleDescriptions=$visibleDescriptions"
+        }
+        openSkipExerciseDialog(skipAction)
+        longPressByDesc("Done", timeoutMs)
+        device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+    }
+
+    fun finishEarly(timeoutMs: Long = 5_000) {
+        val finishActionSelectors = arrayOf(
+            By.text("Finish early"),
+            By.desc("Finish early")
+        )
+        val buttonsPageAnchors = arrayOf(
+            By.text("Keep screen on"),
+            By.textContains("Screen can dim"),
+            By.textContains("This exercise keeps the screen on"),
+            By.text("Back"),
+            By.text("Go Home"),
+            By.desc("Go Home")
+        )
+
+        fun findFinishEarlyAction(waitMs: Long = 400): UiObject2? {
+            return device.wait(Until.findObject(By.text("Finish early")), waitMs)
+                ?: device.wait(Until.findObject(By.desc("Finish early")), waitMs)
+        }
+
+        fun isOnButtonsPage(): Boolean {
+            return buttonsPageAnchors.any(device::hasObject) || finishActionSelectors.any(device::hasObject)
+        }
+
+        fun scrollButtonsPageDownUntilFinishVisible(): UiObject2? {
+            findFinishEarlyAction()?.let { return it }
+
+            val scrollable = device.findObject(By.scrollable(true))
+            if (scrollable != null) {
+                finishActionSelectors.forEach { selector ->
+                    runCatching {
+                        scrollable.scrollUntil(Direction.DOWN, Until.findObject(selector))
+                    }.getOrNull()?.let { return it }
+                }
+            }
+
+            repeat(6) {
+                verticalSwipe(Direction.DOWN)
+                device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+                findFinishEarlyAction()?.let { return it }
+            }
+
+            return null
+        }
+
+        fun openFinishEarlyDialog() {
+            val action = scrollButtonsPageDownUntilFinishVisible()
+            require(action != null) { "Could not find 'Finish early' after scrolling the buttons page." }
+            clickObjectOrAncestorInternal(action)
+            device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+
+            val dialogAppeared = waitForAnyObject(
+                timeoutMs = timeoutMs,
+                selectors = arrayOf(
+                    By.text("Finish early"),
+                    By.text("End the workout now? All remaining exercises and sets will be skipped.")
+                )
+            )
+            require(dialogAppeared) { "Finish early dialog did not appear" }
+        }
+
+        require(navigateToButtonsPage(::isOnButtonsPage, canProceed = { findFinishEarlyAction(1_000) != null })) {
+            "Could not navigate to the buttons page before attempting to finish early."
+        }
+        openFinishEarlyDialog()
+        longPressByDesc("Done", timeoutMs)
+        device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
     }
 
     fun waitForWorkoutCompletion(timeoutMs: Long = 10_000) {
@@ -1298,10 +1507,21 @@ class WearWorkoutDriver(
         while (System.currentTimeMillis() < deadline) {
             findVisibleAction()?.let { return it }
 
-            val direction = if (attempts % 2 == 0) Direction.DOWN else Direction.UP
+            // Let the detail screen finish its asynchronous record check before sending gestures.
+            // Gestures are particularly expensive on Wear emulators and can interrupt recomposition.
+            if (attempts == 0) {
+                device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+                findVisibleAction()?.let { return it }
+                attempts++
+                continue
+            }
+
+            // The primary action is below the workout description on the detail screen. Scan down
+            // first; alternating directions on every poll repeatedly traverses the same content.
+            val direction = if (attempts <= 4) Direction.DOWN else Direction.UP
             val scrollable = device.findObject(By.scrollable(true))
             if (scrollable != null) {
-                runCatching { scrollable.scroll(direction, 0.75f) }
+                runCatching { scrollable.scroll(direction, 0.4f) }
             } else {
                 verticalSwipe(direction)
             }

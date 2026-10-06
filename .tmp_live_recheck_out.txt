@@ -1,0 +1,24 @@
+=== PREFLIGHT (ranking only; Fix1 was cut recovery upstream) ===
+{'still_empty': 19, 'recovered': 11}
+ recovered build\exercise_motion\exercise-library\barbell-glute-bridge\bake\barbell-glute-b {'intervalPairs': 5565, 'contactCompatible': 2704, 'endpointFeasible': 1502, 'directionCompatible': 404, 'completePhase': 241, 'rangePreserved': 30}
+ recovered build\exercise_motion\exercise-library\barbell-good-morning\bake\barbell-good-mo {'intervalPairs': 9453, 'contactCompatible': 3304, 'endpointFeasible': 51, 'directionCompatible': 33, 'completePhase': 10, 'rangePreserved': 2}
+ recovered build\exercise_motion\exercise-library\barbell-hip-thrust\bake\barbell-hip-thrus {'intervalPairs': 2145, 'contactCompatible': 819, 'endpointFeasible': 39, 'directionCompatible': 26, 'completePhase': 26, 'rangePreserved': 9}
+ recovered build\exercise_motion\exercise-library\barbell-push-press\bake\barbell-push-pres {'intervalPairs': 2926, 'contactCompatible': 1161, 'endpointFeasible': 295, 'directionCompatible': 94, 'completePhase': 40, 'rangePreserved': 2}
+ recovered build\exercise_motion\exercise-library\barbell-reverse-curl\bake\barbell-reverse {'intervalPairs': 3321, 'contactCompatible': 3321, 'endpointFeasible': 67, 'directionCompatible': 21, 'completePhase': 3, 'rangePreserved': 1}
+
+=== SUPPORT plant/torso LIVE REPLAY ===
+candidates 5
+ passed bake attempt=0 ptp 0.01690960944198893->1.2322904101317036e-05 spine None->None geo=True align=True s=138.88 
+ passed bake attempt=1 ptp 0.01531791482477603->1.2160145718014526e-05 spine None->None geo=True align=True s=124.35 
+ passed bake attempt=2 ptp 0.011895462869719547->1.2297742048411603e-05 spine None->None geo=True align=True s=129.87 
+ passed bake attempt=0 ptp 0.007000814119116482->0.00021320844196496812 spine 0.012009657479868546->0.0030224986984039234 geo=True align=True s=132.9 
+ passed bake attempt=1 ptp 0.0071254910196917615->0.00026834299900633656 spine 0.012055198609885376->0.003002258844569022 geo=True align=True s=154.14 
+support summary {'passed': 5}
+
+=== DISCONTINUITY LIVE FIT REPLAY (expensive; 2 samples) ===
+candidates 2
+ replaying bake attempt 0 then ['anatomy', 'jointShake', 'motionDiscontinuity', 'relativeJointShake', 'rootTravel', 'trajectoryFit']
+  failed no_validated_loop_cycle failed_now [] disc None jerk None -> None stop None methods [] s 129.08
+ replaying bake attempt 1 then ['loopSeam', 'motionDiscontinuity', 'playback']
+  failed fit_validation_failed failed_now ['anatomy', 'bodyRotation', 'contacts', 'equipment', 'jerk', 'jointShake', 'loopSeam', 'motionDiscontinuity', 'playback', 'relativeJointShake', 'rootContinuity', 'settling', 'sourceArticulation', 'trajectoryFit'] disc False jerk 0.0005500082647098728 -> 0.037115953724807416 stop unreachable_conflict methods [] s 87.39
+disc summary {'no_checks': 1, 'disc_still_fails': 1}

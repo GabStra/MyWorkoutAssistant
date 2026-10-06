@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
+import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
+
 import android.widget.Toast
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Box
@@ -18,7 +20,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -63,6 +64,7 @@ fun getSetTypeFromExerciseType(exerciseType: ExerciseType): SetType {
         ExerciseType.BODY_WEIGHT -> SetType.BODY_WEIGHT_SET
         ExerciseType.COUNTUP -> SetType.COUNTUP_SET
         ExerciseType.COUNTDOWN -> SetType.COUNTDOWN_SET
+        ExerciseType.RUNNING -> SetType.COUNTUP_SET
     }
 }
 
@@ -82,17 +84,9 @@ fun SetForm(
 
     val outlineVariant = MaterialTheme.colorScheme.outlineVariant
     Box(modifier = Modifier.fillMaxSize()) {
-        Scaffold(
+        BreadcrumbScaffold(
             topBar = {
                 TopAppBar(
-                    modifier = Modifier.drawBehind {
-                        drawLine(
-                            color = outlineVariant,
-                            start = Offset(0f, size.height),
-                            end = Offset(size.width, size.height),
-                            strokeWidth = 1.dp.toPx(),
-                        )
-                    },
                     colors = TopAppBarDefaults.topAppBarColors(
                         containerColor = Color.Transparent,
                         navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
@@ -167,7 +161,7 @@ fun SetForm(
                                 Toast.LENGTH_LONG,
                             ).show()
                             onCancel()
-                            return@Scaffold
+                            return@BreadcrumbScaffold
                         }
 
                         WeightSetForm(
@@ -194,6 +188,7 @@ fun SetForm(
                             onSetUpsert = onSetUpsert,
                             onCancel = onCancel,
                             enduranceSet = set as EnduranceSet?,
+                            equipment = equipment,
                         )
                     }
 
@@ -202,6 +197,7 @@ fun SetForm(
                             onSetUpsert = onSetUpsert,
                             onCancel = onCancel,
                             timedDurationSet = set as TimedDurationSet?,
+                            equipment = equipment,
                         )
                     }
                 }

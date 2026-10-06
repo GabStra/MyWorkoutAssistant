@@ -1,11 +1,14 @@
 Param(
     [string]$WearTestClass = "WearCrossDeviceSyncProducerE2ETest",
     [string]$WearPhoneToWatchHistoryTestClass = "PhoneToWearWorkoutHistorySyncVerificationE2ETest",
+    [string]$WearPhoneToWatchMovementVisibilityTestClass = "PhoneToWearMovementVisibilityE2ETest",
     [string]$WearVsLastComparisonTestClass = "PhoneToWearVsLastComparisonE2ETest",
     [string]$MobilePrepTestClass = "com.gabstra.myworkoutassistant.e2e.PhoneSyncPreparationTest",
+    [string]$MobileAcknowledgedProgressTestClass = "com.gabstra.myworkoutassistant.e2e.PhoneToWearAcknowledgedProgressE2ETest",
     [string]$MobileResetTestClass = "com.gabstra.myworkoutassistant.e2e.PhoneSyncResetStateTest",
     [string]$MobileObserverTestClass = "com.gabstra.myworkoutassistant.e2e.WorkoutIntermediateSyncObservationTest",
     [string]$MobileTestClass = "com.gabstra.myworkoutassistant.e2e.WorkoutSyncVerificationTest",
+    [string]$MobileTestMethod,
     [string]$ExpectedWorkoutName = "Cross Device Sync Workout",
     [string]$MobileBackupPath,
     [string]$AppPackage = "com.gabstra.myworkoutassistant.debug",
@@ -16,8 +19,15 @@ Param(
     [string]$PhoneAvdName,
     [switch]$CleanInstallApps = $false,
     [switch]$SkipWearToPhonePhase = $false,
+    [switch]$MovementVisibilityOnly = $false,
     [switch]$SkipWearRebuildAfterFirstRun = $true,
+    [switch]$SkipBuildAndInstall = $false,
     [switch]$FastTimeoutProfile = $false,
+    [switch]$VerifyMissingWearAppGuard = $false,
+    [switch]$InjectEmulatorGpsDuringWearProducer = $false,
+    [switch]$UseWearGpsInjectionMarkers = $false,
+    [switch]$RevokeWearLocationPermissionsBeforeProducer = $false,
+    [string]$WearTestMethod,
     [string]$TimingOutputPath
 )
 
@@ -28,7 +38,43 @@ $runStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 $timings = [ordered]@{}
 $timings["startedAtUtc"] = (Get-Date).ToUniversalTime().ToString("o")
 $timings["skipWearRebuildAfterFirstRun"] = $SkipWearRebuildAfterFirstRun.IsPresent
+$timings["skipBuildAndInstall"] = $SkipBuildAndInstall.IsPresent
 $timings["fastTimeoutProfile"] = $FastTimeoutProfile.IsPresent
+$timings["movementVisibilityOnly"] = $MovementVisibilityOnly.IsPresent
+
+if ($MovementVisibilityOnly) {
+    $MobilePrepTestClass = "com.gabstra.myworkoutassistant.e2e.PhoneToWearZercherMovementPreparationTest"
+    $ExpectedWorkoutName = "Zercher Squat Movement Preview"
+    $WearPhoneToWatchHistoryTestClass = ""
+    $WearPhoneToWatchMovementVisibilityTestClass = "PhoneToWearZercherMovementVisibilityE2ETest"
+    $WearVsLastComparisonTestClass = ""
+    $SkipWearToPhonePhase = $true
+}
+
+function Resolve-AdbPath {
+    $cmd = Get-Command adb -ErrorAction SilentlyContinue
+    if ($cmd) {
+        return $cmd.Source
+    }
+
+    $candidates = @(
+        "$env:ANDROID_SDK_ROOT\platform-tools\adb.exe",
+        "$env:ANDROID_HOME\platform-tools\adb.exe",
+        "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
+    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+
+    if ($candidates.Count -gt 0) {
+        return $candidates | Select-Object -First 1
+    }
+
+    throw "Could not find adb. Set ANDROID_SDK_ROOT/ANDROID_HOME or add adb to PATH."
+}
+
+$script:AdbPath = Resolve-AdbPath
+$script:AdbDirectory = Split-Path -Parent $script:AdbPath
+if ($env:PATH -notlike "*$script:AdbDirectory*") {
+    $env:PATH = "$script:AdbDirectory$([System.IO.Path]::PathSeparator)$env:PATH"
+}
 
 function Save-TimingOutput {
     param(
@@ -79,6 +125,35 @@ function Get-DeviceKind([string]$serial) {
         return "watch"
     }
     return "phone"
+}
+
+function Get-EmulatorPairingStatus([string]$serial) {
+    return (& adb -s $serial shell am broadcast -a com.google.android.gms.wearable.EMULATOR --es operation get-pairing-status 2>&1) -join "`n"
+}
+
+function Assert-EmulatorPairingEndpointAvailable([string]$serial, [string]$kind) {
+    $status = Get-EmulatorPairingStatus -serial $serial
+    if ($status -notmatch "result=1") {
+        throw @"
+$kind emulator '$serial' does not expose the Wear emulator pairing endpoint.
+
+Pairing status output:
+$status
+
+Use a phone AVD/image that supports the Wear OS companion/Data Layer emulator pairing flow, then pair it with the Wear emulator before running this script.
+"@
+    }
+
+    if ($kind -eq "watch" -and $status -notmatch "Peer:\[[^\]]+,true,true\]") {
+        throw @"
+Wear emulator '$serial' is not paired to an online phone emulator.
+
+Pairing status output:
+$status
+
+Pair the Wear emulator with a compatible phone emulator before running this script.
+"@
+    }
 }
 
 function Resolve-EmulatorPath {
@@ -219,6 +294,27 @@ function Reset-AppInstallState([string]$serial, [string]$appPackage) {
     Uninstall-PackageIfPresent -serial $serial -packageName $appPackage
 }
 
+function Reset-PhoneAppInstallState([string]$serial, [string]$appPackage) {
+    Reset-AppInstallState -serial $serial -appPackage $appPackage
+    # Old non-debug test packages can keep enough data around to break emulator installs.
+    Uninstall-PackageIfPresent -serial $serial -packageName "com.gabstra.myworkoutassistant.test"
+}
+
+function Invoke-AdbInstall([string]$serial, [string]$apkPath) {
+    $output = & adb -s $serial install -r $apkPath 2>&1
+    return [PSCustomObject]@{
+        Output = $output
+        ExitCode = $LASTEXITCODE
+    }
+}
+
+function Recover-PhoneInstallSpace([string]$serial, [string]$appPackage) {
+    Write-Host "Recovering phone install space on $serial before retry..." -ForegroundColor Yellow
+    Reset-PhoneAppInstallState -serial $serial -appPackage $appPackage
+    & adb -s $serial shell rm -f /data/local/tmp/*.apk | Out-Null
+    & adb -s $serial shell pm trim-caches 256G | Out-Null
+}
+
 function Install-MobileDebugAndTestApks([string]$phoneSerial) {
     Write-Host "Building and installing mobile debug + androidTest APKs on phone emulator..." -ForegroundColor Cyan
     & .\gradlew :mobile:assembleDebug :mobile:assembleDebugAndroidTest
@@ -235,14 +331,39 @@ function Install-MobileDebugAndTestApks([string]$phoneSerial) {
         throw "Mobile test APK not found at $mobileTestApk"
     }
 
-    & adb -s $phoneSerial install -r $mobileApk | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to install mobile debug app on $phoneSerial"
+    $mobileInstall = Invoke-AdbInstall -serial $phoneSerial -apkPath $mobileApk
+    if ($mobileInstall.ExitCode -ne 0) {
+        Write-Host "Initial phone app install failed; resetting phone packages and retrying once..." -ForegroundColor Yellow
+        if (($mobileInstall.Output -join "`n") -match "INSTALL_FAILED_INSUFFICIENT_STORAGE") {
+            Recover-PhoneInstallSpace -serial $phoneSerial -appPackage $AppPackage
+        } else {
+            Reset-PhoneAppInstallState -serial $phoneSerial -appPackage $AppPackage
+        }
+        $mobileInstall = Invoke-AdbInstall -serial $phoneSerial -apkPath $mobileApk
+        if ($mobileInstall.ExitCode -ne 0) {
+            $mobileInstall.Output | Out-Host
+            throw "Failed to install mobile debug app on $phoneSerial"
+        }
     }
 
-    & adb -s $phoneSerial install -r $mobileTestApk | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to install mobile androidTest APK on $phoneSerial"
+    $mobileTestInstall = Invoke-AdbInstall -serial $phoneSerial -apkPath $mobileTestApk
+    if ($mobileTestInstall.ExitCode -ne 0) {
+        Write-Host "Initial phone androidTest install failed; resetting phone packages and retrying once..." -ForegroundColor Yellow
+        if (($mobileTestInstall.Output -join "`n") -match "INSTALL_FAILED_INSUFFICIENT_STORAGE") {
+            Recover-PhoneInstallSpace -serial $phoneSerial -appPackage $AppPackage
+        } else {
+            Reset-PhoneAppInstallState -serial $phoneSerial -appPackage $AppPackage
+        }
+        $mobileInstall = Invoke-AdbInstall -serial $phoneSerial -apkPath $mobileApk
+        if ($mobileInstall.ExitCode -ne 0) {
+            $mobileInstall.Output | Out-Host
+            throw "Failed to reinstall mobile debug app on $phoneSerial after reset"
+        }
+        $mobileTestInstall = Invoke-AdbInstall -serial $phoneSerial -apkPath $mobileTestApk
+        if ($mobileTestInstall.ExitCode -ne 0) {
+            $mobileTestInstall.Output | Out-Host
+            throw "Failed to install mobile androidTest APK on $phoneSerial"
+        }
     }
 }
 
@@ -396,7 +517,7 @@ function Wait-ForPhoneWorkoutStoreSync([string]$phoneSerial, [string]$appPackage
 
 function Bring-PhoneAppToForeground([string]$phoneSerial, [string]$appPackage) {
     Write-Host "Bringing phone app to foreground before Wear producer run..." -ForegroundColor Cyan
-    & adb -s $phoneSerial shell monkey -p $appPackage -c android.intent.category.LAUNCHER 1 | Out-Null
+    & adb -s $phoneSerial shell monkey -p $appPackage -c android.intent.category.LAUNCHER 1 > $null 2>&1
 }
 
 function Ensure-PhonePackageState([string]$phoneSerial) {
@@ -462,6 +583,8 @@ $timings["resolveDeviceSeconds"] = [math]::Round($resolvePhase.Elapsed.TotalSeco
 Write-Host "Using watch: $watchSerial" -ForegroundColor Green
 Write-Host "Using phone: $phoneSerial" -ForegroundColor Green
 Write-Host "Required package on both: $AppPackage" -ForegroundColor Green
+Assert-EmulatorPairingEndpointAvailable -serial $phoneSerial -kind "phone"
+Assert-EmulatorPairingEndpointAvailable -serial $watchSerial -kind "watch"
 
 $logsDir = "wearos/build/e2e-logs"
 if (-not (Test-Path $logsDir)) {
@@ -473,28 +596,76 @@ if (-not $TimingOutputPath) {
 }
 $timings["timingOutputPath"] = $TimingOutputPath
 
+if ($SkipBuildAndInstall -and ($CleanInstallApps -or $VerifyMissingWearAppGuard)) {
+    throw "-SkipBuildAndInstall cannot be combined with -CleanInstallApps or -VerifyMissingWearAppGuard."
+}
+
 $previousAndroidSerial = $env:ANDROID_SERIAL
 try {
-    if ($CleanInstallApps) {
-        Reset-AppInstallState -serial $watchSerial -appPackage $AppPackage
-    }
     $wearInstallPhase = [System.Diagnostics.Stopwatch]::StartNew()
-    Install-WearDebugApp -watchSerial $watchSerial
+    if ($SkipBuildAndInstall) {
+        foreach ($apkPath in @(
+            "wearos/build/outputs/apk/debug/wearos-debug.apk",
+            "wearos/build/outputs/apk/androidTest/debug/wearos-debug-androidTest.apk",
+            "mobile/build/outputs/apk/debug/mobile-debug.apk",
+            "mobile/build/outputs/apk/androidTest/debug/mobile-debug-androidTest.apk"
+        )) {
+            if (-not (Test-Path -LiteralPath $apkPath)) {
+                throw "-SkipBuildAndInstall requires existing APK '$apkPath'. Run without the switch to build and install APKs."
+            }
+        }
+        foreach ($packageName in @($AppPackage, "$AppPackage.test")) {
+            Assert-DeviceAndPackage -serial $watchSerial -deviceLabel "Wear" -packageName $packageName
+            Assert-DeviceAndPackage -serial $phoneSerial -deviceLabel "Phone" -packageName $packageName
+        }
+        Write-Host "Reusing the installed app and test APKs on both emulators." -ForegroundColor Yellow
+    } else {
+        if ($CleanInstallApps) {
+            Reset-AppInstallState -serial $watchSerial -appPackage $AppPackage
+        }
+        Install-WearDebugApp -watchSerial $watchSerial
+    }
     $wearInstallPhase.Stop()
     $timings["wearBuildInstallSeconds"] = [math]::Round($wearInstallPhase.Elapsed.TotalSeconds, 3)
 
     Ensure-PhonePackageState -phoneSerial $phoneSerial
-    if ($CleanInstallApps) {
-        Reset-AppInstallState -serial $phoneSerial -appPackage $AppPackage
-    }
 
     $mobileInstallPhase = [System.Diagnostics.Stopwatch]::StartNew()
-    Install-MobileDebugAndTestApks -phoneSerial $phoneSerial
+    if (-not $SkipBuildAndInstall) {
+        if ($CleanInstallApps) {
+            Reset-AppInstallState -serial $phoneSerial -appPackage $AppPackage
+        }
+        Install-MobileDebugAndTestApks -phoneSerial $phoneSerial
+    }
     $mobileInstallPhase.Stop()
     $timings["mobileBuildInstallSeconds"] = [math]::Round($mobileInstallPhase.Elapsed.TotalSeconds, 3)
     Stage-MobileBackupFile -phoneSerial $phoneSerial -appPackage $AppPackage -backupPath $MobileBackupPath
 
     Assert-CrossDevicePackageParity -watchSerial $watchSerial -phoneSerial $phoneSerial -packageName $AppPackage
+    if ($VerifyMissingWearAppGuard) {
+        Write-Host "Uninstalling Wear app to verify the phone availability guard..." -ForegroundColor Cyan
+        & adb -s $watchSerial uninstall $AppPackage | Out-Host
+        Start-Sleep -Seconds 3
+        Run-MobileInstrumentationClass `
+            -phoneSerial $phoneSerial `
+            -className "com.gabstra.myworkoutassistant.e2e.PhoneToWearUnavailableAppE2ETest" `
+            -appPackage $AppPackage `
+            -fastTimeoutProfile:$FastTimeoutProfile
+        Write-Host "Missing Wear app guard verified successfully." -ForegroundColor Green
+
+        Write-Host "Uninstalling phone app to verify the reciprocal Wear availability guard..." -ForegroundColor Cyan
+        & adb -s $phoneSerial uninstall $AppPackage | Out-Host
+        Start-Sleep -Seconds 3
+        Invoke-WearRunnerClass `
+            -className "WearToPhoneUnavailableAppE2ETest" `
+            -watchSerial $watchSerial `
+            -timingPath (Join-Path $logsDir "wear_missing_phone_$timestamp.json") `
+            -skipAssemble:$false `
+            -skipInstall:$false `
+            -fastProfile:$FastTimeoutProfile
+        Write-Host "Missing counterpart app guards verified in both directions." -ForegroundColor Green
+        return
+    }
     Reset-WearAppState -watchSerial $watchSerial -appPackage $AppPackage
 
     $mobilePrepPhase = [System.Diagnostics.Stopwatch]::StartNew()
@@ -508,28 +679,52 @@ try {
     Bring-PhoneAppToForeground -phoneSerial $phoneSerial -appPackage $AppPackage
     Assert-CrossDevicePackageParity -watchSerial $watchSerial -phoneSerial $phoneSerial -packageName $AppPackage
 
+    if (-not [string]::IsNullOrWhiteSpace($MobileAcknowledgedProgressTestClass)) {
+        Write-Host "Verifying receiver-acknowledged phone->Wear sync progress and completion..." -ForegroundColor Cyan
+        Run-MobileInstrumentationClass -phoneSerial $phoneSerial -className $MobileAcknowledgedProgressTestClass -appPackage $AppPackage -fastTimeoutProfile:$FastTimeoutProfile
+    }
+
     $wearClassTimings = [ordered]@{}
-    $skipAssemble = $false
-    $skipInstall = $false
+    $skipAssemble = $SkipBuildAndInstall.IsPresent
+    $skipInstall = $SkipBuildAndInstall.IsPresent
 
-    Write-Host "Running Wear verification for phone->watch workout history sync..." -ForegroundColor Cyan
-    $phase = [System.Diagnostics.Stopwatch]::StartNew()
-    Invoke-WearRunnerClass -className $WearPhoneToWatchHistoryTestClass -watchSerial $watchSerial -timingPath (Join-Path $logsDir "wear_phone_to_watch_$timestamp.json") -skipAssemble:$skipAssemble -skipInstall:$skipInstall -fastProfile:$FastTimeoutProfile
-    $phase.Stop()
-    $wearClassTimings["phoneToWatchSeconds"] = [math]::Round($phase.Elapsed.TotalSeconds, 3)
+    if (-not [string]::IsNullOrWhiteSpace($WearPhoneToWatchHistoryTestClass)) {
+        Write-Host "Running Wear verification for phone->watch workout history sync..." -ForegroundColor Cyan
+        $phase = [System.Diagnostics.Stopwatch]::StartNew()
+        Invoke-WearRunnerClass -className $WearPhoneToWatchHistoryTestClass -watchSerial $watchSerial -timingPath (Join-Path $logsDir "wear_phone_to_watch_$timestamp.json") -skipAssemble:$skipAssemble -skipInstall:$skipInstall -fastProfile:$FastTimeoutProfile
+        $phase.Stop()
+        $wearClassTimings["phoneToWatchSeconds"] = [math]::Round($phase.Elapsed.TotalSeconds, 3)
 
-    if ($SkipWearRebuildAfterFirstRun) {
-        $skipAssemble = $true
-        $skipInstall = $true
+        if ($SkipWearRebuildAfterFirstRun) {
+            $skipAssemble = $true
+            $skipInstall = $true
+        }
     }
 
     Assert-CrossDevicePackageParity -watchSerial $watchSerial -phoneSerial $phoneSerial -packageName $AppPackage
 
-    Write-Host "Running Wear VS LAST comparison verification against synced phone history..." -ForegroundColor Cyan
-    $phase = [System.Diagnostics.Stopwatch]::StartNew()
-    Invoke-WearRunnerClass -className $WearVsLastComparisonTestClass -watchSerial $watchSerial -timingPath (Join-Path $logsDir "wear_vs_last_$timestamp.json") -skipAssemble:$skipAssemble -skipInstall:$skipInstall -fastProfile:$FastTimeoutProfile
-    $phase.Stop()
-    $wearClassTimings["vsLastSeconds"] = [math]::Round($phase.Elapsed.TotalSeconds, 3)
+    if (-not [string]::IsNullOrWhiteSpace($WearPhoneToWatchMovementVisibilityTestClass)) {
+        Write-Host "Running Wear movement visibility verification against phone-loaded movement..." -ForegroundColor Cyan
+        $phase = [System.Diagnostics.Stopwatch]::StartNew()
+        Invoke-WearRunnerClass -className $WearPhoneToWatchMovementVisibilityTestClass -watchSerial $watchSerial -timingPath (Join-Path $logsDir "wear_phone_to_watch_movement_visibility_$timestamp.json") -skipAssemble:$skipAssemble -skipInstall:$skipInstall -fastProfile:$FastTimeoutProfile
+        $phase.Stop()
+        $wearClassTimings["phoneToWatchMovementVisibilitySeconds"] = [math]::Round($phase.Elapsed.TotalSeconds, 3)
+
+        if ($SkipWearRebuildAfterFirstRun) {
+            $skipAssemble = $true
+            $skipInstall = $true
+        }
+    }
+
+    Assert-CrossDevicePackageParity -watchSerial $watchSerial -phoneSerial $phoneSerial -packageName $AppPackage
+
+    if (-not [string]::IsNullOrWhiteSpace($WearVsLastComparisonTestClass)) {
+        Write-Host "Running Wear VS LAST comparison verification against synced phone history..." -ForegroundColor Cyan
+        $phase = [System.Diagnostics.Stopwatch]::StartNew()
+        Invoke-WearRunnerClass -className $WearVsLastComparisonTestClass -watchSerial $watchSerial -timingPath (Join-Path $logsDir "wear_vs_last_$timestamp.json") -skipAssemble:$skipAssemble -skipInstall:$skipInstall -fastProfile:$FastTimeoutProfile
+        $phase.Stop()
+        $wearClassTimings["vsLastSeconds"] = [math]::Round($phase.Elapsed.TotalSeconds, 3)
+    }
 
     Assert-CrossDevicePackageParity -watchSerial $watchSerial -phoneSerial $phoneSerial -packageName $AppPackage
 
@@ -581,13 +776,59 @@ try {
         "-TimingOutputPath",
         (Join-Path $logsDir "wear_producer_$timestamp.json")
     )
+    if ($WearTestClass -eq "WearCrossDeviceSyncProducerE2ETest" -and
+        $MobileObserverTestClass -eq "com.gabstra.myworkoutassistant.e2e.WorkoutIntermediateSyncObservationTest") {
+        $wearArgs += "-WaitForCheckpointAcknowledgments"
+    }
+    if ($WearTestMethod) { $wearArgs += @("-TestMethod", $WearTestMethod) }
     if ($skipAssemble) { $wearArgs += "-SkipAssemble" }
     if ($skipInstall) { $wearArgs += "-SkipInstall" }
     if ($FastTimeoutProfile) { $wearArgs += "-FastTimeoutProfile" }
 
+    if ($UseWearGpsInjectionMarkers) {
+        & adb -s $watchSerial shell appops set $AppPackage android:mock_location allow
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to enable mock GPS locations for the Wear E2E app."
+        }
+        & adb -s $watchSerial logcat -c
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to clear Wear logcat before GPS injection control started."
+        }
+    }
+    if ($RevokeWearLocationPermissionsBeforeProducer) {
+        foreach ($permission in @("android.permission.ACCESS_FINE_LOCATION", "android.permission.ACCESS_COARSE_LOCATION")) {
+            & adb -s $watchSerial shell pm revoke $AppPackage $permission
+            if ($LASTEXITCODE -ne 0) {
+                throw "Failed to revoke Wear permission '$permission' before instrumentation."
+            }
+            & adb -s $watchSerial shell pm clear-permission-flags $AppPackage $permission user-set user-fixed
+            if ($LASTEXITCODE -ne 0) {
+                throw "Failed to reset Wear permission prompt state for '$permission'."
+            }
+        }
+    }
     $wearProcess = Start-Process -FilePath "pwsh" -ArgumentList $wearArgs -NoNewWindow -PassThru -WorkingDirectory $repoRoot
     $lastParityCheck = Get-Date
+    $lastGpsFix = [DateTime]::MinValue
+    $gpsFixIndex = 0
+    $emulatorGpsRoute = @(
+        @{ Longitude = -122.084000; Latitude = 37.421900 },
+        @{ Longitude = -122.083920; Latitude = 37.421980 },
+        @{ Longitude = -122.083830; Latitude = 37.422060 },
+        @{ Longitude = -122.083740; Latitude = 37.422140 },
+        @{ Longitude = -122.083650; Latitude = 37.422220 },
+        @{ Longitude = -122.083560; Latitude = 37.422300 }
+    )
     while ((-not $wearProcess.HasExited) -or ($observerProcess -and -not $observerProcess.HasExited)) {
+        if ($InjectEmulatorGpsDuringWearProducer -and ((Get-Date) - $lastGpsFix).TotalSeconds -ge 1) {
+            $fix = $emulatorGpsRoute[$gpsFixIndex % $emulatorGpsRoute.Count]
+            & adb -s $watchSerial emu geo fix $fix.Longitude $fix.Latitude | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                throw "Failed to inject emulator GPS fix on $watchSerial."
+            }
+            $gpsFixIndex++
+            $lastGpsFix = Get-Date
+        }
         if (((Get-Date) - $lastParityCheck).TotalSeconds -ge 15) {
             Assert-CrossDevicePackageParity -watchSerial $watchSerial -phoneSerial $phoneSerial -packageName $AppPackage
             $lastParityCheck = Get-Date
@@ -611,7 +852,8 @@ try {
 
     Write-Host "Running mobile verification instrumentation test..." -ForegroundColor Cyan
     $mobileVerifyPhase = [System.Diagnostics.Stopwatch]::StartNew()
-    Run-MobileInstrumentationClass -phoneSerial $phoneSerial -className $MobileTestClass -appPackage $AppPackage -fastTimeoutProfile:$FastTimeoutProfile
+    $mobileVerificationClass = if ($MobileTestMethod) { "$MobileTestClass#$MobileTestMethod" } else { $MobileTestClass }
+    Run-MobileInstrumentationClass -phoneSerial $phoneSerial -className $mobileVerificationClass -appPackage $AppPackage -fastTimeoutProfile:$FastTimeoutProfile
     $mobileVerifyPhase.Stop()
     $timings["mobileVerificationInstrumentationSeconds"] = [math]::Round($mobileVerifyPhase.Elapsed.TotalSeconds, 3)
 
@@ -619,6 +861,9 @@ try {
 
     Write-Host "Cross-device sync E2E completed successfully." -ForegroundColor Green
 } finally {
+    if ($UseWearGpsInjectionMarkers -and $watchSerial) {
+        & adb -s $watchSerial shell appops set $AppPackage android:mock_location default | Out-Null
+    }
     $env:ANDROID_SERIAL = $previousAndroidSerial
     $runStopwatch.Stop()
     $timings["totalSeconds"] = [math]::Round($runStopwatch.Elapsed.TotalSeconds, 3)

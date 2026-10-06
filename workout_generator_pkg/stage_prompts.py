@@ -3,8 +3,6 @@
 import json
 
 from .constants import (
-    EXACT_GENERATION_CONFIRMATION,
-    EXAMPLE_JSON,
     EXERCISE_CATEGORY_ENUM_VALUES,
     EXERCISE_TYPE_ENUM_VALUES,
     JSON_SCHEMA,
@@ -27,6 +25,7 @@ EQUIPMENT_SCHEMA = {
                     {"$ref": "#/$defs/EquipmentPlateLoadedCable"},
                     {"$ref": "#/$defs/EquipmentWeightVest"},
                     {"$ref": "#/$defs/EquipmentMachine"},
+                    {"$ref": "#/$defs/EquipmentCardioMachine"},
                 ]
             },
         }
@@ -123,12 +122,13 @@ EQUIPMENT_SYSTEM_PROMPT = (
     "Output JSON only (no markdown/explanations).\n"
     "Generate only the equipment list using placeholder IDs (EQUIPMENT_X, ACCESSORY_X).\n"
     "Do not use real UUIDs. Do not use IRONNECK.\n\n"
-    "Allowed types (exact): BARBELL, DUMBBELLS, DUMBBELL, PLATELOADEDCABLE, WEIGHTVEST, MACHINE, ACCESSORY.\n"
+    "Allowed types (exact): BARBELL, DUMBBELLS, DUMBBELL, PLATELOADEDCABLE, WEIGHTVEST, MACHINE, CARDIO_MACHINE, ACCESSORY.\n"
     "Required structures:\n"
     "- BARBELL/PLATELOADEDCABLE availablePlates: array of {weight, thickness} objects.\n"
     "- DUMBBELLS/DUMBBELL extraWeights and dumbbells: array of {weight} objects.\n"
     "- WEIGHTVEST availableWeights: array of {weight} objects.\n"
     "- MACHINE availableWeights and extraWeights: array of {weight} objects.\n"
+    "- CARDIO_MACHINE: id, type, name only; use for stationary cardio machines, never weight-loaded equipment.\n"
     "- ACCESSORY: id, type, name only.\n"
     "Never output numeric arrays for weight lists.\n\n"
     "Output format:\n"
@@ -155,6 +155,7 @@ EXERCISE_EXAMPLE = {
             "enabled": True,
             "name": "Warm Up",
             "notes": "",
+            "placementNotes": "",
             "sets": [
                 {
                     "id": "SET_WARMUP",
@@ -184,6 +185,7 @@ EXERCISE_EXAMPLE = {
             "enabled": True,
             "name": "Back Squat",
             "notes": "",
+            "placementNotes": "",
             "sets": [
                 {
                     "id": "SET_0",
@@ -221,6 +223,7 @@ EXERCISE_EXAMPLE = {
             "enabled": True,
             "name": "Ring Rows",
             "notes": "Pause briefly at the top and control the lowering phase",
+            "placementNotes": "",
             "sets": [
                 {
                     "id": "SET_2",
@@ -293,6 +296,9 @@ EXERCISE_SYSTEM_PROMPT = (
     f"- muscleGroups must use valid MuscleGroup enum values only: {MUSCLE_GROUP_ENUM_VALUES}.\n"
     "- Keep muscleGroups non-empty unless the exercise brief explicitly allows an empty array.\n"
     "- requiredAccessoryEquipmentIds must use ACCESSORY_X placeholders (use [] when none).\n"
+    "- CARDIO_MACHINE equipmentId is valid only for COUNTUP or COUNTDOWN exercises.\n"
+    "- Non-cardio weight-loaded equipmentId is valid for WEIGHT, BODY_WEIGHT, COUNTUP, or COUNTDOWN exercises.\n"
+    "- For externally loaded COUNTUP/COUNTDOWN work sets, use targetWeight from the selected equipment's available loads; omit it for cardio machines.\n"
     "- BODY_WEIGHT exercises must include bodyWeightPercentage and it must never be null.\n"
     "- bodyWeightPercentage uses percentage semantics, not unit fractions. Example: use 100.0 for full bodyweight and 65.0 for about sixty-five percent of bodyweight; do not use 1.0 to mean 100%.\n"
     "- bodyWeightPercentage is the percentage of the user's body mass that counts toward the movement's effective load baseline.\n"
@@ -304,7 +310,8 @@ EXERCISE_SYSTEM_PROMPT = (
     "Timed exercise rule:\n"
     "- For COUNTDOWN exercises, emit exactly one TimedDurationSet, no RestSet, and showCountDownTimer=true.\n\n"
     "Other required behavior:\n"
-    "- Use notes as concise string (max 500 chars).\n"
+    "- Use notes only for workout-occurrence placement notes; do not generate shared movement instructions.\n"
+    "- Use placementNotes for workout- or phase-specific execution/progression guidance (max 500 chars); emit an empty string when none is needed.\n"
     "- Set exerciseCategory for WEIGHT/BODY_WEIGHT (HEAVY_COMPOUND, MODERATE_COMPOUND, ISOLATION); null for COUNTUP/COUNTDOWN.\n"
     "- Set generateWarmUpSets explicitly to true or false for every exercise.\n"
     "- Set generateWarmUpSets=true for exercises that should normally ramp into work sets, especially heavy or technically demanding compound lifts with meaningful external load.\n"
@@ -351,8 +358,8 @@ WORKOUT_STRUCTURE_EXAMPLE = {
             "enabled": True,
             "exerciseIds": ["EXERCISE_1", "EXERCISE_2"],
             "restSecondsByExercise": {
-                "EXERCISE_1": 60,
-                "EXERCISE_2": 60,
+                "EXERCISE_1": 0,
+                "EXERCISE_2": 90,
             },
         },
     ],
@@ -384,8 +391,12 @@ WORKOUT_STRUCTURE_SYSTEM_PROMPT = (
     "- Include a warm-up exercise reference only if it already exists in the workout plan entry's exerciseIds.\n"
     "- Do not invent or prepend EXERCISE_WARMUP when it is not present in the workout plan entry.\n\n"
     "Superset rules:\n"
-    "- Include exerciseIds and restSecondsByExercise mapping.\n"
-    "- Superset must include at least one valid exercise.\n\n"
+    "- Include exerciseIds and restSecondsByExercise mapping with exactly one entry for every grouped exercise ID.\n"
+    "- restSecondsByExercise[exerciseId] is the exact rest inserted immediately after that exercise during every work round.\n"
+    "- For ordered exercises [A, B, C], A's value is the rest before B, B's value is the rest before C, and C's value is the rest before A in the next round.\n"
+    "- The runtime automatically omits C's rest after the final round; do not create a separate Rest component for an internal superset transition.\n"
+    "- Use 0 when the next grouped exercise should start immediately. Never omit a map entry and never invent a fallback.\n"
+    "- Superset must include at least two valid exercises.\n\n"
     "Output format:\n"
     f"{json.dumps(WORKOUT_STRUCTURE_EXAMPLE, indent=2)}\n\n"
     "Generate workout structure based on the conversation and exercise list."
@@ -471,6 +482,14 @@ PLAN_INDEX_EXAMPLE = {
 
 PLAN_INDEX_SYSTEM_PROMPT = (
     "Output JSON only (no markdown/explanations).\n"
+    "Exercise entries in the PlanIndex are workout-specific prescriptions, not reusable identity records.\n"
+    "When an exercise-library catalog is supplied, every exercise must include a listed libraryDefinitionId.\n"
+    "Never create a movement outside that catalog. nameOverride may provide a workout-local alias.\n"
+    "For periodized or versioned programming, emit a separate EXERCISE_X prescription for each "
+    "independently programmed occurrence, even when multiple occurrences share the same movement.\n"
+    "Shared movement identity fields (name, exerciseType, equipmentId, body-weight semantics, muscles, "
+    "accessories, category, and movement reference) must remain identical across those occurrences; "
+    "sets, reps, loads, rests, progression, and execution settings may differ.\n"
     "Generate a PlanIndex (not full workout JSON) using placeholder IDs only.\n"
     "IDs: EQUIPMENT_X, ACCESSORY_X, EXERCISE_X, WORKOUT_X.\n\n"
     "Placeholder ID rules:\n"
@@ -485,7 +504,10 @@ PLAN_INDEX_SYSTEM_PROMPT = (
     "- Create new items only when missing, with non-conflicting placeholders.\n"
     "- equipmentId must be null or an EQUIPMENT_X placeholder only. Never use an ACCESSORY_X as equipmentId.\n"
     "- requiredAccessoryEquipmentIds must contain ACCESSORY_X placeholders only. Never use an EQUIPMENT_X there.\n"
-    "- Ensure all equipmentId/requiredAccessoryEquipmentIds references exist.\n\n"
+    "- Ensure all equipmentId/requiredAccessoryEquipmentIds references exist.\n"
+    "- CARDIO_MACHINE equipmentId is valid only for COUNTUP or COUNTDOWN exercises.\n"
+    "- Non-cardio weight-loaded equipment is valid for WEIGHT, BODY_WEIGHT, COUNTUP, or COUNTDOWN exercises.\n"
+    "- A timed exercise may prescribe targetWeight only when its selected non-cardio equipment supplies that load; cardio-machine timed sets omit it.\n\n"
     "Exercise constraints:\n"
     "- Exercise names must be movement-only labels (remove equipment/accessory wording and set/time details).\n"
     "- Examples: 'Barbell Back Squat' -> 'Back Squat', 'Cable Triceps Pushdown' -> 'Triceps Pushdown', 'Warm up (spin bike)' -> 'Warm Up'.\n"
@@ -496,7 +518,7 @@ PLAN_INDEX_SYSTEM_PROMPT = (
     "- If user provided sets/reps/rest structure, copy exact work-set counts and exact rest values into numWorkSets and restBetweenSetsSeconds for any exercise type when they are known.\n"
     "- Unilateral intent must be encoded explicitly via intraSetRestInSeconds.\n"
     "- intraSetRestInSeconds means the exact rest in whole seconds between the two sides of one logical unilateral set, for example left side, then rest, then right side.\n"
-    "- If an exercise is unilateral or single-side work (for example single-arm row, split squat, lunge, step-up, single-leg calf raise), set intraSetRestInSeconds to the exact positive integer side-to-side rest.\n"
+    "- CRITICAL: Every unilateral or single-side exercise (for example single-arm row, split squat, lunge, step-up, single-leg calf raise) MUST include an LLM-chosen exact positive integer intraSetRestInSeconds. null, 0, and omission are invalid; never rely on a generator default.\n"
     "- If the exercise is not unilateral, set intraSetRestInSeconds to null.\n"
     "- For timed exercises, numWorkSets counts timed work intervals and must be a positive integer when provided; omit minReps/maxReps for COUNTUP/COUNTDOWN.\n"
     "- restBetweenSetsSeconds must always be exact integers in seconds, never ranges.\n"
@@ -537,7 +559,10 @@ PLAN_INDEX_SYSTEM_PROMPT = (
     "- Each supersetGroups item must be an object with exerciseIds containing the exact grouped exercises in order.\n"
     "- Superset exerciseIds must be a contiguous subsequence of workout.exerciseIds.\n"
     "- Do not rely on hasSupersets alone; when any exercises are supersetted, supersetGroups must encode the exact grouping.\n"
-    "- Use restToNextSeconds alongside supersetGroups: for a superset, grouped exercises usually have 0 rest to the next grouped exercise and the last grouped exercise carries the post-superset rest.\n\n"
+    "- When the plan uses supersets, restToNextSeconds is required and supplies the future restSecondsByExercise value for each grouped exercise.\n"
+    "- Inside an ordered superset [A, B, C], A's value is rest before B, B's value is rest before C, and C's value is rest before A in the next round.\n"
+    "- The last grouped exercise therefore carries the between-round rest even when it is the final exercise in the workout; it is not an outer Rest component after the completed superset.\n"
+    "- Unless the user requested otherwise, use 0 between grouped exercises and choose one exact recovery duration after the final grouped exercise.\n\n"
     "Output format:\n"
     f"{json.dumps(PLAN_INDEX_EXAMPLE, indent=2)}\n\n"
     "Generate the PlanIndex based on the conversation context."

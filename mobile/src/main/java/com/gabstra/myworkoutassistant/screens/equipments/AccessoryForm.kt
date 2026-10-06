@@ -1,9 +1,10 @@
 package com.gabstra.myworkoutassistant.screens.equipments
 
+import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
+
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -24,17 +25,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.Spacing
-import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
-import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import java.util.UUID
 
@@ -49,19 +45,10 @@ fun AccessoryForm(
     val nameState = rememberSaveable { mutableStateOf(accessory?.name ?: "") }
 
     val scrollState = rememberScrollState()
-    val outlineVariant = MaterialTheme.colorScheme.outlineVariant
 
-    Scaffold(
+    BreadcrumbScaffold(
         topBar = {
             TopAppBar(
-                modifier = Modifier.drawBehind {
-                    drawLine(
-                        color = outlineVariant,
-                        start = Offset(0f, size.height),
-                        end = Offset(size.width, size.height),
-                        strokeWidth = 1.dp.toPx()
-                    )
-                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = Color.Transparent,
                     navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
@@ -103,43 +90,28 @@ fun AccessoryForm(
                 .padding(vertical = Spacing.sm)
                 .verticalScroll(scrollState)
                 .padding(horizontal = Spacing.md),
-            verticalArrangement = Arrangement.spacedBy(Spacing.md)
+            verticalArrangement = Arrangement.spacedBy(Spacing.sm)
         ) {
-            Column(modifier = Modifier.fillMaxWidth().padding(Spacing.md)) {
+            EquipmentFormSection(title = "Details") {
                 OutlinedTextField(
                     value = nameState.value,
                     onValueChange = { nameState.value = it },
-                    label = { Text("Accessory Name", style = MaterialTheme.typography.labelLarge) },
+                    label = { Text("Name", style = MaterialTheme.typography.labelLarge) },
                     modifier = Modifier.fillMaxWidth()
                 )
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(Spacing.md),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                AppSecondaryButton(
-                    text = "Cancel",
-                    onClick = {
-                        onCancel()
-                    },
-                    modifier = Modifier.weight(1f)
-                )
-
-                AppPrimaryButton(
-                    text = "Save",
-                    onClick = {
-                        val newAccessory = AccessoryEquipment(
-                            id = accessory?.id ?: UUID.randomUUID(),
-                            name = nameState.value.trim()
-                        )
-                        onUpsert(newAccessory)
-                    },
-                    enabled = nameState.value.isNotBlank(),
-                    modifier = Modifier.weight(1f)
-                )
-            }
+            EquipmentFormActions(
+                saveEnabled = nameState.value.isNotBlank(),
+                onCancel = onCancel,
+                onSave = {
+                    val newAccessory = AccessoryEquipment(
+                        id = accessory?.id ?: UUID.randomUUID(),
+                        name = nameState.value.trim()
+                    )
+                    onUpsert(newAccessory)
+                },
+            )
         }
     }
 }

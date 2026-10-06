@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
+import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -29,12 +30,14 @@ fun TimedDurationSetForm(
     onSetUpsert: (Set) -> Unit,
     onCancel: () -> Unit,
     timedDurationSet: TimedDurationSet? = null,
+    equipment: WeightLoadedEquipment? = null,
 ) {
     val autoStartState = remember { mutableStateOf(timedDurationSet?.autoStart ?: false) }
     val autoStopState = remember { mutableStateOf(timedDurationSet?.autoStop ?: false) }
     val shouldReapplyHistoryState = remember {
         mutableStateOf(timedDurationSet?.shouldReapplyHistoryToSet ?: true)
     }
+    val targetWeightState = remember { mutableStateOf(timedDurationSet?.targetWeight) }
 
     val hms = remember { mutableStateOf(TimeConverter.secondsToHms(timedDurationSet?.timeInMillis?.div(1000) ?: 0)) }
     val (hours, minutes, seconds) = hms.value
@@ -94,6 +97,12 @@ fun TimedDurationSetForm(
             Text(text = "Auto stop")
         }
 
+        TimedSetLoadField(
+            equipment = equipment,
+            selectedWeight = targetWeightState.value,
+            onWeightSelected = { targetWeightState.value = it },
+        )
+
         SetHistoryReapplySetting(
             checked = shouldReapplyHistoryState.value,
             onCheckedChange = { shouldReapplyHistoryState.value = it },
@@ -122,7 +131,8 @@ fun TimedDurationSetForm(
                         timeInMillis = TimeConverter.hmsToTotalSeconds(hours, minutes, seconds) * 1000,
                         autoStart = autoStartState.value,
                         autoStop = autoStopState.value,
-                        shouldReapplyHistoryToSet = shouldReapplyHistoryState.value
+                        shouldReapplyHistoryToSet = shouldReapplyHistoryState.value,
+                        targetWeight = targetWeightState.value,
                     )
 
                     onSetUpsert(newTimedDurationSet)

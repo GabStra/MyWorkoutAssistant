@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.e2e
 
 import android.content.Context
+import androidx.core.content.edit
 
 object E2eRuntimePreferences {
     const val PREFS_NAME = "e2e_prefs"
@@ -17,10 +18,9 @@ object E2eRuntimePreferences {
     }
 
     fun setStartupUnsyncedHistorySyncDisabled(context: Context, disabled: Boolean) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putBoolean(KEY_DISABLE_STARTUP_UNSYNCED_HISTORY_SYNC, disabled)
-            .commit()
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit(commit = true) {
+            putBoolean(KEY_DISABLE_STARTUP_UNSYNCED_HISTORY_SYNC, disabled)
+        }
     }
 
     fun getWorkoutHistorySyncDebounceMs(context: Context): Long? {
@@ -33,10 +33,9 @@ object E2eRuntimePreferences {
     }
 
     fun setWorkoutHistorySyncDebounceMs(context: Context, debounceMs: Long) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putLong(KEY_WORKOUT_HISTORY_SYNC_DEBOUNCE_MS, debounceMs)
-            .commit()
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit(commit = true) {
+            putLong(KEY_WORKOUT_HISTORY_SYNC_DEBOUNCE_MS, debounceMs)
+        }
     }
 
     fun isAmbientWorkoutOverlayForced(context: Context): Boolean {
@@ -45,18 +44,16 @@ object E2eRuntimePreferences {
     }
 
     fun setAmbientWorkoutOverlayForced(context: Context, forced: Boolean) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putBoolean(KEY_FORCE_AMBIENT_WORKOUT_OVERLAY, forced)
-            .commit()
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit(commit = true) {
+            putBoolean(KEY_FORCE_AMBIENT_WORKOUT_OVERLAY, forced)
+        }
     }
 
     fun clear(context: Context) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .remove(KEY_DISABLE_STARTUP_UNSYNCED_HISTORY_SYNC)
-            .remove(KEY_WORKOUT_HISTORY_SYNC_DEBOUNCE_MS)
-            .remove(KEY_FORCE_AMBIENT_WORKOUT_OVERLAY)
-            .commit()
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit(commit = true) {
+            remove(KEY_DISABLE_STARTUP_UNSYNCED_HISTORY_SYNC)
+            remove(KEY_WORKOUT_HISTORY_SYNC_DEBOUNCE_MS)
+            remove(KEY_FORCE_AMBIENT_WORKOUT_OVERLAY)
+        }
     }
 }

@@ -5,17 +5,25 @@ package com.gabstra.myworkoutassistant.shared.datalayer
  * All paths are transaction-scoped to enable concurrent transfers.
  */
 object DataLayerPaths {
+    const val PHONE_APP_CAPABILITY = "data_layer_app_helper_device_phone"
+    const val WEAR_APP_CAPABILITY = "data_layer_app_helper_device_watch"
+
     // Path prefixes (without transaction ID)
     const val SYNC_REQUEST_PREFIX = "/sync/request"
     const val SYNC_ACK_PREFIX = "/sync/ack"
     const val SYNC_COMPLETE_PREFIX = "/sync/complete"
     const val SYNC_ERROR_PREFIX = "/sync/error"
+    const val SYNC_CANCEL_PREFIX = "/sync/cancel"
+    const val SYNC_PROGRESS_PREFIX = "/sync/progress"
+    const val SYNC_PHASE_PREFIX = "/sync/phase"
     const val WORKOUT_HISTORY_START_PREFIX = "/workoutHistory/start"
     const val WORKOUT_HISTORY_CHUNK_PREFIX = "/workoutHistory/chunk"
     const val WORKOUT_HISTORY_DISCARD_PREFIX = "/workoutHistory/discard"
     const val WORKOUT_SESSION_HEARTBEAT_PATH = "/workoutSession/heartbeat"
     const val APP_BACKUP_START_PREFIX = "/appBackup/start"
     const val APP_BACKUP_CHUNK_PREFIX = "/appBackup/chunk"
+    const val EXERCISE_MOVEMENT_START_PREFIX = "/exerciseMovement/start"
+    const val EXERCISE_MOVEMENT_CHUNK_PREFIX = "/exerciseMovement/chunk"
     const val WORKOUT_STORE_PREFIX = "/workoutStore"
     const val PHONE_LLM_OPERATION_REQUEST_PREFIX = "/phoneLlm/request"
     const val PHONE_LLM_OPERATION_RESULT_PREFIX = "/phoneLlm/result"

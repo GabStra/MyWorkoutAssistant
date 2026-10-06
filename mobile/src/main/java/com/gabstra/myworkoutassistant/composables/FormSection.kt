@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.clickable
+import com.gabstra.myworkoutassistant.ui.theme.tertiaryContent
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -54,7 +55,7 @@ fun ContentSubtitle(
     Text(
         text = text,
         style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        color = MaterialTheme.colorScheme.tertiaryContent,
         textAlign = TextAlign.Start,
         modifier = modifier
     )
@@ -100,6 +101,8 @@ fun CollapsibleSection(
     expanded: Boolean,
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
+    expandedContentSpacing: Dp = Spacing.md,
+    footerAction: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -124,12 +127,12 @@ fun CollapsibleSection(
                         color = MaterialTheme.colorScheme.onBackground,
                         textAlign = TextAlign.Start
                     )
-                    if (!expanded && summary.isNotBlank()) {
+                    if (summary.isNotBlank()) {
                         Spacer(Modifier.height(Spacing.xs))
                         Text(
                             text = summary,
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.tertiaryContent
                         )
                     }
                 }
@@ -139,8 +142,18 @@ fun CollapsibleSection(
                 )
             }
             if (expanded) {
-                Spacer(Modifier.height(Spacing.md))
+                Spacer(Modifier.height(expandedContentSpacing))
                 content()
+                footerAction?.let { action ->
+                    Spacer(Modifier.height(Spacing.sm))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        action()
+                    }
+                }
             }
         }
     }

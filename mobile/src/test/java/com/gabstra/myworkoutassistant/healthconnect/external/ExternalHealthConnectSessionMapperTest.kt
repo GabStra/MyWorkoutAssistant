@@ -199,4 +199,128 @@ class ExternalHealthConnectSessionMapperTest {
 
         assertEquals(listOf("external-separate"), result.map { it.id })
     }
+
+    @Test
+    fun buildExternalHealthConnectSessionEntities_mergesOverlappingExternalSessions() {
+        val start = LocalDateTime.of(2026, 5, 20, 10, 0)
+        val result = buildExternalHealthConnectSessionEntities(
+            sessions = listOf(
+                rawSession(
+                    id = "watch-session",
+                    title = "Strength training",
+                    start = start,
+                    end = start.plusMinutes(50),
+                    source = "com.example.watch",
+                ),
+                rawSession(
+                    id = "phone-session",
+                    title = null,
+                    start = start.plusMinutes(3),
+                    end = start.plusMinutes(55),
+                    source = "com.example.phone",
+                ),
+            ),
+            heartRateSamples = listOf(
+                RawExternalHeartRateSample(start.plusMinutes(1), 120),
+                RawExternalHeartRateSample(start.plusMinutes(54), 135),
+            ),
+            appOwnedWorkoutHistoryIds = emptySet(),
+            appOwnedSessionWindows = emptyList(),
+            appPackageName = "com.gabstra.myworkoutassistant",
+            syncedAt = start.plusHours(1),
+            resolveSourceAppLabel = { it },
+        )
+
+        val merged = result.single()
+        assertTrue(merged.id.startsWith("merged:"))
+        assertEquals(start, merged.startTime)
+        assertEquals(start.plusMinutes(55), merged.endTime)
+        assertEquals(55 * 60, merged.durationSeconds)
+        assertEquals("Strength training", merged.title)
+        assertNull(merged.sourcePackageName)
+        assertEquals("Multiple sources", merged.sourceAppLabel)
+        assertEquals(2, merged.heartRateSampleCount)
+    }
+
+    @Test
+    fun buildExternalHealthConnectSessionEntities_mergesTransitiveOverlaps() {
+        val start = LocalDateTime.of(2026, 5, 20, 10, 0)
+        val sessions = listOf(
+            rawSession("one", null, start, start.plusMinutes(20), "source"),
+            rawSession("two", null, start.plusMinutes(15), start.plusMinutes(35), "source"),
+            rawSession("three", null, start.plusMinutes(30), start.plusMinutes(50), "source"),
+        )
+
+        val result = buildExternalHealthConnectSessionEntities(
+            sessions = sessions,
+            heartRateSamples = emptyList(),
+            appOwnedWorkoutHistoryIds = emptySet(),
+            appOwnedSessionWindows = emptyList(),
+            appPackageName = "app",
+            syncedAt = start.plusHours(1),
+            resolveSourceAppLabel = { "Tracker" },
+        )
+
+        assertEquals(1, result.size)
+        assertEquals(start.plusMinutes(50), result.single().endTime)
+    }
+
+    @Test
+    fun buildExternalHealthConnectSessionEntities_keepsTouchingSessionsSeparate() {
+        val start = LocalDateTime.of(2026, 5, 20, 10, 0)
+        val sessions = listOf(
+            rawSession("one", null, start, start.plusMinutes(20), "source"),
+            rawSession("two", null, start.plusMinutes(20), start.plusMinutes(40), "source"),
+        )
+
+        val result = buildExternalHealthConnectSessionEntities(
+            sessions = sessions,
+            heartRateSamples = emptyList(),
+            appOwnedWorkoutHistoryIds = emptySet(),
+            appOwnedSessionWindows = emptyList(),
+            appPackageName = "app",
+            syncedAt = start.plusHours(1),
+            resolveSourceAppLabel = { "Tracker" },
+        )
+
+        assertEquals(2, result.size)
+        assertEquals(setOf("one", "two"), result.map { it.id }.toSet())
+    }
+
+    @Test
+    fun buildExternalHealthConnectSessionEntities_usesStableMergedId() {
+        val start = LocalDateTime.of(2026, 5, 20, 10, 0)
+        val sessions = listOf(
+            rawSession("one", null, start, start.plusMinutes(30), "source-a"),
+            rawSession("two", null, start.plusMinutes(2), start.plusMinutes(28), "source-b"),
+        )
+        fun map(input: List<RawExternalExerciseSession>) =
+            buildExternalHealthConnectSessionEntities(
+                sessions = input,
+                heartRateSamples = emptyList(),
+                appOwnedWorkoutHistoryIds = emptySet(),
+                appOwnedSessionWindows = emptyList(),
+                appPackageName = "app",
+                syncedAt = start.plusHours(1),
+                resolveSourceAppLabel = { it },
+            ).single().id
+
+        assertEquals(map(sessions), map(sessions.reversed()))
+    }
+
+    private fun rawSession(
+        id: String,
+        title: String?,
+        start: LocalDateTime,
+        end: LocalDateTime,
+        source: String?,
+    ) = RawExternalExerciseSession(
+        id = id,
+        clientRecordId = null,
+        title = title,
+        startTime = start,
+        endTime = end,
+        exerciseType = 56,
+        sourcePackageName = source,
+    )
 }

@@ -8,6 +8,7 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
 import com.gabstra.myworkoutassistant.ensureRestSeparatedByExercises
 import com.gabstra.myworkoutassistant.ensureRestSeparatedBySets
 import com.gabstra.myworkoutassistant.sendAppBackup
@@ -15,12 +16,15 @@ import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreValidationException
+import com.gabstra.myworkoutassistant.shared.calculateWorkoutStoreHash
+import com.gabstra.myworkoutassistant.shared.motion.collectExerciseMovementBackups
 import com.gabstra.myworkoutassistant.shared.validateWorkoutStoreForRuntimeUse
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.google.android.gms.wearable.Wearable
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.TimeUnit
@@ -31,12 +35,15 @@ class MobileSyncToWatchWorker(
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
+        val isManualSync = inputData.getBoolean(INPUT_IS_MANUAL_SYNC, false)
+        var transactionId: String? = null
         return runCatching {
             val context = applicationContext
             val dataClient = Wearable.getDataClient(context)
             val db = AppDatabase.getDatabase(context)
             val workoutStoreRepository = WorkoutStoreRepository(context.filesDir)
             val workoutStore = workoutStoreRepository.getWorkoutStore()
+            val workoutStoreFingerprint = calculateWorkoutStoreHash(workoutStore)
             validateWorkoutStoreForRuntimeUse(workoutStore)
 
             val workoutHistoryDao = db.workoutHistoryDao()
@@ -131,8 +138,9 @@ class MobileSyncToWatchWorker(
                 .filter { progression -> progression.workoutHistoryId in validWorkoutHistoryIds }
             val errorLogs = errorLogDao.getAllErrorLogs().first()
 
+            val adjustedWorkoutStore = workoutStore.copy(workouts = adjustedWorkouts)
             val appBackup = AppBackup(
-                workoutStore.copy(workouts = adjustedWorkouts),
+                adjustedWorkoutStore,
                 validWorkoutHistories,
                 setHistories,
                 exerciseInfos,
@@ -140,7 +148,8 @@ class MobileSyncToWatchWorker(
                 workoutRecords,
                 exerciseSessionProgressions,
                 errorLogs.takeIf { it.isNotEmpty() },
-                restHistories
+                restHistories,
+                ExerciseMovements = collectExerciseMovementBackups(context, adjustedWorkoutStore)
             )
 
             workerSyncMutex.withLock {
@@ -148,17 +157,43 @@ class MobileSyncToWatchWorker(
                     TAG,
                     "SYNC_TRACE event=worker_start side=mobile channel=full_backup"
                 )
-                sendAppBackup(dataClient, appBackup, context)
+                sendAppBackup(
+                    dataClient = dataClient,
+                    appBackup = appBackup,
+                    context = context,
+                    onProgress = { phase, acknowledgedProgress ->
+                        transactionId?.let { activeTransactionId ->
+                            PhoneToWatchSyncCoordinator.updateManualSyncState(
+                                transactionId = activeTransactionId,
+                                phase = phase,
+                                progress = acknowledgedProgress,
+                            )
+                        }
+                    },
+                    onTransactionStarted = { startedTransactionId ->
+                        transactionId = startedTransactionId
+                        PhoneToWatchSyncCoordinator.onTransactionStarted(startedTransactionId)
+                    },
+                )
             }
             Log.d(
                 TAG,
                 "SYNC_TRACE event=worker_complete side=mobile channel=full_backup"
             )
-            PhoneToWatchSyncCoordinator.onWorkerSyncAttemptSucceeded(context.applicationContext)
+            PhoneToWatchSyncCoordinator.onWorkerSyncAttemptSucceeded(
+                context.applicationContext,
+                workoutStoreFingerprint,
+                isManualSync
+            )
             Result.success()
         }.getOrElse { exception ->
+            if (exception is CancellationException) {
+                PhoneToWatchSyncCoordinator.onWorkerSyncStopped()
+                throw exception
+            }
             if (exception is WorkoutStoreValidationException) {
                 Log.e(TAG, "Mobile sync worker aborted because workout-store validation failed: ${exception.userMessage}")
+                PhoneToWatchSyncCoordinator.onWorkerSyncStopped()
                 return Result.failure()
             }
             Log.e(TAG, "SYNC_TRACE event=worker_retry side=mobile channel=full_backup", exception)
@@ -177,6 +212,7 @@ class MobileSyncToWatchWorker(
     companion object {
         private const val TAG = "MobileSyncToWatchWorker"
         const val UNIQUE_WORK_NAME = "mobile_sync_to_watch"
+        private const val INPUT_IS_MANUAL_SYNC = "is_manual_sync"
         private val workerSyncMutex = Mutex()
 
         fun enqueue(context: Context) {
@@ -184,11 +220,16 @@ class MobileSyncToWatchWorker(
         }
 
         fun enqueueManual(context: Context) {
-            enqueueInternal(context, ExistingWorkPolicy.REPLACE)
+            enqueueInternal(context, ExistingWorkPolicy.REPLACE, isManualSync = true)
         }
 
-        private fun enqueueInternal(context: Context, policy: ExistingWorkPolicy) {
+        private fun enqueueInternal(
+            context: Context,
+            policy: ExistingWorkPolicy,
+            isManualSync: Boolean = false
+        ) {
             val request = OneTimeWorkRequestBuilder<MobileSyncToWatchWorker>()
+                .setInputData(workDataOf(INPUT_IS_MANUAL_SYNC to isManualSync))
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 10, TimeUnit.SECONDS)
                 .build()
             WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(

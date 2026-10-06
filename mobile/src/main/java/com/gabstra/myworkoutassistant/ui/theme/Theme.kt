@@ -20,6 +20,7 @@ import com.gabstra.myworkoutassistant.shared.MediumDarkerGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.Red
+import com.gabstra.myworkoutassistant.shared.TertiaryTextGray
 import com.gabstra.myworkoutassistant.shared.Yellow
 
 private val DarkColorScheme = darkColorScheme(
@@ -90,3 +91,11 @@ fun MyWorkoutAssistantTheme(
  */
 val ColorScheme.disabledContent: Color
     get() = DisabledContentGray
+
+/**
+ * Quiet color for captions, hints and empty states.
+ * One visible step below the primary text colors so auxiliary text reads as
+ * secondary without dropping below accessible contrast on any surface.
+ */
+val ColorScheme.tertiaryContent: Color
+    get() = TertiaryTextGray

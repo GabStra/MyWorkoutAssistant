@@ -5,12 +5,9 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.net.Uri
-import android.media.AudioManager
-import android.media.ToneGenerator
-import android.os.VibrationEffect
-import android.os.Vibrator
 import android.util.Log
 import android.widget.Toast
+import androidx.core.content.edit
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ScrollState
@@ -36,7 +33,6 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import androidx.wear.compose.material3.MaterialTheme
 import com.gabstra.myworkoutassistant.DataLayerListenerService
 import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
@@ -48,6 +44,7 @@ import com.gabstra.myworkoutassistant.shared.ExerciseSessionSnapshot
 import com.gabstra.myworkoutassistant.shared.adapters.ExerciseSessionSnapshotAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
+import com.gabstra.myworkoutassistant.shared.adapters.WorkoutHistoryAdapter
 import com.gabstra.myworkoutassistant.shared.compressString
 import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
@@ -77,15 +74,11 @@ import com.google.android.horologist.datalayer.watch.WearDataLayerAppHelper
 import com.google.gson.GsonBuilder
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
@@ -94,6 +87,7 @@ import kotlinx.coroutines.sync.withLock
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
+import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.CancellationException
 import java.util.concurrent.ConcurrentHashMap
@@ -106,9 +100,9 @@ fun FormatTime(seconds: Int): String {
     val minutes = (seconds % 3600) / 60
     val remainingSeconds = seconds % 60
     return if (hours > 0) {
-        String.format("%02d:%02d:%02d", hours, minutes, remainingSeconds)
+        String.format(Locale.US, "%02d:%02d:%02d", hours, minutes, remainingSeconds)
     } else {
-        String.format("%02d:%02d", minutes, remainingSeconds)
+        String.format(Locale.US, "%02d:%02d", minutes, remainingSeconds)
     }
 }
 
@@ -118,6 +112,7 @@ fun FormatTime(seconds: Int): String {
 private val DEFAULT_CONTENT_FADE_HEIGHT = 5.dp
 
 @Composable
+@SuppressLint("FrequentlyChangingValue")
 fun Modifier.verticalColumnScrollbar(
     scrollState: ScrollState,
     // Scrollbar appearance
@@ -314,6 +309,7 @@ fun Modifier.verticalColumnScrollbar(
 }
 
 @Composable
+@SuppressLint("FrequentlyChangingValue")
 fun Modifier.verticalLazyColumnScrollbar(
     lazyListState: LazyListState,
     // Scrollbar appearance
@@ -388,7 +384,7 @@ fun Modifier.verticalLazyColumnScrollbar(
 
         val componentWidth = size.width
         val componentHeight = size.height
-        val viewportHeight = componentHeight.toFloat()
+        val viewportHeight = componentHeight
 
         // Calculate scroll position and total content height
         val firstVisibleItem = visibleItemsInfo.firstOrNull()
@@ -539,25 +535,6 @@ fun Modifier.verticalLazyColumnScrollbar(
     }
 }
 
-@OptIn(DelicateCoroutinesApi::class)
-fun VibrateAndBeep(context: Context) {
-    val vibrator = ContextCompat.getSystemService(context, Vibrator::class.java)
-    val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
-
-    GlobalScope.launch(Dispatchers.Default) {
-        val vibratorJob = launch(start = CoroutineStart.LAZY){
-            vibrator?.vibrate(VibrationEffect.createOneShot(100, 255))
-        }
-
-        val toneJob= launch(start = CoroutineStart.LAZY){
-            toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 100)
-        }
-        joinAll(toneJob,vibratorJob)
-    }
-}
-
-
-
 fun Context.findActivity(): Activity? {
     var currentContext = this
     while (currentContext is ContextWrapper) {
@@ -679,7 +656,9 @@ private object WorkoutHistorySyncFaultInjection {
         }
         val targetIndex = configuredIndex.takeIf { it in 0 until chunksCount - 1 } ?: fallbackIndex
         if (chunkIndex != targetIndex) return false
-        prefs.edit().putBoolean(SKIP_INITIAL_CHUNK_CONSUMED_KEY, true).apply()
+        prefs.edit {
+            putBoolean(SKIP_INITIAL_CHUNK_CONSUMED_KEY, true)
+        }
         Log.w(
             "WorkoutSync",
             "E2E fault injection: skipping initial workout history chunk index=$chunkIndex once"
@@ -701,7 +680,9 @@ private object WorkoutHistorySyncFaultInjection {
             else -> 0
         }
         val targetIndex = configuredIndex.takeIf { it in 0 until chunksCount } ?: fallbackIndex
-        prefs.edit().putBoolean(SEND_STALE_RETRY_AFTER_COMPLETION_CONSUMED_KEY, true).apply()
+        prefs.edit {
+            putBoolean(SEND_STALE_RETRY_AFTER_COMPLETION_CONSUMED_KEY, true)
+        }
         return targetIndex
     }
 }
@@ -743,25 +724,33 @@ internal object WorkoutHistoryRetryProtocol {
 }
 
 /**
- * Checks if at least one connected node exists before attempting sync.
+ * Checks whether the paired phone transport is reachable before attempting sync.
+ * The transaction handshake remains the authoritative check that the phone app is installed
+ * and listening; static capability discovery can temporarily return an empty set after installs.
  * Retries up to 3 times with exponential backoff.
  */
-suspend fun checkConnection(context: android.content.Context, maxRetries: Int = 3): Boolean {
+suspend fun checkConnection(
+    context: android.content.Context,
+    maxRetries: Int = 3
+): Boolean = withContext(Dispatchers.IO) {
     var attempt = 0
     while (attempt < maxRetries) {
         try {
             Log.d("WorkoutSync", "checkConnection: Checking connection (attempt ${attempt + 1}/$maxRetries)")
-            val nodeClient = Wearable.getNodeClient(context)
-            val nodes = Tasks.await(nodeClient.connectedNodes, 10, java.util.concurrent.TimeUnit.SECONDS)
+            val nodes = Tasks.await(
+                Wearable.getNodeClient(context).connectedNodes,
+                10,
+                java.util.concurrent.TimeUnit.SECONDS
+            )
             val hasConnection = nodes.isNotEmpty()
             
             Log.d("WorkoutSync", "checkConnection: Found ${nodes.size} connected node(s): ${nodes.map { it.id }}")
             
             if (hasConnection) {
-                Log.d("WorkoutSync", "checkConnection: Connection verified: ${nodes.size} node(s) connected")
-                return true
+                Log.d("WorkoutSync", "checkConnection: Paired phone transport reachable: ${nodes.size} node(s)")
+                return@withContext true
             } else {
-                Log.w("WorkoutSync", "checkConnection: No connected nodes found (attempt ${attempt + 1}/$maxRetries)")
+                Log.w("WorkoutSync", "checkConnection: No paired phone transport found (attempt ${attempt + 1}/$maxRetries)")
             }
         } catch (e: Exception) {
             Log.w("WorkoutSync", "checkConnection: Connection check failed (attempt ${attempt + 1}/$maxRetries): ${e.message}", e)
@@ -776,7 +765,7 @@ suspend fun checkConnection(context: android.content.Context, maxRetries: Int = 
     }
     
     Log.e("DataLayerSync", "Connection check failed after $maxRetries attempts")
-    return false
+    false
 }
 
 suspend fun sendSyncRequest(dataClient: DataClient, transactionId: String, context: android.content.Context? = null): Boolean {
@@ -801,9 +790,6 @@ suspend fun sendSyncRequest(dataClient: DataClient, transactionId: String, conte
             
             Log.d("DataLayerSync", "Sending sync request for transaction: $transactionId")
             Tasks.await(dataClient.putDataItem(request))
-            
-            // Small delay to allow message delivery
-            delay(100)
             
             Log.d("DataLayerSync", "Waiting for acknowledgment for transaction: $transactionId")
             // Wait for acknowledgment with timeout
@@ -903,8 +889,7 @@ suspend fun sendWorkoutStore(dataClient: DataClient, workoutStore: WorkoutStore)
             dataMap.putString("transactionId", transactionId)
         }.asPutDataRequest().setUrgent()
 
-        dataClient.putDataItem(request)
-        delay(100)
+        Tasks.await(dataClient.putDataItem(request))
 
         val completionTimeout = DataLayerListenerService.calculateCompletionTimeout(1)
         Log.d(
@@ -991,6 +976,8 @@ private suspend fun sendWorkoutHistoryStoreInternal(
     usedTransactionId: String
 ): Pair<Boolean, String> {
     try {
+        cleanupAbandonedWorkoutHistoryPayloadDataItems(dataClient)
+
         // Check if phone is connected before attempting sync
         // This prevents sync attempts when phone is not available
         if (context != null) {
@@ -1031,9 +1018,10 @@ private suspend fun sendWorkoutHistoryStoreInternal(
             .registerTypeAdapter(RestSetData::class.java, SetDataAdapter())
             .registerTypeAdapter(WeightSetData::class.java, SetDataAdapter())
             .registerTypeAdapter(ExerciseSessionSnapshot::class.java, ExerciseSessionSnapshotAdapter())
+            .registerTypeAdapter(com.gabstra.myworkoutassistant.shared.WorkoutHistory::class.java, WorkoutHistoryAdapter())
             .create()
     val jsonString = gson.toJson(workoutHistoryStore)
-    val chunkSize = 50000 // Adjust the chunk size as needed
+    val chunkSize = 90_000
     val compressedData = compressString(jsonString)
     val chunks = compressedData.asList().chunked(chunkSize).map { it.toByteArray() }
     Log.d(
@@ -1050,8 +1038,6 @@ private suspend fun sendWorkoutHistoryStoreInternal(
         }.asPutDataRequest().setUrgent()
 
         Tasks.await(dataClient.putDataItem(startRequest))
-
-        delay(500)
 
         // Send chunks with indices
         chunks.forEachIndexed { index, chunk ->
@@ -1081,13 +1067,7 @@ private suspend fun sendWorkoutHistoryStoreInternal(
                 Tasks.await(dataClient.putDataItem(request))
             }
 
-            if (!isLastChunk) {
-                delay(500)
-            }
         }
-        
-        // Small delay after last chunk to allow message delivery
-        delay(100)
 
         // Calculate dynamic timeout based on chunk count
         val completionTimeout = DataLayerListenerService.calculateCompletionTimeout(chunks.size)
@@ -1269,6 +1249,34 @@ private suspend fun sendWorkoutHistoryStoreInternal(
     }
 }
 
+internal suspend fun cleanupAbandonedWorkoutHistoryPayloadDataItems(dataClient: DataClient) {
+    listOf(
+        DataLayerPaths.WORKOUT_HISTORY_START_PREFIX,
+        DataLayerPaths.WORKOUT_HISTORY_CHUNK_PREFIX
+    ).forEach { pathPrefix ->
+        try {
+            val uri = Uri.Builder()
+                .scheme("wear")
+                .path(pathPrefix)
+                .build()
+            val deletedCount = Tasks.await(
+                dataClient.deleteDataItems(uri, DataClient.FILTER_PREFIX)
+            )
+            if (deletedCount > 0) {
+                Log.d(
+                    "DataLayerSync",
+                    "Removed $deletedCount abandoned workout-history DataItem(s) for prefix=$pathPrefix"
+                )
+            }
+        } catch (exception: Exception) {
+            Log.w(
+                "DataLayerSync",
+                "Failed to remove abandoned workout-history DataItems for prefix=$pathPrefix: ${exception.message}"
+            )
+        }
+    }
+}
+
 private suspend fun cleanupWorkoutHistoryTransactionDataItems(
     dataClient: DataClient,
     transactionId: String
@@ -1352,11 +1360,11 @@ suspend fun openSettingsOnPhoneApp(context: Context, dataClient: DataClient, pho
     }
 }
 
-private fun sendOpenPageRequestToPhone(
+private suspend fun sendOpenPageRequestToPhone(
     dataClient: DataClient,
     page: String
-): Boolean {
-    return try {
+): Boolean = withContext(Dispatchers.IO) {
+    try {
         val request = PutDataMapRequest.create("/openPagePath").apply {
             dataMap.putString("page", page)
             dataMap.putString("timestamp", System.currentTimeMillis().toString())

@@ -11,6 +11,7 @@ object WorkoutPagerLayoutTokens {
     val WorkoutHeaderTopPadding = 7.5.dp
     val WorkoutHeaderHeight = 25.dp
     val HorizontalPagerBottomContentPadding = 32.5.dp
+    val BottomIndicatorSpacing = 7.5.dp
     val ExerciseTitleHorizontalPadding = 37.5.dp
     val OverlayContentHorizontalPadding = 10.dp
 }

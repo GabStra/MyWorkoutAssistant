@@ -2,11 +2,6 @@ package com.gabstra.myworkoutassistant.composables
 
 import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -18,7 +13,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -28,8 +22,9 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
@@ -47,21 +42,19 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathOperation
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.min
+import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
@@ -100,97 +93,6 @@ enum class HeartRateStatus {
 }
 
 @Composable
-fun HrTargetGlowEffect(
-    isVisible: Boolean,
-    modifier: Modifier = Modifier
-) {
-    val density = LocalDensity.current
-    val infiniteTransition = rememberInfiniteTransition(label = "glow")
-    val glowAlpha by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 0.8f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1000, delayMillis = 0),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "glowAlpha"
-    )
-
-    val visibilityAlpha by animateFloatAsState(
-        targetValue = if (isVisible) 1f else 0f,
-        animationSpec = tween(durationMillis = 300),
-        label = "visibilityAlpha"
-    )
-
-    if (isVisible || visibilityAlpha > 0f) {
-        BoxWithConstraints(
-            modifier = modifier
-                .fillMaxSize()
-        ) {
-            val diameter = min(maxWidth, maxHeight)
-            val radiusPx = with(density) { (diameter / 2f).toPx() }
-            val center = Offset(radiusPx, radiusPx)
-            val glowWidth = with(density) { 15.dp.toPx() }
-
-            Canvas(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .alpha(visibilityAlpha)
-            ) {
-                if (isVisible) {
-                    // Draw circular glow border with radial fade inward
-                    val outerRadius = radiusPx
-                    val fadeDistance = glowWidth * 1.5f // Fade distance proportional to glow width
-                    val innerRadius = (outerRadius - fadeDistance).coerceAtLeast(0f)
-                    
-                    // Calculate gradient stops (0.0 = center, 1.0 = edge)
-                    // We want red at the outer edge and transparent at inner radius
-                    val innerStop = if (outerRadius > 0f) innerRadius / outerRadius else 0f
-                    val redColor = Red.copy(alpha = glowAlpha * visibilityAlpha)
-                    
-                    // Create radial gradient: red at outer edge, transparent at inner radius
-                    val gradient = Brush.radialGradient(
-                        innerStop to Color.Transparent,
-                        1.0f to redColor,
-                        center = center,
-                        radius = outerRadius
-                    )
-                    
-                    // Draw ring shape using path
-                    val ringPath = Path().apply {
-                        // Outer circle
-                        addOval(
-                            Rect(
-                                center.x - outerRadius,
-                                center.y - outerRadius,
-                                center.x + outerRadius,
-                                center.y + outerRadius
-                            )
-                        )
-                        // Inner circle (counter-clockwise to create hole)
-                        addOval(
-                            Rect(
-                                center.x - innerRadius,
-                                center.y - innerRadius,
-                                center.x + innerRadius,
-                                center.y + innerRadius
-                            )
-                        )
-                        fillType = androidx.compose.ui.graphics.PathFillType.EvenOdd
-                    }
-                    
-                    // Draw the ring with radial gradient
-                    drawPath(
-                        path = ringPath,
-                        brush = gradient
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
 fun HrStatusBadge(
     hrStatus: HeartRateStatus?,
     modifier: Modifier = Modifier
@@ -205,11 +107,11 @@ fun HrStatusBadge(
         enter = fadeIn(animationSpec = tween(durationMillis = 300)),
         exit = fadeOut(animationSpec = tween(durationMillis = 300))
     ) {
-        val status = lastHrStatus
+        val status = hrStatus ?: lastHrStatus
         if (status != null) {
             val message = when (status) {
-                HeartRateStatus.HIGHER_THAN_TARGET -> "HR Above Target"
-                HeartRateStatus.LOWER_THAN_TARGET -> "HR Below Target"
+                HeartRateStatus.HIGHER_THAN_TARGET -> "Above Target"
+                HeartRateStatus.LOWER_THAN_TARGET -> "Below Target"
                 HeartRateStatus.OUT_OF_MAX -> "Max HR Exceeded"
             }
             val icon = when (status) {
@@ -226,31 +128,40 @@ fun HrStatusBadge(
                 Box(
                     modifier = Modifier
                         .background(
-                            color = Red,
-                            shape = RoundedCornerShape(12.dp)
+                            color = Color.Black,
+                            shape = RoundedCornerShape(14.dp)
                         )
-/*                        .border(
-                            BorderStroke(1.dp, Red),
-                            shape = RoundedCornerShape(12.dp)
-                        )*/
-                        .padding(10.dp)
+                        .padding(2.dp)
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically
+                    Box(
+                        modifier = Modifier
+                            .background(
+                                color = Color.Black,
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                            .border(
+                                BorderStroke(1.dp, Red),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                            .padding(horizontal = 7.5.dp, vertical = 5.dp)
                     ) {
-                        Icon(
-                            imageVector = icon,
-                            contentDescription = "HR Status",
-                            modifier = Modifier.size(15.dp),
-                            tint = MaterialTheme.colorScheme.onBackground
-                        )
-                        Spacer(modifier = Modifier.size(5.dp))
-                        Text(
-                            text = message,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onBackground,
-                            textAlign = TextAlign.Center
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = icon,
+                                contentDescription = "HR Status",
+                                modifier = Modifier.size(15.dp),
+                                tint = Red
+                            )
+                            Spacer(modifier = Modifier.width(2.5.dp))
+                            Text(
+                                text = message,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Red,
+                                textAlign = TextAlign.Center
+                            )
+                        }
                     }
                 }
             }
@@ -281,7 +192,6 @@ fun HeartRateCircularChart(
     val scope = rememberWearCoroutineScope()
     var alertJob by remember { mutableStateOf<Job?>(null) }
     var zoneTrackingJob by remember { mutableStateOf<Job?>(null) }
-    var alarmJob by remember { mutableStateOf<Job?>(null) }
 
     val currentZone by remember(mhrPercentage) {
         derivedStateOf { getZoneFromPercentage(mhrPercentage) }
@@ -308,8 +218,7 @@ fun HeartRateCircularChart(
             if (alertJob?.isActive == true) return@LaunchedEffect
 
             if (mhrPercentage in lowerBoundMaxHRPercent..upperBoundMaxHRPercent) {
-                if (alarmJob?.isActive == true) {
-                    alarmJob?.cancel()
+                if (hrStatus == HeartRateStatus.LOWER_THAN_TARGET || hrStatus == HeartRateStatus.HIGHER_THAN_TARGET) {
                     hrStatus = null
                     onHrStatusChange?.invoke(null)
                 }
@@ -325,30 +234,19 @@ fun HeartRateCircularChart(
             } else {
                 zoneTrackingJob?.cancel()
 
-                if (!reachedTargetOnce || alarmJob?.isActive == true) {
+                if (!reachedTargetOnce) {
                     return@LaunchedEffect
                 }
 
-                alarmJob = scope.launch {
-                    delay(5000)
+                delay(5000)
 
-                    val newStatus = if (mhrPercentage < lowerBoundMaxHRPercent) {
-                        HeartRateStatus.LOWER_THAN_TARGET
-                    } else {
-                        HeartRateStatus.HIGHER_THAN_TARGET
-                    }
-                    hrStatus = newStatus
-                    onHrStatusChange?.invoke(newStatus)
-
-                    while (isActive) {
-                        hapticsViewModel.doHardVibrationTwiceWithBeep()
-                        delay(1000)
-                        hapticsViewModel.doHardVibrationTwiceWithBeep()
-                        delay(1000)
-                        hapticsViewModel.doHardVibrationTwiceWithBeep()
-                        delay(5000)
-                    }
+                val newStatus = if (mhrPercentage < lowerBoundMaxHRPercent) {
+                    HeartRateStatus.LOWER_THAN_TARGET
+                } else {
+                    HeartRateStatus.HIGHER_THAN_TARGET
                 }
+                hrStatus = newStatus
+                onHrStatusChange?.invoke(newStatus)
             }
         }
 
@@ -364,7 +262,6 @@ fun HeartRateCircularChart(
             hrStatus = HeartRateStatus.OUT_OF_MAX
             onHrStatusChange?.invoke(HeartRateStatus.OUT_OF_MAX)
             zoneTrackingJob?.cancel()
-            alarmJob?.cancel()
         } else if (alertJob?.isActive == true && mhrPercentage <= 100) {
             hrStatus = null
             onHrStatusChange?.invoke(null)
@@ -377,7 +274,6 @@ fun HeartRateCircularChart(
         onDispose {
             alertJob?.cancel()
             zoneTrackingJob?.cancel()
-            alarmJob?.cancel()
         }
     }
 
@@ -403,15 +299,8 @@ private fun HeartRateDisplay(
     bpm: Int,
     textToDisplay: String,
     currentZone: Int,
-    colorsByZone: Array<Color>,
-    displayMode: Int
+    colorsByZone: Array<Color>
 ) {
-    val textWidth = if(displayMode == 0){
-        25.dp
-    }else{
-        50.dp
-    }
-
     // Zone chip with black background, colored border, and colored text
     val chipBorderColor = colorsByZone[currentZone]
 
@@ -423,67 +312,73 @@ private fun HeartRateDisplay(
     else
         colorsByZone[currentZone]
 
+    val labelStyle = MaterialTheme.typography.labelMedium
 
+    // The chip is always laid out (zone 0 renders in its gray palette color) so the
+    // centered ensemble keeps the same width and nothing shifts as zones change.
     Row(
         modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp)
     ) {
         Spacer(modifier = Modifier.weight(1f))
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(5.dp)
-        ){
-            PulsingHeartWithBpm(
-                bpm = bpm,
-                tint = heartColor
-            )
 
-            Row(
-                modifier = Modifier.width(55.dp),
-                horizontalArrangement = Arrangement.End
-            ){
-                Text(
-                    modifier = Modifier.alignByBaseline().widthIn(min = textWidth),
-                    text = textToDisplay,
-                    textAlign = if (displayMode != 0) TextAlign.Center else TextAlign.End,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = if (bpm == 0) MediumDarkGray else MaterialTheme.colorScheme.onBackground
-                )
+        PulsingHeartWithBpm(
+            bpm = bpm,
+            tint = heartColor
+        )
 
-                if (bpm != 0 && displayMode == 0) {
-                    Spacer(modifier = Modifier.width(2.5.dp))
-                    Text(
-                        modifier = Modifier.alignByBaseline(),
-                        text = "bpm",
-                        style = MaterialTheme.typography.bodyExtraSmall,
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
-                }
-            }
-            if(bpm != 0){
-                Box(
+        BasicText(
+            text = textToDisplay,
+            // Fixed-width, centered box: fits "100%" up to large font scales (autosize
+            // absorbs the rest), so digit growth never re-centers the ensemble.
+            modifier = Modifier.width(45.dp),
+            style = labelStyle.copy(
+                textAlign = TextAlign.Center,
+                color = if (bpm == 0) MediumDarkGray else MaterialTheme.colorScheme.onBackground,
+                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                lineHeightStyle = LineHeightStyle(
+                    alignment = LineHeightStyle.Alignment.Center,
+                    trim = LineHeightStyle.Trim.Both,
+                ),
+            ),
+            maxLines = 1,
+            softWrap = false,
+            autoSize = TextAutoSize.StepBased(minFontSize = 8.sp, maxFontSize = labelStyle.fontSize),
+        )
+
+        Box(
+            modifier = Modifier.width(27.5.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(BorderStroke(1.dp, chipBorderColor), shape)
+                    .background(
+                        color = MaterialTheme.colorScheme.background,
+                        shape = shape
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                BasicText(
                     modifier = Modifier
-                        .border(BorderStroke(1.dp, chipBorderColor), shape)
-                        .background(
-                            color = MaterialTheme.colorScheme.background,
-                            shape = shape
-                        )
-                        .width(27.5.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(2.5.dp),
-                        text = zoneText,
-                        textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.bodySmall
-                            .copy(platformStyle = PlatformTextStyle(
-                                includeFontPadding = false
-                            )
+                        .fillMaxWidth()
+                        .padding(2.5.dp),
+                    text = zoneText,
+                    style = MaterialTheme.typography.bodySmall
+                        .copy(
+                            textAlign = TextAlign.Center,
+                            color = chipBorderColor,
+                            platformStyle = PlatformTextStyle(includeFontPadding = false),
                         ),
-                        color = chipBorderColor
-                    )
-                }
+                    maxLines = 1,
+                    softWrap = false,
+                    autoSize = TextAutoSize.StepBased(
+                        minFontSize = 8.sp,
+                        maxFontSize = MaterialTheme.typography.bodySmall.fontSize,
+                    ),
+                )
             }
         }
 
@@ -824,7 +719,7 @@ private fun HeartRateView(
                     contentDescription = "Disconnected",
                     modifier = Modifier
                         .size(15.dp)
-                        .offset(y = (-7.5).dp)
+                        .offset(y = -WorkoutPagerLayoutTokens.BottomIndicatorSpacing)
                         .then(heartRateDisplayModifier),
                     tint = MediumDarkGray
                 )
@@ -833,14 +728,13 @@ private fun HeartRateView(
                     modifier = Modifier
                         .width(120.dp)
                         .height(25.dp)
-                        .offset(y = (-7.5).dp)
+                        .offset(y = -WorkoutPagerLayoutTokens.BottomIndicatorSpacing)
                         .clickable(onClick = onSwitchClick)
                         .then(heartRateDisplayModifier),
                     bpm = hr,
                     textToDisplay = textToDisplay,
                     currentZone = currentZone,
-                    colorsByZone = colorsByZone,
-                    displayMode = displayMode
+                    colorsByZone = colorsByZone
                 )
             }
 
@@ -1070,5 +964,26 @@ private fun HeartRateCircularChartPreview() {
             lowerBoundMaxHRPercent = 65f,
             upperBoundMaxHRPercent = 75f
         )
+    }
+}
+
+@Preview(
+    name = "HR Above Target Badge",
+    device = WearDevices.LARGE_ROUND,
+    showBackground = true
+)
+@Composable
+private fun HrStatusBadgePreview() {
+    MaterialTheme(
+        colorScheme = darkScheme,
+        typography = baseline,
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+        ) {
+            HrStatusBadge(hrStatus = HeartRateStatus.HIGHER_THAN_TARGET)
+        }
     }
 }

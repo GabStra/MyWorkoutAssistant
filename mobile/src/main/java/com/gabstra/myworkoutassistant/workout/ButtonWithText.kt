@@ -26,7 +26,7 @@ fun ButtonWithText(
         .fillMaxWidth()
         // Ensure min 48.dp touch target (M3 recommendation)
         .minimumInteractiveComponentSize()
-        .heightIn(min = 48.dp)
+        .heightIn(min = 56.dp)
 
     when (style) {
         AppButtonStyle.Filled -> AppPrimaryButton(

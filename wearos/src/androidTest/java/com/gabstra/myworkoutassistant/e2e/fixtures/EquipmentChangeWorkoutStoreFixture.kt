@@ -115,10 +115,10 @@ object EquipmentChangeWorkoutStoreFixture {
             id = UUID.randomUUID(),
             name = MACHINE_NAME,
             availableWeights = listOf(
-                BaseWeight(20.0),
-                BaseWeight(40.0),
-                BaseWeight(60.0),
-                BaseWeight(80.0)
+                BaseWeight(21.0),
+                BaseWeight(41.0),
+                BaseWeight(61.0),
+                BaseWeight(81.0)
             )
         )
 
@@ -127,7 +127,7 @@ object EquipmentChangeWorkoutStoreFixture {
             enabled = true,
             name = WEIGHT_EXERCISE_NAME,
             notes = "",
-            sets = listOf(WeightSet(UUID.randomUUID(), 10, 60.0)),
+            sets = listOf(WeightSet(UUID.randomUUID(), 10, 61.0)),
             exerciseType = ExerciseType.WEIGHT,
             minReps = 5,
             maxReps = 12,

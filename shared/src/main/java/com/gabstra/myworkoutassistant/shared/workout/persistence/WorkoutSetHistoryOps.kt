@@ -40,15 +40,10 @@ internal object WorkoutSetHistoryOps {
         state: WorkoutState,
         historyIdentity: WorkoutStateQueries.StateHistoryIdentity
     ): SetHistory? {
-        val setData = when (state) {
-            is WorkoutState.Set -> state.currentSetData
-            else -> return null
-        }
-        val startTime = when (state) {
-            is WorkoutState.Set -> state.startTime ?: LocalDateTime.now()
-            else -> return null
-        }
-        val skipped = (state as? WorkoutState.Set)?.skipped ?: false
+        if (state !is WorkoutState.Set) return null
+        val setData = state.currentSetData
+        val startTime = state.startTime ?: LocalDateTime.now()
+        val skipped = state.skipped
 
         return SetHistory(
             id = UUID.randomUUID(),

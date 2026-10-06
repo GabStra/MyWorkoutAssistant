@@ -1,9 +1,9 @@
 package com.gabstra.myworkoutassistant
 
-import com.gabstra.myworkoutassistant.composables.PlateUiStep
-import com.gabstra.myworkoutassistant.composables.applyPlateUiSteps
-import com.gabstra.myworkoutassistant.composables.navigablePlateUiSteps
-import com.gabstra.myworkoutassistant.composables.squashPlateStepsForDisplay
+import com.gabstra.myworkoutassistant.composables.workout.pages.PlateUiStep
+import com.gabstra.myworkoutassistant.composables.workout.pages.applyPlateUiSteps
+import com.gabstra.myworkoutassistant.composables.workout.pages.navigablePlateUiSteps
+import com.gabstra.myworkoutassistant.composables.workout.pages.squashPlateStepsForDisplay
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
 import org.junit.Assert.assertEquals
 import org.junit.Test

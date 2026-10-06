@@ -1,0 +1,373 @@
+from __future__ import annotations
+
+import threading
+import time
+import os
+from pathlib import Path
+
+import pytest
+
+from exercise_motion_pkg.gpu_lock import (
+    GPU_LOCK_PATH_ENV_VAR,
+    GPU_LOCK_SAME_PROCESS_TIMEOUT_SECONDS_ENV_VAR,
+    GlobalGpuLock,
+)
+
+
+def test_global_gpu_lock_serializes_different_threads_in_same_process(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lock_path = tmp_path / "gpu.lock"
+    monkeypatch.setenv(GPU_LOCK_PATH_ENV_VAR, str(lock_path))
+    second_started = threading.Event()
+    second_acquired = threading.Event()
+    failures: list[BaseException] = []
+
+    def acquire_from_second_thread() -> None:
+        second_started.set()
+        try:
+            with GlobalGpuLock(stage="second"):
+                second_acquired.set()
+        except BaseException as exc:  # pragma: no cover - asserted below
+            failures.append(exc)
+
+    with GlobalGpuLock(stage="first"):
+        worker = threading.Thread(target=acquire_from_second_thread)
+        worker.start()
+        assert second_started.wait(timeout=1.0)
+        time.sleep(0.05)
+        assert not second_acquired.is_set()
+
+    worker.join(timeout=2.0)
+
+    assert not worker.is_alive()
+    assert not failures
+    assert second_acquired.is_set()
+    assert not lock_path.exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows delete-on-close sharing semantics")
+def test_metadata_reader_cannot_orphan_released_gpu_lock(tmp_path, monkeypatch):
+    import msvcrt
+    from exercise_motion_pkg.gpu_lock import _windows_file_handle, lock_payload
+    path = tmp_path / "reader.lock"
+    monkeypatch.setenv(GPU_LOCK_PATH_ENV_VAR, str(path))
+    lock = GlobalGpuLock(stage="owner")
+    lock.__enter__()
+    assert lock_payload(path)["stage"] == "owner"
+    reader = msvcrt.open_osfhandle(_windows_file_handle(path, create=False), os.O_RDONLY)
+    try:
+        # Release must not raise or lose the operation result with an open reader.
+        lock.__exit__(None, None, None)
+    finally:
+        os.close(reader)
+    assert not path.exists()
+    with GlobalGpuLock(stage="next"):
+        assert lock_payload(path)["stage"] == "next"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows process-exit lease semantics")
+def test_process_crash_does_not_leave_gpu_lock(tmp_path, monkeypatch):
+    import subprocess
+    import sys
+    path = tmp_path / "crash.lock"
+    monkeypatch.setenv(GPU_LOCK_PATH_ENV_VAR, str(path))
+    child = subprocess.run([sys.executable, "-c",
+        "import os; from exercise_motion_pkg.gpu_lock import GlobalGpuLock; "
+        "lock=GlobalGpuLock(stage='crash'); lock.__enter__(); os._exit(3)"], timeout=20)
+    assert child.returncode == 3
+    assert not path.exists()
+
+
+def test_global_gpu_lock_rejects_recursive_acquisition_in_same_thread(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lock_path = tmp_path / "gpu.lock"
+    monkeypatch.setenv(GPU_LOCK_PATH_ENV_VAR, str(lock_path))
+
+    with GlobalGpuLock(stage="outer"):
+        with pytest.raises(RuntimeError, match="same thread would deadlock"):
+            with GlobalGpuLock(stage="inner"):
+                pass
+        assert lock_path.exists()
+
+    assert not lock_path.exists()
+
+
+def test_failed_metadata_write_releases_lease(tmp_path, monkeypatch):
+    from exercise_motion_pkg import gpu_lock
+    path = tmp_path / "failed-write.lock"
+    monkeypatch.setenv(GPU_LOCK_PATH_ENV_VAR, str(path))
+    def fail(*args):
+        raise OSError("metadata write failed")
+    monkeypatch.setattr(gpu_lock.os, "write", fail)
+    with pytest.raises(OSError, match="metadata write failed"):
+        with GlobalGpuLock(stage="write-failure"):
+            pass
+    assert not path.exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows delete-on-close sharing semantics")
+def test_docker_lease_reader_does_not_mask_operation_failure(tmp_path, monkeypatch):
+    import msvcrt
+    from exercise_motion_pkg.gpu_lock import _windows_file_handle
+    from exercise_motion_pkg import wham_runner
+    path = tmp_path / "docker.lock"
+    monkeypatch.setenv(wham_runner.WHAM_DOCKER_LOCK_ENV_VAR, str(path))
+    reader = None
+    try:
+        with pytest.raises(ValueError, match="tracking rejected"):
+            with wham_runner.wham_docker_run_lock(enabled=True):
+                reader = msvcrt.open_osfhandle(_windows_file_handle(path, create=False), os.O_RDONLY)
+                raise ValueError("tracking rejected")
+    finally:
+        if reader is not None:
+            os.close(reader)
+    assert not path.exists()
+
+
+def test_same_process_timeout_force_releases_pinned_holder(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lock_path = tmp_path / "gpu.lock"
+    monkeypatch.setenv(GPU_LOCK_PATH_ENV_VAR, str(lock_path))
+    monkeypatch.setenv(GPU_LOCK_SAME_PROCESS_TIMEOUT_SECONDS_ENV_VAR, "1")
+    released: list[str] = []
+
+    holder = GlobalGpuLock(
+        stage="llama_cpp_server",
+        on_force_release=lambda: released.append("holder"),
+    )
+    holder.__enter__()
+    failures: list[BaseException] = []
+
+    def acquire_from_worker_thread() -> None:
+        try:
+            with GlobalGpuLock(stage="yolo_pose_prefilter"):
+                # The pinned holder was force-released, so the waiter acquired.
+                assert lock_path.exists()
+        except BaseException as exc:  # pragma: no cover - asserted below
+            failures.append(exc)
+
+    started = time.perf_counter()
+    worker = threading.Thread(target=acquire_from_worker_thread)
+    worker.start()
+    worker.join(timeout=30.0)
+    holder.__exit__(None, None, None)
+
+    assert not worker.is_alive()
+    assert not failures
+    assert released == ["holder"]
+
+
+def test_old_gpu_and_wham_lock_metadata_does_not_evict_live_owner(tmp_path: Path):
+    import json
+
+    from exercise_motion_pkg import gpu_lock, wham_runner
+
+    identity = gpu_lock.process_identity(os.getpid())
+    gpu_path = tmp_path / "gpu-old-live.lock"
+    gpu_path.write_text(json.dumps({"pid": os.getpid(), "processIdentity": identity}))
+    wham_path = tmp_path / "wham-old-live.lock"
+    wham_path.write_text(json.dumps({"pid": os.getpid(), "processIdentity": identity}))
+    old_timestamp = time.time() - 24 * 60 * 60
+    os.utime(gpu_path, (old_timestamp, old_timestamp))
+    os.utime(wham_path, (old_timestamp, old_timestamp))
+
+    assert not gpu_lock.gpu_lock_is_stale(gpu_path, timeout_seconds=1.0)
+    assert not wham_runner.wham_docker_lock_is_stale(wham_path, timeout_seconds=1.0)
+
+
+def test_corrupt_or_ownerless_old_gpu_locks_are_not_age_evicted(tmp_path: Path):
+    from exercise_motion_pkg import gpu_lock, wham_runner
+
+    for lock_path, is_stale in (
+        (tmp_path / "gpu-corrupt.lock", gpu_lock.gpu_lock_is_stale),
+        (tmp_path / "wham-corrupt.lock", wham_runner.wham_docker_lock_is_stale),
+    ):
+        lock_path.write_text("{truncated", encoding="utf-8")
+        os.utime(lock_path, (time.time() - 120, time.time() - 120))
+        assert not is_stale(lock_path, timeout_seconds=1.0)
+
+        lock_path.write_text("{}", encoding="utf-8")
+        os.utime(lock_path, (time.time() - 120, time.time() - 120))
+        assert not is_stale(lock_path, timeout_seconds=1.0)
+
+
+def test_gpu_stale_lock_recovery_is_serialized_between_waiters(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    from exercise_motion_pkg import gpu_lock
+
+    lock_path = tmp_path / "gpu-stale.lock"
+    lock_path.write_text(
+        json.dumps({"pid": 987654, "processIdentity": 42, "stage": "crashed"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(GPU_LOCK_PATH_ENV_VAR, str(lock_path))
+    monkeypatch.setattr(gpu_lock, "process_is_running", lambda _pid: False)
+    original_is_stale = gpu_lock.gpu_lock_is_stale
+    check_lock = threading.Lock()
+    active_stale_checks = 0
+    max_concurrent_stale_checks = 0
+    active_sections = 0
+    max_concurrent_sections = 0
+    counts_lock = threading.Lock()
+    start_together = threading.Barrier(3)
+    failures: list[BaseException] = []
+
+    def observe_stale_check(path: Path, *, timeout_seconds: float) -> bool:
+        nonlocal active_stale_checks, max_concurrent_stale_checks
+        with check_lock:
+            active_stale_checks += 1
+            max_concurrent_stale_checks = max(max_concurrent_stale_checks, active_stale_checks)
+        try:
+            # Keep the stale observation open long enough for a second waiter
+            # to reach the same decision point if admission is not serialized.
+            time.sleep(0.1)
+            return original_is_stale(path, timeout_seconds=timeout_seconds)
+        finally:
+            with check_lock:
+                active_stale_checks -= 1
+
+    monkeypatch.setattr(gpu_lock, "gpu_lock_is_stale", observe_stale_check)
+
+    def acquire() -> None:
+        nonlocal active_sections, max_concurrent_sections
+        try:
+            start_together.wait()
+            with GlobalGpuLock(stage="stale-recovery-test"):
+                with counts_lock:
+                    active_sections += 1
+                    max_concurrent_sections = max(max_concurrent_sections, active_sections)
+                try:
+                    time.sleep(0.05)
+                finally:
+                    with counts_lock:
+                        active_sections -= 1
+        except BaseException as exc:  # pragma: no cover - asserted below
+            failures.append(exc)
+
+    workers = [threading.Thread(target=acquire) for _ in range(2)]
+    for worker in workers:
+        worker.start()
+    start_together.wait()
+    for worker in workers:
+        worker.join(timeout=5.0)
+
+    assert all(not worker.is_alive() for worker in workers)
+    assert not failures
+    assert max_concurrent_stale_checks == 1
+    assert max_concurrent_sections == 1
+
+
+def test_wham_stale_lock_recovery_is_serialized_between_waiters(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    from exercise_motion_pkg import wham_runner
+
+    lock_path = tmp_path / "wham-stale.lock"
+    lock_path.write_text(
+        json.dumps({"pid": 987654, "processIdentity": 42}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(wham_runner.WHAM_DOCKER_LOCK_ENV_VAR, str(lock_path))
+    monkeypatch.setenv(wham_runner.WHAM_DOCKER_LOCK_TIMEOUT_SECONDS_ENV_VAR, "5")
+    monkeypatch.setattr(wham_runner, "process_is_running", lambda _pid: False)
+    original_is_stale = wham_runner.wham_docker_lock_is_stale
+    check_lock = threading.Lock()
+    active_stale_checks = 0
+    max_concurrent_stale_checks = 0
+    active_sections = 0
+    max_concurrent_sections = 0
+    counts_lock = threading.Lock()
+    start_together = threading.Barrier(3)
+    failures: list[BaseException] = []
+
+    def observe_stale_check(path: Path, *, timeout_seconds: float) -> bool:
+        nonlocal active_stale_checks, max_concurrent_stale_checks
+        with check_lock:
+            active_stale_checks += 1
+            max_concurrent_stale_checks = max(max_concurrent_stale_checks, active_stale_checks)
+        try:
+            time.sleep(0.1)
+            return original_is_stale(path, timeout_seconds=timeout_seconds)
+        finally:
+            with check_lock:
+                active_stale_checks -= 1
+
+    monkeypatch.setattr(wham_runner, "wham_docker_lock_is_stale", observe_stale_check)
+
+    def acquire() -> None:
+        nonlocal active_sections, max_concurrent_sections
+        try:
+            start_together.wait()
+            with wham_runner.wham_docker_run_lock(enabled=True):
+                with counts_lock:
+                    active_sections += 1
+                    max_concurrent_sections = max(max_concurrent_sections, active_sections)
+                try:
+                    time.sleep(0.05)
+                finally:
+                    with counts_lock:
+                        active_sections -= 1
+        except BaseException as exc:  # pragma: no cover - asserted below
+            failures.append(exc)
+
+    workers = [threading.Thread(target=acquire) for _ in range(2)]
+    for worker in workers:
+        worker.start()
+    start_together.wait()
+    for worker in workers:
+        worker.join(timeout=5.0)
+
+    assert all(not worker.is_alive() for worker in workers)
+    assert not failures
+    assert max_concurrent_stale_checks == 1
+    assert max_concurrent_sections == 1
+
+
+def test_cross_process_gpu_wait_sleep_is_bounded_by_candidate_deadline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+    from types import SimpleNamespace
+
+    from exercise_motion_pkg import gpu_lock
+
+    lock_path = tmp_path / "gpu-external.lock"
+    lock_path.write_text(
+        json.dumps({"pid": 987654, "processIdentity": 42, "stage": "external"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(GPU_LOCK_PATH_ENV_VAR, str(lock_path))
+    monkeypatch.setattr(gpu_lock, "process_is_running", lambda _pid: True)
+    monkeypatch.setattr(gpu_lock, "process_identity", lambda _pid: 42)
+
+    observed_sleeps: list[float] = []
+
+    def observe_sleep(seconds: float) -> None:
+        observed_sleeps.append(seconds)
+        raise RuntimeError("sleep observed")
+
+    monkeypatch.setattr(
+        gpu_lock,
+        "time",
+        SimpleNamespace(perf_counter=lambda: 9.95, sleep=observe_sleep),
+    )
+    with pytest.raises(RuntimeError, match="sleep observed"):
+        with GlobalGpuLock(stage="deadline-bound", deadline=10.0):
+            pass
+
+    assert observed_sleeps
+    assert 0.0 <= observed_sleeps[0] <= 0.051

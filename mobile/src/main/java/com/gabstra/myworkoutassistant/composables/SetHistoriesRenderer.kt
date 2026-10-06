@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -29,6 +30,7 @@ fun SetHistoriesRenderer(
     appViewModel: AppViewModel,
     workout: Workout,
     showMetadata: Boolean = true,
+    contentPadding: PaddingValues = PaddingValues(5.dp),
 ) {
     if (setHistories.isEmpty() && restHistories.isEmpty()) {
         return
@@ -50,7 +52,7 @@ fun SetHistoriesRenderer(
     }
 
     Column(
-        modifier = modifier.padding(5.dp),
+        modifier = modifier.padding(contentPadding),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         val equipmentName = when {
@@ -60,140 +62,25 @@ fun SetHistoriesRenderer(
         }
         if (showMetadata) {
             val accessoryNames = (exercise.requiredAccessoryEquipmentIds ?: emptyList())
-                .mapNotNull { id -> appViewModel.getAccessoryEquipmentById(id)?.name }
+                .mapNotNull { id -> appViewModel.getLinkedSupportName(id) }
             EquipmentAccessoryMetadata(
                 equipmentName = equipmentName,
                 accessoryNames = accessoryNames,
             )
         }
 
-        val rows = mutableListOf<SetTableRowUiModel>()
-        val mergedTimeline = mergeSessionTimeline(setHistories, restHistories)
-        val identifierResolver = HistoricalSetDisplayIdentifierResolver(
-            setHistories = mergedTimeline.mapNotNull { item ->
-                val setStep = item as? SessionTimelineItem.SetStep ?: return@mapNotNull null
-                setStep.history.takeUnless { it.setData is RestSetData }
-            }
+        val rows = buildExerciseHistoryRows(
+            exercise = exercise,
+            equipment = equipment,
+            setHistories = setHistories,
+            intraExerciseRestHistories = restHistories,
+            showRest = true,
         )
-        var index = 0
-        while (index < mergedTimeline.size) {
-            val item = mergedTimeline[index]
-            when (item) {
-                is SessionTimelineItem.RestStep -> {
-                    rows += SetTableRowUiModel.Rest(
-                        text = formatRestHistoryDisplayLine(item.history)
-                    )
-                    index += 1
-                }
-
-                is SessionTimelineItem.SetStep -> {
-                    val set = item.history
-                    val setData = set.setData
-                    if (setData is RestSetData) {
-                        rows += SetTableRowUiModel.Rest(
-                            text = formatHistoricalRestValue(set)
-                        )
-                        index += 1
-                        continue
-                    }
-
-                    val followingRestText = mergedTimeline.getOrNull(index + 1)
-                        ?.let { nextItem ->
-                            val restStep = nextItem as? SessionTimelineItem.RestStep ?: return@let null
-                            formatRestHistoryDisplayLine(restStep.history)
-                        }
-
-                    val identifier = identifierResolver.resolve(set)
-                    when (setData) {
-                        is WeightSetData -> {
-                            val isCal = setData.subCategory == SetSubCategory.CalibrationSet
-                            val secondary = if (isCal && setData.calibrationRIR != null) {
-                                "${setData.actualReps} (RIR ${setData.calibrationRIR})"
-                            } else {
-                                "${setData.actualReps}"
-                            }
-                            appendHistoricalDataRows(
-                                rows = rows,
-                                exercise = exercise,
-                                setData = setData,
-                                followingRestText = followingRestText,
-                                row = SetTableRowUiModel.Data(
-                                    identifier = identifier,
-                                    primaryValue = equipment?.formatWeight(setData.actualWeight) ?: "${setData.actualWeight} kg",
-                                    secondaryValue = secondary,
-                                ),
-                            )
-                        }
-
-                        is BodyWeightSetData -> {
-                            val isCal = setData.subCategory == SetSubCategory.CalibrationSet
-                            val secondary = if (isCal && setData.calibrationRIR != null) {
-                                "${setData.actualReps} (RIR ${setData.calibrationRIR})"
-                            } else {
-                                "${setData.actualReps}"
-                            }
-                            appendHistoricalDataRows(
-                                rows = rows,
-                                exercise = exercise,
-                                setData = setData,
-                                followingRestText = followingRestText,
-                                row = SetTableRowUiModel.Data(
-                                    identifier = identifier,
-                                    primaryValue = formatHistoricalBodyWeightSetValue(
-                                        setData = setData,
-                                        equipment = equipment
-                                    ),
-                                    secondaryValue = secondary,
-                                ),
-                            )
-                        }
-
-                        is TimedDurationSetData -> {
-                            val primaryTime = if (setData.endTimer == 0) {
-                                formatSecondsToMinutesSeconds(setData.startTimer / 1000)
-                            } else {
-                                "${formatTime(setData.startTimer / 1000)} - ${formatTime(setData.endTimer / 1000)}"
-                            }
-                            appendHistoricalDataRows(
-                                rows = rows,
-                                exercise = exercise,
-                                setData = null,
-                                followingRestText = followingRestText,
-                                row = SetTableRowUiModel.Data(
-                                    identifier = identifier,
-                                    primaryValue = primaryTime,
-                                    secondaryValue = null,
-                                ),
-                            )
-                        }
-
-                        is EnduranceSetData -> {
-                            val primaryTime = if (setData.endTimer == 0) {
-                                formatSecondsToMinutesSeconds(setData.startTimer / 1000)
-                            } else {
-                                "${formatTime(setData.startTimer / 1000)} - ${formatTime(setData.endTimer / 1000)}"
-                            }
-                            appendHistoricalDataRows(
-                                rows = rows,
-                                exercise = exercise,
-                                setData = null,
-                                followingRestText = followingRestText,
-                                row = SetTableRowUiModel.Data(
-                                    identifier = identifier,
-                                    primaryValue = primaryTime,
-                                    secondaryValue = null,
-                                ),
-                            )
-                        }
-                    }
-                    index += if (shouldDuplicateUnilateralHistoryRow(exercise, setData) && followingRestText != null) 2 else 1
-                }
-            }
-        }
 
         SetTable(
             rows = rows,
             enabled = exercise.enabled,
+            presentation = SetTablePresentation.REVIEW,
         )
     }
 }

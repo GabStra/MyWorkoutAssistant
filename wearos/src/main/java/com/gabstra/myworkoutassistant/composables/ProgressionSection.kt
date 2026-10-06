@@ -44,6 +44,8 @@ import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.ProgressionMode
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.SetHistory
+import com.gabstra.myworkoutassistant.shared.Workout
+import com.gabstra.myworkoutassistant.shared.Yellow
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
@@ -56,15 +58,30 @@ import com.gabstra.myworkoutassistant.shared.utils.compareSetListsForProgression
 import com.gabstra.myworkoutassistant.shared.utils.compareSetListsUnordered
 import com.gabstra.myworkoutassistant.shared.viewmodels.ProgressionState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
 data class ProgressionInfo(
     val exerciseName: String,
-    val vsExpected: Ternary,
-    val vsLast: Ternary
+    val vsLast: Ternary?
 )
+
+internal fun progressionExercisesForWorkout(
+    workout: Workout,
+    executedExerciseIds: Set<java.util.UUID>
+): List<Exercise> {
+    return workout.workoutComponents
+        .flatMap { component ->
+            when (component) {
+                is Exercise -> listOf(component)
+                is Superset -> component.exercises
+                else -> emptyList()
+            }
+        }
+        .filter { it.id in executedExerciseIds }
+}
 
 private fun SetHistory.isExcludedFromProgressionComparison(): Boolean {
     return when (val setData = setData) {
@@ -152,7 +169,7 @@ private fun progressionLifecycleComparisonConfig(
 private fun StatusIcon(label: String, status: Ternary, modifier: Modifier = Modifier) {
     val (icon, tint) = when (status) {
         Ternary.ABOVE -> Icons.AutoMirrored.Filled.TrendingUp to Green
-        Ternary.EQUAL -> Icons.Filled.DragHandle to MaterialTheme.colorScheme.onBackground
+        Ternary.EQUAL -> Icons.Filled.DragHandle to Yellow
         Ternary.BELOW -> Icons.AutoMirrored.Filled.TrendingDown to Red
         Ternary.MIXED -> Icons.Filled.SwapVert to MaterialTheme.colorScheme.tertiary
     }
@@ -162,6 +179,20 @@ private fun StatusIcon(label: String, status: Ternary, modifier: Modifier = Modi
         contentDescription = "$label:$status",
         tint = tint
     )
+}
+
+@Composable
+private fun StatusIndicator(label: String, status: Ternary?, modifier: Modifier = Modifier) {
+    if (status == null) {
+        Text(
+            modifier = modifier,
+            text = "-",
+            style = MaterialTheme.typography.bodyMedium,
+            textAlign = TextAlign.Center
+        )
+    } else {
+        StatusIcon(label = label, status = status, modifier = modifier)
+    }
 }
 
 @SuppressLint("DefaultLocale")
@@ -195,8 +226,7 @@ private fun ProgressionRow(
                     text = info.exerciseName,
                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
                 )
-                StatusIcon(label = "LAST", status = info.vsLast, modifier = Modifier.weight(1f))
-                StatusIcon(label = "EXP", status = info.vsExpected, modifier = Modifier.weight(1f))
+                StatusIndicator(label = "LAST", status = info.vsLast, modifier = Modifier.weight(1f))
             }
         }
     }
@@ -217,12 +247,16 @@ fun ProgressionSection(
             viewModel.completionPushCompleted.first { it }
         }
         progressionData = withContext(Dispatchers.IO) {
-            val exerciseIds = viewModel.executedSetsHistory
+            val executedExerciseIds = viewModel.executedSetsHistory
                 .mapNotNull { it.exerciseId }
-                .distinct()
+                .toSet()
+            val executedExercises = progressionExercisesForWorkout(
+                workout = viewModel.selectedWorkout.value,
+                executedExerciseIds = executedExerciseIds
+            )
 
-            exerciseIds.mapNotNull { exerciseId ->
-                val exercise = viewModel.exercisesById[exerciseId] ?: return@mapNotNull null
+            executedExercises.mapNotNull { exercise ->
+                val exerciseId = exercise.id
                 if (exercise.exerciseType != ExerciseType.WEIGHT && exercise.exerciseType != ExerciseType.BODY_WEIGHT) return@mapNotNull null
 
                 val executedSets = viewModel.executedSetsHistory
@@ -235,20 +269,12 @@ fun ProgressionSection(
 
                 if(progressionData == null) return@mapNotNull null
 
-                val expectedSets = progressionData.first.sets
                 val progressionState = progressionData.second
 
                 if(progressionState == ProgressionState.DELOAD || progressionState == ProgressionState.FAILED) return@mapNotNull null
 
                 val lastSessionSets = viewModel.getProgressionComparisonBaselineSets(exerciseId)
 
-                val vsExpected = compareProgressionAwareSetLists(
-                    current = executedSets,
-                    baseline = expectedSets,
-                    exercise = exercise,
-                    viewModel = viewModel,
-                    progressionState = progressionState
-                )
                 val vsLast = if (lastSessionSets != null) {
                     compareProgressionAwareSetLists(
                         current = executedSets,
@@ -258,10 +284,10 @@ fun ProgressionSection(
                         progressionState = progressionState
                     )
                 } else {
-                    Ternary.EQUAL
+                    null
                 }
 
-                ProgressionInfo(exercise.name, vsExpected, vsLast)
+                ProgressionInfo(exercise.name, vsLast)
             }
         }
         
@@ -269,6 +295,19 @@ fun ProgressionSection(
         onProgressionDataCalculated?.invoke(progressionData.isNullOrEmpty())
     }
 
+    ProgressionSectionContent(
+        modifier = modifier,
+        progressionData = progressionData,
+        showLoading = progressionData == null && waitForCompletionPush,
+    )
+}
+
+@Composable
+internal fun ProgressionSectionContent(
+    modifier: Modifier = Modifier,
+    progressionData: List<ProgressionInfo>?,
+    showLoading: Boolean = false,
+) {
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
 
     val scrollState = rememberScrollState()
@@ -276,11 +315,11 @@ fun ProgressionSection(
     // A sample item for DynamicHeightColumn to measure.
     val prototypeItem = @Composable {
         ProgressionRow(
-            info = ProgressionInfo("Sample Exercise", Ternary.EQUAL, Ternary.EQUAL)
+            info = ProgressionInfo("Sample Exercise", null)
         )
     }
 
-    if (progressionData == null && waitForCompletionPush) {
+    if (showLoading) {
         Box(
             modifier = modifier.fillMaxSize(),
             contentAlignment = Alignment.Center
@@ -306,7 +345,6 @@ fun ProgressionSection(
             ) {
                 Text(modifier = Modifier.weight(2f), text = "EXERCISE", style = headerStyle, textAlign = TextAlign.Center)
                 Text(modifier =Modifier.weight(1f), text = "VS LAST", style = headerStyle, textAlign = TextAlign.Center)
-                Text(modifier =Modifier.weight(1f), text = "VS EXP", style = headerStyle, textAlign = TextAlign.Center)
 
             }
 
@@ -322,8 +360,8 @@ fun ProgressionSection(
                         .verticalColumnScrollbar(scrollState = scrollState)
                         .verticalScroll(scrollState),
                 ) {
-                    progressionData?.forEachIndexed { index, info ->
-                       ProgressionRow(info = info)
+                    progressionData.forEach { info ->
+                        ProgressionRow(info = info)
                     }
                 }
             }

@@ -4,10 +4,13 @@
 
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_HEALTH" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.BODY_SENSORS" />
+    <uses-permission android:name="android.permission.health.READ_HEART_RATE" />
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
@@ -38,8 +41,10 @@
     <application
         android:name=".MyApplication"
         android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:enableOnBackInvokedCallback="true"
         android:theme="@style/MyCustomWearTheme"
@@ -55,6 +60,24 @@
             android:name=".DataLayerListenerService"
             android:exported="true"
             android:foregroundServiceType="dataSync">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data android:scheme="wear" />
+                <data android:host="*" />
+                <data android:pathPrefix="/sync/phase" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data android:scheme="wear" />
+                <data android:host="*" />
+                <data android:pathPrefix="/sync/progress" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data android:scheme="wear" />
+                <data android:host="*" />
+                <data android:pathPrefix="/sync/cancel" />
+            </intent-filter>
             <intent-filter>
                 <!-- DATA_CHANGED with path filters (no deprecated BIND_LISTENER) -->
                 <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
@@ -82,8 +105,16 @@
                 <data android:scheme="wear"/>
                 <data android:host="*"/>
                 <data android:pathPrefix="/sync/error"/>
+                <data android:pathPrefix="/sync/cancel"/>
+                <data android:pathPrefix="/sync/progress"/>
+                <data android:pathPrefix="/sync/phase"/>
             </intent-filter>
         </service>
+
+        <service
+            android:name=".services.RunningTrackingService"
+            android:exported="false"
+            android:foregroundServiceType="health|location" />
         
         <!-- Register receivers -->
         <receiver

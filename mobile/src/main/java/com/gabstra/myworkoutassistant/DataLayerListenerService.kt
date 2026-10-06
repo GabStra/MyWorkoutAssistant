@@ -17,6 +17,7 @@ import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
+import com.gabstra.myworkoutassistant.shared.adapters.WorkoutHistoryAdapter
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.replaceSetsInExerciseRecursively
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateWorkoutOld
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateWorkoutComponentsRecursively
@@ -31,12 +32,15 @@ import com.gabstra.myworkoutassistant.shared.adapters.LocalTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
 import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
+import com.gabstra.myworkoutassistant.shared.datalayer.SyncPhase
+import com.gabstra.myworkoutassistant.shared.datalayer.SyncProgressUpdate
 import com.gabstra.myworkoutassistant.shared.datalayer.WorkoutSessionHeartbeat
 import com.gabstra.myworkoutassistant.shared.datalayer.WorkoutSessionHeartbeatKeys
 import com.gabstra.myworkoutassistant.shared.datalayer.decideWorkoutSessionHeartbeatApply
-import com.gabstra.myworkoutassistant.shared.datalayer.sentAtLocalDateTime
 import com.gabstra.myworkoutassistant.shared.decompressToString
 import com.gabstra.myworkoutassistant.shared.findWorkoutForHistory
+import com.gabstra.myworkoutassistant.shared.fromJSONToWorkoutStore
+import com.gabstra.myworkoutassistant.shared.validateWorkoutStoreForRuntimeUse
 import com.gabstra.myworkoutassistant.llm.PhoneLlmOperationExecutor
 import com.gabstra.myworkoutassistant.shared.llm.DEFAULT_PHONE_LLM_OPERATION
 import com.gabstra.myworkoutassistant.shared.llm.PhoneLlmDataMapKeys
@@ -53,6 +57,8 @@ import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.workout.model.decideWorkoutRecordIngest
+import com.gabstra.myworkoutassistant.shared.workout.model.ownerDeviceOrDefault
+import com.gabstra.myworkoutassistant.shared.workout.model.SessionOwnerDevice
 import com.gabstra.myworkoutassistant.sync.BackupCoordinator
 import com.gabstra.myworkoutassistant.sync.PhoneSyncToWatchSuppressor
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -61,6 +67,7 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.google.android.gms.tasks.Tasks
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
+import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
@@ -196,6 +203,21 @@ internal object WorkoutHistorySyncTelemetryPolicy {
     }
 }
 
+private fun normalizeIncomingWorkoutRecordForPhone(
+    incomingRecord: WorkoutRecord,
+    incomingHistory: WorkoutHistory,
+    receivedAt: LocalDateTime = LocalDateTime.now()
+): WorkoutRecord {
+    if (incomingHistory.isDone) {
+        return incomingRecord
+    }
+    if (incomingRecord.ownerDeviceOrDefault() != SessionOwnerDevice.WEAR) {
+        return incomingRecord
+    }
+    // Phone freshness must reflect when this device received the active Wear snapshot.
+    return incomingRecord.copy(lastActiveSyncAt = receivedAt)
+}
+
 class DataLayerListenerService : WearableListenerService() {
     private val dataClient by lazy { Wearable.getDataClient(this) }
     private val nodeClient by lazy { Wearable.getNodeClient(this) }
@@ -234,6 +256,7 @@ class DataLayerListenerService : WearableListenerService() {
         .registerTypeAdapter(RestSetData::class.java, SetDataAdapter())
         .registerTypeAdapter(WeightSetData::class.java, SetDataAdapter())
         .registerTypeAdapter(ExerciseSessionSnapshot::class.java, ExerciseSessionSnapshotAdapter())
+        .registerTypeAdapter(com.gabstra.myworkoutassistant.shared.WorkoutHistory::class.java, WorkoutHistoryAdapter())
         .create()
 
     @OptIn(ExperimentalEncodingApi::class)
@@ -703,6 +726,12 @@ class DataLayerListenerService : WearableListenerService() {
                 }
 
                 withContext(NonCancellable) {
+                    val normalizedIncomingRecord = workoutHistoryStore.WorkoutRecord?.let { incomingRecord ->
+                        normalizeIncomingWorkoutRecordForPhone(
+                            incomingRecord = incomingRecord,
+                            incomingHistory = workoutHistoryStore.WorkoutHistory
+                        )
+                    }
                     workoutHistoryDao.insertWithVersionCheck(workoutHistoryStore.WorkoutHistory)
                     setHistoryDao.deleteByWorkoutHistoryId(workoutHistoryStore.WorkoutHistory.id)
                     setHistoryDao.insertAllWithVersionCheck(*workoutHistoryStore.SetHistories.toTypedArray())
@@ -712,12 +741,12 @@ class DataLayerListenerService : WearableListenerService() {
                     if (
                         shouldApplyIncomingWorkoutRecord(
                             incomingHistory = workoutHistoryStore.WorkoutHistory,
-                            incomingRecord = workoutHistoryStore.WorkoutRecord,
+                            incomingRecord = normalizedIncomingRecord,
                             workoutId = workout.id
                         )
                     ) {
                         workoutRecordDao.deleteByWorkoutId(workout.id)
-                        workoutRecordDao.insert(workoutHistoryStore.WorkoutRecord!!)
+                        workoutRecordDao.insert(normalizedIncomingRecord!!)
                     }
 
                     if (workoutHistoryStore.WorkoutHistory.isDone) {
@@ -811,6 +840,13 @@ class DataLayerListenerService : WearableListenerService() {
                         errorLogDao.insertAll(*workoutHistoryStore.ErrorLogs.toTypedArray())
                     }
 
+                    // Persist the terminal state before publishing completion. The completion
+                    // observer may immediately finish instrumentation or otherwise stop this
+                    // process; leaving "Processing" persisted would make the restarted service
+                    // reject the next valid transaction as overlapping stale work.
+                    markTerminalTransaction(transactionId)
+                    clearActiveWorkoutHistoryTransactionState()
+
                     transactionId?.let { tid ->
                         processingStep = "sending sync complete acknowledgment"
                         sendWorkoutHistorySyncComplete(
@@ -839,8 +875,6 @@ class DataLayerListenerService : WearableListenerService() {
                         latestRequestedRetryGeneration = retryGenerationsUsed
                     )
                 }
-                markTerminalTransaction(transactionId)
-                clearActiveWorkoutHistoryTransactionState()
 
                 processingStep = "scheduling workout backup"
                 runCatching {
@@ -994,6 +1028,18 @@ class DataLayerListenerService : WearableListenerService() {
             "Successfully sent SYNC_COMPLETE for transaction: $transactionId ($reason)"
         )
     }
+
+    private suspend fun sendSyncError(transactionId: String, errorMessage: String) {
+        val errorPath = DataLayerPaths.buildPath(
+            DataLayerPaths.SYNC_ERROR_PREFIX,
+            transactionId
+        )
+        val errorDataMapRequest = PutDataMapRequest.create(errorPath)
+        errorDataMapRequest.dataMap.putString("transactionId", transactionId)
+        errorDataMapRequest.dataMap.putString("errorMessage", errorMessage)
+        errorDataMapRequest.dataMap.putString("timestamp", System.currentTimeMillis().toString())
+        Tasks.await(dataClient.putDataItem(errorDataMapRequest.asPutDataRequest().setUrgent()))
+    }
     
     /**
      * Checks connection state and throws exception if disconnected.
@@ -1131,7 +1177,9 @@ class DataLayerListenerService : WearableListenerService() {
         }
         
         // Update last service start time
-        sharedPreferences.edit().putLong("last_service_start_time", currentTime).apply()
+        sharedPreferences.edit {
+            putLong("last_service_start_time", currentTime)
+        }
         pruneTerminalTransactions(currentTime)
     }
 
@@ -1282,7 +1330,8 @@ class DataLayerListenerService : WearableListenerService() {
         val updatedRecord = existingRecord!!.copy(
             exerciseId = heartbeat.exerciseId,
             setIndex = heartbeat.setIndex,
-            lastActiveSyncAt = heartbeat.sentAtLocalDateTime(),
+            // Freshness on phone must be based on local receipt time, not the watch clock.
+            lastActiveSyncAt = LocalDateTime.now(),
             activeSessionRevision = heartbeat.activeSessionRevision,
             lastKnownSessionState = heartbeat.sessionState
         )
@@ -1298,6 +1347,62 @@ class DataLayerListenerService : WearableListenerService() {
             "Applied heartbeat workoutId=${heartbeat.workoutId} historyId=${heartbeat.workoutHistoryId} " +
                 "revision=${heartbeat.activeSessionRevision} state=${heartbeat.sessionState}"
         )
+    }
+
+    override fun onMessageReceived(messageEvent: MessageEvent) {
+        try {
+            if (DataLayerPaths.matchesPrefix(
+                    messageEvent.path,
+                    DataLayerPaths.SYNC_PROGRESS_PREFIX
+                )
+            ) {
+                val transactionId = DataLayerPaths.parseTransactionId(
+                    messageEvent.path,
+                    DataLayerPaths.SYNC_PROGRESS_PREFIX
+                ) ?: return
+                val update = SyncProgressUpdate.fromByteArray(messageEvent.data) ?: return
+                SyncHandshakeManager.reportProgress(
+                    transactionId,
+                    update.phase,
+                    update.progress
+                )
+                Log.d(
+                    "DataLayerSync",
+                    "Received acknowledged progress ${update.progress} for transaction $transactionId"
+                )
+                return
+            }
+
+            if (!DataLayerPaths.matchesPrefix(
+                    messageEvent.path,
+                    DataLayerPaths.SYNC_PHASE_PREFIX
+                )
+            ) {
+                return
+            }
+
+            val transactionId = DataLayerPaths.parseTransactionId(
+                messageEvent.path,
+                DataLayerPaths.SYNC_PHASE_PREFIX
+            ) ?: return
+            val phase = SyncPhase.fromWireValue(
+                messageEvent.data.toString(Charsets.UTF_8)
+            ) ?: return
+            val progress = when (phase) {
+                SyncPhase.CONNECTING,
+                SyncPhase.TRANSFERRING -> 0f
+                SyncPhase.PROCESSING,
+                SyncPhase.COMPLETED -> 1f
+            }
+
+            SyncHandshakeManager.reportProgress(transactionId, phase, progress)
+            Log.d(
+                "DataLayerSync",
+                "Received ${phase.name} phase for transaction $transactionId"
+            )
+        } finally {
+            super.onMessageReceived(messageEvent)
+        }
     }
 
     override fun onDataChanged(dataEvents: DataEventBuffer) {
@@ -1326,8 +1431,6 @@ class DataLayerListenerService : WearableListenerService() {
                     DataLayerPaths.matchesPrefix(path, DataLayerPaths.SYNC_ACK_PREFIX) -> {
                         val transactionId =
                             DataLayerPaths.parseTransactionId(path, DataLayerPaths.SYNC_ACK_PREFIX)
-                        val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
-                        val timestampStr = dataMap.getString("timestamp")
 
                         // Ignore ACKs without transactionId
                         if (transactionId == null) {
@@ -1336,30 +1439,6 @@ class DataLayerListenerService : WearableListenerService() {
                                 "Received SYNC_ACK without transactionId - ignoring stale message"
                             )
                             return@forEach
-                        }
-
-                        // Ignore stale ACKs (older than threshold, default 60 seconds)
-                        if (timestampStr != null) {
-                            try {
-                                val timestamp = timestampStr.toLong()
-                                val currentTime = System.currentTimeMillis()
-                                val age = currentTime - timestamp
-                                // Get stale ACK threshold from SharedPreferences, default 60 seconds
-                                val staleAckThreshold = getSharedPreferences("sync_timeouts", Context.MODE_PRIVATE)
-                                    .getLong("stale_ack_threshold_ms", 60000L)
-                                if (age > staleAckThreshold) {
-                                    Log.w(
-                                        "DataLayerSync",
-                                        "Received stale SYNC_ACK for transaction: $transactionId (age: ${age}ms, threshold: ${staleAckThreshold}ms) - ignoring"
-                                    )
-                                    return@forEach
-                                }
-                            } catch (e: NumberFormatException) {
-                                Log.w(
-                                    "DataLayerSync",
-                                    "Received SYNC_ACK with invalid timestamp format for transaction: $transactionId"
-                                )
-                            }
                         }
 
                         Log.d("DataLayerSync", "Received SYNC_ACK for transaction: $transactionId")
@@ -1378,6 +1457,11 @@ class DataLayerListenerService : WearableListenerService() {
                                 "DataLayerSync",
                                 "Received SYNC_COMPLETE for transaction: $tid, timestamp: $timestamp"
                             )
+                            SyncHandshakeManager.reportProgress(
+                                tid,
+                                SyncPhase.COMPLETED,
+                                dataMap.getFloat("progress", 1f)
+                            )
                             SyncHandshakeManager.completeCompletion(tid)
                             Log.d(
                                 "DataLayerSync",
@@ -1395,6 +1479,48 @@ class DataLayerListenerService : WearableListenerService() {
                             Log.w(
                                 "DataLayerSync",
                                 "Received SYNC_COMPLETE without transactionId, timestamp: $timestamp"
+                            )
+                        }
+                    }
+
+                    DataLayerPaths.matchesPrefix(path, DataLayerPaths.SYNC_PROGRESS_PREFIX) -> {
+                        val progressUri = dataEvent.dataItem.uri
+                        val transactionId = DataLayerPaths.parseTransactionId(
+                            path,
+                            DataLayerPaths.SYNC_PROGRESS_PREFIX
+                        )
+                        val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
+                        val progress = dataMap.getFloat("progress", 0f)
+                        val phase = SyncPhase.fromWireValue(dataMap.getString("phase"))
+                            ?: SyncPhase.TRANSFERRING
+                        transactionId?.let { tid ->
+                            SyncHandshakeManager.reportProgress(tid, phase, progress)
+                        }
+                        scope.launch {
+                            runCatching {
+                                Tasks.await(dataClient.deleteDataItems(progressUri))
+                            }.onFailure { exception ->
+                                Log.w(
+                                    "DataLayerSync",
+                                    "Failed to remove consumed sync progress event at $path",
+                                    exception
+                                )
+                            }
+                        }
+                    }
+
+                    DataLayerPaths.matchesPrefix(path, DataLayerPaths.SYNC_PHASE_PREFIX) -> {
+                        val transactionId = DataLayerPaths.parseTransactionId(
+                            path,
+                            DataLayerPaths.SYNC_PHASE_PREFIX
+                        )
+                        val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
+                        val phase = SyncPhase.fromWireValue(dataMap.getString("phase"))
+                        if (transactionId != null && phase != null) {
+                            SyncHandshakeManager.reportProgress(
+                                transactionId,
+                                phase,
+                                dataMap.getFloat("progress", 0f)
                             )
                         }
                     }
@@ -1441,6 +1567,62 @@ class DataLayerListenerService : WearableListenerService() {
                     ) -> {
                         val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
                         handlePhoneLlmOperationRequest(path, dataMap)
+                    }
+
+                    DataLayerPaths.matchesPrefix(path, DataLayerPaths.WORKOUT_STORE_PREFIX) -> {
+                        val pathTransactionId = DataLayerPaths.parseTransactionId(
+                            path,
+                            DataLayerPaths.WORKOUT_STORE_PREFIX
+                        )
+                        val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
+                        val transactionId = pathTransactionId ?: dataMap.getString("transactionId")
+                        val compressedJson = dataMap.getByteArray("compressedJson")
+
+                        scope.launch(Dispatchers.IO) {
+                            runCatching {
+                                requireNotNull(compressedJson) {
+                                    "Workout store payload is missing compressedJson"
+                                }
+                                val workoutStoreJson = decompressToString(compressedJson)
+                                val incomingWorkoutStore = fromJSONToWorkoutStore(workoutStoreJson)
+                                validateWorkoutStoreForRuntimeUse(incomingWorkoutStore)
+                                workoutStoreRepository.saveWorkoutStore(incomingWorkoutStore)
+
+                                val intent = Intent(INTENT_ID).apply {
+                                    putExtra(UPDATE_WORKOUTS, UPDATE_WORKOUTS)
+                                    setPackage(packageName)
+                                }
+                                sendBroadcast(intent)
+
+                                transactionId?.let { tid ->
+                                    sendSyncComplete(tid, "workout store")
+                                }
+                                Log.d(
+                                    "DataLayerSync",
+                                    "Applied workout store update from Wear, transaction: $transactionId"
+                                )
+                            }.onFailure { exception ->
+                                Log.e(
+                                    "DataLayerSync",
+                                    "Failed applying workout store update from Wear, transaction: $transactionId",
+                                    exception
+                                )
+                                transactionId?.let { tid ->
+                                    runCatching {
+                                        sendSyncError(
+                                            tid,
+                                            exception.message ?: "Unknown error processing workout store"
+                                        )
+                                    }.onFailure { syncError ->
+                                        Log.e(
+                                            "DataLayerSync",
+                                            "Failed sending workout store sync error for transaction: $tid",
+                                            syncError
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     path == DataLayerPaths.WORKOUT_SESSION_HEARTBEAT_PATH -> {
@@ -1991,7 +2173,9 @@ class DataLayerListenerService : WearableListenerService() {
                     timeoutRate > 0.3f -> 1.2f // Moderate issues
                     else -> 1.0f // Good connection
                 }
-                prefs.edit().putFloat(PREF_CONNECTION_QUALITY, multiplier).apply()
+                prefs.edit {
+                    putFloat(PREF_CONNECTION_QUALITY, multiplier)
+                }
                 Log.d("DataLayerSync", "Updated connection quality multiplier to $multiplier (timeout rate: $timeoutRate)")
             }
         }

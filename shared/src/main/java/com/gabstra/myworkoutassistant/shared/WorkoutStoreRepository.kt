@@ -1,6 +1,8 @@
 package com.gabstra.myworkoutassistant.shared
 
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.UUID
 
 class WorkoutStoreRepository(private val filesDir:File) : IWorkoutStoreRepository {
@@ -13,6 +15,13 @@ class WorkoutStoreRepository(private val filesDir:File) : IWorkoutStoreRepositor
         if (file.exists()) {
             val jsonString = file.readText()
             workoutStore = fromJSONToWorkoutStore(jsonString)
+            val legacySchema = !jsonString.contains("\"schemaVersion\"") ||
+                Regex("\"schemaVersion\"\\s*:\\s*1(?:\\D|$)").containsMatchIn(jsonString)
+            if (legacySchema) {
+                val recoveryFile = File(filesDir, "$filename.v1-recovery")
+                if (!recoveryFile.exists()) file.copyTo(recoveryFile, overwrite = false)
+                writeAtomically(file, fromWorkoutStoreToJSON(workoutStore))
+            }
         }
 
         val result = workoutStore ?: WorkoutStore(
@@ -105,12 +114,28 @@ class WorkoutStoreRepository(private val filesDir:File) : IWorkoutStoreRepositor
         val jsonString = fromWorkoutStoreToJSON(migratedWorkoutStore)
         val filename = "workout_store.json"  // Assuming a single file for the workout store
         val file = File(filesDir, filename)
-        file.writeText(jsonString)  // Write the JSON string to the file
+        writeAtomically(file, jsonString)
     }
 
     override fun saveWorkoutStoreFromJson(workoutStoreJson: String) {
         val filename = "workout_store.json"  // Assuming a single file for the workout store
         val file = File(filesDir, filename)
-        file.writeText(workoutStoreJson)  // Write the JSON string to the file
+        val migratedJson = fromWorkoutStoreToJSON(fromJSONToWorkoutStore(workoutStoreJson))
+        writeAtomically(file, migratedJson)
+    }
+
+    private fun writeAtomically(destination: File, contents: String) {
+        val temporary = File(destination.parentFile, "${destination.name}.tmp")
+        temporary.writeText(contents)
+        try {
+            Files.move(
+                temporary.toPath(), destination.toPath(),
+                StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE,
+            )
+        } catch (_: Exception) {
+            Files.move(
+                temporary.toPath(), destination.toPath(), StandardCopyOption.REPLACE_EXISTING,
+            )
+        }
     }
 }

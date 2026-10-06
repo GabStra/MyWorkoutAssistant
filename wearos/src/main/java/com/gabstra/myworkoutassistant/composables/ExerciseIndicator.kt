@@ -26,7 +26,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.tooling.preview.Devices
+import androidx.wear.tooling.preview.devices.WearDevices
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -47,7 +47,7 @@ import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workout.display.buildExerciseSetDisplayRows
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
-import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateMachine
+import com.gabstra.myworkoutassistant.preview.createPreviewWorkoutStateMachine
 import com.gabstra.myworkoutassistant.shared.workout.timer.WorkoutTimerService
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import java.util.LinkedList
@@ -439,7 +439,8 @@ private fun WorkoutState.Set.shouldIgnoreCalibration(): Boolean {
 private val previewAppViewModel = AppViewModel()
 
 @SuppressLint("UnrememberedMutableState")
-@Preview(device = Devices.WEAR_OS_SMALL_ROUND, showBackground = true)
+@Suppress("DEPRECATION", "UNCHECKED_CAST")
+@Preview(device = WearDevices.SMALL_ROUND, showBackground = true)
 @Composable
 private fun ExerciseIndicatorPreview() {
     MaterialTheme {
@@ -556,7 +557,11 @@ private fun ExerciseIndicatorPreview() {
         )
         // Set state machine so allWorkoutStates getter returns preview states; current set is workoutState1_3 (index 2)
         try {
-            val machine = WorkoutStateMachine.fromStates(previewStates, { java.time.LocalDateTime.now() }, startIndex = 2)
+            val machine = createPreviewWorkoutStateMachine(
+                states = previewStates,
+                timeProvider = { java.time.LocalDateTime.now() },
+                startIndex = 2,
+            )
             val stateMachineField = viewModel::class.java.superclass
                 ?.declaredFields?.find { it.name == "stateMachine" }
             stateMachineField?.isAccessible = true

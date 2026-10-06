@@ -102,11 +102,11 @@ fun WorkoutsAlarmsTab(
         ) {
             StyledCard(
                 modifier = Modifier
-                    .padding(15.dp),
+                    .padding(Spacing.md),
             ) {
                 Text(
                     modifier = Modifier
-                        .padding(15.dp),
+                        .padding(Spacing.md),
                     text = "No alarms yet.",
                     textAlign = TextAlign.Center,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = .87f),
@@ -117,11 +117,10 @@ fun WorkoutsAlarmsTab(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(top = 10.dp)
-                .padding(bottom = 10.dp)
+                .padding(vertical = Spacing.md)
                 .verticalScroll(scrollState)
                 .padding(horizontal = Spacing.md),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            verticalArrangement = Arrangement.spacedBy(Spacing.sm)
         ) {
             // Bulk toggle button - only show if there are schedules for available workouts
             AppPrimaryButton(
@@ -174,8 +173,8 @@ fun WorkoutsAlarmsTab(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(15.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                                .padding(Spacing.md),
+                            verticalArrangement = Arrangement.spacedBy(Spacing.sm)
                         ) {
                             Text(
                                 text = workout.name,
@@ -192,7 +191,7 @@ fun WorkoutsAlarmsTab(
                                 if (index < schedules.size - 1) {
                                     HorizontalDivider(
                                         color = MaterialTheme.colorScheme.outlineVariant,
-                                        modifier = Modifier.padding(vertical = 5.dp)
+                                        modifier = Modifier.padding(vertical = Spacing.xs)
                                     )
                                 }
                             }

@@ -9,6 +9,7 @@ import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import java.util.Locale
 import kotlin.math.abs
 
 internal fun formatSetInlineForExport(
@@ -39,12 +40,12 @@ internal fun formatSetInlineForExport(
         is TimedDurationSet -> {
             val minutes = set.timeInMillis / 60000
             val seconds = (set.timeInMillis % 60000) / 1000
-            "${minutes}:${String.format("%02d", seconds)}"
+            "${minutes}:${String.format(Locale.US, "%02d", seconds)}"
         }
         is EnduranceSet -> {
             val minutes = set.timeInMillis / 60000
             val seconds = (set.timeInMillis % 60000) / 1000
-            "${minutes}:${String.format("%02d", seconds)} (endurance)"
+            "${minutes}:${String.format(Locale.US, "%02d", seconds)} (endurance)"
         }
         is RestSet -> "${set.timeInSeconds} seconds rest"
     }

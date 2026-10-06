@@ -196,14 +196,7 @@ class WearIncompleteWorkoutE2ETest : WearBaseE2ETest() {
 
     @Test
     fun calibrationRecovery_continueCalibration_resumesAtCalibration() {
-        CalibrationRequiredWorkoutStoreFixture.setupWorkoutStore(context)
-        launchAppFromHome()
-        startWorkout(CalibrationRequiredWorkoutStoreFixture.getWorkoutName())
-
-        val calibrationLoadVisible = device.wait(Until.hasObject(By.textContains("Set load")), 10_000)
-        require(calibrationLoadVisible) { "Calibration load selection did not appear" }
-
-        workoutDriver.killAppProcessTimed(packageName = context.packageName, settleMs = 0)
+        CalibrationRequiredWorkoutStoreFixture.setupCalibrationLoadRecovery(context)
         launchAppFromHome()
 
         val resumed = workoutDriver.resumeOrEnterRecoveredWorkoutTimed(
@@ -213,7 +206,7 @@ class WearIncompleteWorkoutE2ETest : WearBaseE2ETest() {
             useRestartCalibration = false
         )
         require(resumed.enteredWorkout) {
-            "Could not resume into calibration after process death"
+            "Could not resume into the persisted calibration checkpoint"
         }
 
         val calibrationOrSetVisible = device.wait(Until.hasObject(By.textContains("Set load")), 5_000) ||
@@ -225,14 +218,7 @@ class WearIncompleteWorkoutE2ETest : WearBaseE2ETest() {
 
     @Test
     fun calibrationRecovery_restartCalibration_resetsToCalibrationLoad() {
-        CalibrationRequiredWorkoutStoreFixture.setupWorkoutStore(context)
-        launchAppFromHome()
-        startWorkout(CalibrationRequiredWorkoutStoreFixture.getWorkoutName())
-
-        val calibrationLoadVisible = device.wait(Until.hasObject(By.textContains("Set load")), 10_000)
-        require(calibrationLoadVisible) { "Calibration load selection did not appear" }
-
-        workoutDriver.killAppProcessTimed(packageName = context.packageName, settleMs = 0)
+        CalibrationRequiredWorkoutStoreFixture.setupCalibrationLoadRecovery(context)
         launchAppFromHome()
 
         workoutDriver.resumeOrEnterRecoveredWorkoutTimed(

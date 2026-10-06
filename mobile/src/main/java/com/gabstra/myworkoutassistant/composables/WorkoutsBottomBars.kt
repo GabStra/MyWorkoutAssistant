@@ -62,6 +62,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import java.time.LocalDate
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
+import com.gabstra.myworkoutassistant.shared.equipments.CardioMachine
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
@@ -106,10 +107,6 @@ fun WorkoutsBottomBar(
                         derivedStateOf { scrollState.canScrollBackward }
                     }
                     val density = LocalDensity.current
-
-                    LaunchedEffect(scrollState.value) {
-                        // Trigger recomposition when scroll state changes
-                    }
 
                     Box(modifier = Modifier.fillMaxSize()) {
                         Row(
@@ -576,7 +573,6 @@ fun AccessoriesBottomBar(
                             item.id != selectedAccessory.id
                         }
                         appViewModel.updateAccessoryEquipments(newAccessories)
-                        appViewModel.scheduleWorkoutSave(context)
                         onSelectionChange(emptyList())
                         onSelectionModeChange(false)
                         showDeleteConfirmation = false
@@ -714,6 +710,10 @@ fun EquipmentsBottomBar(
                                         EquipmentType.PLATELOADEDCABLE -> throw NotImplementedError("PlateLoadedCable equipment copying not yet implemented")
                                         EquipmentType.WEIGHTVEST -> throw NotImplementedError("WeightVest equipment copying not yet implemented")
                                         EquipmentType.MACHINE -> throw NotImplementedError("Machine equipment copying not yet implemented")
+                                        EquipmentType.CARDIO_MACHINE -> CardioMachine(
+                                            id = UUID.randomUUID(),
+                                            name = it.name + " (Copy)"
+                                        )
                                         EquipmentType.IRONNECK -> throw NotImplementedError("IronNeck equipment copying not yet implemented")
                                         EquipmentType.ACCESSORY -> throw IllegalArgumentException("Accessories cannot be copied here")
                                     }
@@ -777,7 +777,6 @@ fun EquipmentsBottomBar(
                             item.id != selectedEquipment.id
                         }
                         appViewModel.updateEquipments(newEquipments)
-                        appViewModel.scheduleWorkoutSave(context)
                         onSelectionChange(emptyList())
                         onSelectionModeChange(false)
                         showDeleteConfirmation = false

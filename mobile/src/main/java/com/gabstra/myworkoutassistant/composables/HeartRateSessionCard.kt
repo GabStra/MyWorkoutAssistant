@@ -31,9 +31,9 @@ fun HeartRateSessionCard(
     title: String,
     analysis: HeartRateSessionAnalysis,
     userAge: Int,
+    modifier: Modifier = Modifier,
     measuredMaxHeartRate: Int? = null,
     restingHeartRate: Int? = null,
-    modifier: Modifier = Modifier,
     caloriesBurned: Int? = null,
     onInteractionChange: (Boolean) -> Unit = {},
 ) {

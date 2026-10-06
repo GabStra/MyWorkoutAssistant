@@ -21,12 +21,7 @@ class NotificationUtilsTest {
         val intent = Intent().configureOpenActiveWorkoutIntent(workoutId)
 
         assertEquals(OPEN_ACTIVE_WORKOUT_ACTION, intent.action)
-        assertEquals(
-            Intent.FLAG_ACTIVITY_NEW_TASK or
-                Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                Intent.FLAG_ACTIVITY_SINGLE_TOP,
-            intent.flags
-        )
+        assertEquals(Intent.FLAG_ACTIVITY_SINGLE_TOP, intent.flags)
         assertEquals(workoutId.toString(), intent.getStringExtra("WORKOUT_ID"))
     }
 
@@ -37,6 +32,6 @@ class NotificationUtilsTest {
         }.configureOpenActiveWorkoutIntent(null)
 
         assertFalse(intent.hasExtra("WORKOUT_ID"))
-        assertTrue(intent.flags and Intent.FLAG_ACTIVITY_CLEAR_TOP != 0)
+        assertTrue(intent.flags and Intent.FLAG_ACTIVITY_SINGLE_TOP != 0)
     }
 }

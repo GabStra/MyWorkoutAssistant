@@ -108,6 +108,7 @@ sealed class WorkoutState {
         val upperBoundMaxHRPercent: Float? = null,
         val currentBodyWeight: Double,
         var plateChangeResult: PlateCalculator.Companion.PlateChangeResult? = null,
+        val loadedPlateConfigurationOverride: List<Double>? = null,
         val streak: Int,
         val progressionState: ProgressionState?,
         val isWarmupSet: Boolean,

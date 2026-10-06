@@ -3,6 +3,14 @@ package com.gabstra.myworkoutassistant.e2e.fixtures
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
+import com.gabstra.myworkoutassistant.shared.equipments.Barbell
+import com.gabstra.myworkoutassistant.shared.equipments.Plate
+import com.gabstra.myworkoutassistant.shared.motion.ExerciseMovementRef
+import com.gabstra.myworkoutassistant.shared.running.DistanceUnit
+import com.gabstra.myworkoutassistant.shared.running.RunningEnvironment
+import com.gabstra.myworkoutassistant.shared.running.RunningPrescription
+import com.gabstra.myworkoutassistant.shared.running.RunningTargetType
+import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import java.time.LocalDate
@@ -15,6 +23,13 @@ import java.util.UUID
 object CrossDeviceSyncPhoneWorkoutStoreFixture {
     const val WORKOUT_NAME = "Cross Device Sync Workout"
     const val CALIBRATION_WORKOUT_NAME = "Cross Device Calibration Workout"
+    const val RUNNING_PLAN_WORKOUT_NAME = "Cross Device Running Plan"
+    const val OUTDOOR_RUN_NAME = "Outdoor Distance Run"
+    const val TREADMILL_RUN_NAME = "Treadmill Time Run"
+    val RUNNING_PLAN_WORKOUT_ID: UUID = UUID.fromString("65d1f21a-459c-4376-8a99-2fa1328f4f50")
+    val RUNNING_PLAN_WORKOUT_GLOBAL_ID: UUID = UUID.fromString("758492ca-52b1-44bc-aea9-94f7cde7e011")
+    val OUTDOOR_RUN_EXERCISE_ID: UUID = UUID.fromString("75398883-7cf8-42b3-8c44-0e8e394480f0")
+    val TREADMILL_RUN_EXERCISE_ID: UUID = UUID.fromString("5cba1938-3093-40fa-934e-5c63fd6af852")
     /**
      * Template values written into the phone workout_store before cross-device sync begins.
      * Wear applies workout progression before the session starts, so these are not the same
@@ -59,6 +74,7 @@ object CrossDeviceSyncPhoneWorkoutStoreFixture {
 
     val WORKOUT_ID: UUID = UUID.fromString("0ed4ca78-a798-4f4a-9ed1-5bd22c2f6f47")
     val WORKOUT_GLOBAL_ID: UUID = UUID.fromString("301e8ea8-b8a8-466b-8f97-9eb54e6b7c8a")
+    val EQUIPMENT_ID: UUID = UUID.fromString("208f3754-d331-4f33-b62a-05620fb3272e")
     val CALIBRATION_WORKOUT_ID: UUID = UUID.fromString("8fd7f6b3-a9f4-4a07-8be8-65b43f3d2de6")
     val CALIBRATION_WORKOUT_GLOBAL_ID: UUID = UUID.fromString("4f1d3f8f-4969-465b-a3c0-eec173919953")
     val EXERCISE_A_ID: UUID = UUID.fromString("5b206aca-7c4f-4cf2-9f8f-3fb0016f8d61")
@@ -78,8 +94,41 @@ object CrossDeviceSyncPhoneWorkoutStoreFixture {
     val PHONE_TO_WEAR_HISTORY_GLOBAL_ID: UUID = WORKOUT_GLOBAL_ID
     val PHONE_TO_WEAR_SET_HISTORY_A1_ID: UUID = UUID.fromString("2f9802de-89d8-43b2-95e4-b7d73bc0cf84")
     val PHONE_TO_WEAR_SET_HISTORY_A2_ID: UUID = UUID.fromString("c5d9eb2e-f056-41d5-83cf-d0904a47aa7e")
+    const val MOVEMENT_ID = "cross-device-complex-a-motion"
+    const val MOVEMENT_JSON = """
+        {
+          "fps": 30,
+          "bounds": { "minX": -0.5, "maxX": 0.5, "minY": 0.0, "maxY": 1.8, "minZ": -0.3, "maxZ": 0.3 },
+          "frames": [
+            {
+              "joints": {
+                "pelvis": [0.0, 0.9, 0.0],
+                "neck": [0.0, 1.45, 0.0],
+                "head": [0.0, 1.68, 0.02],
+                "left_shoulder": [-0.22, 1.36, 0.0],
+                "right_shoulder": [0.22, 1.36, 0.0],
+                "left_elbow": [-0.32, 1.05, 0.0],
+                "right_elbow": [0.32, 1.05, 0.0],
+                "left_wrist": [-0.34, 0.78, 0.0],
+                "right_wrist": [0.34, 0.78, 0.0],
+                "left_hip": [-0.13, 0.82, 0.0],
+                "right_hip": [0.13, 0.82, 0.0],
+                "left_knee": [-0.14, 0.44, 0.02],
+                "right_knee": [0.14, 0.44, 0.02],
+                "left_ankle": [-0.14, 0.08, 0.0],
+                "right_ankle": [0.14, 0.08, 0.0]
+              }
+            }
+          ]
+        }
+    """
+
+    fun movementRef(): ExerciseMovementRef =
+        ExerciseMovementRef.forWearSkeletonJson(MOVEMENT_ID, MOVEMENT_JSON.trimIndent())
 
     fun createWorkoutStore(): WorkoutStore {
+        val equipment = createTestBarbell()
+        val movementRef = movementRef()
         val exercise = Exercise(
             id = EXERCISE_A_ID,
             enabled = true,
@@ -94,7 +143,7 @@ object CrossDeviceSyncPhoneWorkoutStoreFixture {
             maxReps = 15,
             lowerBoundMaxHRPercent = null,
             upperBoundMaxHRPercent = null,
-            equipmentId = null,
+            equipmentId = equipment.id,
             bodyWeightPercentage = null,
             generateWarmUpSets = false,
             progressionMode = com.gabstra.myworkoutassistant.shared.ProgressionMode.DOUBLE_PROGRESSION,
@@ -103,7 +152,8 @@ object CrossDeviceSyncPhoneWorkoutStoreFixture {
             intraSetRestInSeconds = null,
             loadJumpDefaultPct = null,
             loadJumpMaxPct = null,
-            loadJumpOvercapUntil = null
+            loadJumpOvercapUntil = null,
+            movementRef = movementRef
         )
 
         val exerciseB = Exercise(
@@ -117,7 +167,7 @@ object CrossDeviceSyncPhoneWorkoutStoreFixture {
             maxReps = 20,
             lowerBoundMaxHRPercent = null,
             upperBoundMaxHRPercent = null,
-            equipmentId = null,
+            equipmentId = equipment.id,
             bodyWeightPercentage = null,
             generateWarmUpSets = false,
             progressionMode = com.gabstra.myworkoutassistant.shared.ProgressionMode.DOUBLE_PROGRESSION,
@@ -140,7 +190,7 @@ object CrossDeviceSyncPhoneWorkoutStoreFixture {
             maxReps = 20,
             lowerBoundMaxHRPercent = null,
             upperBoundMaxHRPercent = null,
-            equipmentId = null,
+            equipmentId = equipment.id,
             bodyWeightPercentage = null,
             generateWarmUpSets = false,
             progressionMode = com.gabstra.myworkoutassistant.shared.ProgressionMode.DOUBLE_PROGRESSION,
@@ -166,7 +216,7 @@ object CrossDeviceSyncPhoneWorkoutStoreFixture {
             maxReps = 15,
             lowerBoundMaxHRPercent = null,
             upperBoundMaxHRPercent = null,
-            equipmentId = null,
+            equipmentId = equipment.id,
             bodyWeightPercentage = null,
             generateWarmUpSets = false,
             progressionMode = com.gabstra.myworkoutassistant.shared.ProgressionMode.DOUBLE_PROGRESSION,
@@ -207,7 +257,7 @@ object CrossDeviceSyncPhoneWorkoutStoreFixture {
             maxReps = 15,
             lowerBoundMaxHRPercent = null,
             upperBoundMaxHRPercent = null,
-            equipmentId = null,
+            equipmentId = equipment.id,
             bodyWeightPercentage = null,
             generateWarmUpSets = false,
             progressionMode = com.gabstra.myworkoutassistant.shared.ProgressionMode.DOUBLE_PROGRESSION,
@@ -236,12 +286,106 @@ object CrossDeviceSyncPhoneWorkoutStoreFixture {
             type = 0
         )
 
+        val runningPlanWorkout = Workout(
+            id = RUNNING_PLAN_WORKOUT_ID,
+            name = RUNNING_PLAN_WORKOUT_NAME,
+            description = "Phone-to-Wear running prescription sync fixture",
+            workoutComponents = listOf(
+                Exercise(
+                    id = OUTDOOR_RUN_EXERCISE_ID,
+                    enabled = true,
+                    name = OUTDOOR_RUN_NAME,
+                    notes = "",
+                    sets = listOf(
+                        EnduranceSet(
+                            id = UUID.fromString("6ed5c27a-0a89-48f4-982a-3eeb8fc7e50a"),
+                            timeInMillis = 0,
+                            autoStart = false,
+                            autoStop = false,
+                            shouldReapplyHistoryToSet = false
+                        )
+                    ),
+                    exerciseType = ExerciseType.RUNNING,
+                    minReps = 0,
+                    maxReps = 0,
+                    lowerBoundMaxHRPercent = null,
+                    upperBoundMaxHRPercent = null,
+                    equipmentId = null,
+                    bodyWeightPercentage = null,
+                    runningPrescription = RunningPrescription(
+                        environment = RunningEnvironment.OUTDOOR,
+                        targetType = RunningTargetType.DISTANCE,
+                        targetValue = 30.0
+                    )
+                ),
+                Exercise(
+                    id = TREADMILL_RUN_EXERCISE_ID,
+                    enabled = true,
+                    name = TREADMILL_RUN_NAME,
+                    notes = "",
+                    sets = listOf(
+                        EnduranceSet(
+                            id = UUID.fromString("18eb3a49-4378-4327-9f31-8c97ca5f4c4d"),
+                            timeInMillis = 600_000,
+                            autoStart = false,
+                            autoStop = false,
+                            shouldReapplyHistoryToSet = false
+                        )
+                    ),
+                    exerciseType = ExerciseType.RUNNING,
+                    minReps = 0,
+                    maxReps = 0,
+                    lowerBoundMaxHRPercent = null,
+                    upperBoundMaxHRPercent = null,
+                    equipmentId = null,
+                    bodyWeightPercentage = null,
+                    runningPrescription = RunningPrescription(
+                        environment = RunningEnvironment.TREADMILL,
+                        targetType = RunningTargetType.TIME,
+                        targetValue = 600.0
+                    )
+                )
+            ),
+            order = 2,
+            enabled = true,
+            creationDate = LocalDate.now(),
+            previousVersionId = null,
+            nextVersionId = null,
+            isActive = true,
+            timesCompletedInAWeek = null,
+            globalId = RUNNING_PLAN_WORKOUT_GLOBAL_ID,
+            type = 0
+        )
+
         return WorkoutStore(
-            workouts = listOf(workout, calibrationWorkout),
-            equipments = emptyList(),
+            workouts = listOf(workout, calibrationWorkout, runningPlanWorkout),
+            equipments = listOf(equipment),
             birthDateYear = 1990,
             weightKg = 75.0,
-            progressionPercentageAmount = 0.0
+            progressionPercentageAmount = 0.0,
+            distanceUnit = DistanceUnit.MILES
+        )
+    }
+
+    private fun createTestBarbell(): Barbell {
+        val plates = listOf(
+            Plate(20.0, 20.0),
+            Plate(20.0, 20.0),
+            Plate(10.0, 15.0),
+            Plate(10.0, 15.0),
+            Plate(5.0, 10.0),
+            Plate(5.0, 10.0),
+            Plate(2.5, 5.0),
+            Plate(2.5, 5.0),
+            Plate(1.25, 3.0),
+            Plate(1.25, 3.0)
+        )
+        return Barbell(
+            id = EQUIPMENT_ID,
+            name = "Cross Device Test Barbell",
+            availablePlates = plates,
+            sleeveLength = 200,
+            barWeight = 20.0
         )
     }
 }

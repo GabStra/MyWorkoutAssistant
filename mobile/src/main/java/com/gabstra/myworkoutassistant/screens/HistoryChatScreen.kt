@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
+import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
+
 import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.util.Log
@@ -18,7 +20,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -27,7 +29,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -44,6 +45,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -353,7 +355,7 @@ fun HistoryChatScreen(
         }
     }
 
-    Scaffold(
+    BreadcrumbScaffold(
         modifier = Modifier.imePadding(),
         topBar = {
             TopAppBar(
@@ -364,10 +366,7 @@ fun HistoryChatScreen(
                 ),
                 title = {
                     Text(
-                        text = when (val p = prepareUi) {
-                            is HistoryChatPrepareUi.Ready -> p.title
-                            else -> "History chat"
-                        },
+                        text = "History chat",
                         style = MaterialTheme.typography.titleLarge,
                     )
                 },
@@ -410,6 +409,14 @@ fun HistoryChatScreen(
                         .fillMaxSize()
                         .padding(padding),
                 ) {
+                    Text(
+                        text = p.title,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        style = MaterialTheme.typography.titleMedium,
+                        textAlign = TextAlign.Center,
+                    )
                     LazyColumn(
                         modifier = Modifier
                             .weight(1f)
@@ -486,7 +493,7 @@ fun HistoryChatScreen(
                             onClick = { submitCurrentUserTurn(p) },
                             enabled = !isSending && composerText.isNotBlank(),
                         ) {
-                            Icon(Icons.Default.Send, contentDescription = "Send")
+                            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
                         }
                     }
                 }

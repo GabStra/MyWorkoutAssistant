@@ -1,0 +1,208 @@
+{
+  "reason": "fit_validation_failed",
+  "inner_keys": [
+    "anatomicalInitialization",
+    "anatomicalSourceRepair",
+    "applied",
+    "balance",
+    "balancePolicy",
+    "bodySupport",
+    "boundedRefinement",
+    "checks",
+    "elapsedSeconds",
+    "equipment",
+    "evaluations",
+    "evidence",
+    "finalSocketProjectionMaximumMeters",
+    "jerkAfter",
+    "jerkBefore",
+    "jointRangeRatios",
+    "jointTargetRmsMeters",
+    "maximumAnkleAnchorCalibrationMeters",
+    "maximumArticulationChangeDegrees",
+    "maximumBoneLengthVariationMeters",
+    "maximumContactErrorMeters",
+    "motionDiscontinuity",
+    "noNewJointShake",
+    "optimizerTermination",
+    "physicalEvents",
+    "physicalReasons",
+    "placementRegistration",
+    "playback",
+    "polishReserveRemainingSeconds",
+    "polishReserveSeconds",
+    "rangePreserved",
+    "reason",
+    "relativeMotionQuality",
+    "retainedIntervalFit",
+    "rootMotionQuality",
+    "settlingLimit",
+    "settlingPreserved",
+    "settlingReference",
+    "settlingSpeedAfter",
+    "settlingSpeedBefore",
+    "solvePhaseBudgetSeconds",
+    "sourceCyclePreflight",
+    "strategy",
+    "supportAlignment",
+    "supportArticulationRangeRatios",
+    "supportCalibration",
+    "supportInitializationSeconds",
+    "supportInitializationStrategy",
+    "supportReferenceAlignment",
+    "supportReferenceAnatomy",
+    "supportReferenceContacts",
+    "supportReferenceContinuedAfterTimeout",
+    "supportReferenceCorrection",
+    "supportReferenceEquipment",
+    "supportReferenceGeometry",
+    "targetRmsMeters",
+    "temporalReference",
+    "termination",
+    "timeBudgetSeconds",
+    "unanchoredFloorClearanceLiftMeters"
+  ],
+  "checks": {
+    "anatomy": true,
+    "contacts": true,
+    "sourceArticulation": true,
+    "trajectoryFit": true,
+    "rootTravel": true,
+    "jointRange": true,
+    "jointShake": true,
+    "settling": true,
+    "jerk": false,
+    "fixedRig": true,
+    "relativeJointShake": true,
+    "bodyRotation": true,
+    "rootContinuity": true,
+    "equipment": false,
+    "bodySupport": true,
+    "supportAlignment": true,
+    "motionDiscontinuity": true,
+    "playback": false
+  },
+  "playback": {
+    "passed": false,
+    "sampleCount": 605,
+    "subdivisions": 4,
+    "maximumSamplePoseMismatchMeters": 9.992007221626409e-16,
+    "maximumContactErrorMeters": 0.002000758447952944,
+    "equipment": {
+      "required": true,
+      "passed": false,
+      "maximumSpacingErrorMeters": 0.17598561663404322,
+      "constraint": {
+        "handRelationship": "rigid_pair",
+        "available": true,
+        "endpointPair": [
+          "left_hand",
+          "right_hand"
+        ],
+        "distanceMeters": 0.9674329589042905,
+        "distanceSource": "robust_reconstruction_estimate",
+        "toleranceMeters": 0.01934865917808581
+      }
+    },
+    "bodySupport": {
+      "required": true,
+      "passed": true,
+      "policyVersion": 3,
+      "maximumStationaryJointRangeMeters": 0.004023268570999187,
+      "maximumSurfaceErrorMeters": 0.0007971855575100717,
+      "toleranceMeters": 0.005,
+      "rejectionReasons": []
+    },
+    "shoeOrientation": {
+      "required": true,
+      "passed": true,
+      "maximumOrientationErrorMeters": 1.7685901432255508e-07
+    },
+    "supportAlignment": {
+      "required": false,
+      "passed": true
+    },
+    "interpolation": "limited_quaternion_hermite_v2",
+    "maximumFrameBoundaryVelocityJumpMetersPerSecond": 0.08943762253450693,
+    "velocityContinuous": false,
+    "maximumStoredFrameContactErrorMeters": 0.00013846351046511508,
+    "maximumFloorPenetrationMeters": 0.0,
+    "maximumBoneLengthVariationMeters": 6.106226635438361e-16,
+    "physicalReasons": [
+      "anatomy_spine_deviation",
+      "anatomy_torso_bend"
+    ],
+    "physicalEvents": [
+      {
+        "reason": "anatomy_torso_bend",
+        "joint": "spine1",
+        "frameIndex": 65
+      },
+      {
+        "reason": "anatomy_torso_bend",
+        "joint": "spine1",
+        "frameIndex": 66
+      },
+      {
+        "reason": "anatomy_torso_bend",
+        "joint": "spine1",
+        "frameIndex": 67
+      },
+      {
+        "reason": "anatomy_torso_bend",
+        "joint": "spine1",
+        "frameIndex": 73
+      },
+      {
+        "reason": "anatomy_torso_bend",
+        "joint": "spine1",
+        "frameIndex": 74
+      },
+      {
+        "reason": "anatomy_torso_bend",
+        "joint": "spine1",
+        "frameIndex": 75
+      },
+      {
+        "reason": "anatomy_torso_bend",
+        "joint": "spine1",
+        "frameIndex": 83
+      },
+      {
+        "reason": "anatomy_torso_bend",
+        "joint": "spine1",
+        "frameIndex": 86
+      }
+    ],
+    "seamPositionJumpMeters": 0.13447794836513488,
+    "seamStepExcessMeters": 0.11807166034837958,
+    "seamStepExcessLimitMeters": 0.0031791080377947187,
+    "seamVelocityMismatchMetersPerSecond": 4.394059914597306,
+    "seamVelocityMismatchLimitMetersPerSecond": 0.19869425236216992,
+    "seamContinuous": false,
+    "loopTransition": "requires_cycle_repair"
+  },
+  "jerk": null,
+  "equipment": {
+    "required": true,
+    "passed": false,
+    "maximumSpacingErrorMeters": 0.17598561663404333,
+    "constraint": {
+      "handRelationship": "rigid_pair",
+      "available": true,
+      "endpointPair": [
+        "left_hand",
+        "right_hand"
+      ],
+      "distanceMeters": 0.9674329589042905,
+      "distanceSource": "robust_reconstruction_estimate",
+      "toleranceMeters": 0.01934865917808581
+    }
+  },
+  "maximumContactErrorMeters": 0.00013846351046511508,
+  "supportInitializationStrategy": "plant_projection",
+  "supportInitializationSeconds": 73.92462999999407,
+  "supportReferenceContinuedAfterTimeout": true,
+  "supportInitializationFailedChecks": null,
+  "fitStageTimings": null
+}

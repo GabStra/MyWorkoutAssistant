@@ -16,7 +16,7 @@ import androidx.compose.runtime.remember
 import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.navigation.NavController
@@ -25,11 +25,10 @@ import androidx.wear.compose.material3.MaterialTheme
 import com.gabstra.myworkoutassistant.composables.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composables.ExerciseIndicator
 import com.gabstra.myworkoutassistant.composables.ExerciseNameText
-import com.gabstra.myworkoutassistant.composables.PageButtons
-import com.gabstra.myworkoutassistant.composables.PageCalibrationRIR
-import com.gabstra.myworkoutassistant.composables.PageExercises
+import com.gabstra.myworkoutassistant.composables.workout.pages.ControlsPage
+import com.gabstra.myworkoutassistant.composables.workout.pages.CalibrationRirPage
+import com.gabstra.myworkoutassistant.composables.workout.pages.ExercisesPage
 import com.gabstra.myworkoutassistant.composables.WorkoutPagerLayoutTokens
-import com.gabstra.myworkoutassistant.composables.WorkoutPagerPageSafeAreaPadding
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
@@ -61,8 +60,10 @@ fun CalibrationRIRScreen(
     val pageTypes = remember {
         mutableListOf<CalibrationPageType>().apply {
             add(CalibrationPageType.BUTTONS)
+            add(CalibrationPageType.INFO)
             add(CalibrationPageType.CALIBRATION_RIR)
             add(CalibrationPageType.EXERCISES)
+            if (exercise.movementRef != null) add(CalibrationPageType.MOVEMENT)
         }
     }
 
@@ -119,7 +120,7 @@ fun CalibrationRIRScreen(
             text = exercise.name,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = WorkoutPagerLayoutTokens.ExerciseTitleHorizontalPadding),
+                .padding(horizontal = WorkoutPagerLayoutTokens.ExerciseTitleHorizontalPadding + 15.dp),
             style = MaterialTheme.typography.titleLarge.copy(
                 fontWeight = FontWeight.SemiBold
             ),
@@ -135,6 +136,7 @@ fun CalibrationRIRScreen(
                 .fillMaxSize(),
             pagerState = pagerState,
             userScrollEnabled = allowHorizontalScrolling,
+            animatePages = false,
             pageOverlay = { pageIndex ->
                 if (pageTypes[pageIndex] == CalibrationPageType.CALIBRATION_RIR) {
                     hearthRateChart(Modifier.fillMaxSize())
@@ -148,17 +150,13 @@ fun CalibrationRIRScreen(
         ) { pageIndex ->
             // Get the page type for the current index
             val pageType = pageTypes[pageIndex]
-
             Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(WorkoutPagerPageSafeAreaPadding)
-                    .clipToBounds()
+                modifier = Modifier.calibrationPageContent(pageType)
             ) {
                 when (pageType) {
                     CalibrationPageType.BUTTONS -> {
                         key(pageType, pageIndex) {
-                            // Create a temporary Set state from calibration state for PageButtons
+                            // Create a temporary Set state from calibration state for ControlsPage
                             val mockSetState = remember(state) {
                                 WorkoutState.Set(
                                     exerciseId = state.exerciseId,
@@ -184,7 +182,7 @@ fun CalibrationRIRScreen(
                                 )
                             }
                             Box(modifier = Modifier.fillMaxSize()) {
-                                PageButtons(
+                                ControlsPage(
                                     updatedState = mockSetState,
                                     viewModel = viewModel,
                                     hapticsViewModel = hapticsViewModel,
@@ -198,7 +196,7 @@ fun CalibrationRIRScreen(
                     CalibrationPageType.EXERCISES -> {
                         key(pageType, pageIndex) {
                             Box(modifier = Modifier.fillMaxSize()) {
-                                PageExercises(
+                                ExercisesPage(
                                     selectedExercise = selectedExercise,
                                     selectedRestPageId = null,
                                     workoutState = state,
@@ -213,15 +211,33 @@ fun CalibrationRIRScreen(
                         }
                     }
 
+                    CalibrationPageType.INFO -> {
+                        CalibrationExerciseInfoPage(
+                            sections = buildCalibrationExerciseInfoSections(
+                                viewModel = viewModel,
+                                exercise = exercise,
+                                equipmentId = state.equipmentId,
+                                status = "Calibration",
+                            ),
+                        )
+                    }
+
+                    CalibrationPageType.MOVEMENT -> {
+                        CalibrationExerciseMovementPage(
+                            exercise = exercise,
+                            isActive = pagerState.currentPage == pageIndex &&
+                                !pagerState.isScrollInProgress,
+                        )
+                    }
+
                     CalibrationPageType.CALIBRATION_RIR -> {
                         key(pageType, pageIndex) {
                             Box(modifier = Modifier.fillMaxSize()) {
                                 Box(
                                     modifier = Modifier
                                         .fillMaxSize()
-                                        .padding(horizontal = WorkoutPagerLayoutTokens.OverlayContentHorizontalPadding)
                                 ) {
-                                    PageCalibrationRIR(
+                                    CalibrationRirPage(
                                         modifier = Modifier.fillMaxSize(),
                                         viewModel = viewModel,
                                         hapticsViewModel = hapticsViewModel,

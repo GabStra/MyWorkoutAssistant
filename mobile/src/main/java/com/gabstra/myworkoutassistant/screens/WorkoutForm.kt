@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
+import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
+
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
@@ -43,6 +45,7 @@ import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -51,8 +54,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
@@ -102,7 +103,9 @@ fun WorkoutForm(
         mutableStateOf(workout?.heartRateSource ?: HeartRateSource.WATCH_SENSOR)
     }
 
-    val selectedWorkoutType = rememberSaveable { mutableStateOf(workout?.type ?: ExerciseSessionRecord.EXERCISE_TYPE_STRENGTH_TRAINING) }
+    val selectedWorkoutType = rememberSaveable {
+        mutableIntStateOf(workout?.type ?: ExerciseSessionRecord.EXERCISE_TYPE_STRENGTH_TRAINING)
+    }
     val workoutTypeItems = remember {
         WorkoutTypes.WORKOUT_TYPE_STRING_TO_INT_MAP.entries.map { entry ->
             StandardFilterDropdownItem(
@@ -121,7 +124,11 @@ fun WorkoutForm(
         }
     }
 
-    val schedules = remember(existingSchedules) { mutableStateOf(existingSchedules.toMutableList()) }
+    val schedules = remember(existingSchedules) {
+        mutableStateListOf<WorkoutSchedule>().apply {
+            addAll(existingSchedules)
+        }
+    }
     val showScheduleDialog = remember { mutableStateOf(false) }
     val currentEditingSchedule = remember { mutableStateOf<WorkoutSchedule?>(null) }
 
@@ -132,21 +139,13 @@ fun WorkoutForm(
     val newGlobalId = remember { workout?.globalId ?: UUID.randomUUID() }
 
     val scrollState = rememberScrollState()
-    val outlineVariant = MaterialTheme.colorScheme.outlineVariant
     val context = LocalContext.current
 
     Box(modifier = Modifier.fillMaxSize()) {
-        Scaffold(
+        BreadcrumbScaffold(
+            showTopBarDivider = false,
             topBar = {
                 TopAppBar(
-                    modifier = Modifier.drawBehind {
-                        drawLine(
-                            color = outlineVariant,
-                            start = Offset(0f, size.height),
-                            end = Offset(size.width, size.height),
-                            strokeWidth = 1.dp.toPx()
-                        )
-                    },
                     title = {
                         Text(
                             modifier = Modifier
@@ -213,16 +212,17 @@ fun WorkoutForm(
                             singleLine = false
                         )
 
-                        val typeLabel = remember(workoutTypeItems, selectedWorkoutType.value) {
-                            workoutTypeItems.firstOrNull { it.value == selectedWorkoutType.value }?.label ?: ""
+                        val typeLabel = remember(workoutTypeItems, selectedWorkoutType.intValue) {
+                            workoutTypeItems.firstOrNull { it.value == selectedWorkoutType.intValue }?.label ?: ""
                         }
                         StandardFilterDropdown(
                             label = "Workout type",
                             selectedText = typeLabel,
                             items = workoutTypeItems,
-                            onItemSelected = { selectedWorkoutType.value = it },
+                            onItemSelected = { selectedWorkoutType.intValue = it },
+                            selectedValue = selectedWorkoutType.intValue,
                             modifier = Modifier.fillMaxWidth(),
-                            isItemSelected = { it == selectedWorkoutType.value }
+                            isItemSelected = { it == selectedWorkoutType.intValue }
                         )
 
                         OutlinedTextField(
@@ -246,6 +246,7 @@ fun WorkoutForm(
                             selectedText = heartRateSourceLabel,
                             items = heartRateSourceItems,
                             onItemSelected = { heartRateSourceState.value = it },
+                            selectedValue = heartRateSourceState.value,
                             modifier = Modifier.fillMaxWidth(),
                             isItemSelected = { it == heartRateSourceState.value }
                         )
@@ -255,9 +256,9 @@ fun WorkoutForm(
                 Spacer(Modifier.height(Spacing.md))
 
                 FormSectionTitle(text = "Schedule")
-                val scheduleSummary = remember(schedules.value.size) {
-                    if (schedules.value.isEmpty()) "No alarms yet"
-                    else "${schedules.value.size} alarm${if (schedules.value.size == 1) "" else "s"}"
+                val scheduleSummary = remember(schedules.size) {
+                    if (schedules.isEmpty()) "No alarms yet"
+                    else "${schedules.size} alarm${if (schedules.size == 1) "" else "s"}"
                 }
                 CollapsibleSection(
                     title = "Alarms",
@@ -265,14 +266,14 @@ fun WorkoutForm(
                     expanded = expandedSchedule,
                     onToggle = { expandedSchedule = !expandedSchedule }
                 ) {
-                    if (schedules.value.isEmpty()) {
+                    if (schedules.isEmpty()) {
                         Text(
                             text = "No alarms yet.",
                             style = MaterialTheme.typography.bodyMedium
                         )
                     } else {
                         Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                            schedules.value.forEachIndexed { index, schedule ->
+                            schedules.forEachIndexed { index, schedule ->
                                 ScheduleListItem(
                                     schedule = schedule,
                                     index = index,
@@ -281,9 +282,7 @@ fun WorkoutForm(
                                         showScheduleDialog.value = true
                                     },
                                     onDelete = {
-                                        val updated = schedules.value.toMutableList()
-                                        updated.removeAt(index)
-                                        schedules.value = updated
+                                        schedules.removeAt(index)
                                     }
                                 )
                             }
@@ -354,10 +353,10 @@ fun WorkoutForm(
                                 order = workout?.order ?: 0,
                                 timesCompletedInAWeek = timesCompletedInAWeekState.value.toIntOrNull(),
                                 globalId = newGlobalId,
-                                type = selectedWorkoutType.value,
+                                type = selectedWorkoutType.intValue,
                                 workoutPlanId = workoutPlanId ?: workout?.workoutPlanId
                             )
-                            onWorkoutUpsert(newWorkout, schedules.value)
+                            onWorkoutUpsert(newWorkout, schedules.toList())
                         },
                         enabled = canBeSaved && !isSaving,
                         modifier = Modifier.weight(1f)
@@ -394,13 +393,11 @@ fun WorkoutForm(
         ScheduleDialog(
             schedule = currentEditingSchedule.value,
             workoutId = newGlobalId,
-            existingSchedules = schedules.value,
+            existingSchedules = schedules.toList(),
             onDismiss = { showScheduleDialog.value = false },
             onSave = { newSchedule ->
-                val updated = schedules.value.toMutableList()
-                val idx = updated.indexOfFirst { it.id == newSchedule.id }
-                if (idx >= 0) updated[idx] = newSchedule else updated.add(newSchedule)
-                schedules.value = updated
+                val idx = schedules.indexOfFirst { it.id == newSchedule.id }
+                if (idx >= 0) schedules[idx] = newSchedule else schedules.add(newSchedule)
                 showScheduleDialog.value = false
             }
         )
@@ -409,12 +406,10 @@ fun WorkoutForm(
     if (showBatchScheduleDialog.value) {
         BatchScheduleDialog(
             workoutId = newGlobalId,
-            existingSchedules = schedules.value,
+            existingSchedules = schedules.toList(),
             onDismiss = { showBatchScheduleDialog.value = false },
             onSave = { newSchedules ->
-                val updated = schedules.value.toMutableList()
-                updated.addAll(newSchedules)
-                schedules.value = updated
+                schedules.addAll(newSchedules)
                 showBatchScheduleDialog.value = false
             }
         )
@@ -784,7 +779,7 @@ fun BatchScheduleDialog(
     onSave: (List<WorkoutSchedule>) -> Unit
 ) {
     val context = LocalContext.current
-    val selectedTabIndex = rememberSaveable { mutableStateOf(0) }
+    val selectedTabIndex = rememberSaveable { mutableIntStateOf(0) }
 
     val labelPrefixState = rememberSaveable { mutableStateOf("Schedule") }
     val isEnabledState = rememberSaveable { mutableStateOf(true) }
@@ -816,8 +811,8 @@ fun BatchScheduleDialog(
             ) {
                 SwipeableTabs(
                     tabTitles = listOf("One-time", "Recurring"),
-                    selectedTabIndex = selectedTabIndex.value,
-                    onTabSelected = { selectedTabIndex.value = it },
+                    selectedTabIndex = selectedTabIndex.intValue,
+                    onTabSelected = { selectedTabIndex.intValue = it },
                     containerColor = Color.Transparent,
                     contentColor = MaterialTheme.colorScheme.onBackground,
                     selectedContentColor = MaterialTheme.colorScheme.primary,
@@ -902,7 +897,7 @@ fun BatchScheduleDialog(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Spacer(Modifier.height(Spacing.lg))
 
-                if (selectedTabIndex.value == 0) {
+                if (selectedTabIndex.intValue == 0) {
                     val date = datePickerState.selectedDateMillis?.let {
                         Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate()
                     } ?: LocalDate.now()
@@ -957,7 +952,7 @@ fun BatchScheduleDialog(
             while (t <= endTotal) {
                 val hour = t / 60
                 val minute = t % 60
-                val specificDate = if (selectedTabIndex.value == 0) {
+                val specificDate = if (selectedTabIndex.intValue == 0) {
                     datePickerState.selectedDateMillis?.let {
                         Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate()
                     }
@@ -971,7 +966,7 @@ fun BatchScheduleDialog(
                         hour = hour,
                         minute = minute,
                         isEnabled = isEnabledState.value,
-                        daysOfWeek = if (selectedTabIndex.value == 1) daysOfWeekState.intValue else 0,
+                        daysOfWeek = if (selectedTabIndex.intValue == 1) daysOfWeekState.intValue else 0,
                         specificDate = specificDate,
                         hasExecuted = false
                     )

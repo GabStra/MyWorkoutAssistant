@@ -13,6 +13,10 @@ val MediumLightGray = Color(120, 120, 120)
 
 val DisabledContentGray = Color(100, 100, 100)
 
+// Quiet tier for captions, hints and empty states: one visible step below the
+// primary text colors (225) while staying AA-compliant on every surface.
+val TertiaryTextGray = Color(196, 196, 196)
+
 val MediumLighterGray = Color(150, 150, 150)
 
 val LightGray = Color(180, 180, 180)

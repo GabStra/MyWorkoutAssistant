@@ -158,7 +158,6 @@ class WorkoutAlarmActivity : ComponentActivity() {
 
     private fun startWorkoutAndDismiss() {
         val i = Intent(this, MainActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             putExtra("WORKOUT_ID", intent.getStringExtra("WORKOUT_ID"))
             putExtra("SCHEDULE_ID", intent.getStringExtra("SCHEDULE_ID"))
         }
@@ -172,7 +171,6 @@ class WorkoutAlarmActivity : ComponentActivity() {
             Toast.makeText(this, "Reminder dismissed.", Toast.LENGTH_SHORT).show()
         }
         finishAndRemoveTask()
-        overridePendingTransition(0, 0)
     }
 
     // ---- helpers ----

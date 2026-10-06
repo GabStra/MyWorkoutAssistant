@@ -7,4 +7,6 @@
 -keep class androidx.test.uiautomator.** { *; }
 -keep class org.junit.** { *; }
 -keep class junit.** { *; }
+-keep class kotlin.** { *; }
+-keep class kotlin.jvm.** { *; }
 -keep class com.gabstra.myworkoutassistant.e2e.** { *; }

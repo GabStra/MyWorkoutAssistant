@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.runtime.Composable
+import com.gabstra.myworkoutassistant.presentation.theme.tertiaryContent
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.wear.compose.material3.MaterialTheme
@@ -17,7 +18,7 @@ fun WorkoutStepIndicatorText(
         text = stepLabel,
         modifier = modifier,
         style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        color = MaterialTheme.colorScheme.tertiaryContent,
         textAlign = TextAlign.Center,
     )
 }

@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
+import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -29,6 +30,7 @@ fun EnduranceSetForm(
     onSetUpsert: (Set) -> Unit,
     onCancel: () -> Unit,
     enduranceSet: EnduranceSet? = null,
+    equipment: WeightLoadedEquipment? = null,
 ) {
 
     val autoStartState = remember { mutableStateOf(enduranceSet?.autoStart ?: false) }
@@ -36,6 +38,7 @@ fun EnduranceSetForm(
     val shouldReapplyHistoryState = remember {
         mutableStateOf(enduranceSet?.shouldReapplyHistoryToSet ?: true)
     }
+    val targetWeightState = remember { mutableStateOf(enduranceSet?.targetWeight) }
 
     val hms = remember { mutableStateOf(TimeConverter.secondsToHms(enduranceSet?.timeInMillis?.div(1000) ?: 0)) }
     val (hours, minutes, seconds) = hms.value
@@ -95,6 +98,12 @@ fun EnduranceSetForm(
             Text(text = "Auto stop")
         }
 
+        TimedSetLoadField(
+            equipment = equipment,
+            selectedWeight = targetWeightState.value,
+            onWeightSelected = { targetWeightState.value = it },
+        )
+
         SetHistoryReapplySetting(
             checked = shouldReapplyHistoryState.value,
             onCheckedChange = { shouldReapplyHistoryState.value = it },
@@ -123,7 +132,8 @@ fun EnduranceSetForm(
                         timeInMillis = TimeConverter.hmsToTotalSeconds(hours, minutes, seconds) * 1000,
                         autoStart = autoStartState.value,
                         autoStop = autoStopState.value,
-                        shouldReapplyHistoryToSet = shouldReapplyHistoryState.value
+                        shouldReapplyHistoryToSet = shouldReapplyHistoryState.value,
+                        targetWeight = targetWeightState.value,
                     )
 
                     onSetUpsert(newEnduranceSet)

@@ -248,6 +248,48 @@ def validate_equipment_references(exercise, equipment_ids, accessory_ids=None):
     return True, None
 
 
+def validate_equipment_exercise_type_compatibility(exercise, equipment_dict):
+    """Validate the same primary-equipment compatibility enforced by the apps."""
+    equipment_id = exercise.get("equipmentId")
+    if equipment_id is None:
+        return True, None
+
+    equipment = equipment_dict.get(equipment_id) if isinstance(equipment_dict, dict) else None
+    if not equipment:
+        return True, None  # Missing references are reported separately.
+
+    exercise_type = exercise.get("exerciseType")
+    equipment_type = str(equipment.get("type", "")).upper()
+    if equipment_type == "CARDIO_MACHINE":
+        compatible = exercise_type in {"COUNTUP", "COUNTDOWN"}
+    elif equipment_type == "ACCESSORY":
+        compatible = False
+    else:
+        compatible = exercise_type in {"WEIGHT", "BODY_WEIGHT", "COUNTUP", "COUNTDOWN"}
+    if compatible:
+        return True, None
+
+    return False, (
+        f"Exercise '{exercise.get('name', 'Unknown')}' cannot use equipmentId "
+        f"'{equipment_id}' of type '{equipment_type}' with exerciseType '{exercise_type}'."
+    )
+
+
+def _is_calibration_placeholder_load(exercise, set_item):
+    if set_item.get("subCategory") == "CalibrationPendingSet":
+        return True
+    if not exercise.get("requiresLoadCalibration"):
+        return False
+
+    exercise_type = exercise.get("exerciseType")
+    set_type = set_item.get("type")
+    return (
+        (exercise_type == "WEIGHT" and set_type == "WeightSet" and set_item.get("weight") == 0)
+        or
+        (exercise_type == "BODY_WEIGHT" and set_type == "BodyWeightSet" and set_item.get("additionalWeight") == 0)
+    )
+
+
 def validate_equipment_weight_combinations(exercise, equipment_dict):
     """
     Validate that WeightSet weights and BodyWeightSet additionalWeight values
@@ -270,7 +312,7 @@ def validate_equipment_weight_combinations(exercise, equipment_dict):
     if equipment_id is None:
         return True, None, []
     
-    if exercise_type not in ["WEIGHT", "BODY_WEIGHT"]:
+    if exercise_type not in ["WEIGHT", "BODY_WEIGHT", "COUNTUP", "COUNTDOWN"]:
         return True, None, []
     
     # Get equipment
@@ -301,6 +343,8 @@ def validate_equipment_weight_combinations(exercise, equipment_dict):
     
     for set_index, set_item in enumerate(sets):
         set_type = set_item.get("type")
+        if _is_calibration_placeholder_load(exercise, set_item):
+            continue
         
         if exercise_type == "WEIGHT" and set_type == "WeightSet":
             weight = set_item.get("weight", 0.0)
@@ -315,6 +359,14 @@ def validate_equipment_weight_combinations(exercise, equipment_dict):
             is_valid = any(abs(additional_weight - valid_weight) < EPSILON for valid_weight in valid_combinations)
             if not is_valid:
                 invalid_weights.append((set_index, additional_weight, "BodyWeightSet"))
+
+        elif exercise_type in {"COUNTUP", "COUNTDOWN"} and set_type in {"EnduranceSet", "TimedDurationSet"}:
+            target_weight = set_item.get("targetWeight")
+            if target_weight is None:
+                continue
+            is_valid = any(abs(target_weight - valid_weight) < EPSILON for valid_weight in valid_combinations)
+            if not is_valid:
+                invalid_weights.append((set_index, target_weight, set_type))
     
     if invalid_weights:
         # Build error message
@@ -362,7 +414,7 @@ def fix_equipment_weights(exercise, equipment_dict):
     equipment_id = exercise.get("equipmentId")
     exercise_type = exercise.get("exerciseType")
     
-    if equipment_id is None or exercise_type not in ["WEIGHT", "BODY_WEIGHT"]:
+    if equipment_id is None or exercise_type not in ["WEIGHT", "BODY_WEIGHT", "COUNTUP", "COUNTDOWN"]:
         return []
     
     # Get equipment
@@ -398,6 +450,8 @@ def fix_equipment_weights(exercise, equipment_dict):
     
     for set_index, set_item in enumerate(sets):
         set_type = set_item.get("type")
+        if _is_calibration_placeholder_load(exercise, set_item):
+            continue
         
         if exercise_type == "WEIGHT" and set_type == "WeightSet":
             weight = set_item.get("weight", 0.0)
@@ -423,6 +477,20 @@ def fix_equipment_weights(exercise, equipment_dict):
                     exercise_name = exercise.get("name", "Unknown")
                     fixes_applied.append(
                         f"Exercise '{exercise_name}' Set {set_index}: Fixed additionalWeight from {additional_weight}kg to {closest_valid}kg"
+                    )
+
+        elif exercise_type in {"COUNTUP", "COUNTDOWN"} and set_type in {"EnduranceSet", "TimedDurationSet"}:
+            target_weight = set_item.get("targetWeight")
+            if target_weight is None:
+                continue
+            is_valid = any(abs(target_weight - valid_weight) < EPSILON for valid_weight in valid_combinations)
+            if not is_valid:
+                closest_valid = find_closest_valid_weight(target_weight)
+                if closest_valid is not None:
+                    set_item["targetWeight"] = closest_valid
+                    exercise_name = exercise.get("name", "Unknown")
+                    fixes_applied.append(
+                        f"Exercise '{exercise_name}' Set {set_index}: Fixed targetWeight from {target_weight}kg to {closest_valid}kg"
                     )
     
     return fixes_applied
@@ -453,7 +521,7 @@ def _has_complete_explicit_work_set_loads(exercise):
     return False
 
 
-def apply_requires_load_calibration_policy(exercise, allow_educated_load_guesses=False):
+def apply_requires_load_calibration_policy(exercise, allow_educated_load_guesses=True):
     """Set requiresLoadCalibration deterministically from generator policy and exercise data."""
     if not isinstance(exercise, dict):
         return exercise
@@ -630,7 +698,7 @@ def finalize_and_validate_exercise_definition(
     equipment_subset=None,
     accessory_subset=None,
     all_equipment_candidates=None,
-    allow_educated_load_guesses=False,
+    allow_educated_load_guesses=True,
 ):
     """
     Finalize one emitted exercise and validate it before adding it to exercise_definitions.
@@ -694,6 +762,7 @@ def finalize_and_validate_exercise_definition(
         validate_reps_for_exercise_type(exercise),
         validate_muscle_groups(exercise),
         validate_equipment_references(exercise, equipment_ids, accessory_ids),
+        validate_equipment_exercise_type_compatibility(exercise, equipment_by_id),
     ]
     for is_valid, error in checks:
         if not is_valid and error:
@@ -961,6 +1030,7 @@ def get_selectable_weights_for_exercise(exercise_type, equipment):
     Shared/mobile parity:
     - WEIGHT exercises use equipment.getWeightsCombinations().
     - BODY_WEIGHT exercises with equipment use the same set plus 0.0 additional load.
+    - COUNTUP/COUNTDOWN externally loaded exercises use the equipment combinations.
     """
     valid_combinations = set(calculate_equipment_weight_combinations(equipment))
     if exercise_type == "BODY_WEIGHT":
@@ -1023,6 +1093,10 @@ def format_planner_equipment_context(equipment_list, accessory_list=None):
             eq_type = eq.get("type", "").upper()
             lines.append(f"{eq_id} ({eq_name}, {eq_type})")
             lines.append("  - Use only as equipmentId, never as requiredAccessoryEquipmentIds.")
+            if eq_type == "CARDIO_MACHINE":
+                lines.append("  - Compatible exercise types: COUNTUP, COUNTDOWN only.")
+            else:
+                lines.append("  - Compatible exercise types: WEIGHT, BODY_WEIGHT only.")
             selectable_loads = calculate_equipment_weight_combinations(eq)
             if selectable_loads:
                 sorted_loads = sorted(selectable_loads)
@@ -1220,115 +1294,10 @@ def create_placeholder_schema():
     return placeholder_schema
 
 
-def _rewrite_string_id(value: Any, id_map: Dict[str, str]) -> Any:
-    if isinstance(value, str) and value in id_map:
-        return id_map[value]
-    return value
 
 
-def canonicalize_plan_index_placeholders(plan_index: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Rewrite plan-level placeholders to canonical numeric forms.
-
-    Canonical forms:
-    - EQUIPMENT_<n>
-    - ACCESSORY_<n>
-    - EXERCISE_<n> / EXERCISE_WARMUP
-    - WORKOUT_<n>
-    """
-    if not isinstance(plan_index, dict):
-        return plan_index
-
-    canonical = copy.deepcopy(plan_index)
-    id_map: Dict[str, str] = {}
-
-    equipments = canonical.get("equipments", []) or []
-    for idx, item in enumerate(equipments):
-        if isinstance(item, dict) and item.get("id"):
-            new_id = f"EQUIPMENT_{idx}"
-            if item["id"] != new_id:
-                id_map[item["id"]] = new_id
-            item["id"] = new_id
-
-    accessories = canonical.get("accessoryEquipments", []) or []
-    for idx, item in enumerate(accessories):
-        if isinstance(item, dict) and item.get("id"):
-            new_id = f"ACCESSORY_{idx}"
-            if item["id"] != new_id:
-                id_map[item["id"]] = new_id
-            item["id"] = new_id
-
-    exercises = canonical.get("exercises", []) or []
-    exercise_counter = 0
-    for item in exercises:
-        if not isinstance(item, dict) or not item.get("id"):
-            continue
-        if item["id"] == "EXERCISE_WARMUP":
-            continue
-        new_id = f"EXERCISE_{exercise_counter}"
-        exercise_counter += 1
-        if item["id"] != new_id:
-            id_map[item["id"]] = new_id
-        item["id"] = new_id
-
-    workouts = canonical.get("workouts", []) or []
-    for idx, item in enumerate(workouts):
-        if isinstance(item, dict) and item.get("id"):
-            new_id = f"WORKOUT_{idx}"
-            if item["id"] != new_id:
-                id_map[item["id"]] = new_id
-            item["id"] = new_id
-
-    for ex in exercises:
-        if not isinstance(ex, dict):
-            continue
-        if "equipmentId" in ex:
-            ex["equipmentId"] = _rewrite_string_id(ex.get("equipmentId"), id_map)
-        if isinstance(ex.get("requiredAccessoryEquipmentIds"), list):
-            ex["requiredAccessoryEquipmentIds"] = [
-                _rewrite_string_id(item, id_map) for item in ex.get("requiredAccessoryEquipmentIds", [])
-            ]
-
-    for wo in workouts:
-        if not isinstance(wo, dict):
-            continue
-        if isinstance(wo.get("exerciseIds"), list):
-            wo["exerciseIds"] = [_rewrite_string_id(item, id_map) for item in wo.get("exerciseIds", [])]
-
-    return canonical
 
 
-def canonicalize_exercise_definition_placeholders(
-    exercise: Dict[str, Any],
-    exercise_id: str,
-    next_set_index: int = 0,
-) -> tuple[Dict[str, Any], int]:
-    """
-    Enforce canonical placeholder IDs inside one emitted exercise definition.
-
-    The exercise id is forced to the requested `exercise_id`. Set ids are rewritten
-    sequentially as SET_<n>, except the reserved warm-up case which uses SET_WARMUP.
-    """
-    if not isinstance(exercise, dict):
-        return exercise, next_set_index
-
-    canonical = copy.deepcopy(exercise)
-    canonical["id"] = exercise_id
-
-    sets = canonical.get("sets")
-    if not isinstance(sets, list):
-        return canonical, next_set_index
-
-    for idx, set_item in enumerate(sets):
-        if not isinstance(set_item, dict):
-            continue
-        if exercise_id == "EXERCISE_WARMUP" and idx == 0:
-            set_item["id"] = "SET_WARMUP"
-        else:
-            set_item["id"] = f"SET_{next_set_index}"
-            next_set_index += 1
-
-    return canonical, next_set_index
 
 
 def ensure_unique_ids(workout_store):
@@ -1373,6 +1342,23 @@ def ensure_unique_ids(workout_store):
                     component["id"] = str(uuid.uuid4())
                 seen_ids.add(component["id"])
 
+            if component.get("type") == "Superset":
+                rewritten_rest_keys = {}
+                rest_map = component.get("restSecondsByExercise") or {}
+                for exercise in component.get("exercises", []):
+                    if not isinstance(exercise, dict):
+                        continue
+                    old_id = exercise.get("id")
+                    new_id = old_id
+                    if not new_id or new_id in seen_ids:
+                        new_id = str(uuid.uuid4())
+                        exercise["id"] = new_id
+                    seen_ids.add(new_id)
+                    if old_id in rest_map:
+                        rewritten_rest_keys[new_id] = rest_map[old_id]
+                if rewritten_rest_keys:
+                    component["restSecondsByExercise"] = rewritten_rest_keys
+
     # Third pass: Check set IDs within exercises (including exercises within supersets)
     for workout in workout_store.get("workouts", []):
         if not isinstance(workout, dict):
@@ -1405,6 +1391,165 @@ def _dedupe_sets_in_exercise(exercise, seen_ids):
         if not set_id or set_id in seen_ids:
             set_item["id"] = str(uuid.uuid4())
         seen_ids.add(set_item["id"])
+
+
+DEFINITION_OWNED_FIELDS = (
+    "name",
+    "exerciseType",
+    "equipmentId",
+    "bodyWeightPercentage",
+    "muscleGroups",
+    "secondaryMuscleGroups",
+    "requiredAccessoryEquipmentIds",
+    "exerciseCategory",
+    "movementRef",
+)
+
+
+def build_exercise_definition_id(definition):
+    """Return the deterministic schema-v2 ID for definition-owned content."""
+    content = {
+        key: copy.deepcopy(value)
+        for key, value in definition.items()
+        if key != "id"
+    }
+    stable_content = json.dumps(content, sort_keys=True, separators=(",", ":"))
+    return str(
+        uuid.uuid5(uuid.NAMESPACE_URL, f"mwa-exercise-definition-v2:{stable_content}")
+    )
+
+
+def apply_exercise_library_schema_v2(
+    workout_package,
+    supplied_definitions=None,
+    supplied_exercise_movements=None,
+):
+    """Materialize schema-v2 definitions and link every independent prescription.
+
+    Exercise components remain fully materialized for legacy app readers. Definition identity is
+    movement/name + exercise type + equipment; programming fields and component IDs remain local
+    to each occurrence, which permits periodized prescriptions of one shared movement.
+    """
+    if not isinstance(workout_package, dict):
+        raise ValueError("Workout package must be an object")
+
+    supplied_by_id = {}
+    for raw_definition in supplied_definitions or []:
+        if not isinstance(raw_definition, dict) or not raw_definition.get("id"):
+            raise ValueError("Every supplied exercise definition must have an id")
+        definition = copy.deepcopy(raw_definition)
+        definition.pop("instructions", None)
+        definition.pop("instructionEquipmentIds", None)
+        existing = supplied_by_id.get(definition["id"])
+        if existing is not None and existing != definition:
+            raise ValueError(
+                f"Conflicting content for exercise definition id {definition['id']}"
+            )
+        supplied_by_id[definition["id"]] = definition
+
+    def identity_key(value):
+        movement_ref = value.get("movementRef")
+        movement_identity = (
+            json.dumps(movement_ref, sort_keys=True, separators=(",", ":"))
+            if movement_ref is not None
+            else str(value.get("name") or "").strip().casefold()
+        )
+        return (
+            movement_identity,
+            value.get("exerciseType"),
+            value.get("equipmentId"),
+        )
+
+    supplied_by_identity = {}
+    for definition in supplied_by_id.values():
+        key = identity_key(definition)
+        existing = supplied_by_identity.get(key)
+        if existing is not None and existing != definition:
+            raise ValueError(
+                "Exercise library contains multiple definitions for the same movement, type, "
+                "and equipment"
+            )
+        supplied_by_identity[key] = definition
+
+    canonical_by_identity = {}
+
+    def generated_definition(exercise):
+        definition = {
+            "name": exercise.get("name", ""),
+        }
+        for field in DEFINITION_OWNED_FIELDS:
+            if field != "name" and field in exercise:
+                definition[field] = copy.deepcopy(exercise[field])
+        definition["id"] = build_exercise_definition_id(definition)
+        return definition
+
+    def link_prescription(exercise):
+        if not isinstance(exercise, dict) or exercise.get("type") != "Exercise":
+            return
+        key = identity_key(exercise)
+        definition = canonical_by_identity.get(key)
+        if definition is None:
+            definition = copy.deepcopy(supplied_by_identity.get(key) or generated_definition(exercise))
+            canonical_by_identity[key] = definition
+
+        exercise["exerciseDefinitionId"] = definition["id"]
+        exercise["placementNotes"] = exercise.get("placementNotes") or exercise.get("notes") or ""
+        for field in DEFINITION_OWNED_FIELDS:
+            if field in definition:
+                exercise[field] = copy.deepcopy(definition[field])
+            else:
+                exercise.pop(field, None)
+
+    for workout in workout_package.get("workouts", []) or []:
+        for component in workout.get("workoutComponents", []) or []:
+            if not isinstance(component, dict):
+                continue
+            if component.get("type") == "Exercise":
+                link_prescription(component)
+            elif component.get("type") == "Superset":
+                for exercise in component.get("exercises", []) or []:
+                    link_prescription(exercise)
+
+    definitions = list(canonical_by_identity.values())
+    referenced_ids = {
+        exercise.get("exerciseDefinitionId")
+        for exercise in _iter_exercise_components(workout_package)
+    }
+    if None in referenced_ids or referenced_ids != {definition["id"] for definition in definitions}:
+        raise ValueError("Generated exercise definition references are incomplete")
+
+    workout_package["schemaVersion"] = 2
+    workout_package["exerciseDefinitions"] = definitions
+    referenced_movement_refs = {
+        json.dumps(definition.get("movementRef"), sort_keys=True, separators=(",", ":"))
+        for definition in definitions
+        if definition.get("movementRef") is not None
+    }
+    movement_backups = supplied_exercise_movements
+    if movement_backups is None:
+        movement_backups = workout_package.get("exerciseMovements", [])
+    workout_package["exerciseMovements"] = [
+        copy.deepcopy(backup)
+        for backup in movement_backups or []
+        if isinstance(backup, dict)
+        and json.dumps(backup.get("movementRef"), sort_keys=True, separators=(",", ":"))
+        in referenced_movement_refs
+    ]
+    return workout_package
+
+
+def _iter_exercise_components(workout_package):
+    for workout in workout_package.get("workouts", []) or []:
+        for component in workout.get("workoutComponents", []) or []:
+            if not isinstance(component, dict):
+                continue
+            if component.get("type") == "Exercise":
+                yield component
+            elif component.get("type") == "Superset":
+                yield from (
+                    exercise for exercise in component.get("exercises", []) or []
+                    if isinstance(exercise, dict)
+                )
 
 
 def convert_placeholders_to_uuids(placeholder_workout_store, id_manager, validate_final=True, logger=None):
@@ -1477,12 +1622,12 @@ def remove_none_from_workout_components(workout_store, logger=None):
     return workout_store
 
 
-def ensure_requiresLoadCalibration(workout_store, allow_educated_load_guesses=False):
+def ensure_requiresLoadCalibration(workout_store, allow_educated_load_guesses=True):
     """
     Ensure all exercises have a boolean requiresLoadCalibration value.
-    Default behavior is strict calibration for load-based exercises. When
-    allow_educated_load_guesses=True, preserve explicit false values and only
-    backfill missing ones.
+    By default, complete emitted work-set loads are accepted as educated starting loads and
+    calibration is required only when those loads are unavailable. Pass
+    allow_educated_load_guesses=False to require strict calibration for every loaded exercise.
     
     Args:
         workout_store: WorkoutStore dict (may be modified in place)
@@ -1648,6 +1793,11 @@ def assemble_placeholder_workout_store(equipment_items, accessory_items, exercis
                 exercise_ids_placeholder = component_spec.get("exerciseIds", [])
                 superset_exercises = []
                 rest_seconds_by_exercise = {}
+                emitted_rest_map = component_spec.get("restSecondsByExercise")
+                if not isinstance(emitted_rest_map, dict) or set(emitted_rest_map) != set(exercise_ids_placeholder):
+                    raise ValueError(
+                        "Superset restSecondsByExercise must contain exactly one entry for every exerciseId"
+                    )
 
                 for ex_id_placeholder in exercise_ids_placeholder:
                     if ex_id_placeholder in exercise_definitions:
@@ -1659,7 +1809,12 @@ def assemble_placeholder_workout_store(equipment_items, accessory_items, exercis
                         strip_rep_range_fields_for_timed_exercises(exercise)
                         superset_exercises.append(exercise)
                         # Map the placeholder ID to rest seconds
-                        rest_seconds_by_exercise[ex_id_placeholder] = component_spec.get("restSecondsByExercise", {}).get(ex_id_placeholder, 60)
+                        rest_seconds = emitted_rest_map[ex_id_placeholder]
+                        if not isinstance(rest_seconds, int) or isinstance(rest_seconds, bool) or rest_seconds < 0:
+                            raise ValueError(
+                                f"Superset rest after {ex_id_placeholder} must be a non-negative integer"
+                            )
+                        rest_seconds_by_exercise[ex_id_placeholder] = rest_seconds
 
                 # Only create Superset if it has at least one exercise
                 if superset_exercises:
@@ -1854,7 +2009,7 @@ def fix_set_errors(sets):
     return fixed
 
 
-def fix_exercise_errors(exercises, allow_educated_load_guesses=False):
+def fix_exercise_errors(exercises, allow_educated_load_guesses=True):
     """Fix common exercise errors including muscle groups and sets."""
     if not isinstance(exercises, list):
         return exercises
@@ -2016,6 +2171,8 @@ def sync_plan_owned_exercise_fields(exercise, plan_entry):
         return exercise
 
     fields_to_sync = [
+        "name",
+        "nameOverride",
         "exerciseType",
         "equipmentId",
         "bodyWeightPercentage",
@@ -2843,7 +3000,7 @@ def EquipmentItem(equipment_dict):
         dict: Equipment item with placeholder ID
     """
     # Validate it's one of the equipment types
-    valid_types = ["BARBELL", "DUMBBELLS", "DUMBBELL", "PLATELOADEDCABLE", "WEIGHTVEST", "MACHINE", "ACCESSORY"]
+    valid_types = ["BARBELL", "DUMBBELLS", "DUMBBELL", "PLATELOADEDCABLE", "WEIGHTVEST", "MACHINE", "CARDIO_MACHINE", "ACCESSORY"]
     eq_type = equipment_dict.get("type", "")
     if eq_type not in valid_types:
         raise ValueError(f"Invalid equipment type: {eq_type}")

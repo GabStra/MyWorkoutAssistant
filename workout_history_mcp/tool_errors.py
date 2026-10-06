@@ -39,11 +39,19 @@ class ToolFailure:
     def from_load_exception(exc: BaseException, backup_path: Path) -> ToolFailure:
         shown = str(backup_path)
         if isinstance(exc, FileNotFoundError):
+            if "MYWORKOUT_BACKUP_PATH is not set" in str(exc):
+                return ToolFailure(
+                    message="Backup path is not configured: MYWORKOUT_BACKUP_PATH is not set.",
+                    hint=(
+                        "Set MYWORKOUT_BACKUP_PATH to the absolute path of your AppBackup JSON, "
+                        "or run scripts/setup_workout_history_mcp.ps1 with -BackupPath."
+                    ),
+                )
             return ToolFailure(
                 message=f"Backup file not found: {shown}",
                 hint=(
                     "Set environment variable MYWORKOUT_BACKUP_PATH to the absolute path of your AppBackup JSON, "
-                    "or place merged_workout_store_backup.json at the repository root."
+                    "or run scripts/setup_workout_history_mcp.ps1 with -BackupPath."
                 ),
             )
         if isinstance(exc, json.JSONDecodeError):
