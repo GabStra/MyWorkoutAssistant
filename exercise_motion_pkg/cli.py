@@ -325,6 +325,19 @@ def build_parser() -> argparse.ArgumentParser:
     detect.add_argument("--llama-cpp-image-max-tokens", type=int, default=DEFAULT_LLAMA_CPP_IMAGE_MAX_TOKENS)
     detect.add_argument("--base-url", default="http://127.0.0.1:8090")
     detect.add_argument("--model", default="local-vision")
+    detect.add_argument(
+        "--visual-decision-backend",
+        choices=("qwen-chat", "clef-systemone"),
+        default="clef-systemone",
+        help="Backend for the optional comparative candidate-window choice.",
+    )
+    detect.add_argument("--clef-systemone-base-url", default="http://127.0.0.1:8091")
+    detect.add_argument("--clef-systemone-model", default="ggml-org/Clef-Flash-GGUF:Q4_K_M")
+    detect.add_argument(
+        "--comparative-selection",
+        action="store_true",
+        help="Use the selected visual-decision backend to break close candidate-window ties.",
+    )
     detect.add_argument("--litert-command")
     detect.add_argument("--litert-backend", default="gpu")
     detect.add_argument("--window-seconds", type=float, default=5.0)
@@ -826,6 +839,11 @@ def build_parser() -> argparse.ArgumentParser:
     bake_and_rank.add_argument("--segment-window-seconds", type=float)
     bake_and_rank.add_argument("--segment-overlap-seconds", type=float)
     bake_and_rank.add_argument("--segment-frames-per-window", type=int)
+    bake_and_rank.add_argument(
+        "--comparative-segment-selection",
+        action="store_true",
+        help="After detection, compare near-tied candidate windows with the selected visual-decision backend.",
+    )
     bake_and_rank.add_argument("--segment-confidence-threshold", type=float, default=0.45)
     bake_and_rank.add_argument("--segment-padding-seconds", type=float, default=0.35)
     bake_and_rank.add_argument("--segment-end-padding-seconds", type=float, default=0.35)
@@ -951,6 +969,31 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=DEFAULT_FINAL_OUTPUT_VALIDATION_MIN_SCORE,
         help="Minimum final-output validator score required for automatic acceptance.",
+    )
+    bake_and_rank.add_argument(
+        "--visual-decision-backend",
+        choices=("qwen-chat", "clef-systemone"),
+        default="clef-systemone",
+        help=(
+            "Backend for bounded source and support decisions outside final preview review. "
+            "Qwen remains responsible for free-form reasoning, scorecards, and exact timing."
+        ),
+    )
+    bake_and_rank.add_argument(
+        "--final-output-review-backend",
+        choices=("qwen-chat", "clef-systemone"),
+        default="clef-systemone",
+        help="Backend for the advisory review of the final rendered preview.",
+    )
+    bake_and_rank.add_argument(
+        "--clef-systemone-base-url",
+        default="http://127.0.0.1:8091",
+        help="Local Clef llama.cpp endpoint; typed visual decisions start and stop its server on demand.",
+    )
+    bake_and_rank.add_argument(
+        "--clef-systemone-model",
+        default="ggml-org/Clef-Flash-GGUF:Q4_K_M",
+        help="Model id served at --clef-systemone-base-url.",
     )
     bake_and_rank.add_argument("--no-classify-support-dominance", action="store_true")
     bake_and_rank.add_argument("--llama-cpp-base-url", default="http://127.0.0.1:8090")
@@ -1338,6 +1381,7 @@ def build_bake_and_rank_request(args: argparse.Namespace) -> BakeAndRankRequest:
             args.final_output_validation and not args.skip_final_output_validation
         ),
         "two_scale_source_validation": args.two_scale_source_validation,
+        "comparative_segment_selection_enabled": args.comparative_segment_selection,
         "motion_tuning_enabled": not args.skip_motion_tuning,
         "structural_refinement_enabled": not args.skip_structural_refinement,
         "structural_refinement_vertical_only": args.structural_refinement_vertical_only,
@@ -1548,6 +1592,10 @@ def main() -> None:
             raise ValueError("--llama-cpp-n-predict must be greater than 0.")
         if args.fast_segment_profile:
             settings = DetectionSettings(
+                visual_decision_backend=args.visual_decision_backend,
+                clef_systemone_base_url=args.clef_systemone_base_url,
+                clef_systemone_model=args.clef_systemone_model,
+                comparative_selection_enabled=args.comparative_selection,
                 llama_cpp_backend=args.llama_cpp_backend,
                 llama_cpp_n_predict=args.llama_cpp_n_predict,
                 llama_cpp_temperature=args.llama_cpp_temperature,
@@ -1585,6 +1633,10 @@ def main() -> None:
             )
         else:
             settings = DetectionSettings(
+                visual_decision_backend=args.visual_decision_backend,
+                clef_systemone_base_url=args.clef_systemone_base_url,
+                clef_systemone_model=args.clef_systemone_model,
+                comparative_selection_enabled=args.comparative_selection,
                 llama_cpp_backend=args.llama_cpp_backend,
                 llama_cpp_n_predict=args.llama_cpp_n_predict,
                 llama_cpp_temperature=args.llama_cpp_temperature,

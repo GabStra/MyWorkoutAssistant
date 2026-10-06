@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import re
 import subprocess
 import threading
@@ -35,10 +36,21 @@ from exercise_motion_pkg.youtube import sanitize_video_for_processing
 from exercise_motion_pkg.video_utils import read_basic_video_metadata
 
 
+LOGGER = logging.getLogger(__name__)
+
+
 @dataclass(frozen=True)
 class DetectionSettings:
     base_url: str = "http://127.0.0.1:8090"
     model: str = "local-vision"
+    visual_decision_backend: str = "clef-systemone"
+    clef_systemone_base_url: str = "http://127.0.0.1:8091"
+    clef_systemone_model: str = "ggml-org/Clef-Flash-GGUF:Q4_K_M"
+    clef_gpu_exclusive_runner: Callable[[Callable[[], object]], object] | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
     litert_command: str | None = None
     litert_backend: str = "gpu"
     llama_cpp_backend: str = "gpu"
@@ -520,8 +532,51 @@ def classify_support_dominance_from_frames(
     *,
     frame_paths: list[Path],
     exercise_name: str | None,
-    caption_images: Callable[[list[Path], str], str],
+    caption_images: Callable[[list[Path], str], str] | None,
+    visual_decision_backend: str = "clef-systemone",
+    clef_systemone_base_url: str = "http://127.0.0.1:8091",
+    clef_systemone_model: str = "ggml-org/Clef-Flash-GGUF:Q4_K_M",
+    clef_conflicting_base_urls: tuple[str | None, ...] = (),
+    timeout_seconds: float = 90.0,
 ) -> SupportDominanceResult:
+    if visual_decision_backend == "clef-systemone":
+        from .clef_systemone import request_support_dominance_decision, run_clef_visual_decision_exclusively
+
+        result = run_clef_visual_decision_exclusively(
+            base_url=clef_systemone_base_url,
+            caption_source=caption_images,
+            conflicting_base_urls=clef_conflicting_base_urls,
+            operation=lambda: request_support_dominance_decision(
+                base_url=clef_systemone_base_url,
+                model=clef_systemone_model,
+                frame_paths=frame_paths,
+                exercise_name=exercise_name,
+                timeout_seconds=timeout_seconds,
+            ),
+        )
+        uncertain = bool(result["uncertain"])
+        label = str(result["supportDominance"] or "uncertain")
+        return SupportDominanceResult(
+            support_dominance="mixed_support" if label == "uncertain" else label,
+            confidence=float(result["confidence"]),
+            reason=(
+                "Clef typed visual decision is uncertain."
+                if uncertain
+                else "Clef typed visual decision from the supplied movement frames."
+            ),
+            exercise_name=exercise_name,
+            uncertain=uncertain,
+            model_output={
+                "backend": "clef_flash_systemone",
+                "supportDominance": label,
+                "confidence": result["confidence"],
+                "rawSystemOneResponse": result["rawSystemOneResponse"],
+            },
+        )
+    if visual_decision_backend != "qwen-chat":
+        raise ValueError(f"Unsupported visual-decision backend: {visual_decision_backend!r}")
+    if caption_images is None:
+        raise ValueError("Qwen support classification requires a caption_images callback.")
     payload = parse_support_dominance_payload(
         caption_images(
             frame_paths=frame_paths,
@@ -2665,6 +2720,7 @@ def refine_span_with_comparative_selection(
         client=client,
         detections=candidate_detections,
         exercise_name=exercise_name,
+        settings=settings,
     )
     if selected_window_index is None:
         return selected_span
@@ -2679,7 +2735,42 @@ def select_best_candidate_window_with_vlm(
     client: LlamaCppVisionClient,
     detections: list[WindowDetection],
     exercise_name: str | None,
+    settings: DetectionSettings,
 ) -> int | None:
+    if settings.visual_decision_backend == "clef-systemone":
+        from .clef_systemone import request_window_selection, run_clef_visual_decision_exclusively
+
+        try:
+            result = run_clef_visual_decision_exclusively(
+                base_url=settings.clef_systemone_base_url,
+                caption_source=client,
+                exclusive_runner=settings.clef_gpu_exclusive_runner,
+                conflicting_base_urls=(settings.base_url,),
+                operation=lambda: request_window_selection(
+                    base_url=settings.clef_systemone_base_url,
+                    model=settings.clef_systemone_model,
+                    exercise_name=exercise_name,
+                    candidates=[
+                        {
+                            "window_index": detection.window.index,
+                            "start_seconds": detection.window.start_seconds,
+                            "end_seconds": detection.window.end_seconds,
+                            "frame_paths": [Path(path) for path in detection.frame_paths],
+                        }
+                        for detection in detections
+                    ],
+                    timeout_seconds=settings.request_timeout_seconds,
+                ),
+            )
+        except Exception:
+            LOGGER.warning("Clef comparative window choice failed; retaining the deterministic span.", exc_info=True)
+            return None
+        if not result["confidenceAccepted"]:
+            return None
+        selected_index = result["windowIndex"]
+        return int(selected_index) if selected_index is not None else None
+    if settings.visual_decision_backend != "qwen-chat":
+        raise ValueError(f"Unsupported visual-decision backend: {settings.visual_decision_backend!r}")
     frame_paths: list[Path] = []
     prompt_lines = [
         "You are comparing candidate chunks from the same exercise video.",

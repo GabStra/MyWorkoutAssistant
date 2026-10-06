@@ -3000,6 +3000,11 @@ class BakeAndRankRequest:
     max_adaptive_preview_settings: int = 3
     classify_support_dominance: bool = True
     final_output_validation: bool = False
+    visual_decision_backend: str = "clef-systemone"
+    final_output_review_backend: str | None = None
+    clef_systemone_base_url: str = "http://127.0.0.1:8091"
+    clef_systemone_model: str = "ggml-org/Clef-Flash-GGUF:Q4_K_M"
+    comparative_segment_selection_enabled: bool = False
     two_scale_source_validation: bool = False
     final_output_validation_min_score: float = DEFAULT_FINAL_OUTPUT_VALIDATION_MIN_SCORE
     llama_cpp_base_url: str | None = "http://127.0.0.1:8090"
@@ -3051,6 +3056,10 @@ class BakeAndRankRequest:
     exercise_contract_llama_cpp_mmproj: str | None = None
     exercise_motion_contract_cache_dir: Path | None = None
     artifact_retention: str = ARTIFACT_RETENTION_DEBUG
+
+
+def effective_final_output_review_backend(request: BakeAndRankRequest) -> str:
+    return request.final_output_review_backend or request.visual_decision_backend
 
 
 PreviewBaker = Callable[..., list[BakedLoopArtifact]]
@@ -5669,7 +5678,8 @@ def final_output_validation_metrics(
                       hardRejectionReasons=["final_render_evidence_unavailable"],
                       rejectionReasons=["final_render_evidence_unavailable"], error=f"{type(exc).__name__}: {exc}")
         return result
-    if caption_images is None:
+    clef_final_review = effective_final_output_review_backend(request) == "clef-systemone"
+    if caption_images is None and (not clef_final_review or request.two_scale_source_validation):
         result["visualReview"] = {"advisoryOnly": True, "status": "unavailable", "findings": []}
         if request.two_scale_source_validation:
             result.update(passed=False, failureOwner="source", reviewStatus="needs_manual_review",
@@ -6447,7 +6457,7 @@ def validate_final_output_with_caption_images(
     ranking: LoopRanking,
     *,
     request: BakeAndRankRequest,
-    caption_images: Callable[..., str],
+    caption_images: Callable[..., str] | None,
     deterministic_metrics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     preparation_started = time.perf_counter()
@@ -6616,20 +6626,50 @@ def validate_final_output_with_caption_images(
     )
     prompt += "\nCell-to-frame manifest (same in both views): " + json.dumps(
         {str(cell): index for cell, index in enumerate(sampled_indices, 1)})
+    final_output_review_backend = effective_final_output_review_backend(request)
+    use_clef_systemone = final_output_review_backend == "clef-systemone"
+    if final_output_review_backend not in {"qwen-chat", "clef-systemone"}:
+        raise ValueError(
+            f"Unsupported final-output review backend: {final_output_review_backend!r}"
+        )
+    if use_clef_systemone:
+        from .clef_systemone import (
+            CLEF_FINAL_REVIEW_POLICY_VERSION,
+            final_preview_review_contract,
+        )
+
+        clef_request_identity = {
+            "model": request.clef_systemone_model,
+            **final_preview_review_contract(sampled_indices),
+        }
+        cache_prompt = json.dumps(clef_request_identity, sort_keys=True)
+        review_prompt_artifact = json.dumps(clef_request_identity, indent=2)
+    else:
+        cache_prompt = prompt
+        review_prompt_artifact = prompt
     prompt_path = output_dir / "final_output_validation_prompt.txt"
     raw_response_path = output_dir / "final_output_validation_raw_response.txt"
     parsed_response_path = output_dir / "final_output_validation_parsed.json"
     cache_metadata_path = output_dir / "final_output_validation_cache.json"
     model_settings = {key: value for key, value in vars(build_llama_cpp_vision_settings(request)).items()
                       if key.startswith("llama_cpp_")}
+    model_settings["visualDecisionBackend"] = request.visual_decision_backend
+    model_settings["finalOutputReviewBackend"] = final_output_review_backend
+    if use_clef_systemone:
+        model_settings.update(
+            finalOutputReviewModel=request.clef_systemone_model,
+            finalOutputReviewBaseUrl=request.clef_systemone_base_url,
+            finalOutputReviewPolicyVersion=CLEF_FINAL_REVIEW_POLICY_VERSION,
+        )
     model_settings["validationEvidenceIdentity"] = {
         "skeleton": file_sha256(item.skeleton_path),
         "contract": exercise_motion_contract_for_review_item(item, ranking),
         "validators": {name: file_sha256(Path(__file__).with_name(name)) for name in (
-            "bake_and_rank.py", "visual_evidence.py", "review_consensus.py", "acceptance.py", "pose_fidelity.py")},
+            "bake_and_rank.py", "visual_evidence.py", "review_consensus.py", "acceptance.py",
+            "pose_fidelity.py", "clef_systemone.py")},
     }
     cache_key = final_output_validation_cache_key(
-        prompt=prompt,
+        prompt=cache_prompt,
         frame_paths=frame_paths,
         min_score=request.final_output_validation_min_score,
         model_settings=model_settings,
@@ -6645,23 +6685,46 @@ def validate_final_output_with_caption_images(
         return cached
     debug_artifact_errors: list[str] = []
     try:
-        prompt_path.write_text(prompt, encoding="utf-8")
+        prompt_path.write_text(review_prompt_artifact, encoding="utf-8")
     except Exception as exc:
         debug_artifact_errors.append(f"prompt_write_failed:{type(exc).__name__}: {exc}")
     preparation_seconds = elapsed_seconds(preparation_started)
     started = time.perf_counter()
     try:
-        raw = call_caption_images_json(
-            caption_images,
-            frame_paths=frame_paths,
-            prompt=prompt,
-            max_tokens=min(max(1, request.llama_cpp_n_predict), 512),
-            request_timeout_seconds=request.final_review_timeout_seconds,
-            disable_reasoning=False,
-            json_response=True,
-            temperature=0.0,
-            top_p=1.0,
-        )
+        if use_clef_systemone:
+            from .clef_systemone import request_final_preview_review_with_managed_server
+
+            clef_response = request_final_preview_review_with_managed_server(
+                base_url=request.clef_systemone_base_url,
+                model=request.clef_systemone_model,
+                frame_paths=frame_paths,
+                sampled_frame_indices=sampled_indices,
+                timeout_seconds=request.final_review_timeout_seconds,
+                caption_source=caption_images,
+                conflicting_base_urls=(request.llama_cpp_base_url,),
+                startup_timeout_seconds=request.llama_cpp_server_startup_timeout_seconds,
+            )
+            raw = json.dumps(clef_response.pop("rawSystemOneResponse"), indent=2)
+            parsed = clef_response
+        else:
+            if caption_images is None:
+                raise RuntimeError("Qwen final review is configured without a chat vision client.")
+            raw = call_caption_images_json(
+                caption_images,
+                frame_paths=frame_paths,
+                prompt=prompt,
+                max_tokens=min(max(1, request.llama_cpp_n_predict), 512),
+                request_timeout_seconds=request.final_review_timeout_seconds,
+                disable_reasoning=False,
+                json_response=True,
+                temperature=0.0,
+                top_p=1.0,
+            )
+            from .visual_evidence import parse_visual_observations
+
+            parsed = parse_visual_observations(
+                extract_json_object(raw.rsplit("</think>", 1)[-1]), sampled_indices
+            )
     except Exception as exc:
         return {"advisoryOnly": True, "status": "unavailable", "findings": [],
                 "twoScaleSourceValidation": two_scale_source_validation,
@@ -6670,11 +6733,10 @@ def validate_final_output_with_caption_images(
         raw_response_path.write_text(raw, encoding="utf-8")
     except Exception as exc:
         debug_artifact_errors.append(f"raw_response_write_failed:{type(exc).__name__}: {exc}")
-    parsed = parse_visual_observations(extract_json_object(raw.rsplit("</think>", 1)[-1]), sampled_indices)
     parsed.update(
         {
             "enabled": True,
-            "backend": "llama_cpp_vision",
+            "backend": "clef_flash_systemone" if use_clef_systemone else "llama_cpp_vision",
             "exerciseMotionContract": exercise_motion_contract_for_review_item(item, ranking),
             "rawResponse": raw,
             "sourceContactSheetPaths": [str(path) for path in source_sheet_paths],
@@ -17378,21 +17440,30 @@ def run_bake_and_rank_pipeline(
     caption_images: Callable[..., str] | None = None
     support_dominance_classifier = None
     try:
-        if loop_ranker is None and (
+        if (
             request.classify_support_dominance
             or section_selection_enabled(request)
             or request.adaptive_preview_settings
             or request.pre_wham_source_validation
-            or request.final_output_validation
+            or request.two_scale_source_validation
+            or (
+                request.comparative_segment_selection_enabled
+                and request.visual_decision_backend == "clef-systemone"
+            )
+            or (
+                request.final_output_validation
+                and effective_final_output_review_backend(request) == "qwen-chat"
+            )
         ):
-            if vision_session is None:
+            if vision_session is None and loop_ranker is None:
                 vision_session = LazyLlamaCppVisionSession(request)
                 owns_vision_session = True
-            caption_images = vision_session.caption_images
-            pipeline_timings["visionRankerMode"] = (
-                "lazy_wham_exclusive" if owns_vision_session else "shared_staged_wave"
-            )
-        if request.classify_support_dominance and caption_images is not None:
+            if vision_session is not None:
+                caption_images = vision_session.caption_images
+                pipeline_timings["visionRankerMode"] = (
+                    "lazy_wham_exclusive" if owns_vision_session else "shared_staged_wave"
+                )
+        if request.classify_support_dominance:
             support_dominance_classifier = caption_images
         if section_selection_enabled(request) and loop_ranker is None and caption_images is not None:
             effective_ranker = lambda items, active_request: rank_review_items_with_llama_cpp(
@@ -19117,6 +19188,24 @@ def bake_and_rank_request_from_selection_manifest(
         max_adaptive_preview_settings=int(manifest.get("maxAdaptivePreviewSettings") or 3),
         classify_support_dominance=False,
         final_output_validation=bool(manifest.get("finalOutputValidationEnabled", False)),
+        visual_decision_backend=str(
+            manifest.get("visualDecisionBackend", manifest.get("finalOutputReviewBackend", "qwen-chat"))
+        ),
+        final_output_review_backend=str(
+            manifest.get(
+                "finalOutputReviewBackend",
+                manifest.get("visualDecisionBackend", "qwen-chat"),
+            )
+        ),
+        clef_systemone_base_url=str(
+            manifest.get("clefSystemOneBaseUrl", "http://127.0.0.1:8091")
+        ),
+        clef_systemone_model=str(
+            manifest.get("clefSystemOneModel", "ggml-org/Clef-Flash-GGUF:Q4_K_M")
+        ),
+        comparative_segment_selection_enabled=bool(
+            manifest.get("comparativeSegmentSelectionEnabled", False)
+        ),
         two_scale_source_validation=bool(manifest.get("twoScaleSourceValidationEnabled", False)),
         final_output_validation_min_score=float(
             manifest.get("finalOutputValidationMinScore")
@@ -21670,6 +21759,11 @@ def process_ranked_candidate(
                         candidate_workspace=candidate_workspace,
                         loop_index=eligible_loop.loop_index,
                         sample_frames=request.review_frames,
+                        visual_decision_backend=request.visual_decision_backend,
+                        clef_systemone_base_url=request.clef_systemone_base_url,
+                        clef_systemone_model=request.clef_systemone_model,
+                        timeout_seconds=request.final_review_timeout_seconds,
+                        clef_conflicting_base_urls=(request.llama_cpp_base_url,),
                     )
                     record_timing_seconds(result_payload, "supportDominanceSeconds", support_started)
                     if support_dominance_result is not None:
@@ -21963,6 +22057,7 @@ def generate_candidate_motion(
             request=request,
             source_cut_caption_images=source_cut_caption_images,
             exercise_motion_contract_resolver=exercise_motion_contract_resolver,
+            clef_exclusive_runner=run_wham_exclusive,
         )
         if request.two_scale_source_validation:
             if source_cut_caption_images is None:
@@ -22872,8 +22967,13 @@ def classify_support_dominance_for_review_loop(
     candidate_workspace: Path,
     loop_index: int,
     sample_frames: int,
+    visual_decision_backend: str = "clef-systemone",
+    clef_systemone_base_url: str = "http://127.0.0.1:8091",
+    clef_systemone_model: str = "ggml-org/Clef-Flash-GGUF:Q4_K_M",
+    clef_conflicting_base_urls: tuple[str | None, ...] = (),
+    timeout_seconds: float = 90.0,
 ) -> SupportDominanceResult | None:
-    if classifier is None:
+    if classifier is None and visual_decision_backend != "clef-systemone":
         return None
     if not review_video_path.exists():
         return SupportDominanceResult(
@@ -22909,6 +23009,11 @@ def classify_support_dominance_for_review_loop(
             frame_paths=frame_paths,
             exercise_name=exercise_name,
             caption_images=classifier,
+            visual_decision_backend=visual_decision_backend,
+            clef_systemone_base_url=clef_systemone_base_url,
+            clef_systemone_model=clef_systemone_model,
+            clef_conflicting_base_urls=clef_conflicting_base_urls,
+            timeout_seconds=timeout_seconds,
         )
     except Exception as exc:
         if is_critical_vlm_interaction_error(exc):
@@ -22923,7 +23028,8 @@ def classify_support_dominance_for_review_loop(
                     "sampleFrames": sample_frames,
                 },
             )
-            raise
+            if visual_decision_backend != "clef-systemone":
+                raise
         return SupportDominanceResult(
             support_dominance="mixed_support",
             confidence=0.0,
@@ -22954,6 +23060,7 @@ def prepare_candidate_input_video(
     request: BakeAndRankRequest,
     source_cut_caption_images: Callable[..., str] | None = None,
     exercise_motion_contract_resolver: ExerciseMotionContractResolver | None = None,
+    clef_exclusive_runner: Callable[[Callable[[], Any]], Any] | None = None,
 ) -> Path:
     candidate_workspace = request.workspace / ranked_candidate.workspace_slug
     source_dir = candidate_workspace / "source"
@@ -23046,6 +23153,9 @@ def prepare_candidate_input_video(
                 exercise_motion_contract=exercise_motion_contract,
                 max_vlm_workers=request.review_llm_workers,
                 request_timeout_seconds=request.source_review_timeout_seconds,
+                visual_decision_backend=request.visual_decision_backend,
+                clef_systemone_base_url=request.clef_systemone_base_url,
+                clef_systemone_model=request.clef_systemone_model,
             )
         return trim_ranked_source_chunk_hint(
             ranked_candidate=ranked_candidate,
@@ -23106,6 +23216,9 @@ def prepare_candidate_input_video(
                 exercise_motion_contract=exercise_motion_contract,
                 max_vlm_workers=request.review_llm_workers,
                 request_timeout_seconds=request.source_review_timeout_seconds,
+                visual_decision_backend=request.visual_decision_backend,
+                clef_systemone_base_url=request.clef_systemone_base_url,
+                clef_systemone_model=request.clef_systemone_model,
             )
         return trim_ranked_source_chunk_hint(
             ranked_candidate=ranked_candidate,
@@ -23147,9 +23260,20 @@ def prepare_candidate_input_video(
     segment_base_url = request.segment_base_url or "http://127.0.0.1:8090"
     segment_model = request.segment_model or request.llama_cpp_model
     segment_server: LlamaCppVisionRanker | None = None
-    if pre_wham_caption_images is not None:
+    segment_caption_images = pre_wham_caption_images
+    if (
+        segment_caption_images is None
+        and request.visual_decision_backend == "clef-systemone"
+        and request.comparative_segment_selection_enabled
+        and clef_exclusive_runner is not None
+    ):
+        exclusive_owner = getattr(clef_exclusive_runner, "__self__", None)
+        candidate_caption_images = getattr(exclusive_owner, "caption_images", None)
+        if callable(candidate_caption_images):
+            segment_caption_images = candidate_caption_images
+    if segment_caption_images is not None:
         segment_client: object | None = CaptionImagesDetectionClient(
-            pre_wham_caption_images,
+            segment_caption_images,
             max_tokens=SEGMENT_DETECTION_VLM_MAX_TOKENS,
             temperature=SEGMENT_DETECTION_VLM_TEMPERATURE,
             top_p=SEGMENT_DETECTION_VLM_TOP_P,
@@ -23181,6 +23305,11 @@ def prepare_candidate_input_video(
                 settings=DetectionSettings(
                     base_url=segment_base_url,
                     model=segment_model,
+                    visual_decision_backend=request.visual_decision_backend,
+                    clef_systemone_base_url=request.clef_systemone_base_url,
+                    clef_systemone_model=request.clef_systemone_model,
+                    clef_gpu_exclusive_runner=clef_exclusive_runner,
+                    comparative_selection_enabled=request.comparative_segment_selection_enabled,
                     window_seconds=segment_window_seconds,
                     overlap_seconds=segment_overlap_seconds,
                     frames_per_window=segment_frames_per_window,
@@ -23291,6 +23420,9 @@ def prepare_candidate_input_video(
             source_chunk_estimate=chunk_estimate,
             max_vlm_workers=request.review_llm_workers,
             request_timeout_seconds=request.source_review_timeout_seconds,
+            visual_decision_backend=request.visual_decision_backend,
+            clef_systemone_base_url=request.clef_systemone_base_url,
+            clef_systemone_model=request.clef_systemone_model,
             segment_settings={
                 "windowSeconds": segment_window_seconds,
                 "overlapSeconds": segment_overlap_seconds,
@@ -25015,6 +25147,9 @@ def choose_pre_wham_source_cut_or_reject(
     source_chunk_estimate: Any | None = None,
     max_vlm_workers: int = 1,
     request_timeout_seconds: float = DEFAULT_SOURCE_REVIEW_TIMEOUT_SECONDS,
+    visual_decision_backend: str = "clef-systemone",
+    clef_systemone_base_url: str = "http://127.0.0.1:8091",
+    clef_systemone_model: str = "ggml-org/Clef-Flash-GGUF:Q4_K_M",
     segment_settings: dict[str, Any] | None = None,
 ) -> Path:
     chunk_estimate = source_chunk_estimate or estimate_chunking(
@@ -25073,6 +25208,9 @@ def choose_pre_wham_source_cut_or_reject(
         source_pose_offset_seconds=detection_source_offset_seconds,
         max_vlm_workers=max_vlm_workers,
         request_timeout_seconds=request_timeout_seconds,
+        visual_decision_backend=visual_decision_backend,
+        clef_systemone_base_url=clef_systemone_base_url,
+        clef_systemone_model=clef_systemone_model,
         progressive_source_selection=not validating_padded_chunk,
         prefer_largest_padded_candidate=validating_padded_chunk,
     )
@@ -34521,6 +34659,283 @@ def source_cut_candidate_id_for_index(index: int) -> str:
     return "".join(reversed(parts))
 
 
+_CLEF_SOURCE_CUT_CONFIDENCE_CHOICES = {
+    "C00": (0.00, "below 0.50"),
+    "C01": (0.50, "0.50 through 0.64"),
+    "C02": (0.65, "0.65 through 0.74"),
+    "C03": (0.75, "0.75 through 0.84"),
+    "C04": (0.85, "0.85 through 0.89"),
+    "C05": (0.90, "0.90 through 0.94"),
+    "C06": (0.95, "0.95 through 1.00"),
+}
+CLEF_SOURCE_CUT_SCORECARD_POLICY_VERSION = "clef-source-cut-scorecard-v1"
+
+
+def source_cut_systemone_questions(*, required_equipment: str) -> dict[str, dict[str, Any]]:
+    from .clef_systemone import choice_question
+
+    def question(instructions: str, options: dict[str, str]) -> dict[str, Any]:
+        return choice_question(instructions=instructions, options=options)
+
+    questions = {
+        "approval": question(
+            "Should this single candidate pass the supplied movement-only source-cut policy? "
+            "Choose uncertain if any required evidence is unclear.",
+            {
+                "approved": "The requested exercise and variant are visible, the required action is complete, "
+                "both cut boundaries are clean, and no material setup, filler, or quality defect is present.",
+                "rejected": "At least one required identity, completion, boundary, equipment, or quality condition fails.",
+                "uncertain": "The visible evidence is insufficient to approve or confidently reject the candidate.",
+            },
+        ),
+        "identity": question(
+            "Does the visible action match the exact target exercise and its named qualifiers?",
+            {
+                "match": "The visible action and required variation match the target.",
+                "wrong_exercise": "The visible action is a different exercise.",
+                "wrong_variant": "The base exercise is similar, but a required visible variant or implement does not match.",
+                "uncertain": "The action or a required qualifier cannot be verified from these images.",
+            },
+        ),
+        "complete_movement": question(
+            "Is the appropriate complete movement or useful representative interval visibly present, "
+            "using the completion rules in the supplied policy?",
+            {
+                "yes": "The required complete action or representative interval is visible.",
+                "no": "A required action phase or natural finish is missing.",
+                "uncertain": "The images do not establish whether the required action is complete.",
+            },
+        ),
+        "start_boundary": question(
+            "Does the first boundary belong to clean, uninterrupted target exercise action rather than setup, "
+            "waiting, repositioning, or a cut through a required phase?",
+            {
+                "clean": "The start boundary is clean under the supplied completion rules.",
+                "unclean": "The start boundary contains setup, unrelated action, or a cut through a required phase.",
+                "uncertain": "The start boundary cannot be judged from the supplied images.",
+            },
+        ),
+        "finish_boundary": question(
+            "Does the last boundary belong to clean, uninterrupted target exercise action and its natural finish, "
+            "without cleanup, transition, or a cut through a required phase?",
+            {
+                "clean": "The finish boundary is clean under the supplied completion rules.",
+                "unclean": "The finish boundary contains cleanup, transition, or a cut through a required phase.",
+                "uncertain": "The finish boundary cannot be judged from the supplied images.",
+            },
+        ),
+        "setup_or_filler": question(
+            "Is material setup, unrelated waiting, adjustment, reset, or filler inside this candidate? "
+            "A requested static hold or ongoing activity is not filler.",
+            {
+                "present": "Material setup, waiting, adjustment, reset, or filler is visible.",
+                "absent": "No material setup, waiting, adjustment, reset, or filler is visible.",
+                "uncertain": "The supplied images do not establish whether material filler is present.",
+            },
+        ),
+        "identity_cue": question(
+            "Which concise visible-evidence category best supports the identity judgment?",
+            {
+                "target_action_and_variant_visible": "The target action and required variant are visibly demonstrated.",
+                "different_action_visible": "A different exercise action is visible.",
+                "required_variant_not_visible": "A required implement or variant is absent or visibly different.",
+                "action_or_variant_unclear": "The action or required variant is obscured or ambiguous.",
+            },
+        ),
+        "mechanics": question(
+            "Is an obvious mechanics inconsistency visible that makes the source unsuitable?",
+            {
+                "consistent": "No obvious mechanics inconsistency is visible.",
+                "inconsistent": "A clear mechanics inconsistency is visible.",
+                "uncertain": "Mechanics cannot be judged reliably from these images.",
+            },
+        ),
+        "contact": question(
+            "Does the performer materially change grip, support, or implement relationship during the cut?",
+            {
+                "stable": "The relevant grip, support, and implement relationships stay consistent.",
+                "changed": "A material grip, support, or implement relationship change is visible.",
+                "uncertain": "The relevant relationship is hidden or ambiguous.",
+            },
+        ),
+        "source_quality": question(
+            "Is the source visually clear and real enough to judge the requested movement?",
+            {
+                "adequate": "The movement is readable in genuine footage.",
+                "low": "Occlusion, blur, framing, or another clear source defect prevents reliable review.",
+                "uncertain": "Source quality cannot be judged reliably.",
+            },
+        ),
+        "synthetic_subject": question(
+            "Does the visible subject or footage appear synthetic or materially fabricated?",
+            {
+                "no": "The visible subject and footage appear genuine.",
+                "yes": "The visible subject or footage has a clear synthetic defect.",
+                "uncertain": "The subject or footage authenticity is unclear.",
+            },
+        ),
+        "overall_confidence": question(
+            "How confident are you in this complete candidate scorecard, considering the visible evidence? "
+            "Choose the lower confidence range when uncertain.",
+            {
+                key: f"Confidence {label}."
+                for key, (_value, label) in _CLEF_SOURCE_CUT_CONFIDENCE_CHOICES.items()
+            },
+        ),
+    }
+    if normalize_observed_equipment_name(required_equipment) != "none":
+        questions["required_equipment"] = question(
+            f"Is the exact required equipment ({required_equipment}) visibly engaged by the moving performer?",
+            {
+                "engaged": "The exact required equipment is visibly held, worn, attached, or connected during the action.",
+                "absent": "The exact required equipment is absent or a different implement is used.",
+                "unclear": "The equipment is hidden or its relationship to the performer is unclear.",
+            },
+        )
+    return questions
+
+
+def source_cut_scorecard_from_systemone_answers(
+    *,
+    candidate_id: str,
+    required_equipment: str,
+    decisions: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    choices = {
+        name: str(decision.get("choice") or "uncertain")
+        for name, decision in decisions.items()
+    }
+
+    def boolean_choice(name: str, true_value: str, false_value: str) -> bool | None:
+        value = choices.get(name)
+        if value == true_value:
+            return True
+        if value == false_value:
+            return False
+        return None
+
+    identity = choices.get("identity", "uncertain")
+    identity_cue_choice = choices.get("identity_cue", "action_or_variant_unclear")
+    identity_cue_matches = {
+        "match": "target_action_and_variant_visible",
+        "wrong_exercise": "different_action_visible",
+        "wrong_variant": "required_variant_not_visible",
+    }
+    if identity in identity_cue_matches and identity_cue_choice != identity_cue_matches[identity]:
+        identity = "uncertain"
+    identity_match = "match" if identity == "match" else (
+        "mismatch" if identity in {"wrong_exercise", "wrong_variant"} else "uncertain"
+    )
+    complete_movement = boolean_choice("complete_movement", "yes", "no")
+    start_boundary_clean = boolean_choice("start_boundary", "clean", "unclean")
+    finish_boundary_clean = boolean_choice("finish_boundary", "clean", "unclean")
+    setup_or_filler = boolean_choice("setup_or_filler", "present", "absent")
+    confidence_choice = choices.get("overall_confidence", "C00")
+    confidence = _CLEF_SOURCE_CUT_CONFIDENCE_CHOICES.get(confidence_choice, (0.0, "below 0.50"))[0]
+    equipment_required = normalize_observed_equipment_name(required_equipment) != "none"
+    equipment_status = choices.get("required_equipment", "not_applicable")
+
+    rejection_tags: list[str] = []
+
+    def add_tag(tag: str) -> None:
+        if tag not in rejection_tags:
+            rejection_tags.append(tag)
+
+    if identity == "wrong_exercise":
+        add_tag("wrong_exercise")
+    elif identity == "wrong_variant":
+        add_tag("wrong_variant")
+    elif identity == "uncertain":
+        add_tag("unclear")
+    if complete_movement is False:
+        add_tag("partial_movement")
+    elif complete_movement is None:
+        add_tag("unclear")
+    if start_boundary_clean is False or finish_boundary_clean is False:
+        add_tag("bad_boundary")
+    elif start_boundary_clean is None or finish_boundary_clean is None:
+        add_tag("unclear")
+    if setup_or_filler is True:
+        add_tag("setup_or_filler")
+    elif setup_or_filler is None:
+        add_tag("unclear")
+    if equipment_required:
+        if equipment_status == "absent":
+            add_tag("wrong_variant")
+        elif equipment_status != "engaged":
+            add_tag("unclear")
+    if choices.get("mechanics") == "inconsistent":
+        add_tag("mechanics_inconsistent")
+    elif choices.get("mechanics") == "uncertain":
+        add_tag("unclear")
+    if choices.get("contact") == "changed":
+        add_tag("contact_changed")
+    elif choices.get("contact") == "uncertain":
+        add_tag("unclear")
+    if choices.get("source_quality") == "low":
+        add_tag("low_source_quality")
+    elif choices.get("source_quality") == "uncertain":
+        add_tag("unclear")
+    if choices.get("synthetic_subject") == "yes":
+        add_tag("synthetic_subject")
+    elif choices.get("synthetic_subject") == "uncertain":
+        add_tag("unclear")
+    if confidence < SOURCE_CUT_CLASSIFIER_MIN_CONFIDENCE_WITH_CONTRACT:
+        add_tag("low_confidence")
+
+    approved_choice = choices.get("approval", "uncertain")
+    approved = approved_choice == "approved"
+    if approved_choice == "uncertain":
+        add_tag("unclear")
+    if not approved and not rejection_tags:
+        add_tag("unclear")
+
+    identity_evidence = {
+        "target_action_and_variant_visible": "The typed identity cue records the target action and variant as visible.",
+        "different_action_visible": "The typed identity cue records a different exercise action as visible.",
+        "required_variant_not_visible": "The typed identity cue records the required variant as absent or different.",
+        "action_or_variant_unclear": "The typed identity cue records the action or variant as unclear.",
+    }.get(identity_cue_choice, "The typed identity cue is unclear.")
+    boundary_evidence = (
+        "Typed boundary observations: "
+        f"completeMovement={complete_movement}; startBoundaryClean={start_boundary_clean}; "
+        f"finishBoundaryClean={finish_boundary_clean}; setupOrFiller={setup_or_filler}."
+    )
+    quality_evidence = (
+        "Typed quality observations: "
+        f"mechanics={choices.get('mechanics', 'uncertain')}; contact={choices.get('contact', 'uncertain')}; "
+        f"sourceQuality={choices.get('source_quality', 'uncertain')}; "
+        f"syntheticSubject={choices.get('synthetic_subject', 'uncertain')}."
+    )
+    boundary_tags = {"partial_movement", "bad_boundary", "setup_or_filler", "contact_changed"}
+    quality_tags = {"mechanics_inconsistent", "low_source_quality", "synthetic_subject"}
+    return {
+        "id": normalize_source_cut_candidate_id(candidate_id),
+        "approved": approved,
+        "confidence": confidence,
+        "completeMovement": complete_movement,
+        "startBoundaryClean": start_boundary_clean,
+        "finishBoundaryClean": finish_boundary_clean,
+        "setupOrFiller": setup_or_filler,
+        "namedEquipmentEngagedStatus": equipment_status,
+        "reject": rejection_tags,
+        "note": "",
+        "identityMatch": identity_match,
+        "identityEvidence": identity_evidence,
+        "boundaryEvidence": boundary_evidence if boundary_tags.intersection(rejection_tags) else "",
+        "qualityEvidence": quality_evidence if quality_tags.intersection(rejection_tags) else "",
+        "clefTypedDecisionSummary": {
+            "backend": "clef_flash_systemone",
+            "choices": choices,
+            "choiceConfidence": {
+                name: float(answer["confidence"])
+                for name, answer in decisions.items()
+                if isinstance(answer.get("confidence"), (int, float))
+            },
+        },
+    }
+
+
 def build_movement_cut_candidate_choice_prompt(
     *,
     exercise_name: str,
@@ -38533,6 +38948,11 @@ def source_cut_scorecard_row(
             "reject": reject_tags,
             "invalidRejectTags": invalid_reject_tags,
             "note": note,
+            "identityMatch": payload.get("identityMatch"),
+            "identityEvidence": payload.get("identityEvidence"),
+            "boundaryEvidence": payload.get("boundaryEvidence"),
+            "qualityEvidence": payload.get("qualityEvidence"),
+            "clefTypedDecisionSummary": payload.get("clefTypedDecisionSummary"),
             "score": clamp_unit(model_score),
             "passed": not deduped_reasons,
             "rejectionReasons": deduped_reasons,
@@ -38636,6 +39056,7 @@ def source_cut_scorecard_row(
         "reject": reject_tags,
         "invalidRejectTags": invalid_reject_tags,
         "note": note,
+        "clefTypedDecisionSummary": payload.get("clefTypedDecisionSummary"),
         "score": clamp_unit(model_score),
         "passed": not deduped_reasons,
         "rejectionReasons": deduped_reasons,
@@ -39007,6 +39428,9 @@ def cut_candidate_vlm_caption_kwargs(
 def source_cut_vlm_caption_kwargs(
     request_timeout_seconds: float = DEFAULT_SOURCE_REVIEW_TIMEOUT_SECONDS,
     exercise_motion_contract: dict[str, Any] | None = None,
+    visual_decision_backend: str = "clef-systemone",
+    clef_systemone_base_url: str = "http://127.0.0.1:8091",
+    clef_systemone_model: str = "ggml-org/Clef-Flash-GGUF:Q4_K_M",
 ) -> dict[str, Any]:
     topology = (
         exercise_motion_contract.get("movementTopology")
@@ -39027,6 +39451,10 @@ def source_cut_vlm_caption_kwargs(
         request_timeout_seconds=request_timeout_seconds,
     )
     kwargs["disable_reasoning"] = SOURCE_CUT_CANDIDATE_VLM_DISABLE_REASONING
+    kwargs["clef_visual_decision_backend"] = visual_decision_backend
+    kwargs["clef_visual_decision_base_url"] = clef_systemone_base_url
+    kwargs["clef_visual_decision_model"] = clef_systemone_model
+    kwargs["clef_visual_decision_timeout_seconds"] = max(1.0, float(request_timeout_seconds))
     return kwargs
 
 
@@ -39942,10 +40370,14 @@ def write_cut_candidate_vlm_review_debug(
 def invoke_cut_caption_images(
     caption_images: Callable[..., str], *, frame_paths: list[Path], prompt: str, request_kwargs: dict[str, Any]
 ) -> str:
+    caption_kwargs = {
+        key: value for key, value in request_kwargs.items()
+        if not key.startswith("clef_visual_decision_")
+    }
     try:
-        return caption_images(frame_paths=frame_paths, prompt=prompt, **request_kwargs)
+        return caption_images(frame_paths=frame_paths, prompt=prompt, **caption_kwargs)
     except TypeError as exc:
-        if request_kwargs and "unexpected keyword argument" in str(exc):
+        if caption_kwargs and "unexpected keyword argument" in str(exc):
             return caption_images(frame_paths=frame_paths, prompt=prompt)
         raise
 
@@ -40026,15 +40458,70 @@ def review_source_cut_boundaries(
         started = time.perf_counter()
         observations = {}
         responses = []
+        endpoint_errors: dict[str, str] = {}
+        use_clef_decision = request_kwargs.get("clef_visual_decision_backend") == "clef-systemone"
         endpoint_caption = getattr(getattr(caption_images, "__self__", None), "caption_endpoint_images", caption_images)
-        for endpoint, path in (("start", paths[0]), ("end", paths[-1])):
-            response_raw = invoke_cut_caption_images(
-                endpoint_caption, frame_paths=[path], prompt=prompt,
-                request_kwargs={**request_kwargs, "max_tokens": 200, "disable_reasoning": True, "json_response": True},
+        endpoint_paths = (("start", paths[0]), ("end", paths[-1]))
+        if use_clef_decision:
+            from .clef_systemone import (
+                request_endpoint_posture_observation,
+                run_clef_visual_decision_exclusively,
             )
-            responses.append(response_raw)
-            observation = extract_json_object_with_trailing_repair(response_raw)
-            observations[endpoint] = observation if isinstance(observation, dict) else {}
+
+            def observe_endpoints_with_clef() -> tuple[dict[str, Any], list[str], dict[str, str]]:
+                clef_observations: dict[str, Any] = {}
+                clef_responses: list[str] = []
+                clef_errors: dict[str, str] = {}
+                for endpoint, path in endpoint_paths:
+                    try:
+                        result = request_endpoint_posture_observation(
+                            base_url=str(request_kwargs["clef_visual_decision_base_url"]),
+                            model=str(request_kwargs["clef_visual_decision_model"]),
+                            frame_path=path,
+                            timeout_seconds=float(request_kwargs.get("clef_visual_decision_timeout_seconds") or 90.0),
+                        )
+                        clef_observations[endpoint] = result["observations"]
+                        response_raw = json.dumps(
+                            {
+                                "backend": "clef_flash_systemone",
+                                "observations": result["observations"],
+                                "confidences": result["confidences"],
+                                "rawSystemOneResponse": result["rawSystemOneResponse"],
+                            }
+                        )
+                    except Exception as exc:
+                        clef_errors[endpoint] = f"{type(exc).__name__}: {exc}"
+                        clef_observations[endpoint] = {}
+                        response_raw = json.dumps(
+                            {"backend": "clef_flash_systemone", "error": clef_errors[endpoint]}
+                        )
+                    clef_responses.append(response_raw)
+                return clef_observations, clef_responses, clef_errors
+
+            try:
+                observations, responses, endpoint_errors = run_clef_visual_decision_exclusively(
+                    base_url=str(request_kwargs["clef_visual_decision_base_url"]),
+                    caption_source=caption_images,
+                    operation=observe_endpoints_with_clef,
+                    startup_timeout_seconds=float(
+                        request_kwargs.get("clef_visual_decision_startup_timeout_seconds") or 180.0
+                    ),
+                )
+            except Exception as exc:
+                error = f"{type(exc).__name__}: {exc}"
+                for endpoint, _path in endpoint_paths:
+                    endpoint_errors[endpoint] = error
+                    observations[endpoint] = {}
+                    responses.append(json.dumps({"backend": "clef_flash_systemone", "error": error}))
+        else:
+            for endpoint, path in endpoint_paths:
+                response_raw = invoke_cut_caption_images(
+                    endpoint_caption, frame_paths=[path], prompt=prompt,
+                    request_kwargs={**request_kwargs, "max_tokens": 200, "disable_reasoning": True, "json_response": True},
+                )
+                observation = extract_json_object_with_trailing_repair(response_raw)
+                observations[endpoint] = observation if isinstance(observation, dict) else {}
+                responses.append(response_raw)
         comparisons = []
         explicit = explicit_endpoint_requirements(
             str(contract.get("exerciseName") or ""), completion_mode=contract_completion_mode(contract),
@@ -40060,7 +40547,9 @@ def review_source_cut_boundaries(
         boundary_payload = {**assessment, "supportRelativeReturn": support_return,
             "prompt": prompt, "framePaths": [str(paths[0]), str(paths[-1])],
             "observations": observations, "comparisons": comparisons,
-            "rawResponses": responses, "elapsedSeconds": elapsed_seconds(started)}
+            "rawResponses": responses, "endpointErrors": endpoint_errors,
+            "backend": "clef_flash_systemone" if use_clef_decision else "qwen_chat",
+            "elapsedSeconds": elapsed_seconds(started)}
     boundary_payload["blocking"] = boundary_payload["decision"] == "rejected"
     boundary_payload["eligibleForReconstruction"] = not boundary_payload["blocking"]
     boundary_payload["candidateId"] = candidate.candidate_id
@@ -41843,6 +42332,9 @@ def rank_source_video_cut_candidates_with_caption_images(
     source_pose_offset_seconds: float = 0.0,
     max_vlm_workers: int = 1,
     request_timeout_seconds: float = DEFAULT_SOURCE_REVIEW_TIMEOUT_SECONDS,
+    visual_decision_backend: str = "clef-systemone",
+    clef_systemone_base_url: str = "http://127.0.0.1:8091",
+    clef_systemone_model: str = "ggml-org/Clef-Flash-GGUF:Q4_K_M",
     allow_progressive_without_pose: bool = False,
     include_boundary_audit: bool = True,
     progressive_source_selection: bool = True,
@@ -42216,6 +42708,9 @@ def rank_source_video_cut_candidates_with_caption_images(
     source_cut_caption_kwargs = source_cut_vlm_caption_kwargs(
         request_timeout_seconds,
         exercise_motion_contract,
+        visual_decision_backend,
+        clef_systemone_base_url,
+        clef_systemone_model,
     )
 
     def parse_source_candidate_with_boundary_validation(
@@ -42233,95 +42728,228 @@ def rank_source_video_cut_candidates_with_caption_images(
             require_identity_evidence=True,
         )
 
-    remaining_vlm_candidates = list(candidates)
-    review_rankings: list[LoopRanking] = []
-    review_raw_responses: list[str] = []
-    review_errors: list[dict[str, Any]] = []
-    reviewed_candidate_ids: list[str] = []
-    reviewed_request_count = 0
-    review_elapsed_seconds = 0.0
-    review_recoveries: list[dict[str, Any]] = []
-    selected_ranking: LoopRanking | None = None
-    kinematic_first_pass_done = False
-    while remaining_vlm_candidates and selected_ranking is None:
-        kinematic_batch = [
-            candidate
-            for candidate in remaining_vlm_candidates
-            if source_cut_candidate_is_kinematic(candidate)
-        ]
-        if kinematic_batch and not kinematic_first_pass_done:
-            vlm_shortlist = kinematic_batch[:KINEMATIC_CUT_MAX_PROPOSALS]
-            kinematic_first_pass_done = True
-        else:
-            vlm_shortlist = shortlist_movement_cut_vlm_candidates(
-                remaining_vlm_candidates,
-                max_candidates=SOURCE_CUT_MAX_VLM_CANDIDATES,
-            )
-        batch_choice, recovery = run_source_cut_review_with_adaptive_recovery(
-            lambda workers, caption_kwargs: rank_cut_candidates_shortest_first_with_caption_images(
-                candidates=vlm_shortlist,
-                caption_images=caption_images,
-                prompt_builder=lambda candidate: build_source_cut_candidate_choice_prompt(
-                    exercise_name=exercise_name,
-                    candidate_title=candidate_title,
-                    candidate=candidate,
-                    exercise_motion_contract=exercise_motion_contract,
+    required_equipment = ", ".join(two_scale_required_equipment_names(
+        exercise_name, exercise_motion_contract
+    )) or "none"
+    candidates_by_frame_signature = {
+        tuple(str(Path(path).resolve()).casefold() for path in candidate.frame_paths): candidate
+        for candidate in candidates
+    }
+
+    def clef_source_cut_caption_images(
+        *,
+        frame_paths: list[Path],
+        prompt: str,
+        **kwargs: Any,
+    ) -> str:
+        from .clef_systemone import request_choice_decisions
+
+        signature = tuple(str(Path(path).resolve()).casefold() for path in frame_paths)
+        candidate = candidates_by_frame_signature.get(signature)
+        if candidate is None:
+            raise ValueError("Clef source-cut review could not map the supplied images to one candidate.")
+        policy, separator, _schema_tail = prompt.partition(
+            "Return JSON only with exactly one row in this schema:"
+        )
+        if not separator:
+            raise ValueError("Clef source-cut review received an unknown scorecard prompt schema.")
+        decisions = request_choice_decisions(
+            base_url=clef_systemone_base_url,
+            model=clef_systemone_model,
+            frame_paths=[Path(path) for path in frame_paths],
+            state={
+                "purpose": "Image-grounded typed review of one source-cut candidate.",
+                "candidateId": candidate.candidate_id,
+                "candidateWindow": {
+                    "startSeconds": candidate.window.start_seconds,
+                    "endSeconds": candidate.window.end_seconds,
+                },
+                "candidateDecisionPolicy": policy.strip(),
+                "imageOrder": "Images are this candidate's contact sheets in the supplied chronological order.",
+                "limits": [
+                    "Classify only this candidate; do not select a winner across candidates.",
+                    "Treat uncertainty as a reason to withhold approval.",
+                    "Use the provided typed choices; do not infer hidden phases or equipment.",
+                ],
+            },
+            questions=source_cut_systemone_questions(required_equipment=required_equipment),
+            timeout_seconds=float(kwargs.get("request_timeout_seconds") or request_timeout_seconds),
+        )
+        scorecard = source_cut_scorecard_from_systemone_answers(
+            candidate_id=candidate.candidate_id,
+            required_equipment=required_equipment,
+            decisions=decisions["decisions"],
+        )
+        return json.dumps(
+            {
+                "candidates": [scorecard],
+                "clefSystemOne": {
+                    "policyVersion": CLEF_SOURCE_CUT_SCORECARD_POLICY_VERSION,
+                    "decisions": decisions["decisions"],
+                    "rawSystemOneResponse": decisions["rawSystemOneResponse"],
+                },
+            },
+            ensure_ascii=True,
+        )
+
+    def run_source_cut_scorecard_batches(
+        active_caption_images: Callable[..., str],
+        *,
+        use_clef_backend: bool,
+        caption_kwargs: dict[str, Any],
+    ) -> tuple[CutCandidateReviewChoice, list[dict[str, Any]]]:
+        remaining_vlm_candidates = list(candidates)
+        review_rankings: list[LoopRanking] = []
+        review_raw_responses: list[str] = []
+        review_errors: list[dict[str, Any]] = []
+        reviewed_candidate_ids: list[str] = []
+        reviewed_request_count = 0
+        review_elapsed_seconds = 0.0
+        review_recoveries: list[dict[str, Any]] = []
+        selected_ranking: LoopRanking | None = None
+        kinematic_first_pass_done = False
+        while remaining_vlm_candidates and selected_ranking is None:
+            kinematic_batch = [
+                candidate
+                for candidate in remaining_vlm_candidates
+                if source_cut_candidate_is_kinematic(candidate)
+            ]
+            if kinematic_batch and not kinematic_first_pass_done:
+                vlm_shortlist = kinematic_batch[:KINEMATIC_CUT_MAX_PROPOSALS]
+                kinematic_first_pass_done = True
+            else:
+                vlm_shortlist = shortlist_movement_cut_vlm_candidates(
+                    remaining_vlm_candidates,
+                    max_candidates=SOURCE_CUT_MAX_VLM_CANDIDATES,
+                )
+            reviewer_workers = 1 if use_clef_backend else effective_source_cut_vlm_workers
+            batch_choice, recovery = run_source_cut_review_with_adaptive_recovery(
+                lambda workers, caption_kwargs: rank_cut_candidates_shortest_first_with_caption_images(
+                    candidates=vlm_shortlist,
+                    caption_images=active_caption_images,
+                    prompt_builder=lambda candidate: build_source_cut_candidate_choice_prompt(
+                        exercise_name=exercise_name,
+                        candidate_title=candidate_title,
+                        candidate=candidate,
+                        exercise_motion_contract=exercise_motion_contract,
+                    ),
+                    parser=parse_source_candidate_with_boundary_validation,
+                    max_workers=1 if use_clef_backend else workers,
+                    prefer_largest_padded_candidate=prefer_largest_padded_candidate,
+                    progressive_source_selection=progressive_source_selection,
+                    progressive_source_early_stop=False,
+                    progressive_pad_one_stable_level=not contract_accepts_ongoing_action_interval(
+                        exercise_motion_contract
+                    ),
+                    batch_size=1 if use_clef_backend else SOURCE_CUT_SCORECARD_BATCH_SIZE,
+                    batch_prompt_builder=(
+                        None
+                        if use_clef_backend
+                        else lambda group: build_source_cut_candidate_batch_choice_prompt(
+                            exercise_name=exercise_name,
+                            candidate_title=candidate_title,
+                            candidates=group,
+                            exercise_motion_contract=exercise_motion_contract,
+                        )
+                    ),
+                    caption_image_kwargs=caption_kwargs,
+                    exercise_motion_contract=None,
                 ),
-                parser=parse_source_candidate_with_boundary_validation,
-                max_workers=workers,
-                prefer_largest_padded_candidate=prefer_largest_padded_candidate,
-                progressive_source_selection=progressive_source_selection,
-                progressive_source_early_stop=False,
-                progressive_pad_one_stable_level=not contract_accepts_ongoing_action_interval(
-                    exercise_motion_contract
-                ),
-                batch_size=SOURCE_CUT_SCORECARD_BATCH_SIZE,
-                batch_prompt_builder=lambda group: build_source_cut_candidate_batch_choice_prompt(
-                    exercise_name=exercise_name,
-                    candidate_title=candidate_title,
-                    candidates=group,
-                    exercise_motion_contract=exercise_motion_contract,
-                ),
+                max_workers=reviewer_workers,
                 caption_image_kwargs=caption_kwargs,
-                exercise_motion_contract=None,
+            )
+            if recovery is not None:
+                review_recoveries.append(recovery)
+            review_rankings.extend(batch_choice.rankings)
+            review_raw_responses.extend(batch_choice.raw_responses)
+            review_errors.extend(batch_choice.errors)
+            reviewed_candidate_ids.extend(batch_choice.reviewed_candidate_ids)
+            reviewed_request_count += batch_choice.reviewed_request_count
+            review_elapsed_seconds += batch_choice.elapsed_seconds
+            batch_ranking = batch_choice.ranking
+            selected_ranking = (
+                batch_ranking
+                if batch_ranking is not None
+                and source_cut_ranking_has_vlm_approval(batch_ranking)
+                else None
+            )
+            remaining_vlm_candidates = remaining_source_cut_candidates_after_review(
+                remaining_vlm_candidates,
+                vlm_shortlist,
+                batch_choice.reviewed_candidate_ids,
+            )
+        return (
+            CutCandidateReviewChoice(
+                ranking=selected_ranking,
+                raw_responses=review_raw_responses,
+                errors=review_errors,
+                reviewed_candidate_ids=dedupe_text(reviewed_candidate_ids),
+                reviewed_request_count=reviewed_request_count,
+                elapsed_seconds=review_elapsed_seconds,
+                rankings=review_rankings,
             ),
-            max_workers=effective_source_cut_vlm_workers,
-            caption_image_kwargs=source_cut_caption_kwargs,
+            review_recoveries,
         )
-        if recovery is not None:
-            review_recoveries.append(recovery)
-        review_rankings.extend(batch_choice.rankings)
-        review_raw_responses.extend(batch_choice.raw_responses)
-        review_errors.extend(batch_choice.errors)
-        reviewed_candidate_ids.extend(batch_choice.reviewed_candidate_ids)
-        reviewed_request_count += batch_choice.reviewed_request_count
-        review_elapsed_seconds += batch_choice.elapsed_seconds
-        batch_ranking = batch_choice.ranking
-        selected_ranking = (
-            batch_ranking
-            if batch_ranking is not None
-            and source_cut_ranking_has_vlm_approval(batch_ranking)
-            else None
+
+    clef_failure: BaseException | None = None
+    if visual_decision_backend == "clef-systemone":
+        from .clef_systemone import run_clef_visual_decision_exclusively
+
+        managed_review_started = time.perf_counter()
+        try:
+            review_choice, review_recoveries = run_clef_visual_decision_exclusively(
+                base_url=clef_systemone_base_url,
+                caption_source=caption_images,
+                conflicting_base_urls=(
+                    str(getattr(getattr(caption_images, "__self__", None), "base_url", "")) or None,
+                ),
+                operation=lambda: run_source_cut_scorecard_batches(
+                    clef_source_cut_caption_images,
+                    use_clef_backend=True,
+                    caption_kwargs=source_cut_caption_kwargs,
+                ),
+            )
+        except Exception as exc:
+            if critical_vlm_interaction_error(exc) is None and not isinstance(
+                exc, (FileNotFoundError, OSError, TimeoutError, RuntimeError)
+            ):
+                raise
+            clef_failure = exc
+            review_choice, review_recoveries = run_source_cut_scorecard_batches(
+                caption_images,
+                use_clef_backend=False,
+                caption_kwargs={
+                    **source_cut_caption_kwargs,
+                    "clef_visual_decision_backend": "qwen-chat",
+                },
+            )
+            review_recoveries.append({
+                "applied": True,
+                "reason": "clef_scorecard_infrastructure_fallback_to_qwen",
+                "error": f"{type(exc).__name__}: {exc}",
+            })
+        review_choice = replace(
+            review_choice,
+            elapsed_seconds=elapsed_seconds(managed_review_started),
         )
-        # The progressive reviewer may stop before consuming its whole
-        # shortlist. Keep those unreviewed candidates queued for the next
-        # pass; otherwise a rejected first choice silently discards valid
-        # wider windows. If the reviewer reports no attempted ids, consume the
-        # submitted batch to guarantee forward progress after an infrastructure
-        # failure.
-        remaining_vlm_candidates = remaining_source_cut_candidates_after_review(
-            remaining_vlm_candidates,
-            vlm_shortlist,
-            batch_choice.reviewed_candidate_ids,
+    else:
+        review_choice, review_recoveries = run_source_cut_scorecard_batches(
+            caption_images,
+            use_clef_backend=False,
+            caption_kwargs=source_cut_caption_kwargs,
         )
-    review_choice = CutCandidateReviewChoice(
-        ranking=selected_ranking,
-        raw_responses=review_raw_responses,
-        errors=review_errors,
-        reviewed_candidate_ids=dedupe_text(reviewed_candidate_ids),
-        reviewed_request_count=reviewed_request_count,
-        elapsed_seconds=review_elapsed_seconds,
-        rankings=review_rankings,
+    scorecard_review_backend = (
+        "qwen-chat-infrastructure-fallback"
+        if clef_failure is not None
+        else visual_decision_backend
+    )
+    scorecard_uses_clef = scorecard_review_backend == "clef-systemone"
+    scorecard_batch_size = 1 if scorecard_uses_clef else SOURCE_CUT_SCORECARD_BATCH_SIZE
+    scorecard_effective_workers = 1 if scorecard_uses_clef else effective_source_cut_vlm_workers
+    scorecard_request_policy = (
+        "one_candidate_per_systemone_request"
+        if scorecard_uses_clef
+        else f"{SOURCE_CUT_SCORECARD_BATCH_SIZE}_candidates_per_chat_request"
     )
     vlm_seconds = review_choice.elapsed_seconds
     ranking = review_choice.ranking
@@ -42397,10 +43025,15 @@ def rank_source_video_cut_candidates_with_caption_images(
                     "sourceChoiceInvalidResponse": not bool(source_cut_scorecard_rows),
                     "sourceCutVlmReviewedCandidateCount": len(reviewed_vlm_candidates),
                     "sourceCutVlmReviewedRequestCount": review_choice.reviewed_request_count,
-                    "sourceCutVlmRequestPolicy": f"{SOURCE_CUT_SCORECARD_BATCH_SIZE}_candidates_per_request",
+                    "sourceCutVlmRequestPolicy": scorecard_request_policy,
+                    "sourceCutVlmCandidateBatchSize": scorecard_batch_size,
                     "sourceCutVlmRequestTimeoutSeconds": request_timeout_seconds,
                     "sourceCutMaxVlmWorkers": SOURCE_CUT_MAX_VLM_WORKERS,
-                    "sourceCutEffectiveVlmWorkers": effective_source_cut_vlm_workers,
+                    "sourceCutEffectiveVlmWorkers": scorecard_effective_workers,
+                    "sourceCutScorecardBackend": scorecard_review_backend,
+                    "sourceCutScorecardPolicyVersion": (
+                        CLEF_SOURCE_CUT_SCORECARD_POLICY_VERSION if scorecard_uses_clef else None
+                    ),
                     "sourceCutVlmRecoveries": review_recoveries,
                     "sourceCutVlmRequestErrors": review_choice.errors,
                     "sourceCutScorecardCandidates": source_cut_scorecard_rows,
@@ -42492,11 +43125,15 @@ def rank_source_video_cut_candidates_with_caption_images(
     )
     ranking_payload["sourceCutVlmReviewedCandidateCount"] = len(reviewed_vlm_candidates)
     ranking_payload["sourceCutVlmReviewedRequestCount"] = review_choice.reviewed_request_count
-    ranking_payload["sourceCutVlmRequestPolicy"] = f"{SOURCE_CUT_SCORECARD_BATCH_SIZE}_candidates_per_request"
-    ranking_payload["sourceCutVlmCandidateBatchSize"] = SOURCE_CUT_SCORECARD_BATCH_SIZE
+    ranking_payload["sourceCutVlmRequestPolicy"] = scorecard_request_policy
+    ranking_payload["sourceCutVlmCandidateBatchSize"] = scorecard_batch_size
     ranking_payload["sourceCutVlmRequestTimeoutSeconds"] = request_timeout_seconds
     ranking_payload["sourceCutMaxVlmWorkers"] = SOURCE_CUT_MAX_VLM_WORKERS
-    ranking_payload["sourceCutEffectiveVlmWorkers"] = effective_source_cut_vlm_workers
+    ranking_payload["sourceCutEffectiveVlmWorkers"] = scorecard_effective_workers
+    ranking_payload["sourceCutScorecardBackend"] = scorecard_review_backend
+    ranking_payload["sourceCutScorecardPolicyVersion"] = (
+        CLEF_SOURCE_CUT_SCORECARD_POLICY_VERSION if scorecard_uses_clef else None
+    )
     ranking_payload["sourceCutVlmRecoveries"] = review_recoveries
     ranking_payload["sourceCutVlmRequestErrors"] = review_choice.errors
     ranking_payload["sourceCutUnreviewedCandidateCount"] = max(0, len(candidates) - len(reviewed_vlm_candidates))
@@ -43130,6 +43767,11 @@ def build_selection_manifest(
         "maxFinalOutputRejections": max_final_output_rejections_for_request(request),
         "exerciseMotionContractEnabled": request.exercise_motion_contract_enabled,
         "finalOutputValidationEnabled": request.final_output_validation,
+        "visualDecisionBackend": request.visual_decision_backend,
+        "finalOutputReviewBackend": effective_final_output_review_backend(request),
+        "comparativeSegmentSelectionEnabled": request.comparative_segment_selection_enabled,
+        "clefSystemOneBaseUrl": request.clef_systemone_base_url,
+        "clefSystemOneModel": request.clef_systemone_model,
         "twoScaleSourceValidationEnabled": request.two_scale_source_validation,
         "finalOutputValidationMinScore": request.final_output_validation_min_score,
         "minSelectedScore": request.min_selected_score,

@@ -61,6 +61,7 @@ param(
     [double]$SegmentEndPaddingSeconds = 0.35,
     [double]$SegmentMinSeconds = 2.0,
     [double]$SegmentMaxSeconds = 0.0,
+    [switch]$ComparativeSegmentSelection,
     [switch]$SkipPreWhamSourceValidation,
     [switch]$NoExerciseMotionContract,
     [switch]$RankPreviewVariants,
@@ -78,6 +79,12 @@ param(
     [bool]$FinalOutputValidation = $true,
     [switch]$SkipFinalOutputValidation,
     [double]$FinalOutputValidationMinScore = 0.90,
+    [ValidateSet("qwen-chat", "clef-systemone")]
+    [string]$VisualDecisionBackend = "clef-systemone",
+    [ValidateSet("qwen-chat", "clef-systemone")]
+    [string]$FinalOutputReviewBackend = "clef-systemone",
+    [string]$ClefSystemOneBaseUrl = "http://127.0.0.1:8091",
+    [string]$ClefSystemOneModel = "ggml-org/Clef-Flash-GGUF:Q4_K_M",
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
     [string]$LlamaCppModel = "C:\Users\gabri\Downloads\Qwen3.5-9B-UD-Q4_K_XL.gguf",
     [string]$LlamaCppServerCommand = "C:\Users\gabri\Downloads\llama-b10424-bin-win-cuda-12.4-x64\llama-server.exe",
@@ -389,6 +396,10 @@ $argsList = @(
     "--max-review-windows", "$MaxReviewWindows",
     "--min-selected-score", "$MinSelectedScore",
     "--final-output-validation-min-score", "$FinalOutputValidationMinScore",
+    "--visual-decision-backend", $VisualDecisionBackend,
+    "--final-output-review-backend", $FinalOutputReviewBackend,
+    "--clef-systemone-base-url", $ClefSystemOneBaseUrl,
+    "--clef-systemone-model", $ClefSystemOneModel,
     "--llama-cpp-base-url", $LlamaCppBaseUrl,
     "--llama-cpp-model", $LlamaCppModel,
     "--llama-cpp-mmproj", $LlamaCppMmproj,
@@ -579,6 +590,9 @@ if (-not [string]::IsNullOrWhiteSpace($SegmentBaseUrl)) {
 }
 if (-not [string]::IsNullOrWhiteSpace($SegmentModel)) {
     $argsList += @("--segment-model", $SegmentModel)
+}
+if ($ComparativeSegmentSelection) {
+    $argsList += "--comparative-segment-selection"
 }
 if ($SkipSourceSegmentDetection) {
     $argsList += "--skip-source-segment-detection"

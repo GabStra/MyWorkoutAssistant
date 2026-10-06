@@ -160,6 +160,13 @@ param(
     [switch]$TwoScaleSourceValidation,
     [switch]$SkipTwoScaleSourceValidation,
     [double]$FinalOutputValidationMinScore = 0.90,
+    [ValidateSet("qwen-chat", "clef-systemone")]
+    [string]$VisualDecisionBackend = "clef-systemone",
+    [ValidateSet("qwen-chat", "clef-systemone")]
+    [string]$FinalOutputReviewBackend = "clef-systemone",
+    [string]$ClefSystemOneBaseUrl = "http://127.0.0.1:8091",
+    [string]$ClefSystemOneModel = "ggml-org/Clef-Flash-GGUF:Q4_K_M",
+    [switch]$ComparativeSegmentSelection,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
     [string]$LlamaCppModel = "C:\Users\gabri\Downloads\Qwen3.5-9B-UD-Q4_K_XL.gguf",
     [string]$LlamaCppServerCommand = "C:\Users\gabri\Downloads\llama-b10424-bin-win-cuda-12.4-x64\llama-server.exe",
@@ -7025,6 +7032,10 @@ foreach ($exercise in $exerciseList.exercises) {
         "--max-review-windows", "$MaxReviewWindows",
         "--min-selected-score", "$MinSelectedScore",
         "--final-output-validation-min-score", "$FinalOutputValidationMinScore",
+        "--visual-decision-backend", $VisualDecisionBackend,
+        "--final-output-review-backend", $FinalOutputReviewBackend,
+        "--clef-systemone-base-url", $ClefSystemOneBaseUrl,
+        "--clef-systemone-model", $ClefSystemOneModel,
         "--llama-cpp-base-url", $LlamaCppBaseUrl,
         "--llama-cpp-backend", $LlamaCppBackend,
         "--llama-cpp-temperature", "$LlamaCppTemperature",
@@ -7034,6 +7045,9 @@ foreach ($exercise in $exerciseList.exercises) {
     )
     if ($null -ne $LlamaCppTopP) {
         $bakeArgs += @("--llama-cpp-top-p", "$LlamaCppTopP")
+    }
+    if ($ComparativeSegmentSelection) {
+        $bakeArgs += "--comparative-segment-selection"
     }
     if ($null -ne $LlamaCppTopK) {
         $bakeArgs += @("--llama-cpp-top-k", "$LlamaCppTopK")
