@@ -2782,6 +2782,35 @@ def test_seam_boundary_nudge_reduces_first_last_root_gap():
     assert projected_score <= closed_score + 1e-9
 
 
+def test_seam_projection_scores_grip_and_rejects_breaking_a_valid_pair(monkeypatch):
+    from types import SimpleNamespace
+    from exercise_motion_pkg import controlled_motion as motion
+    from exercise_motion_pkg.equipment_constraints import calibrated_grip_constraint, validate_grip
+
+    names, points = stance(4)
+    rig = FixedRig(points, names)
+    original = rig.initial.copy()
+    equipment = calibrated_grip_constraint(
+        {'equipmentConstraints': {'handRelationship': 'rigid_pair'}},
+        rig.decode(original), names)
+    pinned = np.zeros(points.shape[:2], dtype=bool)
+
+    def solve(residual, initial, *, jac, **kwargs):
+        baseline = residual(initial)
+        probe = initial.reshape(4, rig.width).copy()
+        probe[:, rig.slots[names.index('left_wrist')]] += .6
+        assert not validate_grip(rig.decode(probe), names, equipment)['passed']
+        errors = residual(probe.ravel())
+        assert errors @ errors > baseline @ baseline
+        return SimpleNamespace(x=probe.ravel())
+
+    monkeypatch.setattr(motion, 'least_squares', solve)
+    projected = motion.project_loop_seam_coordinates(
+        original, rig, pinned, scale=motion.body_scale(points, names), fps=30.,
+        equipment=equipment)
+    np.testing.assert_array_equal(projected, original)
+
+
 def test_seam_projection_scores_anatomy_hidden_by_socket_guard(monkeypatch):
     from types import SimpleNamespace
     from exercise_motion_pkg import controlled_motion as motion

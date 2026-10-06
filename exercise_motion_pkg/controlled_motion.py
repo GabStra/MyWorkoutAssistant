@@ -3313,7 +3313,7 @@ def close_loop_seam_coordinates(coordinates, rig, pinned, *, scale, fps=30., pas
 
 def project_loop_seam_coordinates(coordinates, rig, pinned, *, scale, fps, max_nfev=50,
                                   deadline=None, settling_weights=None, settling_limit=None,
-                                  span_targets=None):
+                                  span_targets=None, equipment=None):
     """Hard-project free boundary DOFs so wrap step+velocity fall under playback limits.
 
     Planted positions are constrained in world space, while local rotations stay
@@ -3325,6 +3325,8 @@ def project_loop_seam_coordinates(coordinates, rig, pinned, *, scale, fps, max_n
     from .loop_seam import (
         seam_errors, MAX_STEP_EXCESS_BODY_RATIO, MAX_VELOCITY_MISMATCH_BODY_RATIO)
     from .physical_validation import span_rigidity_fit_residuals
+    from .equipment_constraints import grip_residual, validate_grip
+    equipment = equipment or {}
     coords = np.asarray(coordinates, dtype=float).copy()
     count = len(coords)
     if count < 4:
@@ -3421,6 +3423,8 @@ def project_loop_seam_coordinates(coordinates, rig, pinned, *, scale, fps, max_n
                 unconstrained_points, rig.names, pose_only=True,
                 margin=ANATOMY_FIT_MARGIN, reference=original_points)[0].ravel(),
             ANATOMY_FIT_WEIGHT * span_errors.ravel(),
+            (GRIP_FIT_WEIGHT * grip_residual(points, rig.names, equipment)
+             / max(float(scale), 1e-6)).ravel(),
             0.02 * (values - original),
         ]
         if smooth_boundary:
@@ -3483,8 +3487,12 @@ def project_loop_seam_coordinates(coordinates, rig, pinned, *, scale, fps, max_n
         pass
     projected = unpack(best_values)
     # Keep only if the playback score improved.
-    before = seam_playback_over_limit_score(rig.decode(coords), scale=scale, fps=fps)
-    after = seam_playback_over_limit_score(rig.decode(projected), scale=scale, fps=fps)
+    before_points, after_points = rig.decode(coords), rig.decode(projected)
+    if (validate_grip(before_points, rig.names, equipment)['passed']
+            and not validate_grip(after_points, rig.names, equipment)['passed']):
+        return coords
+    before = seam_playback_over_limit_score(before_points, scale=scale, fps=fps)
+    after = seam_playback_over_limit_score(after_points, scale=scale, fps=fps)
     return projected if after <= before else coords
 
 
@@ -8477,6 +8485,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                     scale=scale, fps=fps, settling_weights=hold_weights,
                     settling_limit=settling_limit,
                     span_targets=span_targets,
+                    equipment=equipment,
                     # Nudge validation can consume the polish reserve. Give
                     # each bounded solve its own window, still inside
                     # the candidate's outer deadline.
