@@ -108,6 +108,7 @@ param(
     [Alias("Resume")]
     [switch]$ReuseExistingSelected,
     [switch]$DisableStageResume,
+    [switch]$DisableMotionProcessingResume,
     [switch]$AllowDirtyWorktree,
     [switch]$DeferAfterFirstAttempt,
     [switch]$IncludeDisabled,
@@ -2031,10 +2032,15 @@ function Start-SharedLlamaServer {
     $sessionLeaseKey = Acquire-MotionServiceSessionLease `
         -SessionDirectory $SessionDir `
         -Stage "shared_llama_server"
+    if (Test-SharedLlamaExclusiveHandoffActive -SessionDir $SessionDir) {
+        $null = Release-MotionServiceSessionLease -SessionDirectory $sessionLeaseKey
+        Write-Host "Shared llama.cpp restart deferred for an active exclusive GPU handoff."
+        return $null
+    }
     New-Item -ItemType Directory -Force -Path (Join-Path $SessionDir "in-flight") | Out-Null
     # Stale markers from a previous supervisor instance must not satisfy or
     # confuse a fresh start; crashed clients leave their counters behind.
-    foreach ($staleFile in @("ready.json", "heartbeat.json", "startup_error.json", "stop_intent.json", "start_requested.json", "stopped.json")) {
+    foreach ($staleFile in @("ready.json", "heartbeat.json", "startup_error.json", "start_requested.json", "stopped.json")) {
         $path = Join-Path $SessionDir $staleFile
         if (Test-Path -LiteralPath $path) {
             Remove-Item -LiteralPath $path -Force
@@ -2113,12 +2119,18 @@ function Start-SharedLlamaServer {
     $deadline = (Get-Date).AddSeconds($LlamaCppServerStartupTimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
         if ($process.HasExited) {
-            $tail = ""
-            try {
-                $tail = (Get-Content -LiteralPath $logPath -Tail 12 -ErrorAction SilentlyContinue) -join " | "
-            } catch {
+            if (Test-SharedLlamaServerStoppedByLiveExclusiveHandoff -SessionDir $SessionDir) {
+                Write-Host "Shared llama.cpp startup was quiesced by a live exclusive GPU handoff; restart remains pending."
+                $null = Release-MotionServiceSessionLease -SessionDirectory $sessionLeaseKey
+                return $null
             }
-            throw "Shared llama.cpp server exited during startup (code $($process.ExitCode)). Logs: $tail"
+            $stdoutTail = (Get-Content -LiteralPath $logPath -Tail 12 -ErrorAction SilentlyContinue) -join " | "
+            $stderrTail = (Get-Content -LiteralPath $errorLogPath -Tail 12 -ErrorAction SilentlyContinue) -join " | "
+            throw "Shared llama.cpp server exited during startup (code $($process.ExitCode)). stdout: $stdoutTail stderr: $stderrTail"
+        }
+        if (Test-SharedLlamaExclusiveHandoffActive -SessionDir $SessionDir) {
+            Start-Sleep -Milliseconds 250
+            continue
         }
         try {
             $null = Invoke-RestMethod -Uri "$baseUrl/v1/models" -TimeoutSec 5
@@ -2168,6 +2180,7 @@ function Test-SharedLlamaServerRestartAdmission {
         [bool]$RestartRequired,
         [bool]$StartRequested,
         [bool]$ReadyMarkerExists,
+        [bool]$LiveExclusiveHandoffActive = $false,
         [int]$SafeBakeRunningJobCount,
         [int]$UnsafeBakeRunningJobCount,
         [int]$PrefetchRunningJobCount,
@@ -2176,6 +2189,10 @@ function Test-SharedLlamaServerRestartAdmission {
         [int]$PendingDiscoveryCount,
         [int]$PendingLegacyBakeCount
     )
+
+    if ($LiveExclusiveHandoffActive) {
+        return $false
+    }
 
     $hasWork = (
         $SafeBakeRunningJobCount -gt 0 -or
@@ -2187,6 +2204,48 @@ function Test-SharedLlamaServerRestartAdmission {
     )
     $hasRestartSignal = $RestartRequired -or $StartRequested -or -not $ReadyMarkerExists
     return [bool]($UnsafeBakeRunningJobCount -eq 0 -and $hasWork -and $hasRestartSignal)
+}
+
+function Test-SharedLlamaExclusiveHandoffActive {
+    param([string]$SessionDir)
+
+    $stopIntentPath = Join-Path $SessionDir "stop_intent.json"
+    if (-not (Test-Path -LiteralPath $stopIntentPath -PathType Leaf)) {
+        return $false
+    }
+    try {
+        $intent = Get-Content -LiteralPath $stopIntentPath -Raw | ConvertFrom-Json
+        $ownerPid = [int]$intent.pid
+        $ownerIdentity = [long]$intent.processIdentity
+        if ($ownerPid -le 0 -or
+            (Get-MotionProcessIdentityState -ProcessId $ownerPid -ExpectedProcessIdentity $ownerIdentity) -ne "running") {
+            return $false
+        }
+        $counterPath = Join-Path (Join-Path $SessionDir "in-flight") ("{0}.json" -f $ownerPid)
+        if (-not (Test-Path -LiteralPath $counterPath -PathType Leaf)) {
+            return $false
+        }
+        $counter = Get-Content -LiteralPath $counterPath -Raw | ConvertFrom-Json
+        return [bool]([int]$counter.pid -eq $ownerPid -and
+            [long]$counter.processIdentity -eq $ownerIdentity)
+    } catch {
+        return $false
+    }
+}
+
+function Test-SharedLlamaServerStoppedByLiveExclusiveHandoff {
+    param([string]$SessionDir)
+
+    if (-not (Test-SharedLlamaExclusiveHandoffActive -SessionDir $SessionDir)) {
+        return $false
+    }
+    try {
+        $intent = Get-Content -LiteralPath (Join-Path $SessionDir "stop_intent.json") -Raw | ConvertFrom-Json
+        $stopped = Get-Content -LiteralPath (Join-Path $SessionDir "stopped.json") -Raw | ConvertFrom-Json
+        return [bool]([int]$stopped.stoppedByPid -eq [int]$intent.pid)
+    } catch {
+        return $false
+    }
 }
 
 function Get-SharedLlamaBakeRestartCounts {
@@ -7585,6 +7644,7 @@ foreach ($workItem in $workItems) {
     # rediscovery so retained WHAM/bake can finish this pass.
     if ($script:MotionSourceIdentityMatchesPriorRun -and
         -not $DisableStageResume -and
+        -not $DisableMotionProcessingResume -and
         (Test-MotionProcessingResumeReady -WorkItem $workItem)) {
         $workItem.motionProcessingResumed = $true
         $workItem.primarySourceDownloadReused = $true
@@ -7594,7 +7654,8 @@ foreach ($workItem in $workItems) {
         Write-Host ("Resuming {0} at incomplete motion processing." -f $workItem.exerciseName)
         continue
     }
-    if (-not $DisableStageResume -and (Test-BakeStageReady -WorkItem $workItem)) {
+    if (-not $DisableStageResume -and -not $DisableMotionProcessingResume -and
+        (Test-BakeStageReady -WorkItem $workItem)) {
         $workItem.bakeReused = $true
         "[$(Get-Date -Format o)] reused completed movement bake; resuming selected-output materialization" | Add-Content -LiteralPath $workItem.logPath -Encoding UTF8
         Add-SchedulerTimelineItemEvent -WorkItem $workItem -ReadyReason "bake_stage_resume"
@@ -7725,6 +7786,7 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                         -RestartRequired $sharedLlamaServerRestartRequired `
                         -StartRequested (Test-Path -LiteralPath (Join-Path $resolvedSharedLlamaServerSessionDir "start_requested.json")) `
                         -ReadyMarkerExists (Test-Path -LiteralPath (Join-Path $resolvedSharedLlamaServerSessionDir "ready.json")) `
+                        -LiveExclusiveHandoffActive (Test-SharedLlamaExclusiveHandoffActive -SessionDir $resolvedSharedLlamaServerSessionDir) `
                         -SafeBakeRunningJobCount $bakeRestartCounts.safeBakeRunningJobCount `
                         -UnsafeBakeRunningJobCount $bakeRestartCounts.unsafeBakeRunningJobCount `
                         -PrefetchRunningJobCount $prefetchRunningJobs.Count `
@@ -7738,7 +7800,9 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                     # WHAM has released the GPU; unknown phases remain blocked.
                     # Start-SharedLlamaServer clears stale markers.
                     $sharedLlamaServerInstance = Start-SharedLlamaServer -SessionDir $resolvedSharedLlamaServerSessionDir
-                    $sharedLlamaServerRestartRequired = $false
+                    if ($null -ne $sharedLlamaServerInstance) {
+                        $sharedLlamaServerRestartRequired = $false
+                    }
                 }
             }
             while (
@@ -8421,6 +8485,7 @@ $summary = [ordered]@{
     generatedAt = (Get-Date).ToUniversalTime().ToString("o")
     motionSourceIdentity = $script:MotionSourceIdentity
     stageResumeDisabledForSourceIdentityMismatch = ($priorRunStateExists -and -not $script:MotionSourceIdentityMatchesPriorRun)
+    motionProcessingResumeDisabled = [bool]$DisableMotionProcessingResume
     sourceWorkoutPlanPath = $resolvedWorkoutPlanJson
     equipmentJsonPath = if ([string]::IsNullOrWhiteSpace($EquipmentJson)) { $null } else { $EquipmentJson }
     workspaceRoot = $resolvedWorkspaceRoot

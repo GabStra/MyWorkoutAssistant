@@ -229,7 +229,7 @@ def test_shared_llama_restart_reuses_held_lease_only_after_runtime_stops():
     assert 'process identity is unverified' in runtime_transition
 
 
-def test_shared_llama_restart_admission_ignores_stale_ready_and_defers_only_for_unsafe_bake():
+def test_shared_llama_restart_admission_defers_for_live_exclusive_handoff(tmp_path: Path):
     pwsh = shutil.which("pwsh")
     if pwsh is None:
         pytest.skip("PowerShell is required to exercise the shared llama restart gate")
@@ -240,11 +240,28 @@ def test_shared_llama_restart_admission_ignores_stale_ready_and_defers_only_for_
     )
     source = script_path.read_text(encoding="utf-8-sig")
     helper = _powershell_function(source, "Test-SharedLlamaServerRestartAdmission")
+    handoff_helper = _powershell_function(source, "Test-SharedLlamaExclusiveHandoffActive")
+    stopped_handoff_helper = _powershell_function(source, "Test-SharedLlamaServerStoppedByLiveExclusiveHandoff")
+    process_identity_helper = _powershell_function(source, "Get-MotionProcessIdentityState")
     bake_restart_counter = _powershell_function(source, "Get-SharedLlamaBakeRestartCounts")
+    session_dir = str(tmp_path / "shared-llama").replace("'", "''")
     command = f"""
 $ErrorActionPreference = 'Stop'
 {helper}
+{handoff_helper}
+{stopped_handoff_helper}
+{process_identity_helper}
 {bake_restart_counter}
+$sessionDir = '{session_dir}'
+$inflightDir = Join-Path $sessionDir 'in-flight'
+New-Item -ItemType Directory -Path $inflightDir -Force | Out-Null
+$ownerProcess = Get-Process -Id $PID
+$ownerIdentity = [long]$ownerProcess.StartTime.ToUniversalTime().ToFileTimeUtc()
+@{{ pid = $PID; processIdentity = $ownerIdentity }} | ConvertTo-Json | Set-Content (Join-Path $sessionDir 'stop_intent.json')
+@{{ pid = $PID; processIdentity = $ownerIdentity; activeRequests = 0 }} | ConvertTo-Json | Set-Content (Join-Path $inflightDir "$PID.json")
+if (-not (Test-SharedLlamaExclusiveHandoffActive -SessionDir $sessionDir)) {{ throw 'A live zero-request exclusive owner was not recognized.' }}
+@{{ stoppedByPid = $PID }} | ConvertTo-Json | Set-Content (Join-Path $sessionDir 'stopped.json')
+if (-not (Test-SharedLlamaServerStoppedByLiveExclusiveHandoff -SessionDir $sessionDir)) {{ throw 'A matching stop record was not recognized.' }}
 $staleReadyRestart = Test-SharedLlamaServerRestartAdmission `
     -RestartRequired $true -StartRequested $false -ReadyMarkerExists $true `
     -SafeBakeRunningJobCount 0 -UnsafeBakeRunningJobCount 0 -PrefetchRunningJobCount 0 -PendingPrefetchCount 0 `
@@ -255,6 +272,12 @@ $prefetchRestart = Test-SharedLlamaServerRestartAdmission `
     -SafeBakeRunningJobCount 0 -UnsafeBakeRunningJobCount 0 -PrefetchRunningJobCount 1 -PendingPrefetchCount 0 `
     -DiscoveryRunningJobCount 0 -PendingDiscoveryCount 0 -PendingLegacyBakeCount 0
 if (-not $prefetchRestart) {{ throw 'Active prefetch work did not admit a required restart.' }}
+$quiescingClient = Test-SharedLlamaServerRestartAdmission `
+    -RestartRequired $true -StartRequested $true -ReadyMarkerExists $false `
+    -LiveExclusiveHandoffActive $true `
+    -SafeBakeRunningJobCount 1 -UnsafeBakeRunningJobCount 0 -PrefetchRunningJobCount 0 -PendingPrefetchCount 0 `
+    -DiscoveryRunningJobCount 0 -PendingDiscoveryCount 0 -PendingLegacyBakeCount 0
+if ($quiescingClient) {{ throw 'A live exclusive GPU handoff did not defer the server restart.' }}
 $exclusiveBake = Test-SharedLlamaServerRestartAdmission `
     -RestartRequired $true -StartRequested $true -ReadyMarkerExists $false `
     -SafeBakeRunningJobCount 0 -UnsafeBakeRunningJobCount 1 -PrefetchRunningJobCount 0 -PendingPrefetchCount 0 `
@@ -296,6 +319,10 @@ if ($staleMarkerOnly) {{ throw 'A stale ready marker without an observed exit tr
         check=False,
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "Test-SharedLlamaServerStoppedByLiveExclusiveHandoff -SessionDir $SessionDir" in source
+    assert "stderrTail = (Get-Content -LiteralPath $errorLogPath" in source
+    assert '"startup_error.json", "start_requested.json", "stopped.json"' in source
+    assert source.count("Test-SharedLlamaExclusiveHandoffActive -SessionDir $SessionDir") >= 2
 
 
 def test_powershell_shared_llama_counter_ignores_recycled_pid_identity(tmp_path: Path):

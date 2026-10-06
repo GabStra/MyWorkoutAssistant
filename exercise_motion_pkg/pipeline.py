@@ -266,6 +266,32 @@ def default_wham_results_pkl(wham_output_dir: Path, input_video_path: Path) -> P
     return wham_output_dir / input_video_path.stem / "wham_output.pkl"
 
 
+def wham_output_dir_for_uncached_generation(
+    output_root: Path,
+    *,
+    cache_key_value: str,
+    input_video_path: Path,
+    request: GenerateRequest,
+) -> Path:
+    """Choose a content-keyed root, isolating unvalidated final outputs."""
+    output_dir = output_root / cache_key_value
+    has_stale_wham_result = default_wham_results_pkl(output_dir, input_video_path).exists()
+    has_stale_gvhmr_prediction = (
+        request.motion_reconstruction_backend == "gvhmr"
+        and (
+            output_dir / "demo" / input_video_path.stem / "hmr4d_results.pt"
+        ).exists()
+    )
+    if not request.reuse_wham_cache or has_stale_wham_result or has_stale_gvhmr_prediction:
+        # GVHMR trusts hmr4d_results.pt existence as proof that inference has
+        # completed. A WHAM pkl without a valid cache manifest is similarly
+        # untrusted, so neither may be reused as an intermediate on a cache miss.
+        # Keep content-keyed preprocessed features reusable when no final output
+        # exists and the request permits cache reuse.
+        output_dir = output_dir / f"attempt-{uuid.uuid4().hex}"
+    return output_dir
+
+
 def default_wham_global_cache_dir(workspace: Path) -> Path:
     resolved = workspace.expanduser().resolve()
     for candidate in (resolved, *resolved.parents):
@@ -796,12 +822,17 @@ def _run_generation_pipeline_uncached(
         reusable_results_pkl = reusable_wham_results_pkl(
             request, input_video_path, runtime_identity=runtime_identity
         )
-        # WHAM also caches detections/features under its output directory.
-        # Isolate a fresh run by input content so those cannot survive a changed
-        # source window merely because the MP4 basename stayed the same.
+        # WHAM caches detections/features below this directory, so key it by
+        # source and runtime identity. If an unvalidated final output remains,
+        # the helper gives the model runner a clean attempt directory.
         if reusable_results_pkl is None and request.wham_results_pkl is None:
-            wham_output_dir = wham_output_dir / wham_content_cache_key(
-                request, input_video_path, runtime_identity=runtime_identity
+            wham_output_dir = wham_output_dir_for_uncached_generation(
+                wham_output_dir,
+                cache_key_value=wham_content_cache_key(
+                    request, input_video_path, runtime_identity=runtime_identity
+                ),
+                input_video_path=input_video_path,
+                request=request,
             )
         wham_source = resolve_wham_results_source(
             explicit_results_pkl=request.wham_results_pkl or reusable_results_pkl,

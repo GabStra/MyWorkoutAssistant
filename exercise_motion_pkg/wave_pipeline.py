@@ -1458,6 +1458,11 @@ def _run_staged_bake_wave(
         if getattr(items[0].request, "shared_llama_server", False)
         else None
     )
+    generation_session = (
+        LazyLlamaCppVisionSession(items[0].request)
+        if shared_llama_session_dir is not None
+        else None
+    )
     if shared_llama_session_dir is not None:
         write_generation_holder_marker(shared_llama_session_dir, holder=wave_id)
 
@@ -1490,6 +1495,13 @@ def _run_staged_bake_wave(
         }
         if callable_accepts_keyword(generate_candidate_motion, "stage_identity"):
             generate_kwargs["stage_identity"] = stage_identity
+        if (
+            generation_session is not None
+            and callable_accepts_keyword(generate_candidate_motion, "run_wham_exclusive")
+        ):
+            generate_kwargs["run_wham_exclusive"] = (
+                generation_session.run_without_llama_overlap
+            )
         result = generate_candidate_motion(candidate, **generate_kwargs)
         return exercise_id, item, result, time.perf_counter() - wham_started
 
@@ -1507,89 +1519,102 @@ def _run_staged_bake_wave(
     wham_attempts: dict[str, list[dict[str, Any]]] = {
         exercise_id: [] for exercise_id in prepared
     }
-    with ThreadPoolExecutor(max_workers=wham_worker_count) as executor:
-        future_items = {
-            executor.submit(
-                generate_item_motion,
-                exercise_id,
-                item,
-                candidate,
-                selected_video_path,
-            ): (exercise_id, item, candidate, selected_video_path)
-            for exercise_id, item, candidate, selected_video_path in prepared_candidates
-        }
-        for future in as_completed(future_items):
-            exercise_id, item, candidate, selected_video_path = future_items[future]
-            state = item_states[exercise_id]
-            wham_started = generation_start_times.get(_candidate_key(candidate), time.perf_counter())
-            try:
-                _result_exercise_id, _result_item, result, generation_seconds = future.result()
-                attempt = {
-                    "status": "prepared",
-                    "candidateKey": _candidate_key(candidate),
-                    "selectedVideoPath": str(selected_video_path),
-                    "elapsedSeconds": round(generation_seconds, 3),
-                    "cacheStatus": result.wham_cache_status,
-                    "resultsPath": str(result.wham_results_pkl) if result.wham_results_pkl else None,
-                }
-                reconstruction_timings = _reconstruction_timing_snapshot(result)
-                if reconstruction_timings is not None:
-                    attempt["reconstructionTimings"] = reconstruction_timings
-                wham_attempts[exercise_id].append(attempt)
-                _ready_item, ready_sources = wham_ready.setdefault(exercise_id, (item, []))
-                ready_sources.append((candidate, selected_video_path))
-                # Speculative CPU bake/fit only for the first ready source. Later
-                # sources bake during final processing if the primary fails, so
-                # unfinished secondary fits cannot stall the kept path.
-                # Once extraction is finished, speculative work cannot overlap
-                # it and finalization immediately abandons an unfinished bake.
-                # Let final processing own that bake from the start instead.
-                if len(ready_sources) == 1 and any(
-                    not pending.done() for pending in future_items
-                ):
-                    candidate_key = _candidate_key(candidate)
-                    render_futures[candidate_key] = render_executor.submit(
-                        prepare_cpu_render_cache, item, candidate, result,
-                        prepared_contracts.get(_candidate_key(candidate)))
-                    render_workspaces[candidate_key] = (
-                        item.request.workspace / candidate.workspace_slug
-                    )
-            except Exception as exc:
-                if is_storage_failure(exc):
-                    raise
-                failure_status = generation_failure_status(exc)
-                attempt = {
-                    "status": failure_status,
-                    "candidateKey": _candidate_key(candidate),
-                    "selectedVideoPath": str(selected_video_path),
-                    "elapsedSeconds": round(time.perf_counter() - wham_started, 3),
-                    "error": f"{type(exc).__name__}: {exc}",
-                }
-                failure_details = candidate_generation_failure_details(exc)
-                if failure_details is not None:
-                    attempt["reconstructionFailure"] = failure_details
-                if isinstance(exc, WhamTrackingPreflightRejected):
-                    attempt["trackingPreflight"] = exc.report
-                if isinstance(exc, RawMotionRejected):
-                    attempt["rawWhamMotionGate"] = exc.gate
-                    candidate_workspace = item.request.workspace / candidate.workspace_slug
-                    attempt["artifactRetention"] = apply_artifact_retention_policy(
-                        candidate_workspace,
-                        {"candidateResults": [{"candidateWorkspace": str(candidate_workspace),
-                                                "inputVideoPath": str(selected_video_path)}]},
-                        mode=item.request.artifact_retention,
-                    )
-                wham_attempts[exercise_id].append(attempt)
-            wham_completed_count += 1
-            state["wham"] = {
-                "status": generation_status(wham_attempts[exercise_id], len(prepared[exercise_id][1])),
-                "attempts": wham_attempts[exercise_id],
+    def run_generation_jobs() -> None:
+        nonlocal wham_completed_count
+        with ThreadPoolExecutor(max_workers=wham_worker_count) as executor:
+            future_items = {
+                executor.submit(
+                    generate_item_motion,
+                    exercise_id,
+                    item,
+                    candidate,
+                    selected_video_path,
+                ): (exercise_id, item, candidate, selected_video_path)
+                for exercise_id, item, candidate, selected_video_path in prepared_candidates
             }
-            checkpoint("wham_generation", item.exercise_name)
-            announce(
-                f"{'Extracted motion' if attempt['status'] == 'prepared' else 'Extraction failed'} for {item.exercise_name} "
-                f"({wham_completed_count}/{len(prepared_candidates)}, {attempt['elapsedSeconds']:.1f}s)."
-            )
+            for future in as_completed(future_items):
+                exercise_id, item, candidate, selected_video_path = future_items[future]
+                state = item_states[exercise_id]
+                wham_started = generation_start_times.get(_candidate_key(candidate), time.perf_counter())
+                try:
+                    _result_exercise_id, _result_item, result, generation_seconds = future.result()
+                    attempt = {
+                        "status": "prepared",
+                        "candidateKey": _candidate_key(candidate),
+                        "selectedVideoPath": str(selected_video_path),
+                        "elapsedSeconds": round(generation_seconds, 3),
+                        "cacheStatus": result.wham_cache_status,
+                        "resultsPath": str(result.wham_results_pkl) if result.wham_results_pkl else None,
+                    }
+                    reconstruction_timings = _reconstruction_timing_snapshot(result)
+                    if reconstruction_timings is not None:
+                        attempt["reconstructionTimings"] = reconstruction_timings
+                    wham_attempts[exercise_id].append(attempt)
+                    _ready_item, ready_sources = wham_ready.setdefault(exercise_id, (item, []))
+                    ready_sources.append((candidate, selected_video_path))
+                    # Speculative CPU bake/fit only for the first ready source. Later
+                    # sources bake during final processing if the primary fails, so
+                    # unfinished secondary fits cannot stall the kept path.
+                    # Once extraction is finished, speculative work cannot overlap
+                    # it and finalization immediately abandons an unfinished bake.
+                    # Let final processing own that bake from the start instead.
+                    if len(ready_sources) == 1 and any(
+                        not pending.done() for pending in future_items
+                    ):
+                        candidate_key = _candidate_key(candidate)
+                        render_futures[candidate_key] = render_executor.submit(
+                            prepare_cpu_render_cache, item, candidate, result,
+                            prepared_contracts.get(_candidate_key(candidate)))
+                        render_workspaces[candidate_key] = (
+                            item.request.workspace / candidate.workspace_slug
+                        )
+                except Exception as exc:
+                    if is_storage_failure(exc):
+                        raise
+                    failure_status = generation_failure_status(exc)
+                    attempt = {
+                        "status": failure_status,
+                        "candidateKey": _candidate_key(candidate),
+                        "selectedVideoPath": str(selected_video_path),
+                        "elapsedSeconds": round(time.perf_counter() - wham_started, 3),
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                    failure_details = candidate_generation_failure_details(exc)
+                    if failure_details is not None:
+                        attempt["reconstructionFailure"] = failure_details
+                    if isinstance(exc, WhamTrackingPreflightRejected):
+                        attempt["trackingPreflight"] = exc.report
+                    if isinstance(exc, RawMotionRejected):
+                        attempt["rawWhamMotionGate"] = exc.gate
+                        candidate_workspace = item.request.workspace / candidate.workspace_slug
+                        attempt["artifactRetention"] = apply_artifact_retention_policy(
+                            candidate_workspace,
+                            {"candidateResults": [{"candidateWorkspace": str(candidate_workspace),
+                                                    "inputVideoPath": str(selected_video_path)}]},
+                            mode=item.request.artifact_retention,
+                        )
+                    wham_attempts[exercise_id].append(attempt)
+                wham_completed_count += 1
+                state["wham"] = {
+                    "status": generation_status(wham_attempts[exercise_id], len(prepared[exercise_id][1])),
+                    "attempts": wham_attempts[exercise_id],
+                }
+                checkpoint("wham_generation", item.exercise_name)
+                announce(
+                    f"{'Extracted motion' if attempt['status'] == 'prepared' else 'Extraction failed'} for {item.exercise_name} "
+                    f"({wham_completed_count}/{len(prepared_candidates)}, {attempt['elapsedSeconds']:.1f}s)."
+                )
+
+
+    try:
+        # Cache hits return before run_processing_exclusive is invoked. A cache
+        # miss is handed to this session by generate_candidate_motion, which
+        # drains and stops the supervisor-owned server before acquiring the GPU.
+        run_generation_jobs()
+    finally:
+        if generation_session is not None:
+            metrics["generationVisionSession"] = generation_session.timing_manifest()
+            generation_session.close(force_stop_server=True)
 
     for exercise_id in prepared:
         state = item_states[exercise_id]

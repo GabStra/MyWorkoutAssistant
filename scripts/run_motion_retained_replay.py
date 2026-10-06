@@ -22,11 +22,17 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 
-def verify_replay_outputs(run_root: Path, exercise_ids: set[str]) -> None:
+def verify_replay_outputs(
+    run_root: Path,
+    exercise_ids: set[str],
+    *,
+    workspace_root: Path | None = None,
+) -> None:
     """Require reviewed production artifacts and their exact packaged bytes."""
     from scripts import build_workout_plan_movement_package as builder
 
-    summary_path = run_root / "workspace/workout_motion_generation_summary.json"
+    summary_workspace = workspace_root or run_root / "workspace"
+    summary_path = summary_workspace / "workout_motion_generation_summary.json"
     summary = builder.load_json_file(summary_path)
     package = builder.load_json_file(run_root / "package.json")
     items = {str(item.get("exerciseId")): item
@@ -125,7 +131,8 @@ def run_bounded_process(command, *, environment, stdout, stderr, timeout_seconds
 
 
 def run_replay(config_path: Path, run_root: Path, python_command: str | None,
-               timeout_seconds: float = 2400) -> int:
+               timeout_seconds: float = 2400,
+               existing_workspace_root: Path | None = None) -> int:
     if timeout_seconds <= 0:
         raise ValueError("Replay timeout must be positive")
     sys.path.insert(0, str(REPO_ROOT / "tests"))
@@ -133,23 +140,35 @@ def run_replay(config_path: Path, run_root: Path, python_command: str | None,
     from exercise_motion_pkg.video_utils import read_basic_video_metadata
 
     config = json.loads(config_path.read_text(encoding="utf-8"))
-    if config.get("mode") != "retained_reconstruction_real_review":
-        raise ValueError("Replay requires retained_reconstruction_real_review mode")
+    mode = config.get("mode")
+    if mode not in {
+        "retained_reconstruction_real_review",
+        "fresh_reconstruction_real_review",
+    }:
+        raise ValueError("Replay requires a supported real-review reconstruction mode")
+    retained_reconstruction = mode == "retained_reconstruction_real_review"
     fixtures = config["exerciseFixtures"]
     if not fixtures:
         raise ValueError("No retained exercise fixtures")
     for fixture in fixtures.values():
         video = verified_file(fixture, "sourceVideoPath")
-        raw_path = verified_file(fixture, "normalizedMotionPath")
-        raw = json.loads(raw_path.read_text(encoding="utf-8"))
         metadata = read_basic_video_metadata(video)
-        if len(raw["frames"]) != metadata.frame_count or abs(float(raw["fps"]) - metadata.fps) > 0.001:
-            raise ValueError(f"Retained source/reconstruction timeline mismatch: {video}")
-        if not fixture.get("upstreamIdentity"):
-            raise ValueError("Retained reconstruction upstream identity is required")
+        if retained_reconstruction:
+            raw_path = verified_file(fixture, "normalizedMotionPath")
+            raw = json.loads(raw_path.read_text(encoding="utf-8"))
+            if len(raw["frames"]) != metadata.frame_count or abs(float(raw["fps"]) - metadata.fps) > 0.001:
+                raise ValueError(f"Retained source/reconstruction timeline mismatch: {video}")
+            if not fixture.get("upstreamIdentity"):
+                raise ValueError("Retained reconstruction upstream identity is required")
     run_root.mkdir(parents=True, exist_ok=False)
     config["callsPath"] = str((run_root / "boundary_calls.jsonl").resolve())
-    workspace_root = run_root / "workspace"
+    workspace_root = (
+        existing_workspace_root.resolve()
+        if existing_workspace_root is not None
+        else run_root / "workspace"
+    )
+    if existing_workspace_root is not None and not workspace_root.is_dir():
+        raise ValueError(f"Existing replay workspace does not exist: {workspace_root}")
     config["seededExerciseMotionContracts"] = seed_replay_contract_cache(config, workspace_root)
     local_config = run_root / "replay_config.json"
     local_config.write_text(json.dumps(config, indent=2), encoding="utf-8")
@@ -174,7 +193,7 @@ def run_replay(config_path: Path, run_root: Path, python_command: str | None,
         "-YouTubeSourceCacheDir", str((run_root / "youtube-source-cache").resolve()),
         "-YouTubePreviewCacheDir", str((run_root / "youtube-preview-cache").resolve()),
         "-SharedLlamaServer", "-DiscoveryWorkers", "1",
-        "-RequireWhamCache", "-SkipLlamaCppQueryPlanner", "-NoExerciseNameRewrite",
+        "-SkipLlamaCppQueryPlanner", "-NoExerciseNameRewrite",
         "-SkipPosePrefilter", "-SkipExerciseMotionContractPrefetch", "-SkipSourceSegmentDetection",
         "-TwoScaleSourceValidation", "-StagedWaveSize", "1",
         "-MaxConcurrentStagedWaves", "1", "-ResultsPerQuery", "1",
@@ -188,7 +207,10 @@ def run_replay(config_path: Path, run_root: Path, python_command: str | None,
         "-LlamaCppRequestTimeoutSeconds", "120",
         "-CandidateTimeoutSeconds", "300", "-ExerciseTimeoutSeconds", "600",
         "-ProgressIntervalSeconds", "5", "-ArtifactRetention", "debug",
+        "-DisableMotionProcessingResume",
     ]
+    if retained_reconstruction:
+        command.append("-RequireWhamCache")
     # Let the production wrapper select EXERCISE_MOTION_PYTHON or its CUDA
     # default. Passing this runner's sys.executable would silently override
     # that selection with a CPU-only interpreter on many developer machines.
@@ -203,7 +225,11 @@ def run_replay(config_path: Path, run_root: Path, python_command: str | None,
     verification_error = None
     if exit_code == 0:
         try:
-            verify_replay_outputs(run_root, set(fixtures))
+            verify_replay_outputs(
+                run_root,
+                set(fixtures),
+                workspace_root=workspace_root,
+            )
         except (OSError, ValueError, KeyError, TypeError) as exc:
             verification_error = str(exc)
             exit_code = 1
@@ -213,7 +239,11 @@ def run_replay(config_path: Path, run_root: Path, python_command: str | None,
         "timeoutSeconds": timeout_seconds,
         "productionScriptE2EPassed": exit_code == 0,
         "outputVerificationError": verification_error,
-        "reconstructionBoundary": "hash-bound retained raw motion; inference/cache lookup not covered",
+        "reconstructionBoundary": (
+            "hash-bound retained raw motion; inference/cache lookup not covered"
+            if retained_reconstruction
+            else "fresh WHAM inference with cache reuse disabled and attempt outputs isolated"
+        ),
         "visualReviewBoundary": "production models; no fabricated positive review responses",
     }, indent=2), encoding="utf-8")
     return exit_code
@@ -225,6 +255,12 @@ if __name__ == "__main__":
     parser.add_argument("--run-root", required=True, type=Path)
     parser.add_argument("--python", default=None)
     parser.add_argument("--timeout-seconds", type=float, default=2400)
+    parser.add_argument(
+        "--existing-workspace-root",
+        type=Path,
+        help="Reuse completed discovery and source-review stages from an existing replay workspace.",
+    )
     args = parser.parse_args()
     raise SystemExit(run_replay(args.config.resolve(), args.run_root.resolve(), args.python,
-                               args.timeout_seconds))
+                               args.timeout_seconds,
+                               args.existing_workspace_root))

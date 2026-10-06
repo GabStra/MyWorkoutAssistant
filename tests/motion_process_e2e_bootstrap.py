@@ -31,7 +31,10 @@ def _record(config: dict[str, Any], event: str, **details: Any) -> None:
 def _patch_module(fullname: str, module: Any) -> None:
     config = _config()
 
-    if config.get("mode") == "retained_reconstruction_real_review":
+    if config.get("mode") in {
+        "retained_reconstruction_real_review",
+        "fresh_reconstruction_real_review",
+    }:
         from motion_retained_replay_boundary import patch_module
 
         patch_module(fullname, module, config, _record)

@@ -494,6 +494,60 @@ def test_queue_service_retains_ambiguous_processing_request_without_replaying(tm
     assert result["processed"] == 0
 
 
+def test_queue_service_terminalizes_cancelled_processing_request_without_replaying(tmp_path: Path):
+    queue_root = tmp_path / "queue"
+    processing = queue_root / "processing"
+    processing.mkdir(parents=True)
+    request = {
+        "schemaVersion": 1,
+        "requestId": "request-cancelled-recovery",
+        "runId": "run-cancelled-recovery",
+        "waveId": "run-cancelled-recovery-wave-0001",
+        "reportPath": str(tmp_path / "report.json"),
+    }
+    request_path = processing / "request-cancelled-recovery.json"
+    request_path.write_text(json.dumps(request), encoding="utf-8")
+    cancelled_runs = queue_root / "cancelled_runs"
+    cancelled_runs.mkdir(parents=True)
+    (cancelled_runs / "run-cancelled-recovery.json").write_text(
+        json.dumps({"runId": "run-cancelled-recovery"}), encoding="utf-8"
+    )
+    executed = []
+
+    result = {}
+
+    def run_service():
+        result["processed"] = run_staged_wave_service(
+            queue_root,
+            execute_wave=lambda payload: executed.append(payload["requestId"]) or {},
+            poll_interval_seconds=0.01,
+        )
+
+    service_thread = threading.Thread(target=run_service)
+    service_thread.start()
+    result_path = queue_root / "results" / "request-cancelled-recovery.json"
+    deadline = time.monotonic() + 2
+    while not result_path.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert result_path.exists()
+    payload = json.loads(result_path.read_text(encoding="utf-8"))
+    assert payload["requestId"] == "request-cancelled-recovery"
+    assert payload["waveId"] == "run-cancelled-recovery-wave-0001"
+    assert payload["exitCode"] == 130
+    assert payload["status"] == "cancelled"
+    assert "not replayed" in payload["error"]
+    assert executed == []
+    assert not request_path.exists()
+    assert not (queue_root / "ambiguous" / request_path.name).exists()
+    archived_request = queue_root / "consumed" / "request-cancelled-recovery.request.json"
+    assert json.loads(archived_request.read_text(encoding="utf-8")) == request
+
+    (queue_root / "stop.request").write_text("test shutdown", encoding="utf-8")
+    service_thread.join(timeout=2)
+    assert not service_thread.is_alive()
+    assert result["processed"] == 0
+
+
 def test_queue_service_os_lease_prevents_a_second_in_process_owner(tmp_path: Path):
     queue_root = tmp_path / "queue"
     service_thread = threading.Thread(

@@ -7837,6 +7837,76 @@ def test_resolve_wham_results_source_can_force_regeneration(tmp_path: Path) -> N
     assert source.should_run_wham is True
 
 
+def test_uncached_wham_generation_isolates_stale_completion_outputs(
+    tmp_path: Path,
+) -> None:
+    output_root = tmp_path / "raw" / "wham"
+    content_key = "same-source-and-runtime"
+    input_video = tmp_path / "input" / "selected_segment.mp4"
+    input_video.parent.mkdir(parents=True)
+    input_video.write_bytes(b"pinned video bytes")
+    previous_prediction = (
+        output_root / content_key / "demo" / "selected_segment" / "hmr4d_results.pt"
+    )
+    previous_prediction.parent.mkdir(parents=True)
+    previous_prediction.write_bytes(b"retained prediction")
+
+    fresh_request = GenerateRequest(
+        exercise_slug="press",
+        workspace=tmp_path / "workspace",
+        video_path=input_video,
+        motion_reconstruction_backend="gvhmr",
+        reuse_wham_cache=False,
+    )
+    cache_miss_request = replace(fresh_request, reuse_wham_cache=True)
+    first_attempt = pipeline.wham_output_dir_for_uncached_generation(
+        output_root,
+        cache_key_value=content_key,
+        input_video_path=input_video,
+        request=fresh_request,
+    )
+    second_attempt = pipeline.wham_output_dir_for_uncached_generation(
+        output_root,
+        cache_key_value=content_key,
+        input_video_path=input_video,
+        request=fresh_request,
+    )
+    stale_cache_miss_attempt = pipeline.wham_output_dir_for_uncached_generation(
+        output_root,
+        cache_key_value=content_key,
+        input_video_path=input_video,
+        request=cache_miss_request,
+    )
+
+    assert first_attempt != second_attempt
+    assert stale_cache_miss_attempt not in {first_attempt, second_attempt}
+    assert previous_prediction.is_file()
+    assert not (first_attempt / "demo" / "selected_segment" / "hmr4d_results.pt").exists()
+
+
+def test_uncached_wham_generation_reuses_content_key_root_without_stale_outputs(
+    tmp_path: Path,
+) -> None:
+    input_video = tmp_path / "selected_segment.mp4"
+    input_video.write_bytes(b"pinned video bytes")
+    request = GenerateRequest(
+        exercise_slug="press",
+        workspace=tmp_path / "workspace",
+        video_path=input_video,
+        motion_reconstruction_backend="gvhmr",
+        reuse_wham_cache=True,
+    )
+
+    output_dir = pipeline.wham_output_dir_for_uncached_generation(
+        tmp_path / "raw" / "wham",
+        cache_key_value="same-source-and-runtime",
+        input_video_path=input_video,
+        request=request,
+    )
+
+    assert output_dir == tmp_path / "raw" / "wham" / "same-source-and-runtime"
+
+
 def test_generation_pipeline_requires_precomputed_wham_without_entering_gpu_stage(
     tmp_path: Path,
 ) -> None:
@@ -20021,7 +20091,7 @@ def test_discovery_runs_pose_before_owned_vision_ranker(
     assert manifest["exercises"][0]["candidates"][0]["status"] == "recommended"
 
 
-def test_staged_wave_releases_source_vlm_before_wham_and_reuses_final_vlm(
+def test_staged_wave_hands_off_shared_llama_before_wham_and_reuses_final_vlm(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -20035,16 +20105,23 @@ def test_staged_wave_releases_source_vlm_before_wham_and_reuses_final_vlm(
 
     class FakeSession:
         def __init__(self, _request: BakeAndRankRequest) -> None:
+            self.session_index = len(sessions)
             sessions.append(self)
 
         def caption_images(self, *_args: object, **_kwargs: object) -> str:
             return "{}"
 
         def run_without_llama_overlap(self, operation: object) -> object:
-            return operation()
+            events.append(f"exclusive_start_{self.session_index}")
+            result = operation()
+            events.append(f"exclusive_end_{self.session_index}")
+            return result
 
         def close(self, *, force_stop_server: bool = False) -> None:
-            events.append("source_vlm_released" if force_stop_server else "final_vlm_released")
+            events.append(f"session_{self.session_index}_closed_{force_stop_server}")
+
+        def timing_manifest(self) -> dict[str, object]:
+            return {"exclusiveGpuOperationCount": 1}
 
     candidate = RankedCandidate(
         exercise_index=0,
@@ -20061,6 +20138,8 @@ def test_staged_wave_releases_source_vlm_before_wham_and_reuses_final_vlm(
         body_model_root=None,
         pre_wham_source_validation=True,
         final_output_validation=True,
+        shared_llama_server=True,
+        shared_llama_server_session_dir=tmp_path / "shared-llama",
     )
     item = wave_pipeline.StagedWaveItem(
         exercise_id="squat",
@@ -20092,7 +20171,8 @@ def test_staged_wave_releases_source_vlm_before_wham_and_reuses_final_vlm(
         assert generated_candidate is candidate
         assert kwargs["prepared_video_path"] == tmp_path / "source.mp4"
         assert kwargs["request"].wham_tracking_preflight is True
-        events.append("wham_generated")
+        run_exclusive = kwargs["run_wham_exclusive"]
+        run_exclusive(lambda: events.append("wham_generated"))
         return SimpleNamespace(
             wham_cache_status="generated",
             wham_results_pkl=tmp_path / "wham.pkl",
@@ -20113,7 +20193,7 @@ def test_staged_wave_releases_source_vlm_before_wham_and_reuses_final_vlm(
     ) -> dict[str, object]:
         assert final_request.require_wham_cache is True
         assert final_request.fallback_candidates == 0
-        assert shared_vision_session is sessions[1]
+        assert shared_vision_session is sessions[2]
         assert prepared_candidates == [candidate]
         assert prepared_candidate_video_paths == {
             candidate.workspace_slug: tmp_path / "source.mp4"
@@ -20132,12 +20212,15 @@ def test_staged_wave_releases_source_vlm_before_wham_and_reuses_final_vlm(
 
     assert events == [
         "source_prepared",
-        "source_vlm_released",
+        "session_0_closed_True",
+        "exclusive_start_1",
         "wham_generated",
+        "exclusive_end_1",
+        "session_1_closed_True",
         "final_validated",
-        "final_vlm_released",
+        "session_2_closed_False",
     ]
-    assert len(sessions) == 2
+    assert len(sessions) == 3
     assert report["completedExerciseCount"] == 1
     assert report["retryExerciseCount"] == 0
     state = report["items"][0]
@@ -20149,6 +20232,7 @@ def test_staged_wave_releases_source_vlm_before_wham_and_reuses_final_vlm(
     )
     assert (tmp_path / "wave" / "staged_wave_checkpoint.json").exists()
     assert (tmp_path / "wave" / "staged_wave_report.json").exists()
+    assert report["metrics"]["generationVisionSession"]["exclusiveGpuOperationCount"] == 1
 
 
 def test_lazy_vision_session_drains_exclusive_gpu_work_before_restarting_vlm(

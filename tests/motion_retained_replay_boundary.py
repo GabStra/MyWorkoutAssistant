@@ -1,7 +1,7 @@
-"""Local source IO and retained reconstruction boundaries; reviews stay real.
+"""Pinned source IO with retained or fresh reconstruction; reviews stay real.
 
 Used only by the opt-in process replay bootstrap. This does not fabricate model
-verdicts or prove reconstruction cache lookup. Every input is pinned by bytes.
+verdicts. Every source input is pinned by bytes.
 """
 from __future__ import annotations
 
@@ -62,9 +62,10 @@ def patch_module(fullname: str, module: Any, config: dict[str, Any], record: Any
 
     if fullname == "exercise_motion_pkg.bake_and_rank":
         module.download_youtube = download
+    production_generate_candidate_motion = module.generate_candidate_motion
 
     def generate(candidate: Any, *, request: Any, prepared_video_path: Path | None = None,
-                 stage_identity: dict[str, Any] | None = None, **_kwargs: Any) -> Any:
+                 stage_identity: dict[str, Any] | None = None, **generation_kwargs: Any) -> Any:
         from exercise_motion_pkg import bake_and_rank as bake
         from exercise_motion_pkg.pipeline import GenerateRequest, run_generation_pipeline
 
@@ -103,17 +104,40 @@ def patch_module(fullname: str, module: Any, config: dict[str, Any], record: Any
             if (prepared_metadata.frame_count != metadata.frame_count
                     or abs(prepared_metadata.fps - metadata.fps) > 0.001):
                 raise AssertionError("Staged source timeline differs from retained reconstruction")
-        raw = verified_file(fixture, "normalizedMotionPath")
+        retained_reconstruction = (
+            config.get("mode") == "retained_reconstruction_real_review"
+        )
+        raw = verified_file(fixture, "normalizedMotionPath") if retained_reconstruction else None
         contract = bake.exercise_motion_contract_from_candidate(candidate.candidate)
         pose = request.workspace / candidate.workspace_slug / "segment_detection/exact_source_pose_reference.json"
         if not pose.is_file():
             raise AssertionError("Production exact-source pose evidence is missing before reconstruction replay")
-        record(config, "retained_reconstruction_boundary", exerciseId=candidate.exercise_id,
-               sourceSha256=fixture["sourceVideoPathSha256"], rawSha256=fixture["normalizedMotionPathSha256"],
-               upstreamIdentity=fixture["upstreamIdentity"], owner=fullname,
+        record(config,
+               "retained_reconstruction_boundary" if retained_reconstruction else "fresh_reconstruction_boundary",
+               exerciseId=candidate.exercise_id,
+               sourceSha256=fixture["sourceVideoPathSha256"],
+               rawSha256=fixture.get("normalizedMotionPathSha256") if retained_reconstruction else None,
+               upstreamIdentity=fixture.get("upstreamIdentity") if retained_reconstruction else None,
+               inferenceCacheReuse=False if not retained_reconstruction else None,
+               owner=fullname,
                selectedSourcePath=str(selected), stagedSourcePath=(
                    str(Path(prepared_video_path).resolve()) if prepared_video_path is not None else None
                ), selectedSpan=span)
+        if not retained_reconstruction:
+            from dataclasses import replace
+
+            fresh_request = replace(
+                request,
+                reuse_wham_cache=False,
+                require_wham_cache=False,
+            )
+            return production_generate_candidate_motion(
+                candidate,
+                request=fresh_request,
+                prepared_video_path=prepared_video_path,
+                stage_identity=stage_identity,
+                **generation_kwargs,
+            )
         return run_generation_pipeline(GenerateRequest(
             exercise_slug=candidate.workspace_slug, workspace=request.workspace,
             video_path=selected, normalized_motion_json=raw,
@@ -126,7 +150,8 @@ def patch_module(fullname: str, module: Any, config: dict[str, Any], record: Any
             source_pose_reference_path=pose, stage_identity=stage_identity,
             structural_refinement_enabled=request.structural_refinement_enabled,
             motion_tuning_enabled=request.motion_tuning_enabled,
-            require_wham_cache=True,
+            reuse_wham_cache=retained_reconstruction,
+            require_wham_cache=retained_reconstruction,
         ))
 
     module.generate_candidate_motion = generate

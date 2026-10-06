@@ -16,6 +16,8 @@ function Get-FunctionText([string]$Name) {
 foreach ($name in @(
     'Test-BakeStageReady',
     'Test-SelectionHasNeedsMotionProcessing',
+    'Test-CandidateIdentityEvidenceComplete',
+    'Test-HasIdentityReviewedRecommendedCandidate',
     'Test-MotionProcessingResumeReady',
     'Test-SourceTurnResumePresent',
     'Get-BakeQueuePriority',
@@ -39,7 +41,8 @@ try {
     New-Item -ItemType Directory -Path $coldBake, $resumeBake, $cursorBake -Force | Out-Null
 
     $candidatesPath = Join-Path $fixture 'candidates.json'
-    '{"candidates":[]}' | Set-Content -LiteralPath $candidatesPath -Encoding UTF8
+    '{"exercises":[{"candidates":[{"status":"recommended","scoreReasons":[],"visionPayload":{"target_identity_match":true}}]}]}' |
+        Set-Content -LiteralPath $candidatesPath -Encoding UTF8
 
     $incompleteManifest = @{
         selectionValidationPolicyVersion = 70
@@ -115,6 +118,15 @@ try {
     )
     if ($disableDiscoveryReuse.Count -lt 1) {
         throw 'Discovery stage reuse must remain gated by DisableStageResume.'
+    }
+    if ($enqueueText -notmatch '\[switch\]\$DisableMotionProcessingResume') {
+        throw 'The runner must expose a motion-processing-only resume switch.'
+    }
+    if ($enqueueText -notmatch '-not \$DisableStageResume -and\s+-not \$DisableMotionProcessingResume -and\s+\(Test-MotionProcessingResumeReady') {
+        throw 'The motion-processing resume path must honor both resume switches.'
+    }
+    if ($enqueueText -notmatch 'if \(-not \$DisableStageResume -and -not \$DisableMotionProcessingResume -and\s+\(Test-BakeStageReady') {
+        throw 'Completed bake reuse must honor the motion-processing-only resume switch.'
     }
 
     Write-Output 'Hot-path keep priority checks passed.'

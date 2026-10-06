@@ -163,3 +163,50 @@ def test_retained_replay_checks_reviewed_package_outputs(tmp_path, defect):
             verify_replay_outputs(tmp_path, {"press"})
     else:
         verify_replay_outputs(tmp_path, {"press"})
+
+
+def test_existing_workspace_replay_reruns_selected_generation(tmp_path, monkeypatch):
+    from exercise_motion_pkg import video_utils
+    from scripts import run_motion_retained_replay as replay
+
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"pinned source bytes")
+    existing_workspace = tmp_path / "existing-workspace"
+    existing_workspace.mkdir()
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({
+        "mode": "fresh_reconstruction_real_review",
+        "workoutPlanPath": str(tmp_path / "plan.json"),
+        "exerciseFixtures": {
+            "press": {
+                "sourceVideoPath": str(source),
+                "sourceVideoPathSha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+            },
+        },
+    }), encoding="utf-8")
+    monkeypatch.setattr(
+        video_utils, "read_basic_video_metadata",
+        lambda _path: SimpleNamespace(frame_count=10, fps=30.0),
+    )
+    monkeypatch.setattr(replay, "seed_replay_contract_cache", lambda *_args: [])
+    monkeypatch.setattr(replay, "verify_replay_outputs", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        replay, "run_bounded_process",
+        lambda command, **_kwargs: (0, False),
+    )
+
+    run_root = tmp_path / "run"
+    assert replay.run_replay(
+        config_path,
+        run_root,
+        python_command=None,
+        timeout_seconds=300,
+        existing_workspace_root=existing_workspace,
+    ) == 0
+
+    command = json.loads((run_root / "command.json").read_text(encoding="utf-8"))
+    assert "-ReuseExistingSelected" not in command
+    assert "-DisableMotionProcessingResume" in command
+    assert "-WorkspaceRoot" in command
+    result = json.loads((run_root / "process_result.json").read_text(encoding="utf-8"))
+    assert "attempt outputs isolated" in result["reconstructionBoundary"]

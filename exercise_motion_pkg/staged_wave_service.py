@@ -400,6 +400,22 @@ def _run_staged_wave_service_locked(
                 wave_id = str(recovered_request.get("waveId") or "")
                 if not wave_id:
                     raise ValueError("request has no wave ID")
+                run_id = _request_run_id(recovered_request)
+                if run_id and (cancelled_runs / f"{run_id}.json").is_file():
+                    _publish_result(
+                        results,
+                        request_id=request_id,
+                        wave_id=wave_id,
+                        exit_code=130,
+                        error="The motion run was cancelled before service recovery; this request was not replayed.",
+                        status="cancelled",
+                    )
+                    _write_json_atomic(
+                        consumed / f"{request_id}.request.json",
+                        recovered_request,
+                    )
+                    claimed_path.unlink(missing_ok=True)
+                    continue
                 recovery_error = (
                     "The previous staged-wave service stopped while this request was running. "
                     "Completion is ambiguous, so it was retained for inspection and not replayed."
