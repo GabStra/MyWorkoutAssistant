@@ -43,7 +43,7 @@ class MotionCaptureExportService {
         } else {
             exportEventsFile.writeText(
                 "eventType,epochTimeMs,elapsedRealtimeNanos,stateName,exerciseId,exerciseName," +
-                    "setId,setIndex,exerciseType,noRepExpected,segmentId,reviewStatus,notes\n"
+                    "setId,setIndex,exerciseType,noRepExpected,segmentId,reviewStatus,notes,actualReps\n"
             )
         }
         val metadata = MotionCaptureExportMetadata(

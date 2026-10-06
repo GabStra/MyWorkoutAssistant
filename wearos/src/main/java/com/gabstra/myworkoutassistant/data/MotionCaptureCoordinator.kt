@@ -28,6 +28,9 @@ import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureWorkoutCatalog
 import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutScreenState
 import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutSessionPhase
 import com.gabstra.myworkoutassistant.shared.Workout
+import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
+import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.repository.MotionSensorRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -81,6 +84,7 @@ class MotionCaptureCoordinator(
     private var activeSession: MotionCaptureSessionRecord? = null
     private var activeSegment: MotionCaptureSegmentRecord? = null
     private var activeLabel: MotionCaptureLabel? = null
+    private var lastObservedWorkoutState: com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState? = null
     private var segmentSequenceIndex = 0
     private var captureJob: Job? = null
     private var currentChunkWriter: BufferedWriter? = null
@@ -260,6 +264,7 @@ class MotionCaptureCoordinator(
         sessionDao.insert(session.toEntity())
         activeSession = session
         activeLabel = null
+        lastObservedWorkoutState = null
         activeSegment = null
         segmentSequenceIndex = 0
         currentChunkIndex = 0
@@ -275,11 +280,13 @@ class MotionCaptureCoordinator(
         val session = activeSession ?: return
         val previousLabel = activeLabel
         val previousSegment = activeSegment
+        val previousWorkoutState = lastObservedWorkoutState
+        lastObservedWorkoutState = screenState.workoutState
         val newLabel = MotionCaptureLabelMapper.map(screenState.workoutState, screenState.selectedWorkout)
         val transitionEpochMs = System.currentTimeMillis()
         val transitionElapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
         if (newLabel == null) {
-            recordExitEvents(previousLabel, previousSegment, transitionEpochMs, transitionElapsedRealtimeNanos)
+            recordExitEvents(previousLabel, previousSegment, transitionEpochMs, transitionElapsedRealtimeNanos, previousWorkoutState)
             closeActiveSegment(transitionEpochMs, transitionElapsedRealtimeNanos)
             activeLabel = null
             return
@@ -287,7 +294,7 @@ class MotionCaptureCoordinator(
         if (activeLabel == newLabel && activeSegment != null) {
             return
         }
-        recordExitEvents(previousLabel, previousSegment, transitionEpochMs, transitionElapsedRealtimeNanos)
+        recordExitEvents(previousLabel, previousSegment, transitionEpochMs, transitionElapsedRealtimeNanos, previousWorkoutState)
         closeActiveSegment(transitionEpochMs, transitionElapsedRealtimeNanos)
         val startedAtEpochMs = transitionEpochMs
         val startedAtElapsedRealtimeNanos = transitionElapsedRealtimeNanos
@@ -325,7 +332,7 @@ class MotionCaptureCoordinator(
     private suspend fun stopCapture(status: MotionCaptureSessionStatus) {
         val endedAtEpochMs = System.currentTimeMillis()
         val endedAtElapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
-        recordExitEvents(activeLabel, activeSegment, endedAtEpochMs, endedAtElapsedRealtimeNanos)
+        recordExitEvents(activeLabel, activeSegment, endedAtEpochMs, endedAtElapsedRealtimeNanos, lastObservedWorkoutState)
         closeActiveSegment(endedAtEpochMs, endedAtElapsedRealtimeNanos)
         activeLabel = null
         captureJob?.cancel()
@@ -521,7 +528,8 @@ class MotionCaptureCoordinator(
         previousLabel: MotionCaptureLabel?,
         previousSegment: MotionCaptureSegmentRecord?,
         epochTimeMs: Long,
-        elapsedRealtimeNanos: Long
+        elapsedRealtimeNanos: Long,
+        previousWorkoutState: com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState?
     ) {
         if (previousLabel?.kind != MotionCaptureLabelKind.EXERCISE) {
             return
@@ -538,7 +546,8 @@ class MotionCaptureCoordinator(
                 setIndex = previousLabel.setIndex,
                 exerciseType = previousLabel.exerciseType,
                 noRepExpected = previousLabel.noRepExpected,
-                segmentId = previousSegment?.id
+                segmentId = previousSegment?.id,
+                actualReps = completedSetReps(previousWorkoutState)
             ),
             previousSegment?.sessionId
         )
@@ -587,6 +596,16 @@ class MotionCaptureCoordinator(
         )
     }
 
+    /** Reps entered for the set that just completed; null for timed sets, skipped data, or non-set states. */
+    private fun completedSetReps(state: WorkoutState?): Int? {
+        val setData = (state as? WorkoutState.Set)?.currentSetData ?: return null
+        return when (setData) {
+            is WeightSetData -> setData.actualReps
+            is BodyWeightSetData -> setData.actualReps
+            else -> null
+        }
+    }
+
     private fun initializeEventsFile(sessionDirectory: File) {
         val eventsFile = sessionDirectory.resolve(eventsFileName)
         if (eventsFile.exists()) {
@@ -594,7 +613,7 @@ class MotionCaptureCoordinator(
         }
         eventsFile.writeText(
             "eventType,epochTimeMs,elapsedRealtimeNanos,stateName,exerciseId,exerciseName," +
-                "setId,setIndex,exerciseType,noRepExpected,segmentId,reviewStatus,notes\n"
+                "setId,setIndex,exerciseType,noRepExpected,segmentId,reviewStatus,notes,actualReps\n"
         )
     }
 
@@ -624,7 +643,8 @@ class MotionCaptureCoordinator(
                     event.noRepExpected.toString(),
                     csvValue(event.segmentId?.toString()),
                     csvValue(event.reviewStatus?.name),
-                    csvValue(event.notes)
+                    csvValue(event.notes),
+                    event.actualReps?.toString() ?: ""
                 ).joinToString(",") + "\n"
             )
         }

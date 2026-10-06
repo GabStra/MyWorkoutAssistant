@@ -45,12 +45,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
 import com.gabstra.myworkoutassistant.shared.datalayer.MotionCaptureSyncDao
 import com.gabstra.myworkoutassistant.shared.datalayer.MotionCaptureSyncMappings
 import com.gabstra.myworkoutassistant.shared.datalayer.SensorSessionPayloadCodec
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSessionDao
+import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSessionEntity
+import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSegmentEntity
+import com.gabstra.myworkoutassistant.ui.theme.MyWorkoutAssistantTheme
 import com.gabstra.myworkoutassistant.ui.theme.tertiaryContent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -116,6 +120,22 @@ fun SensorSessionsScreen(
         segmentCounts.associate { it.sessionId to it.segmentCount }
     }
 
+    SensorSessionsScreenContent(
+        sessions = sessions,
+        segmentCountBySession = segmentCountBySession,
+        onBack = onBack,
+        onOpenSession = onOpenSession
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SensorSessionsScreenContent(
+    sessions: List<MotionCaptureSessionEntity>,
+    segmentCountBySession: Map<UUID, Int>,
+    onBack: () -> Unit,
+    onOpenSession: (UUID) -> Unit
+) {
     BreadcrumbScaffold(
         topBar = {
             TopAppBar(
@@ -182,7 +202,7 @@ fun SensorSessionsScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SensorSessionCard(
-    session: com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSessionEntity,
+    session: MotionCaptureSessionEntity,
     segmentCount: Int,
     onClick: () -> Unit
 ) {
@@ -240,7 +260,7 @@ fun SensorSessionDetailScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val session by produceState<com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSessionEntity?>(
+    val session by produceState<MotionCaptureSessionEntity?>(
         initialValue = null,
         key1 = sessionId
     ) {
@@ -250,6 +270,54 @@ fun SensorSessionDetailScreen(
     var exportedZipPath by remember { mutableStateOf<String?>(null) }
     var isExporting by remember { mutableStateOf(false) }
 
+    SensorSessionDetailScreenContent(
+        session = session,
+        segments = segments,
+        isExporting = isExporting,
+        exportedZipPath = exportedZipPath,
+        onBack = onBack,
+        onExportClick = {
+            val currentSession = session ?: return@SensorSessionDetailScreenContent
+            isExporting = true
+            scope.launch {
+                val exportedFile = zipSessionDirectoryForExport(
+                    context = context,
+                    sessionDirectoryName = currentSession.sessionDirectoryName
+                )
+                isExporting = false
+                if (exportedFile == null) {
+                    Toast.makeText(
+                        context,
+                        "Sensor session files are not on this phone.",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                } else {
+                    exportedZipPath = exportedFile.absolutePath
+                }
+            }
+        },
+        onDismissExportDialog = { exportedZipPath = null },
+        onCopyExportPath = {
+            val clipboard =
+                context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText("Sensor session zip", exportedZipPath))
+            Toast.makeText(context, "Path copied.", Toast.LENGTH_SHORT).show()
+        }
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SensorSessionDetailScreenContent(
+    session: MotionCaptureSessionEntity?,
+    segments: List<MotionCaptureSegmentEntity>,
+    isExporting: Boolean,
+    exportedZipPath: String?,
+    onBack: () -> Unit,
+    onExportClick: () -> Unit,
+    onDismissExportDialog: () -> Unit,
+    onCopyExportPath: () -> Unit
+) {
     BreadcrumbScaffold(
         topBar = {
             TopAppBar(
@@ -278,26 +346,7 @@ fun SensorSessionDetailScreen(
                 actions = {
                     IconButton(
                         enabled = session != null && !isExporting,
-                        onClick = {
-                            val currentSession = session ?: return@IconButton
-                            isExporting = true
-                            scope.launch {
-                                val exportedFile = zipSessionDirectoryForExport(
-                                    context = context,
-                                    sessionDirectoryName = currentSession.sessionDirectoryName
-                                )
-                                isExporting = false
-                                if (exportedFile == null) {
-                                    Toast.makeText(
-                                        context,
-                                        "Sensor session files are not on this phone.",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
-                                } else {
-                                    exportedZipPath = exportedFile.absolutePath
-                                }
-                            }
-                        }
+                        onClick = onExportClick
                     ) {
                         Icon(
                             imageVector = Icons.Default.Share,
@@ -388,21 +437,16 @@ fun SensorSessionDetailScreen(
 
     exportedZipPath?.let { path ->
         AlertDialog(
-            onDismissRequest = { exportedZipPath = null },
+            onDismissRequest = onDismissExportDialog,
             title = { Text("Session exported") },
             text = { Text(path) },
             confirmButton = {
-                TextButton(onClick = { exportedZipPath = null }) {
+                TextButton(onClick = onDismissExportDialog) {
                     Text("Close")
                 }
             },
             dismissButton = {
-                TextButton(onClick = {
-                    val clipboard =
-                        context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    clipboard.setPrimaryClip(ClipData.newPlainText("Sensor session zip", path))
-                    Toast.makeText(context, "Path copied.", Toast.LENGTH_SHORT).show()
-                }) {
+                TextButton(onClick = onCopyExportPath) {
                     Text("Copy path")
                 }
             }
@@ -412,7 +456,7 @@ fun SensorSessionDetailScreen(
 
 @Composable
 private fun SensorSegmentCard(
-    segment: com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSegmentEntity
+    segment: MotionCaptureSegmentEntity
 ) {
     val record = remember(segment.id) { MotionCaptureSyncMappings.segmentEntityToRecord(segment) }
     val label = record.correctedLabel ?: record.autoLabel
@@ -461,5 +505,139 @@ private fun SensorSegmentCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
+    }
+}
+
+private const val PreviewLabelBase =
+    "{\"kind\":\"%s\",\"stateName\":\"%s\",\"exerciseId\":\"%s\",\"exerciseName\":\"%s\"," +
+        "\"setId\":\"%s\",\"setIndex\":%d,\"exerciseType\":\"%s\",\"noRepExpected\":%b," +
+        "\"isWarmupSet\":false,\"isCalibrationSet\":false,\"isAutoRegulationSet\":false," +
+        "\"isIntraSetRest\":false}"
+
+private fun previewSession(
+    id: UUID,
+    startedAtEpochMs: Long,
+    status: String,
+    durationMs: Long
+) = MotionCaptureSessionEntity(
+    id = id,
+    workoutId = UUID.fromString("11111111-1111-1111-1111-111111111111"),
+    workoutHistoryId = UUID.fromString("22222222-2222-2222-2222-222222222222"),
+    status = status,
+    startedAtEpochMs = startedAtEpochMs,
+    endedAtEpochMs = startedAtEpochMs + durationMs,
+    deviceManufacturer = "Google",
+    deviceModel = "Pixel Watch 3",
+    deviceName = "pixel_watch3",
+    appVersion = "1.0",
+    sessionDirectoryName = id.toString(),
+    sensorConfigJson = "{}",
+    exerciseCandidatesJson = "[]"
+)
+
+private fun previewSegment(
+    id: UUID,
+    sessionId: UUID,
+    sequenceIndex: Int,
+    startedAtEpochMs: Long,
+    durationMs: Long,
+    stateName: String,
+    labelKind: String,
+    exerciseName: String,
+    reviewStatus: String
+) = MotionCaptureSegmentEntity(
+    id = id,
+    sessionId = sessionId,
+    sequenceIndex = sequenceIndex,
+    startedAtEpochMs = startedAtEpochMs,
+    endedAtEpochMs = startedAtEpochMs + durationMs,
+    startedAtElapsedRealtimeNanos = 0L,
+    endedAtElapsedRealtimeNanos = durationMs * 1_000_000,
+    stateName = stateName,
+    autoLabelJson = PreviewLabelBase.format(
+        labelKind, stateName,
+        "33333333-3333-3333-3333-333333333333", exerciseName,
+        "44444444-4444-4444-4444-444444444444", sequenceIndex, "WEIGHT", "false"
+    ),
+    correctedLabelJson = null,
+    reviewStatus = reviewStatus,
+    chunkFileNamesJson = "[\"chunk_00001.csv.gz\"]"
+)
+
+@Preview(name = "Sensor sessions - populated", showBackground = true, widthDp = 412, heightDp = 720)
+@Composable
+private fun SensorSessionsScreenPopulatedPreview() {
+    MyWorkoutAssistantTheme {
+        val firstId = UUID.fromString("55555555-5555-5555-5555-555555555555")
+        val secondId = UUID.fromString("66666666-6666-6666-6666-666666666666")
+        val sessions = listOf(
+            previewSession(firstId, startedAtEpochMs = 1_760_000_000_000, status = "COMPLETED", durationMs = 3_725_000),
+            previewSession(secondId, startedAtEpochMs = 1_759_900_000_000, status = "COMPLETED", durationMs = 2_115_000)
+        )
+        SensorSessionsScreenContent(
+            sessions = sessions,
+            segmentCountBySession = mapOf(firstId to 9, secondId to 5),
+            onBack = {},
+            onOpenSession = {}
+        )
+    }
+}
+
+@Preview(name = "Sensor sessions - empty", showBackground = true, widthDp = 412, heightDp = 720)
+@Composable
+private fun SensorSessionsScreenEmptyPreview() {
+    MyWorkoutAssistantTheme {
+        SensorSessionsScreenContent(
+            sessions = emptyList(),
+            segmentCountBySession = emptyMap(),
+            onBack = {},
+            onOpenSession = {}
+        )
+    }
+}
+
+@Preview(name = "Sensor session detail", showBackground = true, widthDp = 412, heightDp = 900)
+@Composable
+private fun SensorSessionDetailScreenPreview() {
+    MyWorkoutAssistantTheme {
+        val sessionId = UUID.fromString("55555555-5555-5555-5555-555555555555")
+        SensorSessionDetailScreenContent(
+            session = previewSession(
+                id = sessionId,
+                startedAtEpochMs = 1_760_000_000_000,
+                status = "COMPLETED",
+                durationMs = 3_725_000
+            ),
+            segments = listOf(
+                previewSegment(
+                    id = UUID.fromString("77777777-7777-7777-7777-777777777777"),
+                    sessionId = sessionId,
+                    sequenceIndex = 0,
+                    startedAtEpochMs = 1_760_000_100_000,
+                    durationMs = 42_500,
+                    stateName = "Set",
+                    labelKind = "EXERCISE",
+                    exerciseName = "Bench Press",
+                    reviewStatus = "CONFIRMED"
+                ),
+                previewSegment(
+                    id = UUID.fromString("88888888-8888-8888-8888-888888888888"),
+                    sessionId = sessionId,
+                    sequenceIndex = 1,
+                    startedAtEpochMs = 1_760_000_150_000,
+                    durationMs = 91_000,
+                    stateName = "Rest",
+                    labelKind = "REST",
+                    exerciseName = "Bench Press",
+                    reviewStatus = "PENDING"
+                )
+            ),
+            isExporting = false,
+            exportedZipPath = null,
+            onBack = {},
+            onExportClick = {},
+            onDismissExportDialog = {},
+            onCopyExportPath = {}
+        )
     }
 }

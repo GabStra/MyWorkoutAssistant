@@ -147,7 +147,9 @@ data class MotionCaptureEventRecord(
     val noRepExpected: Boolean = false,
     val segmentId: UUID? = null,
     val reviewStatus: MotionCaptureReviewStatus? = null,
-    val notes: String? = null
+    val notes: String? = null,
+    /** Reps entered for the completed set; null for timed/no-rep states and older sessions. */
+    val actualReps: Int? = null
 )
 
 data class MotionCaptureWorkoutContext(
