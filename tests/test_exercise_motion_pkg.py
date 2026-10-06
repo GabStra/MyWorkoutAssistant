@@ -17717,6 +17717,75 @@ def test_source_pose_endpoint_contract_downgrades_matching_absolute_mismatch_for
     } == {("start", "handHeight"), ("end", "handHeight")}
 
 
+def test_materialized_cycle_uses_its_exact_source_phase_for_endpoint_reconciliation() -> None:
+    contract = {
+        "exerciseName": "Dumbbell Overhead Press",
+        "status": "generated",
+        "source": "reused_candidate_contract",
+        "completionMode": "return_to_start",
+        "requiresReturnToStart": True,
+        **pose_contract_fields(
+            support_mode="standing",
+            hand_height="shoulder_chest",
+            torso_orientation="upright",
+            knee_state="extended",
+            stance="shoulder_width",
+        ),
+    }
+    endpoint = {
+        "supportMode": "standing",
+        "handHeight": "above_head",
+        "torsoOrientation": "upright",
+        "kneeState": "extended",
+        "stance": "shoulder_width",
+    }
+    ranking_payload = {
+        "artifactState": {
+            "artifactClass": "cyclic_rebake",
+            "lineageComplete": True,
+            "selectionEvidence": {
+                "cyclicRebake": {"contentSha256": "a" * 64, "frameCount": 85},
+                "sourceCyclePreflight": [
+                    {
+                        "passed": True,
+                        "selection": {"startFrame": 5, "stopFrameExclusive": 85},
+                        "sourcePhase": {
+                            "required": True,
+                            "passed": True,
+                            "hasCompleteMajorCycle": True,
+                            "hasSingleMajorCycle": True,
+                        },
+                    }
+                ],
+            },
+        }
+    }
+
+    phase_metrics = bake_and_rank_module.selected_source_cycle_phase_metrics_for_review(
+        ranking_payload,
+        contract,
+    )
+    validation = bake_and_rank_module.validate_source_pose_endpoints_against_contract(
+        {"available": True, "start": endpoint, "end": endpoint},
+        contract,
+        phase_metrics=phase_metrics,
+    )
+
+    assert phase_metrics is not None
+    assert validation["passed"] is True
+    assert validation["returnCycleCorroborated"] is True
+    assert {
+        (mismatch["endpoint"], mismatch["field"])
+        for mismatch in validation["contractMismatchesDowngradedByReturnCycle"]
+    } == {("start", "handHeight")}
+
+    phase_metrics["hasSingleMajorCycle"] = False
+    assert bake_and_rank_module.selected_source_cycle_phase_metrics_for_review(
+        ranking_payload,
+        contract,
+    ) is None
+
+
 def test_source_pose_endpoint_contract_keeps_inconsistent_return_endpoints_blocking() -> None:
     start = {
         "supportMode": "standing",

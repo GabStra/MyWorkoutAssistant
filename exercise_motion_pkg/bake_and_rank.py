@@ -600,7 +600,7 @@ SOURCE_CUT_BOUNDARY_AUDIT_FRAME_COUNT = 12
 SOURCE_CUT_BOUNDARY_AUDIT_TILE_WIDTH = 480
 SOURCE_CUT_BOUNDARY_AUDIT_JPEG_QUALITY = 92
 DEFAULT_FINAL_OUTPUT_VALIDATION_MIN_SCORE = 0.90
-SELECTION_VALIDATION_POLICY_VERSION = 127
+SELECTION_VALIDATION_POLICY_VERSION = 128
 FINAL_OUTPUT_VALIDATION_POLICY_VERSION = 82
 RETAINED_SELECTED_REVALIDATION_VERSION = 18
 # These policy versions isolate source-review caches from unrelated edits to
@@ -9269,6 +9269,19 @@ def materialized_output_acceptance_metrics(
         item
     )
     parent_source_phase_metrics = pre_wham_exact_source_phase_reference_metrics(item)
+    source_endpoint_phase_metrics = source_video_phase_metrics
+    source_endpoint_phase_evidence_source = "exact_selected_source_video_phase_metrics"
+    if not source_phase_corroborates_single_return_cycle(
+        source_endpoint_phase_metrics,
+        exercise_motion_contract,
+    ):
+        selected_cycle_phase_metrics = selected_source_cycle_phase_metrics_for_review(
+            ranking.payload if isinstance(ranking.payload, dict) else None,
+            exercise_motion_contract,
+        )
+        if selected_cycle_phase_metrics is not None:
+            source_endpoint_phase_metrics = selected_cycle_phase_metrics
+            source_endpoint_phase_evidence_source = "selected_materialized_cycle_preflight"
     source_endpoint_contract_validation = validate_source_pose_endpoints_against_contract(
         (
             source_video_phase_metrics.get("sourcePoseEndpointFeatures")
@@ -9277,7 +9290,15 @@ def materialized_output_acceptance_metrics(
             else None
         ),
         exercise_motion_contract,
-        phase_metrics=source_video_phase_metrics,
+        phase_metrics=source_endpoint_phase_metrics,
+    )
+    source_endpoint_contract_validation["phaseEvidenceSource"] = (
+        source_endpoint_phase_evidence_source
+        if source_phase_corroborates_single_return_cycle(
+            source_endpoint_phase_metrics,
+            exercise_motion_contract,
+        )
+        else None
     )
     phase_source_pose_reference = source_pose_reference_from_phase_metrics(
         source_video_phase_metrics
@@ -10646,6 +10667,64 @@ def source_phase_corroborates_single_return_cycle(
         and phase_metrics.get("hasCompleteMajorCycle") is True
         and phase_metrics.get("hasSingleMajorCycle") is not False
     )
+
+
+def selected_source_cycle_phase_metrics_for_review(
+    ranking_payload: dict[str, Any] | None,
+    contract: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Return unambiguous single-cycle evidence for this materialized rebake."""
+    if not isinstance(ranking_payload, dict):
+        return None
+    artifact_state = ranking_payload.get("artifactState")
+    if (
+        not isinstance(artifact_state, dict)
+        or artifact_state.get("artifactClass") != "cyclic_rebake"
+    ):
+        return None
+    if artifact_state.get("lineageComplete") is not True:
+        return None
+    selection_evidence = artifact_state.get("selectionEvidence")
+    if not isinstance(selection_evidence, dict):
+        return None
+    rebake_identity = selection_evidence.get("cyclicRebake")
+    if not isinstance(rebake_identity, dict) or not rebake_identity.get("contentSha256"):
+        return None
+    try:
+        rebake_frame_count = int(rebake_identity.get("frameCount") or 0)
+    except (TypeError, ValueError):
+        return None
+    if rebake_frame_count <= 0:
+        return None
+    preflight = selection_evidence.get("sourceCyclePreflight")
+    if not isinstance(preflight, list):
+        return None
+
+    matching_phase_metrics: list[dict[str, Any]] = []
+    for row in preflight:
+        if not isinstance(row, dict) or row.get("passed") is not True:
+            continue
+        selection = row.get("selection")
+        if not isinstance(selection, dict):
+            continue
+        try:
+            start_frame = int(selection.get("startFrame"))
+            stop_frame = int(selection.get("stopFrameExclusive"))
+        except (TypeError, ValueError):
+            continue
+        if start_frame < 0 or stop_frame <= start_frame or stop_frame > rebake_frame_count:
+            continue
+        phase_metrics = row.get("sourcePhase")
+        if (
+            isinstance(phase_metrics, dict)
+            and phase_metrics.get("hasSingleMajorCycle") is True
+            and source_phase_corroborates_single_return_cycle(phase_metrics, contract)
+        ):
+            matching_phase_metrics.append(phase_metrics)
+
+    # More than one eligible interval is ambiguous: do not let an unrelated
+    # cycle in the same artifact override the exact endpoint comparison.
+    return matching_phase_metrics[0] if len(matching_phase_metrics) == 1 else None
 
 
 def validate_source_pose_endpoints_against_contract(
