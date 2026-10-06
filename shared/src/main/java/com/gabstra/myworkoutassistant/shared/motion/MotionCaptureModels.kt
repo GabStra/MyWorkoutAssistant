@@ -6,7 +6,12 @@ import java.util.UUID
 enum class MotionSensorType {
     ACCELEROMETER,
     GYROSCOPE,
-    ROTATION_VECTOR
+    ROTATION_VECTOR,
+    HEART_RATE,
+    STEP_COUNTER,
+    GRAVITY,
+    LINEAR_ACCELERATION,
+    PRESSURE
 }
 
 fun ExerciseType.supportsRepAnnotations(): Boolean = when (this) {
@@ -31,8 +36,15 @@ data class MotionCaptureSensorConfig(
     val enabledSensors: List<MotionSensorType> = listOf(
         MotionSensorType.ACCELEROMETER,
         MotionSensorType.GYROSCOPE,
-        MotionSensorType.ROTATION_VECTOR
-    )
+        MotionSensorType.ROTATION_VECTOR,
+        MotionSensorType.HEART_RATE,
+        MotionSensorType.GRAVITY,
+        MotionSensorType.LINEAR_ACCELERATION,
+        MotionSensorType.STEP_COUNTER,
+        MotionSensorType.PRESSURE
+    ),
+    // Sensors actually present/registered on the capturing device; null on records written before this field existed.
+    val observedSensors: List<MotionSensorType>? = null
 )
 
 enum class MotionCaptureSessionStatus {
@@ -119,7 +131,8 @@ enum class MotionCaptureEventType {
     TIMER_STARTED,
     TIMER_FINISHED,
     SKIPPED,
-    SEGMENT_REVIEW_CHANGED
+    SEGMENT_REVIEW_CHANGED,
+    CAPTURE_ABORTED_LOW_STORAGE
 }
 
 data class MotionCaptureEventRecord(

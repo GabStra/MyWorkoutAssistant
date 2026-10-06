@@ -9,7 +9,7 @@ object MotionCapturePreferences {
 
     fun isEnabled(context: Context): Boolean =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getBoolean(KEY_RECORD_MOTION_DATASET, false)
+            .getBoolean(KEY_RECORD_MOTION_DATASET, true)
 
     fun setEnabled(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {

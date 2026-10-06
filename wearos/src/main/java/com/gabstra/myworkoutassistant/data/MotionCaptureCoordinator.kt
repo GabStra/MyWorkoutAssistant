@@ -5,6 +5,7 @@ import android.os.Build
 import android.os.SystemClock
 import android.util.Log
 import com.gabstra.myworkoutassistant.shared.AppDatabase
+import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureChunkCompressor
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureExerciseCandidate
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureEventRecord
 import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureEventType
@@ -72,7 +73,7 @@ class MotionCaptureCoordinator(
     private val _uiState = MutableStateFlow(
         MotionCaptureUiState(
             collectionEnabled = MotionCapturePreferences.isEnabled(context),
-            hasRequiredSensors = sensorRepository.hasRequiredSensors(sensorConfig)
+            hasRequiredSensors = sensorRepository.hasCoreSensors()
         )
     )
     val uiState: StateFlow<MotionCaptureUiState> = _uiState.asStateFlow()
@@ -86,7 +87,13 @@ class MotionCaptureCoordinator(
     private var currentChunkFileName: String? = null
     private var currentChunkSampleCount = 0
     private var currentChunkIndex = 0
+    private var lowStorageAbortTriggered = false
     private val eventsFileName = "events.csv"
+
+    companion object {
+        private const val TAG = "MotionCapture"
+        private const val MIN_FREE_BYTES_FOR_CAPTURE = 200L * 1024 * 1024
+    }
 
     private fun sessionsRootDirectory(): File =
         File(context.filesDir, "motion_capture/sessions").apply { mkdirs() }
@@ -210,6 +217,10 @@ class MotionCaptureCoordinator(
     }
 
     private suspend fun startCaptureIfNeeded(workout: Workout) {
+        if (sessionsRootDirectory().usableSpace < MIN_FREE_BYTES_FOR_CAPTURE) {
+            Log.e(TAG, "Motion capture not started - low storage (free=${sessionsRootDirectory().usableSpace} bytes)")
+            return
+        }
         val historyId = activeWorkoutHistoryIdProvider()
         val currentSession = activeSession
         if (currentSession != null && currentSession.workoutId == workout.id) {
@@ -241,7 +252,9 @@ class MotionCaptureCoordinator(
             deviceName = Build.DEVICE,
             appVersion = appVersionProvider(),
             sessionDirectoryName = sessionDirectoryName,
-            sensorConfig = sensorConfig,
+            sensorConfig = sensorConfig.copy(
+                observedSensors = sensorRepository.observedSensors(sensorConfig).sorted().toList()
+            ),
             exerciseCandidates = candidates
         )
         sessionDao.insert(session.toEntity())
@@ -252,6 +265,7 @@ class MotionCaptureCoordinator(
         currentChunkIndex = 0
         currentChunkSampleCount = 0
         currentChunkFileName = null
+        lowStorageAbortTriggered = false
         val sessionDirectory = sessionsRootDirectory().resolve(sessionDirectoryName).apply { mkdirs() }
         initializeEventsFile(sessionDirectory)
         startSensorCollection(session)
@@ -324,11 +338,52 @@ class MotionCaptureCoordinator(
         )
         sessionDao.insert(updated.toEntity())
         activeSession = null
+        gzipSessionChunks(session.id, session.sessionDirectoryName)
         _uiState.value = _uiState.value.copy(
             isCapturing = false,
             activeSessionId = null
         )
         refreshLatestReview()
+    }
+
+    private suspend fun gzipSessionChunks(sessionId: UUID, sessionDirectoryName: String) {
+        withContext(Dispatchers.IO) {
+            val sessionDirectory = sessionsRootDirectory().resolve(sessionDirectoryName)
+            val chunkFiles = sessionDirectory.listFiles { file ->
+                file.isFile && file.name.startsWith("chunk_") && file.name.endsWith(".csv")
+            }.orEmpty()
+            if (chunkFiles.isEmpty()) {
+                return@withContext
+            }
+            chunkFiles.forEach { file -> MotionCaptureChunkCompressor.gzipFile(file) }
+            segmentDao.getBySessionId(sessionId).forEach { entity ->
+                val record = entity.toRecord()
+                val updatedNames = record.chunkFileNames.map { name ->
+                    if (sessionDirectory.resolve("$name.gz").exists()) "$name.gz" else name
+                }
+                if (updatedNames != record.chunkFileNames) {
+                    segmentDao.insert(record.copy(chunkFileNames = updatedNames).toEntity())
+                }
+            }
+        }
+    }
+
+    private suspend fun abortCaptureForLowStorage(session: MotionCaptureSessionRecord) {
+        if (lowStorageAbortTriggered) {
+            return
+        }
+        lowStorageAbortTriggered = true
+        Log.e(TAG, "Motion capture aborted - low storage (free=${sessionsRootDirectory().usableSpace} bytes)")
+        writeEvent(
+            MotionCaptureEventRecord(
+                eventType = MotionCaptureEventType.CAPTURE_ABORTED_LOW_STORAGE,
+                epochTimeMs = System.currentTimeMillis(),
+                elapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos(),
+                notes = "freeBytes=${sessionsRootDirectory().usableSpace}"
+            ),
+            session.id
+        )
+        scope.launch { stopCapture(MotionCaptureSessionStatus.ABANDONED) }
     }
 
     private suspend fun refreshLatestReview() {
@@ -584,10 +639,14 @@ class MotionCaptureCoordinator(
 
     private suspend fun ensureChunkWriter(session: MotionCaptureSessionRecord) {
         if (currentChunkWriter != null) return
+        val sessionDirectory = sessionsRootDirectory().resolve(session.sessionDirectoryName).apply { mkdirs() }
+        if (sessionDirectory.usableSpace < MIN_FREE_BYTES_FOR_CAPTURE) {
+            abortCaptureForLowStorage(session)
+            return
+        }
         currentChunkIndex += 1
         currentChunkSampleCount = 0
         val chunkFileName = "chunk_${currentChunkIndex.toString().padStart(5, '0')}.csv"
-        val sessionDirectory = sessionsRootDirectory().resolve(session.sessionDirectoryName).apply { mkdirs() }
         currentChunkFileName = chunkFileName
         currentChunkWriter = withContext(Dispatchers.IO) {
             File(sessionDirectory, chunkFileName).bufferedWriter().also { writer ->
@@ -625,7 +684,7 @@ class MotionCaptureCoordinator(
             deviceName = deviceName,
             appVersion = appVersion,
             sessionDirectoryName = sessionDirectoryName,
-            sensorConfigJson = MotionCaptureJson.sensorConfigToJson(sensorConfig),
+            sensorConfigJson = MotionCaptureJson.sensorConfigToJson(this.sensorConfig),
             exerciseCandidatesJson = MotionCaptureJson.candidateListToJson(exerciseCandidates)
         )
 

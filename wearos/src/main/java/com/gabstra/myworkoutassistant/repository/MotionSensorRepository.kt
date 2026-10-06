@@ -16,20 +16,36 @@ class MotionSensorRepository(
     context: Context
 ) {
     private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
-    private val sensorByType = mapOf(
-        MotionSensorType.ACCELEROMETER to sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER),
-        MotionSensorType.GYROSCOPE to sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE),
-        MotionSensorType.ROTATION_VECTOR to sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+
+    private val androidSensorTypeByMotionType = mapOf(
+        MotionSensorType.ACCELEROMETER to Sensor.TYPE_ACCELEROMETER,
+        MotionSensorType.GYROSCOPE to Sensor.TYPE_GYROSCOPE,
+        MotionSensorType.ROTATION_VECTOR to Sensor.TYPE_ROTATION_VECTOR,
+        MotionSensorType.HEART_RATE to Sensor.TYPE_HEART_RATE,
+        MotionSensorType.STEP_COUNTER to Sensor.TYPE_STEP_COUNTER,
+        MotionSensorType.GRAVITY to Sensor.TYPE_GRAVITY,
+        MotionSensorType.LINEAR_ACCELERATION to Sensor.TYPE_LINEAR_ACCELERATION,
+        MotionSensorType.PRESSURE to Sensor.TYPE_PRESSURE
     )
 
-    fun hasRequiredSensors(config: MotionCaptureSensorConfig = MotionCaptureSensorConfig()): Boolean =
-        config.enabledSensors.all { sensorByType[it] != null }
+    fun availableSensors(): Set<MotionSensorType> =
+        androidSensorTypeByMotionType
+            .filterValues { sensorManager.getDefaultSensor(it) != null }
+            .keys
+
+    /** Sensors rep/phase analysis depends on; capture without them produces no usable motion data. */
+    fun hasCoreSensors(): Boolean = CORE_SENSOR_TYPES.all {
+        sensorManager.getDefaultSensor(androidSensorTypeByMotionType.getValue(it)) != null
+    }
+
+    fun observedSensors(config: MotionCaptureSensorConfig): Set<MotionSensorType> =
+        config.enabledSensors.toSet() intersect availableSensors()
 
     fun sampleFlow(config: MotionCaptureSensorConfig) = callbackFlow {
-        val sensors = config.enabledSensors.mapNotNull { type ->
-            sensorByType[type]?.let { type to it }
+        val sensors = observedSensors(config).mapNotNull { type ->
+            sensorManager.getDefaultSensor(androidSensorTypeByMotionType.getValue(type))?.let { type to it }
         }
-        if (sensors.size != config.enabledSensors.size) {
+        if (sensors.isEmpty()) {
             close()
             return@callbackFlow
         }
@@ -37,14 +53,13 @@ class MotionSensorRepository(
         val listener = object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent?) {
                 event ?: return
-                val sensorType = when (event.sensor.type) {
-                    Sensor.TYPE_ACCELEROMETER -> MotionSensorType.ACCELEROMETER
-                    Sensor.TYPE_GYROSCOPE -> MotionSensorType.GYROSCOPE
-                    Sensor.TYPE_ROTATION_VECTOR -> MotionSensorType.ROTATION_VECTOR
-                    else -> return
-                }
-                val w = if (sensorType == MotionSensorType.ROTATION_VECTOR && event.values.size >= 4) {
-                    event.values[3]
+                val sensorType = androidSensorTypeByMotionType.entries
+                    .firstOrNull { it.value == event.sensor.type }
+                    ?.key
+                    ?: return
+                val values = event.values
+                val w = if (sensorType == MotionSensorType.ROTATION_VECTOR && values.size >= 4) {
+                    values[3]
                 } else {
                     null
                 }
@@ -54,9 +69,9 @@ class MotionSensorRepository(
                         epochTimeMs = System.currentTimeMillis(),
                         elapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos(),
                         accuracy = event.accuracy,
-                        x = event.values.getOrElse(0) { 0f },
-                        y = event.values.getOrElse(1) { 0f },
-                        z = event.values.getOrElse(2) { 0f },
+                        x = values.getOrElse(0) { 0f },
+                        y = values.getOrElse(1) { 0f },
+                        z = values.getOrElse(2) { 0f },
                         w = w
                     )
                 )
@@ -75,5 +90,13 @@ class MotionSensorRepository(
                 sensorManager.unregisterListener(listener, sensor)
             }
         }
+    }
+
+    companion object {
+        private val CORE_SENSOR_TYPES = setOf(
+            MotionSensorType.ACCELEROMETER,
+            MotionSensorType.GYROSCOPE,
+            MotionSensorType.ROTATION_VECTOR
+        )
     }
 }
