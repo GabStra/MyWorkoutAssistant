@@ -985,6 +985,15 @@ directory has a condensed version of this state; update it after the arms land.
   playback improvement, not a successful RDL output. The generic projection
   change passed its focused regressions and Python compilation; no model or
   reconstruction calls were made.
+- The follow-up exposed a quality-state bug in Stage-C free-temporal polish: it
+  could replace a `jointShake` failure with a different `relativeJointShake`
+  failure and keep the candidate. It now retains that block only when the full
+  failed-check set strictly decreases. The bounded 45.1-second RDL replay now
+  keeps the no-spike state and passes grip (8.81mm vs 9.41mm), contacts,
+  playback, anatomy, and the relative-shake gate. It still rejects on the
+  absolute joint-shake gate: right wrist is 1.0124× its limit and right hand is
+  1.0009×. The output is improved but remains unaccepted; broader smoothing is
+  not safe because it introduced severe local spikes.
 - A follow-up source-support audit ruled out the suspected absolute-height
   detector bug: both RDL ankle tracks pass its pre-normalization ground cutoff.
   The right-side continuity gap is 0.667s (over the 0.5s merge limit), and

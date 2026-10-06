@@ -8383,6 +8383,10 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                         ),
                     )
                     and not refinement.get('temporalFreeStageC')):
+                previous_acceptance = {
+                    'applied': False,
+                    'checks': deepcopy(report.get('checks') or {}),
+                }
                 previous_coordinates = solved.x.copy()
                 previous_failed = set(failed_checks)
                 previous_jerk = report.get('jerkAfter')
@@ -8416,6 +8420,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                         or play_after > previous_play * 1.05 + 1e-9
                         or not (report.get('playback') or {}).get('passed')
                         or 'velocity' in nested_after
+                        or not fit_report_improves_acceptance(previous_acceptance, report)
                         or ({'anatomy', 'sourceArticulation', 'contacts'} & set(block_failed))
                         - previous_failed
                         or polish_worsened_jerk(report, previous_jerk)):
