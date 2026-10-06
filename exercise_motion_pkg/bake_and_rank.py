@@ -25321,6 +25321,7 @@ def validate_exact_pre_wham_source_video(
     cached_metrics = load_cached_exact_source_phase_validation(
         cache_path=cache_path,
         cache_key=cache_key,
+        source_video_path=source_video_path,
     )
     if cached_metrics is not None:
         return cached_metrics
@@ -25418,6 +25419,7 @@ def load_cached_exact_source_phase_validation(
     *,
     cache_path: Path,
     cache_key: str,
+    source_video_path: Path,
 ) -> dict[str, Any] | None:
     if cache_path.exists():
         try:
@@ -25428,12 +25430,24 @@ def load_cached_exact_source_phase_validation(
             metrics = cached.get("metrics")
             if isinstance(metrics, dict):
                 reference_path_value = metrics.get("sourcePoseReferencePath")
-                reference_available = (
-                    not reference_path_value
-                    or Path(str(reference_path_value)).expanduser().exists()
-                )
-                if reference_available:
-                    return {**metrics, "cacheStatus": "reused"}
+                if reference_path_value:
+                    # A cache hit must not run detectors or trust a reference
+                    # replaced in place after validation. Bind it to this source.
+                    try:
+                        reference = json.loads(
+                            Path(str(reference_path_value)).expanduser().read_text(encoding="utf-8")
+                        )
+                    except (OSError, ValueError):
+                        return None
+                    if (
+                        not isinstance(reference, dict)
+                        or reference.get("sourceVideoSha256") != file_sha256(source_video_path)
+                        or not isinstance(reference.get("pose"), dict)
+                        or not isinstance(reference["pose"].get("frames"), list)
+                        or not reference["pose"]["frames"]
+                    ):
+                        return None
+                return {**metrics, "cacheStatus": "reused"}
     return None
 
 
@@ -25463,6 +25477,7 @@ def validate_exact_source_with_cached_gpu_handoff(
         cached = load_cached_exact_source_phase_validation(
             cache_path=shared_cache_path,
             cache_key=cache_key,
+            source_video_path=source_video_path,
         )
         if cached is None and shared_cache_path != cache_path:
             # Promote a valid candidate-local result so later workspaces with
@@ -25470,6 +25485,7 @@ def validate_exact_source_with_cached_gpu_handoff(
             cached = load_cached_exact_source_phase_validation(
                 cache_path=cache_path,
                 cache_key=cache_key,
+                source_video_path=source_video_path,
             )
             if cached is not None:
                 cached = persist_shared_exact_source_phase_cache(
@@ -25485,6 +25501,7 @@ def validate_exact_source_with_cached_gpu_handoff(
                 current = load_cached_exact_source_phase_validation(
                     cache_path=shared_cache_path,
                     cache_key=cache_key,
+                    source_video_path=source_video_path,
                 )
                 if current is not None:
                     return current
@@ -25507,6 +25524,7 @@ def validate_exact_source_with_cached_gpu_handoff(
             if load_cached_exact_source_phase_validation(
                 cache_path=shared_cache_path,
                 cache_key=cache_key,
+                source_video_path=source_video_path,
             ) is None:
                 write_exact_source_phase_validation_cache(
                     cache_path=shared_cache_path,

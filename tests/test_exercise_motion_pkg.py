@@ -50754,6 +50754,45 @@ def test_exact_source_phase_validation_cache_reuses_identical_clips_across_works
     assert len(calls) == 2
 
 
+@pytest.mark.parametrize("reference_content", ["{", '{"sourceVideoSha256": "another-video", "pose": {}}'])
+def test_exact_source_validation_cache_rejects_corrupted_or_wrong_video_pose(
+    tmp_path: Path, reference_content: str,
+) -> None:
+    video = tmp_path / "selected.mp4"
+    video.write_bytes(b"current source video")
+    reference = tmp_path / "exact_source_pose_reference.json"
+    reference.write_text(reference_content, encoding="utf-8")
+    cache = tmp_path / "validation.json"
+    cache.write_text(json.dumps({
+        "cacheKey": "matching-key",
+        "metrics": {"passed": True, "sourcePoseReferencePath": str(reference)},
+    }), encoding="utf-8")
+
+    assert bake_and_rank_module.load_cached_exact_source_phase_validation(
+        cache_path=cache, cache_key="matching-key", source_video_path=video,
+    ) is None
+
+
+def test_exact_source_validation_cache_reuses_hash_bound_pose_without_model_work(tmp_path: Path) -> None:
+    video = tmp_path / "selected.mp4"
+    video.write_bytes(b"current source video")
+    reference = tmp_path / "reference.json"
+    reference.write_text(json.dumps({
+        "sourceVideoSha256": bake_and_rank_module.file_sha256(video),
+        "validationPolicyVersion": 1,
+        "pose": {"frames": [{"sourceTimeSec": 0.0, "joints": {}}]},
+    }), encoding="utf-8")
+    cache = tmp_path / "validation.json"
+    cache.write_text(json.dumps({
+        "cacheKey": "matching-key",
+        "metrics": {"passed": True, "sourcePoseReferencePath": str(reference)},
+    }), encoding="utf-8")
+    result = bake_and_rank_module.load_cached_exact_source_phase_validation(
+        cache_path=cache, cache_key="matching-key", source_video_path=video,
+    )
+    assert result is not None and result["cacheStatus"] == "reused"
+
+
 def test_source_pose_foot_support_evidence_separates_stationary_support_from_moving_foot() -> None:
     frames = []
     for index in range(20):

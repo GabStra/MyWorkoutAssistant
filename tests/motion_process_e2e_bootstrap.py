@@ -496,6 +496,7 @@ def _patch_module(fullname: str, module: Any) -> None:
                     if module.load_cached_exact_source_phase_validation(
                         cache_path=candidate_path,
                         cache_key=cache_key,
+                        source_video_path=source_video_path,
                     )
                     is not None
                 ),
