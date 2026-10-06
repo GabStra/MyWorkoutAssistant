@@ -21964,7 +21964,27 @@ def generate_candidate_motion(
             source_cut_caption_images=source_cut_caption_images,
             exercise_motion_contract_resolver=exercise_motion_contract_resolver,
         )
+        if request.two_scale_source_validation:
+            if source_cut_caption_images is None:
+                raise SourceCandidateRejected(
+                    "Independent source review is required before reconstruction.",
+                    reason_tags=["source_cut_review_required"],
+                )
+            from .source_review_preflight import SourceReviewIncomplete, review_prepared_source
+
+            try:
+                review_prepared_source(
+                    ranked_candidate, request=request, selected_video=video_path,
+                    contract=exercise_motion_contract_from_candidate(ranked_candidate.candidate),
+                    caption_images=source_cut_caption_images,
+                )
+            except SourceReviewIncomplete as error:
+                raise SourceCandidateRejected(
+                    str(error), reason_tags=["source_cut_review_required"],
+                ) from error
     else:
+        # Staged waves already own source preparation and independent review
+        # before releasing their source model and entering reconstruction.
         video_path = prepared_video_path.expanduser().resolve()
         candidate_workspace = candidate_workspace.resolve()
         if not path_is_relative_to(video_path, candidate_workspace):

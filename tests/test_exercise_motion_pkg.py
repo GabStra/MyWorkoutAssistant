@@ -20332,6 +20332,47 @@ def test_staged_wave_uses_configured_llama_slots_for_source_preparation(
     assert all("sourceActivity" not in item for item in checkpoint["items"])
     assert report["schemaVersion"] == 2
 
+@pytest.mark.parametrize("review_status", ["rejected", "unavailable", "incomplete"])
+def test_individual_generation_requires_semantic_source_review_before_inference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, review_status: str,
+) -> None:
+    from exercise_motion_pkg import source_review_preflight
+
+    candidate = RankedCandidate(
+        exercise_index=0, candidate_rank=0, exercise_id="movement",
+        exercise_name="Movement", exercise_slug="movement",
+        candidate={"videoId": "source", "title": "Movement"},
+    )
+    request = BakeAndRankRequest(
+        candidates_json=tmp_path / "candidates.json", workspace=tmp_path,
+        wham_repo_path=None, body_model_root=None, two_scale_source_validation=True,
+    )
+    selected = tmp_path / "selected.mp4"
+    monkeypatch.setattr(bake_and_rank_module, "prepare_candidate_input_video",
+                        lambda *_args, **_kwargs: selected)
+    monkeypatch.setattr(bake_and_rank_module, "prepare_wham_inference_video",
+                        lambda **_kwargs: pytest.fail("inference preparation preceded source verdict"))
+    reviewed = []
+
+    def reject_source(candidate, **kwargs):
+        reviewed.append(kwargs["selected_video"])
+        if review_status == "incomplete":
+            raise source_review_preflight.SourceReviewIncomplete("Source evidence incomplete")
+        raise bake_and_rank_module.SourceCandidateRejected(
+            "Wrong source movement", reason_tags=["source_identity_mismatch"],
+        )
+
+    monkeypatch.setattr(source_review_preflight, "review_prepared_source", reject_source)
+    with pytest.raises(bake_and_rank_module.SourceCandidateRejected) as error:
+        bake_and_rank_module.generate_candidate_motion(
+            candidate, request=request,
+            source_cut_caption_images=(lambda **_kwargs: "unused") if review_status != "unavailable" else None,
+        )
+    assert error.value.reason_tags == (["source_identity_mismatch"] if review_status == "rejected"
+                                       else ["source_cut_review_required"])
+    assert reviewed == ([selected] if review_status != "unavailable" else [])
+
+
 def test_generate_candidate_motion_consumes_prepared_cut_without_revalidating_source(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -20354,6 +20395,7 @@ def test_generate_candidate_motion_consumes_prepared_cut_without_revalidating_so
         workspace=tmp_path / "bake",
         wham_repo_path=None,
         body_model_root=None,
+        two_scale_source_validation=True,
     )
     prepared_video = request.workspace / candidate.workspace_slug / "input" / "selected_segment.mp4"
     prepared_video.parent.mkdir(parents=True)
