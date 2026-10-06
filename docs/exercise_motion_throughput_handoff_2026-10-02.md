@@ -914,15 +914,21 @@ directory has a condensed version of this state; update it after the arms land.
   other callers retain the original 15% rule. Explicit release/partial-sole
   patch states, source-hash mismatch, and intermittent/none contact modes still
   block the added anchor. Focused support regression passed.
-- One CPU-only replay of the same retained payload after bilateral support
-  materialization took 51.9s versus 151.6s immediately before the change. Both
-  ankle/foot target RMS values fell from 35.2/44.2mm on fit-left to 0, and
-  anatomy, motion-discontinuity, contacts, and support checks now pass. The fit
-  remains rejected: right-wrist and right-hand shake exceed their limits by
-  only 1.2% and 0.3%, and playback reports an 11.3mm interpolated grip-spacing
-  error against a 9.4mm limit. The decisive remaining artifact issue is its
-  `requiredClass=cyclic_rebake` with no accepted source-cycle proposal; the
-  playback seam is 176mm and 5.06m/s over the reported limits. This source
-  cycle is not made valid by the bilateral-support fix, so no acceptance or
-  cycle-quality claim is made. The fit report now identifies joints failing
-  the shake limit to avoid another opaque diagnosis replay.
+- The open-clip replay after bilateral support took 51.9s versus 151.6s for the
+  preceding open-clip replay, but the retained artifact has `loop.enabled=false`;
+  that replay does not exercise the required cyclic fit. The nested fit report
+  showed the original production run had attempted full interval `[0,123)`:
+  its source and output phase checks passed, but the fit failed anatomy,
+  contacts, shake, playback, and loop seam. A captured-cycle replay after the
+  support fix took 168.9s total (119.7s for `[0,123)`, then 46.5s for retained
+  interval validation). On the cyclic attempt, fit-left ankle/foot target RMS
+  fell from 32.2/45.5mm to 0.1/0mm, contact error fell from 2.04mm to 0.71mm,
+  and motion-discontinuity now passes. The seam improved from 195mm and
+  6.54m/s to 93.4mm and 3.08m/s, but still fails; anatomy also remains failed
+  (`anatomy_chest_attachment`, `anatomy_spine_deviation`, and
+  `anatomy_torso_bend`). The retained open interval passes anatomy and
+  contacts, but still fails playback, with a 176mm seam and 5.06m/s mismatch;
+  right-wrist and right-hand shake exceed their limits by 1.2% and 0.3%, and
+  interpolated grip spacing is 11.3mm against a 9.4mm limit. Phase preflight is
+  not fit acceptance, and no output is promoted. The fit report now identifies
+  joints failing the shake limit to make follow-up diagnosis direct.
