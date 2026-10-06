@@ -1108,3 +1108,26 @@ Its old generated artifact is explicitly invalid (`supported_body_moves`,
 `support_surface_geometry_mismatch`); reuse reconstruction evidence only after
 checking its source/timeline identity, not that old generated acceptance. The
 replacement has not yet passed the current production path or rendered review.
+
+### Oct 6 replacement-source fit checkpoint
+
+Commit `dba8d6e9` increases the bounded interpolated neck-clearance repair from
+four to eight attempts, retaining its deadline and unchanged acceptance limits.
+The measured guard overshoot was converging but the old cap discarded the repair.
+Two focused neck-clearance regressions pass, including the extracted replacement
+trajectory; dense interpolation clears the guard without moving limbs.
+
+A replay through `fit_controlled_motion` on the freshly rebuilt replacement
+full-input candidate, with a 120-second budget, completes in 32.04 seconds wall
+time (29.67 seconds reported fit time). It reports
+`validated_controlled_motion`, with all 19 fit checks passing. Existing playback
+grip repair succeeds after the neck repair; playback velocity jump is
+0.0000007901 m/s, contact error 0.00002170 m, and grip spacing error 0.00877323 m
+against the unchanged 0.00891076 m limit. Evidence is retained under
+`build/exercise_motion/replays/20261006-replacement-rdl-neck-fix-fit-{report,output}.json`.
+
+This proves a valid full-clip intermediate fit, not terminal generation or an
+accepted-output throughput improvement. Its cyclic seam still requires repair.
+Cycle selection/rebake, production-rendered review, packaging, and the corrected
+two-exercise production-script E2E remain unverified. The earlier 98.92-second
+failed bake fit is a different invocation and is not a controlled speed comparison.
