@@ -1266,3 +1266,23 @@ cannot receive an unconditional whole-clip approval. Audit evidence and the
 inspected source contact sheet are retained as
 `20261006-ohp-source-fixture-audit.json` and `20261006-ohp-retained-source-audit.jpg`
 under `build/exercise_motion/replays/`. The corrected two-exercise E2E remains open.
+
+### Oct 6 discovery-service queue decision
+
+The production scheduler runs source discovery in separate PowerShell jobs,
+bounded by `DiscoveryWorkers` (default up to four when the pose prefilter does
+not use the GPU). Staged baking uses a separate durable, single-consumer queue
+in `staged_wave_service.py`. Routing discovery through that bake queue would
+serialize discovery behind unrelated bake requests and reduce the scheduler's
+existing discovery width.
+
+On the configured Python environment, five fresh-process samples importing
+`exercise_motion_pkg.cli` and `exercise_motion_pkg.youtube` took 0.719–0.931
+seconds (median 0.784 seconds). This is only process/import overhead; it does
+not measure model startup, discovery wall time, or campaign throughput. The
+measurement does not justify replacing parallel discovery with one serial
+queue. Keep the existing discovery workers and independent bake queue unless
+a multi-consumer discovery service can preserve the configured worker width
+and a comparable production run shows startup overhead materially affects
+wall time. Discovery queue service work therefore remains partial rather than
+claiming the queue-backed-service architecture is complete.
