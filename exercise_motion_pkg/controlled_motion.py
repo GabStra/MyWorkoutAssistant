@@ -1260,48 +1260,46 @@ class FixedRig:
         neck_slot = self.slots[self.names.index('neck')]
         head_slot = self.slots[self.names.index('head')]
         clamp_columns = list(range(neck_slot, neck_slot + 3)) + list(range(head_slot, head_slot + 3))
-        clamp_map = {}
-        # Frames without an engaged clamp pass through untouched; only the
-        # clamped frames' blocks are overridden below.
-        for frame in range(count):
-            frame_base = frame * self.width
-            for row_offset in range(self.width):
-                clamp_map[(frame_base + row_offset, frame_base + row_offset)] = 1.0
-        for frame in np.flatnonzero(clamp_active):
-            frame_base = frame * self.width
-            base = clamped[frame]
-            frame_block = {}
-            for column in clamp_columns:
-                probe = values[frame].copy()
-                probe[column] += step
-                moved = project_neck_attachment_values(
-                    probe[None], self.offsets, self.names, self.active, clamp_limit)[0]
-                difference = (moved - base).reshape(-1)
-                # difference.reshape(-1, 3) rows are [root, active joints in
-                # active order] — map each row back to its joint index before
-                # looking up the slot.
-                for changed_row in np.flatnonzero(
-                        np.any(difference.reshape(-1, 3) != 0., axis=1)):
-                    changed = (self.root if changed_row == 0
-                               else self.active[int(changed_row) - 1])
-                    if changed not in self.slots:
-                        continue
-                    changed_slot = self.slots[changed]
-                    for axis in range(3):
-                        frame_block[(changed_slot + axis, column)] = (
-                            float(difference[int(changed_row) * 3 + axis]) / step)
-            for row_offset in range(self.width):
-                for column_offset in range(self.width):
-                    out = frame_base + row_offset
-                    inp = frame_base + column_offset
-                    clamp_map[(out, inp)] = frame_block.get(
-                        (row_offset, column_offset),
-                        1.0 if row_offset == column_offset else 0.0)
-        clamp_jacobian = coo_matrix(
-            (list(clamp_map.values()),
-             (tuple(out for out, _ in clamp_map), tuple(inp for _, inp in clamp_map))),
-            shape=(shape[1], shape[1])).tocsr()
-        return jacobian @ clamp_jacobian
+        clamped_frames = np.flatnonzero(clamp_active)
+        clamp_outputs = np.asarray(clamp_columns, dtype=int)
+        base = clamped[clamped_frames][:, clamp_outputs]
+        clamp_derivatives = np.empty(
+            (len(clamped_frames), len(clamp_outputs), len(clamp_columns)), dtype=float)
+        # The socket projection changes only neck/head rotation coordinates.
+        # Probe all clamped frames together instead of making six tiny calls per
+        # frame and building a dense frame-by-frame identity map.
+        for input_index, column in enumerate(clamp_columns):
+            probes = values[clamped_frames].copy()
+            probes[:, column] += step
+            moved = project_neck_attachment_values(
+                probes, self.offsets, self.names, self.active, clamp_limit)
+            clamp_derivatives[:, :, input_index] = (
+                moved[:, clamp_outputs] - base) / step
+
+        # Compose only the changed neck/head columns. The full clamp Jacobian
+        # is identity outside these small per-frame blocks, so multiplying by a
+        # dense identity-like sparse matrix needlessly scales as frames × rig².
+        clamp_derivatives[:, np.arange(len(clamp_outputs)), np.arange(len(clamp_columns))] -= 1.0
+        correction_rows = np.broadcast_to(
+            np.arange(len(clamped_frames))[:, None, None] * len(clamp_outputs)
+            + np.arange(len(clamp_outputs))[None, :, None],
+            clamp_derivatives.shape,
+        )
+        correction_columns = np.broadcast_to(
+            clamped_frames[:, None, None] * self.width
+            + np.asarray(clamp_columns)[None, None, :],
+            clamp_derivatives.shape,
+        )
+        nonzero = clamp_derivatives != 0.0
+        correction = coo_matrix(
+            (clamp_derivatives[nonzero],
+             (correction_rows[nonzero], correction_columns[nonzero])),
+            shape=(len(clamped_frames) * len(clamp_outputs), shape[1]),
+        ).tocsr()
+        output_columns = (
+            clamped_frames[:, None] * self.width + clamp_outputs[None, :]
+        ).ravel()
+        return jacobian + jacobian[:, output_columns] @ correction
 
 
 def project_neck_attachment_values(coordinates, offsets, names, active, maximum_lateral_ratio):
