@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -23,6 +24,13 @@ from exercise_motion_pkg.shared_llama_server import (
     detach_shared_llama_request_publisher,
     install_shared_llama_request_publisher,
 )
+
+
+def _powershell_function(source: str, name: str) -> str:
+    marker = f"function {name} {{"
+    start = source.index(marker)
+    next_function = source.find("\nfunction ", start + len(marker))
+    return source[start:] if next_function < 0 else source[start:next_function]
 
 
 @pytest.fixture(autouse=True)
@@ -323,6 +331,102 @@ def test_stale_foreign_counter_and_intent_are_reclaimed(tmp_path):
     assert (session_dir / START_REQUEST_FILE_NAME).exists()
     coordinator.detach()
     assert not list((session_dir / INFLIGHT_DIRECTORY_NAME).glob("*.json"))
+
+
+def test_exclusive_handoff_waits_for_powershell_startup_transition(tmp_path, monkeypatch):
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell is required to verify shared transition-lock interoperability")
+    from exercise_motion_pkg import shared_llama_server as shared_module
+    from exercise_motion_pkg.process_lock import InterProcessFileLock
+
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "run_exercise_motion_workout_plan.ps1"
+    )
+    source = script_path.read_text(encoding="utf-8-sig")
+    lock_function = _powershell_function(source, "Enter-SharedLlamaTransitionLock")
+    ready_path = tmp_path / "server-ready"
+    release_path = tmp_path / "release-startup-lock"
+    session_dir = tmp_path / "shared-llama"
+    command = f"""
+$ErrorActionPreference = 'Stop'
+{lock_function}
+$lock = Enter-SharedLlamaTransitionLock -SessionDir '{str(session_dir).replace("'", "''")}' -TimeoutSeconds 10
+Set-Content -LiteralPath '{str(ready_path).replace("'", "''")}' -Value 'startup owns transition'
+while (-not (Test-Path -LiteralPath '{str(release_path).replace("'", "''")}')) {{ Start-Sleep -Milliseconds 20 }}
+$lock.Dispose()
+"""
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    startup_process = subprocess.Popen(
+        [pwsh, "-NoProfile", "-Command", command],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=creationflags,
+    )
+    attempting_lock = threading.Event()
+    completed = threading.Event()
+    events: list[str] = []
+    errors: list[BaseException] = []
+
+    class ObservedTransitionLock(InterProcessFileLock):
+        def __enter__(self):
+            if self.stage == "shared_llama_transition":
+                attempting_lock.set()
+            return super().__enter__()
+
+    monkeypatch.setattr(shared_module, "InterProcessFileLock", ObservedTransitionLock)
+    coordinator = SharedLlamaServerCoordinator(
+        session_dir=session_dir,
+        base_url="http://127.0.0.1:8090",
+        stop_server=lambda: events.append("stop_server"),
+        poll_seconds=0.05,
+    )
+
+    def begin_exclusive():
+        try:
+            coordinator.begin_exclusive_phase()
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            completed.set()
+
+    try:
+        assert _wait_until(ready_path.exists, timeout_seconds=5)
+        thread = threading.Thread(target=begin_exclusive, daemon=True)
+        thread.start()
+        assert attempting_lock.wait(timeout=5)
+        assert not completed.is_set()
+        assert events == []
+        assert not (session_dir / STOP_INTENT_FILE_NAME).exists()
+        assert not (session_dir / INFLIGHT_DIRECTORY_NAME / f"{os.getpid()}.json").exists()
+
+        release_path.write_text("ready", encoding="utf-8")
+        assert completed.wait(timeout=5)
+        thread.join(timeout=5)
+        assert not errors
+        assert events == ["stop_server"]
+        assert (session_dir / STOP_INTENT_FILE_NAME).exists()
+        assert (session_dir / INFLIGHT_DIRECTORY_NAME / f"{os.getpid()}.json").exists()
+        coordinator.end_exclusive_phase()
+        assert (session_dir / START_REQUEST_FILE_NAME).exists()
+
+        start_function = _powershell_function(source, "Start-SharedLlamaServer")
+        assert start_function.index("Enter-SharedLlamaTransitionLock") < start_function.index(
+            "Test-SharedLlamaExclusiveHandoffActive"
+        )
+        assert "Remove-StaleSharedLlamaInflightCounters -SessionDir $SessionDir" in start_function
+        assert "Get-ChildItem -LiteralPath (Join-Path $SessionDir \"in-flight\") -Filter \"*.json\"" not in start_function
+        assert start_function.index("Start-Process") < start_function.index("Shared llama.cpp server ready")
+        assert "finally" in start_function and "$transitionLock.Dispose()" in start_function
+    finally:
+        release_path.write_text("release", encoding="utf-8")
+        try:
+            startup_process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            startup_process.kill()
+            startup_process.wait(timeout=5)
 
 
 def test_shared_ranker_never_stops_or_spawns_the_server(tmp_path, monkeypatch):

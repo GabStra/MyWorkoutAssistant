@@ -55,6 +55,7 @@ so every process pointing at one base URL agrees with no configuration).
 | `in-flight/<pid>.json` | One coordinator per attached process | `{pid, processIdentity, activeRequests, updatedAtUnixSeconds}` - that process's concurrent VLM request count (wave-session admissions + every non-session shared-server request) |
 | `stopped.json` | Quiescing client | `{stoppedByPid, stoppedAtUnixSeconds}` - observability for the supervisor |
 | `start_requested.json` | Client needing the server back | `{requestedByPid, processIdentity, requestedAtUnixSeconds}` - lazy restart request; supervisor deletes it after a successful restart |
+| `shared-llama-transition.lock` | Python clients and PowerShell supervisor | OS-level transition mutex shared across runtimes; serializes startup admission/readiness against exclusive-handoff publication/release |
 | `startup_error.json`, `server.log` | Supervisor | startup failure payload, redirected server output |
 
 Liveness of any marker's owner uses the same rule as the global GPU lock:
@@ -128,8 +129,13 @@ survives a detachment while counted requests are still in flight.
 1. **In-process drain** (unchanged): `_exclusive_waiters += 1`, wait for
    `_wham_active`, then wait for local `_active_calls == 0`.
 2. **Publish** our counter file at 0.
-3. **Stop-intent**: acquire `stop_intent.json` (wait out any *live* foreign
-   intent; reclaim stale ones; optimistic-lock verify after write).
+3. **Transition reservation + stop-intent**: acquire
+   `shared-llama-transition.lock`, wait out any *live* foreign intent, then
+   publish `stop_intent.json` and this process's in-flight counter before
+   releasing the lock. The supervisor takes the same lock before checking
+   handoff state and holds it until the server is healthy (or startup fails).
+   This makes the intent and counter visible atomically with respect to server
+   startup admission.
    From this moment every attached process's `caption_images` admission gate
    blocks new VLM requests (any live intent, ours included).
 4. **Drain**: wait until every *live* foreign counter reads `activeRequests`
@@ -141,10 +147,11 @@ survives a detachment while counted requests are still in flight.
    which process owns the server). Write `stopped.json`.
 6. **Run the exclusive operation** (GVHMR/WHAM/...). Our stop-intent stays
    live, keeping every attached client's admissions closed.
-7. **Release**: clear `stop_intent.json`, write `start_requested.json` (lazy
-   restart), re-publish counter 0. The next vision request in any process
-   either finds the restarted server (supervisor already acted) or blocks in
-   the client's bounded recovery wait for it.
+7. **Release**: under `shared-llama-transition.lock`, clear
+   `stop_intent.json`, write `start_requested.json` (lazy restart), and
+   re-publish counter 0. The next vision request in any process either finds
+   the restarted server (supervisor already acted) or blocks in the client's
+   bounded recovery wait for it.
 
 ### What the protocol guarantees
 
@@ -173,8 +180,12 @@ survives a detachment while counted requests are still in flight.
   nobody restarts the server; the next attach/recovery waits out the startup
   timeout and raises an actionable error. Attach with no server at the base URL
   fails fast.
-- Two simultaneous `begin_exclusive_phase` writers race only at the
-  optimistic-lock level; correctness there still rests on the GPU stage locks.
+- Server startup cannot pass its admission check while an exclusive handoff is
+  being published, and an exclusive handoff cannot begin between startup
+  admission and readiness. The persistent lock file is an OS lease; process
+  exit releases ownership without deleting the file.
+- Two simultaneous `begin_exclusive_phase` writers still rely on the GPU stage
+  locks to serialize the exclusive operations themselves.
 - A restart request landing while another process is already entering its own
   exclusive phase causes at most one wasted supervisor start/stop cycle: the
   second quiesce stops whatever is at the port before its operation runs, so
@@ -199,12 +210,16 @@ survives a detachment while counted requests are still in flight.
 ## Supervisor (PowerShell)
 
 `Start-SharedLlamaServer -SessionDir <dir>` (mirrors `Start-WhamWarmWorker`):
-clears stale markers and `in-flight/*.json`, starts `llama-server` using the
+takes `shared-llama-transition.lock`, defers when a live exclusive handoff is
+present, clears stale markers, and removes only in-flight counters whose PID
+and process-start identity prove the owner has stopped. Malformed or
+unverifiable counters are retained. It then starts `llama-server` using the
 configured `-LlamaCpp*` parameters (model and projection paths, parallelism,
 context and batch sizes, cache types, reasoning mode and budget, and GPU
 layers); host/port come from `-LlamaCppBaseUrl`. It polls `/v1/models` until
 healthy within
-`-LlamaCppServerStartupTimeoutSeconds`, writes `ready.json` +
+`-LlamaCppServerStartupTimeoutSeconds` while holding the transition lock,
+writes `ready.json` +
 `heartbeat.json`, redirects output to `server.log`, writes
 `startup_error.json` and throws on failure. Returns the instance object.
 

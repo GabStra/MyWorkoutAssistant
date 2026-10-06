@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Callable
 
 from exercise_motion_pkg.gpu_lock import process_identity, process_is_running
+from exercise_motion_pkg.process_lock import InterProcessFileLock
 
 SHARED_LLAMA_SESSION_DIR_ENV_VAR = "EXERCISE_MOTION_SHARED_LLAMA_SESSION_DIR"
 INFLIGHT_DIRECTORY_NAME = "in-flight"
@@ -36,6 +37,8 @@ START_REQUEST_FILE_NAME = "start_requested.json"
 STOPPED_FILE_NAME = "stopped.json"
 READY_FILE_NAME = "ready.json"
 HEARTBEAT_FILE_NAME = "heartbeat.json"
+TRANSITION_LOCK_FILE_NAME = "shared-llama-transition.lock"
+TRANSITION_LOCK_TIMEOUT_SECONDS = 240.0
 GENERATION_HOLDERS_DIRECTORY_NAME = "generation-holders"
 # Two consecutive all-zero in-flight observations this far apart close the
 # admission-vs-drain race: a request admitted just before a foreign stop-intent
@@ -253,9 +256,10 @@ class SharedLlamaServerCoordinator:
             if self._counted_active_requests <= 0:
                 _remove(self._counter_path)
         intent_path = self.session_dir / STOP_INTENT_FILE_NAME
-        if self._owns_stop_intent(intent_path):
-            _remove(intent_path)
-            self._request_restart()
+        with self._transition_lock():
+            if self._owns_stop_intent(intent_path):
+                _remove(intent_path)
+                self._request_restart()
 
     def publish_active_requests(self, count: int) -> None:
         _write_json_atomic(self._counter_path, {
@@ -291,6 +295,15 @@ class SharedLlamaServerCoordinator:
     def _owns_stop_intent(self, intent_path: Path) -> bool:
         payload = _read_json(intent_path)
         return payload is not None and payload.get("pid") == os.getpid()
+
+    def _transition_lock(self) -> InterProcessFileLock:
+        return InterProcessFileLock(
+            self.session_dir / TRANSITION_LOCK_FILE_NAME,
+            stage="shared_llama_transition",
+            timeout_seconds=TRANSITION_LOCK_TIMEOUT_SECONDS,
+            stale_after_seconds=TRANSITION_LOCK_TIMEOUT_SECONDS,
+            poll_interval_seconds=self._poll_seconds,
+        )
 
     # --- process-wide counted request scopes ---------------------------------
 
@@ -367,21 +380,30 @@ class SharedLlamaServerCoordinator:
     # --- exclusive quiesce --------------------------------------------------
 
     def begin_exclusive_phase(self) -> QuiesceSummary:
-        """Stop-intent -> drain attached in-flight requests -> stop the server.
+        """Publish intent atomically against startup, drain requests, and stop.
 
         Blocks until every live attached process reports zero in-flight VLM
         requests (two consecutive observations), then invokes the injected
-        server stop so the GPU is exclusively ours when this returns.
+        server stop so the GPU is exclusively ours when this returns. The
+        shared transition lock closes the interval in which a supervisor could
+        start the server between its admission check and readiness.
         """
         summary = QuiesceSummary()
         started = time.monotonic()
         intent_path = self.session_dir / STOP_INTENT_FILE_NAME
-        self._acquire_stop_intent(intent_path, summary)
-        with self._counted_lock:
-            # Our own admissions are drained by now; counted client-scope
-            # requests (discovery/contract rankers in this pid) stay visible so
-            # foreign drainers keep seeing the truth about this process.
-            self.publish_active_requests(self._counted_active_requests)
+        while True:
+            with self._transition_lock():
+                acquired = self._try_acquire_stop_intent(intent_path, summary)
+                if acquired:
+                    with self._counted_lock:
+                        # Publish intent and counter within the same transition
+                        # as supervisor admission. Startup can never mistake
+                        # the intentional intent-before-counter interval for
+                        # an inactive handoff.
+                        self.publish_active_requests(self._counted_active_requests)
+            if acquired:
+                break
+            time.sleep(self._poll_seconds)
         self._drain_foreign_inflight(summary)
         summary.stopped_server = self._stop_shared_server()
         _write_json_atomic(self.session_dir / STOPPED_FILE_NAME, {
@@ -396,34 +418,34 @@ class SharedLlamaServerCoordinator:
     def end_exclusive_phase(self) -> None:
         """Release the GPU back to vision work and ask for the server restart."""
         intent_path = self.session_dir / STOP_INTENT_FILE_NAME
-        if self._owns_stop_intent(intent_path):
-            _remove(intent_path)
-        self._request_restart()
-        with self._counted_lock:
-            self.publish_active_requests(self._counted_active_requests)
+        with self._transition_lock():
+            if self._owns_stop_intent(intent_path):
+                _remove(intent_path)
+            self._request_restart()
+            with self._counted_lock:
+                self.publish_active_requests(self._counted_active_requests)
 
-    def _acquire_stop_intent(self, intent_path: Path, summary: QuiesceSummary) -> None:
-        while True:
-            payload = _read_json(intent_path)
-            if payload is not None and _owner_is_live(payload) and payload.get("pid") != os.getpid():
-                # Another process holds the GPU exclusively; its end_exclusive
-                # (or its death, which makes the intent stale) releases us.
-                time.sleep(self._poll_seconds)
-                continue
-            if payload is not None and not _owner_is_live(payload):
-                summary.reclaimed_stale_markers.append(STOP_INTENT_FILE_NAME)
-            _write_json_atomic(intent_path, {
-                "pid": os.getpid(),
-                "processIdentity": self._identity,
-                "requestedAtUnixSeconds": time.time(),
-            })
-            # Optimistic-lock check: a concurrent writer that landed after us
-            # must win; cross-process exclusive phases are additionally
-            # serialized by the global GPU stage locks.
-            winner = _read_json(intent_path)
-            if winner is not None and winner.get("pid") == os.getpid():
-                return
-            time.sleep(self._poll_seconds)
+    def _try_acquire_stop_intent(
+        self,
+        intent_path: Path,
+        summary: QuiesceSummary,
+    ) -> bool:
+        payload = _read_json(intent_path)
+        if (
+            payload is not None
+            and _owner_is_live(payload)
+            and payload.get("pid") != os.getpid()
+        ):
+            return False
+        if payload is not None and not _owner_is_live(payload):
+            summary.reclaimed_stale_markers.append(STOP_INTENT_FILE_NAME)
+        _write_json_atomic(intent_path, {
+            "pid": os.getpid(),
+            "processIdentity": self._identity,
+            "requestedAtUnixSeconds": time.time(),
+        })
+        winner = _read_json(intent_path)
+        return winner is not None and winner.get("pid") == os.getpid()
 
     def _drain_foreign_inflight(self, summary: QuiesceSummary) -> None:
         settled_observations = 0

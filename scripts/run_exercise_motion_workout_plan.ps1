@@ -2026,17 +2026,69 @@ function Set-MotionServiceSessionState {
         -ServiceState $ServiceState
 }
 
+function Enter-SharedLlamaTransitionLock {
+    param(
+        [string]$SessionDir,
+        [double]$TimeoutSeconds = 240.0
+    )
+
+    $lockPath = Join-Path $SessionDir "shared-llama-transition.lock"
+    New-Item -ItemType Directory -Force -Path $SessionDir | Out-Null
+    $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Max(0.1, $TimeoutSeconds))
+    while ($true) {
+        try {
+            # Python's InterProcessFileLock opens this same persistent file
+            # with no sharing on Windows, so both runtimes hold one OS lease.
+            return [System.IO.File]::Open(
+                $lockPath,
+                [System.IO.FileMode]::OpenOrCreate,
+                [System.IO.FileAccess]::ReadWrite,
+                [System.IO.FileShare]::None
+            )
+        } catch [System.IO.IOException] {
+            if ([DateTime]::UtcNow -ge $deadline) {
+                throw "Timed out waiting for shared llama transition lock: $lockPath"
+            }
+            Start-Sleep -Milliseconds 50
+        }
+    }
+}
+
+function Remove-StaleSharedLlamaInflightCounters {
+    param([string]$SessionDir)
+
+    $inflightDir = Join-Path $SessionDir "in-flight"
+    Get-ChildItem -LiteralPath $inflightDir -Filter "*.json" -File -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            try {
+                $counter = Get-Content -LiteralPath $_.FullName -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+                $counterPid = [int]$counter.pid
+                $counterIdentity = [long]$counter.processIdentity
+                if ($counterPid -gt 0 -and
+                    (Get-MotionProcessIdentityState -ProcessId $counterPid -ExpectedProcessIdentity $counterIdentity) -eq "stopped") {
+                    Remove-Item -LiteralPath $_.FullName -Force -ErrorAction Stop
+                }
+            } catch {
+                # Malformed or unverifiable counters are retained. Startup
+                # cannot prove that their owners have released the GPU.
+            }
+        }
+}
+
 function Start-SharedLlamaServer {
     param([string]$SessionDir)
 
     $sessionLeaseKey = Acquire-MotionServiceSessionLease `
         -SessionDirectory $SessionDir `
         -Stage "shared_llama_server"
-    if (Test-SharedLlamaExclusiveHandoffActive -SessionDir $SessionDir) {
-        $null = Release-MotionServiceSessionLease -SessionDirectory $sessionLeaseKey
-        Write-Host "Shared llama.cpp restart deferred for an active exclusive GPU handoff."
-        return $null
-    }
+    $transitionLock = $null
+    try {
+        $transitionLock = Enter-SharedLlamaTransitionLock -SessionDir $SessionDir
+        if (Test-SharedLlamaExclusiveHandoffActive -SessionDir $SessionDir) {
+            $null = Release-MotionServiceSessionLease -SessionDirectory $sessionLeaseKey
+            Write-Host "Shared llama.cpp restart deferred for an active exclusive GPU handoff."
+            return $null
+        }
     New-Item -ItemType Directory -Force -Path (Join-Path $SessionDir "in-flight") | Out-Null
     # Stale markers from a previous supervisor instance must not satisfy or
     # confuse a fresh start; crashed clients leave their counters behind.
@@ -2046,8 +2098,7 @@ function Start-SharedLlamaServer {
             Remove-Item -LiteralPath $path -Force
         }
     }
-    Get-ChildItem -LiteralPath (Join-Path $SessionDir "in-flight") -Filter "*.json" -File -ErrorAction SilentlyContinue |
-        Remove-Item -Force -ErrorAction SilentlyContinue
+    Remove-StaleSharedLlamaInflightCounters -SessionDir $SessionDir
 
     $host_ = "127.0.0.1"
     $port = 8090
@@ -2208,6 +2259,11 @@ function Start-SharedLlamaServer {
     @{ error = "Timed out waiting for shared llama.cpp server startup after $LlamaCppServerStartupTimeoutSeconds seconds." } |
         ConvertTo-Json | Set-Content -LiteralPath (Join-Path $SessionDir "startup_error.json") -Encoding UTF8
     throw "Timed out waiting for shared llama.cpp server startup after $LlamaCppServerStartupTimeoutSeconds seconds. Logs: $logPath"
+    } finally {
+        if ($null -ne $transitionLock) {
+            $transitionLock.Dispose()
+        }
+    }
 }
 
 function Update-SharedLlamaServerHeartbeat {

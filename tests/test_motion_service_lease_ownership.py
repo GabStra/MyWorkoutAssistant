@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 
 import pytest
 
@@ -323,6 +324,72 @@ if ($staleMarkerOnly) {{ throw 'A stale ready marker without an observed exit tr
     assert "stderrTail = (Get-Content -LiteralPath $errorLogPath" in source
     assert '"startup_error.json", "start_requested.json", "stopped.json"' in source
     assert source.count("Test-SharedLlamaExclusiveHandoffActive -SessionDir $SessionDir") >= 2
+
+
+def test_powershell_shared_llama_start_prunes_only_confirmed_dead_counters(tmp_path: Path):
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell is required to exercise shared llama counter cleanup")
+    from exercise_motion_pkg.gpu_lock import process_identity
+
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "run_exercise_motion_workout_plan.ps1"
+    )
+    source = script_path.read_text(encoding="utf-8-sig")
+    remove_counters = _powershell_function(source, "Remove-StaleSharedLlamaInflightCounters")
+    process_identity_helper = _powershell_function(source, "Get-MotionProcessIdentityState")
+    session_dir = tmp_path / "shared-llama"
+    inflight_dir = session_dir / "in-flight"
+    inflight_dir.mkdir(parents=True)
+
+    live_path = inflight_dir / f"{os.getpid()}.json"
+    live_path.write_text(
+        json.dumps({
+            "pid": os.getpid(),
+            "processIdentity": process_identity(os.getpid()),
+            "activeRequests": 0,
+        }),
+        encoding="utf-8",
+    )
+    dead = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(120)"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    dead_identity = process_identity(dead.pid)
+    dead.terminate()
+    dead.wait(timeout=10)
+    dead_path = inflight_dir / f"{dead.pid}.json"
+    dead_path.write_text(
+        json.dumps({
+            "pid": dead.pid,
+            "processIdentity": dead_identity,
+            "activeRequests": 0,
+        }),
+        encoding="utf-8",
+    )
+    malformed_path = inflight_dir / "unverifiable.json"
+    malformed_path.write_text("{not-json", encoding="utf-8")
+
+    command = f"""
+$ErrorActionPreference = 'Stop'
+{process_identity_helper}
+{remove_counters}
+Remove-StaleSharedLlamaInflightCounters -SessionDir '{str(session_dir).replace("'", "''")}'
+if (-not (Test-Path -LiteralPath '{str(live_path).replace("'", "''")}')) {{ throw 'A live counter was removed.' }}
+if (Test-Path -LiteralPath '{str(dead_path).replace("'", "''")}') {{ throw 'A dead counter was not reclaimed.' }}
+if (-not (Test-Path -LiteralPath '{str(malformed_path).replace("'", "''")}')) {{ throw 'An unverifiable counter was removed.' }}
+"""
+    completed = subprocess.run(
+        [pwsh, "-NoProfile", "-Command", command],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
 def test_powershell_shared_llama_counter_ignores_recycled_pid_identity(tmp_path: Path):
