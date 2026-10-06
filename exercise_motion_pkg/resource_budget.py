@@ -6,10 +6,9 @@ import os
 
 # Keep Cursor/IDE/Chrome usable on the same machine as library generation.
 CODING_HEADROOM_LOGICAL_CORES = 4
-# Measured 2026-09-24 on 16 logical cores: 4 concurrent deadline-bound fits
-# run each fit only ~13% slower while tripling throughput, with identical
-# accept/reject decisions (scripts/bench_refine_concurrency.py). The previous
-# value of 2 left the dominant stage half idle.
+# The checked-in concurrency benchmark compares two synthetic structural
+# refinements, not four production controlled-motion fits. Keep this as a
+# bounded host policy; its production throughput optimum has not been measured.
 DEFAULT_CPU_FIT_SLOTS = 4
 MACHINE_FIT_LANES_ENV_VAR = "EXERCISE_MOTION_MACHINE_FIT_LANES"
 DEFAULT_BROWSER_WORKER_CAP = 4
