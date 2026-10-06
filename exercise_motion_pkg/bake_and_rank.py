@@ -22960,10 +22960,17 @@ def prepare_candidate_input_video(
                     / "segment_detection"
                     / "exact_source_phase_validation.json"
                 ),
+                shared_cache_dir=(
+                    candidate_workspace.parent
+                    / "source-review-cache"
+                    / "exact-source-phase"
+                ),
             )
-            update_pre_wham_exact_phase_validation_manifest(
+            promote_and_require_exact_source_phase_validation(
                 candidate_workspace=candidate_workspace,
                 validation=exact_phase_validation,
+                exercise_motion_contract=cached_exercise_motion_contract,
+                rejection_context="Cached pre-WHAM exact-source validation rejected the movement cut",
             )
         return cached_selected_segment
     if request.reuse_wham_cache and cached_segment_selection.exists():
@@ -23015,14 +23022,38 @@ def prepare_candidate_input_video(
             fallback_reason=str(ranked_candidate.candidate.get("sourceWindowParentFallbackReason") or ""),
         )
     if not request.detect_source_segment:
+        selected_video_path = source_video_path
         if source_chunk_hint is not None:
-            return trim_ranked_source_chunk_hint(
+            selected_video_path = trim_ranked_source_chunk_hint(
                 ranked_candidate=ranked_candidate,
                 candidate_workspace=candidate_workspace,
                 source_video_path=source_video_path,
                 source_chunk_hint=source_chunk_hint,
             )
-        return source_video_path
+        if pre_wham_validation_enabled and request.exercise_motion_contract_enabled:
+            validation = validate_exact_source_with_cached_gpu_handoff(
+                caption_images=pre_wham_caption_images,
+                source_video_path=selected_video_path,
+                exercise_name=ranked_candidate.exercise_name,
+                exercise_motion_contract=exercise_motion_contract,
+                cache_path=(
+                    candidate_workspace
+                    / "segment_detection"
+                    / "exact_source_phase_validation.json"
+                ),
+                shared_cache_dir=(
+                    candidate_workspace.parent
+                    / "source-review-cache"
+                    / "exact-source-phase"
+                ),
+            )
+            promote_and_require_exact_source_phase_validation(
+                candidate_workspace=candidate_workspace,
+                validation=validation,
+                exercise_motion_contract=exercise_motion_contract,
+                rejection_context="Exact-source validation rejected the unsegmented source",
+            )
+        return selected_video_path
     if should_use_ranked_source_chunk_directly(source_chunk_hint, request=request):
         if pre_wham_caption_images is not None:
             return choose_pre_wham_source_cut_or_reject(
@@ -25251,41 +25282,12 @@ def choose_pre_wham_source_cut_or_reject(
                 / "exact_source_phase_validation.json"
             ),
         )
-    exact_phase_validation = promote_exact_source_pose_reference(
+    exact_phase_validation = promote_and_require_exact_source_phase_validation(
         candidate_workspace=candidate_workspace,
         validation=exact_phase_validation,
-    )
-    annotate_exact_source_pose_movement_instance(
-        candidate_workspace=candidate_workspace,
-        completion_mode=contract_completion_mode(exercise_motion_contract),
         exercise_motion_contract=exercise_motion_contract,
+        rejection_context="Pre-WHAM exact trimmed-source validation rejected the movement cut",
     )
-    endpoint_contract_validation = exact_phase_validation.get("sourcePoseEndpointContractValidation")
-    endpoint_contract_rejected = exact_source_endpoint_mismatch_is_hard_reject(
-        exact_phase_validation
-    )
-    exact_pose_rejected = (
-        bool(exact_phase_validation.get("required"))
-        and not bool(exact_phase_validation.get("passed"))
-    ) or endpoint_contract_rejected or not exact_phase_validation.get("requiredRegionObservations", {}).get("passed", True)
-    update_pre_wham_exact_phase_validation_manifest(
-        candidate_workspace=candidate_workspace,
-        validation=exact_phase_validation,
-    )
-    if exact_pose_rejected:
-        raise SourceCandidateRejected(
-            "Pre-WHAM exact trimmed-source validation rejected the movement cut: "
-            f"reason={exact_phase_validation.get('reason')}, "
-            f"joint={exact_phase_validation.get('dominantJoint')}, "
-            f"sequence={exact_phase_validation.get('majorPhaseSequence')}, "
-            f"endpointMismatches={(endpoint_contract_validation or {}).get('mismatches')}.",
-            reason_tags=(
-                "source_cut_pose_contract_mismatch"
-                if endpoint_contract_rejected
-                else "source_cut_incomplete_repetition_phase",
-            ),
-            evidence={"exactSourcePhaseValidation": exact_phase_validation},
-        )
     return selected_segment_path
 
 
@@ -25580,6 +25582,49 @@ def promote_exact_source_pose_reference(
         "sourcePoseReferencePath": str(destination.resolve()),
         "sourcePoseReferencePromoted": True,
     }
+
+
+def promote_and_require_exact_source_phase_validation(
+    *,
+    candidate_workspace: Path,
+    validation: dict[str, Any],
+    exercise_motion_contract: dict[str, Any] | None,
+    rejection_context: str,
+) -> dict[str, Any]:
+    validation = promote_exact_source_pose_reference(
+        candidate_workspace=candidate_workspace,
+        validation=validation,
+    )
+    annotate_exact_source_pose_movement_instance(
+        candidate_workspace=candidate_workspace,
+        completion_mode=contract_completion_mode(exercise_motion_contract),
+        exercise_motion_contract=exercise_motion_contract,
+    )
+    endpoint_contract_validation = validation.get("sourcePoseEndpointContractValidation")
+    endpoint_contract_rejected = exact_source_endpoint_mismatch_is_hard_reject(validation)
+    exact_pose_rejected = (
+        bool(validation.get("required")) and not bool(validation.get("passed"))
+    ) or endpoint_contract_rejected or not validation.get("requiredRegionObservations", {}).get(
+        "passed", True
+    )
+    update_pre_wham_exact_phase_validation_manifest(
+        candidate_workspace=candidate_workspace,
+        validation=validation,
+    )
+    if exact_pose_rejected:
+        raise SourceCandidateRejected(
+            f"{rejection_context}: reason={validation.get('reason')}, "
+            f"joint={validation.get('dominantJoint')}, "
+            f"sequence={validation.get('majorPhaseSequence')}, "
+            f"endpointMismatches={(endpoint_contract_validation or {}).get('mismatches')}.",
+            reason_tags=(
+                "source_cut_pose_contract_mismatch"
+                if endpoint_contract_rejected
+                else "source_cut_incomplete_repetition_phase",
+            ),
+            evidence={"exactSourcePhaseValidation": validation},
+        )
+    return validation
 
 
 def update_pre_wham_exact_phase_validation_manifest(
@@ -25928,12 +25973,26 @@ def trim_ranked_source_chunk_hint(
     selected_segment_path.parent.mkdir(parents=True, exist_ok=True)
     if selected_segment_path.exists():
         return selected_segment_path
-    trim_video(
-        source_path=source_video_path,
-        output_path=selected_segment_path,
-        start_seconds=source_chunk_hint.start_seconds,
-        end_seconds=source_chunk_hint.end_seconds,
+    metadata = read_basic_video_metadata(source_video_path)
+    frame_tolerance = 1.0 / metadata.fps if metadata.fps > 0.0 else 0.0
+    source_duration = metadata.duration_seconds
+    covers_full_source = bool(
+        source_chunk_hint.start_seconds <= 1e-4
+        and source_duration > 0.0
+        and source_chunk_hint.end_seconds >= source_duration - frame_tolerance * 0.5
     )
+    if covers_full_source:
+        # A ranked window spanning the whole file needs no transcode. Preserve
+        # the source digest so exact-pose evidence and its content cache remain
+        # reusable through the pre-WHAM validation stage.
+        shutil.copy2(source_video_path, selected_segment_path)
+    else:
+        trim_video(
+            source_path=source_video_path,
+            output_path=selected_segment_path,
+            start_seconds=source_chunk_hint.start_seconds,
+            end_seconds=source_chunk_hint.end_seconds,
+        )
     segment_dir = candidate_workspace / "segment_detection"
     segment_dir.mkdir(parents=True, exist_ok=True)
     (segment_dir / "segment_selection.json").write_text(
@@ -25945,6 +26004,9 @@ def trim_ranked_source_chunk_hint(
                 "fallbackReason": fallback_reason,
                 "sourceVideoPath": str(source_video_path),
                 "selectedSegmentPath": str(selected_segment_path),
+                "selectedSegmentMaterialization": (
+                    "source_copy_full_range" if covers_full_source else "trimmed_ranked_window"
+                ),
                 "exerciseName": ranked_candidate.exercise_name,
                 "selectedSpanInOriginalSource": {
                     "startSeconds": source_chunk_hint.start_seconds,

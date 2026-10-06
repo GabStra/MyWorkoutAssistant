@@ -838,13 +838,29 @@ directory has a condensed version of this state; update it after the arms land.
   explicitly repaired. When initialization reports `passed: true` with no
   remaining violations, the fitter gets its existing bounded retained-interval
   attempt; all physical and playback acceptance gates remain required.
-- A bounded CPU replay of the retained RDL exercised that fallback and improved
+- A bounded CPU replay exercised the retained-interval fallback and improved
   contact, support, trajectory, temporal, equipment, and several anatomy
-  checks, but RDL still did not pass. The retained result has a torso-bend
-  violation at spine1 frame 67, a severe left-hand discontinuity, and a loop
-  seam that still requires cycle repair. This is evidence the stop was
-  premature, not evidence of a successful RDL generation. No GPU/model calls
-  or full pair campaign were run.
+  checks, but did not pass. To force the retry path, the replay removed the
+  persisted artifact state and installed a synthetic whole-clip cycle; its
+  large loop-seam failure is therefore not evidence about the original
+  production cycle. The replay still has a torso-bend violation at spine1 frame
+  67 and a severe left-hand discontinuity. The retained production RDL artifact
+  had no accepted cycle proposal and was rejected before final render/review on
+  fit, body-support, and support-surface checks. The fallback fix has not yet
+  been verified on a current end-to-end RDL generation. No GPU/model calls or
+  full pair campaign were run.
+- The retained process replay exposed a source-preparation bug when source
+  segment detection is disabled: that branch returned before exact-source
+  phase validation and pose-reference promotion. A full-source ranked window
+  was also needlessly re-encoded, changing its digest and preventing the
+  retained source evidence from matching the selected video. The production
+  path now validates and promotes evidence in this branch, and copies a window
+  byte-for-byte when it covers the full source. A self-contained focused
+  regression passed using an exact content-addressed cache entry. The slow pair
+  replay was not rerun: its retained OHP evidence has different contract
+  semantics from the current generated contract, so re-keying it would be
+  unsafe. This fix restores source evidence availability; it does not establish
+  that OHP or RDL now passes fitting.
 - Focused regressions passed (`6 passed`), and the edited Python modules and
   tests compiled with `py_compile`. No throughput promotion is claimed.
 - Architecture status: reviewed render/package artifact identity is connected
