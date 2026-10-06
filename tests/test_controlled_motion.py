@@ -2074,9 +2074,11 @@ def test_slow_solver_block_hands_unused_budget_to_polish(monkeypatch):
 
 def test_hybrid_jacobian_stops_probes_at_solve_deadline(monkeypatch):
     import pytest
-    from types import SimpleNamespace
     from exercise_motion_pkg import controlled_motion as motion
 
+    from exercise_motion_pkg import anatomical_repair
+    monkeypatch.setattr(anatomical_repair, 'repair_rig_anatomy',
+                        lambda rig, points, **kwargs: (points, {'passed': True, 'applied': False}))
     names, points = stance(12)
     current = payload(names, points)
     current['loop'] = {'enabled': True}
@@ -2084,6 +2086,8 @@ def test_hybrid_jacobian_stops_probes_at_solve_deadline(monkeypatch):
     monkeypatch.setenv('EXERCISE_MOTION_HYBRID_JACOBIAN', '1')
     monkeypatch.setattr(motion, 'monotonic', lambda: clock[0])
     observed_timeout = []
+    class DeadlineObserved(BaseException):
+        pass
 
     def expire_during_probe(residual, initial, pattern, max_evaluations, **solver_options):
         residual(initial)
@@ -2097,11 +2101,11 @@ def test_hybrid_jacobian_stops_probes_at_solve_deadline(monkeypatch):
         with pytest.raises(TimeoutError):
             solver_options['local_jacobian'](initial)
         observed_timeout.append(clock[0])
-        monkeypatch.setattr(motion, 'monotonic', lambda: 0.)
-        return SimpleNamespace(x=initial, nfev=1, status=1)
+        raise DeadlineObserved()
 
     monkeypatch.setattr(motion, 'solve_trajectory', expire_during_probe)
-    motion._fit_controlled_motion(current, timeout_seconds=60.)
+    with pytest.raises(DeadlineObserved):
+        motion._fit_controlled_motion(current, timeout_seconds=60., max_evaluations=1)
     assert observed_timeout and observed_timeout[0] >= 45.
 
 
@@ -4031,3 +4035,36 @@ def test_sparse_dependencies_cover_coupled_rotations_and_body_relative_motion():
     pattern=np.maximum(rig.dependencies,basis[None,:]).astype(bool)
     assert np.all(abs(derivative[~pattern])<1e-7)
     assert not pattern.all()
+
+
+def test_solver_sparsity_covers_interpolated_equipment_derivatives(monkeypatch):
+    from exercise_motion_pkg import controlled_motion as motion
+
+    names, points = stance(8)
+    current = payload(names, points)
+    current['loop'] = {'enabled': True}
+    current['equipmentConstraints'] = {'handRelationship': 'rigid_pair'}
+    inspected = []
+    from exercise_motion_pkg import anatomical_repair
+    monkeypatch.setattr(anatomical_repair, 'repair_rig_anatomy',
+                        lambda rig, points, **kwargs: (points, {'passed': True, 'applied': False}))
+    class Inspected(BaseException):
+        pass
+
+    def inspect(residual, initial, pattern, max_evaluations, **options):
+        rig = FixedRig(points, names)
+        column = 3 * rig.width + rig.slots[names.index('right_elbow')]
+        plus, minus = initial.copy(), initial.copy()
+        plus[column] += 1e-6
+        minus[column] -= 1e-6
+        derivative = (residual(plus) - residual(minus)) / 2e-6
+        missing = np.flatnonzero((np.abs(derivative) > 1e-4)
+                                & (pattern[:, column].toarray().ravel() == 0))
+        assert missing.size == 0, f"Residual derivatives absent from sparsity rows: {missing.tolist()}"
+        inspected.append(True)
+        raise Inspected()
+
+    monkeypatch.setattr(motion, 'solve_trajectory', inspect)
+    with pytest.raises(Inspected):
+        motion._fit_controlled_motion(current, timeout_seconds=60.)
+    assert inspected

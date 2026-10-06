@@ -6166,10 +6166,13 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         alignment_source[subframe_first]*(1.-subframe_alpha)+alignment_source[subframe_last]*subframe_alpha,
         names, body_support)
     subframe_pattern = np.vstack([rig.dependencies,rig.dependencies[1::3],
-                                  rig.dependencies[1::3],collision_pattern,structure_pattern])
+                                  rig.dependencies[1::3],collision_pattern])
     subframe_pattern = np.vstack([subframe_pattern, equipment_pattern])
     subframe_pattern = np.vstack([subframe_pattern, support_pattern])
     subframe_pattern = np.vstack([subframe_pattern, heel_pattern])
+    # point_rows appends anatomy after all point-space sections. Sparsity must
+    # follow that same order for grouped finite differences and point probes.
+    subframe_pattern = np.vstack([subframe_pattern, structure_pattern])
     neighbors = np.column_stack([subframe_first-1, subframe_first, subframe_last, subframe_last+1])
     neighbors = neighbors % count if cyclic else np.clip(neighbors, 0, count-1)
     # Cyclic stencils can contain distinct frames in the same modulo-4
@@ -6849,7 +6852,6 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
 
         if cached_rows is not None:
             section_widths = cached_rows['subframeSectionWidths']
-            w_first3 = sum(section_widths[:3])
             w_sub_pts = sum(section_widths)
             base_sub_anat = cached_rows['subframeAnatomy']
             base_sub = cached_rows['subframe']
@@ -6859,7 +6861,6 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             sub_sections_list = subframe_point_sections(subframe, contact_weight, grip_weight)
             section_widths = tuple(section.shape[1] for section in sub_sections_list)
             base_sub_anat = subframe_anatomy_rows(unconstrained_subframe)
-            w_first3 = sum(section.shape[1] for section in sub_sections_list[:3])
             w_sub_pts = sum(section.shape[1] for section in sub_sections_list)
             w_sub_anat = base_sub_anat.shape[1]
             w_sub_total = w_sub_pts + w_sub_anat
@@ -6870,13 +6871,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         if cached_rows is None:
             base_sub = subframe_composite(subframe, unconstrained_subframe)
         check_optimizer_budget()
-        # residual per-cursor layout: [contacts, floor, collision, anatomy,
-        # grip, geometry, alignment, heel] — anatomy sits fourth.
-        w_contacts_floor = section_widths[0] + section_widths[1]
-        sub_col_offsets = np.concatenate([
-            np.arange(w_first3),
-            w_first3 + np.arange(w_sub_anat),
-            w_first3 + w_sub_anat + np.arange(w_sub_pts - w_first3)])
+        # Both the composite and residual append anatomy after point rows.
+        sub_col_offsets = np.arange(w_sub_total)
         row_t = (J_accel_pt.shape[0] + J_jerk_pt.shape[0] + L_s
                  + J_root_acc_pt.shape[0] + J_root_jerk_pt.shape[0] + base_so.size - L_s)
         J_sub_mixed = colored_composite_probe(
