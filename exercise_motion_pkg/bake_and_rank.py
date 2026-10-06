@@ -3738,6 +3738,11 @@ def materialized_metrics_with_gpu_handoff(
     if source_pose_reference is None:
         source_pose_reference = source_pose_reference_from_phase_metrics(
             pre_wham_exact_source_phase_reference_metrics(item))
+    if source_pose_reference is None:
+        source_pose_reference = load_verified_source_pose_reference(
+            item.candidate_workspace / "segment_detection" / "exact_source_pose_reference.json",
+            selected_input_video_path_for_review_item(item),
+        )
     # Cyclic artifacts retain sourceTimeSec on every frame, so pose fidelity
     # can select their exact parent-video interval from this verified reference.
     # Reusing the pre-WHAM evidence avoids rerunning CUDA YOLO during final fit
@@ -9216,6 +9221,10 @@ def materialized_output_acceptance_metrics(
     source_video_phase_metrics: dict[str, Any] | None = None
     try:
         if source_pose_reference is not None:
+            if export_payload is not None:
+                source_pose_reference = source_pose_reference_for_motion(
+                    source_pose_reference, export_payload,
+                )
             source_video_phase_metrics = source_pose_phase_completeness_metrics(
                 source_pose_payload=source_pose_reference,
                 source_video_path=selected_input_video_path_for_review_item(item),

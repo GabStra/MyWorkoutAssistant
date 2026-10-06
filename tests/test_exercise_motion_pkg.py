@@ -16548,9 +16548,11 @@ def test_materialized_source_video_rebuilds_missing_legacy_pose_reference(
     assert calls[0]["include_pose_reference"] is True
 
 
+@pytest.mark.parametrize("reference_origin", ["phase_metrics", "verified_file"])
 def test_materialized_metrics_reuses_exact_parent_pose_for_cyclic_artifact(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    reference_origin: str,
 ) -> None:
     item = ReviewItem(
         exercise_index=0,
@@ -16572,7 +16574,14 @@ def test_materialized_metrics_reuses_exact_parent_pose_for_cyclic_artifact(
     monkeypatch.setattr(
         bake_and_rank_module,
         "pre_wham_exact_source_phase_reference_metrics",
-        lambda _item: phase_metrics,
+        lambda _item: phase_metrics if reference_origin == "phase_metrics" else {},
+    )
+    def verified_reference(path, video):
+        assert path == tmp_path / "segment_detection" / "exact_source_pose_reference.json"
+        return parent_pose
+
+    monkeypatch.setattr(
+        bake_and_rank_module, "load_verified_source_pose_reference", verified_reference,
     )
     captured: dict[str, object] = {}
 
