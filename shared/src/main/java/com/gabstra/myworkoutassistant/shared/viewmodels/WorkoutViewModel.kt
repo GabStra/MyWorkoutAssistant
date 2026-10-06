@@ -472,6 +472,11 @@ open class WorkoutViewModel(
     private var _bodyWeight = mutableDoubleStateOf(0.0)
     val bodyWeight: State<Double> = _bodyWeight
 
+    // Latest HR sample seen during a workout (fed by the UI's HR polling); 0 until
+    // the first beat arrives. Backs the live calorie estimate on timed sets.
+    private var _latestHeartRateBpm = mutableIntStateOf(0)
+    val latestHeartRateBpm: State<Int> = _latestHeartRateBpm
+
     // Plate recalculation debouncer and state
     private val plateRecalculationDebouncer = PlateRecalculationDebouncer(viewModelScope, debounceDelayMs = 400L)
     private var lastPlateRecalculationWeight: Double? = null
@@ -2193,6 +2198,7 @@ open class WorkoutViewModel(
 
     open fun registerHeartBeat(heartBeat: Int) {
         heartBeatHistory.add(heartBeat)
+        _latestHeartRateBpm.intValue = heartBeat
     }
 
     internal fun updateWorkout(currentExercise: Exercise, updatedExercise: Exercise) {

@@ -176,6 +176,7 @@ open class AppViewModel : WorkoutViewModel() {
     fun initApplicationContext(context: android.content.Context) {
         applicationContext = context.applicationContext
         _alertSoundEnabled.value = AlertSoundPreferences.isEnabled(context.applicationContext)
+        _calorieDisplayEnabled.value = CalorieDisplayPreferences.isEnabled(context.applicationContext)
         (context.applicationContext as? MyApplication)?.coroutineExceptionHandler?.let {
             coroutineExceptionHandler = it
         }
@@ -240,6 +241,13 @@ open class AppViewModel : WorkoutViewModel() {
         AlertSoundPreferences.setEnabled(context, enabled)
         _alertSoundEnabled.value = enabled
         rebuildScreenState()
+    }
+
+    fun setCalorieDisplayEnabled(enabled: Boolean) {
+        val context = applicationContext ?: return
+        if (_calorieDisplayEnabled.value == enabled) return
+        CalorieDisplayPreferences.setEnabled(context, enabled)
+        _calorieDisplayEnabled.value = enabled
     }
     private fun checkpointStore(): WorkoutRecoveryCheckpointStore? {
         val context = applicationContext ?: return null
@@ -343,6 +351,9 @@ open class AppViewModel : WorkoutViewModel() {
     private var skipNextResumeLastState = false
     private val _alertSoundEnabled = mutableStateOf(AlertSoundPreferences.DEFAULT_ALERT_SOUND_ENABLED)
     val alertSoundEnabled: State<Boolean> = _alertSoundEnabled
+
+    private val _calorieDisplayEnabled = mutableStateOf(CalorieDisplayPreferences.DEFAULT_CALORIES_ENABLED)
+    val calorieDisplayEnabled: State<Boolean> = _calorieDisplayEnabled
 
     fun consumeRecoveredWorkoutNotice() {
         _showRecoveredWorkoutNotice.value = false
