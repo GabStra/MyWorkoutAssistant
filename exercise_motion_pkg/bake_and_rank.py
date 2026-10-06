@@ -21750,7 +21750,7 @@ def process_ranked_candidate(
                     export_payload=artifact.export_payload,
                     artifact_class=artifact_class,
                 )
-                if support_dominance_result is None:
+                if request.classify_support_dominance and support_dominance_result is None:
                     support_started = time.perf_counter()
                     support_dominance_result = classify_support_dominance_for_review_loop(
                         review_video_path=artifact.review_video_path,

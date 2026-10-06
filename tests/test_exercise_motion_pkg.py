@@ -29057,9 +29057,11 @@ def test_launch_chromium_browser_allows_local_preview_module_imports() -> None:
     }
 
 
-def test_process_ranked_candidate_stores_support_dominance_from_preview_classification(
+@pytest.mark.parametrize("classify_support_dominance", [True, False])
+def test_process_ranked_candidate_honors_support_dominance_setting(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    classify_support_dominance: bool,
 ) -> None:
     candidate = RankedCandidate(
         exercise_index=0,
@@ -29140,15 +29142,31 @@ def test_process_ranked_candidate_stores_support_dominance_from_preview_classifi
     monkeypatch.setattr(bake_and_rank_module, "bake_preview_loops_with_playwright", fake_preview_baker)
     monkeypatch.setattr(
         bake_and_rank_module,
-        "classify_support_dominance_for_review_loop",
-        lambda **_: SupportDominanceResult(
+        "evaluate_baked_motion_gate",
+        lambda _path: {"passed": True, "rejectionReasons": []},
+    )
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "movement_artifact_class_gate",
+        lambda *_args, **_kwargs: {"passed": True, "rejectionReasons": []},
+    )
+    classification_calls: list[None] = []
+
+    def fake_support_dominance_classification(**_: object) -> SupportDominanceResult:
+        classification_calls.append(None)
+        return SupportDominanceResult(
             support_dominance="hand_dominant",
             confidence=0.91,
             reason="Hands are used to pull the body upward.",
             exercise_name="Pull Up",
             uncertain=False,
             model_output={"supportDominance": "hand_dominant"},
-        ),
+        )
+
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "classify_support_dominance_for_review_loop",
+        fake_support_dominance_classification,
     )
 
     review_items: list[ReviewItem] = []
@@ -29161,7 +29179,7 @@ def test_process_ranked_candidate_stores_support_dominance_from_preview_classifi
             wham_repo_path=None,
             body_model_root=None,
             detect_source_segment=False,
-            classify_support_dominance=False,
+            classify_support_dominance=classify_support_dominance,
         ),
         preview_baker=fake_preview_baker,
         review_items=review_items,
@@ -29171,14 +29189,20 @@ def test_process_ranked_candidate_stores_support_dominance_from_preview_classifi
 
     assert result["status"] == "ready_for_selection"
     assert len(review_items) == 1
-    assert review_items[0].support_dominance == "hand_dominant"
-    assert review_items[0].support_dominance_confidence == pytest.approx(0.91)
-    assert review_items[0].support_dominance_uncertain is False
-    assert review_items[0].support_dominance_model_output == {"supportDominance": "hand_dominant"}
-    assert review_entries[0]["supportDominance"] == "hand_dominant"
-    assert review_entries[0]["supportDominanceConfidence"] == pytest.approx(0.91)
-    assert review_entries[0]["supportDominanceUncertain"] is False
-    assert review_entries[0]["supportDominanceModelOutput"] == {"supportDominance": "hand_dominant"}
+    assert len(classification_calls) == int(classify_support_dominance)
+    if classify_support_dominance:
+        assert review_items[0].support_dominance == "hand_dominant"
+        assert review_items[0].support_dominance_confidence == pytest.approx(0.91)
+        assert review_items[0].support_dominance_uncertain is False
+        assert review_items[0].support_dominance_model_output == {"supportDominance": "hand_dominant"}
+        assert review_entries[0]["supportDominance"] == "hand_dominant"
+        assert review_entries[0]["supportDominanceConfidence"] == pytest.approx(0.91)
+        assert review_entries[0]["supportDominanceUncertain"] is False
+        assert review_entries[0]["supportDominanceModelOutput"] == {"supportDominance": "hand_dominant"}
+    else:
+        assert review_items[0].support_dominance is None
+        assert review_items[0].support_dominance_model_output is None
+        assert review_entries[0]["supportDominance"] is None
 
 
 def test_parallel_candidate_processing_uses_fallback_ready_target(

@@ -1478,7 +1478,9 @@ for RDL; RDL reports 96.7s in controlled fit, 63.1s in structural refinement,
 and 143.3s in preview bake. The preview bake aggregate attributes 102.0s to
 source-articulation fitting and 29.3s to artifact review rendering. These are
 single-run stage observations, not a controlled speed comparison. The RDL
-support-dominance classifier was uncertain after a local endpoint conflict; the
-movement still passed the configured final validation and package gate, so keep
-that classifier issue visible rather than treating the run as a throughput
-promotion.
+selection manifest recorded `classifySupportDominance=false`, but
+`process_ranked_candidate` still invoked CLEF and fell back to uncertain after
+finding Qwen on port 8090. The call is now gated by that request setting. A
+focused enabled/disabled regression passes; the two-exercise replay predates this
+narrow correction and has not been repeated. This removes an unrequested model
+operation without changing a fit, render, final-review, or package gate.
