@@ -1286,3 +1286,22 @@ a multi-consumer discovery service can preserve the configured worker width
 and a comparable production run shows startup overhead materially affects
 wall time. Discovery queue service work therefore remains partial rather than
 claiming the queue-backed-service architecture is complete.
+
+### Oct 6 re-audit of the earlier retained-pair process attempt
+
+`build/exercise_motion/retained_pair_process_e2e_20261006_022134` is not a
+production result for the corrected pair. Its own `process_e2e_config.json`
+uses the earlier Press replay crop and RDL candidate `4qt5imy2dum`, the
+previously excluded floor-pickup source. The run ended with Press
+`needs_manual_review`, RDL `no_selection`, and no package; RDL's final report
+included `supported_body_moves` and `support_surface_geometry_mismatch`. Treat
+this as invalid-fixture evidence, not as a current regression or throughput
+measurement.
+
+The current bounded replay config is
+`build/exercise_motion/replays/20261006-corrected-pair-inputs/config.json`.
+Its Press input pins source frames 53–139 and its RDL input uses `yQbSQCkhvTM`.
+Both source-video and normalized-motion hashes match, and their retained
+source/raw timelines match at 87/87 and 124/124 frames at 30 fps. This confirms
+fixture integrity only; the current production-script E2E still needs to run
+with genuine source/final review, fit, production render, and packaging.
