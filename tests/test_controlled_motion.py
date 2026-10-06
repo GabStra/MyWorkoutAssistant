@@ -2441,6 +2441,7 @@ def test_normal_fit_runs_velocity_path_repair_after_soft_solve(monkeypatch):
     }
     assert report['applied'], report
     assert report['boundedRefinement']['playbackPathRepair'] is True
+    assert report['boundedRefinement']['playbackPathRepairKept'] is True
     assert result.get('fixedRig')
 
 

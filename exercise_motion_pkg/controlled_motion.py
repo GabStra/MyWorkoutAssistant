@@ -7618,6 +7618,10 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                     x=kept.ravel(), nfev=solved.nfev, status=getattr(solved, 'status', 1))
                 candidate, report = validate_solution(solved, project_playback_plants=False)
                 failed_checks = failed_check_names(report.get('checks'))
+            refinement['playbackPathRepairKept'] = bool(
+                report.get('applied')
+                or not np.allclose(kept, previous_coordinates, rtol=0., atol=1e-12)
+            )
             refinement['playbackPathRepair'] = True
             if report.get('applied'):
                 return candidate, report
@@ -7639,7 +7643,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             previous_contact = float(report.get('maximumContactErrorMeters') or 0.)
             previous_jerk = report.get('jerkAfter')
             previous_nested = _playback_nested_failures(report.get('playback'))
-            keep_path = bool(refinement.get('playbackPathRepair'))
+            keep_path = bool(refinement.get('playbackPathRepairKept'))
             # After path repair, aggressive shake smooth recreates C1 jumps and
             # lifts plants; use a mild pass then restore velocity continuity.
             shake_sigma = 0.55 if keep_path else 1.5
@@ -7700,7 +7704,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             previous_contact = float(report.get('maximumContactErrorMeters') or 0.)
             previous_jerk = report.get('jerkAfter')
             previous_nested = _playback_nested_failures(report.get('playback'))
-            keep_path = bool(refinement.get('playbackPathRepair'))
+            keep_path = bool(refinement.get('playbackPathRepairKept'))
             # Milder than the default Stage-C smooth — sigma=1 often re-broke
             # plants/anatomy on long plant-only clips after grip projection.
             jerk_sigma = 0.4 if keep_path else 0.5

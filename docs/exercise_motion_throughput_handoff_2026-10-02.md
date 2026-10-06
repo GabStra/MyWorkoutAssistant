@@ -55,6 +55,15 @@
   The same replay with soft LS forced on cleared grip and shake but introduced
   anatomy and playback-velocity failures, so the geometry-ready soft-solve skip
   remains enabled.
+- The playback path report now distinguishes an attempted repair from one
+  actually retained. The follow-up RDL replay recorded
+  `playbackPathRepairKept=false`; Stage-C shake cleanup therefore no longer
+  assumes it has a good path to preserve. Contact, support, and anatomy remain
+  clear on the retained attempt, but it still fails interpolated grip at
+  11.32mm and right-wrist/hand shake at 1.2%/0.3% over their limits. The
+  rejected shake trial reopens multiple structural checks and is rolled back.
+  Focused path/contact regressions passed, and the edited Python modules
+  compiled; no model or reconstruction calls were made.
 
 ## Current-HEAD OHP production-path check — 2026-10-04
 
