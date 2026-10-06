@@ -1131,3 +1131,27 @@ accepted-output throughput improvement. Its cyclic seam still requires repair.
 Cycle selection/rebake, production-rendered review, packaging, and the corrected
 two-exercise production-script E2E remain unverified. The earlier 98.92-second
 failed bake fit is a different invocation and is not a controlled speed comparison.
+
+### Oct 6 replacement-source cyclic bake and render checkpoint
+
+The production `bake_preview_loops_with_playwright` path was replayed on exact
+source frames 6–122 of the inspected replacement, with the retained reconstruction
+and matching support evidence, one adaptive variant, and a 180-second deadline.
+The cyclic fit passed all 20 checks, but its first pre-render gate rejected reuse:
+lineage rematerialization changed the selected start timestamp from `0.2` to
+`0.19999999999999996`. Pose identity was unchanged. Commit `b124e2ee` canonicalizes
+selected-interval identity timestamps to nanoseconds, finer than the existing
+microsecond provenance checks. The regression preserves invalidation for a changed
+interval; validation limits are unchanged.
+
+A fresh production replay after the fix completed in 142.21 seconds, including
+98.55 seconds reported fitting. All fit checks and the pre-render deterministic
+gate passed. Artifact state is terminal `cyclic_rebake` with complete
+`full_clip_bake → cycle_selection → cyclic_rebake` lineage. The actual production
+renderer exported `source-1.adaptive-baseline.webm` (194765 bytes) and review metadata
+under `build/exercise_motion/replays/20261006-inspected-rdl-cycle-bake/review/`.
+An inspected chronological contact sheet extracted from that video shows the
+upright/hinge/return sequence. A contact sheet does not establish temporal quality.
+No final model approval, packaging, or corrected OHP/RDL production-script E2E is
+claimed. These timings are checkpoint measurements, not a controlled throughput
+comparison or proof of a successfully packaged movement.
