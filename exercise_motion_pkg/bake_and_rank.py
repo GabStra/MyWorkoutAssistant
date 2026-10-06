@@ -10763,7 +10763,9 @@ def validate_source_pose_endpoints_against_contract(
         and str(end_constraints.get(field) or "any") not in {"any", "unknown"}
         and str(start_constraints.get(field)) != str(end_constraints.get(field))
     }
-    explicit = explicit_endpoint_requirements(str(contract.get("exerciseName") or ""))
+    explicit = explicit_endpoint_requirements(
+        str(contract.get("exerciseName") or ""), completion_mode=contract_completion_mode(contract),
+    )
     distinct_support_required = contract_requires_distinct_external_support_end_state(contract)
     for endpoint, contract_key in (("start", "startPoseConstraints"), ("end", "endPoseConstraints")):
         observed = endpoint_features.get(endpoint)
@@ -10899,7 +10901,9 @@ def validate_source_pose_endpoints_against_contract(
         blocking_mismatches = [
             mismatch for mismatch in blocking_mismatches if mismatch not in downgraded_mismatches
         ]
-    explicit = explicit_endpoint_requirements(str(contract.get("exerciseName") or ""))
+    explicit = explicit_endpoint_requirements(
+        str(contract.get("exerciseName") or ""), completion_mode=contract_completion_mode(contract),
+    )
     contract_status = str(contract.get("status") or contract.get("exerciseMotionContractStatus") or "").casefold()
     contract_source = str(contract.get("source") or "").casefold()
     generated_pose_expectations_are_advisory = (
@@ -39994,7 +39998,9 @@ def review_source_cut_boundaries(
             observation = extract_json_object_with_trailing_repair(response_raw)
             observations[endpoint] = observation if isinstance(observation, dict) else {}
         comparisons = []
-        explicit = explicit_endpoint_requirements(str(contract.get("exerciseName") or ""))
+        explicit = explicit_endpoint_requirements(
+            str(contract.get("exerciseName") or ""), completion_mode=contract_completion_mode(contract),
+        )
         for endpoint in ("start", "end"):
             expected = contract.get(f"{endpoint}PoseConstraints") or {}
             if not isinstance(expected, dict):

@@ -17,7 +17,9 @@ def _known_observation(value: Any) -> bool:
     return isinstance(value, str) and value not in {"", "unknown", "any"}
 
 
-def explicit_endpoint_requirements(exercise_name: str) -> dict[str, str]:
+def explicit_endpoint_requirements(
+    exercise_name: str, *, completion_mode: str | None = None,
+) -> dict[str, str]:
     """Use explicit target qualifiers, never generated pose guesses, as requirements.
 
     Multiple posture terms describe a transition and do not prescribe one fixed
@@ -29,7 +31,8 @@ def explicit_endpoint_requirements(exercise_name: str) -> dict[str, str]:
     normalized_name = re.sub(r"[-_]+", " ", exercise_name.casefold())
     snatch_motion = re.search(r"\bsnatch\b(?!\s+grip)", normalized_name)
     overhead_press = re.search(r"\b(?:overhead|push)\s+press\b", normalized_name)
-    if re.search(r"\bjerk\b", normalized_name) or snatch_motion or overhead_press:
+    if (completion_mode != "return_to_start"
+            and (re.search(r"\bjerk\b", normalized_name) or snatch_motion or overhead_press)):
         requirements["end.handHeight"] = "above_head"
     return requirements
 

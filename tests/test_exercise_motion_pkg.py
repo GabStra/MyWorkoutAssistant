@@ -17537,6 +17537,14 @@ def test_exercise_name_endpoint_semantics_distinguish_overhead_lifts_from_grip_n
     requirements = bake_and_rank_module.explicit_endpoint_requirements(exercise_name)
 
     assert requirements.get("end.handHeight") == expected_end_hand_height
+    return_requirements = bake_and_rank_module.explicit_endpoint_requirements(
+        exercise_name, completion_mode="return_to_start",
+    )
+    assert "end.handHeight" not in return_requirements
+    finish_requirements = bake_and_rank_module.explicit_endpoint_requirements(
+        exercise_name, completion_mode="distinct_end_state",
+    )
+    assert finish_requirements.get("end.handHeight") == expected_end_hand_height
 
 
 def test_source_pose_endpoint_contract_rejects_airborne_start_as_standing() -> None:
