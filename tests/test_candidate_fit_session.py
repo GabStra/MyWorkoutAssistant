@@ -31,16 +31,16 @@ def test_source_confirmed_cycle_precedes_full_interval_with_shared_budget(monkey
                            'checks': {'loopSeam': succeeds[0]}, 'elapsedSeconds': elapsed}
 
     monkeypatch.setattr(motion, '_fit_controlled_motion', fit)
-    _, report = motion._fit_observed_cycles(payload, timeout_seconds=360.)
-    assert calls == [(choice, 108.)]
+    _, report = motion._fit_observed_cycles(payload, timeout_seconds=273.)
+    assert calls == [(choice, 110.)]
     assert report['applied'] and report['elapsedSeconds'] == 40.
     assert report['cycleSelectionAttempts'][0]['sourceConfirmedFirst']
     succeeds[0] = False
     calls.clear()
     now[0] = 0.
-    result, report = motion._fit_observed_cycles(payload, timeout_seconds=360.)
-    assert calls == [(choice, 108.), (None, 252.)]
-    assert now[0] == 360.
+    result, report = motion._fit_observed_cycles(payload, timeout_seconds=273.)
+    assert calls == [(choice, 110.), (None, 163.)]
+    assert now[0] == 273.
     assert result is payload and not report['applied']
 
 

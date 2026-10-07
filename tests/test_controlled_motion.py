@@ -474,7 +474,7 @@ def test_root_rotation_smoothing_encodes_contact_compensation_in_fit_coordinates
     np.testing.assert_allclose(smoothed_pose[:, 1], original[:, 1], atol=1e-12)
 
 
-def test_observed_cycle_fits_run_before_retained_open_seam_fallback(monkeypatch):
+def test_observed_cycle_fits_run_before_retained_interval_fallback(monkeypatch):
     from exercise_motion_pkg import controlled_motion as motion, loop_cycles
 
     proposals = [
@@ -512,7 +512,7 @@ def test_observed_cycle_fits_run_before_retained_open_seam_fallback(monkeypatch)
 
     assert [call[0] for call in calls] == [*proposals[:2], {'kind': 'retained_interval'}]
     assert [call[1] for call in calls] == [120., 120., 120.]
-    assert [call[2] for call in calls] == [True, True, False]
+    assert [call[2] for call in calls] == [True, True, True]
     assert report['cycleSelectionAttempts'][-1]['selection'] == {'kind': 'retained_interval'}
     retained_attempt = report['cycleSelectionAttempts'][-1]
     assert retained_attempt['reason'] == 'fit_validation_failed'
@@ -1090,8 +1090,9 @@ def test_no_observed_cycle_fits_retained_interval_open_for_seam_repair(monkeypat
         calls.append((fit_payload['loop']['enabled'], timeout_seconds))
         return fit_payload, {
             'applied': True,
-            'reason': 'validated_controlled_motion',
-            'checks': {'trajectoryFit': True},
+            'reason': 'validated_controlled_motion_open_seam',
+            'checks': {'trajectoryFit': True, 'loopSeam': False},
+            'loopSeamOpen': True,
             'elapsedSeconds': 120.,
         }
 
@@ -1099,11 +1100,41 @@ def test_no_observed_cycle_fits_retained_interval_open_for_seam_repair(monkeypat
 
     result, report = motion._fit_observed_cycles(current, timeout_seconds=240.)
 
-    assert calls == [(False, 240.)]
+    assert calls == [(True, 240.)]
     assert result['loop']['enabled'] is True
     assert result['loop']['transition'] == 'requires_cycle_repair'
     assert report['loopSeamOpen'] is True
     assert report['reason'] == 'validated_controlled_motion_open_seam'
+
+
+def test_deferred_retained_cycle_fit_keeps_a_closed_seam(monkeypatch):
+    from exercise_motion_pkg import controlled_motion as motion, loop_cycles
+
+    current = {'loop': {'enabled': True}, 'frames': [{}] * 80,
+               'observedCycleProposals': []}
+    calls = []
+    monkeypatch.setattr(motion, 'monotonic', lambda: 0.)
+    monkeypatch.setattr(motion, 'pose_digest', lambda _payload: 'closed-digest')
+    monkeypatch.setattr(loop_cycles, 'slice_loop_cycle', lambda payload, selection: payload)
+
+    def accept_closed_fit(fit_payload, *, max_evaluations, timeout_seconds, shared_support):
+        calls.append((fit_payload['loop']['enabled'], timeout_seconds))
+        return fit_payload, {
+            'applied': True,
+            'reason': 'validated_controlled_motion',
+            'checks': {'trajectoryFit': True, 'loopSeam': True},
+            'elapsedSeconds': 120.,
+        }
+
+    monkeypatch.setattr(motion, '_fit_controlled_motion', accept_closed_fit)
+
+    result, report = motion._fit_observed_cycles(current, timeout_seconds=240.)
+
+    assert calls == [(True, 240.)]
+    assert result['loop']['enabled'] is True
+    assert result['loop'].get('transition') is None
+    assert report['reason'] == 'validated_controlled_motion'
+    assert report.get('loopSeamOpen') is not True
 
 
 def test_rejected_source_cycle_preflight_skips_open_seam_fit(monkeypatch):
@@ -1257,6 +1288,7 @@ def test_cyclic_fit_evaluates_all_seam_residuals_with_matching_dependencies(monk
 
 def test_source_projection_constraint_enters_the_production_fit_jacobian(monkeypatch):
     from types import SimpleNamespace
+    from scipy.sparse import vstack
     from exercise_motion_pkg import controlled_motion as motion
 
     names, source_points = stance(12)
@@ -1302,11 +1334,15 @@ def test_source_projection_constraint_enters_the_production_fit_jacobian(monkeyp
     }
     captured = []
 
-    def capture_solver(residual, initial, pattern, max_evaluations, *, local_jacobian=None):
+    def capture_solver(residual, initial, pattern, max_evaluations, *,
+                       local_jacobian=None, tail_jacobian=None):
         errors = residual(initial)
-        jacobian = local_jacobian(initial)
+        tail_rows = tail_jacobian(initial).shape[0]
+        jacobian = vstack([
+            local_jacobian(initial), tail_jacobian(initial),
+        ], format='csr')
         assert pattern.shape == jacobian.shape == (len(errors), len(initial))
-        captured.append((residual, errors, jacobian, initial.copy()))
+        captured.append((residual, errors, jacobian, initial.copy(), tail_rows))
         return SimpleNamespace(x=initial, nfev=1, status=0)
 
     monkeypatch.setattr(motion, 'solve_trajectory', capture_solver)
@@ -1330,7 +1366,7 @@ def test_source_projection_constraint_enters_the_production_fit_jacobian(monkeyp
     assert root_travel['minimumPreservedRatio'] == .9
     assert root_travel['preservationToleranceMeters'] == .001
     assert captured
-    residual, errors, jacobian, initial = captured[0]
+    residual, errors, jacobian, initial, tail_rows = captured[0]
     source_row_count = constraint['observationCount'] * 2
     endpoint_row_count = constraint['endpointPostureObservationCount'] * 2
     # Source projection and endpoint posture constraints follow the other fit
@@ -1339,14 +1375,14 @@ def test_source_projection_constraint_enters_the_production_fit_jacobian(monkeyp
     moved = initial.copy()
     moved[0] += epsilon
     numeric = (residual(moved) - errors) / epsilon
-    source_start = len(errors) - endpoint_row_count - source_row_count
+    source_start = len(errors) - endpoint_row_count - source_row_count - tail_rows
     np.testing.assert_allclose(
         jacobian[source_start:source_start + source_row_count, 0].toarray().ravel(),
         numeric[source_start:source_start + source_row_count],
         rtol=1e-3,
         atol=1e-4,
     )
-    endpoint_start = len(errors) - endpoint_row_count
+    endpoint_start = len(errors) - endpoint_row_count - tail_rows
     endpoint_jacobian = jacobian[endpoint_start:]
     endpoint_jacobian_coo = endpoint_jacobian.tocoo()
     largest = int(np.argmax(np.abs(endpoint_jacobian_coo.data)))
@@ -4132,6 +4168,45 @@ def test_support_range_derivative_matches_full_numerical_objective():
     np.testing.assert_allclose(actual, np.atleast_2d(expected), atol=.05, rtol=1e-4)
     assert support_range_jacobian(coordinates.ravel(), rig,
         [('left_knee', joints, np.zeros(2))]).nnz == 0
+
+
+def test_root_travel_preservation_residual_and_jacobian_follow_existing_gate():
+    from scipy.optimize._numdiff import approx_derivative
+    from exercise_motion_pkg.controlled_motion import (
+        root_travel_preservation_jacobian,
+        root_travel_preservation_residual,
+    )
+
+    target = np.array([
+        [0., 0., 0.],
+        [.050, .012, .001],
+        [.018, .004, .003],
+        [.006, -.002, -.0005],
+    ])
+    candidate = target * .75
+    scale = .5
+
+    def residual(flat):
+        return np.array([root_travel_preservation_residual(
+            flat.reshape(target.shape), target, body_scale=scale)])
+
+    values = candidate.ravel()
+    expected = approx_derivative(residual, values, method='3-point')
+    actual = root_travel_preservation_jacobian(
+        candidate, target, body_scale=scale).toarray()
+    assert residual(values)[0] > 0.
+    np.testing.assert_allclose(actual, expected.reshape(1, -1), atol=1e-4, rtol=1e-5)
+
+    assert root_travel_preservation_residual(
+        target, target, body_scale=scale) == 0.
+    assert root_travel_preservation_jacobian(
+        target, target, body_scale=scale).nnz == 0
+
+    small_target = target * .1
+    assert root_travel_preservation_residual(
+        small_target * 0., small_target, body_scale=scale) == 0.
+    assert root_travel_preservation_jacobian(
+        small_target * 0., small_target, body_scale=scale).nnz == 0
 
 
 def test_global_range_derivative_does_not_force_full_clip_difference_groups():

@@ -37,6 +37,9 @@ from .rig_playback import PLAYBACK_CONTACT_LIMIT_METERS, PLAYBACK_FLOOR_LIMIT_ME
 
 KEYFRAME_CONTACT_LIMIT_METERS = .0005
 ROOT_TRAVEL_PRESERVATION_TOLERANCE_METERS = .001
+ROOT_TRAVEL_MINIMUM_PRESERVED_RATIO = .9
+ROOT_TRAVEL_SMALL_MOTION_BODY_RATIO = .05
+ROOT_TRAVEL_FIT_WEIGHT = 2000.
 
 
 def contact_iterate_is_feasible(keyframe_error, playback_error, floor_penetration):
@@ -51,7 +54,7 @@ SUPPORT_REFERENCE_CONTACT_LIMIT_METERS = min(
     PLAYBACK_CONTACT_LIMIT_METERS * 0.5,
 )
 
-CONTROLLED_MOTION_STRATEGY = 'fixed_rig_controlled_motion_v72_material_source_support_trajectory'
+CONTROLLED_MOTION_STRATEGY = 'fixed_rig_controlled_motion_v73_retained_cycle_seam_ownership'
 # Feasibility pre-flight threshold, calibrated from fit reports: every
 # successful fit's target bones matched the rig within ~0.002m, while
 # structurally conflicted fits measured 0.05-0.15m before burning their
@@ -84,6 +87,7 @@ MIN_USEFUL_FIT_SECONDS = 30.
 # Retained-interval validation took ~80s on a failed cyclic repair; reserve
 # headroom for that validation before allowing a minimum useful solve window.
 RETAINED_INTERVAL_VALIDATION_RESERVE_SECONDS = 90.
+SOURCE_CONFIRMED_CYCLE_MINIMUM_BUDGET_SECONDS = 110.
 # In a saved 50-case cycle-anatomy audit, no retained fit applied at or above
 # this boundary; all seven applied recoveries were below it (closest: 0.1875).
 # This measures the reconstructed frame payload, not visual source-video evidence.
@@ -3896,6 +3900,46 @@ def solve_trajectory(residual, initial, pattern, max_evaluations, *,
                          x_scale='jac',tr_options={'maxiter':600})
 
 
+def root_travel_preservation_residual(root_track, target_root_track, *, body_scale):
+    target_span = float(np.linalg.norm(np.ptp(target_root_track, axis=0)))
+    if target_span < ROOT_TRAVEL_SMALL_MOTION_BODY_RATIO * body_scale:
+        return 0.
+    fitted_span = float(np.linalg.norm(np.ptp(root_track, axis=0)))
+    return ROOT_TRAVEL_FIT_WEIGHT * max(
+        0., ROOT_TRAVEL_MINIMUM_PRESERVED_RATIO * target_span - fitted_span,
+    ) / body_scale
+
+
+def root_travel_preservation_jacobian(
+        root_track, target_root_track, *, body_scale, coordinate_width=3):
+    """Differentiate the active one-sided root-span residual at its extrema."""
+    root_track = np.asarray(root_track, dtype=float)
+    target_spans = np.ptp(np.asarray(target_root_track, dtype=float), axis=0)
+    target_span = float(np.linalg.norm(target_spans))
+    fitted_spans = np.ptp(root_track, axis=0)
+    fitted_span = float(np.linalg.norm(fitted_spans))
+    shape = (1, len(root_track) * int(coordinate_width))
+    if (target_span < ROOT_TRAVEL_SMALL_MOTION_BODY_RATIO * body_scale
+            or fitted_span >= ROOT_TRAVEL_MINIMUM_PRESERVED_RATIO * target_span):
+        return csr_matrix(shape)
+
+    direction = fitted_spans / fitted_span if fitted_span > 1e-12 else target_spans / target_span
+    columns, values = [], []
+    for axis, component in enumerate(direction):
+        if abs(component) <= 1e-15:
+            continue
+        minimum = int(np.argmin(root_track[:, axis]))
+        maximum = int(np.argmax(root_track[:, axis]))
+        if minimum == maximum:
+            minimum, maximum = 0, len(root_track) - 1
+        columns.extend((minimum * coordinate_width + axis, maximum * coordinate_width + axis))
+        values.extend((
+            ROOT_TRAVEL_FIT_WEIGHT * component / body_scale,
+            -ROOT_TRAVEL_FIT_WEIGHT * component / body_scale,
+        ))
+    return csr_matrix((values, ([0] * len(columns), columns)), shape=shape)
+
+
 def _stationary_source_anchor_groups(payload, names, count):
     """Map source-confirmed planted feet/ankles to shared stance identities."""
     from .contact_constraints import (
@@ -5406,11 +5450,18 @@ def _fit_observed_cycles(payload, *, max_evaluations=None, timeout_seconds=None)
     preserve_retained_interval = (
         timeout_seconds >= retained_interval_minimum_budget + MIN_USEFUL_FIT_SECONDS
     )
-    if source_confirmed_first and timeout_seconds >= 110. + retained_interval_minimum_budget:
+    if (source_confirmed_first
+            and timeout_seconds >= (
+                SOURCE_CONFIRMED_CYCLE_MINIMUM_BUDGET_SECONDS
+                + retained_interval_minimum_budget
+            )):
         choice, choices = choices[0], choices[1:]
         remaining = max(0., timeout_seconds - (monotonic() - started))
         source_confirmed_budget = min(
-            120., max(55., .3 * float(timeout_seconds)),
+            120., max(
+                SOURCE_CONFIRMED_CYCLE_MINIMUM_BUDGET_SECONDS,
+                .3 * float(timeout_seconds),
+            ),
             max(0., remaining - retained_interval_minimum_budget),
         )
         candidate, report, attempt_elapsed = fit_attempt(
@@ -5483,7 +5534,7 @@ def _fit_observed_cycles(payload, *, max_evaluations=None, timeout_seconds=None)
         if repeated_unreachable_support_conflict(attempts):
             # Another crop fit would repeat the same hard support blockers.
             # Preserve the remaining candidate budget for the retained
-            # interval, which can still be repaired by the separate seam pass.
+            # interval, whose endpoint constraints differ from this crop.
             cycle_retry_stop_reason = 'repeated_unreachable_support_conflict'
             break
         if repeated_unreachable_root_travel(attempts, choices[index + 1:]):
@@ -5493,10 +5544,9 @@ def _fit_observed_cycles(payload, *, max_evaluations=None, timeout_seconds=None)
             cycle_retry_stop_reason = 'repeated_unreachable_root_travel'
             break
     remaining_before_retained = max(0., timeout_seconds - (monotonic() - started))
-    retained_request = payload
-    # When no source-supported cycle was found, forcing the full interval into
-    # a closed loop can distort it for the seam the later bridge stage owns.
-    defer_retained_seam = remaining_before_retained >= retained_interval_minimum_budget
+    retained_fit_has_validation_budget = (
+        remaining_before_retained >= retained_interval_minimum_budget
+    )
     retained_attempt_elapsed = 0.
     core_unreachable_checks = {
         'contacts', 'sourceArticulation', 'trajectoryFit', 'equipment', 'bodySupport'
@@ -5597,14 +5647,9 @@ def _fit_observed_cycles(payload, *, max_evaluations=None, timeout_seconds=None)
             'checks': {},
         }
     else:
-        if defer_retained_seam:
-            retained_request = {
-                **payload,
-                'loop': {**(payload.get('loop') or {}), 'enabled': False},
-            }
-        if remaining_before_retained >= retained_interval_minimum_budget:
+        if retained_fit_has_validation_budget:
             retained, retained_report, retained_attempt_elapsed = fit_attempt(
-                retained_request, remaining_before_retained)
+                payload, remaining_before_retained)
         else:
             retained, retained_report = payload, {
                 'applied': False,
@@ -5613,7 +5658,14 @@ def _fit_observed_cycles(payload, *, max_evaluations=None, timeout_seconds=None)
                 'requiredBudgetSeconds': retained_interval_minimum_budget,
                 'checks': {},
             }
-    if retained_report.get('applied') and defer_retained_seam:
+    retained_checks = retained_report.get('checks') or {}
+    retained_seam_reported_open = (
+        retained_report.get('loopSeamOpen') is True
+        or retained_checks.get('loopSeam') is False
+        or retained_report.get('reason') == 'validated_controlled_motion_open_seam'
+    )
+    if (retained_report.get('applied') and retained_fit_has_validation_budget
+            and retained_seam_reported_open):
         retained = deepcopy(retained)
         retained['loop'] = {
             **(retained.get('loop') or {}),
@@ -6678,6 +6730,14 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                          axis=0)
             articulation_rows.append(np.tile(dep, count))
         pattern = vstack([pattern, csr_matrix(np.asarray(articulation_rows))], format='csr')
+    root_travel_columns = (
+        np.arange(count)[:, None] * rig.width + np.arange(3)
+    ).reshape(-1)
+    root_travel_pattern = csr_matrix((
+        np.ones(len(root_travel_columns), dtype=np.int8),
+        (np.zeros(len(root_travel_columns), dtype=int), root_travel_columns),
+    ), shape=(1, count * rig.width))
+    pattern = vstack([pattern, root_travel_pattern], format='csr')
     initial_rotations = Rotation.from_rotvec(rig.initial[:,3:].reshape(-1,3))
     floor = payload.get('renderFloorY')
     source_head = body_local_head_direction(reference,names)
@@ -6929,6 +6989,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 for _, cols, track in support_articulation_tracks
             ], dtype=float)
             errors = np.r_[errors, support_range_errors]
+        errors = np.r_[errors, root_travel_preservation_residual(
+            candidate[:, rig.root], target[:, rig.root], body_scale=scale)]
         cost = float(errors@errors)
         if np.isfinite(cost) and cost < best_cost:
             best_cost, best_coordinates = cost, values.copy()
@@ -7497,9 +7559,17 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
     if hybrid_jacobian_enabled:
         solver_options['local_jacobian'] = hybrid_jacobian
         report['hybridJacobian'] = True
-    if support_articulation_tracks:
-        solver_options['tail_jacobian'] = lambda values: support_range_jacobian(
-            values, rig, support_articulation_tracks)
+    def fit_tail_jacobian(values):
+        parts = []
+        if support_articulation_tracks:
+            parts.append(support_range_jacobian(values, rig, support_articulation_tracks))
+        coordinates = np.asarray(values).reshape(count, rig.width)
+        parts.append(root_travel_preservation_jacobian(
+            coordinates[:, :3], target[:, rig.root], body_scale=scale,
+            coordinate_width=rig.width))
+        return vstack(parts, format='csr')
+
+    solver_options['tail_jacobian'] = fit_tail_jacobian
 
     trajectory_solver = partial(solve_trajectory, **solver_options) if solver_options else solve_trajectory
     try:
@@ -7917,8 +7987,10 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         relative_quality = relative_motion_quality(
             result, shake_basis, names, fps, spike_reference=spike_reference)
         root_quality = root_motion_quality(result[:,rig.root], fps, scale)
-        root_travel_small = bool(travel_before < .05 * scale)
-        root_travel_shortfall = max(0., .9 * travel_before - travel_after)
+        root_travel_small = bool(
+            travel_before < ROOT_TRAVEL_SMALL_MOTION_BODY_RATIO * scale)
+        root_travel_shortfall = max(
+            0., ROOT_TRAVEL_MINIMUM_PRESERVED_RATIO * travel_before - travel_after)
         root_travel_preserved = bool(
             root_travel_shortfall <= ROOT_TRAVEL_PRESERVATION_TOLERANCE_METERS)
         report['rootTravelEvidence'] = {
@@ -7926,7 +7998,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             'fittedRangeMeters': float(travel_after),
             'preservedRatio': float(travel_after / max(travel_before, 1e-9)),
             'smallTravelAllowanceMeters': float(.05 * scale),
-            'minimumPreservedRatio': .9,
+            'minimumPreservedRatio': ROOT_TRAVEL_MINIMUM_PRESERVED_RATIO,
             'preservationToleranceMeters': ROOT_TRAVEL_PRESERVATION_TOLERANCE_METERS,
             'preservationShortfallMeters': float(root_travel_shortfall),
             'smallTravelAllowancePassed': root_travel_small,
