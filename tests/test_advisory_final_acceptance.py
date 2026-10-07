@@ -108,6 +108,42 @@ def test_observation_parser_discards_invented_verdict_and_frame_fields():
     assert not {"approved", "passed", "reject", "retry", "score"}.intersection(parsed)
 
 
+def test_truncated_visual_response_keeps_only_complete_advisory_findings(tmp_path, monkeypatch):
+    setup_render(tmp_path, monkeypatch)
+    export = {"frameCount": 2, "frames": [{"timeSec": 0, "joints": {}}, {"timeSec": 1, "joints": {}}]}
+    skeleton = tmp_path / "skeleton.json"
+    skeleton.write_text(json.dumps(export))
+    item = bake.ReviewItem(exercise_index=0, candidate_rank=0, loop_index=-1,
+        exercise_name="Movement", candidate_title="Title", candidate_workspace=tmp_path,
+        preview_html_path=tmp_path / "preview.html", skeleton_path=skeleton,
+        review_video_path=tmp_path / "unused.webm", duration_sec=1., loop_start_seconds=0.,
+        loop_end_seconds=1., candidate={})
+    monkeypatch.setattr(bake, "exercise_motion_contract_for_review_item", lambda *a: {})
+    monkeypatch.setattr(bake, "final_output_source_contact_sheets", lambda *a, **k: [])
+    raw = ('```json\n{"findings":[{"kind":"mesh","frameIndices":[0],'
+           '"observation":"Possible torso shape variation."},'
+           '{"kind":"readability","frameIndices":[0],"observation":"Press motion is readable."},'
+           '{"kind":"mesh","frameIndices":[0],"observation":"cut off')
+    req = bake.BakeAndRankRequest(candidates_json=tmp_path / "unused.json", workspace=tmp_path,
+        wham_repo_path=None, body_model_root=None, final_output_validation=True,
+        two_scale_source_validation=False)
+    visual = bake.validate_final_output_with_caption_images(
+        item, bake.LoopRanking(.9, [], {}), request=req, caption_images=lambda **_: raw,
+        deterministic_metrics={"passed": True})
+    assert visual["status"] == "observed"
+    assert visual["advisoryOnly"] and visual["findings"] == [
+        {"kind": "mesh", "frameIndices": [0], "observation": "Possible torso shape variation."},
+        {"kind": "readability", "frameIndices": [0], "observation": "Press motion is readable."},
+    ]
+    final = {"passed": True, "visualReview": visual}
+    assert bake.final_output_hard_rejection_reasons(final) == []
+    decision = decide_acceptance({"passed": True}, final, deterministic_rejections=[], review_rejections=[])
+    assert decision.status == "valid" and not decision.can_regenerate_motion
+    assert bake.extract_complete_visual_observation_payload(
+        '{"findings":[{"kind":"mesh","frameIndices":[0],"observation":"cut off'
+    ) is None
+
+
 @pytest.mark.parametrize("model_fails", [False, True])
 def test_single_observation_call_has_no_corroboration(tmp_path, monkeypatch, model_fails):
     export = {"frameCount": 2, "frames": [{"timeSec": 0, "joints": {}}, {"timeSec": 1, "joints": {}}]}

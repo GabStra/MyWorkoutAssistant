@@ -7258,7 +7258,8 @@ def validate_final_output_with_caption_images(
             from .visual_evidence import parse_visual_observations
 
             parsed = parse_visual_observations(
-                extract_json_object(raw.rsplit("</think>", 1)[-1]), sampled_indices
+                extract_complete_visual_observation_payload(raw.rsplit("</think>", 1)[-1]),
+                sampled_indices,
             )
     except Exception as exc:
         return {"advisoryOnly": True, "status": "unavailable", "findings": [],
@@ -39549,6 +39550,50 @@ SOURCE_CUT_MIN_SELECTED_SCORE = 0.50
 MOVEMENT_CUT_DETERMINISTIC_DIRECT_MIN_COVERAGE_RATIO = 0.90
 MOVEMENT_CUT_DETERMINISTIC_DIRECT_SCORE = 0.86
 SOURCE_CUT_DETERMINISTIC_DIRECT_SCORE = 0.86
+
+
+def extract_complete_visual_observation_payload(raw: str) -> dict[str, Any] | None:
+    """Keep complete findings from an optional response cut off mid-array."""
+    payload = extract_json_object(raw)
+    if isinstance(payload, dict):
+        return payload
+    candidate = str(raw or "").strip()
+    if candidate.startswith("```"):
+        candidate = candidate.partition("\n")[2].lstrip()
+    if not candidate.startswith("{"):
+        return None
+    match = re.match(r'\{\s*"findings"\s*:\s*', candidate)
+    if match is None:
+        return None
+    cursor = match.end()
+    if cursor >= len(candidate) or candidate[cursor] != "[":
+        return None
+    cursor += 1
+    decoder = json.JSONDecoder()
+    findings = []
+    while True:
+        while cursor < len(candidate) and candidate[cursor].isspace():
+            cursor += 1
+        if cursor >= len(candidate):
+            break
+        if candidate[cursor] == "]":
+            return {"findings": findings}
+        try:
+            row, end = decoder.raw_decode(candidate, cursor)
+        except json.JSONDecodeError:
+            break
+        findings.append(row)
+        cursor = end
+        while cursor < len(candidate) and candidate[cursor].isspace():
+            cursor += 1
+        if cursor >= len(candidate):
+            break
+        if candidate[cursor] == "]":
+            return {"findings": findings}
+        if candidate[cursor] != ",":
+            break
+        cursor += 1
+    return {"findings": findings} if findings else None
 
 
 def extract_json_object_with_trailing_repair(raw: str) -> dict[str, Any] | None:
