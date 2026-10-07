@@ -548,7 +548,7 @@ SOURCE_CUT_MIN_ESTIMATED_DURATION_RATIO = 1.0
 SOURCE_CUT_ROBUST_MIN_SECONDS = 1.5
 SOURCE_CUT_ROBUST_MIN_ESTIMATED_DURATION_RATIO = 1.0
 ACTIVE_TRAVEL_SOURCE_CUT_MIN_SECONDS = 2.0
-SOURCE_SELECTION_POLICY_VERSION = 60
+SOURCE_SELECTION_POLICY_VERSION = 61
 SOURCE_SELECTION_CLEARANCE_POLICY_VERSION = 2
 
 # Free-VRAM gates for co-residing small CUDA ops beside the resident llama.cpp
@@ -621,7 +621,7 @@ RETAINED_SELECTED_REVALIDATION_VERSION = 18
 # These policy versions isolate source-review caches from unrelated edits to
 # this large pipeline module. Prompt text and image bytes are already part of
 # each question key; bump the aggregate version when verdict semantics change.
-SOURCE_REVIEW_AGGREGATE_CACHE_POLICY_VERSION = 1
+SOURCE_REVIEW_AGGREGATE_CACHE_POLICY_VERSION = 2
 SOURCE_REVIEW_QUESTION_CACHE_POLICY_VERSION = 1
 SOURCE_OUTPUT_TARGET_MOTION_REJECTION_REASON = (
     "materialized_target_motion_not_preserved_from_source"
@@ -6496,13 +6496,27 @@ def two_scale_completeness_failure_is_independent_outlier(
     deterministic_metrics: dict[str, Any] | None,
 ) -> bool:
     reasons = {str(reason) for reason in rejection_reasons if str(reason)}
-    if not reasons or not reasons <= {
+    allowed_reasons = {
         "two_scale_source_incomplete_movement",
         "two_scale_source_target_blind_motion_observation_missing",
         "two_scale_source_target_blind_motion_observation_inconsistent",
         "two_scale_source_topology_not_verified",
-    }:
+        "two_scale_source_identity_failed",
+    }
+    if not reasons or not reasons <= allowed_reasons:
         return False
+    if "two_scale_source_identity_failed" in reasons:
+        gates = validation.get("gates")
+        consistency_gate = gates.get("evidenceConsistency") if isinstance(gates, dict) else None
+        consistency = consistency_gate.get("response") if isinstance(consistency_gate, dict) else None
+        identity_gate = gates.get("identity") if isinstance(gates, dict) else None
+        if not (
+            isinstance(consistency, dict)
+            and parse_optional_bool(consistency.get("targetIdentitySupported")) is False
+            and isinstance(identity_gate, dict)
+            and identity_gate.get("passed") is True
+        ):
+            return False
     deterministic_corroboration = source_validation_has_strong_independent_corroboration(
         item=item,
         deterministic_metrics=deterministic_metrics,
@@ -6610,6 +6624,7 @@ TWO_SCALE_REJECTION_CLAIMS = {
     "two_scale_source_specific_contract_missing": "ordered_topology",
     "two_scale_source_topology_not_verified": "ordered_topology",
     "two_scale_source_pose_contract_mismatch": "endpoint_pose",
+    "two_scale_source_evidence_consistency_incomplete": "source_validity",
 }
 
 TWO_SCALE_DISAGREEMENT_CLAIM_STATEMENTS = {
@@ -6617,7 +6632,10 @@ TWO_SCALE_DISAGREEMENT_CLAIM_STATEMENTS = {
     "clean_action_window": "The reviewed window contains the target movement without unrelated action that invalidates it.",
     "target_action_visible": "The named target exercise action is visibly performed with its required equipment engaged.",
     "complete_action": "The target execution shows a meaningful start, every required phase, the turning point, and the return or finish.",
-    "required_equipment": "All equipment required by the exercise contract is visible and engaged in the movement.",
+    "required_equipment": (
+        "Every required equipment item visibly serves its authoritative role at the appropriate action or setup "
+        "phase; setup fixtures need direct evidence of appropriate use but do not require contact throughout the rep."
+    ),
     "ordered_topology": "Every phase listed in the exercise contract is visible in the required order, including return or finish phases.",
     "endpoint_pose": "The observed start and end poses satisfy the applicable contract constraints and deterministic phase evidence.",
     "source_validity": "The source is a usable, complete execution of the named target exercise.",
@@ -6638,6 +6656,10 @@ def two_scale_source_validation_needs_repair(validation: dict[str, Any]) -> bool
         return False
 
     rejection_reasons = set(payload_string_list(validation.get("rejectionReasons")))
+    consistency_gate = gates.get("evidenceConsistency")
+    consistency = (
+        consistency_gate.get("response") if isinstance(consistency_gate, dict) else None
+    )
     equipment_detail_gate = gates.get("targetBlindEquipmentDetail")
     equipment_detail = (
         equipment_detail_gate.get("response")
@@ -6655,22 +6677,66 @@ def two_scale_source_validation_needs_repair(validation: dict[str, Any]) -> bool
         and source_equipment_detail_is_clear(equipment_detail)
         and exercise_name
     ):
-        required_equipment = two_scale_named_equipment(
-            exercise_name,
-            contract if isinstance(contract, dict) else None,
-        )
+        active_implements = [
+            requirement["normalizedName"]
+            for requirement in two_scale_equipment_role_requirements(
+                exercise_name,
+                contract if isinstance(contract, dict) else None,
+            )
+            if requirement.get("role") == "active_implement"
+        ]
         detailed_equipment = {"visibleEquipment": equipment_detail.get("heldEquipment")}
         if (
-            required_equipment != "none"
+            active_implements
             and not two_scale_required_equipment_observed(
                 detailed_equipment,
-                equipment=required_equipment,
+                equipment=", ".join(active_implements),
             )
         ):
             # A clear target blind equipment mismatch is independent negative
             # evidence. Do not let a broad visual repair turn a known wrong
             # implement into an approved source.
             return False
+
+    if "two_scale_source_evidence_consistency_incomplete" in rejection_reasons:
+        return True
+    if isinstance(consistency_gate, dict) and isinstance(consistency, dict):
+        identity_supported = parse_optional_bool(consistency.get("targetIdentitySupported"))
+        equipment_supported = parse_optional_bool(consistency.get("requiredEquipmentSupported"))
+        complete_supported = parse_optional_bool(consistency.get("completeExecutionSupported"))
+        identity_gate = gates.get("identity")
+        completeness_gate = gates.get("completeness")
+        topology_gate = gates.get("topology")
+        blind_gate = gates.get("targetBlindMotionObservation")
+        if (
+            identity_supported is False
+            and isinstance(identity_gate, dict)
+            and identity_gate.get("passed") is True
+        ):
+            return True
+        topology_response = (
+            topology_gate.get("response") if isinstance(topology_gate, dict) else None
+        )
+        if (
+            equipment_supported is False
+            and (
+                (isinstance(completeness_gate, dict)
+                 and completeness_gate.get("requiredEquipmentObserved") is True)
+                or (isinstance(topology_response, dict)
+                    and topology_response.get("requiredEquipmentMatch") == "match")
+            )
+        ):
+            return True
+        blind_response = blind_gate.get("response") if isinstance(blind_gate, dict) else None
+        if (
+            complete_supported is False
+            and (
+                (isinstance(completeness_gate, dict) and completeness_gate.get("passed") is True)
+                or (isinstance(blind_response, dict) and blind_response.get("complete") is True)
+                or (isinstance(topology_response, dict) and topology_response.get("complete") is True)
+            )
+        ):
+            return True
 
     identity_gate = gates.get("identity")
     identity = identity_gate.get("response") if isinstance(identity_gate, dict) else None
@@ -6777,6 +6843,12 @@ def build_two_scale_disagreement_repair_prompt(
         + two_scale_contract_authority_guidance(
             contract if isinstance(contract, dict) else None
         )
+        + "Required equipment role policy:\n"
+        + two_scale_equipment_role_policy(
+            exercise_name,
+            contract if isinstance(contract, dict) else None,
+        )
+        + "\n"
         + "Authoritative movement context: "
         + json.dumps(contract_evidence, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
         + "\nCheck each disputed claim against the exact exercise name, structured library context, and visible frames. "
@@ -7950,12 +8022,56 @@ def two_scale_evidence_consistency_passed(
     *,
     equipment: str,
 ) -> bool:
+    return not two_scale_evidence_consistency_rejection_reasons(payload, equipment=equipment)
+
+
+def two_scale_evidence_consistency_rejection_reasons(
+    payload: dict[str, Any] | None,
+    *,
+    equipment: str,
+) -> list[str]:
     if not isinstance(payload, dict):
-        return False
+        payload = {}
     contradictions = payload.get("corroboratedContradictions")
-    if not isinstance(contradictions, list) or contradictions:
-        return False
-    return payload.get("corroboratedConflict") is False
+    reasons: list[str] = []
+    if (
+        payload.get("corroboratedConflict") is not False
+        or not isinstance(contradictions, list)
+        or contradictions
+    ):
+        reasons.append("two_scale_source_evidence_consistency_incomplete")
+
+    identity = parse_optional_bool(payload.get("targetIdentitySupported"))
+    if identity is False:
+        reasons.append("two_scale_source_identity_failed")
+    elif identity is not True:
+        reasons.extend((
+            "two_scale_source_identity_review_incomplete",
+            "two_scale_source_evidence_consistency_incomplete",
+        ))
+
+    equipment_value = str(payload.get("requiredEquipmentSupported") or "").strip().casefold()
+    if equipment == "none" and equipment_value in {"true", "not_applicable"}:
+        pass
+    elif equipment == "none":
+        reasons.append("two_scale_source_evidence_consistency_incomplete")
+    elif parse_optional_bool(equipment_value) is False:
+        reasons.append("two_scale_source_required_equipment_not_observed")
+    elif parse_optional_bool(equipment_value) is not True:
+        reasons.extend((
+            "two_scale_source_required_equipment_not_observed",
+            "two_scale_source_evidence_consistency_incomplete",
+        ))
+
+    complete = parse_optional_bool(payload.get("completeExecutionSupported"))
+    if complete is False:
+        reasons.append("two_scale_source_incomplete_movement")
+    elif complete is not True:
+        reasons.extend((
+            "two_scale_source_completeness_observation_inconsistent",
+            "two_scale_source_evidence_consistency_incomplete",
+        ))
+    return dedupe_text(reasons)
 
 
 def generate_specific_exercise_motion_contract(
@@ -8626,11 +8742,19 @@ def _validate_two_scale_source_uncached(
     )
     # Detail establishes equipment only. Identity, motion, completeness and topology
     # still have to pass independently; conflicting detail must be adjudicated.
-    if (detail_equipment_observed and isinstance(consistency, dict)
-            and consistency.get("requiredEquipmentSupported") == "true"
-            and two_scale_evidence_consistency_passed(consistency, equipment=equipment)):
+    if (
+        detail_equipment_observed
+        and isinstance(consistency, dict)
+        and parse_optional_bool(consistency.get("requiredEquipmentSupported")) is True
+        and consistency.get("corroboratedConflict") is False
+        and consistency.get("corroboratedContradictions") == []
+    ):
         required_equipment_observed = True
     consistency_passed = two_scale_evidence_consistency_passed(
+        consistency,
+        equipment=equipment,
+    )
+    consistency_rejection_reasons = two_scale_evidence_consistency_rejection_reasons(
         consistency,
         equipment=equipment,
     )
@@ -8703,6 +8827,8 @@ def _validate_two_scale_source_uncached(
         and not endpoint_contract_validation.get("passed", True)
     ):
         rejection_reasons.append("two_scale_source_pose_contract_mismatch")
+    rejection_reasons.extend(consistency_rejection_reasons)
+    rejection_reasons = dedupe_text(rejection_reasons)
     missing_evidence = missing_validation_evidence_reasons(rejection_reasons)
     corroborated_negative_motion = bool(
         motion_negative_votes >= 2
@@ -18415,6 +18541,7 @@ def missing_validation_evidence_reasons(reasons: Iterable[str]) -> list[str]:
         "two_scale_source_specific_contract_missing",
         "two_scale_source_target_blind_motion_observation_missing",
         "two_scale_source_target_blind_motion_observation_inconsistent",
+        "two_scale_source_evidence_consistency_incomplete",
     }))
 
 

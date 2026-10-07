@@ -124,7 +124,9 @@ def test_full_resolution_equipment_evidence_preserves_action_gates(
             assert '"targetBlindFullResolutionEquipment"' in prompt
             return json.dumps({"corroboratedConflict": conflict,
                                "corroboratedContradictions": ["incompatible action"] if conflict else [],
-                               "requiredEquipmentSupported": "true"})
+                               "targetIdentitySupported": "true",
+                               "requiredEquipmentSupported": "true",
+                               "completeExecutionSupported": "true" if complete else "false"})
         assert all(path in sheets for path in frame_paths)
         assert "original full-resolution frames" in prompt
         assert json.dumps(detail) in prompt
@@ -380,6 +382,243 @@ def test_two_scale_source_gate_rejects_when_any_uniform_sheet_has_contamination(
     assert "two_scale_source_contamination_detected" in result["rejectionReasons"]
 
 
+@pytest.mark.parametrize("exercise_name,consistency,expected_reasons,incomplete", [
+    (
+        "Bodyweight Squat",
+        {
+            "corroboratedConflict": False,
+            "targetIdentitySupported": "false",
+            "requiredEquipmentSupported": "true",
+            "completeExecutionSupported": "false",
+            "corroboratedContradictions": [],
+        },
+        {"two_scale_source_identity_failed", "two_scale_source_incomplete_movement"},
+        False,
+    ),
+    (
+        "Bodyweight Squat",
+        {
+            "corroboratedConflict": False,
+            "targetIdentitySupported": "true",
+            "requiredEquipmentSupported": "uncertain",
+            "completeExecutionSupported": "true",
+            "corroboratedContradictions": [],
+        },
+        {"two_scale_source_evidence_consistency_incomplete"},
+        True,
+    ),
+    (
+        "Bodyweight Squat",
+        {"corroboratedConflict": False, "corroboratedContradictions": []},
+        {"two_scale_source_evidence_consistency_incomplete"},
+        True,
+    ),
+    (
+        "Barbell Floor Press",
+        {
+            "corroboratedConflict": False,
+            "targetIdentitySupported": "true",
+            "requiredEquipmentSupported": "uncertain",
+            "completeExecutionSupported": "true",
+            "corroboratedContradictions": [],
+        },
+        {
+            "two_scale_source_required_equipment_not_observed",
+            "two_scale_source_evidence_consistency_incomplete",
+        },
+        True,
+    ),
+    (
+        "Barbell Floor Press",
+        None,
+        {
+            "two_scale_source_identity_review_incomplete",
+            "two_scale_source_required_equipment_not_observed",
+            "two_scale_source_completeness_observation_inconsistent",
+            "two_scale_source_evidence_consistency_incomplete",
+        },
+        True,
+    ),
+    (
+        "Barbell Floor Press",
+        {
+            "corroboratedConflict": False,
+            "targetIdentitySupported": "false",
+            "requiredEquipmentSupported": "false",
+            "completeExecutionSupported": "false",
+            "corroboratedContradictions": [
+                "Target requires 'Athlete lies supine on the floor' but independent observations consistently state "
+                "'Lying supine on bench' or 'Performers lies on bench'; Target requires 'Squat Rack' to serve as "
+                "'setup fixture' with direct visual evidence of support, but observations only note the rack is "
+                "'visible in the background' or 'positioned behind' without confirming it supported the barbell "
+                "at start/end or that the setup occurred within the visual frame."
+            ],
+        },
+        {
+            "two_scale_source_identity_failed",
+            "two_scale_source_required_equipment_not_observed",
+            "two_scale_source_incomplete_movement",
+            "two_scale_source_evidence_consistency_incomplete",
+        },
+        True,
+    ),
+])
+def test_source_aggregate_honors_consistency_claims_and_routes_unknown_as_incomplete(
+    tmp_path: Path,
+    monkeypatch,
+    exercise_name,
+    consistency,
+    expected_reasons,
+    incomplete,
+):
+    uniform_sheet = tmp_path / "uniform.jpg"
+    motion_sheets = [tmp_path / f"motion-{index}.jpg" for index in range(
+        2 if exercise_name == "Barbell Floor Press" else 1
+    )]
+    uniform_sheet.write_bytes(b"image")
+    for motion_sheet in motion_sheets:
+        motion_sheet.write_bytes(b"image")
+    monkeypatch.setattr(
+        bake_and_rank,
+        "final_output_motion_contact_sheets",
+        lambda *_args, **_kwargs: motion_sheets,
+    )
+
+    visible_equipment = ["barbell", "squat rack"] if exercise_name == "Barbell Floor Press" else []
+    answers = {
+        "identity": ("", {"verdict": "match", "visibleEquipment": visible_equipment}),
+        "uniform-0": ("", {"unrelatedActionVisible": False, "unrelatedTileNumbers": []}),
+        **{
+            f"motion-{index}": ("", {
+                "targetExerciseActionVisible": True,
+                "namedEquipmentEngagedStatus": "engaged" if visible_equipment else "not_applicable",
+            })
+            for index in range(len(motion_sheets))
+        },
+        "completeness": ("", {
+            "visibleEquipment": visible_equipment, "orderedPhases": ["outward", "return"],
+            "startStateVisible": True, "actionPhaseVisible": True,
+            "turningPointVisible": True, "returnOrFinishVisible": True, "complete": True,
+        }),
+        "observation": ("", {
+            "visibleEquipment": visible_equipment, "orderedPhases": ["outward", "return"],
+            "startStateVisible": True, "actionPhaseVisible": True,
+            "turningPointVisible": True, "returnOrFinishVisible": True, "complete": True,
+        }),
+        "topology": ("", topology_response(
+            equipment_match="match" if visible_equipment else "not_applicable"
+        )),
+    }
+    monkeypatch.setattr(
+        "exercise_motion_pkg.review_questions.run_questions",
+        lambda jobs, _callback: {name: answers[name] for name in jobs},
+    )
+
+    item = make_review_item(tmp_path, exercise_name)
+    if exercise_name == "Barbell Floor Press":
+        item.candidate["exerciseMotionContract"]["motionContext"] = {
+            "primaryEquipment": {"name": "Barbell", "type": "BARBELL"},
+            "requiredAccessories": [{
+                "name": "Squat Rack", "type": "SQUATRACK",
+                "capabilities": ["RACKED_BAR_SUPPORT"],
+            }],
+        }
+    result = bake_and_rank.validate_two_scale_source_with_caption_images(
+        item,
+        uniform_sheet_paths=[uniform_sheet],
+        output_dir=tmp_path / "validation",
+        caption_images=lambda **_kwargs: json.dumps(consistency),
+    )
+
+    assert result["passed"] is False
+    assert expected_reasons.issubset(set(result["rejectionReasons"]))
+    assert result["reviewStatus"] == ("incomplete" if incomplete else "rejected")
+    if incomplete:
+        assert "two_scale_source_evidence_consistency_incomplete" in result["missingEvidenceReasons"]
+        assert bake_and_rank.two_scale_source_validation_needs_repair(result)
+        if (
+            exercise_name == "Barbell Floor Press"
+            and isinstance(consistency, dict)
+            and consistency.get("requiredEquipmentSupported") == "uncertain"
+        ):
+            prompt, claims = bake_and_rank.build_two_scale_disagreement_repair_prompt(
+                result, exercise_name=exercise_name,
+            )
+            assert set(claims) == {"required_equipment", "source_validity"}
+            assert "Squat Rack: required setup fixture" in prompt
+            generic_only = bake_and_rank.parse_two_scale_disagreement_repair(
+                json.dumps({
+                    "internallyConsistent": True,
+                    "claims": [{
+                        "id": "source_validity", "verdict": "supported",
+                        "evidence": "The visible action is a complete floor press.",
+                    }],
+                }),
+                disputed_claims=claims,
+            )
+            assert generic_only["resolved"] is False
+            equipment_uncertain = bake_and_rank.parse_two_scale_disagreement_repair(
+                json.dumps({
+                    "internallyConsistent": True,
+                    "claims": [
+                        {
+                            "id": "source_validity", "verdict": "supported",
+                            "evidence": "The visible action is a complete floor press.",
+                        },
+                        {
+                            "id": "required_equipment", "verdict": "uncertain",
+                            "evidence": "The rack setup is not visible.",
+                        },
+                    ],
+                }),
+                disputed_claims=claims,
+            )
+            assert equipment_uncertain["valid"] is True
+            assert equipment_uncertain["resolved"] is False
+        elif not isinstance(consistency, dict) or not consistency.get("targetIdentitySupported"):
+            _, claims = bake_and_rank.build_two_scale_disagreement_repair_prompt(
+                result, exercise_name=exercise_name,
+            )
+            expected_claims = {"target_identity", "complete_action", "source_validity"}
+            if exercise_name == "Barbell Floor Press":
+                expected_claims.add("required_equipment")
+            assert set(claims) == expected_claims
+
+
+def test_source_repair_guard_compares_held_item_to_active_implement_only():
+    validation = {
+        "passed": False,
+        "rejectionReasons": [
+            "two_scale_source_identity_failed",
+            "two_scale_source_required_equipment_not_observed",
+            "two_scale_source_topology_not_verified",
+        ],
+        "exerciseMotionContract": {
+            "exerciseName": "Barbell Floor Press",
+            "motionContext": {
+                "primaryEquipment": {"name": "Barbell", "type": "BARBELL"},
+                "requiredAccessories": [{
+                    "name": "Squat Rack", "type": "SQUATRACK",
+                    "capabilities": ["RACKED_BAR_SUPPORT"],
+                }],
+            },
+        },
+        "gates": {
+            "identity": {"passed": False, "response": {"verdict": "uncertain"}},
+            "targetBlindEquipmentDetail": {
+                "response": {
+                    "heldEquipment": ["barbell"], "objectCount": 1,
+                    "visibleShape": "bar with plates", "holdingPattern": "both hands",
+                    "uncertain": False,
+                },
+            },
+            "topology": {"passed": False, "response": {"complete": True}},
+        },
+    }
+
+    assert bake_and_rank.two_scale_source_validation_needs_repair(validation)
+
+
 def test_two_scale_source_routes_corroborated_negative_to_next_source(tmp_path: Path, monkeypatch) -> None:
     uniform_sheet = tmp_path / "uniform.jpg"
     motion_sheets = [tmp_path / f"motion-{index}.jpg" for index in range(3)]
@@ -562,14 +801,29 @@ def test_two_scale_source_gate_does_not_let_one_blind_outlier_override_corrobora
         ]
     )
 
+    item = make_review_item(tmp_path, "Barbell Rack Pull")
     result = bake_and_rank.validate_two_scale_source_with_caption_images(
-        make_review_item(tmp_path, "Barbell Rack Pull"),
+        item,
         uniform_sheet_paths=uniform_sheets,
         output_dir=tmp_path / "validation",
         caption_images=lambda **_kwargs: json.dumps(next(responses)),
     )
 
-    assert result["passed"] is complete_observations
+    if complete_observations:
+        assert result["passed"] is False
+        monkeypatch.setattr(
+            bake_and_rank,
+            "source_validation_has_strong_independent_corroboration",
+            lambda **_kwargs: True,
+        )
+        assert bake_and_rank.two_scale_completeness_failure_is_independent_outlier(
+            item=item,
+            validation=result,
+            rejection_reasons=result["rejectionReasons"],
+            deterministic_metrics={},
+        )
+    else:
+        assert result["passed"] is False
     if not complete_observations:
         assert result["reviewStatus"] == "incomplete"
         assert "two_scale_source_target_blind_motion_observation_inconsistent" in result["missingEvidenceReasons"]
