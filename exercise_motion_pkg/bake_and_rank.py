@@ -285,7 +285,7 @@ ADAPTIVE_PREVIEW_SETTINGS_MAX_CONTACT_SHEET_FRAMES = 20
 DEFAULT_DENSE_REVIEW_VIDEO_FPS = 30.0
 MAX_DENSE_REVIEW_VIDEO_FRAMES = 180
 SELECTED_SECTION_REVIEW_VIDEO_LOOP_REPEATS = 1
-SELECTED_SECTION_BAKE_CACHE_VERSION = 42
+SELECTED_SECTION_BAKE_CACHE_VERSION = 43
 SELECTED_SECTION_REVIEW_VIDEO_CACHE_VERSION = 6
 SELECTED_SOURCE_SECTION_FULL_SPAN_TOLERANCE_SECONDS = 0.08
 SELECTED_SOURCE_SECTION_MIN_DURATION_SECONDS = 0.05
@@ -548,7 +548,7 @@ SOURCE_CUT_MIN_ESTIMATED_DURATION_RATIO = 1.0
 SOURCE_CUT_ROBUST_MIN_SECONDS = 1.5
 SOURCE_CUT_ROBUST_MIN_ESTIMATED_DURATION_RATIO = 1.0
 ACTIVE_TRAVEL_SOURCE_CUT_MIN_SECONDS = 2.0
-SOURCE_SELECTION_POLICY_VERSION = 61
+SOURCE_SELECTION_POLICY_VERSION = 62
 SOURCE_SELECTION_CLEARANCE_POLICY_VERSION = 2
 
 # Free-VRAM gates for co-residing small CUDA ops beside the resident llama.cpp
@@ -621,7 +621,7 @@ RETAINED_SELECTED_REVALIDATION_VERSION = 18
 # These policy versions isolate source-review caches from unrelated edits to
 # this large pipeline module. Prompt text and image bytes are already part of
 # each question key; bump the aggregate version when verdict semantics change.
-SOURCE_REVIEW_AGGREGATE_CACHE_POLICY_VERSION = 2
+SOURCE_REVIEW_AGGREGATE_CACHE_POLICY_VERSION = 3
 SOURCE_REVIEW_QUESTION_CACHE_POLICY_VERSION = 1
 SOURCE_OUTPUT_TARGET_MOTION_REJECTION_REASON = (
     "materialized_target_motion_not_preserved_from_source"
@@ -6619,6 +6619,7 @@ TWO_SCALE_REJECTION_CLAIMS = {
     "two_scale_source_incomplete_movement": "complete_action",
     "two_scale_source_completeness_observation_inconsistent": "complete_action",
     "two_scale_source_required_equipment_not_observed": "required_equipment",
+    "two_scale_source_required_equipment_count_unverified": "required_equipment",
     "two_scale_source_target_blind_motion_observation_missing": "complete_action",
     "two_scale_source_target_blind_motion_observation_inconsistent": "complete_action",
     "two_scale_source_specific_contract_missing": "ordered_topology",
@@ -7054,8 +7055,20 @@ def validate_final_output_with_caption_images(
                     output_dir=output_dir / "two-scale-source",
                 )
                 two_scale_source_validation["disagreementRepair"] = repair
-                if repair.get("resolved") is True:
+                repair_applied = (
                     cache_repaired_source_review(two_scale_source_validation, repair)
+                    if repair.get("resolved") is True
+                    else False
+                )
+                if repair.get("resolved") is True and not repair_applied:
+                    repair = {
+                        **repair,
+                        "valid": False,
+                        "resolved": False,
+                        "blockingReason": "required_equipment_quantity_not_independently_verified",
+                    }
+                    two_scale_source_validation["disagreementRepair"] = repair
+                if repair_applied:
                     two_scale_source_validation["passed"] = True
                     two_scale_source_validation["originalRejectionReasons"] = rejection_reasons
                     two_scale_source_validation["rejectionReasons"] = []
@@ -7538,7 +7551,7 @@ def two_scale_required_equipment_names(
     )
     primary = context.get("primaryEquipment")
     if isinstance(primary, dict):
-        name = str(primary.get("name") or primary.get("type") or "").strip()
+        name = two_scale_authoritative_equipment_name(primary)
         if name:
             required.append(name)
     accessories = context.get("requiredAccessories")
@@ -7557,10 +7570,24 @@ def two_scale_required_equipment_names(
     return normalized
 
 
+_TWO_SCALE_CANONICAL_EQUIPMENT_TYPES = {
+    "barbell", "dumbbell", "kettlebell", "cable", "ab wheel", "resistance band",
+    "bench", "box", "rings",
+}
+
+
+def two_scale_authoritative_equipment_name(record: dict[str, Any]) -> str:
+    """Prefer a recognized inventory type over its display label."""
+    normalized_type = normalize_observed_equipment_name(record.get("type"))
+    if normalized_type in _TWO_SCALE_CANONICAL_EQUIPMENT_TYPES:
+        return normalized_type
+    return str(record.get("name") or record.get("type") or "").strip()
+
+
 def two_scale_equipment_role_requirements(
     exercise_name: str,
     exercise_motion_contract: dict[str, Any] | None = None,
-) -> list[dict[str, str]]:
+) -> list[dict[str, Any]]:
     """Preserve equipment roles from authoritative context for visual review."""
     context = (
         exercise_motion_contract.get("motionContext")
@@ -7568,10 +7595,10 @@ def two_scale_equipment_role_requirements(
         and isinstance(exercise_motion_contract.get("motionContext"), dict)
         else {}
     )
-    requirements: list[dict[str, str]] = []
+    requirements: list[dict[str, Any]] = []
     authoritative_names: set[str] = set()
 
-    def add(record: Any, role: str) -> None:
+    def add(record: Any, role: str, *, canonical_type: bool = False) -> None:
         if not isinstance(record, dict):
             return
         name = str(record.get("name") or record.get("type") or "").strip()
@@ -7579,16 +7606,21 @@ def two_scale_equipment_role_requirements(
         if not normalized or normalized == "none":
             return
         normalized_type = normalize_observed_equipment_name(record.get("type"))
+        if canonical_type and normalized_type in _TWO_SCALE_CANONICAL_EQUIPMENT_TYPES:
+            normalized = normalized_type
         authoritative_names.add(normalized)
         if normalized_type and normalized_type != "none":
             authoritative_names.add(normalized_type)
         key = (normalized, role)
         if not any((item["normalizedName"], item["role"]) == key for item in requirements):
-            requirements.append({"name": name, "normalizedName": normalized, "role": role})
+            requirement: dict[str, Any] = {"name": name, "normalizedName": normalized, "role": role}
+            if role == "active_implement" and str(record.get("type") or "").strip().upper() == "DUMBBELLS":
+                requirement["minimumObjectCount"] = 2
+            requirements.append(requirement)
 
     primary = context.get("primaryEquipment")
     if isinstance(primary, dict):
-        add(primary, "active_implement")
+        add(primary, "active_implement", canonical_type=True)
 
     accessories = context.get("requiredAccessories")
     if isinstance(accessories, list):
@@ -7655,6 +7687,12 @@ def two_scale_equipment_role_policy(
     }
     lines = [
         f"{item['name']}: {descriptions[item['role']]}"
+        + (
+            f"; target-blind full-resolution equipment detail must clearly count at least "
+            f"{item['minimumObjectCount']} distinct items"
+            if item.get("minimumObjectCount", 1) > 1
+            else ""
+        )
         for item in requirements
     ]
     return (
@@ -7958,6 +7996,31 @@ def source_equipment_detail_is_clear(payload: Any) -> bool:
         and isinstance(payload.get("visibleShape"), str) and payload["visibleShape"].strip()
         and isinstance(payload.get("holdingPattern"), str) and payload["holdingPattern"].strip()
     )
+
+
+def two_scale_required_equipment_quantity_evidence(
+    payload: Any,
+    requirements: list[dict[str, Any]],
+) -> tuple[bool, bool]:
+    """Return whether paired active implements meet their explicit count evidence."""
+    quantity_requirements = [
+        requirement for requirement in requirements
+        if requirement.get("role") == "active_implement"
+        and int(requirement.get("minimumObjectCount", 1)) > 1
+    ]
+    if not quantity_requirements:
+        return True, False
+    if not source_equipment_detail_is_clear(payload):
+        return False, True
+    for requirement in quantity_requirements:
+        if int(payload["objectCount"]) < int(requirement["minimumObjectCount"]):
+            return False, False
+        if not two_scale_required_equipment_observed(
+            {"visibleEquipment": payload["heldEquipment"]},
+            equipment=str(requirement["normalizedName"]),
+        ):
+            return False, False
+    return True, False
 
 
 def build_two_scale_evidence_consistency_prompt(
@@ -8434,10 +8497,29 @@ def validate_two_scale_source_with_caption_images(
         return result
 
 
-def cache_repaired_source_review(validation: dict[str, Any], repair: dict[str, Any]) -> None:
+def cache_repaired_source_review(validation: dict[str, Any], repair: dict[str, Any]) -> bool:
     """Persist an adjudicated source verdict with its original evidence intact."""
     if repair.get("valid") is not True or repair.get("resolved") is not True:
-        return
+        return False
+    contract = validation.get("exerciseMotionContract")
+    exercise_name = (
+        str(contract.get("exerciseName") or "").strip()
+        if isinstance(contract, dict)
+        else str(validation.get("exerciseName") or "").strip()
+    )
+    quantity_required = any(
+        requirement.get("minimumObjectCount", 1) > 1
+        for requirement in two_scale_equipment_role_requirements(
+            exercise_name, contract if isinstance(contract, dict) else None
+        )
+    )
+    gates = validation.get("gates")
+    detail_gate = gates.get("targetBlindEquipmentDetail") if isinstance(gates, dict) else None
+    if quantity_required and (
+        not isinstance(detail_gate, dict)
+        or detail_gate.get("requiredEquipmentQuantityObserved") is not True
+    ):
+        return False
     validation.update({
         "passed": True, "reviewStatus": "passed", "missingEvidenceReasons": [],
         "originalRejectionReasons": validation.get("rejectionReasons", []),
@@ -8445,13 +8527,14 @@ def cache_repaired_source_review(validation: dict[str, Any], repair: dict[str, A
     })
     cache = validation.get("sourceReviewCache")
     if not isinstance(cache, dict):
-        return
+        return True
     from exercise_motion_pkg.stage_cache import save_stage, stage_lock
     checkpoint = Path(cache["checkpoint"])
     with stage_lock(checkpoint):
         outputs = [Path(path) for name in ("uniformContactSheetPaths", "motionContactSheetPaths")
                    for path in validation.get(name, [])]
         save_stage(checkpoint, cache["key"], validation, outputs)
+    return True
 
 
 def _validate_two_scale_source_uncached(
@@ -8718,6 +8801,14 @@ def _validate_two_scale_source_uncached(
         motion_observation,
         equipment=equipment,
     )
+    equipment_role_requirements = two_scale_equipment_role_requirements(
+        exercise_name, candidate_contract
+    )
+    equipment_quantity_observed, equipment_quantity_unverified = (
+        two_scale_required_equipment_quantity_evidence(
+            equipment_detail, equipment_role_requirements
+        )
+    )
     target_aware_equipment_support_count = (
         two_scale_target_aware_equipment_support_count(motion_results)
     )
@@ -8734,9 +8825,10 @@ def _validate_two_scale_source_uncached(
         equipment == "none"
         or blind_required_equipment_observed
         or corroborated_target_aware_equipment_observed
-    )
+    ) and equipment_quantity_observed
     detail_equipment_observed = bool(
         source_equipment_detail_is_clear(equipment_detail)
+        and equipment_quantity_observed
         and two_scale_required_equipment_observed(
             {"visibleEquipment": equipment_detail["heldEquipment"]}, equipment=equipment)
     )
@@ -8812,6 +8904,8 @@ def _validate_two_scale_source_uncached(
             rejection_reasons.append("two_scale_source_completeness_observation_inconsistent")
     if not required_equipment_observed:
         rejection_reasons.append("two_scale_source_required_equipment_not_observed")
+    if equipment_quantity_unverified:
+        rejection_reasons.append("two_scale_source_required_equipment_count_unverified")
     if not motion_observation_available:
         rejection_reasons.append(
             "two_scale_source_target_blind_motion_observation_inconsistent"
@@ -8868,6 +8962,7 @@ def _validate_two_scale_source_uncached(
             "targetBlindEquipmentDetail": {
                 "clear": source_equipment_detail_is_clear(equipment_detail),
                 "requiredEquipmentObserved": detail_equipment_observed,
+                "requiredEquipmentQuantityObserved": equipment_quantity_observed,
                 "response": equipment_detail,
                 "rawResponse": raw_equipment_detail,
             },
@@ -18542,6 +18637,7 @@ def missing_validation_evidence_reasons(reasons: Iterable[str]) -> list[str]:
         "two_scale_source_target_blind_motion_observation_missing",
         "two_scale_source_target_blind_motion_observation_inconsistent",
         "two_scale_source_evidence_consistency_incomplete",
+        "two_scale_source_required_equipment_count_unverified",
     }))
 
 

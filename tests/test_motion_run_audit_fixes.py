@@ -1927,6 +1927,64 @@ def test_preflight_keeps_bounded_retry_when_repair_remains_uncertain(tmp_path, m
     assert len(validation_calls) == 2
 
 
+def test_preflight_does_not_accept_generic_repair_without_dumbbell_pair_count(tmp_path, monkeypatch):
+    contract = {
+        "exerciseName": "Dumbbell Overhead Press",
+        "motionContext": {
+            "primaryEquipment": {"type": "DUMBBELLS", "name": "Dumbbell Pair"},
+        },
+    }
+    candidate = bake.RankedCandidate(
+        0, 1, "dumbbell-overhead-press", "Dumbbell Overhead Press", "dumbbell-overhead-press",
+        {"videoId": "id", "title": "Dumbbell Overhead Press", "exerciseMotionContract": contract},
+    )
+    request = SimpleNamespace(two_scale_source_validation=True, workspace=tmp_path)
+    monkeypatch.setattr(bake, "read_basic_video_metadata", lambda path: SimpleNamespace(duration_seconds=5))
+    monkeypatch.setattr(bake, "final_output_source_contact_sheets", lambda *a, **k: [])
+    monkeypatch.setattr(bake, "pre_wham_exact_source_phase_reference_metrics", lambda item: {})
+    monkeypatch.setattr(bake, "validate_source_pose_endpoints_against_contract", lambda *a, **k: {})
+    for name in ("small_motion", "completeness", "identity", "topology"):
+        monkeypatch.setattr(bake, f"two_scale_{name}_failure_is_independent_outlier", lambda **k: False)
+    monkeypatch.setattr(bake, "two_scale_source_validation_needs_repair", lambda validation: True)
+    validation_calls = []
+    validation = {
+        "passed": False,
+        "reviewStatus": "incomplete",
+        "rejectionReasons": [
+            "two_scale_source_required_equipment_not_observed",
+            "two_scale_source_required_equipment_count_unverified",
+            "two_scale_source_evidence_consistency_incomplete",
+        ],
+        "missingEvidenceReasons": ["two_scale_source_required_equipment_count_unverified"],
+        "exerciseMotionContract": contract,
+        "gates": {"targetBlindEquipmentDetail": {"requiredEquipmentQuantityObserved": False}},
+    }
+    monkeypatch.setattr(bake, "validate_two_scale_source_with_caption_images", lambda *a, **k: (
+        validation_calls.append(1) or json.loads(json.dumps(validation))
+    ))
+    repair_calls = []
+    monkeypatch.setattr(bake, "repair_two_scale_source_disagreement", lambda *a, **k: (
+        repair_calls.append(1) or {"valid": True, "resolved": True, "claims": ["required_equipment"]}
+    ))
+    cache_calls = []
+    cache_repair = bake.cache_repaired_source_review
+
+    def cache_repair_with_trace(current_validation, repair):
+        cache_calls.append(current_validation)
+        return cache_repair(current_validation, repair)
+
+    monkeypatch.setattr(bake, "cache_repaired_source_review", cache_repair_with_trace)
+
+    with pytest.raises(preflight.SourceReviewIncomplete):
+        preflight.review_prepared_source(
+            candidate, request=request, selected_video=tmp_path / "source.mp4",
+            contract=contract, caption_images=lambda: "",
+        )
+
+    assert len(validation_calls) == len(repair_calls) == len(cache_calls) == 2
+    assert all(result["passed"] is False for result in cache_calls)
+
+
 @pytest.mark.parametrize("cache_only", [False, True])
 def test_cli_cache_only_request_reaches_bake_and_staged_generation(tmp_path, cache_only):
     from exercise_motion_pkg.cli import build_parser, build_bake_and_rank_request

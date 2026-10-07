@@ -50,8 +50,14 @@ def review_prepared_source(candidate: bake.RankedCandidate, *, request: bake.Bak
             repair = bake.repair_two_scale_source_disagreement(validation, item=item,
                 caption_images=caption_images, output_dir=output)
             if repair.get("resolved") is True:
-                bake.cache_repaired_source_review(validation, repair)
-                return
+                if bake.cache_repaired_source_review(validation, repair):
+                    return
+                repair = {
+                    **repair,
+                    "valid": False,
+                    "resolved": False,
+                    "blockingReason": "required_equipment_quantity_not_independently_verified",
+                }
             if repair.get("valid") is True:
                 # A complete repair can resolve the disagreement negatively as
                 # well as positively. A categorical refutation of any required

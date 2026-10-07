@@ -619,6 +619,98 @@ def test_source_repair_guard_compares_held_item_to_active_implement_only():
     assert bake_and_rank.two_scale_source_validation_needs_repair(validation)
 
 
+@pytest.mark.parametrize(
+    ("object_count", "expected_quantity_observed"),
+    [(2, True), (1, False), (None, False)],
+)
+def test_authoritative_dumbbell_pair_requires_two_clear_target_blind_objects(
+    tmp_path: Path, monkeypatch, object_count: int | None, expected_quantity_observed: bool,
+) -> None:
+    item = make_review_item(tmp_path, "Dumbbell Overhead Press")
+    contract = item.candidate["exerciseMotionContract"]
+    contract["motionContext"] = {
+        "primaryEquipment": {"type": "DUMBBELLS", "name": "Dumbbell Pair"},
+    }
+    sheet = tmp_path / "uniform.jpg"
+    motion_sheet = tmp_path / "motion.jpg"
+    sheet.write_bytes(b"sheet")
+    motion_sheet.write_bytes(b"motion")
+    frames = [tmp_path / f"frame-{index}.jpg" for index in range(16)]
+    for frame in frames:
+        frame.write_bytes(b"original")
+    (tmp_path / "contact_sheet_crop.json").write_text(
+        json.dumps({"framePaths": [str(frame) for frame in frames]}), encoding="utf-8")
+    monkeypatch.setattr(
+        bake_and_rank, "final_output_motion_contact_sheets", lambda *_args, **_kwargs: [motion_sheet]
+    )
+
+    def run_questions(jobs, _callback):
+        return {name: job() for name, job in jobs.items()}
+
+    monkeypatch.setattr("exercise_motion_pkg.review_questions.run_questions", run_questions)
+
+    def caption_images(*, frame_paths, prompt, **_kwargs):
+        if prompt.startswith("Inspect only equipment"):
+            detail = {
+                "heldEquipment": ["dumbbell"], "objectCount": object_count,
+                "visibleShape": "handheld weighted dumbbell",
+                "holdingPattern": "held in one hand" if object_count == 1 else "one in each hand",
+                "uncertain": False,
+            }
+            return json.dumps(detail)
+        if prompt.startswith("You verify only exercise identity"):
+            return json.dumps({"verdict": "match", "visibleEquipment": ["dumbbell"]})
+        if prompt.startswith("You inspect one uniformly"):
+            return json.dumps({"unrelatedActionVisible": False, "unrelatedTileNumbers": []})
+        if prompt.startswith("You inspect one motion-focused"):
+            return json.dumps({"targetExerciseActionVisible": True, "namedEquipmentEngagedStatus": "engaged"})
+        if prompt.startswith("Audit only"):
+            return json.dumps({
+                "corroboratedConflict": False, "corroboratedContradictions": [],
+                "targetIdentitySupported": True, "requiredEquipmentSupported": True,
+                "completeExecutionSupported": True,
+            })
+        if "requiredEquipmentMatch" in prompt:
+            return json.dumps(topology_response())
+        return json.dumps({
+            "visibleEquipment": ["dumbbell"], "orderedPhases": ["press", "return"],
+            "startStateVisible": True, "actionPhaseVisible": True, "turningPointVisible": True,
+            "returnOrFinishVisible": True, "complete": True,
+        })
+
+    # Canonical inventory type determines implement identity; the display label
+    # must not become a second, impossible equipment requirement.
+    required = bake_and_rank.two_scale_required_equipment_names("Dumbbell Overhead Press", contract)
+    assert required == ["dumbbell"]
+    assert bake_and_rank.two_scale_equipment_role_requirements(
+        "Dumbbell Overhead Press", contract
+    ) == [{"name": "Dumbbell Pair", "normalizedName": "dumbbell", "role": "active_implement",
+           "minimumObjectCount": 2}]
+
+    result = bake_and_rank.validate_two_scale_source_with_caption_images(
+        item, uniform_sheet_paths=[sheet], output_dir=tmp_path / "review", caption_images=caption_images,
+    )
+    assert result["gates"]["identity"]["equipmentConsistent"] is True
+    assert result["gates"]["completeness"]["requiredEquipmentObserved"] is expected_quantity_observed
+    assert result["gates"]["targetBlindEquipmentDetail"]["requiredEquipmentObserved"] is expected_quantity_observed
+    assert result["passed"] is expected_quantity_observed, result["rejectionReasons"]
+    if object_count is None:
+        assert result["reviewStatus"] == "incomplete"
+        assert "two_scale_source_required_equipment_count_unverified" in result["missingEvidenceReasons"]
+    elif object_count == 1:
+        assert result["reviewStatus"] == "rejected"
+        assert "two_scale_source_required_equipment_not_observed" in result["rejectionReasons"]
+    else:
+        assert result["reviewStatus"] == "passed"
+        assert not bake_and_rank.two_scale_source_validation_needs_repair(result)
+    if not expected_quantity_observed:
+        prior_status = result["reviewStatus"]
+        repair = {"valid": True, "resolved": True, "claims": ["required_equipment"]}
+        assert not bake_and_rank.cache_repaired_source_review(result, repair)
+        assert result["passed"] is False
+        assert result["reviewStatus"] == prior_status
+
+
 def test_two_scale_source_routes_corroborated_negative_to_next_source(tmp_path: Path, monkeypatch) -> None:
     uniform_sheet = tmp_path / "uniform.jpg"
     motion_sheets = [tmp_path / f"motion-{index}.jpg" for index in range(3)]
