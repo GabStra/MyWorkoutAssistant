@@ -115,8 +115,11 @@ def test_retained_replay_uses_pinned_clip_when_final_validation_has_no_staged_vi
         "normalizedMotionPath": str(raw), "normalizedMotionPathSha256": file_sha256(raw),
         "upstreamIdentity": {"extractor": "GVHMR"},
     }
-    module = SimpleNamespace()
-    config = {"exerciseFixtures": {"press": fixture}}
+    module = SimpleNamespace(generate_candidate_motion=lambda *_args, **_kwargs: None)
+    config = {
+        "mode": "retained_reconstruction_real_review",
+        "exerciseFixtures": {"press": fixture},
+    }
     patch_module("exercise_motion_pkg.bake_and_rank", module, config, lambda *_a, **_k: None)
     candidate = SimpleNamespace(
         exercise_id="press", workspace_slug="press", candidate={}, exercise_name="Overhead Press",
