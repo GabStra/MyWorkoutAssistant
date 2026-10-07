@@ -27,6 +27,8 @@ CLEF_ENDPOINT_OBSERVATION_CONFIDENCE_THRESHOLD = 0.20
 
 _MANAGED_SERVER_LOCK = threading.Lock()
 _MANAGED_SERVER_STARTUP_TIMEOUT_SECONDS = 180.0
+_CLEF_SERVER_BATCH_SIZE = 3072
+_CLEF_SERVER_UBATCH_SIZE = 3072
 _ACTIVE_MANAGED_CLEF_ENDPOINT: ContextVar[tuple[str, int] | None] = ContextVar(
     "active_managed_clef_endpoint",
     default=None,
@@ -581,7 +583,8 @@ def _run_with_managed_clef_server(
                 "--port", str(endpoint[1]),
                 "--ctx-size", "4096",
                 "--parallel", "1",
-                "--ubatch-size", "2048",
+                "--batch-size", str(_CLEF_SERVER_BATCH_SIZE),
+                "--ubatch-size", str(_CLEF_SERVER_UBATCH_SIZE),
                 "--n-gpu-layers", "99",
                 "--image-min-tokens", "1024",
                 "--image-max-tokens", "1024",

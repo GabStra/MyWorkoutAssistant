@@ -5,7 +5,8 @@ param(
     [string]$MmprojFile = "mmproj-Clef-Flash-BF16.gguf",
     [int]$Port = 8091,
     [int]$ContextSize = 8192,
-    [int]$UBatchSize = 4096,
+    [int]$BatchSize = 3072,
+    [int]$UBatchSize = 3072,
     [int]$GpuLayers = 99
 )
 
@@ -64,6 +65,7 @@ $serverArgs = @(
     "--host", "127.0.0.1",
     "--port", "$Port",
     "--ctx-size", "$ContextSize",
+    "--batch-size", "$BatchSize",
     "--ubatch-size", "$UBatchSize",
     "--n-gpu-layers", "$GpuLayers"
 )

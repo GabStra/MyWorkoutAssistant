@@ -162,4 +162,6 @@ def test_managed_clef_owner_releases_server_and_nested_lease(tmp_path, monkeypat
     finally:
         assert stopped == [process]
         assert len(launched) == 1
+        assert launched[0][launched[0].index("--batch-size") + 1] == "3072"
+        assert launched[0][launched[0].index("--ubatch-size") + 1] == "3072"
         assert clef_systemone._ACTIVE_MANAGED_CLEF_ENDPOINT.get() is None
