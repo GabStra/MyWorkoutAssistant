@@ -25,6 +25,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -53,10 +54,29 @@ DEFAULT_EXERCISES = (
 )
 
 ARMS: dict[str, list[str]] = {
-    # Library-equivalent defaults: warm GVHMR worker + YOLO co-residency.
-    "baseline": ["-WarmWhamWorker:$true", "-KeepLlamaCppServer:$true"],
-    # + one supervisor-owned shared llama server for all vision consumers.
-    "shared": ["-WarmWhamWorker:$true", "-KeepLlamaCppServer:$true", "-SharedLlamaServer"],
+    # Historical Clef comparison arms keep their backend identity explicit.
+    "baseline": [
+        "-WarmWhamWorker:$true", "-KeepLlamaCppServer:$true",
+        "-VisualDecisionBackend", "clef-systemone",
+        "-FinalOutputReviewBackend", "clef-systemone",
+    ],
+    "shared": [
+        "-WarmWhamWorker:$true", "-KeepLlamaCppServer:$true", "-SharedLlamaServer",
+        "-VisualDecisionBackend", "clef-systemone",
+        "-FinalOutputReviewBackend", "clef-systemone",
+    ],
+    # Production route: Qwen handles source/support decisions and final review.
+    "qwen-full": [
+        "-WarmWhamWorker:$true", "-KeepLlamaCppServer:$true",
+        "-VisualDecisionBackend", "qwen-chat",
+        "-FinalOutputReviewBackend", "qwen-chat",
+    ],
+    # Qwen handles bounded visual decisions; Clef remains the final preview reviewer.
+    "qwen-visual": [
+        "-WarmWhamWorker:$true", "-KeepLlamaCppServer:$true",
+        "-VisualDecisionBackend", "qwen-chat",
+        "-FinalOutputReviewBackend", "clef-systemone",
+    ],
 }
 
 UNSUPPORTED_ARMS = {
@@ -69,6 +89,25 @@ UNSUPPORTED_ARMS = {
 ARM_EFFECTIVE_SETTINGS = {
     "baseline": {"sharedLlamaServerEnabled": False, "effectiveMaxConcurrentStagedWaves": 1},
     "shared": {"sharedLlamaServerEnabled": True, "effectiveMaxConcurrentStagedWaves": 1},
+    "qwen-full": {"sharedLlamaServerEnabled": False, "effectiveMaxConcurrentStagedWaves": 1},
+    "qwen-visual": {"sharedLlamaServerEnabled": False, "effectiveMaxConcurrentStagedWaves": 1},
+}
+ARM_BACKEND_SETTINGS = {
+    "baseline": {"visualDecisionBackend": "clef-systemone", "finalOutputReviewBackend": "clef-systemone"},
+    "shared": {"visualDecisionBackend": "clef-systemone", "finalOutputReviewBackend": "clef-systemone"},
+    "qwen-full": {"visualDecisionBackend": "qwen-chat", "finalOutputReviewBackend": "qwen-chat"},
+    "qwen-visual": {"visualDecisionBackend": "qwen-chat", "finalOutputReviewBackend": "clef-systemone"},
+}
+ARM_REVIEW_ARTIFACT_SETTINGS = {
+    "qwen-full": {
+        "sourceCutScorecardBackends": ["qwen-chat"],
+        "supportDominanceBackends": ["qwen_chat"],
+        "finalOutputValidationBackends": ["llama_cpp_vision"],
+    },
+    "qwen-visual": {
+        "sourceCutScorecardBackends": ["qwen-chat"],
+        "finalOutputValidationBackends": ["clef_flash_systemone"],
+    },
 }
 
 
@@ -100,6 +139,32 @@ def build_mini_library(library_json: Path, slugs: set[str], destination: Path) -
     }
     destination.write_text(json.dumps(mini, indent=1), encoding="utf-8")
     return matched
+
+
+def validate_fixture_contract_motion_contexts(manifest: dict, plan_path: Path) -> None:
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    from exercise_motion_pkg.youtube import load_workout_plan_exercises
+
+    entries_by_id = {
+        entry.exercise_id: entry
+        for entry in load_workout_plan_exercises(plan_path)
+    }
+    for fixture in manifest.get("exercises") or []:
+        slug = fixture.get("slug", "<unknown>")
+        entry = entries_by_id.get(fixture.get("exerciseId"))
+        if entry is None:
+            raise SystemExit(
+                f"Fixture '{slug}' exerciseId {fixture.get('exerciseId')} "
+                "is missing from the constructed mini-library"
+            )
+        contract_path = Path(fixture["contractPath"])
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+        if contract.get("motionContext") != entry.motion_context:
+            raise SystemExit(
+                f"Fixture '{slug}' contract motion context mismatch with the "
+                f"constructed mini-library: {contract_path}"
+            )
 
 
 def _rewrite_absolute_workspace_references(
@@ -183,6 +248,29 @@ def sha256_directory_contents(directory: Path) -> str:
     return digest.hexdigest()
 
 
+def _require_fixture_source_cache_identity_sidecar(
+    source: Path,
+    expected_sha256: str,
+) -> Path:
+    source_sidecar = source.with_name(f"{source.name}.source.json")
+    try:
+        sidecar_payload = json.loads(source_sidecar.read_text(encoding="utf-8"))
+        sidecar_valid = (
+            isinstance(sidecar_payload, dict)
+            and sidecar_payload.get("schemaVersion") == 1
+            and sidecar_payload.get("cacheKey") == source.stem
+            and int(sidecar_payload.get("sizeBytes") or -1) == source.stat().st_size
+            and sidecar_payload.get("contentSha256") == expected_sha256
+        )
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        sidecar_valid = False
+    if not sidecar_valid:
+        raise SystemExit(
+            f"Fixture source cache identity sidecar is missing or invalid: {source_sidecar}"
+        )
+    return source_sidecar
+
+
 def load_fixture_manifest(manifest_path: Path) -> dict:
     """Load a fixture manifest and re-verify every recorded SHA-256."""
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -229,6 +317,10 @@ def load_fixture_manifest(manifest_path: Path) -> dict:
                 raise SystemExit(
                     f"Fixture SHA-256 mismatch for {path}: expected {expected}, got {actual}"
                 )
+        _require_fixture_source_cache_identity_sidecar(
+            Path(exercise["sourceCachePath"]),
+            exercise["sourceSha256"],
+        )
     print(f"[harness] fixtures verified: {len(exercises)} exercises", flush=True)
     return manifest
 
@@ -336,7 +428,7 @@ def stage_fixture_contract_cache(manifest: dict, destination: Path) -> Path:
 
 
 def stage_fixture_source_cache(manifest: dict, destination: Path) -> Path:
-    """Copy pinned source videos into an arm-local cache and verify every copy."""
+    """Copy pinned source videos and their verified cache identities per arm."""
     if destination.exists():
         raise SystemExit(f"Refusing to overwrite staged fixture source cache: {destination}")
     destination.mkdir(parents=True)
@@ -352,6 +444,10 @@ def stage_fixture_source_cache(manifest: dict, destination: Path) -> Path:
                 f"Fixture source SHA-256 mismatch for {source}: "
                 f"expected {expected_sha256}, got {source_sha256}"
             )
+        source_sidecar = _require_fixture_source_cache_identity_sidecar(
+            source,
+            expected_sha256,
+        )
 
         target = destination / source.name
         previous_hash = copied_hashes.get(source.name)
@@ -369,6 +465,7 @@ def stage_fixture_source_cache(manifest: dict, destination: Path) -> Path:
                 f"Copied fixture source SHA-256 mismatch for {target}: "
                 f"expected {expected_sha256}, got {copied_sha256}"
             )
+        shutil.copy2(source_sidecar, target.with_name(f"{target.name}.source.json"))
         copied_hashes[source.name] = copied_sha256
     return destination
 
@@ -765,7 +862,8 @@ def run_arm(arm: str, arm_dir: Path, plan_json: Path, timeout_seconds: float,
             extra_runner_args: list[str] | None = None,
             cpu_prefetch_during_bake: bool = True,
             prefetch_workers: int = DEFAULT_PREFETCH_WORKERS,
-            prefetch_queue_depth: int = DEFAULT_PREFETCH_QUEUE_DEPTH) -> dict:
+            prefetch_queue_depth: int = DEFAULT_PREFETCH_QUEUE_DEPTH,
+            source_frame_decode_cache: bool = False) -> dict:
     source_index = arm_dir / "source_outcome_index.json"
     if DEFAULT_SOURCE_OUTCOME_INDEX.is_file():
         shutil.copy2(DEFAULT_SOURCE_OUTCOME_INDEX, source_index)
@@ -804,7 +902,16 @@ def run_arm(arm: str, arm_dir: Path, plan_json: Path, timeout_seconds: float,
                 resource_samples.append(sample)
 
     log_handle = log_path.open("w", encoding="utf-8", errors="replace")
-    process = subprocess.Popen(args, stdout=log_handle, stderr=subprocess.STDOUT)
+    runner_environment = os.environ.copy()
+    runner_environment["EXERCISE_MOTION_SOURCE_FRAME_CACHE"] = (
+        "on" if source_frame_decode_cache else "off"
+    )
+    process = subprocess.Popen(
+        args,
+        stdout=log_handle,
+        stderr=subprocess.STDOUT,
+        env=runner_environment,
+    )
     resource_sampler = threading.Thread(
         target=sample_resources_until_stopped,
         name=f"motion-resource-sampler-{arm}",
@@ -1364,6 +1471,45 @@ def accepted_artifact_parity_error(reference: list[dict], observed: list[dict]) 
     return f"accepted artifact/frame identities differ for exercise ids {changed}"
 
 
+def _collect_json_field_values(value: object, field: str, found: set[str]) -> None:
+    if isinstance(value, dict):
+        field_value = value.get(field)
+        if isinstance(field_value, str) and field_value:
+            found.add(field_value)
+        for child in value.values():
+            _collect_json_field_values(child, field, found)
+    elif isinstance(value, list):
+        for child in value:
+            _collect_json_field_values(child, field, found)
+
+
+def _collect_final_validation_backends(value: object, found: set[str]) -> None:
+    if isinstance(value, dict):
+        validation = value.get("finalOutputValidation")
+        review = validation.get("visualReview") if isinstance(validation, dict) else None
+        backend = review.get("backend") if isinstance(review, dict) else None
+        if isinstance(backend, str) and backend:
+            found.add(backend)
+        for child in value.values():
+            _collect_final_validation_backends(child, found)
+    elif isinstance(value, list):
+        for child in value:
+            _collect_final_validation_backends(child, found)
+
+
+def _collect_support_dominance_backends(value: object, found: set[str]) -> None:
+    if isinstance(value, dict):
+        output = value.get("supportDominanceModelOutput")
+        backend = output.get("backend") if isinstance(output, dict) else None
+        if isinstance(backend, str) and backend:
+            found.add(backend)
+        for child in value.values():
+            _collect_support_dominance_backends(child, found)
+    elif isinstance(value, list):
+        for child in value:
+            _collect_support_dominance_backends(child, found)
+
+
 def extract_metrics(arm_result: dict) -> dict:
     workspace = Path(arm_result["workspace"])
     metrics: dict = {
@@ -1390,6 +1536,9 @@ def extract_metrics(arm_result: dict) -> dict:
         "prefetchQueueDepth": None,
         "acceptedMovementArtifacts": [],
         "acceptedMovementArtifactErrors": [],
+        "sourceCutScorecardBackends": [],
+        "supportDominanceBackends": [],
+        "finalOutputValidationBackends": [],
         "candidateGenerationAttempts": 0,
         "candidateGenerationAttemptSeconds": 0.0,
         "candidateGenerationTimingSamples": 0,
@@ -1408,6 +1557,28 @@ def extract_metrics(arm_result: dict) -> dict:
         "resourceSampleCount": 0,
         "resourceHighWater": {},
     }
+    source_backends: set[str] = set()
+    for manifest_path in workspace.glob("*/selected/segment_detection/segment_selection.json"):
+        try:
+            _collect_json_field_values(
+                json.loads(manifest_path.read_text(encoding="utf-8")),
+                "sourceCutScorecardBackend",
+                source_backends,
+            )
+        except (OSError, ValueError):
+            continue
+    metrics["sourceCutScorecardBackends"] = sorted(source_backends)
+    support_backends: set[str] = set()
+    final_review_backends: set[str] = set()
+    for manifest_path in workspace.glob("staged-waves/*/final-decisions/*.json"):
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+            _collect_final_validation_backends(payload, final_review_backends)
+            _collect_support_dominance_backends(payload, support_backends)
+        except (OSError, ValueError):
+            continue
+    metrics["supportDominanceBackends"] = sorted(support_backends)
+    metrics["finalOutputValidationBackends"] = sorted(final_review_backends)
     snapshot = _load_metric_input_snapshot(arm_result)
     snapshot_path_text = arm_result.get("metricInputSnapshotPath")
     if snapshot_path_text and snapshot is None:
@@ -1699,12 +1870,28 @@ def effective_configuration_error(
         )
     if not expected_staged_enabled and metrics.get("waves") != 0:
         return f"disabled staged waves reported {metrics.get('waves')!r} wave reports"
+    expected_review_artifacts = ARM_REVIEW_ARTIFACT_SETTINGS.get(arm)
+    if expected_review_artifacts is not None:
+        for key, expected_backends in expected_review_artifacts.items():
+            observed_backends = metrics.get(key)
+            if key == "supportDominanceBackends" and not observed_backends:
+                # Support classification is an optional production stage.
+                continue
+            if observed_backends != expected_backends:
+                stage = {
+                    "sourceCutScorecardBackends": "source-review",
+                    "supportDominanceBackends": "support-classification",
+                }.get(key, "rendered-validation")
+                return (
+                    f"{stage} artifact backend {observed_backends!r}, "
+                    f"expected {expected_backends!r}"
+                )
     return None
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--arms", default=",".join(ARMS), help="Comma-separated arm names")
+    parser.add_argument("--arms", default="qwen-full", help="Comma-separated arm names")
     source_group = parser.add_mutually_exclusive_group()
     source_group.add_argument(
         "--exercises", default=None,
@@ -1724,6 +1911,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--library-json", type=Path, default=DEFAULT_LIBRARY_JSON)
     parser.add_argument("--base-workspace", type=Path, default=DEFAULT_BASE_WORKSPACE)
     parser.add_argument("--timeout-seconds", type=float, default=45 * 60.0)
+    parser.add_argument(
+        "--source-frame-decode-cache",
+        choices=("off", "on"),
+        default="off",
+        help="Experimental bounded native-frame cache for short source-cut clips; default off.",
+    )
     parser.add_argument(
         "--staged-wave-size",
         type=_non_negative_int,
@@ -1807,6 +2000,8 @@ def main() -> None:
     plan_json = run_root / "mini_library.json"
     matched = build_mini_library(args.library_json, set(slugs), plan_json)
     print(f"[harness] {len(matched)} exercises: {', '.join(matched)}", flush=True)
+    if fixture_manifest is not None:
+        validate_fixture_contract_motion_contexts(fixture_manifest, plan_json)
     library_plan_sha = sha256_file(plan_json)
     fixture_manifest_sha = sha256_file(args.fixtures) if args.fixtures is not None else None
 
@@ -1922,6 +2117,7 @@ def main() -> None:
             cpu_prefetch_during_bake=args.cpu_prefetch_during_bake,
             prefetch_workers=args.prefetch_workers,
             prefetch_queue_depth=args.prefetch_queue_depth,
+            source_frame_decode_cache=args.source_frame_decode_cache == "on",
         )
         arm_result.update(run_identity)
         arm_result["requestedConfiguration"] = {
@@ -1930,6 +2126,8 @@ def main() -> None:
             "cpuPrefetchDuringBake": args.cpu_prefetch_during_bake,
             "prefetchWorkers": args.prefetch_workers,
             "prefetchQueueDepth": args.prefetch_queue_depth,
+            "sourceFrameDecodeCache": args.source_frame_decode_cache,
+            **ARM_BACKEND_SETTINGS[arm],
         }
         arm_result["cacheRoots"] = {
             "youtubePreview": str(preview_cache_dir),

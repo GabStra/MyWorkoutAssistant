@@ -162,9 +162,9 @@ param(
     [switch]$SkipTwoScaleSourceValidation,
     [double]$FinalOutputValidationMinScore = 0.90,
     [ValidateSet("qwen-chat", "clef-systemone")]
-    [string]$VisualDecisionBackend = "clef-systemone",
+    [string]$VisualDecisionBackend = "qwen-chat",
     [ValidateSet("qwen-chat", "clef-systemone")]
-    [string]$FinalOutputReviewBackend = "clef-systemone",
+    [string]$FinalOutputReviewBackend = "qwen-chat",
     [string]$ClefSystemOneBaseUrl = "http://127.0.0.1:8091",
     [string]$ClefSystemOneModel = "ggml-org/Clef-Flash-GGUF:Q4_K_M",
     [switch]$ComparativeSegmentSelection,
@@ -224,6 +224,8 @@ param(
 
 . (Join-Path $PSScriptRoot "motion_validation_policy.ps1")
 $SelectionValidationPolicyVersion = Get-MotionSelectionValidationPolicyVersion
+$SourceSelectionPolicyVersion = Get-MotionPythonValidationPolicyConstant -Name 'SOURCE_SELECTION_POLICY_VERSION'
+$SourceSelectionClearancePolicyVersion = Get-MotionPythonValidationPolicyConstant -Name 'SOURCE_SELECTION_CLEARANCE_POLICY_VERSION'
 $RetainedSelectedRevalidationVersion = Get-MotionRetainedSelectedRevalidationVersion
 $StagedWaveAmbiguousRecoveryExitCode = 76
 $StagedWaveAmbiguousRecoveryStatus = "ambiguous_recovery"
@@ -1385,6 +1387,7 @@ function Write-PublishedSelectionAcceptanceMarker {
     $marker = [ordered]@{
         schemaVersion = 1
         selectionValidationPolicyVersion = [int]$SelectionValidationPolicyVersion
+        sourceSelectionPolicyVersion = [int]$SourceSelectionPolicyVersion
         retainedSelectedArtifactFallbackVersion = [int]$RetainedSelectedRevalidationVersion
         validatedAt = (Get-Date).ToUniversalTime().ToString("o")
         exerciseId = "$($WorkItem.exerciseId)"
@@ -2616,6 +2619,37 @@ function Stop-WhamWarmWorker {
     }
 }
 
+function Remove-IntermediateArtifactFile {
+    param([string]$Path)
+
+    $retryDelaysMilliseconds = @(100, 250, 500)
+    for ($attempt = 0; $attempt -le $retryDelaysMilliseconds.Count; $attempt++) {
+        try {
+            Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+            return
+        } catch {
+            $exception = $_.Exception
+            $sharingViolation = $false
+            while ($null -ne $exception) {
+                if (($exception.HResult -band 0xFFFF) -in @(32, 33)) {
+                    $sharingViolation = $true
+                    break
+                }
+                $exception = $exception.InnerException
+            }
+            if (-not $sharingViolation) {
+                throw
+            }
+            if ($attempt -lt $retryDelaysMilliseconds.Count) {
+                Start-Sleep -Milliseconds $retryDelaysMilliseconds[$attempt]
+                continue
+            }
+            Write-Warning "Retaining locked intermediate artifact after bounded cleanup retries: $Path"
+            return
+        }
+    }
+}
+
 function Remove-ExerciseIntermediateArtifacts {
     param([object]$WorkItem)
 
@@ -2625,7 +2659,55 @@ function Remove-ExerciseIntermediateArtifacts {
 
     foreach ($path in @($WorkItem.bakeWorkspace)) {
         if (-not [string]::IsNullOrWhiteSpace($path) -and (Test-Path -LiteralPath $path)) {
-            Remove-Item -LiteralPath $path -Recurse -Force
+            $bakeRoot = [IO.Path]::GetFullPath($path).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+            $bakePrefix = $bakeRoot + [IO.Path]::DirectorySeparatorChar
+            $preservedFiles = @{}
+            $selectionPath = Join-Path $bakeRoot "selection_manifest.json"
+            if (Test-Path -LiteralPath $selectionPath -PathType Leaf) {
+                try {
+                    $bakeSelection = Get-Content -LiteralPath $selectionPath -Raw | ConvertFrom-Json
+                    $selected = $bakeSelection.selected
+                    $clearance = if ($selected) { $selected.sourceSelectionClearance } else { $null }
+                    if ($clearance -and $clearance.status -in @("cleared", "not_required")) {
+                        $proofPaths = @($clearance.sourceManifestPath, $clearance.selectedSegmentPath)
+                        if ($clearance.status -eq "cleared") {
+                            $proofPaths += @($clearance.sourceCutReviewVideoPath, $clearance.sourceCutOriginalVideoPath)
+                            foreach ($image in @($clearance.sourceCutReviewFrameEvidence.images)) {
+                                $proofPaths += [string]$image.path
+                            }
+                            try {
+                                $sourceManifest = Get-Content -LiteralPath $clearance.sourceManifestPath -Raw | ConvertFrom-Json
+                                $proofPaths += [string]$sourceManifest.exactSourcePhaseValidation.sourcePoseReferencePath
+                            } catch {
+                            }
+                        }
+                        foreach ($proofPath in $proofPaths) {
+                            if ([string]::IsNullOrWhiteSpace([string]$proofPath)) { continue }
+                            $resolvedProofPath = [IO.Path]::GetFullPath([string]$proofPath)
+                            if ($resolvedProofPath.StartsWith($bakePrefix, [StringComparison]::OrdinalIgnoreCase) -and
+                                (Test-Path -LiteralPath $resolvedProofPath -PathType Leaf)) {
+                                $preservedFiles[$resolvedProofPath.ToLowerInvariant()] = $true
+                            }
+                        }
+                    }
+                } catch {
+                    $preservedFiles = @{}
+                }
+            }
+            foreach ($file in @(Get-ChildItem -LiteralPath $bakeRoot -File -Recurse -Force -ErrorAction SilentlyContinue)) {
+                $resolvedFile = [IO.Path]::GetFullPath($file.FullName)
+                if (-not $preservedFiles.ContainsKey($resolvedFile.ToLowerInvariant())) {
+                    Remove-IntermediateArtifactFile -Path $resolvedFile
+                }
+            }
+            foreach ($directory in @(Get-ChildItem -LiteralPath $bakeRoot -Directory -Recurse -Force -ErrorAction SilentlyContinue | Sort-Object { $_.FullName.Length } -Descending)) {
+                if (-not (Get-ChildItem -LiteralPath $directory.FullName -Force -ErrorAction SilentlyContinue | Select-Object -First 1)) {
+                    Remove-Item -LiteralPath $directory.FullName -Force
+                }
+            }
+            if (-not (Get-ChildItem -LiteralPath $bakeRoot -Force -ErrorAction SilentlyContinue | Select-Object -First 1)) {
+                Remove-Item -LiteralPath $bakeRoot -Force
+            }
         }
     }
     foreach ($path in @($WorkItem.exercisePlanPath, $WorkItem.exerciseCandidatesPath)) {
@@ -2678,6 +2760,95 @@ function Get-SelectedOutputArtifacts {
     }
 }
 
+function Test-SourceSelectionClearanceCurrent {
+    param(
+        [object]$Selection,
+        [string]$SelectedInputPath,
+        [string]$ExpectedExerciseName,
+        [string]$ExpectedContractSha256,
+        [bool]$AllowRawSkip
+    )
+
+    if ($null -eq $Selection -or $null -eq $Selection.selected -or $null -eq $Selection.selected.sourceSelectionClearance) {
+        return $false
+    }
+    $clearance = $Selection.selected.sourceSelectionClearance
+    $rawSkip = $AllowRawSkip -and
+        $Selection.preWhamSourceValidationEnabled -eq $false -and
+        $Selection.preWhamSourceValidationExplicitlyDisabled -eq $true
+    $expectedStatus = if ($rawSkip) { "not_required" } else { "cleared" }
+    if ($clearance.status -ne $expectedStatus -or
+        [int]$clearance.sourceSelectionPolicyVersion -ne $SourceSelectionPolicyVersion -or
+        [int]$clearance.sourceSelectionClearancePolicyVersion -ne $SourceSelectionClearancePolicyVersion) {
+        return $false
+    }
+    if ($expectedStatus -eq "cleared" -and (
+        [string]::IsNullOrWhiteSpace($ExpectedExerciseName) -or
+        [string]$Selection.selected.exerciseName -ine $ExpectedExerciseName -or
+        [string]$clearance.reviewedExerciseName -ine $ExpectedExerciseName -or
+        [string]::IsNullOrWhiteSpace($ExpectedContractSha256) -or
+        [string]$clearance.exerciseMotionContractSha256 -ine $ExpectedContractSha256
+    )) {
+        return $false
+    }
+    $clearancePaths = @('sourceManifestPath', 'selectedSegmentPath')
+    if ($expectedStatus -eq "cleared") {
+        $clearancePaths += @('sourceCutReviewVideoPath', 'sourceCutOriginalVideoPath')
+    }
+    foreach ($pathProperty in $clearancePaths) {
+        $pathValue = [string]$clearance.$pathProperty
+        if ([string]::IsNullOrWhiteSpace($pathValue) -or -not (Test-Path -LiteralPath $pathValue -PathType Leaf)) {
+            return $false
+        }
+    }
+    if ($rawSkip -and [string]::IsNullOrWhiteSpace([string]$clearance.sourcePrepReason)) {
+        return $false
+    }
+    if (-not $rawSkip -and (
+        [string]::IsNullOrWhiteSpace([string]$clearance.sourceCutReviewVideoSha256) -or
+        [string]::IsNullOrWhiteSpace([string]$clearance.sourceCutOriginalVideoSha256) -or
+        [string]::IsNullOrWhiteSpace([string]$clearance.sourceCutReviewFrameEvidenceSha256) -or
+        $null -eq $clearance.sourceCutReviewFrameEvidence -or
+        [string]$clearance.sourceCutReviewFrameEvidence.candidateId -cne [string]$clearance.authorizedCandidateId -or
+        [string]::IsNullOrWhiteSpace([string]$clearance.sourceCutReviewFrameEvidence.extractionProfileSha256) -or
+        @($clearance.sourceCutReviewFrameEvidence.images).Count -eq 0
+    )) {
+        return $false
+    }
+    try {
+        $manifestHash = (Get-FileHash -LiteralPath $clearance.sourceManifestPath -Algorithm SHA256).Hash
+        $segmentHash = (Get-FileHash -LiteralPath $clearance.selectedSegmentPath -Algorithm SHA256).Hash
+        if ($manifestHash -ine [string]$clearance.sourceManifestSha256 -or
+            $segmentHash -ine [string]$clearance.selectedSegmentSha256) {
+            return $false
+        }
+        if (-not $rawSkip) {
+            $reviewVideoHash = (Get-FileHash -LiteralPath $clearance.sourceCutReviewVideoPath -Algorithm SHA256).Hash
+            $originalVideoHash = (Get-FileHash -LiteralPath $clearance.sourceCutOriginalVideoPath -Algorithm SHA256).Hash
+            if ($reviewVideoHash -ine [string]$clearance.sourceCutReviewVideoSha256 -or
+                $originalVideoHash -ine [string]$clearance.sourceCutOriginalVideoSha256) {
+                return $false
+            }
+            foreach ($imageEvidence in @($clearance.sourceCutReviewFrameEvidence.images)) {
+                $imagePath = [string]$imageEvidence.path
+                if ([string]::IsNullOrWhiteSpace($imagePath) -or -not (Test-Path -LiteralPath $imagePath -PathType Leaf)) {
+                    return $false
+                }
+                $imageHash = (Get-FileHash -LiteralPath $imagePath -Algorithm SHA256).Hash
+                if ($imageHash -ine [string]$imageEvidence.sha256) { return $false }
+            }
+        }
+        if (-not [string]::IsNullOrWhiteSpace($SelectedInputPath)) {
+            if (-not (Test-Path -LiteralPath $SelectedInputPath -PathType Leaf)) { return $false }
+            $selectedInputHash = (Get-FileHash -LiteralPath $SelectedInputPath -Algorithm SHA256).Hash
+            if ($selectedInputHash -ine [string]$clearance.selectedSegmentSha256) { return $false }
+        }
+        return $true
+    } catch {
+        return $false
+    }
+}
+
 function Get-ExistingSelectedSummary {
     param([object]$WorkItem)
 
@@ -2711,12 +2882,19 @@ function Get-ExistingSelectedSummary {
             $matchesSelection = -not ($candidateRevalidation.PSObject.Properties.Name -contains 'selectedManifestSha256') -or
                 $candidateRevalidation.selectedManifestSha256 -eq (Get-FileHash -LiteralPath $selectionPath -Algorithm SHA256).Hash
             if (-not $matchesSelection) { return $null }
-            if ($matchesSelection -and [int]$candidateRevalidation.selectionValidationPolicyVersion -ge $SelectionValidationPolicyVersion) {
+            if (
+                $matchesSelection -and
+                [int]$candidateRevalidation.selectionValidationPolicyVersion -ge $SelectionValidationPolicyVersion -and
+                [int]$candidateRevalidation.sourceSelectionPolicyVersion -ge $SourceSelectionPolicyVersion
+            ) {
                 $currentRevalidation = $candidateRevalidation
             }
         } catch {
             return $null
         }
+    }
+    if ((Test-Path -LiteralPath $revalidationPath) -and $null -eq $currentRevalidation) {
+        return $null
     }
     if ($currentRevalidation -and $currentRevalidation.status -ne "valid") {
         return $null
@@ -2735,10 +2913,20 @@ function Get-ExistingSelectedSummary {
     $selectionPolicyCurrent = $selection -and (
         $selection.PSObject.Properties.Name -contains "selectionValidationPolicyVersion"
     ) -and [int]$selection.selectionValidationPolicyVersion -ge $SelectionValidationPolicyVersion
-    if (-not $selectionPolicyCurrent -and -not $currentRevalidation) {
+    $sourcePolicyCurrent = $selection -and (
+        $selection.PSObject.Properties.Name -contains "sourceSelectionPolicyVersion"
+    ) -and [int]$selection.sourceSelectionPolicyVersion -ge $SourceSelectionPolicyVersion
+    if ((-not $selectionPolicyCurrent -or -not $sourcePolicyCurrent) -and -not $currentRevalidation) {
         return $null
     }
     $manifestSelected = if ($selection -and $selection.selected) { $selection.selected } else { $null }
+    $sourceClearanceStatus = if ($manifestSelected -and $manifestSelected.sourceSelectionClearance) {
+        [string]$manifestSelected.sourceSelectionClearance.status
+    } else { "" }
+    $selectedInputPath = if ($inputFiles.Count -gt 0) { $inputFiles[0].FullName } else { "" }
+    if (-not (Test-SourceSelectionClearanceCurrent -Selection $selection -SelectedInputPath $selectedInputPath -ExpectedExerciseName ([string]$WorkItem.exerciseName) -ExpectedContractSha256 ([string]$WorkItem.currentContractSha256) -AllowRawSkip $SkipPreWhamSourceValidation)) {
+        return $null
+    }
     $manifestSelectedOptions = if ($selection -and $selection.PSObject.Properties.Name -contains "selectedResults" -and $selection.selectedResults) {
         @($selection.selectedResults)
     } elseif ($manifestSelected) {
@@ -2829,6 +3017,11 @@ function Test-SelectionNeedsPolicyReaudit {
         }
         $markerCurrent = ($marker.PSObject.Properties.Name -contains "selectionValidationPolicyVersion") -and
             [int]$marker.selectionValidationPolicyVersion -ge $SelectionValidationPolicyVersion
+        $sourceMarkerCurrent = ($marker.PSObject.Properties.Name -contains "sourceSelectionPolicyVersion") -and
+            [int]$marker.sourceSelectionPolicyVersion -ge $SourceSelectionPolicyVersion
+        if (-not $sourceMarkerCurrent) {
+            return $true
+        }
         if ($markerCurrent -and "$($marker.status)" -ne "valid") {
             return $true
         }
@@ -2843,7 +3036,18 @@ function Test-SelectionNeedsPolicyReaudit {
         ) {
             return $true
         }
-        if (-not $manifestCurrent -and -not $markerCurrent) {
+        $sourceManifestCurrent = ($selection.PSObject.Properties.Name -contains "sourceSelectionPolicyVersion") -and
+            [int]$selection.sourceSelectionPolicyVersion -ge $SourceSelectionPolicyVersion
+        if ((-not $manifestCurrent -and -not $markerCurrent) -or
+            (-not $sourceManifestCurrent -and -not $sourceMarkerCurrent)) {
+            return $true
+        }
+        $selected = $selection.selected
+        $clearanceStatus = if ($selected -and $selected.sourceSelectionClearance) {
+            [string]$selected.sourceSelectionClearance.status
+        } else { "" }
+        $inputPath = if ($artifacts.InputFiles.Count -gt 0) { $artifacts.InputFiles[0].FullName } else { "" }
+        if (-not (Test-SourceSelectionClearanceCurrent -Selection $selection -SelectedInputPath $inputPath -ExpectedExerciseName ([string]$WorkItem.exerciseName) -ExpectedContractSha256 ([string]$WorkItem.currentContractSha256) -AllowRawSkip $SkipPreWhamSourceValidation)) {
             return $true
         }
         return $false
@@ -5075,6 +5279,7 @@ function Start-StagedBakeWaveJob {
                 [ordered]@{
                     exerciseId = $_.exerciseId
                     exerciseName = $_.exerciseName
+                    exercisePlanJson = $_.exercisePlanPath
                     candidatesJson = $_.exerciseCandidatesPath
                     workspace = $_.bakeWorkspace
                 }
@@ -7535,6 +7740,68 @@ $contractPrefetchSummary = [ordered]@{
     elapsedSeconds = 0.0
     counts = $null
 }
+$contractPrefetchReport = $null
+if ($NoExerciseMotionContract) {
+    # SHA-256 of the canonical JSON identity `null`, matching Python's
+    # source_contract_clearance_sha256(None).
+    $nullContractSha256 = "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c0198921a72e7"
+    foreach ($workItem in $workItems) {
+        $workItem | Add-Member -NotePropertyName currentContractSha256 -NotePropertyValue $nullContractSha256 -Force
+    }
+}
+if (-not $NoExerciseMotionContract -and -not $SkipVisionRanking -and -not $SkipExerciseMotionContractPrefetch) {
+    $contractPrefetchReportPath = Join-Path $resolvedWorkspaceRoot "exercise_motion_contract_prefetch_report.json"
+    $retainedContractWorkItems = @()
+    $newContractWorkItems = @()
+    foreach ($workItem in $workItems) {
+        if ($ReuseExistingSelected -and $null -ne (Get-SelectedOutputArtifacts -WorkItem $workItem)) {
+            $retainedContractWorkItems += $workItem
+        } else {
+            $newContractWorkItems += $workItem
+        }
+    }
+    if ($StagedWaveSize -gt 0 -and $newContractWorkItems.Count -gt $StagedWaveSize) {
+        $newContractWorkItems = @($newContractWorkItems | Select-Object -First $StagedWaveSize)
+    }
+    $contractPrefetchWorkItems = @(
+        @($retainedContractWorkItems) + @($newContractWorkItems) |
+            Group-Object { [string]$_.index } |
+            ForEach-Object { $_.Group[0] }
+    )
+    if ($contractPrefetchWorkItems.Count -gt 0) {
+        $contractPrefetchArgs = [string[]](@(
+            $youtubeBaseArgs
+            "--workout-plan-json", $resolvedWorkoutPlanJson,
+            "--out-json", $contractPrefetchReportPath,
+            "--contract-prefetch-only",
+            "--contract-prefetch-workers", "$llamaParallelSlots"
+        ))
+        if (-not [string]::IsNullOrWhiteSpace($EquipmentJson)) {
+            $contractPrefetchArgs = [string[]](@($contractPrefetchArgs) + @("--equipment-json", $EquipmentJson))
+        }
+        foreach ($workItem in $contractPrefetchWorkItems) {
+            $contractPrefetchArgs = [string[]](@($contractPrefetchArgs) + @("--only-exercise-id", $workItem.exerciseId))
+        }
+        Write-Host ("Preparing contracts for {0} retained selection(s) and the first {1} new exercise(s) before reuse." -f $retainedContractWorkItems.Count, $newContractWorkItems.Count)
+        $contractPrefetchStarted = Get-Date
+        Invoke-PythonModule -Arguments $contractPrefetchArgs
+        $contractPrefetchReport = Get-Content -LiteralPath $contractPrefetchReportPath -Raw | ConvertFrom-Json
+        foreach ($result in @($contractPrefetchReport.exercises)) {
+            $matchingItem = $workItems | Where-Object { [string]$_.exerciseId -eq [string]$result.exerciseId } | Select-Object -First 1
+            if ($matchingItem -and $result.status -in @("generated", "reused") -and
+                -not [string]::IsNullOrWhiteSpace([string]$result.sourceSelectionContractSha256)) {
+                $matchingItem | Add-Member -NotePropertyName currentContractSha256 -NotePropertyValue ([string]$result.sourceSelectionContractSha256) -Force
+            }
+        }
+        Write-Host ("Contracts ready: {0} reused, {1} generated, {2} failed" -f $contractPrefetchReport.counts.reused, $contractPrefetchReport.counts.generated, $contractPrefetchReport.counts.failed)
+        $contractPrefetchSummary = [ordered]@{
+            enabled = $true
+            reportPath = $contractPrefetchReportPath
+            elapsedSeconds = [Math]::Round(((Get-Date) - $contractPrefetchStarted).TotalSeconds, 3)
+            counts = $contractPrefetchReport.counts
+        }
+    }
+}
 $existingSelectedSummaryByIndex = @{}
 $existingSelectedSummaryChecked = @{}
 if ($ReuseExistingSelected) {
@@ -7555,47 +7822,6 @@ if ($ReuseExistingSelected) {
         }
     }
 }
-if (-not $NoExerciseMotionContract -and -not $SkipVisionRanking -and -not $SkipExerciseMotionContractPrefetch) {
-    $contractPrefetchReportPath = Join-Path $resolvedWorkspaceRoot "exercise_motion_contract_prefetch_report.json"
-    $contractPrefetchWorkItems = @($workItems | Where-Object {
-        -not $existingSelectedSummaryByIndex.ContainsKey([string]$_.index)
-    })
-    if ($StagedWaveSize -gt 0 -and $contractPrefetchWorkItems.Count -gt $StagedWaveSize) {
-        # Contract generation can make many VLM requests. Prefetching every
-        # exercise here blocks the first source wave for the whole library;
-        # later exercises generate or reuse their contract when discovery starts.
-        $contractPrefetchWorkItems = @($contractPrefetchWorkItems | Select-Object -First $StagedWaveSize)
-    }
-    if ($contractPrefetchWorkItems.Count -gt 0) {
-        $contractPrefetchArgs = [string[]](@(
-            $youtubeBaseArgs
-            "--workout-plan-json", $resolvedWorkoutPlanJson,
-            "--out-json", $contractPrefetchReportPath,
-            "--contract-prefetch-only",
-            "--contract-prefetch-workers", "$llamaParallelSlots"
-        ))
-        if (-not [string]::IsNullOrWhiteSpace($EquipmentJson)) {
-            $contractPrefetchArgs = [string[]](@($contractPrefetchArgs) + @("--equipment-json", $EquipmentJson))
-        }
-        foreach ($workItem in $contractPrefetchWorkItems) {
-            $contractPrefetchArgs = [string[]](@($contractPrefetchArgs) + @("--only-exercise-id", $workItem.exerciseId))
-        }
-        Write-Host ("Preparing contracts for the first {0} unselected exercise(s) with one persistent llama.cpp server; later contracts are generated on demand." -f $contractPrefetchWorkItems.Count)
-        $contractPrefetchStarted = Get-Date
-        Invoke-PythonModule -Arguments $contractPrefetchArgs
-        $contractPrefetchReport = Get-Content -LiteralPath $contractPrefetchReportPath -Raw | ConvertFrom-Json
-        Write-Host ("Contracts ready: {0} reused, {1} generated, {2} failed" -f $contractPrefetchReport.counts.reused, $contractPrefetchReport.counts.generated, $contractPrefetchReport.counts.failed)
-        $contractPrefetchSummary = [ordered]@{
-            enabled = $true
-            reportPath = $contractPrefetchReportPath
-            elapsedSeconds = [Math]::Round(((Get-Date) - $contractPrefetchStarted).TotalSeconds, 3)
-            counts = $contractPrefetchReport.counts
-        }
-    } else {
-        Write-Host "No new exercise contracts need prefetching."
-    }
-}
-
 $summaryByIndex = @{}
 $progressCheckpointPath = Join-Path $resolvedWorkspaceRoot "workout_motion_generation_checkpoint.json"
 $script:LastIncrementalMobilePackageSuccessfulCount = -1
@@ -8479,6 +8705,15 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                             # exhaustion semantics without allowing one hard
                             # exercise to starve every other staged fallback.
                             $retryWorkItem = $bakeSummary.workItem
+                            if ($retryWorkItem.preparedCandidates) {
+                                $summaryByIndex[$retryWorkItem.index] = New-TerminalExerciseSummary -WorkItem $retryWorkItem -Status "no_selection" -ErrorMessage "Prepared candidate did not produce a validated movement; fixed-source replay is exhausted." -Stage "bake" -ExitCode 0
+                                $completedCount += 1
+                                $bakeCompletedCount += 1
+                                Add-SchedulerTimelineItemEvent -WorkItem $retryWorkItem -FinalStatus "failed"
+                                Write-Host ("Fixed-source replay exhausted for {0}; live discovery is disabled for prepared candidates." -f $retryWorkItem.exerciseName)
+                                Write-ProgressCheckpoint
+                                continue
+                            }
                             $retryPassCount = if ($retryWorkItem.PSObject.Properties.Name -contains "individualRetryPassCount") {
                                 [int]$retryWorkItem.individualRetryPassCount + 1
                             } else {

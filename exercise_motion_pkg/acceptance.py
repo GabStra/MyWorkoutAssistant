@@ -11,6 +11,144 @@ from typing import Any, Literal
 
 
 AcceptanceStatus = Literal["valid", "invalid", "needs_manual_review"]
+SOURCE_SELECTION_CLEARANCE_POLICY_VERSION = 2
+
+
+def source_contract_clearance_sha256(contract: dict[str, Any] | None) -> str:
+    from .youtube import exercise_motion_contract_prompt_sha256
+
+    return exercise_motion_contract_prompt_sha256(contract)
+
+
+def source_selection_clearance_is_current(
+    manifest: dict[str, Any], *, source_policy_version: int | None = None,
+    selected_source_path: Path | None = None,
+    expected_exercise_name: str | None = None,
+    expected_contract: dict[str, Any] | None = None,
+) -> bool:
+    """Require a source-stage clearance for normal and unknown lineages.
+
+    Only a manifest that explicitly records source validation as disabled can
+    use the diagnostic/raw path. A clearance attestation is tied to the source
+    policy and source manifest identity so an older selected-output marker
+    cannot stand in for a current source review.
+    """
+    selected = manifest.get("selected")
+    if not isinstance(selected, dict):
+        return False
+    clearance = selected.get("sourceSelectionClearance")
+    if not isinstance(clearance, dict):
+        return False
+    expected_status = (
+        "not_required"
+        if manifest.get("preWhamSourceValidationEnabled") is False
+        else "cleared"
+    )
+    if clearance.get("status") != expected_status:
+        return False
+    if expected_status == "not_required" and manifest.get(
+        "preWhamSourceValidationExplicitlyDisabled"
+    ) is not True:
+        return False
+    if clearance.get("sourceSelectionClearancePolicyVersion") != SOURCE_SELECTION_CLEARANCE_POLICY_VERSION:
+        return False
+    source_version = clearance.get("sourceSelectionPolicyVersion")
+    if source_policy_version is not None and source_version != source_policy_version:
+        return False
+    if source_policy_version is None and source_version != manifest.get("sourceSelectionPolicyVersion"):
+        return False
+    required_fields = (
+        ("sourceManifestSha256", "selectedSegmentSha256", "sourcePrepReason", "sourceManifestPath", "selectedSegmentPath")
+        if expected_status == "not_required"
+        else (
+            "sourceManifestSha256", "selectedSegmentSha256", "authorizedCandidateId",
+            "sourceManifestPath", "selectedSegmentPath", "sourceCutReviewVideoPath",
+            "sourceCutReviewVideoSha256", "sourceCutOriginalVideoPath",
+            "sourceCutOriginalVideoSha256", "sourceCutReviewFrameEvidenceSha256",
+            "reviewedExerciseName",
+            "exerciseMotionContractSha256",
+        )
+    )
+    if not all(
+        isinstance(clearance.get(key), str) and bool(clearance[key])
+        for key in required_fields
+    ):
+        return False
+    if expected_status == "cleared":
+        exercise_name = str(
+            expected_exercise_name if expected_exercise_name is not None
+            else selected.get("exerciseName") or ""
+        ).strip()
+        if (
+            not exercise_name
+            or str(clearance.get("reviewedExerciseName") or "").strip().casefold()
+            != exercise_name.casefold()
+        ):
+            return False
+        try:
+            if expected_exercise_name is None:
+                ranking = selected.get("ranking") if isinstance(selected.get("ranking"), dict) else {}
+                ranking_payload = ranking.get("payload") if isinstance(ranking.get("payload"), dict) else {}
+                candidate = selected.get("candidate") if isinstance(selected.get("candidate"), dict) else {}
+                contract = ranking_payload.get("exerciseMotionContract") or candidate.get("exerciseMotionContract")
+                expected_contract = contract if isinstance(contract, dict) else None
+            contract_hash = source_contract_clearance_sha256(expected_contract)
+        except (TypeError, ValueError):
+            return False
+        if clearance.get("exerciseMotionContractSha256") != contract_hash:
+            return False
+    try:
+        source_manifest_path = Path(clearance["sourceManifestPath"])
+        selected_segment_path = Path(clearance["selectedSegmentPath"])
+        hashes_current = (
+            content_hash(source_manifest_path) == clearance["sourceManifestSha256"]
+            and content_hash(selected_segment_path) == clearance["selectedSegmentSha256"]
+            and (
+                selected_source_path is None
+                or content_hash(selected_source_path) == clearance["selectedSegmentSha256"]
+            )
+        )
+        if expected_status == "not_required":
+            return hashes_current
+        frame_evidence = clearance.get("sourceCutReviewFrameEvidence")
+        if not isinstance(frame_evidence, dict):
+            return False
+        frame_evidence_sha256 = hashlib.sha256(json.dumps(
+            frame_evidence, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        ).encode("utf-8")).hexdigest()
+        profile = frame_evidence.get("extractionProfile")
+        if not isinstance(profile, dict):
+            return False
+        profile_sha256 = hashlib.sha256(json.dumps(
+            profile, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        ).encode("utf-8")).hexdigest()
+        images = frame_evidence.get("images")
+        if (
+            frame_evidence_sha256 != clearance.get("sourceCutReviewFrameEvidenceSha256")
+            or str(frame_evidence.get("candidateId") or "")
+            != str(clearance.get("authorizedCandidateId") or "")
+            or frame_evidence.get("extractionProfileSha256") != profile_sha256
+            or profile.get("sourceSelectionPolicyVersion") != source_version
+            or not isinstance(images, list)
+            or not images
+            or any(
+                not isinstance(image, dict)
+                or not isinstance(image.get("path"), str)
+                or not isinstance(image.get("sha256"), str)
+                or content_hash(Path(image["path"])) != image["sha256"]
+                for image in images
+            )
+        ):
+            return False
+        return (
+            hashes_current
+            and content_hash(Path(clearance["sourceCutReviewVideoPath"]))
+            == clearance["sourceCutReviewVideoSha256"]
+            and content_hash(Path(clearance["sourceCutOriginalVideoPath"]))
+            == clearance["sourceCutOriginalVideoSha256"]
+        )
+    except OSError:
+        return False
 
 
 def invalidate_retained_acceptance(directory: Path, reason: str) -> None:
@@ -110,6 +248,16 @@ def selected_artifact_identity(
     active_contract = contract if contract is not None else payload.get("exerciseMotionContract") or candidate.get("exerciseMotionContract")
     if active_contract is not None and not isinstance(active_contract, dict):
         return None
+    if not source_selection_clearance_is_current(
+        manifest,
+        source_policy_version=(
+            policies.get("source") if isinstance(policies.get("source"), int) else None
+        ),
+        selected_source_path=sources[0],
+        expected_exercise_name=str(selected.get("exerciseName") or ""),
+        expected_contract=active_contract,
+    ):
+        return None
     # Cache location and elapsed timings are bookkeeping, not requirements.
     active_contract = {k: v for k, v in (active_contract or {}).items()
                        if k not in {"cachePath", "cacheStatus", "generatedAt", "elapsedSeconds"}}
@@ -123,7 +271,7 @@ def selected_artifact_identity(
                 "loopIndex", "loopStartSeconds", "loopEndSeconds", "durationSec",
                 "selectedSectionStartSeconds", "selectedSectionEndSeconds", "settingsOptions",
                 "llmTimeRangeCutApplied", "sourceReviewStartSeconds", "sourceReviewEndSeconds",
-                "artifactClass", "artifactState",
+                "artifactClass", "artifactState", "sourceSelectionClearance",
             )}),
             "policies": policies,
         }

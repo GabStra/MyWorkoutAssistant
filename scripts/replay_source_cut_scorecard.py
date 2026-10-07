@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import replace
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -22,9 +23,13 @@ from exercise_motion_pkg.bake_and_rank import (
     SourceCutCandidate,
     build_source_cut_candidate_batch_choice_prompt,
     build_llama_cpp_vision_settings,
+    invoke_cut_caption_images,
     parse_source_cut_candidate_choice,
+    request_clef_source_cut_scorecard,
+    two_scale_equipment_role_policy,
     two_scale_required_equipment_names,
 )
+from exercise_motion_pkg import clef_systemone
 from exercise_motion_pkg.segment_detection import DetectionWindow
 
 
@@ -124,6 +129,38 @@ def candidate_from_debug(payload: dict[str, Any], *, debug_path: Path) -> Source
     )
 
 
+def request_backend(payload: dict[str, Any]) -> str:
+    request_kwargs = payload.get("requestKwargs")
+    saved_backend = request_kwargs.get("clef_visual_decision_backend") if isinstance(request_kwargs, dict) else None
+    backend = str(saved_backend or "qwen-chat").strip().casefold()
+    if backend not in {"qwen-chat", "clef-systemone"}:
+        raise ValueError(f"Unsupported saved source-cut backend: {backend}")
+    return backend
+
+
+def replay_payload_identity(
+    *, backend: str, candidate: SourceCutCandidate, prompt: str, request_kwargs: dict[str, Any]
+) -> str:
+    image_hashes = [
+        hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in candidate.frame_paths
+    ]
+    identity = {
+        "backend": backend,
+        "prompt": prompt,
+        "requestKwargs": {
+            key: value for key, value in request_kwargs.items()
+            if not key.startswith("clef_visual_decision_")
+        },
+        "imagesSha256": image_hashes,
+    }
+    digest = hashlib.sha256(
+        json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        .encode("utf-8")
+    ).hexdigest()
+    return f"sha256:{digest}"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("debug", nargs="+", type=Path, help="Retained vlm_review_debug.json files")
@@ -159,24 +196,28 @@ def main() -> int:
     required_equipment = ", ".join(
         two_scale_required_equipment_names(exercise_name, contract)
     ) or "none"
+    equipment_policy = two_scale_equipment_role_policy(exercise_name, contract)
     cached = cached_response_map(args.cached_responses)
 
     cases = []
-    pending_live = []
+    pending_live: list[tuple[Path, dict[str, Any], str, str, SourceCutCandidate, str]] = []
     for debug_path in args.debug:
         payload = load_json(debug_path)
         video_id, candidate_id = debug_identity(debug_path, payload)
         candidate = candidate_from_debug(payload, debug_path=debug_path)
+        backend = request_backend(payload)
         cache_key = (video_id.casefold(), candidate_id.casefold())
         raw = cached.get(cache_key)
         if raw is None:
-            pending_live.append((debug_path, payload, video_id, candidate_id, candidate))
+            pending_live.append((debug_path, payload, video_id, candidate_id, candidate, backend))
             continue
-        cases.append((debug_path, payload, video_id, candidate_id, candidate, raw, "cached"))
+        cases.append((debug_path, payload, video_id, candidate_id, candidate, raw, "cached", backend))
 
     settings = None
     vision_session = None
-    if pending_live:
+    pending_qwen = [entry for entry in pending_live if entry[5] == "qwen-chat"]
+    pending_clef = [entry for entry in pending_live if entry[5] == "clef-systemone"]
+    if pending_qwen:
         settings_request = BakeAndRankRequest(
             candidates_json=args.contract.resolve(),
             workspace=REPOSITORY_ROOT / "build" / "exercise_motion",
@@ -186,24 +227,85 @@ def main() -> int:
         settings = build_llama_cpp_vision_settings(settings_request)
         vision_session = LazyLlamaCppVisionSession(settings_request)
 
+    clef_calls = 0
+    qwen_calls = 0
     live_calls = 0
-    live_batches: list[list[tuple[Path, dict[str, Any], str, str, SourceCutCandidate]]] = []
-    for start in range(0, len(pending_live), args.batch_size):
-        batch = pending_live[start : start + args.batch_size]
+    live_batches: list[list[tuple[Path, dict[str, Any], str, str, SourceCutCandidate, str]]] = []
+    for start in range(0, len(pending_qwen), args.batch_size):
+        batch = pending_qwen[start : start + args.batch_size]
         original_ids = [entry[3] for entry in batch]
         if args.batch_size > 1 and len(set(original_ids)) != len(original_ids):
             # Candidate letters repeat across retained videos. Assign unique
             # request-local ids while preserving the original ids in reports.
             batch = [
                 (debug_path, payload, video_id, candidate_id,
-                 replace(candidate, candidate_id=chr(ord("A") + index)))
-                for index, (debug_path, payload, video_id, candidate_id, candidate)
+                 replace(candidate, candidate_id=chr(ord("A") + index)), backend)
+                for index, (debug_path, payload, video_id, candidate_id, candidate, backend)
                 in enumerate(batch)
             ]
         live_batches.append(batch)
     try:
+        if pending_clef:
+            clef_base_urls = {
+                str((entry[1].get("requestKwargs") or {}).get(
+                    "clef_visual_decision_base_url"
+                ) or "http://127.0.0.1:8091")
+                for entry in pending_clef
+            }
+            if len(clef_base_urls) != 1:
+                raise ValueError("One native Clef replay cannot mix managed server endpoints.")
+
+            def replay_clef_requests() -> None:
+                nonlocal clef_calls, live_calls
+                for debug_path, payload, video_id, candidate_id, candidate, backend in pending_clef:
+                    request_kwargs = payload.get("requestKwargs")
+                    prompt_text = payload.get("prompt")
+                    if not isinstance(request_kwargs, dict) or not isinstance(prompt_text, str):
+                        raise ValueError(f"Missing saved Clef request state in {debug_path}")
+                    base_url = str(request_kwargs.get("clef_visual_decision_base_url") or "http://127.0.0.1:8091")
+                    model = str(request_kwargs.get("clef_visual_decision_model") or "ggml-org/Clef-Flash-GGUF:Q4_K_M")
+                    timeout_seconds = request_kwargs.get("clef_visual_decision_timeout_seconds")
+                    if not isinstance(timeout_seconds, (int, float)):
+                        timeout_seconds = request_kwargs.get("request_timeout_seconds")
+                    if not isinstance(timeout_seconds, (int, float)):
+                        timeout_seconds = 90.0
+                    started = time.perf_counter()
+                    raw = request_clef_source_cut_scorecard(
+                        base_url=base_url,
+                        model=model,
+                        candidate=candidate,
+                        prompt=prompt_text,
+                        required_equipment=required_equipment,
+                        equipment_policy=equipment_policy,
+                        timeout_seconds=float(timeout_seconds),
+                    )
+                    elapsed = time.perf_counter() - started
+                    ranking = parse_source_cut_candidate_choice(
+                        raw,
+                        [candidate],
+                        has_contract=True,
+                        exercise_motion_contract=contract,
+                        required_equipment=required_equipment,
+                        require_identity_evidence=True,
+                    )
+                    scorecard = next(
+                        iter((ranking.payload or {}).get("sourceCutScorecardCandidates", [])),
+                        None,
+                    ) if ranking is not None else None
+                    cases.append((
+                        debug_path, payload, video_id, candidate_id, candidate, raw,
+                        "live_clef", elapsed, len(cases), ranking, scorecard, backend,
+                    ))
+                    clef_calls += 1
+                    live_calls += 1
+
+            clef_systemone.run_clef_visual_decision_exclusively(
+                base_url=next(iter(clef_base_urls)),
+                operation=replay_clef_requests,
+            )
+
         for batch_index, batch in enumerate(live_batches):
-            debug_path, payload, _, _, _ = batch[0]
+            debug_path, payload = batch[0][0], batch[0][1]
             request_kwargs = payload.get("requestKwargs")
             if not isinstance(request_kwargs, dict):
                 raise ValueError(f"Missing saved request options in {debug_path}")
@@ -220,13 +322,15 @@ def main() -> int:
                     exercise_motion_contract=contract,
                 )
             request_started = time.perf_counter()
-            raw = vision_session.caption_images(
+            raw = invoke_cut_caption_images(
+                vision_session.caption_images,
                 frame_paths=[path for candidate in candidates for path in candidate.frame_paths],
                 prompt=prompt_text,
-                **request_kwargs,
+                request_kwargs=request_kwargs,
             )
             elapsed = time.perf_counter() - request_started
             live_calls += 1
+            qwen_calls += 1
             ranking = parse_source_cut_candidate_choice(
                 raw,
                 candidates,
@@ -240,7 +344,7 @@ def main() -> int:
                 if ranking is not None
                 else []
             )
-            for case_debug_path, case_payload, video_id, original_candidate_id, candidate in batch:
+            for case_debug_path, case_payload, video_id, original_candidate_id, candidate, case_backend in batch:
                 candidate_scorecard = next(
                     (
                         row for row in batch_scorecards
@@ -262,6 +366,7 @@ def main() -> int:
                     batch_index,
                     ranking,
                     candidate_scorecard,
+                    case_backend,
                 ))
             if (
                 args.simulate_exclusive_between_requests
@@ -277,6 +382,11 @@ def main() -> int:
     rows = []
     for case in cases:
         debug_path, payload, video_id, candidate_id, candidate, raw, response_source, *timing = case
+        backend = (
+            timing.pop()
+            if timing and isinstance(timing[-1], str) and timing[-1] in {"clef-systemone", "qwen-chat"}
+            else request_backend(payload)
+        )
         batch_index = timing[1] if len(timing) >= 4 else None
         ranking = timing[2] if len(timing) >= 4 else None
         scorecard = timing[3] if len(timing) >= 4 else None
@@ -309,6 +419,29 @@ def main() -> int:
                 )
                 if candidate_phase.get(key) is not None
             }
+        prompt = payload.get("prompt")
+        request_kwargs = payload.get("requestKwargs")
+        if not isinstance(request_kwargs, dict):
+            request_kwargs = {}
+        raw_payload = None
+        try:
+            raw_payload = json.loads(raw)
+        except (TypeError, json.JSONDecodeError):
+            pass
+        clef_meta = raw_payload.get("clefSystemOne") if isinstance(raw_payload, dict) else None
+        payload_identity = (
+            clef_meta.get("requestPayloadIdentity")
+            if isinstance(clef_meta, dict)
+            else None
+        )
+        if not isinstance(payload_identity, str) and isinstance(prompt, str):
+            payload_identity = replay_payload_identity(
+                backend=backend,
+                candidate=candidate,
+                prompt=prompt,
+                request_kwargs=request_kwargs,
+            )
+        decisions = clef_meta.get("decisions") if isinstance(clef_meta, dict) else None
         rows.append({
             "debugPath": str(debug_path.resolve()),
             "videoId": video_id,
@@ -318,9 +451,20 @@ def main() -> int:
             "batchIndex": batch_index,
             "batchSize": sum(
                 1 for entry in cases
-                if len(entry) > 8 and entry[8] == batch_index
+                if len(entry) > 8
+                and entry[6] in {"live", "live_batch"}
+                and entry[8] == batch_index
             ) if batch_index is not None else 1,
             "responseSource": response_source,
+            "backend": backend,
+            "model": (
+                str(request_kwargs.get("clef_visual_decision_model"))
+                if backend == "clef-systemone" and request_kwargs.get("clef_visual_decision_model")
+                else str(settings.llama_cpp_model) if backend == "qwen-chat" and settings is not None
+                else "ggml-org/Clef-Flash-GGUF:Q4_K_M" if backend == "clef-systemone"
+                else None
+            ),
+            "requestPayloadIdentity": payload_identity,
             "elapsedSeconds": round(float(timing[0]), 3) if timing else None,
             "parserAccepted": ranking is not None,
             "score": scorecard.get("score") if isinstance(scorecard, dict) else None,
@@ -332,13 +476,34 @@ def main() -> int:
                 else ["source_cut_scorecard_parse_failed"]
             ),
             "candidateVerdict": scorecard,
+            "typedDecisions": decisions if backend == "clef-systemone" else None,
             "rawResponse": raw,
         })
 
+    backend_names = sorted({row["backend"] for row in rows})
+    model_names = sorted({row["model"] for row in rows if row.get("model")})
+    typed_decision_distribution: dict[str, dict[str, int]] = {}
+    for row in rows:
+        decisions = row.get("typedDecisions")
+        if not isinstance(decisions, dict):
+            continue
+        for question, answer in decisions.items():
+            choice = answer.get("choice") if isinstance(answer, dict) else None
+            if choice is None:
+                continue
+            by_choice = typed_decision_distribution.setdefault(str(question), {})
+            choice_key = str(choice)
+            by_choice[choice_key] = by_choice.get(choice_key, 0) + 1
+
     report = {
-        "schema": "source_cut_scorecard_replay_v1",
+        "schema": "source_cut_scorecard_replay_v2",
         "exerciseName": exercise_name,
-        "model": str(settings.llama_cpp_model) if settings is not None else None,
+        "backend": backend_names[0] if len(backend_names) == 1 else "mixed" if backend_names else None,
+        "backends": {
+            "clef-systemone": clef_calls,
+            "qwen-chat": qwen_calls,
+        },
+        "model": model_names[0] if len(model_names) == 1 else "mixed" if model_names else None,
         "modelCalls": live_calls,
         "candidateCount": len(cases),
         "requestCount": live_calls,
@@ -349,9 +514,10 @@ def main() -> int:
         "serverStartupSeconds": vision_timing.get("visionRankerStartupSeconds", 0.0),
         "visionSessionTiming": vision_timing,
         "simulatedExclusiveBoundaries": (
-            max(0, live_calls - 1) if args.simulate_exclusive_between_requests else 0
+            max(0, qwen_calls - 1) if args.simulate_exclusive_between_requests else 0
         ),
         "requiredEquipment": required_equipment,
+        "typedDecisionDistribution": typed_decision_distribution,
         "cases": rows,
     }
     rendered = json.dumps(report, indent=2, ensure_ascii=False)

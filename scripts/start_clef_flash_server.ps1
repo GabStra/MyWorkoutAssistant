@@ -5,8 +5,8 @@ param(
     [string]$MmprojFile = "mmproj-Clef-Flash-BF16.gguf",
     [int]$Port = 8091,
     [int]$ContextSize = 8192,
-    [int]$BatchSize = 3072,
-    [int]$UBatchSize = 3072,
+    [int]$BatchSize = 8192,
+    [int]$UBatchSize = 8192,
     [int]$GpuLayers = 99
 )
 

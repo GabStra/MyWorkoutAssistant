@@ -1552,7 +1552,7 @@ def extract_workout_plan_exercises(
                 return None
             summary = {
                 key: record.get(key)
-                for key in ("id", "type", "name")
+                for key in ("id", "type", "name", "capabilities")
                 if record.get(key) is not None
             }
             return summary or None
@@ -1569,7 +1569,42 @@ def extract_workout_plan_exercises(
                 if (summary := equipment_summary(equipment_by_id.get(accessory_id))) is not None
             ],
         }
+        for equipment_key in ("primaryEquipment", "requiredAccessories"):
+            derived_value = derived_context[equipment_key]
+            existing_value = context.get(equipment_key)
+            if equipment_key == "primaryEquipment":
+                if isinstance(derived_value, dict):
+                    existing_record = existing_value if isinstance(existing_value, dict) else {}
+                    context[equipment_key] = {**existing_record, **derived_value}
+            elif isinstance(derived_value, list):
+                existing_records = existing_value if isinstance(existing_value, list) else []
+                merged_records: list[dict[str, Any]] = []
+                used_existing: set[int] = set()
+                for derived_record in derived_value:
+                    derived_id = str(derived_record.get("id") or "").strip()
+                    match_index = next((
+                        index for index, existing_record in enumerate(existing_records)
+                        if isinstance(existing_record, dict)
+                        and index not in used_existing
+                        and derived_id
+                        and str(existing_record.get("id") or "").strip() == derived_id
+                    ), None)
+                    existing_record = (
+                        existing_records[match_index]
+                        if match_index is not None and isinstance(existing_records[match_index], dict)
+                        else {}
+                    )
+                    if match_index is not None:
+                        used_existing.add(match_index)
+                    merged_records.append({**existing_record, **derived_record})
+                merged_records.extend(
+                    record for index, record in enumerate(existing_records)
+                    if index not in used_existing and isinstance(record, dict)
+                )
+                context[equipment_key] = merged_records
         for key, value in derived_context.items():
+            if key in {"primaryEquipment", "requiredAccessories"}:
+                continue
             if value not in (None, [], {}) and key not in context:
                 context[key] = value
         return {key: value for key, value in context.items() if value not in (None, [], {})}
@@ -4362,11 +4397,22 @@ def build_exercise_motion_contract_prompt(exercise: ExerciseEntry) -> str:
         and str(accessory.get("name") or accessory.get("type") or "").strip()
     ] if isinstance(required_accessories, list) else []
     required_accessories_line = (
-        "Required accessories that the described movement must use: "
+        "Required accessories that must serve their authoritative roles at the appropriate phase: "
         + ", ".join(required_accessory_names)
         if required_accessory_names
         else "Required accessories: none specified"
     )
+    rack_support_accessories = [
+        str(accessory.get("name") or accessory.get("type") or "").strip()
+        for accessory in required_accessories
+        if isinstance(accessory, dict)
+        and isinstance(accessory.get("capabilities"), list)
+        and "RACKED_BAR_SUPPORT" in {
+            str(capability).strip().upper()
+            for capability in accessory.get("capabilities", [])
+        }
+        and str(accessory.get("name") or accessory.get("type") or "").strip()
+    ] if isinstance(required_accessories, list) else []
     required_context_names = [
         name
         for name in (primary_equipment_name, *required_accessory_names)
@@ -4427,7 +4473,8 @@ def build_exercise_motion_contract_prompt(exercise: ExerciseEntry) -> str:
         "Return one top-level contract object. Do not put the JSON inside advisoryText, guidance, contract, or another string; "
         "those are not output keys. validStartState and validEndState must describe the actual body posture in ordinary "
         "anatomical prose. Do not write schema labels such as supportMode, handHeight, torsoOrientation, kneeState, or "
-        "stance into either state description.\n"
+        "stance into either state description. validStartState and validEndState must be strings, and requiredPhases "
+        "must be an array of strings. Do not return objects or structured metadata for these fields.\n"
         "Use exactly these keys: movementType, groundContactMode, implementSupportMode, handRelationship, completionMode, requiresReturnToStart, validStartState, validEndState, startPoseConstraints, endPoseConstraints, requiredPhases, singleExecutionDurationSeconds, "
         "primaryMovingRegions, referenceRegions, primaryAxis, motionPattern, mustBeVisibleRegions, excludedSetupOrCleanup.\n"
         "movementType must be one of: repetition, cyclic, hold, carry, transition_sequence, unknown.\n"
@@ -4470,8 +4517,13 @@ def build_exercise_motion_contract_prompt(exercise: ExerciseEntry) -> str:
         "anchored while the distal limb rotates. Flexion closes the joint angle and extension opens it; do not describe "
         "a lowering phase as extension when it visibly closes the elbow or knee angle.\n"
         "Equipment and accessory context is part of the exact movement identity. Use it to distinguish seated, standing, supported, machine, and other adjacent variants, but do not invent a qualifier unsupported by the context. "
-        "Every item in requiredAccessories is required by this exercise definition, not optional background context. The described posture and phases must actually use each required accessory; do not choose a same-named movement variant that does not use it.\n"
-        "A required accessory may be held, anchored, or used to support the body. Do not infer suspension, hanging, or a body-support posture from the accessory name alone. Determine its role from the normal execution of the named exercise; if that role or posture is not established, use supportMode any and avoid adding a posture requirement.\n"
+        "Every item in requiredAccessories remains required by this exercise definition, not optional background context. Use its explicit capability or authoritative equipment-record role, and require it to serve that role at the appropriate phase of normal execution; do not choose a same-named movement variant that omits it.\n"
+        + (
+            f"RACKED_BAR_SUPPORT accessories ({', '.join(rack_support_accessories)}) support a loaded bar at its required setup/start/end height. Preserve that as a required setup or endpoint-support role, but do not require rack contact during the repetition. Do not add setup, unracking, reracking, or fixture contact as required exercise action phases unless the named exercise explicitly includes those actions.\n"
+            if rack_support_accessories
+            else "Do not turn required accessory setup, attachment, or storage into an exercise action phase unless the named exercise explicitly includes that action.\n"
+        )
+        + "A required accessory may be held, anchored, or used to support the body according to its authoritative role. Do not infer suspension, hanging, or a body-support posture from the accessory name alone. If its role or posture is not established, use supportMode any and avoid adding an unsupported posture requirement.\n"
     )
 
 
@@ -4661,6 +4713,7 @@ def generate_exercise_motion_contract_with_ranker(
                 1.0,
                 float(settings.llama_cpp_request_timeout_seconds),
             )
+        raw: Any = None
         try:
             raw = ranker.client.caption_images(**caption_kwargs)
             contract = normalize_exercise_motion_contract_response(raw, exercise=exercise, source="llm")
@@ -4707,6 +4760,7 @@ def generate_exercise_motion_contract_with_ranker(
                         exercise=exercise,
                     ),
                     "contract": exercise_motion_contract_for_prompt(contract),
+                    "rawResponse": exercise_motion_contract_raw_response_for_diagnostics(raw),
                 }
             )
             repair_draft = contract
@@ -4721,6 +4775,13 @@ def generate_exercise_motion_contract_with_ranker(
                 )
                 raise
             failed_attempts.append(f"{attempt_mode}: {truncate_text(str(exc), 240)}")
+            rejected_drafts.append(
+                {
+                    "generationMode": attempt_mode,
+                    "validationIssues": [truncate_text(str(exc), 240)],
+                    "rawResponse": exercise_motion_contract_raw_response_for_diagnostics(raw),
+                }
+            )
 
     if usable_draft is not None:
         if critic_issues:
@@ -4890,6 +4951,7 @@ def normalize_exercise_motion_contract(
         "support_mode_correction", "source_observed_completion_boundary"
     }:
         raise ValueError("Candidate observations cannot define the requested exercise contract.")
+    validate_contract_text_shapes(payload)
     if exercise.motion_context and not isinstance(payload.get("motionContext"), dict):
         payload = {**payload, "motionContext": exercise.motion_context}
     structured_fields = normalized_exercise_motion_contract_fields(payload)
@@ -5301,7 +5363,10 @@ def normalized_exercise_motion_contract_fields(payload: dict[str, Any]) -> dict[
         "boundaryRule": ("boundaryRule", "boundary"),
     }
     for output_key, aliases in string_fields.items():
-        text = cleaned_contract_string(first_contract_value(payload, *aliases), 280)
+        text = cleaned_contract_string(
+            explicit_contract_text_value(first_contract_value(payload, *aliases)),
+            280,
+        )
         if text:
             fields[output_key] = text
     if requires_return is True and isinstance(fields.get("validStartState"), str):
@@ -5420,7 +5485,7 @@ def normalized_exercise_motion_contract_fields(payload: dict[str, Any]) -> dict[
     return fields
 
 
-EXERCISE_MOTION_CONTRACT_POLICY_VERSION = 29
+EXERCISE_MOTION_CONTRACT_POLICY_VERSION = 30
 EXERCISE_MOTION_CONTRACT_CACHE_VERSION = 14
 
 
@@ -5659,6 +5724,7 @@ def prefetch_exercise_motion_contracts(
             "status": "reused",
             "cachePath": cached.get("cachePath"),
             "generationElapsedSeconds": cached.get("generationElapsedSeconds"),
+            "sourceSelectionContractSha256": exercise_motion_contract_prompt_sha256(cached),
         }
         results_by_id[exercise.exercise_id] = result
         completed += 1
@@ -5695,6 +5761,11 @@ def prefetch_exercise_motion_contracts(
                     "status": "generated" if cache_path is not None else "failed",
                     "cachePath": str(cache_path) if cache_path is not None else None,
                     "generationElapsedSeconds": contract.get("generationElapsedSeconds"),
+                    "sourceSelectionContractSha256": (
+                        exercise_motion_contract_prompt_sha256(contract)
+                        if cache_path is not None
+                        else None
+                    ),
                     "error": (
                         exercise_motion_contract_unusable_reason(contract)
                         if cache_path is None
@@ -5806,6 +5877,54 @@ def cleaned_contract_string(value: Any, limit: int) -> str:
     return truncate_text(text, limit) or ""
 
 
+def explicit_contract_text_value(value: Any) -> str | None:
+    """Read prose only from a string or an explicitly named label/description."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        for key in ("label", "description"):
+            text = value.get(key)
+            if isinstance(text, str) and text.strip():
+                return text
+    return None
+
+
+def validate_contract_text_shapes(payload: dict[str, Any]) -> None:
+    for field, aliases in {
+        "validStartState": ("validStartState", "requiredStartPosture", "startState"),
+        "validEndState": ("validEndState", "requiredEndPosture", "endState", "finishState"),
+    }.items():
+        value = first_contract_value(payload, *aliases)
+        if value is not None and explicit_contract_text_value(value) is None:
+            raise ValueError(
+                f"{field} must be a string or an object with a string label or description."
+            )
+
+    phases = first_contract_value(payload, "requiredPhases", "phases", "completePhases")
+    if phases is None or isinstance(phases, str):
+        return
+    if not isinstance(phases, list):
+        raise ValueError("requiredPhases must be a string or an array of strings or labeled descriptions.")
+    for index, phase in enumerate(phases):
+        if explicit_contract_text_value(phase) is None:
+            raise ValueError(
+                f"requiredPhases[{index}] must be a string or an object with a string label or description."
+            )
+
+
+def exercise_motion_contract_raw_response_for_diagnostics(raw: Any) -> str | None:
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        text = raw
+    else:
+        try:
+            text = json.dumps(raw, ensure_ascii=False, default=str)
+        except Exception:
+            text = str(raw)
+    return truncate_text(text, 12000)
+
+
 def readable_contract_value(value: Any) -> str:
     if isinstance(value, dict):
         parts = []
@@ -5889,7 +6008,12 @@ def truncate_contract_phase_label(value: str, limit: int) -> str:
 def normalize_required_phase_labels(value: Any) -> list[str]:
     """Recover concise phase labels from common small-model schema leakage."""
     normalized: list[str] = []
-    for raw_phase in cleaned_contract_string_list(value, limit=8, item_limit=360):
+    raw_phases = [value] if isinstance(value, str) else value if isinstance(value, list) else []
+    for item in raw_phases[:8]:
+        raw_phase = explicit_contract_text_value(item)
+        if raw_phase is None:
+            continue
+        raw_phase = cleaned_contract_string(raw_phase, 360)
         phase = raw_phase.strip()
         description_match = re.search(
             r"(?:^|\b)description\s*:\s*(.+)$", phase, flags=re.IGNORECASE
@@ -6211,6 +6335,19 @@ def exercise_motion_contract_for_prompt(contract: dict[str, Any] | None) -> dict
             continue
         prompt_contract[key] = value
     return prompt_contract
+
+
+def exercise_motion_contract_prompt_sha256(contract: dict[str, Any] | None) -> str:
+    """Hash the normalized contract identity used by source-selection clearance."""
+    prompt_contract = exercise_motion_contract_for_prompt(contract)
+    encoded = json.dumps(
+        prompt_contract,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def exercise_motion_contract_prompt_body(prompt_contract: dict[str, Any]) -> str:

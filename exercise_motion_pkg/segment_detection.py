@@ -4,12 +4,13 @@ import base64
 import json
 import logging
 import re
+import shutil
 import subprocess
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -43,7 +44,7 @@ LOGGER = logging.getLogger(__name__)
 class DetectionSettings:
     base_url: str = "http://127.0.0.1:8090"
     model: str = "local-vision"
-    visual_decision_backend: str = "clef-systemone"
+    visual_decision_backend: str = "qwen-chat"
     clef_systemone_base_url: str = "http://127.0.0.1:8091"
     clef_systemone_model: str = "ggml-org/Clef-Flash-GGUF:Q4_K_M"
     clef_gpu_exclusive_runner: Callable[[Callable[[], object]], object] | None = field(
@@ -533,7 +534,7 @@ def classify_support_dominance_from_frames(
     frame_paths: list[Path],
     exercise_name: str | None,
     caption_images: Callable[[list[Path], str], str] | None,
-    visual_decision_backend: str = "clef-systemone",
+    visual_decision_backend: str = "qwen-chat",
     clef_systemone_base_url: str = "http://127.0.0.1:8091",
     clef_systemone_model: str = "ggml-org/Clef-Flash-GGUF:Q4_K_M",
     clef_conflicting_base_urls: tuple[str | None, ...] = (),
@@ -584,7 +585,9 @@ def classify_support_dominance_from_frames(
         ),
         exercise_name=exercise_name,
     )
-    return payload
+    model_output = dict(payload.model_output or {})
+    model_output["backend"] = "qwen_chat"
+    return replace(payload, model_output=model_output)
 
 
 
@@ -1239,6 +1242,7 @@ def extract_window_frames(
     contact_sheet_jpeg_quality: int = 90,
     contact_sheet_sequence_labels: bool = False,
     contact_sheet_crop_empty_borders: bool = False,
+    native_frame_lookup: dict[str, Path] | None = None,
     output_dir: Path,
 ) -> list[Path]:
     try:
@@ -1251,12 +1255,24 @@ def extract_window_frames(
     output_dir.mkdir(parents=True, exist_ok=True)
     times = linspace_times(window.start_seconds, window.end_seconds, max(1, frames_per_window))
     ffmpeg_available = resolve_ffmpeg_path() is not None
-    frame_paths = extract_window_frames_with_ffmpeg(
-        video_path=video_path,
-        times=times,
-        max_frame_width=max_frame_width,
-        output_dir=output_dir,
+    cached_native_paths = (
+        [native_frame_lookup.get(f"{timestamp_seconds:.3f}") for timestamp_seconds in times]
+        if native_frame_lookup is not None
+        else []
     )
+    frame_paths: list[Path] = []
+    if cached_native_paths and all(path is not None and path.is_file() for path in cached_native_paths):
+        for frame_index, cached_path in enumerate(cached_native_paths, start=1):
+            frame_path = output_dir / f"frame_{frame_index:02d}.jpg"
+            shutil.copyfile(cached_path, frame_path)
+            frame_paths.append(frame_path)
+    else:
+        frame_paths = extract_window_frames_with_ffmpeg(
+            video_path=video_path,
+            times=times,
+            max_frame_width=max_frame_width,
+            output_dir=output_dir,
+        )
     if not frame_paths and not ffmpeg_available:
         capture = cv2.VideoCapture(str(video_path))
         if not capture.isOpened():

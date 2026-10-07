@@ -18,7 +18,7 @@ import httpx
 
 from .gpu_lock import GlobalGpuLock
 
-CLEF_FINAL_REVIEW_POLICY_VERSION = "clef-final-preview-review-v1"
+CLEF_FINAL_REVIEW_POLICY_VERSION = "clef-final-preview-review-v2"
 CLEF_FINAL_REVIEW_FINDING_THRESHOLD = 0.80
 CLEF_VISUAL_DECISION_POLICY_VERSION = "clef-visual-decisions-v1"
 CLEF_WINDOW_SELECTION_CONFIDENCE_THRESHOLD = 0.50
@@ -27,12 +27,26 @@ CLEF_ENDPOINT_OBSERVATION_CONFIDENCE_THRESHOLD = 0.20
 
 _MANAGED_SERVER_LOCK = threading.Lock()
 _MANAGED_SERVER_STARTUP_TIMEOUT_SECONDS = 180.0
-_CLEF_SERVER_BATCH_SIZE = 3072
-_CLEF_SERVER_UBATCH_SIZE = 3072
+_CLEF_SERVER_CONTEXT_SIZE = 8192
 _ACTIVE_MANAGED_CLEF_ENDPOINT: ContextVar[tuple[str, int] | None] = ContextVar(
     "active_managed_clef_endpoint",
     default=None,
 )
+
+
+def managed_clef_server_profile() -> dict[str, int | str]:
+    """Return the validated host profile used by the managed Clef server."""
+    gpu_layers_raw = os.environ.get("EXERCISE_MOTION_CLEF_GPU_LAYERS", "99")
+    if not gpu_layers_raw.isascii() or not gpu_layers_raw.isdecimal():
+        raise ValueError("EXERCISE_MOTION_CLEF_GPU_LAYERS must be a nonnegative decimal integer.")
+    gpu_layers = int(gpu_layers_raw)
+    if gpu_layers > 2_147_483_647:
+        raise ValueError("EXERCISE_MOTION_CLEF_GPU_LAYERS exceeds the supported integer range.")
+
+    flash_attention = os.environ.get("EXERCISE_MOTION_CLEF_FLASH_ATTN", "auto").strip().lower()
+    if flash_attention not in {"on", "off", "auto"}:
+        raise ValueError("EXERCISE_MOTION_CLEF_FLASH_ATTN must be on, off, or auto.")
+    return {"gpuLayers": gpu_layers, "flashAttention": flash_attention}
 
 _FINAL_REVIEW_QUESTIONS: dict[str, dict[str, Any]] = {
     "subject_readable": {
@@ -575,17 +589,20 @@ def _run_with_managed_clef_server(
         with GlobalGpuLock(stage="clef_flash_systemone"):
             require_endpoints_available()
             server_exe, model_path, mmproj_path = _managed_runtime_files()
+            server_profile = managed_clef_server_profile()
             server_args = [
                 str(server_exe),
                 "-m", str(model_path),
                 "--mmproj", str(mmproj_path),
                 "--host", "127.0.0.1",
                 "--port", str(endpoint[1]),
-                "--ctx-size", "4096",
+                "--ctx-size", str(_CLEF_SERVER_CONTEXT_SIZE),
                 "--parallel", "1",
-                "--batch-size", str(_CLEF_SERVER_BATCH_SIZE),
-                "--ubatch-size", str(_CLEF_SERVER_UBATCH_SIZE),
-                "--n-gpu-layers", "99",
+                "--batch-size", str(_CLEF_SERVER_CONTEXT_SIZE),
+                "--ubatch-size", str(_CLEF_SERVER_CONTEXT_SIZE),
+                # Keep host calibration separate from the model's context capacity.
+                "--n-gpu-layers", str(server_profile["gpuLayers"]),
+                "--flash-attn", str(server_profile["flashAttention"]),
                 "--image-min-tokens", "1024",
                 "--image-max-tokens", "1024",
                 "--mtmd-batch-max-tokens", "1024",

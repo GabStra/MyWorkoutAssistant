@@ -23,6 +23,12 @@ from exercise_motion_pkg.artifact_state import (
     validate_artifact_state,
 )
 from exercise_motion_pkg.review_window import validate_final_output_review_window
+from exercise_motion_pkg.acceptance import source_selection_clearance_is_current
+from exercise_motion_pkg.bake_and_rank import (
+    SOURCE_SELECTION_POLICY_VERSION,
+    source_selection_clearance_for_workspace,
+)
+from exercise_motion_pkg.youtube import EXERCISE_MOTION_CONTRACT_POLICY_VERSION
 
 
 MOVEMENT_FORMAT = "wear_skeleton_json_v1"
@@ -261,6 +267,72 @@ def validate_selected_movement(
     if selected.get("artifactState") != movement_state:
         raise ValueError(
             f"Selected skeleton artifact state differs from its selection manifest: {selected_path}"
+        )
+
+    source_workspace_value = selected.get("sourceCandidateWorkspace")
+    if source_workspace_value:
+        source_workspace = Path(str(source_workspace_value))
+        if not source_workspace.is_absolute():
+            source_workspace = manifest_path.parent / source_workspace
+    else:
+        source_workspace = Path(str(selected.get("candidateWorkspace") or ""))
+    source_required = selection_manifest.get("preWhamSourceValidationEnabled") is not False
+    source_explicitly_disabled = selection_manifest.get(
+        "preWhamSourceValidationExplicitlyDisabled"
+    ) is True
+    selected_exercise_name = str(selected.get("exerciseName") or "").strip()
+    if not selected_exercise_name:
+        raise ValueError(
+            f"Selection manifest has no exercise identity for source-selection clearance: {manifest_path}"
+        )
+    selected_candidate = selected.get("candidate") if isinstance(selected.get("candidate"), dict) else {}
+    selected_ranking = selected.get("ranking") if isinstance(selected.get("ranking"), dict) else {}
+    selected_ranking_payload = selected_ranking.get("payload") if isinstance(selected_ranking.get("payload"), dict) else {}
+    selected_contract = selected_ranking_payload.get("exerciseMotionContract")
+    if selected_contract is None:
+        selected_contract = selected_candidate.get("exerciseMotionContract")
+    if selected_contract is not None and (
+        not isinstance(selected_contract, dict)
+        or selected_contract.get("contractPolicyVersion")
+        != EXERCISE_MOTION_CONTRACT_POLICY_VERSION
+    ):
+        observed_policy_version = (
+            selected_contract.get("contractPolicyVersion")
+            if isinstance(selected_contract, dict)
+            else None
+        )
+        raise ValueError(
+            "Selected exercise motion contract policy version "
+            f"{observed_policy_version!r} is not current "
+            f"(expected {EXERCISE_MOTION_CONTRACT_POLICY_VERSION})"
+        )
+    clearance = selected.get("sourceSelectionClearance")
+    selected_source_value = selected.get("selectedInputVideoPath")
+    selected_source_path = Path(str(selected_source_value)) if selected_source_value else None
+    if selected_source_path is not None and not selected_source_path.is_absolute():
+        selected_source_path = manifest_path.parent / selected_source_path
+    current_clearance = source_selection_clearance_for_workspace(
+        source_workspace,
+        required=source_required,
+        explicitly_disabled=source_explicitly_disabled,
+        expected_exercise_name=selected_exercise_name,
+        expected_contract=selected_contract if isinstance(selected_contract, dict) else None,
+    )
+    if (
+        not isinstance(clearance, dict)
+        or clearance.get("status") != "cleared"
+        or not source_selection_clearance_is_current(
+            selection_manifest,
+            source_policy_version=SOURCE_SELECTION_POLICY_VERSION,
+            selected_source_path=selected_source_path,
+            expected_exercise_name=selected_exercise_name,
+            expected_contract=selected_contract if isinstance(selected_contract, dict) else None,
+        )
+        or not isinstance(clearance, dict)
+        or clearance != current_clearance
+    ):
+        raise ValueError(
+            f"Selection manifest has no current source-selection clearance: {manifest_path}"
         )
 
     render_evidence = successful_final_validation(selected, movement_state["artifactClass"])

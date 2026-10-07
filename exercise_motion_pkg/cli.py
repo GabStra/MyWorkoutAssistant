@@ -328,8 +328,8 @@ def build_parser() -> argparse.ArgumentParser:
     detect.add_argument(
         "--visual-decision-backend",
         choices=("qwen-chat", "clef-systemone"),
-        default="clef-systemone",
-        help="Backend for the optional comparative candidate-window choice.",
+        default="qwen-chat",
+        help="Backend for the optional comparative candidate-window choice. Clef can be selected explicitly.",
     )
     detect.add_argument("--clef-systemone-base-url", default="http://127.0.0.1:8091")
     detect.add_argument("--clef-systemone-model", default="ggml-org/Clef-Flash-GGUF:Q4_K_M")
@@ -973,17 +973,16 @@ def build_parser() -> argparse.ArgumentParser:
     bake_and_rank.add_argument(
         "--visual-decision-backend",
         choices=("qwen-chat", "clef-systemone"),
-        default="clef-systemone",
+        default="qwen-chat",
         help=(
-            "Backend for bounded source and support decisions outside final preview review. "
-            "Qwen remains responsible for free-form reasoning, scorecards, and exact timing."
+            "Backend for source and support visual reviews. Clef can be selected explicitly for an experiment."
         ),
     )
     bake_and_rank.add_argument(
         "--final-output-review-backend",
         choices=("qwen-chat", "clef-systemone"),
-        default="clef-systemone",
-        help="Backend for the advisory review of the final rendered preview.",
+        default="qwen-chat",
+        help="Backend for the advisory review of the final rendered preview. Clef can be selected explicitly.",
     )
     bake_and_rank.add_argument(
         "--clef-systemone-base-url",
@@ -1376,6 +1375,9 @@ def build_bake_and_rank_request(args: argparse.Namespace) -> BakeAndRankRequest:
         "pre_wham_source_validation": (
             args.pre_wham_source_validation and not args.skip_pre_wham_source_validation
         ),
+        "pre_wham_source_validation_explicitly_disabled": bool(
+            args.skip_pre_wham_source_validation
+        ),
         "exercise_motion_contract_enabled": not args.no_exercise_motion_contract,
         "final_output_validation": (
             args.final_output_validation and not args.skip_final_output_validation
@@ -1417,7 +1419,7 @@ def run_staged_bake_wave_manifest(
             raise ValueError(
                 f"Staged-wave manifest item at index {index} must be an object"
             )
-        for path_key in ("candidatesJson", "workspace"):
+        for path_key in ("candidatesJson", "workspace", "exercisePlanJson"):
             path_value = item_payload.get(path_key)
             if not isinstance(path_value, str) or not path_value.strip():
                 raise ValueError(
@@ -1435,6 +1437,21 @@ def run_staged_bake_wave_manifest(
         item_workspace = Path(str(item_payload["workspace"])).expanduser().resolve()
         exercise_id = str(item_payload.get("exerciseId") or f"exercise-{index + 1}")
         exercise_name = str(item_payload.get("exerciseName") or exercise_id)
+        exercise_plan_path = Path(str(item_payload["exercisePlanJson"])).expanduser().resolve()
+        plan_exercises = load_workout_plan_exercises(exercise_plan_path)
+        if len(plan_exercises) != 1:
+            raise ValueError(
+                f"Staged-wave exercise plan at index {index} must resolve to exactly one exercise"
+            )
+        plan_exercise = plan_exercises[0]
+        if (
+            plan_exercise.exercise_id != exercise_id
+            or plan_exercise.name.strip().casefold() != exercise_name.strip().casefold()
+        ):
+            raise ValueError(
+                f"Staged-wave exercise plan at index {index} does not match "
+                f"exercise '{exercise_id}' / '{exercise_name}'"
+            )
         wave_items.append(
             StagedWaveItem(
                 exercise_id=exercise_id,
@@ -1444,6 +1461,7 @@ def run_staged_bake_wave_manifest(
                     request,
                     candidates_json=candidates_json,
                     workspace=item_workspace,
+                    authoritative_exercise_motion_context=plan_exercise.motion_context,
                 ),
             )
         )

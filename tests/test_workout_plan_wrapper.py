@@ -294,6 +294,7 @@ def write_fake_motion_cli(tmp_path: Path) -> tuple[Path, Path]:
                             "slug": slugify(exercise_id),
                             "sourceExerciseName": name,
                             "equipmentQualifiedExerciseName": name,
+                            **({"motionContext": item["motionContext"]} if "motionContext" in item else {}),
                         }
                     )
                 out_json.parent.mkdir(parents=True, exist_ok=True)
@@ -2316,6 +2317,91 @@ def test_workout_plan_wrapper_avoids_cuda_discovery_overlap_with_bake_by_default
         assert "installed prepared candidates; skipping discovery and source download" in (
             exercise_workspace / "bake.log"
         ).read_text(encoding="utf-8")
+
+
+@pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None, reason="PowerShell wrapper test requires Windows pwsh")
+def test_prepared_candidates_do_not_fall_back_to_live_discovery_after_rejection(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    workspace = tmp_path / "workspace"
+    wham_repo = tmp_path / "WHAM"
+    body_models = wham_repo / "dataset" / "body_models"
+    body_models.mkdir(parents=True)
+    workout_plan = write_workout_plan(tmp_path, exercise_count=1)
+    plan_payload = json.loads(workout_plan.read_text(encoding="utf-8"))
+    current_motion_context = {
+        "exerciseType": "Strength",
+        "primaryEquipment": {
+            "id": "barbell-1",
+            "type": "barbell",
+            "name": "Barbell",
+            "capabilities": ["loadable_plates"],
+        },
+    }
+    plan_payload["exercises"][0]["motionContext"] = current_motion_context
+    workout_plan.write_text(json.dumps(plan_payload), encoding="utf-8")
+    fake_cli, fake_cmd = write_fake_motion_cli(tmp_path)
+    prepared_candidates_manifest = write_prepared_candidates_manifest(
+        tmp_path,
+        fake_cli,
+        workout_plan,
+    )
+    command_log = tmp_path / "commands.log"
+    env = os.environ.copy()
+    env["FAKE_MOTION_CLI_LOG"] = str(command_log)
+    env["FAKE_MOTION_MANUAL_REVIEW"] = "1"
+
+    result = subprocess.run(
+        [
+            "pwsh",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(repo_root / "scripts" / "run_exercise_motion_workout_plan.ps1"),
+            "-AllowDirtyWorktree",
+            "-WorkoutPlanJson",
+            str(workout_plan),
+            "-WorkspaceRoot",
+            str(workspace),
+            "-WhamRepoPath",
+            str(wham_repo),
+            "-BodyModelRoot",
+            str(body_models),
+            "-PythonCommand",
+            str(fake_cmd),
+            "-PreparedCandidatesManifest",
+            str(prepared_candidates_manifest),
+            "-StagedWaveSize",
+            "1",
+            "-ProgressIntervalSeconds",
+            "1",
+            "-NoWhamDocker",
+            "-SkipVisionRanking",
+            "-SkipSemanticGate",
+            "-SkipLlamaCppQueryPlanner",
+            "-SkipPreWhamSourceValidation",
+            "-SkipFinalOutputValidation",
+        ],
+        cwd=repo_root,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=60,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    commands = command_log.read_text(encoding="utf-8").splitlines()
+    assert "bake-and-rank" in commands
+    assert "find-youtube-videos" not in commands
+    summary = json.loads((workspace / "workout_motion_generation_summary.json").read_text(encoding="utf-8"))
+    assert summary["exercises"][0]["status"] == "no_selection"
+    wave_manifests = list((workspace / "staged-waves").glob("*/wave_manifest.json"))
+    assert len(wave_manifests) == 1
+    wave_item = json.loads(wave_manifests[0].read_text(encoding="utf-8"))["items"][0]
+    exercise_plan_path = Path(wave_item["exercisePlanJson"])
+    exercise_plan = json.loads(exercise_plan_path.read_text(encoding="utf-8"))
+    assert exercise_plan["exercises"][0]["motionContext"] == current_motion_context
 
 
 @pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None, reason="PowerShell wrapper test requires Windows pwsh")

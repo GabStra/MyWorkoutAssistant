@@ -16,6 +16,7 @@ from exercise_motion_pkg.review_window import (
     frame_timestamps_for_indices,
     sample_review_frame_indices,
 )
+from exercise_motion_pkg import bake_and_rank as bake
 
 
 SCRIPT_PATH = Path(__file__).parents[1] / "scripts" / "build_workout_plan_movement_package.py"
@@ -28,6 +29,77 @@ SPEC.loader.exec_module(BUILDER)
 def write_reviewed_movement(movement_path: Path, manifest_path: Path) -> dict:
     movement_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    source_workspace = movement_path.parent / "source_candidate"
+    segment_dir = source_workspace / "segment_detection"
+    segment_dir.mkdir(parents=True, exist_ok=True)
+    source_segment_path = movement_path.parent / "selected_input.mp4"
+    source_segment_path.write_bytes(b"retained source segment")
+    contact_sheet_path = segment_dir / "source_review_contact_sheet.jpg"
+    sample_first_path = segment_dir / "source_review_first.jpg"
+    sample_last_path = segment_dir / "source_review_last.jpg"
+    contact_sheet_path.write_bytes(b"review contact sheet")
+    sample_first_path.write_bytes(b"first sampled frame")
+    sample_last_path.write_bytes(b"last sampled frame")
+    review_candidate = bake.SourceCutCandidate(
+        "A", bake.DetectionWindow(0, 0.0, 8.0), [contact_sheet_path],
+        sample_frame_paths=[sample_first_path, sample_last_path],
+    )
+    candidate = bake.source_cut_candidates_payload([review_candidate])[0]
+    frame_evidence = bake.source_cut_review_frame_evidence(
+        [review_candidate], source_frame_count=8,
+    )
+    scorecard = {
+        "id": "A", "passed": True, "score": 0.9, "confidence": 0.9,
+        "identityMatch": "match", "rejectionReasons": [],
+    }
+    source_ranking = bake.ranking_to_manifest(bake.LoopRanking(
+        score=0.9,
+        reasons=[],
+        raw_response="reviewed source cut",
+        payload={
+            "sourceCutScorecardBackend": "clef-systemone",
+            "sourceCutReviewVideoPath": str(source_segment_path.resolve()),
+            "sourceCutReviewVideoSha256": hashlib.sha256(source_segment_path.read_bytes()).hexdigest(),
+            "sourceCutReviewVideoSha256After": hashlib.sha256(source_segment_path.read_bytes()).hexdigest(),
+            "sourceCutOriginalVideoPath": str(source_segment_path.resolve()),
+            "sourceCutOriginalVideoSha256": hashlib.sha256(source_segment_path.read_bytes()).hexdigest(),
+            "sourceCutOriginalVideoSha256After": hashlib.sha256(source_segment_path.read_bytes()).hexdigest(),
+            "sourceCutCandidates": [candidate],
+            "sourceCutReviewFrameInputs": frame_evidence,
+            "sourceCutReviewFrameInputsAfter": frame_evidence,
+            "sourceCutScorecardCandidates": [scorecard],
+            "selectedCandidateId": "A",
+            "selectedScorecard": scorecard,
+        },
+    ))
+    source_manifest = {
+        "sourceSelectionPolicyVersion": BUILDER.SOURCE_SELECTION_POLICY_VERSION,
+        "preWhamSourceValidationEnabled": True,
+        "sourcePrepReason": "pre_wham_source_window_choice",
+        "exerciseName": "Reviewed exercise",
+        "sourceVideoPath": str(source_segment_path),
+        "detectionSourceVideoPath": str(source_segment_path),
+        "selectedSegmentPath": str(source_segment_path),
+        "selectedSegmentSha256": hashlib.sha256(source_segment_path.read_bytes()).hexdigest(),
+        "selectedSpan": {"startSeconds": 0.0, "endSeconds": 8.0},
+        "exerciseMotionContractEnabled": False,
+        "exactSourcePhaseValidation": {
+            "validationPolicyVersion": bake.EXACT_SOURCE_PHASE_VALIDATION_POLICY_VERSION,
+            "passed": True,
+            "sourceVideoPath": str(source_segment_path),
+            "sourceVideoSha256": hashlib.sha256(source_segment_path.read_bytes()).hexdigest(),
+        },
+        "sourceCutRanking": source_ranking,
+    }
+    source_manifest_path = segment_dir / "segment_selection.json"
+    source_manifest_path.write_text(json.dumps(source_manifest), encoding="utf-8")
+    clearance = BUILDER.source_selection_clearance_for_workspace(
+        source_workspace,
+        required=True,
+        expected_exercise_name="Reviewed exercise",
+        expected_contract=None,
+    )
+    assert clearance["status"] == "cleared"
     payload = {
         "kind": "wear_skeleton_v1",
         "title": "Reviewed exercise",
@@ -63,7 +135,13 @@ def write_reviewed_movement(movement_path: Path, manifest_path: Path) -> dict:
         json.dumps(
             {
                 "selectionStatus": "selected",
+                "sourceSelectionPolicyVersion": BUILDER.SOURCE_SELECTION_POLICY_VERSION,
+                "preWhamSourceValidationEnabled": True,
                 "selected": {
+                    "exerciseName": "Reviewed exercise",
+                    "sourceCandidateWorkspace": str(source_workspace),
+                    "selectedInputVideoPath": str(source_segment_path),
+                    "sourceSelectionClearance": clearance,
                     "artifactState": payload["artifactState"],
                     "selectedSkeletonIdentity": review_identity,
                     "ranking": {
@@ -360,6 +438,50 @@ def test_packager_rejects_manifest_without_selected_disposition(tmp_path):
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     with pytest.raises(ValueError, match="does not approve a selected movement"):
+        BUILDER.validate_selected_movement(
+            movement_path,
+            {"selectionManifestPath": str(manifest_path)},
+            summary_path=tmp_path / "summary.json",
+            summary={},
+        )
+
+
+def test_packager_never_promotes_raw_not_required_source_clearance(tmp_path):
+    movement_path = tmp_path / "movement.json"
+    manifest_path = tmp_path / "selection_manifest.json"
+    write_reviewed_movement(movement_path, manifest_path)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["preWhamSourceValidationEnabled"] = False
+    manifest["preWhamSourceValidationExplicitlyDisabled"] = True
+    manifest["selected"]["sourceSelectionClearance"]["status"] = "not_required"
+    manifest["selected"]["sourceSelectionClearance"]["sourcePrepReason"] = "ranked_best_chunk"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="no current source-selection clearance"):
+        BUILDER.validate_selected_movement(
+            movement_path,
+            {"selectionManifestPath": str(manifest_path)},
+            summary_path=tmp_path / "summary.json",
+            summary={},
+        )
+
+
+@pytest.mark.parametrize(
+    "contract",
+    [
+        {"contractPolicyVersion": bake.EXERCISE_MOTION_CONTRACT_POLICY_VERSION - 1},
+        {},
+    ],
+)
+def test_packager_rejects_stale_or_unversioned_advisory_contract_policy(tmp_path, contract):
+    movement_path = tmp_path / "movement.json"
+    manifest_path = tmp_path / "selection_manifest.json"
+    write_reviewed_movement(movement_path, manifest_path)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["selected"]["ranking"]["payload"]["exerciseMotionContract"] = contract
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="exercise motion contract policy version"):
         BUILDER.validate_selected_movement(
             movement_path,
             {"selectionManifestPath": str(manifest_path)},

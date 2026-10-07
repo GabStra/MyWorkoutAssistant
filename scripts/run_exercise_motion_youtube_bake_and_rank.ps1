@@ -135,9 +135,9 @@ param(
     [switch]$SkipFinalOutputValidation,
     [double]$FinalOutputValidationMinScore = 0.90,
     [ValidateSet("qwen-chat", "clef-systemone")]
-    [string]$VisualDecisionBackend = "clef-systemone",
+    [string]$VisualDecisionBackend = "qwen-chat",
     [ValidateSet("qwen-chat", "clef-systemone")]
-    [string]$FinalOutputReviewBackend = "clef-systemone",
+    [string]$FinalOutputReviewBackend = "qwen-chat",
     [string]$ClefSystemOneBaseUrl = "http://127.0.0.1:8091",
     [string]$ClefSystemOneModel = "ggml-org/Clef-Flash-GGUF:Q4_K_M",
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",

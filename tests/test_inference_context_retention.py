@@ -66,3 +66,37 @@ def test_source_context_protection_ignores_missing_or_outside_paths(tmp_path):
         "candidateResults": [{"candidateWorkspace": str(candidate)}]
     })
     assert external.resolve() not in protected
+
+
+def test_artifact_retention_preserves_source_review_endpoint_frames(tmp_path):
+    workspace = tmp_path / "workspace"
+    candidate = workspace / "candidate"
+    overview = candidate / "review" / "source_review_overview.jpg"
+    first = candidate / "source_candidate_A" / "frame_01.jpg"
+    last = candidate / "source_candidate_A" / "frame_24.jpg"
+    unreferenced = candidate / "source_candidate_A" / "frame_02.jpg"
+    for path in (overview, first, last, unreferenced):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(path.name.encode("utf-8"))
+    manifest = {
+        "selected": {
+            "candidateWorkspace": str(candidate),
+            "sourceCutReviewFrameEvidence": {
+                "framePaths": [str(overview)],
+                "endpointFramePaths": [str(first), str(last)],
+                "images": [
+                    {"path": str(overview)},
+                    {"path": str(first)},
+                    {"path": str(last)},
+                ],
+            },
+        },
+    }
+
+    report = bake.apply_artifact_retention_policy(workspace, manifest)
+
+    assert not report["errors"]
+    assert overview.exists()
+    assert first.exists()
+    assert last.exists()
+    assert not unreferenced.exists()

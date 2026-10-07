@@ -314,6 +314,179 @@ def test_runner_command_passes_production_prefetch_and_arm_local_preview_cache(t
     assert second_command[second_command.index("-StagedWaveSize") + 1] == "0"
 
 
+def test_qwen_visual_arm_is_opt_in_and_keeps_clef_final_review(tmp_path):
+    parser = motion_speed_harness.build_argument_parser()
+    assert parser.parse_args([]).arms == "qwen-full"
+
+    command = motion_speed_harness.build_runner_command(
+        "qwen-visual", tmp_path / "qwen-visual", tmp_path / "plan.json", 8, 300
+    )
+
+    assert "-WarmWhamWorker:$true" in command
+    assert "-KeepLlamaCppServer:$true" in command
+    assert command[command.index("-VisualDecisionBackend") + 1] == "qwen-chat"
+    assert command[command.index("-FinalOutputReviewBackend") + 1] == "clef-systemone"
+    assert motion_speed_harness.ARM_EFFECTIVE_SETTINGS["qwen-visual"] == {
+        "sharedLlamaServerEnabled": False,
+        "effectiveMaxConcurrentStagedWaves": 1,
+    }
+    assert motion_speed_harness.ARM_BACKEND_SETTINGS["qwen-visual"] == {
+        "visualDecisionBackend": "qwen-chat",
+        "finalOutputReviewBackend": "clef-systemone",
+    }
+
+
+def test_qwen_full_is_default_and_clef_comparison_arms_keep_explicit_identity(tmp_path):
+    parser = motion_speed_harness.build_argument_parser()
+    assert parser.parse_args([]).arms == "qwen-full"
+
+    qwen_command = motion_speed_harness.build_runner_command(
+        "qwen-full", tmp_path / "qwen-full", tmp_path / "plan.json", 8, 300
+    )
+    assert qwen_command[qwen_command.index("-VisualDecisionBackend") + 1] == "qwen-chat"
+    assert qwen_command[qwen_command.index("-FinalOutputReviewBackend") + 1] == "qwen-chat"
+
+    for arm in ("baseline", "shared"):
+        command = motion_speed_harness.build_runner_command(
+            arm, tmp_path / arm, tmp_path / "plan.json", 8, 300
+        )
+        assert command[command.index("-VisualDecisionBackend") + 1] == "clef-systemone"
+        assert command[command.index("-FinalOutputReviewBackend") + 1] == "clef-systemone"
+
+    assert motion_speed_harness.ARM_BACKEND_SETTINGS["qwen-full"] == {
+        "visualDecisionBackend": "qwen-chat",
+        "finalOutputReviewBackend": "qwen-chat",
+    }
+    assert motion_speed_harness.ARM_REVIEW_ARTIFACT_SETTINGS["qwen-full"] == {
+        "sourceCutScorecardBackends": ["qwen-chat"],
+        "supportDominanceBackends": ["qwen_chat"],
+        "finalOutputValidationBackends": ["llama_cpp_vision"],
+    }
+
+    workspace = tmp_path / "workspace"
+    selected = workspace / "rdl" / "selected"
+    segment_detection = selected / "segment_detection"
+    final_decisions = workspace / "staged-waves" / "wave-1" / "final-decisions"
+    segment_detection.mkdir(parents=True)
+    final_decisions.mkdir(parents=True)
+    (segment_detection / "segment_selection.json").write_text(json.dumps({
+        "sourceCutRanking": {
+            "payload": {"sourceCutScorecardBackend": "qwen-chat"},
+        },
+    }), encoding="utf-8")
+    (selected / "selection_manifest.json").write_text("{}", encoding="utf-8")
+    (final_decisions / "decision.json").write_text(json.dumps({
+        "reviewItem": {
+            "supportDominanceModelOutput": {"backend": "qwen_chat"},
+        },
+        "selected": {
+            "ranking": {
+                "payload": {
+                    "finalOutputValidation": {
+                        "visualReview": {"backend": "llama_cpp_vision"},
+                    },
+                },
+            },
+        },
+    }), encoding="utf-8")
+
+    metrics = motion_speed_harness.extract_metrics({"workspace": str(workspace)})
+    assert metrics["sourceCutScorecardBackends"] == ["qwen-chat"]
+    assert metrics["supportDominanceBackends"] == ["qwen_chat"]
+    assert metrics["finalOutputValidationBackends"] == ["llama_cpp_vision"]
+    effective_metrics = {
+        **metrics,
+        "sharedLlamaServerEnabled": False,
+        "effectiveMaxConcurrentStagedWaves": 1,
+        "stagedWaveSize": 8,
+        "stagedWavesEnabled": True,
+        "overlapHighWater": 1,
+        "stagedWaveWorkerMode": "workspace_scoped_persistent_serial_queue",
+        "waves": 1,
+        "cpuPrefetchDuringBake": True,
+        "prefetchWorkers": 8,
+        "prefetchQueueDepth": 40,
+    }
+    assert motion_speed_harness.effective_configuration_error(
+        "qwen-full", effective_metrics, 8
+    ) is None
+    assert "support-classification artifact backend" in (
+        motion_speed_harness.effective_configuration_error(
+            "qwen-full", dict(effective_metrics, supportDominanceBackends=["clef_flash_systemone"]), 8
+        )
+    )
+
+
+def test_production_powerShell_entrypoints_default_source_and_final_review_to_qwen():
+    for script_name in (
+        "run_exercise_motion_workout_plan.ps1",
+        "run_exercise_motion_bake_and_rank.ps1",
+        "run_exercise_motion_youtube_bake_and_rank.ps1",
+    ):
+        source = (motion_speed_harness.REPO_ROOT / "scripts" / script_name).read_text(
+            encoding="utf-8"
+        )
+        assert re.search(
+            r'\$VisualDecisionBackend\s*=\s*"qwen-chat"', source
+        ), script_name
+        assert re.search(
+            r'\$FinalOutputReviewBackend\s*=\s*"qwen-chat"', source
+        ), script_name
+
+
+def test_qwen_visual_qualification_uses_completed_review_artifacts(tmp_path):
+    workspace = tmp_path / "workspace"
+    selected = workspace / "rdl" / "selected"
+    segment_detection = selected / "segment_detection"
+    final_decisions = workspace / "staged-waves" / "wave-1" / "final-decisions"
+    segment_detection.mkdir(parents=True)
+    final_decisions.mkdir(parents=True)
+    (segment_detection / "segment_selection.json").write_text(json.dumps({
+        "sourceCutRanking": {
+            "payload": {"sourceCutScorecardBackend": "qwen-chat"},
+        },
+    }), encoding="utf-8")
+    (selected / "selection_manifest.json").write_text("{}", encoding="utf-8")
+    (final_decisions / "decision.json").write_text(json.dumps({
+        "selected": {
+            "ranking": {
+                "payload": {
+                    "finalOutputValidation": {
+                        "visualReview": {"backend": "clef_flash_systemone"},
+                    },
+                },
+            },
+        },
+    }), encoding="utf-8")
+
+    metrics = motion_speed_harness.extract_metrics({"workspace": str(workspace)})
+
+    assert metrics["sourceCutScorecardBackends"] == ["qwen-chat"]
+    assert metrics["finalOutputValidationBackends"] == ["clef_flash_systemone"]
+    effective_metrics = {
+        **metrics,
+        "sharedLlamaServerEnabled": False,
+        "effectiveMaxConcurrentStagedWaves": 1,
+        "stagedWaveSize": 8,
+        "stagedWavesEnabled": True,
+        "overlapHighWater": 1,
+        "stagedWaveWorkerMode": "workspace_scoped_persistent_serial_queue",
+        "waves": 1,
+        "cpuPrefetchDuringBake": True,
+        "prefetchWorkers": 8,
+        "prefetchQueueDepth": 40,
+    }
+    assert motion_speed_harness.effective_configuration_error(
+        "qwen-visual", effective_metrics, 8
+    ) is None
+    assert "source-review artifact backend" in motion_speed_harness.effective_configuration_error(
+        "qwen-visual", dict(effective_metrics, sourceCutScorecardBackends=["clef-systemone"]), 8
+    )
+    assert "rendered-validation artifact backend" in motion_speed_harness.effective_configuration_error(
+        "qwen-visual", dict(effective_metrics, finalOutputValidationBackends=["llama_cpp_vision"]), 8
+    )
+
+
 def test_parser_allows_zero_wave_size_and_prefetch_overrides_and_rejects_invalid_values():
     parser = motion_speed_harness.build_argument_parser()
     defaults = parser.parse_args(["--arms", "baseline"])
@@ -321,6 +494,7 @@ def test_parser_allows_zero_wave_size_and_prefetch_overrides_and_rejects_invalid
     assert defaults.cpu_prefetch_during_bake is True
     assert defaults.prefetch_workers == 8
     assert defaults.prefetch_queue_depth == 40
+    assert defaults.source_frame_decode_cache == "off"
 
     overridden = parser.parse_args([
         "--arms", "baseline", "--staged-wave-size", "0",
@@ -331,6 +505,11 @@ def test_parser_allows_zero_wave_size_and_prefetch_overrides_and_rejects_invalid
     assert overridden.cpu_prefetch_during_bake is False
     assert overridden.prefetch_workers == 3
     assert overridden.prefetch_queue_depth == 12
+
+    enabled_cache = parser.parse_args([
+        "--arms", "baseline", "--source-frame-decode-cache", "on",
+    ])
+    assert enabled_cache.source_frame_decode_cache == "on"
 
     for invalid_args in (
         ["--arms", "baseline", "--staged-wave-size", "-1"],
@@ -420,6 +599,14 @@ def test_fixture_source_cache_is_arm_local_and_hash_verified(tmp_path):
     source = tmp_path / "pinned-source.mp4"
     source.write_bytes(b"fixed source bytes")
     source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+    sidecar = source.with_name(f"{source.name}.source.json")
+    sidecar_payload = {
+        "schemaVersion": 1,
+        "cacheKey": source.stem,
+        "sizeBytes": source.stat().st_size,
+        "contentSha256": source_sha256,
+    }
+    sidecar.write_text(json.dumps(sidecar_payload), encoding="utf-8")
     manifest = {
         "exercises": [{
             "sourceCachePath": str(source),
@@ -440,6 +627,18 @@ def test_fixture_source_cache_is_arm_local_and_hash_verified(tmp_path):
     assert first_copy != second_copy
     assert motion_speed_harness.sha256_file(first_copy) == source_sha256
     assert motion_speed_harness.sha256_file(second_copy) == source_sha256
+    assert json.loads(first_copy.with_name(f"{first_copy.name}.source.json").read_text()) == sidecar_payload
+    assert json.loads(second_copy.with_name(f"{second_copy.name}.source.json").read_text()) == sidecar_payload
+
+    sidecar.unlink()
+    try:
+        motion_speed_harness.stage_fixture_source_cache(
+            manifest, tmp_path / "arm-four" / "cache" / "youtube-source-cache"
+        )
+    except SystemExit as exc:
+        assert "Fixture source cache identity sidecar" in str(exc)
+    else:
+        raise AssertionError("fixture source cache accepted a source with no identity sidecar")
 
     source.write_bytes(b"mutated source bytes")
     try:
@@ -450,6 +649,101 @@ def test_fixture_source_cache_is_arm_local_and_hash_verified(tmp_path):
         assert "Fixture source SHA-256 mismatch" in str(exc)
     else:
         raise AssertionError("fixture source cache accepted bytes with the wrong SHA-256")
+
+
+def test_fixture_manifest_preflight_rejects_missing_or_invalid_source_sidecar(tmp_path):
+    source = tmp_path / "pinned-source.mp4"
+    source.write_bytes(b"fixed source bytes")
+    source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+    seed = tmp_path / "exercise_plan.json"
+    seed.write_text("{}", encoding="utf-8")
+    candidates = tmp_path / "candidates.json"
+    candidates.write_text("{}", encoding="utf-8")
+    contract = tmp_path / "contract.json"
+    contract.write_text("{}", encoding="utf-8")
+    contract_cache = tmp_path / "contract-cache"
+    contract_cache.mkdir()
+    manifest_path = tmp_path / "fixture_manifest.json"
+    manifest_path.write_text(json.dumps({
+        "kind": "motion_fixed_fixture_set",
+        "contractCacheSnapshotPath": str(contract_cache),
+        "contractCacheSnapshotSha256": motion_speed_harness.sha256_directory_contents(
+            contract_cache
+        ),
+        "exercises": [{
+            "slug": "pull-up",
+            "workspaceSeedPath": str(seed),
+            "workspaceSeedSha256": motion_speed_harness.sha256_file(seed),
+            "sourceCachePath": str(source),
+            "sourceSha256": source_sha256,
+            "preparedCandidatesPath": str(candidates),
+            "preparedCandidatesSha256": motion_speed_harness.sha256_file(candidates),
+            "contractPath": str(contract),
+            "contractSha256": motion_speed_harness.sha256_file(contract),
+        }],
+    }), encoding="utf-8")
+    sidecar = source.with_name(f"{source.name}.source.json")
+
+    for payload in (None, {"schemaVersion": 1, "cacheKey": source.stem}):
+        if payload is None:
+            sidecar.unlink(missing_ok=True)
+        else:
+            sidecar.write_text(json.dumps(payload), encoding="utf-8")
+        try:
+            motion_speed_harness.load_fixture_manifest(manifest_path)
+        except SystemExit as exc:
+            assert "Fixture source cache identity sidecar" in str(exc)
+        else:
+            raise AssertionError("fixture preflight accepted a missing or invalid source sidecar")
+
+
+def test_fixture_contract_motion_context_must_match_mini_library(tmp_path):
+    library_path = tmp_path / "library.json"
+    library_path.write_text(json.dumps({
+        "exerciseDefinitions": [{
+            "id": "deadlift-id",
+            "name": "Romanian Deadlift",
+            "exerciseType": "Strength",
+            "exerciseCategory": "Hinge",
+            "muscleGroups": ["hamstrings"],
+            "equipmentId": "barbell-id",
+        }],
+        "equipments": [{
+            "id": "barbell-id",
+            "type": "barbell",
+            "name": "Barbell",
+            "capabilities": ["loadable_plates"],
+        }],
+    }), encoding="utf-8")
+    mini_library_path = tmp_path / "mini_library.json"
+    motion_speed_harness.build_mini_library(
+        library_path, {"romanian-deadlift"}, mini_library_path
+    )
+    from exercise_motion_pkg.youtube import load_workout_plan_exercises
+
+    actual_context = load_workout_plan_exercises(mini_library_path)[0].motion_context
+    contract_path = tmp_path / "contract.json"
+    contract_path.write_text(json.dumps({"motionContext": actual_context}), encoding="utf-8")
+    manifest = {"exercises": [{
+        "slug": "romanian-deadlift",
+        "exerciseId": "deadlift-id",
+        "contractPath": str(contract_path),
+    }]}
+
+    motion_speed_harness.validate_fixture_contract_motion_contexts(manifest, mini_library_path)
+
+    contract_path.write_text(json.dumps({
+        "motionContext": {**actual_context, "primaryEquipment": {
+            **actual_context["primaryEquipment"], "capabilities": []
+        }}
+    }), encoding="utf-8")
+    try:
+        motion_speed_harness.validate_fixture_contract_motion_contexts(manifest, mini_library_path)
+    except SystemExit as exc:
+        assert "motion context mismatch" in str(exc)
+        assert "romanian-deadlift" in str(exc)
+    else:
+        raise AssertionError("fixture preflight accepted a contract with stale equipment capabilities")
 
 
 def test_artifact_parity_compares_full_artifact_and_frame_identities():

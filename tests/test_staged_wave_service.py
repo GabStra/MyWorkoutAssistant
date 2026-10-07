@@ -421,7 +421,11 @@ def test_cli_rejects_invalid_wave_items_before_starting_wave(
             {
                 "waveId": "wave-invalid",
                 "items": [
-                    {"candidatesJson": "valid-candidates.json", "workspace": "valid-workspace"},
+                    {
+                        "candidatesJson": "valid-candidates.json",
+                        "workspace": "valid-workspace",
+                        "exercisePlanJson": "valid-plan.json",
+                    },
                     invalid_item,
                 ],
             }
@@ -443,6 +447,72 @@ def test_cli_rejects_invalid_wave_items_before_starting_wave(
         )
 
     assert not wave_started
+
+
+def test_cli_uses_staged_one_exercise_plan_as_authoritative_motion_context(
+    tmp_path: Path,
+    monkeypatch,
+):
+    from exercise_motion_pkg import cli
+    from exercise_motion_pkg.bake_and_rank import BakeAndRankRequest
+
+    motion_context = {
+        "primaryEquipment": {
+            "id": "barbell",
+            "type": "BARBELL",
+            "name": "Barbell",
+            "capabilities": ["loaded_bar_support"],
+        },
+        "requiredAccessories": [
+            {"id": "rack", "type": "ACCESSORY", "name": "Squat Rack", "capabilities": ["bar_rack"]}
+        ],
+    }
+    plan_path = tmp_path / "one_exercise_plan.json"
+    plan_path.write_text(
+        json.dumps({
+            "exercises": [{
+                "exerciseId": "barbell-back-squat",
+                "name": "Barbell Back Squat",
+                "motionContext": motion_context,
+            }]
+        }),
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "wave_manifest.json"
+    manifest_path.write_text(
+        json.dumps({
+            "waveId": "wave-authoritative-plan",
+            "workspace": str(tmp_path / "wave"),
+            "items": [{
+                "exerciseId": "barbell-back-squat",
+                "exerciseName": "Barbell Back Squat",
+                "candidatesJson": str(tmp_path / "candidates.json"),
+                "workspace": str(tmp_path / "item-workspace"),
+                "exercisePlanJson": str(plan_path),
+            }],
+        }),
+        encoding="utf-8",
+    )
+    captured = {}
+
+    def capture_wave(items, **_kwargs):
+        captured["items"] = items
+        return {"waveId": "wave-authoritative-plan"}
+
+    monkeypatch.setattr(cli, "run_staged_bake_wave", capture_wave)
+    request = BakeAndRankRequest(
+        candidates_json=tmp_path / "shared-candidates.json",
+        workspace=tmp_path / "shared-workspace",
+        wham_repo_path=None,
+        body_model_root=None,
+    )
+
+    cli.run_staged_bake_wave_manifest(
+        SimpleNamespace(staged_wave_manifest=manifest_path), request=request
+    )
+
+    staged_item = captured["items"][0]
+    assert staged_item.request.authoritative_exercise_motion_context == motion_context
 
 
 def test_queue_service_retains_ambiguous_processing_request_without_replaying(tmp_path: Path):

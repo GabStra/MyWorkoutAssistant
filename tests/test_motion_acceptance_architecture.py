@@ -1,3 +1,4 @@
+import hashlib
 import json
 from dataclasses import replace
 from types import SimpleNamespace
@@ -5,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from exercise_motion_pkg.acceptance import (decide_acceptance, selected_artifact_identity,
+                                           source_contract_clearance_sha256,
                                            invalidate_retained_acceptance, promote_verified_artifact)
 from exercise_motion_pkg.contract_authority import contract_field_authority
 from exercise_motion_pkg.review_consensus import corroborate_rejection
@@ -13,12 +15,68 @@ from exercise_motion_pkg.structural_refinement import enforce_final_structural_i
 from exercise_motion_pkg import bake_and_rank as bake
 
 
+def _attach_current_source_clearance(tmp_path, source, manifest):
+    source_manifest = tmp_path / "source_segment_selection.json"
+    source_manifest.write_text('{"sourcePrepReason":"pre_wham_source_window_choice"}')
+    reviewed_image = tmp_path / "reviewed_source_frame.jpg"
+    reviewed_image.write_bytes(b"reviewed image")
+    profile = {"sourceSelectionPolicyVersion": bake.SOURCE_SELECTION_POLICY_VERSION}
+    profile_sha256 = hashlib.sha256(json.dumps(
+        profile, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    ).encode("utf-8")).hexdigest()
+    frame_evidence = {
+        "candidateId": "A",
+        "startSeconds": 0.0,
+        "endSeconds": 8.0,
+        "framePaths": [str(reviewed_image.resolve())],
+        "endpointFramePaths": [],
+        "images": [{
+            "path": str(reviewed_image.resolve()),
+            "sha256": hashlib.sha256(reviewed_image.read_bytes()).hexdigest(),
+        }],
+        "extractionProfile": profile,
+        "extractionProfileSha256": profile_sha256,
+    }
+    clearance = manifest["selected"]["sourceSelectionClearance"]
+    clearance.update({
+        "sourceManifestPath": str(source_manifest),
+        "sourceManifestSha256": hashlib.sha256(source_manifest.read_bytes()).hexdigest(),
+        "selectedSegmentPath": str(source),
+        "selectedSegmentSha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+        "sourceCutReviewVideoPath": str(source),
+        "sourceCutReviewVideoSha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+        "sourceCutOriginalVideoPath": str(source),
+        "sourceCutOriginalVideoSha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+        "sourceCutReviewFrameEvidence": frame_evidence,
+        "sourceCutReviewFrameEvidenceSha256": hashlib.sha256(json.dumps(
+            frame_evidence, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        ).encode("utf-8")).hexdigest(),
+        "reviewedExerciseName": "Example",
+        "exerciseMotionContractSha256": source_contract_clearance_sha256(None),
+    })
+    return manifest
+
+
 def test_identity_changes_for_source_skeleton_contract_and_policy(tmp_path):
     source = tmp_path / "x_selected_input.mp4"
     skeleton = tmp_path / "x_wear_skeleton.json"
     source.write_bytes(b"source")
     skeleton.write_text("{}")
-    manifest = {"selected": {"loopIndex": 0}}
+    manifest = {
+        "preWhamSourceValidationEnabled": True,
+        "sourceSelectionPolicyVersion": bake.SOURCE_SELECTION_POLICY_VERSION,
+        "selected": {
+            "loopIndex": 0,
+            "exerciseName": "Example",
+            "sourceSelectionClearance": {
+                "status": "cleared",
+                "sourceSelectionPolicyVersion": bake.SOURCE_SELECTION_POLICY_VERSION,
+                "sourceSelectionClearancePolicyVersion": bake.SOURCE_SELECTION_CLEARANCE_POLICY_VERSION,
+                "authorizedCandidateId": "A",
+            },
+        },
+    }
+    _attach_current_source_clearance(tmp_path, source, manifest)
     def identity(**kwargs):
         return selected_artifact_identity(tmp_path, manifest, policies=kwargs.pop("policies", {"visual": 1}), **kwargs)
     original = identity()
@@ -42,6 +100,43 @@ def test_identity_changes_for_source_skeleton_contract_and_policy(tmp_path):
     assert identity() == original
     (tmp_path / "other_selected_input.mp4").write_bytes(b"ambiguous")
     assert identity() is None
+
+
+def test_normal_selection_identity_requires_current_source_clearance(tmp_path):
+    (tmp_path / "x_selected_input.mp4").write_bytes(b"source")
+    (tmp_path / "x_wear_skeleton.json").write_text("{}")
+    manifest = {
+        "preWhamSourceValidationEnabled": True,
+        "sourceSelectionPolicyVersion": bake.SOURCE_SELECTION_POLICY_VERSION,
+        "selected": {
+            "loopIndex": 0,
+            "exerciseName": "Example",
+            "sourceSelectionClearance": {
+                "status": "cleared",
+                "sourceSelectionPolicyVersion": bake.SOURCE_SELECTION_POLICY_VERSION,
+                "sourceSelectionClearancePolicyVersion": bake.SOURCE_SELECTION_CLEARANCE_POLICY_VERSION,
+                "authorizedCandidateId": "A",
+            },
+        },
+    }
+    _attach_current_source_clearance(tmp_path, tmp_path / "x_selected_input.mp4", manifest)
+    policies = {"visual": 1, "source": bake.SOURCE_SELECTION_POLICY_VERSION}
+
+    assert selected_artifact_identity(tmp_path, manifest, policies=policies)
+
+    source_manifest_path = manifest["selected"]["sourceSelectionClearance"]["sourceManifestPath"]
+    source_manifest_bytes = open(source_manifest_path, "rb").read()
+    with open(source_manifest_path, "wb") as source_manifest_file:
+        source_manifest_file.write(b'{"changed":true}')
+    assert selected_artifact_identity(tmp_path, manifest, policies=policies) is None
+    with open(source_manifest_path, "wb") as source_manifest_file:
+        source_manifest_file.write(source_manifest_bytes)
+
+    manifest["selected"].pop("sourceSelectionClearance")
+    assert selected_artifact_identity(tmp_path, manifest, policies=policies) is None
+
+    manifest["preWhamSourceValidationEnabled"] = False
+    assert selected_artifact_identity(tmp_path, manifest, policies=policies) is None
 
 
 def test_missing_evidence_cannot_be_approved_by_model():

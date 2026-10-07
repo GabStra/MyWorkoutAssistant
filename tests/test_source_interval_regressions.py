@@ -117,6 +117,88 @@ def test_selected_video_uses_review_interval_not_cached_ratio(tmp_path):
     assert window.end_seconds == 1.6
 
 
+def test_validated_pre_wham_interval_exports_full_source_while_unvalidated_item_keeps_crop(
+    tmp_path, monkeypatch,
+):
+    workspace = tmp_path / "candidate"
+    selected_segment = workspace / "input" / "selected_segment.mp4"
+    selected_segment.parent.mkdir(parents=True)
+    selected_segment.write_bytes(b"validated source bytes")
+    trim_calls = []
+    monkeypatch.setattr(bake, "source_video_duration_seconds", lambda _path: 2.9)
+
+    def trim_video(**kwargs):
+        trim_calls.append(kwargs)
+        output_path = kwargs["output_path"]
+        output_path.write_bytes(b"cropped source bytes")
+        return output_path
+
+    monkeypatch.setattr(bake, "trim_video", trim_video)
+
+    def item(authoritative):
+        return bake.ReviewItem(
+            exercise_index=0,
+            candidate_rank=0,
+            loop_index=0,
+            exercise_name="Example",
+            candidate_title="Example source",
+            candidate_workspace=workspace,
+            preview_html_path=workspace / "preview.html",
+            skeleton_path=workspace / "skeleton.json",
+            review_video_path=workspace / "preview.webm",
+            duration_sec=2.733,
+            loop_start_seconds=0.0,
+            loop_end_seconds=2.733,
+            candidate={
+                "preWhamSourceIntervalAuthority": {"authoritative": authoritative},
+            },
+        )
+
+    validated_payload = {
+        "exerciseIndex": 0,
+        "candidateRank": 0,
+        "loopIndex": 0,
+        "exerciseName": "Example",
+        "candidateTitle": "Example source",
+        "candidateWorkspace": str(workspace),
+        "previewHtmlPath": str(workspace / "preview.html"),
+        "skeletonPath": str(workspace / "skeleton.json"),
+        "reviewVideoPath": str(workspace / "preview.webm"),
+        "durationSec": 2.733,
+        "loopStartSeconds": 0.0,
+        "loopEndSeconds": 2.733,
+        "candidate": {},
+        "ranking": {
+            "score": 1.0,
+            "reasons": [],
+            "payload": {
+                "sectionSelectionPolicy": "validated_pre_wham_source_interval",
+                "preWhamSourceIntervalAuthority": {"authoritative": True},
+            },
+        },
+    }
+    validated_item = bake.review_item_from_manifest(validated_payload)
+    assert bake.source_selection_clearance_for_review_item(
+        validated_item, required=True,
+    )["status"] == "needs_source_review"
+    validated_manifest = bake.review_item_to_manifest(validated_item)
+    assert Path(validated_manifest["selectedInputVideoPath"]) == selected_segment
+    assert validated_manifest["selectedInputSourceWindow"]["endSeconds"] == pytest.approx(2.9)
+    assert not trim_calls
+    selection = bake.movement_instance_selection_payload(
+        validated_item,
+        bake.ranking_from_manifest(validated_payload["ranking"]),
+    )
+    assert selection["endSeconds"] == pytest.approx(2.9)
+
+    unvalidated_manifest = bake.review_item_to_manifest(item(False))
+    assert Path(unvalidated_manifest["selectedInputVideoPath"]).name == (
+        "selected_source_section_000000_002733.mp4"
+    )
+    assert unvalidated_manifest["selectedInputSourceWindow"]["endSeconds"] == pytest.approx(2.733)
+    assert len(trim_calls) == 1
+
+
 def test_source_reviewed_cleanup_preserves_stationary_endpoint_frames(recorded_sources):
     pose = recorded_sources["barbell-bench-press"]["pose"]
     joints = pose["frames"][0]["joints"]

@@ -171,7 +171,14 @@ from exercise_motion_pkg.segment_detection import (
     extract_json_object,
     extract_window_frames,
     iter_detection_windows,
+    linspace_times,
     save_detection_result,
+)
+from exercise_motion_pkg.source_frame_cache import (
+    SOURCE_FRAME_CACHE_MAX_DECODED_FRAMES,
+    NativeFrameIndex,
+    build_source_frame_index,
+    frame_path_for_seek,
 )
 from exercise_motion_pkg.source_outcomes import (
     candidate_result_is_accepted,
@@ -342,6 +349,7 @@ ARTIFACT_RETENTION_PROTECTED_PATH_KEYS = frozenset(
         "sourceContactSheetPath",
         "sourceContactSheetPaths",
         "contactSheetPaths",
+        "endpointFramePaths",
         "previewContactSheetPath",
         "previewContactSheetPaths",
         "promptPath",
@@ -540,7 +548,8 @@ SOURCE_CUT_MIN_ESTIMATED_DURATION_RATIO = 1.0
 SOURCE_CUT_ROBUST_MIN_SECONDS = 1.5
 SOURCE_CUT_ROBUST_MIN_ESTIMATED_DURATION_RATIO = 1.0
 ACTIVE_TRAVEL_SOURCE_CUT_MIN_SECONDS = 2.0
-SOURCE_SELECTION_POLICY_VERSION = 57
+SOURCE_SELECTION_POLICY_VERSION = 60
+SOURCE_SELECTION_CLEARANCE_POLICY_VERSION = 2
 
 # Free-VRAM gates for co-residing small CUDA ops beside the resident llama.cpp
 # server instead of evicting it (each eviction costs a server stop plus a ~40s
@@ -564,7 +573,7 @@ FIRST_ATTEMPT_MEDIUM_TRACKABILITY = 0.65
 FIRST_ATTEMPT_HIGH_RECONSTRUCTION_PRIORITY = 0.70
 KINEMATIC_CUT_STRATEGY = "kinematic_cycle"
 KINEMATIC_CUT_MAX_PROPOSALS = 2
-SOURCE_CUT_DETERMINISTIC_CONFIRMATION_POLICY_VERSION = 23
+SOURCE_CUT_DETERMINISTIC_CONFIRMATION_POLICY_VERSION = 24
 SOURCE_CUT_MAX_CONFIRMATION_ATTEMPTS = 8
 SOURCE_CUT_MAX_CONFIRMATION_REPAIR_EXPANSIONS = 3
 PRE_WHAM_EQUIPMENT_OBSERVATION_POLICY_VERSION = 5
@@ -2991,6 +3000,7 @@ class BakeAndRankRequest:
     segment_refinement_padding_seconds: float = 1.0
     segment_classification_workers: int = 3
     pre_wham_source_validation: bool = False
+    pre_wham_source_validation_explicitly_disabled: bool = False
     exercise_motion_contract_enabled: bool = True
     review_frames: int = DEFAULT_REVIEW_FRAMES
     review_llm_workers: int = 3
@@ -3006,7 +3016,7 @@ class BakeAndRankRequest:
     max_adaptive_preview_settings: int = 3
     classify_support_dominance: bool = True
     final_output_validation: bool = False
-    visual_decision_backend: str = "clef-systemone"
+    visual_decision_backend: str = "qwen-chat"
     final_output_review_backend: str | None = None
     clef_systemone_base_url: str = "http://127.0.0.1:8091"
     clef_systemone_model: str = "ggml-org/Clef-Flash-GGUF:Q4_K_M"
@@ -3061,6 +3071,7 @@ class BakeAndRankRequest:
     exercise_contract_llama_cpp_model: str | None = None
     exercise_contract_llama_cpp_mmproj: str | None = None
     exercise_motion_contract_cache_dir: Path | None = None
+    authoritative_exercise_motion_context: dict[str, Any] | None = None
     artifact_retention: str = ARTIFACT_RETENTION_DEBUG
 
 
@@ -5193,7 +5204,10 @@ def movement_instance_selection_payload(item: ReviewItem, ranking: LoopRanking) 
         ranking_payload.get("selectedSectionEndSeconds"),
         item.loop_end_seconds,
     )
-    if selection_policy == "full_pre_wham_source_segment":
+    if selection_policy in {
+        "full_pre_wham_source_segment",
+        "validated_pre_wham_source_interval",
+    }:
         source_video_path = selected_input_video_path_for_review_item(item)
         source_duration = (
             source_video_duration_seconds(source_video_path)
@@ -5233,6 +5247,496 @@ def manual_boundary_review_required(validation: dict[str, Any], warnings: Iterab
     return bool(warning_set.intersection(FINAL_OUTPUT_VALIDATOR_BOUNDARY_WARNING_TAGS))
 
 
+def source_selection_clearance_for_review_item(
+    item: ReviewItem, *, required: bool, explicitly_disabled: bool = False,
+    ranking: LoopRanking | None = None,
+) -> dict[str, Any]:
+    """Recheck source-stage authority for a materialized selected artifact."""
+    source_workspace = Path(str(
+        (item.candidate or {}).get("sourceCandidateWorkspace") or item.candidate_workspace
+    ))
+    clearance = source_selection_clearance_for_workspace(
+        source_workspace,
+        required=required,
+        explicitly_disabled=explicitly_disabled,
+        expected_exercise_name=item.exercise_name,
+        expected_contract=exercise_motion_contract_for_review_item(item, ranking),
+    )
+    if clearance.get("status") not in {"cleared", "not_required"}:
+        return clearance
+    if clearance.get("status") == "not_required":
+        return clearance
+    selected_segment_path = selected_input_video_path_for_review_item(item)
+    try:
+        reviewed_segment_sha256 = (
+            file_sha256(selected_segment_path)
+            if selected_segment_path is not None
+            else None
+        )
+    except (OSError, TypeError, AttributeError):
+        reviewed_segment_sha256 = None
+    if reviewed_segment_sha256 != clearance.get("selectedSegmentSha256"):
+        return {
+            **clearance,
+            "status": "needs_source_review",
+            "reason": "reviewed_selected_segment_bytes_differ_from_clearance",
+        }
+    return clearance
+
+
+def source_cut_review_frame_inputs_are_current(
+    ranking_payload: dict[str, Any], candidate: dict[str, Any] | None,
+    candidate_id: str,
+) -> bool:
+    if not isinstance(candidate, dict):
+        return False
+    before_rows = ranking_payload.get("sourceCutReviewFrameInputs")
+    after_rows = ranking_payload.get("sourceCutReviewFrameInputsAfter")
+    if not isinstance(before_rows, list) or not isinstance(after_rows, list):
+        return False
+    before = next((row for row in before_rows if isinstance(row, dict)
+                   and normalize_source_cut_candidate_id(row.get("candidateId")) == candidate_id), None)
+    after = next((row for row in after_rows if isinstance(row, dict)
+                  and normalize_source_cut_candidate_id(row.get("candidateId")) == candidate_id), None)
+    if not isinstance(before, dict) or before != after:
+        return False
+    if (
+        parse_optional_float(before.get("startSeconds")) is None
+        or parse_optional_float(before.get("endSeconds")) is None
+        or abs(float(before["startSeconds"]) - float(candidate.get("startSeconds"))) > 0.05
+        or abs(float(before["endSeconds"]) - float(candidate.get("endSeconds"))) > 0.05
+    ):
+        return False
+    expected_frame_paths = [str(Path(path).resolve()) for path in candidate.get("framePaths") or []]
+    expected_samples = [str(Path(path).resolve()) for path in candidate.get("sampleFramePaths") or []]
+    expected_endpoints = list(dict.fromkeys(
+        ([expected_samples[0]] if expected_samples else [])
+        + ([expected_samples[-1]] if expected_samples else [])
+    ))
+    if (
+        before.get("framePaths") != expected_frame_paths
+        or before.get("endpointFramePaths") != expected_endpoints
+    ):
+        return False
+    profile = before.get("extractionProfile")
+    if not isinstance(profile, dict):
+        return False
+    try:
+        expected_profile_sha256 = hashlib.sha256(json.dumps(
+            profile, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        ).encode("utf-8")).hexdigest()
+        images = before.get("images")
+        expected_paths = list(dict.fromkeys([*expected_frame_paths, *expected_endpoints]))
+        if not isinstance(images, list) or [str(Path(row["path"]).resolve()) for row in images] != expected_paths:
+            return False
+        return bool(
+            profile.get("renderer") == "render_video_window_contact_sheet"
+            and profile.get("profileVersion") == 1
+            and profile.get("sourceSelectionPolicyVersion") == SOURCE_SELECTION_POLICY_VERSION
+            and profile.get("maxFrameWidth") == DEFAULT_RANK_FRAME_WIDTH
+            and profile.get("contactSheetTileWidth") == SOURCE_CUT_CONTACT_SHEET_CELL_WIDTH
+            and profile.get("contactSheetFramesPerSheet") == SOURCE_CUT_CONTACT_SHEET_FRAMES_PER_SHEET
+            and profile.get("contactSheetJpegQuality") == SOURCE_CUT_CONTACT_SHEET_JPEG_QUALITY
+            and profile.get("boundaryAuditTileWidth") == SOURCE_CUT_BOUNDARY_AUDIT_TILE_WIDTH
+            and profile.get("boundaryAuditJpegQuality") == SOURCE_CUT_BOUNDARY_AUDIT_JPEG_QUALITY
+            and int(profile.get("frameCount", 0)) > 0
+            and before.get("extractionProfileSha256") == expected_profile_sha256
+            and all(
+                isinstance(row, dict)
+                and str(Path(row.get("path") or "").resolve()) == expected_path
+                and isinstance(row.get("sha256"), str)
+                and file_sha256(Path(expected_path)) == row["sha256"]
+                for row, expected_path in zip(images, expected_paths)
+            )
+        )
+    except (OSError, TypeError, ValueError, KeyError):
+        return False
+
+
+def source_selection_clearance_for_workspace(
+    source_workspace: Path, *, required: bool, explicitly_disabled: bool = False,
+    expected_exercise_name: str | None = None,
+    expected_contract: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Recheck source-stage authority from its retained candidate workspace."""
+    source_manifest_path = source_workspace / "segment_detection" / "segment_selection.json"
+    try:
+        manifest_bytes = source_manifest_path.read_bytes()
+        source_manifest = json.loads(manifest_bytes)
+    except (OSError, ValueError, json.JSONDecodeError):
+        source_manifest = None
+        manifest_bytes = b""
+    if not isinstance(source_manifest, dict):
+        return {
+            "status": "needs_source_review",
+            "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
+            "sourceSelectionClearancePolicyVersion": SOURCE_SELECTION_CLEARANCE_POLICY_VERSION,
+            "reason": (
+                "source_selection_manifest_missing"
+                if required
+                else "source_validation_disabled_without_non_source_lineage_evidence"
+            ),
+        }
+
+    selected_segment_path = Path(str(
+        source_manifest.get("selectedSegmentPath")
+        or source_workspace / "input" / "selected_segment.mp4"
+    )).expanduser()
+
+    source_stage_ran = (
+        parse_optional_bool(source_manifest.get("preWhamSourceValidationEnabled")) is True
+        or str(source_manifest.get("sourcePrepReason") or "") == "pre_wham_source_window_choice"
+        or isinstance(source_manifest.get("sourceCutRanking"), dict)
+        or isinstance(source_manifest.get("exactSourcePhaseValidation"), dict)
+    )
+    if source_stage_ran and expected_exercise_name is not None:
+        source_exercise_name = str(source_manifest.get("exerciseName") or "")
+        source_contract = source_manifest.get("exerciseMotionContract")
+        expected_prompt_contract = exercise_motion_contract_for_prompt(expected_contract)
+        source_prompt_contract = (
+            exercise_motion_contract_for_prompt(source_contract)
+            if isinstance(source_contract, dict)
+            else None
+        )
+        if (
+            normalize_exercise_name(source_exercise_name)
+            != normalize_exercise_name(expected_exercise_name)
+            or expected_prompt_contract != source_prompt_contract
+        ):
+            return {
+                "status": "needs_source_review",
+                "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
+                "sourceSelectionClearancePolicyVersion": SOURCE_SELECTION_CLEARANCE_POLICY_VERSION,
+                "sourceManifestSha256": hashlib.sha256(manifest_bytes).hexdigest(),
+                "reason": "source_selection_target_or_contract_mismatch",
+            }
+    if not required and not source_stage_ran:
+        prep_reason = str(source_manifest.get("sourcePrepReason") or "").strip()
+        explicit_raw_lineage = (
+            explicitly_disabled
+            and bool(prep_reason)
+            and parse_optional_bool(source_manifest.get("preWhamSourceValidationEnabled")) is not True
+            and source_manifest.get("sourceCutRanking") is None
+            and source_manifest.get("exactSourcePhaseValidation") is None
+        )
+        if not explicit_raw_lineage:
+            return {
+                "status": "needs_source_review",
+                "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
+                "sourceSelectionClearancePolicyVersion": SOURCE_SELECTION_CLEARANCE_POLICY_VERSION,
+                "sourceManifestSha256": hashlib.sha256(manifest_bytes).hexdigest(),
+                "reason": "source_validation_disabled_without_explicit_raw_lineage",
+            }
+        segment_path = source_manifest.get("selectedSegmentPath")
+        if not segment_path:
+            return {
+                "status": "needs_source_review",
+                "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
+                "sourceSelectionClearancePolicyVersion": SOURCE_SELECTION_CLEARANCE_POLICY_VERSION,
+                "sourceManifestSha256": hashlib.sha256(manifest_bytes).hexdigest(),
+                "reason": "explicit_raw_lineage_missing_selected_segment",
+            }
+        try:
+            segment_sha = file_sha256(Path(str(segment_path)))
+        except OSError:
+            return {
+                "status": "needs_source_review",
+                "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
+                "sourceSelectionClearancePolicyVersion": SOURCE_SELECTION_CLEARANCE_POLICY_VERSION,
+                "sourceManifestSha256": hashlib.sha256(manifest_bytes).hexdigest(),
+                "reason": "explicit_raw_lineage_selected_segment_missing",
+            }
+        return {
+            "status": "not_required",
+            "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
+            "sourceSelectionClearancePolicyVersion": SOURCE_SELECTION_CLEARANCE_POLICY_VERSION,
+            "sourceManifestSha256": hashlib.sha256(manifest_bytes).hexdigest(),
+            "sourceManifestPath": str(source_manifest_path.resolve()),
+            "selectedSegmentSha256": segment_sha,
+            "selectedSegmentPath": str(Path(str(segment_path)).resolve()),
+            "sourcePrepReason": prep_reason,
+            "explicitlyDisabled": True,
+        }
+    if not required and source_stage_ran:
+        return {
+            "status": "needs_source_review",
+            "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
+            "sourceSelectionClearancePolicyVersion": SOURCE_SELECTION_CLEARANCE_POLICY_VERSION,
+            "sourceManifestSha256": hashlib.sha256(manifest_bytes).hexdigest(),
+            "reason": "source_validation_configuration_conflicts_with_source_lineage",
+        }
+
+    try:
+        selected_segment_bytes = selected_segment_path.read_bytes()
+        selected_segment_sha256 = hashlib.sha256(selected_segment_bytes).hexdigest()
+    except OSError:
+        return {
+            "status": "needs_source_review",
+            "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
+            "sourceSelectionClearancePolicyVersion": SOURCE_SELECTION_CLEARANCE_POLICY_VERSION,
+            "sourceManifestSha256": hashlib.sha256(manifest_bytes).hexdigest(),
+            "reason": "selected_source_segment_missing",
+        }
+    if source_manifest.get("selectedSegmentSha256") != selected_segment_sha256:
+        return {
+            "status": "needs_source_review",
+            "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
+            "sourceSelectionClearancePolicyVersion": SOURCE_SELECTION_CLEARANCE_POLICY_VERSION,
+            "sourceManifestSha256": hashlib.sha256(manifest_bytes).hexdigest(),
+            "selectedSegmentSha256": selected_segment_sha256,
+            "reason": "selected_segment_bytes_changed_since_source_selection",
+        }
+
+    if (
+        parse_optional_int(source_manifest.get("sourceSelectionPolicyVersion"))
+        != SOURCE_SELECTION_POLICY_VERSION
+        or parse_optional_bool(source_manifest.get("preWhamSourceValidationEnabled")) is not True
+        or str(source_manifest.get("sourcePrepReason") or "") != "pre_wham_source_window_choice"
+    ):
+        return {
+            "status": "needs_source_review",
+            "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
+            "sourceSelectionClearancePolicyVersion": SOURCE_SELECTION_CLEARANCE_POLICY_VERSION,
+            "sourceManifestSha256": hashlib.sha256(manifest_bytes).hexdigest(),
+            "selectedSegmentSha256": selected_segment_sha256,
+            "reason": "source_selection_policy_or_lineage_stale",
+        }
+    if not cached_source_selection_matches_validation_mode(
+        source_manifest_path,
+        pre_wham_source_validation=True,
+        exercise_motion_contract_enabled=bool(
+            source_manifest.get("exerciseMotionContractEnabled")
+        ),
+    ):
+        return {
+            "status": "needs_source_review",
+            "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
+            "sourceSelectionClearancePolicyVersion": SOURCE_SELECTION_CLEARANCE_POLICY_VERSION,
+            "sourceManifestSha256": hashlib.sha256(manifest_bytes).hexdigest(),
+            "selectedSegmentSha256": selected_segment_sha256,
+            "reason": "source_selection_validation_evidence_stale_or_incomplete",
+        }
+    exact_validation = source_manifest.get("exactSourcePhaseValidation")
+    exact_source_path = (
+        Path(str(exact_validation.get("sourceVideoPath"))).expanduser()
+        if isinstance(exact_validation, dict) and exact_validation.get("sourceVideoPath")
+        else None
+    )
+    try:
+        exact_source_sha256 = file_sha256(exact_source_path) if exact_source_path is not None else None
+    except OSError:
+        exact_source_sha256 = None
+    if (
+        exact_source_sha256 != selected_segment_sha256
+        or not isinstance(exact_validation, dict)
+        or exact_validation.get("sourceVideoSha256") != selected_segment_sha256
+    ):
+        return {
+            "status": "needs_source_review",
+            "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
+            "sourceSelectionClearancePolicyVersion": SOURCE_SELECTION_CLEARANCE_POLICY_VERSION,
+            "sourceManifestSha256": hashlib.sha256(manifest_bytes).hexdigest(),
+            "selectedSegmentSha256": selected_segment_sha256,
+            "reason": "exact_source_validation_not_bound_to_selected_segment_bytes",
+        }
+
+    ranking_manifest = source_manifest.get("sourceCutRanking")
+    if not isinstance(ranking_manifest, dict):
+        return {
+            "status": "needs_source_review",
+            "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
+            "sourceSelectionClearancePolicyVersion": SOURCE_SELECTION_CLEARANCE_POLICY_VERSION,
+            "sourceManifestSha256": hashlib.sha256(manifest_bytes).hexdigest(),
+            "selectedSegmentSha256": selected_segment_sha256,
+            "reason": "source_cut_review_missing",
+        }
+    source_ranking = ranking_from_manifest(ranking_manifest)
+    ranking_payload = source_ranking.payload if isinstance(source_ranking.payload, dict) else {}
+    review_video_path_value = ranking_payload.get("sourceCutReviewVideoPath")
+    review_video_sha256 = ranking_payload.get("sourceCutReviewVideoSha256")
+    review_video_sha256_after = ranking_payload.get("sourceCutReviewVideoSha256After")
+    original_video_path_value = ranking_payload.get("sourceCutOriginalVideoPath")
+    original_video_sha256 = ranking_payload.get("sourceCutOriginalVideoSha256")
+    original_video_sha256_after = ranking_payload.get("sourceCutOriginalVideoSha256After")
+    expected_review_video_path = source_manifest.get("detectionSourceVideoPath")
+    expected_original_video_path = source_manifest.get("sourceVideoPath")
+    try:
+        review_video_path = Path(str(review_video_path_value)).expanduser().resolve()
+        original_video_path = Path(str(original_video_path_value)).expanduser().resolve()
+        review_video_provenance_valid = (
+            bool(expected_review_video_path)
+            and bool(expected_original_video_path)
+            and review_video_path == Path(str(expected_review_video_path)).expanduser().resolve()
+            and original_video_path == Path(str(expected_original_video_path)).expanduser().resolve()
+            and isinstance(review_video_sha256, str)
+            and review_video_sha256 == review_video_sha256_after
+            and file_sha256(review_video_path) == review_video_sha256
+            and isinstance(original_video_sha256, str)
+            and original_video_sha256 == original_video_sha256_after
+            and file_sha256(original_video_path) == original_video_sha256
+        )
+    except (OSError, TypeError, ValueError):
+        review_video_provenance_valid = False
+    if not review_video_provenance_valid:
+        return {
+            "status": "needs_source_review",
+            "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
+            "sourceSelectionClearancePolicyVersion": SOURCE_SELECTION_CLEARANCE_POLICY_VERSION,
+            "sourceManifestSha256": hashlib.sha256(manifest_bytes).hexdigest(),
+            "selectedSegmentSha256": selected_segment_sha256,
+            "reason": "source_scorecard_review_video_provenance_unbound",
+        }
+    selected_id = normalize_source_cut_candidate_id(ranking_payload.get("selectedCandidateId"))
+    selected_span = source_manifest.get("selectedSpan")
+    selected_start = parse_optional_float(selected_span.get("startSeconds")) if isinstance(selected_span, dict) else None
+    selected_end = parse_optional_float(selected_span.get("endSeconds")) if isinstance(selected_span, dict) else None
+    rows = [
+        row for row in ranking_payload.get("sourceCutCandidates") or []
+        if isinstance(row, dict)
+    ]
+    candidate = next((
+        row for row in rows
+        if normalize_source_cut_candidate_id(row.get("candidateId")) == selected_id
+    ), None)
+    scorecards = {
+        normalize_source_cut_candidate_id(row.get("id")): row
+        for row in ranking_payload.get("sourceCutScorecardCandidates") or []
+        if isinstance(row, dict)
+    }
+    if isinstance(ranking_payload.get("selectedScorecard"), dict):
+        scorecards.setdefault(selected_id, ranking_payload["selectedScorecard"])
+    scorecard = scorecards.get(selected_id, {})
+    candidate_start = parse_optional_float(candidate.get("startSeconds")) if candidate else None
+    candidate_end = parse_optional_float(candidate.get("endSeconds")) if candidate else None
+    selected_matches_candidate = (
+        selected_start is not None and selected_end is not None
+        and candidate_start is not None and candidate_end is not None
+        and abs(selected_start - candidate_start) <= 0.05
+        and abs(selected_end - candidate_end) <= 0.05
+    )
+    authorized_candidates = source_cut_deterministic_confirmation_candidates(source_ranking)
+    authorized_by_id = {
+        normalize_source_cut_candidate_id(row.get("candidateId")): row
+        for row in authorized_candidates
+        if normalize_source_cut_candidate_id(row.get("candidateId"))
+    }
+    positive_scorecard = (
+        source_cut_ranking_has_vlm_approval(source_ranking)
+        and scorecard.get("passed") is True
+        and not scorecard.get("rejectionReasons")
+        and selected_matches_candidate
+        and selected_id in authorized_by_id
+        and selected_id in source_cut_semantically_pose_confirmable_candidate_ids(scorecards)
+    )
+    exact_attempt = next((
+        attempt for attempt in ranking_payload.get("sourceCutDeterministicConfirmationAttempts") or []
+        if isinstance(attempt, dict)
+        and normalize_source_cut_candidate_id(attempt.get("candidateId")) == selected_id
+        and attempt.get("passed") is True
+        and parse_optional_float(attempt.get("startSeconds")) is not None
+        and parse_optional_float(attempt.get("endSeconds")) is not None
+        and selected_start is not None and selected_end is not None
+        and abs(float(attempt["startSeconds"]) - selected_start) <= 0.05
+        and abs(float(attempt["endSeconds"]) - selected_end) <= 0.05
+        and attempt.get("candidateVideoSha256") == selected_segment_sha256
+    ), None)
+    authorized_parent_id = normalize_source_cut_candidate_id(
+        exact_attempt.get("authorizedParentCandidateId")
+    ) if exact_attempt else ""
+    authorized_parent = authorized_by_id.get(authorized_parent_id)
+    authorized_parent_start = parse_optional_float(
+        authorized_parent.get("startSeconds") if authorized_parent else None
+    )
+    authorized_parent_end = parse_optional_float(
+        authorized_parent.get("endSeconds") if authorized_parent else None
+    )
+    stored_parent_start = parse_optional_float(
+        exact_attempt.get("authorizedParentStartSeconds") if exact_attempt else None
+    )
+    stored_parent_end = parse_optional_float(
+        exact_attempt.get("authorizedParentEndSeconds") if exact_attempt else None
+    )
+    review_candidate_id = authorized_parent_id if exact_attempt else selected_id
+    review_candidate = authorized_parent if exact_attempt else candidate
+    review_frame_inputs_current = (
+        source_cut_review_frame_inputs_are_current(
+            ranking_payload, review_candidate, review_candidate_id,
+        )
+        if review_candidate is not None else True
+    )
+    review_frame_evidence = next((
+        row for row in ranking_payload.get("sourceCutReviewFrameInputs") or []
+        if isinstance(row, dict)
+        and normalize_source_cut_candidate_id(row.get("candidateId")) == review_candidate_id
+    ), None)
+    positive_scorecard = positive_scorecard and review_frame_inputs_current
+    parent_contains_selected = (
+        authorized_parent is not None
+        and authorized_parent_start is not None and authorized_parent_end is not None
+        and selected_start is not None and selected_end is not None
+        and authorized_parent_start <= selected_start + 0.05
+        and authorized_parent_end >= selected_end - 0.05
+        and stored_parent_start is not None and stored_parent_end is not None
+        and abs(stored_parent_start - authorized_parent_start) <= 0.05
+        and abs(stored_parent_end - authorized_parent_end) <= 0.05
+    ) if exact_attempt else False
+    semantic_pose_confirmable_ids = source_cut_semantically_pose_confirmable_candidate_ids(scorecards)
+    confirmed_scorecard = (
+        bool(exact_attempt)
+        and parent_contains_selected
+        and authorized_parent_id in semantic_pose_confirmable_ids
+        and review_frame_inputs_current
+    )
+    if not selected_id or not (positive_scorecard or confirmed_scorecard):
+        return {
+            "status": "needs_source_review",
+            "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
+            "sourceSelectionClearancePolicyVersion": SOURCE_SELECTION_CLEARANCE_POLICY_VERSION,
+            "sourceManifestSha256": hashlib.sha256(manifest_bytes).hexdigest(),
+            "selectedSegmentSha256": selected_segment_sha256,
+            "reason": (
+                "source_cut_review_frame_inputs_unbound"
+                if not review_frame_inputs_current
+                else "selected_interval_lacks_current_semantic_clearance"
+            ),
+        }
+    return {
+        "status": "cleared",
+        "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
+        "sourceSelectionClearancePolicyVersion": SOURCE_SELECTION_CLEARANCE_POLICY_VERSION,
+        "sourceManifestSha256": hashlib.sha256(manifest_bytes).hexdigest(),
+        "sourceManifestPath": str(source_manifest_path.resolve()),
+        "selectedSegmentSha256": selected_segment_sha256,
+        "selectedSegmentPath": str(selected_segment_path.resolve()),
+        "sourceCutReviewVideoPath": str(review_video_path),
+        "sourceCutReviewVideoSha256": review_video_sha256,
+        "sourceCutOriginalVideoPath": str(original_video_path),
+        "sourceCutOriginalVideoSha256": original_video_sha256,
+        "sourceCutReviewFrameEvidence": review_frame_evidence,
+        "sourceCutReviewFrameEvidenceSha256": hashlib.sha256(json.dumps(
+            review_frame_evidence, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        ).encode("utf-8")).hexdigest(),
+        "selectedSpan": {"startSeconds": selected_start, "endSeconds": selected_end},
+        "reviewedExerciseName": (
+            str(source_manifest.get("exerciseName") or "")
+            if expected_exercise_name is not None else None
+        ),
+        "exerciseMotionContractSha256": (
+            hashlib.sha256(json.dumps(
+                exercise_motion_contract_for_prompt(expected_contract),
+                sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+                allow_nan=False,
+            ).encode("utf-8")).hexdigest()
+            if expected_exercise_name is not None else None
+        ),
+        "authorizedCandidateId": (
+            authorized_parent_id if confirmed_scorecard else selected_id
+        ),
+        "confirmedCandidateId": selected_id if confirmed_scorecard else None,
+        "authority": "exact_pose_confirmation" if confirmed_scorecard else "source_scorecard_pass",
+    }
+
+
 def apply_materialized_output_acceptance_gate(
     selected: SelectedArtifact,
     *,
@@ -5241,6 +5745,18 @@ def apply_materialized_output_acceptance_gate(
     deterministic_metrics: dict[str, Any] | None = None,
 ) -> SelectedArtifact:
     item, ranking = selected
+    source_clearance = source_selection_clearance_for_review_item(
+        item,
+        required=request.pre_wham_source_validation,
+        explicitly_disabled=request.pre_wham_source_validation_explicitly_disabled,
+        ranking=ranking,
+    )
+    candidate_payload = dict(item.candidate or {})
+    candidate_payload["sourceSelectionClearance"] = source_clearance
+    candidate_payload["sourceCandidateWorkspace"] = str(
+        candidate_payload.get("sourceCandidateWorkspace") or item.candidate_workspace
+    )
+    item = replace(item, candidate=candidate_payload)
     contract = review_item_contract_for_artifact_state(item, ranking)
     required_class = required_final_artifact_class(contract)
     artifact_class = review_item_artifact_class(item)
@@ -5287,7 +5803,19 @@ def apply_materialized_output_acceptance_gate(
         return item, replace(ranking, payload=payload)
     persist_reconciled_review_item_artifact_state(item, artifact_state)
     if selected[1] is None:
-        return selected
+        if source_clearance.get("status") in {"cleared", "not_required"}:
+            return item, None
+        source_failure = "source_selection_clearance_required"
+        payload = {
+            "sourceSelectionClearance": source_clearance,
+            "acceptanceDecision": AcceptanceDecision(
+                "needs_manual_review", "evidence", (source_failure,)
+            ).to_dict(),
+            "materializedOutputRejected": True,
+            "materializedValidationStatus": "needs_source_review",
+            "materializedHardRejectionReasons": [source_failure],
+        }
+        return item, LoopRanking(score=0.0, reasons=[source_failure], payload=payload)
     metrics = deterministic_metrics or materialized_metrics_with_gpu_handoff(
         item, ranking, caption_images=final_output_caption_images)
     infrastructure_error = materialized_validation_infrastructure_error(metrics)
@@ -5308,6 +5836,7 @@ def apply_materialized_output_acceptance_gate(
         if not str(key).startswith("_")
     }
     payload = dict(ranking.payload or {})
+    payload["sourceSelectionClearance"] = source_clearance
     payload["materializedOutputAcceptanceGate"] = public_metrics
     payload["finalOutputValidation"] = final_validation
     payload["artifactClassGate"] = class_gate
@@ -5330,6 +5859,12 @@ def apply_materialized_output_acceptance_gate(
         review_rejections=review_rejections,
         require_visual_review=bool(request.final_output_validation),
     )
+    if source_clearance.get("status") not in {"cleared", "not_required"}:
+        decision = AcceptanceDecision(
+            "needs_manual_review",
+            "evidence",
+            ("source_selection_clearance_required",),
+        )
     payload["acceptanceDecision"] = decision.to_dict()
     # All promotion/rejection paths consume the shared decision, not a parallel
     # interpretation of optional review tags or scores.
@@ -6549,6 +7084,7 @@ def validate_final_output_with_caption_images(
         from .clef_systemone import (
             CLEF_FINAL_REVIEW_POLICY_VERSION,
             final_preview_review_contract,
+            managed_clef_server_profile,
         )
 
         clef_request_identity = {
@@ -6573,6 +7109,7 @@ def validate_final_output_with_caption_images(
             finalOutputReviewModel=request.clef_systemone_model,
             finalOutputReviewBaseUrl=request.clef_systemone_base_url,
             finalOutputReviewPolicyVersion=CLEF_FINAL_REVIEW_POLICY_VERSION,
+            clefManagedServerProfile=managed_clef_server_profile(),
         )
     model_settings["validationEvidenceIdentity"] = {
         "skeleton": file_sha256(item.skeleton_path),
@@ -6948,6 +7485,114 @@ def two_scale_required_equipment_names(
     return normalized
 
 
+def two_scale_equipment_role_requirements(
+    exercise_name: str,
+    exercise_motion_contract: dict[str, Any] | None = None,
+) -> list[dict[str, str]]:
+    """Preserve equipment roles from authoritative context for visual review."""
+    context = (
+        exercise_motion_contract.get("motionContext")
+        if isinstance(exercise_motion_contract, dict)
+        and isinstance(exercise_motion_contract.get("motionContext"), dict)
+        else {}
+    )
+    requirements: list[dict[str, str]] = []
+    authoritative_names: set[str] = set()
+
+    def add(record: Any, role: str) -> None:
+        if not isinstance(record, dict):
+            return
+        name = str(record.get("name") or record.get("type") or "").strip()
+        normalized = normalize_observed_equipment_name(name)
+        if not normalized or normalized == "none":
+            return
+        normalized_type = normalize_observed_equipment_name(record.get("type"))
+        authoritative_names.add(normalized)
+        if normalized_type and normalized_type != "none":
+            authoritative_names.add(normalized_type)
+        key = (normalized, role)
+        if not any((item["normalizedName"], item["role"]) == key for item in requirements):
+            requirements.append({"name": name, "normalizedName": normalized, "role": role})
+
+    primary = context.get("primaryEquipment")
+    if isinstance(primary, dict):
+        add(primary, "active_implement")
+
+    accessories = context.get("requiredAccessories")
+    if isinstance(accessories, list):
+        for accessory in accessories:
+            if not isinstance(accessory, dict):
+                continue
+            capabilities = {
+                str(capability).strip().upper()
+                for capability in accessory.get("capabilities", [])
+                if str(capability).strip()
+            } if isinstance(accessory.get("capabilities"), list) else set()
+            if "RACKED_BAR_SUPPORT" in capabilities:
+                role = "setup_fixture"
+            elif capabilities.intersection({"BENCH", "FLAT_BENCH", "INCLINE_BENCH", "ADJUSTABLE_BENCH"}):
+                role = "support_surface"
+            else:
+                role = "unknown_required_equipment"
+            add(accessory, role)
+
+    # Preserve target-name equipment requirements when the authoritative
+    # library context has not supplied an equivalent record.
+    for name in two_scale_required_equipment_names(exercise_name, exercise_motion_contract):
+        if name not in authoritative_names:
+            # A target-name qualifier can require equipment, but it does not
+            # establish whether that item is an implement, support surface, or
+            # setup fixture. Keep the requirement strict until structured
+            # equipment context supplies the role.
+            requirements.append({
+                "name": name,
+                "normalizedName": name,
+                "role": "unknown_required_equipment",
+            })
+            authoritative_names.add(name)
+    return requirements
+
+
+def two_scale_equipment_role_policy(
+    exercise_name: str,
+    exercise_motion_contract: dict[str, Any] | None = None,
+) -> str:
+    """Describe required equipment evidence without flattening setup/support roles."""
+    requirements = two_scale_equipment_role_requirements(exercise_name, exercise_motion_contract)
+    if not requirements:
+        return "No named equipment requirement."
+    descriptions = {
+        "active_implement": (
+            "active implement: exact item must be visibly held, worn, attached, or connected to the performer "
+            "throughout the exercise action"
+        ),
+        "support_surface": (
+            "required body-support surface: visibly supports the body during the relevant action phase; a box and "
+            "bench may satisfy this support-surface role when the visible contact and mechanics are equivalent"
+        ),
+        "setup_fixture": (
+            "required setup fixture: do not demand contact during the repetition; require direct visual evidence that "
+            "the fixture served the target implement's setup/start-end support. Its presence alone, or an unseen "
+            "setup inferred from the exercise name, does not establish this role; if the setup is outside the images, "
+            "the role remains unverified"
+        ),
+        "unknown_required_equipment": (
+            "required equipment with unspecified role: require clear visible evidence of its role and appropriate use; "
+            "if the relationship cannot be established, classify equipment evidence as unclear"
+        ),
+    }
+    lines = [
+        f"{item['name']}: {descriptions[item['role']]}"
+        for item in requirements
+    ]
+    return (
+        "Every listed equipment role is mandatory. Judge each by its stated role, not by continuous contact alone. "
+        "Only when all listed role conditions are visibly established is the combined equipment status engaged; "
+        "any clearly absent condition is absent, and any unverified role is unclear.\n"
+        + "\n".join(f"- {line}" for line in lines)
+    )
+
+
 def two_scale_named_equipment(
     exercise_name: str,
     exercise_motion_contract: dict[str, Any] | None = None,
@@ -7268,7 +7913,9 @@ def build_two_scale_evidence_consistency_prompt(
         "Audit only the consistency of independent written visual observations. Do not inspect or imagine images, "
         "and do not repair conflicting evidence in favor of the requested exercise.\n"
         f"Exact target exercise: {exercise_name}\n"
-        f"Required named equipment: {equipment}\n"
+        "Required equipment role policy:\n"
+        + two_scale_equipment_role_policy(exercise_name, contract)
+        + "\n"
         + two_scale_contract_authority_guidance(contract)
         + "Candidate movement topology: "
         + json.dumps(topology, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
@@ -7279,9 +7926,11 @@ def build_two_scale_evidence_consistency_prompt(
         "matches. Mark a contradiction as corroborated only when the same incompatible action, equipment, phase, or "
         "boundary is stated by at least two independent observations, or when one target-aware observation explicitly "
         "rejects the target. Do not let one outlying target-blind description override several mutually consistent "
-        "observations. Set a supported field to uncertain when the written observations do not prove it. For a required "
-        "named equipment value other than none, require "
-        "written evidence that the performer visibly engages that exact equipment. "
+        "observations. Set a supported field to uncertain when the written observations do not prove it. For required "
+        "equipment, require written evidence that each role condition in the policy is satisfied; primary implements "
+        "must be visibly engaged during action, support surfaces must show body contact in the relevant phase, and "
+        "setup fixtures require direct evidence of appropriate setup use when shown. A fixture in the background alone "
+        "does not prove the setup role. "
         "Full-resolution equipment evidence concerns only the held implement; it cannot establish action, "
         "complete execution, or override an unresolved action conflict. Uncertain equipment detail is not proof. "
         "When required named equipment is none, this means no named-implement restriction, not forbidden equipment. "
@@ -7424,7 +8073,9 @@ def build_two_scale_topology_verification_prompt(
         "Verify an exact exercise-specific movement topology in chronological contact sheets. Judge only visible "
         "frames and ignore titles, captions, diagrams, and written labels.\n"
         f"Target exercise: {exercise_name}\n"
-        f"Required named equipment: {equipment}\n"
+        "Required equipment role policy:\n"
+        + two_scale_equipment_role_policy(exercise_name, contract)
+        + "\n"
         + two_scale_contract_authority_guidance(contract)
         + "Candidate topology to verify: "
         + json.dumps(topology, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
@@ -7432,8 +8083,10 @@ def build_two_scale_topology_verification_prompt(
         "actually shown, and its chronological position from 0.0 to 1.0. Do not infer a phase from the exercise name. "
         "Do not return timestamps or frame or tile numbers; position is the only permitted temporal reference. "
         "Positions for visible phases must increase. Set startStateMatch and endStateMatch to uncertain when the exact "
-        "contract posture is not visible. Set requiredEquipmentMatch to not_applicable only when required equipment is "
-        "none. "
+        "contract posture is not visible. Set requiredEquipmentMatch=match only when every role condition in the "
+        "equipment policy is visibly supported, mismatch only for a clear contradiction, and uncertain when any role "
+        "is not established. A setup fixture is not required to be contacted during the repetition, but presence alone "
+        "does not prove appropriate setup use. Set requiredEquipmentMatch to not_applicable only when no equipment roles are listed. "
         + (
             "For this ongoing-action topology, complete is true when every required sustained-action phase is visibly "
             "proven; startStateMatch and endStateMatch may be uncertain, but never mismatch.\n"
@@ -7742,7 +8395,9 @@ def _validate_two_scale_source_uncached(
         "identity": (
             "You verify only exercise identity in chronological motion-focused contact sheets.\n"
             f"Target exercise: {exercise_name}\n"
-            f"Required named equipment: {equipment}\n"
+            "Required equipment role policy:\n"
+            + two_scale_equipment_role_policy(exercise_name, candidate_contract)
+            + "\n"
             + two_scale_contract_authority_guidance(specific_contract)
             + f"Movement guidance: {(specific_contract or {}).get('advisoryText') or 'Not supplied'}\n"
             "Inspect every visible frame. Judge visible body action and visibly used equipment, not titles. "
@@ -7772,9 +8427,13 @@ def _validate_two_scale_source_uncached(
         "motion": (
             "You inspect one motion-focused chronological contact sheet.\n"
             f"Target exercise: {exercise_name}\nNamed equipment to check: {equipment}\n"
+            + two_scale_equipment_role_policy(exercise_name, candidate_contract)
+            + "\n"
             f"{action_guidance}"
-            "Named equipment is engaged only when visibly used by the performer; equipment on a floor, rack, or in the "
-            "background is absent. Use not_applicable only when named equipment is none. Return JSON only with exactly:\n"
+            "Return namedEquipmentEngagedStatus=engaged only when every listed equipment role is visibly established; "
+            "use absent only for a clearly false required condition, unclear when any required role is unverified, and "
+            "not_applicable only when the role policy lists no equipment. A rack/setup fixture does not need contact "
+            "during the repetition; its visible presence alone does not establish appropriate setup use. Return JSON only with exactly:\n"
             '{"targetExerciseActionVisible":false,"namedEquipmentEngagedStatus":"engaged|absent|unclear|not_applicable","evidence":"short visible evidence"}'
         ),
         "completeness": build_target_blind_source_observation_prompt(completion_mode=completion_mode),
@@ -8208,10 +8867,16 @@ def final_output_vlm_preview_contact_sheets(item: ReviewItem, *, output_dir: Pat
 
 
 def selected_input_video_path_for_review_item(item: ReviewItem) -> Path | None:
+    source_candidate_workspace = Path(str(
+        (item.candidate or {}).get("sourceCandidateWorkspace") or item.candidate_workspace
+    ))
     candidates = (
         item.candidate_workspace / "input" / "selected_segment.mp4",
         item.candidate_workspace / "input" / "source.mp4",
         item.candidate_workspace / "source" / "source.mp4",
+        source_candidate_workspace / "input" / "selected_segment.mp4",
+        source_candidate_workspace / "input" / "source.mp4",
+        source_candidate_workspace / "source" / "source.mp4",
         item.source_review_video_path,
     )
     return next((path for path in candidates if path is not None and path.exists()), None)
@@ -8226,6 +8891,14 @@ def selected_source_section_window_for_review_item(
     duration = source_duration_seconds
     if duration is None and source_video_path is not None:
         duration = source_video_duration_seconds(source_video_path)
+    source_interval_authority = (item.candidate or {}).get("preWhamSourceIntervalAuthority")
+    if (
+        duration is not None
+        and duration > 0.0
+        and isinstance(source_interval_authority, dict)
+        and source_interval_authority.get("authoritative") is True
+    ):
+        return DetectionWindow(index=0, start_seconds=0.0, end_seconds=duration)
     if (
         item.loop_index < 0
         and not item.llm_time_range_cut_applied
@@ -17058,19 +17731,48 @@ def build_exercise_motion_contract_resolver(
 
     def resolve(ranked_candidate: RankedCandidate) -> dict[str, Any] | None:
         candidate_contract = exercise_motion_contract_from_candidate(ranked_candidate.candidate)
+        authoritative_motion_context = request.authoritative_exercise_motion_context
+        candidate_motion_context = (
+            candidate_contract.get("motionContext")
+            if isinstance(candidate_contract, dict)
+            and isinstance(candidate_contract.get("motionContext"), dict)
+            else {}
+        )
+        motion_context = (
+            authoritative_motion_context
+            if isinstance(authoritative_motion_context, dict)
+            else candidate_motion_context
+        )
         exercise = ExerciseEntry(
             exercise_id=ranked_candidate.exercise_id,
             name=ranked_candidate.exercise_name,
             slug=ranked_candidate.exercise_slug,
+            motion_context=motion_context,
         )
+        if isinstance(authoritative_motion_context, dict) and request.exercise_motion_contract_cache_dir is not None:
+            cache_settings = dataclass_replace(
+                exercise_contract_llama_cpp_settings(build_llama_cpp_vision_settings(request)),
+                exercise_motion_contract_cache_dir=request.exercise_motion_contract_cache_dir,
+            )
+            cached_contract = load_cached_exercise_motion_contract(exercise, cache_settings)
+            if cached_contract is not None:
+                cached_contract["exerciseMotionContractStatus"] = "reused_contract_cache"
+                ranked_candidate.candidate["exerciseMotionContract"] = cached_contract
+                return cached_contract
         if candidate_contract is not None and exercise_motion_contract_uses_candidate_evidence(candidate_contract):
             candidate_contract = None
-        if (
-            candidate_contract is not None
-            and (parse_optional_int(candidate_contract.get("contractPolicyVersion")) or 0)
-            < EXERCISE_MOTION_CONTRACT_POLICY_VERSION
-        ):
-            candidate_contract = None
+        if candidate_contract is not None:
+            candidate_policy = parse_optional_int(candidate_contract.get("contractPolicyVersion"))
+            if isinstance(authoritative_motion_context, dict):
+                # Check the serialized contract before normalization, which stamps
+                # the current policy version and can otherwise hide stale inputs.
+                if (
+                    candidate_policy != EXERCISE_MOTION_CONTRACT_POLICY_VERSION
+                    or candidate_contract.get("motionContext") != authoritative_motion_context
+                ):
+                    candidate_contract = None
+            elif candidate_policy != EXERCISE_MOTION_CONTRACT_POLICY_VERSION:
+                candidate_contract = None
         if candidate_contract is not None:
             candidate_contract = normalize_exercise_motion_contract(
                 candidate_contract,
@@ -17144,11 +17846,16 @@ def generate_exercise_motion_contract_for_bake(
             if isinstance(vision_payload, dict)
             else None
         )
-    motion_context = (
+    candidate_motion_context = (
         candidate_contract.get("motionContext")
         if isinstance(candidate_contract, dict)
         and isinstance(candidate_contract.get("motionContext"), dict)
         else {}
+    )
+    motion_context = (
+        request.authoritative_exercise_motion_context
+        if isinstance(request.authoritative_exercise_motion_context, dict)
+        else candidate_motion_context
     )
     exercise = ExerciseEntry(
         exercise_id=ranked_candidate.exercise_id,
@@ -18288,6 +18995,16 @@ def revalidate_library_workspace(
         if not skeleton_paths or not review_paths:
             return dict(selected)
         retained = dict(selected)
+        retained_candidate = dict(retained.get("candidate") or {})
+        retained_candidate["sourceCandidateWorkspace"] = str(
+            retained.get("sourceCandidateWorkspace")
+            or retained_candidate.get("sourceCandidateWorkspace")
+            or retained.get("candidateWorkspace")
+            or ""
+        )
+        if isinstance(retained.get("sourceSelectionClearance"), dict):
+            retained_candidate["sourceSelectionClearance"] = retained["sourceSelectionClearance"]
+        retained["candidate"] = retained_candidate
         retained["candidateWorkspace"] = str(selected_dir)
         retained["skeletonPath"] = str(skeleton_paths[0])
         retained["selectedWearSkeletonPath"] = str(skeleton_paths[0])
@@ -18301,13 +19018,6 @@ def revalidate_library_workspace(
             retained["selectedPreviewHtmlPath"] = str(preview_html_paths[0])
         if input_paths:
             retained["selectedInputVideoPath"] = str(input_paths[0])
-            retained["sourceReviewVideoPath"] = str(input_paths[0])
-            retained["sourceReviewStartSeconds"] = 0.0
-            duration = parse_optional_float(
-                retained.get("durationSec") or retained.get("selectedSectionDurationSeconds")
-            )
-            if duration is not None and duration > 0.0:
-                retained["sourceReviewEndSeconds"] = duration
         exercise_id, exercise_name = exercise_identity(selected_manifest, exercise_workspace)
         current_contract = contract_cache.resolve(exercise_name, motion_context_by_exercise_id.get(exercise_id, {}))
         return with_revalidation_contract(retained, current_contract)
@@ -18348,6 +19058,7 @@ def revalidate_library_workspace(
                 contract=contract_cache.resolve(exercise_name, context),
                 policies={"selection": SELECTION_VALIDATION_POLICY_VERSION,
                           "visual": FINAL_OUTPUT_VALIDATION_POLICY_VERSION,
+                          "source": SOURCE_SELECTION_POLICY_VERSION,
                           "renderer": preview_runtime_signature()},
             )
         except (OSError, ValueError, TypeError):
@@ -18379,6 +19090,8 @@ def revalidate_library_workspace(
         if (
             int(marker.get("selectionValidationPolicyVersion") or 0)
             < SELECTION_VALIDATION_POLICY_VERSION
+            or int(marker.get("sourceSelectionPolicyVersion") or 0)
+            < SOURCE_SELECTION_POLICY_VERSION
             or marker.get("retryable") is True
             or marker.get("status") not in {"valid", "invalid", "needs_manual_review"}
         ):
@@ -18676,6 +19389,30 @@ def revalidate_library_workspace(
                     "Required source-pose validator failed: " + infrastructure_error
                 )
             if final_output_validation_approved(validated[1]):
+                source_clearance = (
+                    validated[0].candidate.get("sourceSelectionClearance")
+                    if isinstance(validated[0].candidate, dict)
+                    else None
+                )
+                if isinstance(source_clearance, dict) and selected_manifest_path.exists():
+                    previous_selected_entry["sourceSelectionClearance"] = source_clearance
+                    previous_selected_entry["sourceCandidateWorkspace"] = str(
+                        (validated[0].candidate or {}).get("sourceCandidateWorkspace")
+                        or validated[0].candidate_workspace
+                    )
+                    candidate_payload = dict(previous_selected_entry.get("candidate") or {})
+                    candidate_payload.update(
+                        sourceSelectionClearance=source_clearance,
+                        sourceCandidateWorkspace=previous_selected_entry["sourceCandidateWorkspace"],
+                    )
+                    previous_selected_entry["candidate"] = candidate_payload
+                    selected_manifest["sourceSelectionPolicyVersion"] = SOURCE_SELECTION_POLICY_VERSION
+                    selected_manifest.setdefault(
+                        "preWhamSourceValidationEnabled",
+                        bool(request.pre_wham_source_validation),
+                    )
+                    selected_manifest["selected"] = previous_selected_entry
+                    write_json_atomic(selected_manifest_path, selected_manifest)
                 return "valid", []
             final_review = validated_payload.get("finalOutputValidation") or {}
             acceptance_decision = validated_payload.get("acceptanceDecision") or {}
@@ -18806,6 +19543,7 @@ def revalidate_library_workspace(
         marker = {
             "schemaVersion": 1,
             "selectionValidationPolicyVersion": SELECTION_VALIDATION_POLICY_VERSION,
+            "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
             "validatedAt": datetime.now(timezone.utc).isoformat(),
             "exerciseId": exercise_id,
             "exerciseName": exercise_name,
@@ -18820,6 +19558,10 @@ def revalidate_library_workspace(
             ),
             "retainedSelectedArtifactFallbackUsed": retained_selected_fallback_used,
         }
+        if selected_manifest_path.exists():
+            marker["selectedManifestSha256"] = hashlib.sha256(
+                selected_manifest_path.read_bytes()
+            ).hexdigest()
         from .preview import preview_runtime_signature
         marker["previewRuntimeSignature"] = preview_runtime_signature()
         ending_identity = current_artifact_identity(exercise_workspace)
@@ -19098,12 +19840,12 @@ def bake_and_rank_request_from_selection_manifest(
         classify_support_dominance=False,
         final_output_validation=bool(manifest.get("finalOutputValidationEnabled", False)),
         visual_decision_backend=str(
-            manifest.get("visualDecisionBackend", manifest.get("finalOutputReviewBackend", "qwen-chat"))
+            manifest.get("visualDecisionBackend", "qwen-chat")
         ),
         final_output_review_backend=str(
             manifest.get(
                 "finalOutputReviewBackend",
-                manifest.get("visualDecisionBackend", "qwen-chat"),
+                "qwen-chat",
             )
         ),
         clef_systemone_base_url=str(
@@ -19114,6 +19856,12 @@ def bake_and_rank_request_from_selection_manifest(
         ),
         comparative_segment_selection_enabled=bool(
             manifest.get("comparativeSegmentSelectionEnabled", False)
+        ),
+        pre_wham_source_validation=bool(
+            manifest.get("preWhamSourceValidationEnabled", True)
+        ),
+        pre_wham_source_validation_explicitly_disabled=bool(
+            manifest.get("preWhamSourceValidationExplicitlyDisabled", False)
         ),
         two_scale_source_validation=bool(manifest.get("twoScaleSourceValidationEnabled", False)),
         final_output_validation_min_score=float(
@@ -19384,14 +20132,23 @@ def browser_compatible_video_path(
     if video_path.suffix.lower() == ".webm":
         return video_path
     browser_path = video_path.with_name(f"{video_path.stem}.browser.webm")
-    if browser_path.exists() and browser_path.stat().st_size > 0:
-        return browser_path
-    if not create:
-        return None
-    return convert_video_to_webm(
-        source_path=video_path,
-        output_path=browser_path,
+    from exercise_motion_pkg.stage_cache import cache_key, cached_paths, load_stage
+
+    checkpoint_path = browser_path.with_name(f"{browser_path.name}.checkpoint.json")
+    cache_identity = cache_key(
+        {"conversionProfile": "browser-vp9-webm-v1"},
+        [video_path, Path(__file__).with_name("video_utils.py")],
     )
+    if not create:
+        cached = load_stage(checkpoint_path, cache_identity)
+        paths = cached.get("paths") if cached is not None else None
+        return browser_path if paths == [str(browser_path)] else None
+    paths = cached_paths(
+        checkpoint_path,
+        cache_identity,
+        lambda: [convert_video_to_webm(source_path=video_path, output_path=browser_path)],
+    )
+    return paths[0] if paths else None
 
 
 def normalize_artifact_retention_mode(mode: str | None) -> str:
@@ -21622,6 +22379,12 @@ def process_ranked_candidate(
                         }
                     )
                     continue
+                review_item_candidate = ranked_candidate.candidate
+                if source_interval_authority.get("authoritative") is True:
+                    review_item_candidate = {
+                        **ranked_candidate.candidate,
+                        "preWhamSourceIntervalAuthority": source_interval_authority,
+                    }
                 review_item = ReviewItem(
                     exercise_index=ranked_candidate.exercise_index,
                     candidate_rank=ranked_candidate.candidate_rank,
@@ -21637,7 +22400,7 @@ def process_ranked_candidate(
                     duration_sec=eligible_loop.duration_sec,
                     loop_start_seconds=loop_start_seconds,
                     loop_end_seconds=loop_end_seconds,
-                    candidate=ranked_candidate.candidate,
+                    candidate=review_item_candidate,
                     settings_variant_id=artifact.settings_variant_id,
                     settings_variant_label=artifact.settings_variant_label,
                     settings_options=artifact.settings_options,
@@ -22876,7 +23639,7 @@ def classify_support_dominance_for_review_loop(
     candidate_workspace: Path,
     loop_index: int,
     sample_frames: int,
-    visual_decision_backend: str = "clef-systemone",
+    visual_decision_backend: str = "qwen-chat",
     clef_systemone_base_url: str = "http://127.0.0.1:8091",
     clef_systemone_model: str = "ggml-org/Clef-Flash-GGUF:Q4_K_M",
     clef_conflicting_base_urls: tuple[str | None, ...] = (),
@@ -23528,11 +24291,21 @@ def source_cut_ranking_rejection_evidence(ranking: LoopRanking) -> dict[str, Any
 def source_cut_ranking_has_vlm_approval(ranking: LoopRanking) -> bool:
     payload = ranking.payload if isinstance(ranking.payload, dict) else {}
     selected_scorecard = payload.get("selectedScorecard")
+    selected_id = normalize_source_cut_candidate_id(payload.get("selectedCandidateId"))
+    scorecards = {
+        normalize_source_cut_candidate_id(row.get("id")): row
+        for row in payload.get("sourceCutScorecardCandidates") or []
+        if isinstance(row, dict)
+    }
+    if isinstance(selected_scorecard, dict):
+        scorecards.setdefault(selected_id, selected_scorecard)
     return (
         bool(ranking.raw_response)
         and ranking.score >= SOURCE_CUT_MIN_SELECTED_SCORE
         and isinstance(selected_scorecard, dict)
-        and bool(selected_scorecard.get("passed"))
+        and selected_id in source_cut_semantically_pose_confirmable_candidate_ids(scorecards)
+        and selected_scorecard.get("passed") is True
+        and not selected_scorecard.get("rejectionReasons")
     )
 
 
@@ -23658,6 +24431,41 @@ SOURCE_CUT_SCORECARD_COMPLETENESS_ONLY_REJECT_REASONS = frozenset((
     "source_cut_scorecard_reject_contact_changed",
     "source_cut_contact_changed",
 ))
+SOURCE_CUT_SCORECARD_LOW_CONFIDENCE_REJECT_REASONS = frozenset((
+    "source_cut_scorecard_reject_low_confidence",
+    "source_cut_low_confidence",
+))
+
+
+def run_clef_source_cut_review_without_backend_fallback(
+    review_operation: Callable[[], tuple[CutCandidateReviewChoice, list[dict[str, Any]]]],
+    *,
+    candidate_ids: list[str],
+) -> tuple[CutCandidateReviewChoice, list[dict[str, Any]]]:
+    """Keep managed Clef failures unresolved instead of changing review backends."""
+    try:
+        return review_operation()
+    except Exception as exc:
+        if critical_vlm_interaction_error(exc) is None and not isinstance(
+            exc, (FileNotFoundError, OSError, TimeoutError, RuntimeError)
+        ):
+            raise
+        choice = CutCandidateReviewChoice(
+            ranking=None,
+            raw_responses=[],
+            errors=[cut_candidate_error_payload(candidate_ids, exc)],
+            reviewed_candidate_ids=[],
+            reviewed_request_count=0,
+            elapsed_seconds=0.0,
+            rankings=[],
+        )
+        recovery = {
+            "applied": False,
+            "backend": "clef-systemone",
+            "reason": "clef_source_review_failed_no_backend_fallback",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+        return choice, [recovery]
 
 
 def source_cut_scorecard_rejections_are_completeness_only(row: dict[str, Any]) -> bool:
@@ -23669,6 +24477,16 @@ def source_cut_scorecard_rejections_are_completeness_only(row: dict[str, Any]) -
     """
     reasons = {str(reason) for reason in row.get("rejectionReasons") or []}
     return bool(reasons) and reasons <= SOURCE_CUT_SCORECARD_COMPLETENESS_ONLY_REJECT_REASONS
+
+
+def source_cut_scorecard_rows_need_review(rows: list[dict[str, Any]]) -> bool:
+    """Keep uncertainty-only scorecard outcomes visibly unresolved for review."""
+    return any(
+        isinstance(row, dict)
+        and (reasons := {str(reason) for reason in row.get("rejectionReasons") or []})
+        and reasons <= SOURCE_CUT_SCORECARD_LOW_CONFIDENCE_REJECT_REASONS
+        for row in rows
+    )
 
 
 def source_cut_scorecard_fallback_candidates(
@@ -23705,31 +24523,58 @@ def source_cut_scorecard_fallback_candidates(
     return [candidate for _, _, candidate in scored[:max_candidates]]
 
 
+def source_cut_semantically_pose_confirmable_candidate_ids(
+    scorecards: dict[str, dict[str, Any]],
+) -> set[str]:
+    """Require semantic identity and confidence clearance before pose confirmation.
+
+    Exact pose evidence may resolve a high-confidence completeness or boundary
+    dispute, but it cannot establish the exercise identity or replace an
+    uncertain/low-confidence semantic review.
+    """
+    confirmable: set[str] = set()
+    for candidate_id, row in scorecards.items():
+        if not candidate_id or str(row.get("identityMatch") or "").casefold() != "match":
+            continue
+        confidence = parse_source_cut_scorecard_score(row.get("confidence"))
+        if confidence is None or confidence < SOURCE_CUT_CLASSIFIER_MIN_CONFIDENCE_WITH_CONTRACT:
+            continue
+        rejection_reasons = {str(reason) for reason in row.get("rejectionReasons") or []}
+        if (
+            row.get("passed") is True and not rejection_reasons
+        ) or source_cut_scorecard_rejections_are_completeness_only(row):
+            confirmable.add(candidate_id)
+    return confirmable
+
+
 def source_cut_deterministic_confirmation_candidates(
     ranking: LoopRanking,
     *,
     max_candidates: int | None = None,
 ) -> list[dict[str, Any]]:
     payload = ranking.payload if isinstance(ranking.payload, dict) else {}
-    all_candidates = [
-        candidate
-        for candidate in payload.get("sourceCutCandidates") or []
-        if isinstance(candidate, dict)
-        and source_cut_confirmation_candidate_is_eligible(candidate)
-    ]
-    selected_id = normalize_source_cut_candidate_id(payload.get("selectedCandidateId"))
-    candidates_by_id = {
-        normalize_source_cut_candidate_id(candidate.get("candidateId")): candidate
-        for candidate in all_candidates
-    }
     scorecards = {
         normalize_source_cut_candidate_id(row.get("id")): row
         for row in payload.get("sourceCutScorecardCandidates") or []
         if isinstance(row, dict)
     }
+    selected_id = normalize_source_cut_candidate_id(payload.get("selectedCandidateId"))
     selected_scorecard = payload.get("selectedScorecard")
     if isinstance(selected_scorecard, dict):
         scorecards.setdefault(selected_id, selected_scorecard)
+    semantic_pose_confirmable_ids = source_cut_semantically_pose_confirmable_candidate_ids(scorecards)
+    all_candidates = [
+        candidate
+        for candidate in payload.get("sourceCutCandidates") or []
+        if isinstance(candidate, dict)
+        and source_cut_confirmation_candidate_is_eligible(candidate)
+        and normalize_source_cut_candidate_id(candidate.get("candidateId"))
+        in semantic_pose_confirmable_ids
+    ]
+    candidates_by_id = {
+        normalize_source_cut_candidate_id(candidate.get("candidateId")): candidate
+        for candidate in all_candidates
+    }
     selected = candidates_by_id.get(selected_id)
     passed_candidates = [
         candidate
@@ -23747,40 +24592,6 @@ def source_cut_deterministic_confirmation_candidates(
             selected_scorecard.get("passed")
         ):
             selected = None
-    def unreviewed_tier(candidates_so_far: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        # Scorecard-unreviewed eligible candidates are the last tier: the VLM
-        # sometimes scores only its favorite cut, and if that cut then fails
-        # exact pose confirmation the source would dead-end even when a
-        # complete candidate was discovered. Exact pose review owns
-        # completeness, and an unreviewed candidate carries no rejection.
-        seen = {
-            (
-                round(float(candidate.get("startSeconds") or 0.0), 3),
-                round(float(candidate.get("endSeconds") or 0.0), 3),
-            )
-            for candidate in candidates_so_far
-        }
-        tier = []
-        for candidate in all_candidates:
-            candidate_id = normalize_source_cut_candidate_id(candidate.get("candidateId"))
-            if not candidate_id or candidate_id in scorecards:
-                continue
-            window_key = (
-                round(float(candidate.get("startSeconds") or 0.0), 3),
-                round(float(candidate.get("endSeconds") or 0.0), 3),
-            )
-            if window_key in seen:
-                continue
-            seen.add(window_key)
-            tier.append(candidate)
-        tier.sort(
-            key=lambda candidate: -(
-                float(candidate.get("endSeconds") or 0.0)
-                - float(candidate.get("startSeconds") or 0.0)
-            )
-        )
-        return tier[:SOURCE_CUT_MAX_CONFIRMATION_REPAIR_EXPANSIONS]
-
     if selected is None:
         # Deterministic pose can confirm an approved semantic window, but it
         # cannot recover a window explicitly rejected for the wrong movement,
@@ -23791,8 +24602,13 @@ def source_cut_deterministic_confirmation_candidates(
             # A scorecard that passes nothing on completeness grounds does not
             # dead-end the source: its disapproved cuts still go to exact pose
             # confirmation, which is the authority on cycle completeness.
-            fallback = source_cut_scorecard_fallback_candidates(payload, scorecards=scorecards)
-            return (fallback + unreviewed_tier(fallback))[:SOURCE_CUT_MAX_CONFIRMATION_ATTEMPTS]
+            fallback = [
+                candidate
+                for candidate in source_cut_scorecard_fallback_candidates(payload, scorecards=scorecards)
+                if normalize_source_cut_candidate_id(candidate.get("candidateId"))
+                in semantic_pose_confirmable_ids
+            ]
+            return fallback[:SOURCE_CUT_MAX_CONFIRMATION_ATTEMPTS]
         selected_id = normalize_source_cut_candidate_id(selected.get("candidateId"))
     alternatives: list[dict[str, Any]] = []
     seen_windows = {
@@ -23852,6 +24668,8 @@ def source_cut_deterministic_confirmation_candidates(
         candidate_id = normalize_source_cut_candidate_id(candidate.get("candidateId"))
         if not candidate_id or candidate_id == selected_id:
             continue
+        if candidate_id not in semantic_pose_confirmable_ids:
+            continue
         if any(
             normalize_source_cut_candidate_id(item.get("candidateId")) == candidate_id
             for item in alternatives
@@ -23885,7 +24703,6 @@ def source_cut_deterministic_confirmation_candidates(
         selected,
         *alternatives,
         *repair_expansions[:SOURCE_CUT_MAX_CONFIRMATION_REPAIR_EXPANSIONS],
-        *unreviewed_tier([selected, *alternatives]),
     ]
     if max_candidates is None:
         return ordered_candidates[:SOURCE_CUT_MAX_CONFIRMATION_ATTEMPTS]
@@ -23914,7 +24731,13 @@ def source_cut_candidate_materialization_matches(
     stored_start_seconds = parse_optional_float(metadata.get("startSeconds"))
     stored_end_seconds = parse_optional_float(metadata.get("endSeconds"))
     return bool(
-        metadata.get("sourcePath") == str(source_video_path.resolve())
+        int(metadata.get("policyVersion") or -1)
+        == SOURCE_CUT_DETERMINISTIC_CONFIRMATION_POLICY_VERSION
+        and metadata.get("materialization") in {
+            "source_copy_full_range",
+            "trimmed_source_window",
+        }
+        and metadata.get("sourcePath") == str(source_video_path.resolve())
         and int(metadata.get("sourceSizeBytes") or -1) == source_stat.st_size
         and int(metadata.get("sourceMtimeNs") or -1) == source_stat.st_mtime_ns
         and stored_start_seconds is not None
@@ -23947,7 +24770,7 @@ def materialize_source_cut_candidate_for_exact_validation(
         output_path=output_path,
     ):
         return output_path, "reused"
-    trim_video(
+    materialization = materialize_source_video_interval(
         source_path=source_video_path,
         output_path=output_path,
         start_seconds=start_seconds,
@@ -23964,6 +24787,7 @@ def materialize_source_cut_candidate_for_exact_validation(
         "startSeconds": start_seconds,
         "endSeconds": end_seconds,
         "outputPath": str(output_path),
+        "materialization": materialization,
     }
     temporary_path = metadata_path.with_name(
         f"{metadata_path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
@@ -24249,6 +25073,55 @@ def source_cut_endpoint_contract_trim_candidates(
     return proposals
 
 
+def source_cut_authorized_parent_for_candidate(
+    ranking: LoopRanking, candidate: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Resolve an exact-pose candidate to a reviewed source-cut interval."""
+    authorized = source_cut_deterministic_confirmation_candidates(ranking)
+    start = parse_optional_float(candidate.get("startSeconds"))
+    end = parse_optional_float(candidate.get("endSeconds"))
+    if start is None or end is None or end <= start:
+        return None
+    authorized_by_id = {
+        normalize_source_cut_candidate_id(row.get("candidateId")): row
+        for row in authorized
+        if normalize_source_cut_candidate_id(row.get("candidateId"))
+    }
+    ancestry_ids = [
+        normalize_source_cut_candidate_id(candidate.get(key))
+        for key in (
+            "exactCycleRefinementParentId",
+            "exactBoundaryExpansionParentId",
+            "exactContractTrimParentId",
+        )
+    ]
+    chunking = candidate.get("chunking")
+    if isinstance(chunking, dict):
+        ancestry_ids.append(normalize_source_cut_candidate_id(chunking.get("parentCandidateId")))
+    ancestry_ids.append(normalize_source_cut_candidate_id(candidate.get("candidateId")))
+    for parent_id in ancestry_ids:
+        parent = authorized_by_id.get(parent_id)
+        if parent is None:
+            continue
+        parent_start = parse_optional_float(parent.get("startSeconds"))
+        parent_end = parse_optional_float(parent.get("endSeconds"))
+        if (
+            parent_start is not None and parent_end is not None
+            and parent_start <= start + 0.05 and parent_end >= end - 0.05
+        ):
+            return parent
+    containing = []
+    for parent in authorized:
+        parent_start = parse_optional_float(parent.get("startSeconds"))
+        parent_end = parse_optional_float(parent.get("endSeconds"))
+        if (
+            parent_start is not None and parent_end is not None
+            and parent_start <= start + 0.05 and parent_end >= end - 0.05
+        ):
+            containing.append((parent_end - parent_start, parent))
+    return min(containing, key=lambda entry: entry[0])[1] if containing else None
+
+
 def source_cut_return_phase_expansion_candidates(
     candidate: dict[str, Any],
     validation: dict[str, Any],
@@ -24418,6 +25291,7 @@ def select_exact_pose_confirmed_source_cut(
     selected_candidate: dict[str, Any] | None = None
     selected_validation: dict[str, Any] | None = None
     selected_video_path: Path | None = None
+    selected_materialization: str | None = None
     candidate_queue = list(candidates)
     parent_fallback_enqueued = False
     while True:
@@ -24468,6 +25342,7 @@ def select_exact_pose_confirmed_source_cut(
         candidate = candidate_queue.pop(0)
         candidate_id = normalize_source_cut_candidate_id(candidate.get("candidateId")) or "unknown"
         candidate_dir = output_dir / f"source_candidate_{candidate_id}"
+        candidate_video_path: Path | None = None
         try:
             candidate_video_path, materialization_status = (
                 materialize_source_cut_candidate_for_exact_validation(
@@ -24669,6 +25544,12 @@ def select_exact_pose_confirmed_source_cut(
                 "endSeconds": candidate.get("endSeconds"),
                 "materializedVideoPath": str(candidate_video_path),
                 "materializationStatus": materialization_status,
+                "materialization": (
+                    json.loads((candidate_dir / "materialization.json").read_text(encoding="utf-8"))
+                    .get("materialization")
+                    if (candidate_dir / "materialization.json").is_file()
+                    else None
+                ),
                 "passed": not rejection_reasons,
                 "rejectionReasons": rejection_reasons,
                 "failureClass": source_cut_confirmation_failure_class(
@@ -24695,11 +25576,21 @@ def select_exact_pose_confirmed_source_cut(
                 "failureClass": "validation_execution_failed",
                 "error": f"{type(exc).__name__}: {exc}",
             }
+        if candidate_video_path is not None and candidate_video_path.is_file():
+            parent = source_cut_authorized_parent_for_candidate(ranking, candidate)
+            attempt["candidateVideoSha256"] = file_sha256(candidate_video_path)
+            if parent is not None:
+                attempt.update(
+                    authorizedParentCandidateId=parent.get("candidateId"),
+                    authorizedParentStartSeconds=parent.get("startSeconds"),
+                    authorizedParentEndSeconds=parent.get("endSeconds"),
+                )
         attempts.append(attempt)
         if bool(attempt.get("passed")):
             selected_candidate = candidate
             selected_validation = validation
             selected_video_path = candidate_video_path
+            selected_materialization = attempt.get("materialization")
             break
 
     payload = dict(ranking.payload) if isinstance(ranking.payload, dict) else {}
@@ -24753,6 +25644,7 @@ def select_exact_pose_confirmed_source_cut(
             "selectedScorecard": scorecards.get(selected_id),
             "sourceCutDeterministicConfirmationSelectedValidation": selected_validation,
             "sourceCutDeterministicConfirmationSelectedVideoPath": str(selected_video_path),
+            "sourceCutDeterministicConfirmationSelectedMaterialization": selected_materialization,
         }
     )
     reasons = [*ranking.reasons, "source_cut_deterministic_confirmation_passed"]
@@ -25056,7 +25948,7 @@ def choose_pre_wham_source_cut_or_reject(
     source_chunk_estimate: Any | None = None,
     max_vlm_workers: int = 1,
     request_timeout_seconds: float = DEFAULT_SOURCE_REVIEW_TIMEOUT_SECONDS,
-    visual_decision_backend: str = "clef-systemone",
+    visual_decision_backend: str = "qwen-chat",
     clef_systemone_base_url: str = "http://127.0.0.1:8091",
     clef_systemone_model: str = "ggml-org/Clef-Flash-GGUF:Q4_K_M",
     segment_settings: dict[str, Any] | None = None,
@@ -25105,6 +25997,7 @@ def choose_pre_wham_source_cut_or_reject(
     )
     source_choice = rank_source_video_cut_candidates_with_caption_images(
         video_path=detection_source_video_path,
+        source_identity_video_path=source_video_path,
         exercise_name=ranked_candidate.exercise_name,
         candidate_title=ranked_candidate.title,
         timeline_window=source_window,
@@ -25341,12 +26234,16 @@ def choose_pre_wham_source_cut_or_reject(
     ):
         if confirmed_video_path.resolve() != selected_segment_path.resolve():
             shutil.copy2(confirmed_video_path, selected_segment_path)
+        selected_segment_materialization = (
+            ranking_payload.get("sourceCutDeterministicConfirmationSelectedMaterialization")
+            or "deterministic_confirmation_copy"
+        )
         exact_phase_validation = {
             **confirmed_validation,
             "cacheStatus": "reused_deterministic_candidate_confirmation",
         }
     else:
-        trim_video(
+        selected_segment_materialization = materialize_source_video_interval(
             source_path=detection_source_video_path,
             output_path=selected_segment_path,
             start_seconds=start_seconds,
@@ -25363,6 +26260,10 @@ def choose_pre_wham_source_cut_or_reject(
                 / "exact_source_phase_validation.json"
             ),
         )
+    selection_manifest_path = segment_dir / "segment_selection.json"
+    selection_manifest = json.loads(selection_manifest_path.read_text(encoding="utf-8"))
+    selection_manifest["selectedSegmentMaterialization"] = selected_segment_materialization
+    selection_manifest_path.write_text(json.dumps(selection_manifest, indent=2), encoding="utf-8")
     exact_phase_validation = promote_and_require_exact_source_phase_validation(
         candidate_workspace=candidate_workspace,
         validation=exact_phase_validation,
@@ -25602,6 +26503,7 @@ def validate_exact_source_with_cached_gpu_handoff(
         result = {
             **cached,
             "sourceVideoPath": str(source_video_path.resolve()),
+            "sourceVideoSha256": file_sha256(source_video_path),
         }
         if shared_cache_path != cache_path:
             write_exact_source_phase_validation_cache(
@@ -25736,6 +26638,24 @@ def update_pre_wham_exact_phase_validation_manifest(
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         payload = {}
+    selected_segment_path = candidate_workspace / "input" / "selected_segment.mp4"
+    try:
+        selected_segment_sha256 = file_sha256(selected_segment_path)
+    except OSError:
+        selected_segment_sha256 = None
+    validation_source_path = validation.get("sourceVideoPath")
+    if selected_segment_sha256 and validation_source_path:
+        try:
+            validated_source_sha256 = file_sha256(Path(str(validation_source_path)).expanduser())
+        except OSError:
+            validated_source_sha256 = None
+        if (
+            validated_source_sha256 == selected_segment_sha256
+            and validation.get("sourceVideoSha256") == selected_segment_sha256
+        ):
+            validation = {**validation, "sourceVideoPath": str(selected_segment_path.resolve())}
+    payload["selectedSegmentPath"] = str(selected_segment_path)
+    payload["selectedSegmentSha256"] = selected_segment_sha256
     payload["exactSourcePhaseValidationRequired"] = bool(validation.get("required"))
     payload["exactSourcePhaseValidationPhasePassed"] = bool(validation.get("passed", True))
     payload["exactSourcePhaseValidationPassed"] = exact_source_validation_effectively_passed(
@@ -25827,6 +26747,11 @@ def write_pre_wham_source_selection_manifest(
             exercise_motion_contract.get("exerciseMotionContractStatus")
             or exercise_motion_contract.get("status")
         )
+    selected_segment_path = candidate_workspace / "input" / "selected_segment.mp4"
+    try:
+        selected_segment_sha256 = file_sha256(selected_segment_path)
+    except OSError:
+        selected_segment_sha256 = None
     manifest = {
         "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
         "role": "pre_wham_validated_source_cut",
@@ -25835,7 +26760,8 @@ def write_pre_wham_source_selection_manifest(
         "preWhamSourceValidationEnabled": True,
         "sourceVideoPath": str(source_video_path),
         "detectionSourceVideoPath": str(detection_source_video_path),
-        "selectedSegmentPath": str(candidate_workspace / "input" / "selected_segment.mp4"),
+        "selectedSegmentPath": str(selected_segment_path),
+        "selectedSegmentSha256": selected_segment_sha256,
         "exerciseName": ranked_candidate.exercise_name,
         "sourceChunkHint": source_chunk_hint_payload,
         "candidateSourceWindow": {
@@ -26059,6 +26985,35 @@ def should_use_ranked_source_chunk_directly(
     )
 
 
+def materialize_source_video_interval(
+    *,
+    source_path: Path,
+    output_path: Path,
+    start_seconds: float,
+    end_seconds: float,
+) -> str:
+    """Copy full-source intervals byte-for-byte; transcode only actual cuts."""
+    covers_full_source = False
+    if start_seconds <= 1e-4:
+        metadata = read_basic_video_metadata(source_path)
+        frame_tolerance = 1.0 / metadata.fps if metadata.fps > 0.0 else 0.0
+        covers_full_source = bool(
+            metadata.duration_seconds > 0.0
+            and end_seconds >= metadata.duration_seconds - frame_tolerance * 0.5
+        )
+    if covers_full_source:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_path, output_path)
+        return "source_copy_full_range"
+    trim_video(
+        source_path=source_path,
+        output_path=output_path,
+        start_seconds=start_seconds,
+        end_seconds=end_seconds,
+    )
+    return "trimmed_source_window"
+
+
 def trim_ranked_source_chunk_hint(
     *,
     ranked_candidate: RankedCandidate,
@@ -26072,26 +27027,12 @@ def trim_ranked_source_chunk_hint(
     selected_segment_path.parent.mkdir(parents=True, exist_ok=True)
     if selected_segment_path.exists():
         return selected_segment_path
-    metadata = read_basic_video_metadata(source_video_path)
-    frame_tolerance = 1.0 / metadata.fps if metadata.fps > 0.0 else 0.0
-    source_duration = metadata.duration_seconds
-    covers_full_source = bool(
-        source_chunk_hint.start_seconds <= 1e-4
-        and source_duration > 0.0
-        and source_chunk_hint.end_seconds >= source_duration - frame_tolerance * 0.5
+    materialization = materialize_source_video_interval(
+        source_path=source_video_path,
+        output_path=selected_segment_path,
+        start_seconds=source_chunk_hint.start_seconds,
+        end_seconds=source_chunk_hint.end_seconds,
     )
-    if covers_full_source:
-        # A ranked window spanning the whole file needs no transcode. Preserve
-        # the source digest so exact-pose evidence and its content cache remain
-        # reusable through the pre-WHAM validation stage.
-        shutil.copy2(source_video_path, selected_segment_path)
-    else:
-        trim_video(
-            source_path=source_video_path,
-            output_path=selected_segment_path,
-            start_seconds=source_chunk_hint.start_seconds,
-            end_seconds=source_chunk_hint.end_seconds,
-        )
     segment_dir = candidate_workspace / "segment_detection"
     segment_dir.mkdir(parents=True, exist_ok=True)
     (segment_dir / "segment_selection.json").write_text(
@@ -26104,7 +27045,9 @@ def trim_ranked_source_chunk_hint(
                 "sourceVideoPath": str(source_video_path),
                 "selectedSegmentPath": str(selected_segment_path),
                 "selectedSegmentMaterialization": (
-                    "source_copy_full_range" if covers_full_source else "trimmed_ranked_window"
+                    materialization
+                    if materialization == "source_copy_full_range"
+                    else "trimmed_ranked_window"
                 ),
                 "exerciseName": ranked_candidate.exercise_name,
                 "selectedSpanInOriginalSource": {
@@ -33650,18 +34593,22 @@ def render_video_window_contact_sheet(
     contact_sheet_frames_per_sheet_override: int | None = None,
     contact_sheet_jpeg_quality: int = SOURCE_CUT_CONTACT_SHEET_JPEG_QUALITY,
     crop_empty_borders: bool = False,
+    native_frame_lookup: Mapping[str, Path] | None = None,
+    native_frame_cache_key: str | None = None,
 ) -> list[Path]:
     from exercise_motion_pkg.stage_cache import cache_key, cached_paths
     key = cache_key({"window": vars(window), "frames": frame_count, "tile": contact_sheet_tile_width,
                      "perSheet": contact_sheet_frames_per_sheet_override,
-                     "quality": contact_sheet_jpeg_quality, "crop": crop_empty_borders},
+                     "quality": contact_sheet_jpeg_quality, "crop": crop_empty_borders,
+                     "nativeFrameCacheKey": native_frame_cache_key},
                     [video_path, Path(__file__), Path(__file__).with_name("segment_detection.py")])
     return cached_paths(output_dir / "source_render_checkpoint.json", key, lambda:
         _render_video_window_contact_sheet_uncached(
             video_path=video_path, window=window, output_dir=output_dir, frame_count=frame_count,
             contact_sheet_tile_width=contact_sheet_tile_width,
             contact_sheet_frames_per_sheet_override=contact_sheet_frames_per_sheet_override,
-            contact_sheet_jpeg_quality=contact_sheet_jpeg_quality, crop_empty_borders=crop_empty_borders),
+            contact_sheet_jpeg_quality=contact_sheet_jpeg_quality, crop_empty_borders=crop_empty_borders,
+            native_frame_lookup=native_frame_lookup),
         supporting_outputs=lambda: source_cut_sample_frame_paths(output_dir))
 
 
@@ -33675,6 +34622,7 @@ def _render_video_window_contact_sheet_uncached(
     contact_sheet_frames_per_sheet_override: int | None = None,
     contact_sheet_jpeg_quality: int = SOURCE_CUT_CONTACT_SHEET_JPEG_QUALITY,
     crop_empty_borders: bool = False,
+    native_frame_lookup: Mapping[str, Path] | None = None,
 ) -> list[Path]:
     if not video_path.exists():
         return []
@@ -33696,6 +34644,7 @@ def _render_video_window_contact_sheet_uncached(
             contact_sheet_jpeg_quality=max(1, min(100, int(contact_sheet_jpeg_quality))),
             contact_sheet_sequence_labels=True,
             contact_sheet_crop_empty_borders=crop_empty_borders,
+            native_frame_lookup=(dict(native_frame_lookup) if native_frame_lookup is not None else None),
             output_dir=output_dir,
         )
     except Exception:
@@ -34340,14 +35289,18 @@ def build_source_cut_candidate_choice_prompt(
     exercise_motion_contract: dict[str, Any] | None = None,
 ) -> str:
     candidate_lines = cut_candidate_attachment_prompt_lines([candidate])
-    required_values = two_scale_required_equipment_names(exercise_name, exercise_motion_contract)
-    required_equipment = ", ".join(required_values) if required_values else "none"
+    equipment_role_requirements = two_scale_equipment_role_requirements(
+        exercise_name, exercise_motion_contract
+    )
+    equipment_role_policy = two_scale_equipment_role_policy(
+        exercise_name, exercise_motion_contract
+    )
     equipment_section = (
-        f"Required named equipment: {required_equipment}. Set namedEquipmentEngagedStatus to engaged only when "
-        "that exact equipment is visibly held, worn, attached, or connected to the moving performer throughout "
-        "the exercise action. Use absent for bodyweight or different equipment, and unclear when image evidence "
-        "cannot verify it. "
-        if required_equipment != "none"
+        "Required equipment role policy:\n"
+        + equipment_role_policy
+        + "\nSet namedEquipmentEngagedStatus to engaged only when every listed role condition is visibly established; "
+        "use absent only when a required condition is visibly false, and unclear when any required role is not verifiable. "
+        if equipment_role_requirements
         else "Set namedEquipmentEngagedStatus to not_applicable because the target has no named equipment requirement. "
     )
     cyclic_source = observable_motion_spec_requires_return(exercise_motion_contract)
@@ -34528,10 +35481,14 @@ _CLEF_SOURCE_CUT_CONFIDENCE_CHOICES = {
     "C05": (0.90, "0.90 through 0.94"),
     "C06": (0.95, "0.95 through 1.00"),
 }
-CLEF_SOURCE_CUT_SCORECARD_POLICY_VERSION = "clef-source-cut-scorecard-v1"
+CLEF_SOURCE_CUT_SCORECARD_POLICY_VERSION = "clef-source-cut-scorecard-v2"
 
 
-def source_cut_systemone_questions(*, required_equipment: str) -> dict[str, dict[str, Any]]:
+def source_cut_systemone_questions(
+    *,
+    required_equipment: str,
+    equipment_policy: str | None = None,
+) -> dict[str, dict[str, Any]]:
     from .clef_systemone import choice_question
 
     def question(instructions: str, options: dict[str, str]) -> dict[str, Any]:
@@ -34567,20 +35524,36 @@ def source_cut_systemone_questions(*, required_equipment: str) -> dict[str, dict
             },
         ),
         "start_boundary": question(
-            "Does the first boundary belong to clean, uninterrupted target exercise action rather than setup, "
-            "waiting, repositioning, or a cut through a required phase?",
+            "Does the first boundary meet the supplied completion policy? For a cyclic source, it may be "
+            "mid-repetition only when a complete repetition is visible in the candidate. For a static hold or "
+            "ongoing travel interval, a mid-hold or mid-travel boundary is clean. For a discrete action, the "
+            "meaningful start must be visible. Setup or unrelated action at the boundary is unclean.",
             {
-                "clean": "The start boundary is clean under the supplied completion rules.",
-                "unclean": "The start boundary contains setup, unrelated action, or a cut through a required phase.",
+                "clean": (
+                    "The start meets policy; a mid-repetition edge requires a complete repetition in the "
+                    "candidate, while mid-hold or mid-travel edges are allowed for those intervals."
+                ),
+                "unclean": (
+                    "The boundary contains setup or unrelated action, or a discrete action omits its "
+                    "meaningful start."
+                ),
                 "uncertain": "The start boundary cannot be judged from the supplied images.",
             },
         ),
         "finish_boundary": question(
-            "Does the last boundary belong to clean, uninterrupted target exercise action and its natural finish, "
-            "without cleanup, transition, or a cut through a required phase?",
+            "Does the last boundary meet the supplied completion policy? For a cyclic source, it may be "
+            "mid-repetition only when a complete repetition is visible in the candidate. For a static hold or "
+            "ongoing travel interval, a mid-hold or mid-travel boundary is clean. For a discrete action, its "
+            "natural finish must be visible. Cleanup, transition, or unrelated action at the boundary is unclean.",
             {
-                "clean": "The finish boundary is clean under the supplied completion rules.",
-                "unclean": "The finish boundary contains cleanup, transition, or a cut through a required phase.",
+                "clean": (
+                    "The finish meets policy; a mid-repetition edge requires a complete repetition in the "
+                    "candidate, while mid-hold or mid-travel edges are allowed for those intervals."
+                ),
+                "unclean": (
+                    "The boundary contains cleanup, transition, or unrelated action, or a discrete action "
+                    "omits its natural finish."
+                ),
                 "uncertain": "The finish boundary cannot be judged from the supplied images.",
             },
         ),
@@ -34644,14 +35617,25 @@ def source_cut_systemone_questions(*, required_equipment: str) -> dict[str, dict
         ),
     }
     if normalize_observed_equipment_name(required_equipment) != "none":
-        questions["required_equipment"] = question(
-            f"Is the exact required equipment ({required_equipment}) visibly engaged by the moving performer?",
-            {
-                "engaged": "The exact required equipment is visibly held, worn, attached, or connected during the action.",
-                "absent": "The exact required equipment is absent or a different implement is used.",
-                "unclear": "The equipment is hidden or its relationship to the performer is unclear.",
-            },
-        )
+        if equipment_policy:
+            questions["required_equipment"] = question(
+                "Does the performer satisfy every required equipment role? Apply this role policy:\n"
+                f"{equipment_policy}",
+                {
+                    "engaged": "Every listed role condition is visibly satisfied during the relevant action.",
+                    "absent": "At least one listed role is clearly not satisfied.",
+                    "unclear": "At least one listed role cannot be verified from the supplied images.",
+                },
+            )
+        else:
+            questions["required_equipment"] = question(
+                f"Is the exact required equipment ({required_equipment}) visibly engaged by the moving performer?",
+                {
+                    "engaged": "The exact required equipment is visibly held, worn, attached, or connected during the action.",
+                    "absent": "The exact required equipment is absent or a different implement is used.",
+                    "unclear": "The equipment is hidden or its relationship to the performer is unclear.",
+                },
+            )
     return questions
 
 
@@ -34794,6 +35778,115 @@ def source_cut_scorecard_from_systemone_answers(
             },
         },
     }
+
+
+def request_clef_source_cut_scorecard(
+    *,
+    base_url: str,
+    model: str,
+    candidate: SourceCutCandidate,
+    prompt: str,
+    required_equipment: str,
+    equipment_policy: str | None = None,
+    timeout_seconds: float,
+) -> str:
+    """Make the production typed Clef request and serialize its parsed scorecard."""
+    from .clef_systemone import request_choice_decisions
+
+    policy, separator, _schema_tail = prompt.partition(
+        "Return JSON only with exactly one row in this schema:"
+    )
+    if not separator:
+        raise ValueError("Clef source-cut review received an unknown scorecard prompt schema.")
+    questions = source_cut_systemone_questions(
+        required_equipment=required_equipment,
+        equipment_policy=equipment_policy,
+    )
+    state = {
+        "purpose": "Image-grounded typed review of one source-cut candidate.",
+        "candidateId": candidate.candidate_id,
+        "candidateWindow": {
+            "startSeconds": candidate.window.start_seconds,
+            "endSeconds": candidate.window.end_seconds,
+        },
+        "candidateDecisionPolicy": policy.strip(),
+        "imageOrder": "Images are this candidate's contact sheets in the supplied chronological order.",
+        "limits": [
+            "Classify only this candidate; do not select a winner across candidates.",
+            "Treat uncertainty as a reason to withhold approval.",
+            "Use the provided typed choices; do not infer hidden phases or equipment.",
+        ],
+    }
+    image_inputs = [
+        {
+            "imageIndex": index,
+            "sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest(),
+        }
+        for index, path in enumerate(candidate.frame_paths)
+    ]
+    request_identity_payload = {
+        "backend": "clef-systemone",
+        "model": model,
+        "images": image_inputs,
+        "state": state,
+        "questions": questions,
+    }
+    request_payload_identity = "sha256:" + hashlib.sha256(
+        json.dumps(request_identity_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        .encode("utf-8")
+    ).hexdigest()
+    decisions = request_choice_decisions(
+        base_url=base_url,
+        model=model,
+        frame_paths=[Path(path) for path in candidate.frame_paths],
+        state=state,
+        questions=questions,
+        timeout_seconds=timeout_seconds,
+    )
+    scorecard = source_cut_scorecard_from_systemone_answers(
+        candidate_id=candidate.candidate_id,
+        required_equipment=required_equipment,
+        decisions=decisions["decisions"],
+    )
+    return json.dumps(
+        {
+            "candidates": [scorecard],
+            "clefSystemOne": {
+                "policyVersion": CLEF_SOURCE_CUT_SCORECARD_POLICY_VERSION,
+                "requestPayloadIdentity": request_payload_identity,
+                "decisions": decisions["decisions"],
+                "rawSystemOneResponse": decisions["rawSystemOneResponse"],
+            },
+        },
+        ensure_ascii=True,
+    )
+
+
+def clef_source_cut_caption_images_for_candidate(
+    *,
+    frame_paths: list[Path],
+    prompt: str,
+    candidates_by_frame_signature: Mapping[tuple[str, ...], SourceCutCandidate],
+    base_url: str,
+    model: str,
+    required_equipment: str,
+    equipment_policy: str | None = None,
+    timeout_seconds: float,
+    request_timeout_seconds: float | None = None,
+) -> str:
+    signature = tuple(str(Path(path).resolve()).casefold() for path in frame_paths)
+    candidate = candidates_by_frame_signature.get(signature)
+    if candidate is None:
+        raise ValueError("Clef source-cut review could not map the supplied images to one candidate.")
+    return request_clef_source_cut_scorecard(
+        base_url=base_url,
+        model=model,
+        candidate=candidate,
+        prompt=prompt,
+        required_equipment=required_equipment,
+        equipment_policy=equipment_policy,
+        timeout_seconds=float(request_timeout_seconds or timeout_seconds),
+    )
 
 
 def build_movement_cut_candidate_choice_prompt(
@@ -35041,6 +36134,54 @@ def source_cut_candidates_payload(candidates: list[SourceCutCandidate]) -> list[
         }
         for candidate in candidates
     ]
+
+
+def source_cut_review_frame_evidence(
+    candidates: list[SourceCutCandidate], *, source_frame_count: int,
+) -> list[dict[str, Any]]:
+    """Hash the exact contact sheets and endpoint frames used for visual review."""
+    profile = {
+        "renderer": "render_video_window_contact_sheet",
+        "profileVersion": 1,
+        "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
+        "frameCount": cut_candidate_contact_sheet_frame_count(max(1, int(source_frame_count))),
+        "maxFrameWidth": DEFAULT_RANK_FRAME_WIDTH,
+        "contactSheetTileWidth": SOURCE_CUT_CONTACT_SHEET_CELL_WIDTH,
+        "contactSheetFramesPerSheet": SOURCE_CUT_CONTACT_SHEET_FRAMES_PER_SHEET,
+        "contactSheetJpegQuality": SOURCE_CUT_CONTACT_SHEET_JPEG_QUALITY,
+        "contactSheetSequenceLabels": True,
+        "contactSheetCropEmptyBorders": True,
+        "boundaryAuditTileWidth": SOURCE_CUT_BOUNDARY_AUDIT_TILE_WIDTH,
+        "boundaryAuditJpegQuality": SOURCE_CUT_BOUNDARY_AUDIT_JPEG_QUALITY,
+    }
+    profile_identity = hashlib.sha256(json.dumps(
+        profile, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    ).encode("utf-8")).hexdigest()
+    evidence: list[dict[str, Any]] = []
+    for candidate in candidates:
+        main_paths = [Path(path).resolve() for path in candidate.frame_paths]
+        endpoint_paths = [
+            Path(path).resolve()
+            for path in (
+                candidate.sample_frame_paths[:1]
+                + candidate.sample_frame_paths[-1:]
+            )
+        ] if candidate.sample_frame_paths else []
+        image_paths = list(dict.fromkeys([*main_paths, *endpoint_paths]))
+        evidence.append({
+            "candidateId": candidate.candidate_id,
+            "startSeconds": candidate.window.start_seconds,
+            "endSeconds": candidate.window.end_seconds,
+            "framePaths": [str(path) for path in main_paths],
+            "endpointFramePaths": [str(path) for path in endpoint_paths],
+            "images": [
+                {"path": str(path), "sha256": file_sha256(path)}
+                for path in image_paths
+            ],
+            "extractionProfile": profile,
+            "extractionProfileSha256": profile_identity,
+        })
+    return evidence
 
 
 def movement_cut_manual_trim_payload(
@@ -39288,7 +40429,7 @@ def cut_candidate_vlm_caption_kwargs(
 def source_cut_vlm_caption_kwargs(
     request_timeout_seconds: float = DEFAULT_SOURCE_REVIEW_TIMEOUT_SECONDS,
     exercise_motion_contract: dict[str, Any] | None = None,
-    visual_decision_backend: str = "clef-systemone",
+    visual_decision_backend: str = "qwen-chat",
     clef_systemone_base_url: str = "http://127.0.0.1:8091",
     clef_systemone_model: str = "ggml-org/Clef-Flash-GGUF:Q4_K_M",
 ) -> dict[str, Any]:
@@ -42180,6 +43321,7 @@ def expand_detection_source_for_kinematic_cut(
 def rank_source_video_cut_candidates_with_caption_images(
     *,
     video_path: Path,
+    source_identity_video_path: Path | None = None,
     exercise_name: str,
     candidate_title: str,
     timeline_window: DetectionWindow,
@@ -42192,7 +43334,7 @@ def rank_source_video_cut_candidates_with_caption_images(
     source_pose_offset_seconds: float = 0.0,
     max_vlm_workers: int = 1,
     request_timeout_seconds: float = DEFAULT_SOURCE_REVIEW_TIMEOUT_SECONDS,
-    visual_decision_backend: str = "clef-systemone",
+    visual_decision_backend: str = "qwen-chat",
     clef_systemone_base_url: str = "http://127.0.0.1:8091",
     clef_systemone_model: str = "ggml-org/Clef-Flash-GGUF:Q4_K_M",
     allow_progressive_without_pose: bool = False,
@@ -42201,6 +43343,17 @@ def rank_source_video_cut_candidates_with_caption_images(
     prefer_largest_padded_candidate: bool = False,
     _refinement_depth: int = 0,
 ) -> tuple[LoopRanking, float, float] | None:
+    reviewed_video_path = video_path.expanduser().resolve()
+    original_source_path = (
+        source_identity_video_path.expanduser().resolve()
+        if source_identity_video_path is not None
+        else reviewed_video_path
+    )
+    same_review_and_original = reviewed_video_path == original_source_path
+    reviewed_video_sha256 = file_sha256(reviewed_video_path)
+    original_source_sha256 = (
+        reviewed_video_sha256 if same_review_and_original else file_sha256(original_source_path)
+    )
     render_started = time.perf_counter()
     incoming_timeline_window = timeline_window
     video_duration_seconds = _video_duration_seconds_or_none(video_path)
@@ -42344,6 +43497,51 @@ def rank_source_video_cut_candidates_with_caption_images(
         )
         for index, spec in enumerate(candidate_window_specs)
     ]
+    source_frame_cache_requested = (
+        os.environ.get("EXERCISE_MOTION_SOURCE_FRAME_CACHE", "off").strip().lower() == "on"
+    )
+    source_frame_cache_index: NativeFrameIndex | None = None
+    source_frame_cache_diagnostics: dict[str, Any] = {
+        "requested": source_frame_cache_requested,
+        "effective": False,
+        "status": "disabled" if not source_frame_cache_requested else "not_started",
+        "reason": "disabled" if not source_frame_cache_requested else None,
+        "estimatedFrameCount": None,
+        "decodedFrameCount": 0,
+        "uniqueRequestedSeekCount": 0,
+        "cacheHit": False,
+        "elapsedSeconds": 0.0,
+        "maxDecodedFrames": SOURCE_FRAME_CACHE_MAX_DECODED_FRAMES,
+    }
+    if source_frame_cache_requested:
+        source_frame_sample_count = cut_candidate_contact_sheet_frame_count(frame_count)
+        source_frame_seek_timestamps = sorted({
+            f"{timestamp:.3f}"
+            for spec in candidate_window_specs
+            for timestamp in linspace_times(
+                spec.window.start_seconds,
+                spec.window.end_seconds,
+                source_frame_sample_count,
+            )
+        })
+        source_frame_cache_build = build_source_frame_index(
+            video_path=reviewed_video_path,
+            seek_timestamps=source_frame_seek_timestamps,
+            cache_dir=output_dir / "source_native_frame_cache",
+            max_frame_width=DEFAULT_RANK_FRAME_WIDTH,
+        )
+        source_frame_cache_index = source_frame_cache_build.index
+        source_frame_cache_diagnostics.update({
+            "effective": source_frame_cache_index is not None,
+            "status": source_frame_cache_build.status,
+            "reason": source_frame_cache_build.reason,
+            "estimatedFrameCount": source_frame_cache_build.estimated_frame_count,
+            "decodedFrameCount": source_frame_cache_build.decoded_frame_count,
+            "uniqueRequestedSeekCount": len(source_frame_seek_timestamps),
+            "cacheHit": source_frame_cache_build.cache_hit,
+            "elapsedSeconds": round(source_frame_cache_build.elapsed_seconds, 3),
+            "cacheKey": source_frame_cache_index.cache_key if source_frame_cache_index else None,
+        })
     candidates: list[SourceCutCandidate] = []
     all_candidates: list[SourceCutCandidate] = []
 
@@ -42396,6 +43594,21 @@ def rank_source_video_cut_candidates_with_caption_images(
                 motion_coverage=motion_coverage,
                 chunking=candidate_chunking,
             )
+        native_frame_lookup: dict[str, Path] | None = None
+        if source_frame_cache_index is not None:
+            candidate_times = linspace_times(
+                candidate_window.start_seconds,
+                candidate_window.end_seconds,
+                cut_candidate_contact_sheet_frame_count(frame_count),
+            )
+            candidate_seek_strings = [f"{timestamp:.3f}" for timestamp in candidate_times]
+            candidate_lookup = {
+                seek_string: frame_path
+                for seek_string in set(candidate_seek_strings)
+                if (frame_path := frame_path_for_seek(source_frame_cache_index, seek_string)) is not None
+            }
+            if all(candidate_lookup.get(seek_string) is not None for seek_string in candidate_seek_strings):
+                native_frame_lookup = candidate_lookup
         frame_paths = render_video_window_contact_sheet(
             video_path=video_path,
             window=candidate_window,
@@ -42405,6 +43618,12 @@ def rank_source_video_cut_candidates_with_caption_images(
             contact_sheet_frames_per_sheet_override=SOURCE_CUT_CONTACT_SHEET_FRAMES_PER_SHEET,
             contact_sheet_jpeg_quality=SOURCE_CUT_CONTACT_SHEET_JPEG_QUALITY,
             crop_empty_borders=True,
+            native_frame_lookup=native_frame_lookup,
+            native_frame_cache_key=(
+                source_frame_cache_index.cache_key
+                if native_frame_lookup is not None and source_frame_cache_index is not None
+                else None
+            ),
         )
         candidate = build_source_cut_candidate(
             candidate_id=candidate_id,
@@ -42537,6 +43756,7 @@ def rank_source_video_cut_candidates_with_caption_images(
                     "sourceCutRequiredRegionFilteredCount": required_region_filtered_count,
                     "sourceCutPosePrefilterFilteredCount": pose_filtered_count,
                     "sourceCutSourcePoseSampleCount": source_pose_sample_count,
+                    "sourceCutFrameDecodeCache": source_frame_cache_diagnostics,
                     "sourceCutProgressiveDisabledReason": (
                         "source_pose_samples_unavailable" if progressive_without_pose else None
                     ),
@@ -42591,10 +43811,21 @@ def rank_source_video_cut_candidates_with_caption_images(
     required_equipment = ", ".join(two_scale_required_equipment_names(
         exercise_name, exercise_motion_contract
     )) or "none"
+    equipment_policy = (
+        two_scale_equipment_role_policy(exercise_name, exercise_motion_contract)
+        if two_scale_equipment_role_requirements(exercise_name, exercise_motion_contract)
+        else None
+    )
     candidates_by_frame_signature = {
         tuple(str(Path(path).resolve()).casefold() for path in candidate.frame_paths): candidate
         for candidate in candidates
     }
+    try:
+        review_frame_inputs_before = source_cut_review_frame_evidence(
+            candidates, source_frame_count=frame_count,
+        )
+    except OSError:
+        review_frame_inputs_before = []
 
     def clef_source_cut_caption_images(
         *,
@@ -42602,54 +43833,16 @@ def rank_source_video_cut_candidates_with_caption_images(
         prompt: str,
         **kwargs: Any,
     ) -> str:
-        from .clef_systemone import request_choice_decisions
-
-        signature = tuple(str(Path(path).resolve()).casefold() for path in frame_paths)
-        candidate = candidates_by_frame_signature.get(signature)
-        if candidate is None:
-            raise ValueError("Clef source-cut review could not map the supplied images to one candidate.")
-        policy, separator, _schema_tail = prompt.partition(
-            "Return JSON only with exactly one row in this schema:"
-        )
-        if not separator:
-            raise ValueError("Clef source-cut review received an unknown scorecard prompt schema.")
-        decisions = request_choice_decisions(
+        return clef_source_cut_caption_images_for_candidate(
+            frame_paths=frame_paths,
+            prompt=prompt,
+            candidates_by_frame_signature=candidates_by_frame_signature,
             base_url=clef_systemone_base_url,
             model=clef_systemone_model,
-            frame_paths=[Path(path) for path in frame_paths],
-            state={
-                "purpose": "Image-grounded typed review of one source-cut candidate.",
-                "candidateId": candidate.candidate_id,
-                "candidateWindow": {
-                    "startSeconds": candidate.window.start_seconds,
-                    "endSeconds": candidate.window.end_seconds,
-                },
-                "candidateDecisionPolicy": policy.strip(),
-                "imageOrder": "Images are this candidate's contact sheets in the supplied chronological order.",
-                "limits": [
-                    "Classify only this candidate; do not select a winner across candidates.",
-                    "Treat uncertainty as a reason to withhold approval.",
-                    "Use the provided typed choices; do not infer hidden phases or equipment.",
-                ],
-            },
-            questions=source_cut_systemone_questions(required_equipment=required_equipment),
-            timeout_seconds=float(kwargs.get("request_timeout_seconds") or request_timeout_seconds),
-        )
-        scorecard = source_cut_scorecard_from_systemone_answers(
-            candidate_id=candidate.candidate_id,
             required_equipment=required_equipment,
-            decisions=decisions["decisions"],
-        )
-        return json.dumps(
-            {
-                "candidates": [scorecard],
-                "clefSystemOne": {
-                    "policyVersion": CLEF_SOURCE_CUT_SCORECARD_POLICY_VERSION,
-                    "decisions": decisions["decisions"],
-                    "rawSystemOneResponse": decisions["rawSystemOneResponse"],
-                },
-            },
-            ensure_ascii=True,
+            equipment_policy=equipment_policy,
+            timeout_seconds=request_timeout_seconds,
+            request_timeout_seconds=kwargs.get("request_timeout_seconds"),
         )
 
     def run_source_cut_scorecard_batches(
@@ -42751,13 +43944,12 @@ def rank_source_video_cut_candidates_with_caption_images(
             review_recoveries,
         )
 
-    clef_failure: BaseException | None = None
     if visual_decision_backend == "clef-systemone":
         from .clef_systemone import run_clef_visual_decision_exclusively
 
         managed_review_started = time.perf_counter()
-        try:
-            review_choice, review_recoveries = run_clef_visual_decision_exclusively(
+        review_choice, review_recoveries = run_clef_source_cut_review_without_backend_fallback(
+            lambda: run_clef_visual_decision_exclusively(
                 base_url=clef_systemone_base_url,
                 caption_source=caption_images,
                 conflicting_base_urls=(
@@ -42768,26 +43960,9 @@ def rank_source_video_cut_candidates_with_caption_images(
                     use_clef_backend=True,
                     caption_kwargs=source_cut_caption_kwargs,
                 ),
-            )
-        except Exception as exc:
-            if critical_vlm_interaction_error(exc) is None and not isinstance(
-                exc, (FileNotFoundError, OSError, TimeoutError, RuntimeError)
-            ):
-                raise
-            clef_failure = exc
-            review_choice, review_recoveries = run_source_cut_scorecard_batches(
-                caption_images,
-                use_clef_backend=False,
-                caption_kwargs={
-                    **source_cut_caption_kwargs,
-                    "clef_visual_decision_backend": "qwen-chat",
-                },
-            )
-            review_recoveries.append({
-                "applied": True,
-                "reason": "clef_scorecard_infrastructure_fallback_to_qwen",
-                "error": f"{type(exc).__name__}: {exc}",
-            })
+            ),
+            candidate_ids=[candidate.candidate_id for candidate in candidates],
+        )
         review_choice = replace(
             review_choice,
             elapsed_seconds=elapsed_seconds(managed_review_started),
@@ -42798,11 +43973,7 @@ def rank_source_video_cut_candidates_with_caption_images(
             use_clef_backend=False,
             caption_kwargs=source_cut_caption_kwargs,
         )
-    scorecard_review_backend = (
-        "qwen-chat-infrastructure-fallback"
-        if clef_failure is not None
-        else visual_decision_backend
-    )
+    scorecard_review_backend = visual_decision_backend
     scorecard_uses_clef = scorecard_review_backend == "clef-systemone"
     scorecard_batch_size = 1 if scorecard_uses_clef else SOURCE_CUT_SCORECARD_BATCH_SIZE
     scorecard_effective_workers = 1 if scorecard_uses_clef else effective_source_cut_vlm_workers
@@ -42813,6 +43984,43 @@ def rank_source_video_cut_candidates_with_caption_images(
     )
     vlm_seconds = review_choice.elapsed_seconds
     ranking = review_choice.ranking
+    try:
+        reviewed_video_sha256_after = file_sha256(reviewed_video_path)
+        original_source_sha256_after = (
+            reviewed_video_sha256_after
+            if same_review_and_original
+            else file_sha256(original_source_path)
+        )
+    except OSError:
+        reviewed_video_sha256_after = None
+        original_source_sha256_after = None
+    try:
+        review_frame_inputs_after = source_cut_review_frame_evidence(
+            candidates, source_frame_count=frame_count,
+        )
+    except OSError:
+        review_frame_inputs_after = []
+    review_frame_inputs_unchanged = (
+        bool(review_frame_inputs_before)
+        and review_frame_inputs_before == review_frame_inputs_after
+    )
+    review_video_evidence = {
+        "sourceCutReviewVideoPath": str(reviewed_video_path),
+        "sourceCutReviewVideoSha256": reviewed_video_sha256,
+        "sourceCutReviewVideoSha256After": reviewed_video_sha256_after,
+        "sourceCutOriginalVideoPath": str(original_source_path),
+        "sourceCutOriginalVideoSha256": original_source_sha256,
+        "sourceCutOriginalVideoSha256After": original_source_sha256_after,
+        "sourceCutReviewFrameInputs": review_frame_inputs_before,
+        "sourceCutReviewFrameInputsAfter": review_frame_inputs_after,
+    }
+    source_video_changed_during_review = (
+        reviewed_video_sha256_after != reviewed_video_sha256
+        or original_source_sha256_after != original_source_sha256
+        or not review_frame_inputs_unchanged
+    )
+    if source_video_changed_during_review:
+        ranking = None
     reviewed_vlm_candidates = cut_candidates_with_ids(candidates, review_choice.reviewed_candidate_ids)
     source_cut_scorecard_rows = collect_ranking_payload_rows(review_choice.rankings, "sourceCutScorecardCandidates")
     boundary_reviews = [dict(row.payload["sourceCutBoundaryReview"]) for row in review_choice.rankings
@@ -42822,7 +44030,10 @@ def rank_source_video_cut_candidates_with_caption_images(
                           if isinstance(row.payload, dict) and "sourceReviewAssessment" in row.payload]
     pending_source_review = (
         any(item.get("status") == "needs_review" for item in source_assessments)
-        or bool(review_choice.errors) or not source_cut_scorecard_rows
+        or bool(review_choice.errors)
+        or source_video_changed_during_review
+        or not source_cut_scorecard_rows
+        or source_cut_scorecard_rows_need_review(source_cut_scorecard_rows)
     )
     if ranking is None:
         no_selection_reasons = ["source_candidate_window_choice_failed"]
@@ -42840,6 +44051,7 @@ def rank_source_video_cut_candidates_with_caption_images(
                 reasons=dedupe_text(no_selection_reasons),
                 raw_response=review_choice.raw_responses[-1] if review_choice.raw_responses else None,
                 payload={
+                    **review_video_evidence,
                     "score": 0.0,
                     "modelScore": 0.0,
                     "sourceCutCandidates": source_cut_candidates_payload(all_candidates),
@@ -42932,7 +44144,9 @@ def rank_source_video_cut_candidates_with_caption_images(
             vlm_seconds,
         )
     ranking_payload = dict(ranking.payload) if isinstance(ranking.payload, dict) else {}
+    ranking_payload.update(review_video_evidence)
     ranking_payload["sourceCutCandidates"] = source_cut_candidates_payload(all_candidates)
+    ranking_payload["sourceCutFrameDecodeCache"] = source_frame_cache_diagnostics
     ranking_payload["sourceCutCandidateRenderSkippedCount"] = sum(
         1 for candidate in all_candidates
         if source_cut_candidate_render_was_skipped(candidate)
@@ -43606,6 +44820,11 @@ def build_selection_manifest(
     manifest = {
         "schemaVersion": 1,
         "selectionValidationPolicyVersion": SELECTION_VALIDATION_POLICY_VERSION,
+        "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
+        "preWhamSourceValidationEnabled": bool(request.pre_wham_source_validation),
+        "preWhamSourceValidationExplicitlyDisabled": bool(
+            request.pre_wham_source_validation_explicitly_disabled
+        ),
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "sourceCandidatesJson": str(request.candidates_json),
         "youtubeSourceCacheDir": str(resolved_youtube_source_cache_dir(request)),
@@ -43750,6 +44969,13 @@ def repair_selection_manifest_renderer_metadata(manifest: dict[str, Any]) -> tup
 def selected_to_manifest(item: ReviewItem, ranking: LoopRanking | None) -> dict[str, Any]:
     item = repair_rigid_correction_settings(item)
     payload = review_item_to_manifest(item)
+    if isinstance(item.candidate, dict):
+        clearance = item.candidate.get("sourceSelectionClearance")
+        if isinstance(clearance, dict):
+            payload["sourceSelectionClearance"] = clearance
+        payload["sourceCandidateWorkspace"] = str(
+            item.candidate.get("sourceCandidateWorkspace") or item.candidate_workspace
+        )
     if ranking is None:
         payload["selectionReason"] = "top_ranked_video_cropped_clip"
         payload["rankingSkipped"] = "no_loop_choice_required"
@@ -43972,6 +45198,19 @@ def review_item_to_manifest(item: ReviewItem) -> dict[str, Any]:
 
 def review_item_from_manifest(payload: dict[str, Any]) -> ReviewItem:
     preview_html_path = payload.get("sourcePreviewHtmlPath") or payload.get("previewHtmlPath") or "."
+    candidate = payload.get("candidate") if isinstance(payload.get("candidate"), dict) else {}
+    ranking = payload.get("ranking") if isinstance(payload.get("ranking"), dict) else {}
+    ranking_payload = ranking.get("payload") if isinstance(ranking.get("payload"), dict) else {}
+    source_interval_authority = ranking_payload.get("preWhamSourceIntervalAuthority")
+    if (
+        isinstance(source_interval_authority, dict)
+        and source_interval_authority.get("authoritative") is True
+        and not isinstance(candidate.get("preWhamSourceIntervalAuthority"), dict)
+    ):
+        candidate = {
+            **candidate,
+            "preWhamSourceIntervalAuthority": source_interval_authority,
+        }
     return repair_rigid_correction_settings(ReviewItem(
         exercise_index=int(payload.get("exerciseIndex") or 0),
         candidate_rank=int(payload.get("candidateRank") or 0),
@@ -43987,7 +45226,7 @@ def review_item_from_manifest(payload: dict[str, Any]) -> ReviewItem:
         duration_sec=float(payload.get("durationSec") or payload.get("selectedSectionDurationSeconds") or 0.0),
         loop_start_seconds=float(payload.get("loopStartSeconds") or payload.get("sectionStartSeconds") or payload.get("selectedSectionStartSeconds") or 0.0),
         loop_end_seconds=float(payload.get("loopEndSeconds") or payload.get("sectionEndSeconds") or payload.get("selectedSectionEndSeconds") or 0.0),
-        candidate=payload.get("candidate") if isinstance(payload.get("candidate"), dict) else {},
+        candidate=candidate,
         support_dominance=str(payload["supportDominance"]) if payload.get("supportDominance") is not None else None,
         support_dominance_confidence=parse_optional_float(payload.get("supportDominanceConfidence")),
         support_dominance_reason=str(payload["supportDominanceReason"]) if payload.get("supportDominanceReason") is not None else None,
