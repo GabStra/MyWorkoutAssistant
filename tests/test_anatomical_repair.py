@@ -167,6 +167,60 @@ def test_anatomical_repair_uses_the_source_relative_torso_bend_floor():
     assert corrected_residuals[:, torso_bend].max() <= 1e-6
 
 
+def test_anatomical_repair_uses_the_matching_source_frame_for_each_projection():
+    import math
+    from exercise_motion_pkg.anatomical_repair import repair_residuals
+    from exercise_motion_pkg.physical_validation import anatomical_structure_residuals
+    from scipy.spatial.transform import Rotation
+
+    names, source = stance()
+    upper = ('spine2', 'spine3', 'neck', 'head', 'left_collar',
+             'right_collar', 'left_shoulder', 'right_shoulder', 'left_elbow',
+             'right_elbow', 'left_wrist', 'right_wrist', 'left_hand', 'right_hand')
+    bend = Rotation.from_rotvec([.8, 0., 0.]).as_matrix()
+    spine1 = names.index('spine1')
+    for name in upper:
+        index = names.index(name)
+        origin = source[:, spine1]
+        source[:, index] = (source[:, index] - origin) @ bend.T + origin
+
+    source_residuals, source_labels = anatomical_structure_residuals(source, names)
+    source_torso_bend = [i for i, label in enumerate(source_labels)
+                         if label.startswith('anatomy_torso_bend:')]
+    assert source_torso_bend and source_residuals[:, source_torso_bend].max() > 1e-6
+    assert repair_residuals(source, names, reference=source)[0].max() <= 1e-6
+
+    observed = source.copy()
+    pelvis = observed[3, names.index('pelvis')]
+    neck = observed[3, names.index('neck')]
+    hips = observed[3, names.index('right_hip')] - observed[3, names.index('left_hip')]
+    forward = np.cross(neck - pelvis, hips)
+    forward /= np.linalg.norm(forward)
+    observed[3, names.index('spine2')] += .14 * forward
+
+    rig = FixedRig(observed, names)
+    corrected, report = repair_rig_anatomy(
+        rig, observed, reference=source, deadline=monotonic() + 20.)
+    assert report['passed'], report
+
+    relative, labels = repair_residuals(corrected, names, reference=source)
+    assert np.max(relative) <= 1e-6
+    absolute, absolute_labels = anatomical_structure_residuals(corrected, names)
+    spine_fold = [i for i, label in enumerate(absolute_labels)
+                  if label.startswith('anatomy_spine_fold:')]
+    assert spine_fold and absolute[:, spine_fold].max() <= 1e-6
+
+    def torso_angle(frame):
+        hips = (frame[names.index('left_hip')] + frame[names.index('right_hip')]) * .5
+        joint = frame[spine1]
+        neck = frame[names.index('neck')]
+        left, right = hips - joint, neck - joint
+        cosine = np.dot(left, right) / (np.linalg.norm(left) * np.linalg.norm(right))
+        return math.degrees(math.acos(np.clip(cosine, -1., 1.)))
+
+    assert abs(torso_angle(corrected[3]) - torso_angle(source[3])) < 5.
+
+
 def test_spine_alignment_preserves_each_parent_bone_length():
     from exercise_motion_pkg.anatomical_repair import enforce_spine_axis_alignment
 

@@ -13,7 +13,7 @@ from .physical_validation import anatomical_structure_residuals, angles, body_sc
 from .smpl_joint_names import SMPL_JOINT_NAMES, SMPL_JOINT_PARENTS
 
 
-ANATOMICAL_REPAIR_STRATEGY = 'fixed_rig_anatomical_projection_v8_source_relative_torso_floor'
+ANATOMICAL_REPAIR_STRATEGY = 'fixed_rig_anatomical_projection_v9_frame_bound_source_reference'
 
 # Stop soft polishing once geometry is valid and overall lean matches the
 # observation to the same tolerance as the lean-preservation tests.
@@ -765,10 +765,15 @@ def repair_rig_anatomy(rig, observed, *, deadline, reference=None, completion_de
         if not repair_budget_available():
             break
         base = rig.initial[frame].copy()
+        frame_reference = (
+            None if reference_points is None else reference_points[frame:frame + 1])
+        frame_reference_key = (
+            b'' if frame_reference is None else
+            hashlib.sha256(np.ascontiguousarray(frame_reference).tobytes()).digest())
         target = initial_points[frame]-base[:3]
         torso_direction = observed_torso_directions[frame]
         key = hashlib.sha256(ANATOMICAL_REPAIR_STRATEGY.encode() + repr(names).encode()
-                             + span_target_key + reference_key
+                             + span_target_key + reference_key + frame_reference_key
                              + rig.offsets.tobytes() + np.float64(scale).tobytes()
                              + base[3:].tobytes() + target.tobytes() + torso_direction.tobytes()).hexdigest()
         if session is not None and key in session.repairs:
@@ -805,8 +810,8 @@ def repair_rig_anatomy(rig, observed, *, deadline, reference=None, completion_de
             candidate = rig.decode(current[None])
             if np.max(repair_residuals(
                     candidate, names, span_targets,
-                    reference=reference_points,
-                    head_reference=(None if reference_points is None else reference_points[frame:frame + 1]))[0], initial=0.) > 1e-6:
+                    reference=frame_reference,
+                    head_reference=frame_reference)[0], initial=0.) > 1e-6:
                 return False
             lean = torso_directions(candidate, names) - torso_direction
             return float(np.max(np.abs(lean), initial=0.)) <= _ANATOMY_FEASIBLE_LEAN
@@ -823,10 +828,13 @@ def repair_rig_anatomy(rig, observed, *, deadline, reference=None, completion_de
             for row, free_values in enumerate(values):
                 current[row, columns] = unpack(free_values, seed_full)
             candidate = rig.decode(current)
+            candidate_reference = (
+                None if frame_reference is None else
+                np.broadcast_to(frame_reference, candidate.shape))
             geometry = repair_residuals(
                 candidate, names, span_targets,
-                reference=reference_points,
-                    head_reference=(None if reference_points is None else reference_points[frame:frame + 1]))[0]
+                reference=candidate_reference,
+                head_reference=frame_reference)[0]
             lean = torso_directions(candidate, names)-torso_direction
             # Soft orientation polishing used to keep burning evals after the
             # initializer bounds were already met. Exit as soon as geometry and
@@ -931,13 +939,15 @@ def repair_rig_anatomy(rig, observed, *, deadline, reference=None, completion_de
             session.repairs[key] = np.asarray(solved_x, dtype=float).tolist()
 
     def _frame_feasible(frame, values):
+        frame_reference = (
+            None if reference_points is None else reference_points[frame:frame + 1])
         current = np.asarray(rig.initial[frame], dtype=float).copy()
         current[columns] = values
         candidate = rig.decode(current[None])
         if np.max(repair_residuals(
                 candidate, names, span_targets,
-                reference=reference_points,
-                    head_reference=(None if reference_points is None else reference_points[frame:frame + 1]))[0], initial=0.) > 1e-6:
+                reference=frame_reference,
+                head_reference=frame_reference)[0], initial=0.) > 1e-6:
             return False
         lean = torso_directions(candidate, names) - observed_torso_directions[frame]
         return float(np.max(np.abs(lean), initial=0.)) <= _ANATOMY_FEASIBLE_LEAN
