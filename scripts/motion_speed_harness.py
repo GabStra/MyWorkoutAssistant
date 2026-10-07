@@ -1920,8 +1920,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Experimental bounded native-frame cache for short source-cut clips; default off.",
     )
     parser.add_argument(
-        "--browser-frame-batch", choices=("off", "on"), default="off",
-        help="Configure the production browser renderer once per frame batch; default off pending qualification.",
+        "--browser-frame-batch", choices=("off", "on"), default="on",
+        help="Configure the production browser renderer once per frame batch; production default is on.",
     )
     parser.add_argument(
         "--staged-wave-size",

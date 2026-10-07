@@ -36214,8 +36214,17 @@ def test_playwright_review_frames_transfer_the_motion_payload_once(monkeypatch: 
         "exportPayload": export_payload,
         "frameIndices": frame_indices,
         "options": options,
-        "allowFrameBatch": False,
+        "allowFrameBatch": True,
     }
+
+    monkeypatch.setenv("EXERCISE_MOTION_BROWSER_FRAME_BATCH", "off")
+    bake_and_rank_module.render_baked_wear_frames_with_playwright(
+        FakePage(),
+        export_payload=export_payload,
+        frame_indices=frame_indices,
+        options=options,
+    )
+    assert calls[-1][1]["allowFrameBatch"] is False
 
 
 def test_source_cut_vlm_requests_have_a_bounded_timeout() -> None:

@@ -29,7 +29,9 @@ The current library wrapper uses wave size 8 and partial-wave wait 300 seconds. 
 
 The speed harness now exposes wave size/wait, preserves unsuccessful artifacts, remaps copied workspace references, and gives each arm an isolated WHAM cache. Its default exercise pair remains a smoke pair; the fixed v4b pair below is the measured fixture. Older harness results may contain shared-cache or absolute-path contamination.
 
-Latest current-policy measurement is `build/exercise_motion/controlled_current_source61_comparison_20261007.json`: cache-off/off completed in 970.2s and cache-on/on in 610.1s, with the same app HEAD, tracked/untracked runtime fingerprints, pinned v4b sources, normalized plan, and contract hashes. Both arms pass automated source/package checks 2/2; sampled visual review qualifies OHP only, while RDL remains pending source-projection fidelity. The nominal 59.0% automated approval-rate difference is not a qualified gain or repeatable result; reconstruction startup differed by 142.316s and this is one pair. Keep both optimizations default off.
+Latest current-policy run is `build/exercise_motion/speed-harness/20261008-floorpress-policy62/`: source review passed 1/1, but output acceptance was 0/1 after 212.112s of preview bake/fit and support/endpoint rejection. This is a fixed candidate, not fresh discovery or a throughput result. The retained v4b Qwen pair is policy61: OHP is visually usable, while RDL remains pending source-projection fidelity, so it is not a current-policy usable-throughput control. Keep source-frame caching off; its latest paired wall gain was 1.3% and not repeatable.
+
+The isolated browser-render A/B in `20261007-191208-5ffb3392/qwen-full/render_reconfigure_ab.json` produced byte-identical PNGs and matching sampled renderer states. Batching cut the 119-frame RDL render from 16.019s to 5.957s and the 85-frame OHP render from 9.038s to 3.840s. This is a measured render-stage saving, not an end-to-end throughput claim; browser frame batching is enabled by default in production, with `EXERCISE_MOTION_BROWSER_FRAME_BATCH=off` available for the legacy path.
 
 A pre-fix fresh-discovery attempt routed a Floor Press plan under the Step-Up output key and was aborted. The filter fix is committed as `a151da7b`, with 8 focused tests and exact exercise-ID checks passed. This repairs the routing defect; fresh source/family qualification remains separate work.
 
@@ -105,18 +107,19 @@ Exit: a result whose wall time, accepted artifacts, queue intervals, effective c
 
 ## 3. Measure shared ownership and two-wave overlap
 
-Current implementation limitation (verified 2026-10-07): the persistent service executes each request inline under process-wide stdout/stderr redirection, and the PowerShell runner independently clamps staged-wave concurrency to one. The harness therefore rejects `shared-overlap`. Removing only the clamp cannot create overlap; threading whole waves also conflicts with process-scoped generation markers and model-session ownership. First compare the supported `shared` and `baseline` arms with matching wave settings. Treat the overlap experiment below as pending implementation and ownership verification, not an executable current configuration.
+Current implementation limitation (verified 2026-10-07): the persistent service executes each request inline under process-wide stdout/stderr redirection, and the PowerShell runner independently clamps staged-wave concurrency to one. The harness therefore rejects `shared-overlap`. Its historical `baseline` and `shared` arms use Clef and are not valid Qwen production controls; `qwen-full` is the current production route, and no `qwen-shared` arm exists yet. First qualify both fixed inputs under current policy62 and resolve RDL's pending rendered-fidelity review. Then add a Qwen shared-ownership arm that changes only server ownership. Removing only the concurrency clamp cannot create overlap; threading whole waves also conflicts with process-scoped generation markers and model-session ownership. Treat overlap as pending implementation and ownership verification, not an executable current configuration.
 
 Use the same two inputs as two singleton waves, keep partial wait at 300 seconds, and leave all quality/reconstruction settings unchanged. Inputs must be prepared so the next item can be ready before the current wave completes.
 
 | Arm | Shared llama | Maximum active waves | Purpose |
 | --- | --- | --- | --- |
-| `baseline` | Off | 1 | Current library-equivalent ownership |
-| `shared` | On | 1 | Isolate shared-server cost/benefit |
-| `shared-overlap` | On | 2 | Isolate overlap with shared ownership held constant |
+| `qwen-full` | Off | 1 | Current Qwen production ownership |
+| `qwen-shared` | On | 1 | Isolate shared-server cost/benefit with Qwen held constant |
+| `qwen-shared-overlap` | On | 2 | Future overlap test with Qwen and shared ownership held constant |
 
-- [ ] Run `shared` versus `shared-overlap` first. Stop this comparison if the fixture fails or overlap high-water never reaches 2. Resolve a failed admission/queue condition before another expensive attempt.
-- [ ] If overlap helps, measure `baseline` to establish whether the combined change improves the current production configuration. Shared ownership could cost more than overlap saves.
+- [ ] After current-policy fixture qualification, run `qwen-full` versus `qwen-shared` first. Stop if either fixture fails or any output lacks visual/package qualification.
+- [ ] Only if shared ownership helps, evaluate `qwen-shared` versus `qwen-shared-overlap`; stop if overlap high-water never reaches 2. Resolve failed admission/queue behavior before another expensive attempt.
+- [ ] If overlap helps, compare the combined candidate against `qwen-full` to establish improvement over current production. Shared ownership could cost more than overlap saves.
 - [ ] Inspect the source clips and generated playback of both outputs in each arm using the actual production renderer. Automated acceptance alone is insufficient.
 - [ ] If promotion is plausible or timing noise obscures the result, run one reverse-order comparison of the two finalists with reset initial caches. Maximum for this first decision: five measured arms; no retries beyond the stated diagnostic fix.
 - [ ] Choose the fastest arm with the same usable output and no resource or lifecycle regression. Keep concurrency 1 if contention or restart/drain costs erase the benefit.
@@ -133,7 +136,7 @@ After step 3, rank avoidable costs by their contribution to time per usable outp
 | llama request or queue time | Replay the same saved real requests with 4 versus 6 slots, keeping at least 8192 context tokens per slot and the current image budgets/model. Test a second batch/microbatch setting only if profiling identifies that limit. | Better completed-request throughput, no truncation/OOM/decision loss, followed by the full fixture comparison. |
 | Repeated model startup/handoff | Count effective worker lifetimes and cold constructors. Audit whether the existing warm GVHMR path is actually reused across requests/waves and how llama-exclusive transitions behave. | Fewer measured cold starts with unchanged output and exclusive GPU ownership preserved. |
 | CPU fitting/queueing | Profile solver evaluations, sparse operations, native thread pools, and slot waits. Sparse zero removal is already applied. Compare fit-lane cap 4 versus 6 only if fit slots are saturated and the host has the documented coding headroom. | Same objectives/output decisions, lower completed-work wall time, and no browser/CPU oversubscription regression. |
-| Browser/rendering or repeated materialization | Identify duplicate content-identical renders and conversions; audit existing content-addressed reuse and prefetch ownership. | Less actual rendering/conversion with the same production renderer and complete artifacts. |
+| Browser/rendering or repeated materialization | Browser frame batching is already enabled by default after exact PNG/state parity and a retained render-time A/B. Continue only with evidence of duplicate content-identical renders or conversions. | Less actual rendering/conversion with the same production renderer and complete artifacts; the isolated batching win does not establish an end-to-end gain. |
 | GVHMR setup/checkpoint loading | Reuse the exact source/weights for a constructor or extraction-only comparison. Test a loading change only after separating cold setup, filesystem cache, and inference. | Tensor/result parity and a completed counter-order timing comparison; then output-quality verification. |
 | Discovery/download queueing | Separate search, review preparation, network, and model-slot waits. Prefetch/search caps already exist; tune only the measured starvation source. | Reduced time to a usable input without reducing required source coverage or identity checks. |
 

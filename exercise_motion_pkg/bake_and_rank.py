@@ -34125,7 +34125,7 @@ def render_baked_wear_frames_with_playwright(
             "exportPayload": export_payload,
             "frameIndices": frame_indices,
             "options": options,
-            "allowFrameBatch": os.environ.get("EXERCISE_MOTION_BROWSER_FRAME_BATCH", "off").strip().casefold() == "on",
+            "allowFrameBatch": os.environ.get("EXERCISE_MOTION_BROWSER_FRAME_BATCH", "on").strip().casefold() == "on",
         },
     )
     if not isinstance(rendered, list) or len(rendered) != len(frame_indices):
