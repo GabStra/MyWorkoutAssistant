@@ -18,7 +18,7 @@ from exercise_motion_pkg.stage_cache import cache_key, cached_paths
 from exercise_motion_pkg.video_utils import read_basic_video_metadata
 
 
-SOURCE_FRAME_CACHE_VERSION = 1
+SOURCE_FRAME_CACHE_VERSION = 2
 SOURCE_FRAME_CACHE_MAX_DECODED_FRAMES = 600
 _SHOWINFO_PTS_RE = re.compile(r"\bn:\s*(\d+)\s+pts:\s*(-?\d+)")
 _SHOWINFO_TIME_BASE_RE = re.compile(r"\bconfig in time_base:\s*(\d+)\s*/\s*(\d+)")
@@ -31,10 +31,6 @@ class NativeFrameIndex:
     time_base: Fraction
     first_pts: int
     cache_key: str
-
-    @property
-    def normalized_pts(self) -> tuple[Fraction, ...]:
-        return tuple((pts - self.first_pts) * self.time_base for pts in self.pts_ticks)
 
 
 @dataclass(frozen=True)
@@ -54,7 +50,10 @@ def frame_path_for_seek(index: NativeFrameIndex, seek_timestamp: str) -> Path | 
         target_seconds = Fraction(Decimal(seek_timestamp))
     except (InvalidOperation, ValueError, ZeroDivisionError):
         return None
-    frame_index = bisect_left(index.normalized_pts, target_seconds)
+    if index.time_base <= 0:
+        return None
+    target_pts = index.first_pts + target_seconds / index.time_base
+    frame_index = bisect_left(index.pts_ticks, target_pts)
     if frame_index >= len(index.frame_paths):
         return None
     return index.frame_paths[frame_index]
@@ -92,8 +91,24 @@ def build_source_frame_index(
             or estimated_count <= 0
         ):
             return _fallback("unknown_video_metadata", estimated_count or None, started)
-        if estimated_count > min(len(unique_seeks), max_decoded_frames):
-            return _fallback("source_exceeds_short_decode_budget", estimated_count, started)
+        target_seconds = max(Fraction(Decimal(seek)) for seek in unique_seeks)
+        if target_seconds < 0 or target_seconds >= Fraction(str(metadata.duration_seconds)):
+            return _fallback("requested_seek_outside_source_duration", estimated_count, started)
+        decode_budget = min(len(unique_seeks), max_decoded_frames)
+        if estimated_count <= decode_budget:
+            decode_frame_count = estimated_count
+            decode_extent = "whole-bounded-source-v1"
+        else:
+            target_frame_position = target_seconds * Fraction(str(metadata.fps))
+            decode_frame_count = (
+                (target_frame_position.numerator + target_frame_position.denominator - 1)
+                // target_frame_position.denominator
+            ) + 1
+            decode_extent = "timeline-zero-through-max-seek-v1"
+            if decode_frame_count > decode_budget:
+                return _fallback("requested_prefix_exceeds_decode_budget", estimated_count, started)
+            if decode_frame_count > estimated_count:
+                return _fallback("requested_prefix_exceeds_source_frame_count", estimated_count, started)
         ffmpeg_version = _ffmpeg_version(ffmpeg)
         if not ffmpeg_version:
             return _fallback("ffmpeg_version_unavailable", estimated_count, started)
@@ -109,6 +124,8 @@ def build_source_frame_index(
         "jpegQuality": 5,
         "passthrough": True,
         "ptsNormalization": "first-decoded-pts-integer-timebase-v1",
+        "decodeExtent": decode_extent,
+        "decodeFrameCount": decode_frame_count,
         "maxDecodedFrames": int(max_decoded_frames),
     }
     try:
@@ -144,7 +161,7 @@ def build_source_frame_index(
                 "-vf", f"scale='min({int(max_frame_width)},iw)':-2,showinfo",
                 "-vsync", "0",
                 "-q:v", "5",
-                "-frames:v", str(max_decoded_frames + 1),
+                "-frames:v", str(decode_frame_count),
                 "-start_number", "1",
                 str(frame_pattern),
             ]
@@ -161,6 +178,8 @@ def build_source_frame_index(
             frame_paths = sorted(temporary_root.glob("frame_*.jpg"))
             if len(frame_paths) > max_decoded_frames:
                 raise RuntimeError("runtime_frame_cap_exceeded")
+            if len(frame_paths) != decode_frame_count:
+                raise RuntimeError("decode_frame_count_mismatch")
             pts_ticks, time_base = _parse_showinfo_pts(result.stderr)
             if len(pts_ticks) != len(frame_paths) or not pts_ticks:
                 raise RuntimeError("decoded_frame_pts_count_mismatch")

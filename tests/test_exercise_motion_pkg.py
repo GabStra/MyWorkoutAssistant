@@ -56165,7 +56165,7 @@ def test_native_source_frame_cache_uses_normalized_integer_pts_and_first_at_or_a
     assert frame_path_for_seek(index, "0.167") is None
 
 
-def test_native_source_frame_cache_parses_integer_pts_and_refuses_over_budget_source(
+def test_native_source_frame_cache_parses_pts_and_refuses_prefix_over_request_budget(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -56197,7 +56197,7 @@ def test_native_source_frame_cache_parses_integer_pts_and_refuses_over_budget_so
 
     assert result.index is None
     assert result.status == "fallback"
-    assert result.reason == "source_exceeds_short_decode_budget"
+    assert result.reason == "requested_prefix_exceeds_decode_budget"
     assert result.estimated_frame_count == 601
 
 
@@ -56237,3 +56237,171 @@ def test_native_source_frame_cache_falls_back_for_nonzero_first_pts(
     assert result.index is None
     assert result.status == "fallback"
     assert "nonzero_first_pts_unsupported" in (result.reason or "")
+
+
+def test_native_source_frame_cache_decodes_only_requested_prefix_of_long_source(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(source_frame_cache_module, "resolve_ffmpeg_path", lambda: "ffmpeg")
+    monkeypatch.setattr(source_frame_cache_module, "_ffmpeg_version", lambda _ffmpeg: "ffmpeg test")
+    monkeypatch.setattr(
+        source_frame_cache_module,
+        "read_basic_video_metadata",
+        lambda _path: SimpleNamespace(fps=30.0, frame_count=1475, duration_seconds=49.167),
+    )
+    calls: list[list[str]] = []
+
+    def fake_ffmpeg_run(command: list[str], **_kwargs: object) -> SimpleNamespace:
+        calls.append(command)
+        frame_pattern = Path(command[-1])
+        frame_count = int(command[command.index("-frames:v") + 1])
+        for index in range(frame_count):
+            frame_pattern.with_name(f"frame_{index + 1:06d}.jpg").write_bytes(b"jpeg")
+        pts = "".join(
+            f"[Parsed_showinfo] n: {index} pts: {index} pts_time:{index / 30:.6f}\n"
+            for index in range(frame_count)
+        )
+        return SimpleNamespace(
+            returncode=0,
+            stderr=f"[Parsed_showinfo] config in time_base: 1/30, frame_rate: 30/1\n{pts}",
+        )
+
+    monkeypatch.setattr(source_frame_cache_module.subprocess, "run", fake_ffmpeg_run)
+    seek_timestamps = [f"{index * 3.85 / 119:.3f}" for index in range(120)]
+    result = source_frame_cache_module.build_source_frame_index(
+        video_path=tmp_path / "long-source.mp4",
+        seek_timestamps=seek_timestamps,
+        cache_dir=tmp_path / "cache",
+        max_frame_width=640,
+    )
+
+    assert result.index is not None
+    assert result.status == "decoded"
+    assert result.estimated_frame_count == 1475
+    assert result.decoded_frame_count == 117
+    assert len(calls) == 1
+    assert "-ss" not in calls[0]
+    assert calls[0][calls[0].index("-frames:v") + 1] == "117"
+    assert frame_path_for_seek(result.index, "3.850") == result.index.frame_paths[-1]
+
+    shorter_result = source_frame_cache_module.build_source_frame_index(
+        video_path=tmp_path / "long-source.mp4",
+        seek_timestamps=[f"{index * 3.0 / 90:.3f}" for index in range(91)],
+        cache_dir=tmp_path / "cache",
+        max_frame_width=640,
+    )
+
+    assert shorter_result.index is not None
+    assert shorter_result.decoded_frame_count == 91
+    assert shorter_result.index.cache_key != result.index.cache_key
+    assert len(calls) == 2
+
+
+def test_native_source_frame_cache_accepts_covered_vfr_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(source_frame_cache_module, "resolve_ffmpeg_path", lambda: "ffmpeg")
+    monkeypatch.setattr(source_frame_cache_module, "_ffmpeg_version", lambda _ffmpeg: "ffmpeg test")
+    monkeypatch.setattr(
+        source_frame_cache_module,
+        "read_basic_video_metadata",
+        lambda _path: SimpleNamespace(fps=30.0, frame_count=120, duration_seconds=4.0),
+    )
+
+    def fake_ffmpeg_run(command: list[str], **_kwargs: object) -> SimpleNamespace:
+        frame_pattern = Path(command[-1])
+        for index in range(4):
+            frame_pattern.with_name(f"frame_{index + 1:06d}.jpg").write_bytes(b"jpeg")
+        return SimpleNamespace(
+            returncode=0,
+            stderr=(
+                "[Parsed_showinfo] config in time_base: 1/30, frame_rate: 30/1\n"
+                "[Parsed_showinfo] n: 0 pts: 0 pts_time:0.000000\n"
+                "[Parsed_showinfo] n: 1 pts: 1 pts_time:0.033333\n"
+                "[Parsed_showinfo] n: 2 pts: 3 pts_time:0.100000\n"
+                "[Parsed_showinfo] n: 3 pts: 4 pts_time:0.133333\n"
+            ),
+        )
+
+    monkeypatch.setattr(source_frame_cache_module.subprocess, "run", fake_ffmpeg_run)
+    result = source_frame_cache_module.build_source_frame_index(
+        video_path=tmp_path / "vfr.mp4",
+        seek_timestamps=["0.000", "0.033", "0.067", "0.100"],
+        cache_dir=tmp_path / "cache",
+        max_frame_width=640,
+    )
+
+    assert result.index is not None
+    assert result.status == "decoded"
+    assert result.decoded_frame_count == 4
+    assert frame_path_for_seek(result.index, "0.067") == result.index.frame_paths[2]
+
+
+def test_native_source_frame_cache_falls_back_when_prefix_does_not_cover_seek(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(source_frame_cache_module, "resolve_ffmpeg_path", lambda: "ffmpeg")
+    monkeypatch.setattr(source_frame_cache_module, "_ffmpeg_version", lambda _ffmpeg: "ffmpeg test")
+    monkeypatch.setattr(
+        source_frame_cache_module,
+        "read_basic_video_metadata",
+        lambda _path: SimpleNamespace(fps=30.0, frame_count=120, duration_seconds=4.0),
+    )
+
+    def fake_ffmpeg_run(command: list[str], **_kwargs: object) -> SimpleNamespace:
+        frame_pattern = Path(command[-1])
+        for index in range(4):
+            frame_pattern.with_name(f"frame_{index + 1:06d}.jpg").write_bytes(b"jpeg")
+        return SimpleNamespace(
+            returncode=0,
+            stderr=(
+                "[Parsed_showinfo] config in time_base: 1/60, frame_rate: 60/1\n"
+                "[Parsed_showinfo] n: 0 pts: 0 pts_time:0.000000\n"
+                "[Parsed_showinfo] n: 1 pts: 1 pts_time:0.016667\n"
+                "[Parsed_showinfo] n: 2 pts: 2 pts_time:0.033333\n"
+                "[Parsed_showinfo] n: 3 pts: 3 pts_time:0.050000\n"
+            ),
+        )
+
+    monkeypatch.setattr(source_frame_cache_module.subprocess, "run", fake_ffmpeg_run)
+    result = source_frame_cache_module.build_source_frame_index(
+        video_path=tmp_path / "undercovered-vfr.mp4",
+        seek_timestamps=["0.000", "0.033", "0.067", "0.100"],
+        cache_dir=tmp_path / "cache",
+        max_frame_width=640,
+    )
+
+    assert result.index is None
+    assert result.status == "fallback"
+    assert result.reason == "requested_sample_outside_decoded_pts"
+
+
+def test_native_source_frame_cache_refuses_prefix_over_decode_budget(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(source_frame_cache_module, "resolve_ffmpeg_path", lambda: "ffmpeg")
+    monkeypatch.setattr(
+        source_frame_cache_module,
+        "read_basic_video_metadata",
+        lambda _path: SimpleNamespace(fps=30.0, frame_count=3000, duration_seconds=100.0),
+    )
+    monkeypatch.setattr(
+        source_frame_cache_module.subprocess,
+        "run",
+        lambda *args, **kwargs: pytest.fail("over-budget prefix must not launch FFmpeg"),
+    )
+
+    result = source_frame_cache_module.build_source_frame_index(
+        video_path=tmp_path / "long.mp4",
+        seek_timestamps=[f"{index / 30:.3f}" for index in range(601)],
+        cache_dir=tmp_path / "cache",
+        max_frame_width=640,
+    )
+
+    assert result.index is None
+    assert result.status == "fallback"
+    assert result.reason == "requested_prefix_exceeds_decode_budget"
