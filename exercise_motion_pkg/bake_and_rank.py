@@ -29344,8 +29344,8 @@ def render_prechecked_baked_artifacts(
     source_video = workspace / "input" / "selected_segment.mp4"
     source_pose = load_verified_source_pose_reference(reference_path, source_video)
     camera_reference = load_baked_source_camera_reference(workspace, source_pose)
-    prepared: list[tuple[BakedLoopArtifact, dict[str, Any]]] = []
-    for artifact in artifacts:
+    prepared: list[tuple[int, BakedLoopArtifact, dict[str, Any]]] = []
+    for artifact_index, artifact in enumerate(artifacts):
         payload = artifact.export_payload
         diagnostics = artifact.preview_bake_diagnostics
         if camera_reference is not None:
@@ -29367,15 +29367,15 @@ def render_prechecked_baked_artifacts(
             diagnostics["deterministicGateSeconds"] = time.perf_counter() - gate_started
         payload["preRenderDeterministicGate"] = gate
         write_json_atomic(artifact.skeleton_path, payload)
-        prepared.append((artifact, gate))
+        prepared.append((artifact_index, artifact, gate))
 
-    for artifact, gate in prepared:
+    for artifact_index, artifact, gate in prepared:
         if gate.get("passed") is not True:
             continue
         payload = artifact.export_payload
         replacement = terminal_cycle_rebake_superseding_full_clip(
             artifact.export_payload,
-            [sibling.export_payload for sibling, _ in prepared if sibling is not artifact],
+            [sibling.export_payload for _, sibling, _ in prepared if sibling is not artifact],
         )
         if replacement is not None:
             state = artifact.export_payload.get("artifactState")
@@ -29406,7 +29406,7 @@ def render_prechecked_baked_artifacts(
             diagnostics["reviewFrameCaptureSeconds"] = time.perf_counter() - capture_started
         fps = parse_review_video_fps(payload, frame_count=len(urls))
         video_write_started = time.perf_counter()
-        _, quality = write_validated_review_video_from_data_urls(urls, artifact.review_video_path, fps=fps)
+        encoded_path, quality = write_validated_review_video_from_data_urls(urls, artifact.review_video_path, fps=fps)
         if isinstance(diagnostics, dict):
             diagnostics["reviewVideoWriteAndQualityCheckSeconds"] = (
                 time.perf_counter() - video_write_started
@@ -29414,7 +29414,8 @@ def render_prechecked_baked_artifacts(
             diagnostics["reviewVideoFrameCount"] = len(urls)
         if not quality.get("passed"):
             raise RuntimeError(f"Preview review video export failed quality validation: {quality}")
-        metadata_path = artifact.review_video_path.with_suffix(".review_video.json")
+        artifacts[artifact_index] = replace(artifact, review_video_path=encoded_path)
+        metadata_path = encoded_path.with_suffix(".review_video.json")
         metadata_path.write_text(json.dumps({
             "schemaVersion": 1, "frameCount": len(urls), "fps": fps,
             "sourceFrameCount": len(payload.get("frames", [])), "frameIndices": indices,

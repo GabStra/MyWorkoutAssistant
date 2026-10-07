@@ -42,3 +42,30 @@ def test_usable_geometry_renders_after_precheck(tmp_path, monkeypatch):
     bake.render_prechecked_baked_artifacts(None, [artifact], tmp_path)
     assert calls == ["render"]
     assert payload["frames"] == before
+
+
+def test_validated_codec_fallback_updates_artifact_and_metadata(tmp_path, monkeypatch):
+    payload = {"frames": [{"joints": {}}], "fps": 30}
+    requested_path = tmp_path / "preview.webm"
+    encoded_path = requested_path.with_suffix(".mp4")
+    artifacts = [bake.BakedLoopArtifact(-1, tmp_path / "skeleton.json", requested_path, payload)]
+    monkeypatch.setattr(bake, "pre_render_deterministic_gate", lambda *args, **kwargs: {
+        "passed": True, "rejectionReasons": [],
+    })
+    monkeypatch.setattr(bake, "dense_loop_review_video_frame_indices", lambda _payload: [0])
+    monkeypatch.setattr(bake, "render_baked_wear_frames_with_playwright",
+                        lambda *args, **kwargs: ["data:image/png;base64,unused"])
+
+    def encode(urls, path, *, fps):
+        assert path == requested_path
+        encoded_path.write_bytes(b"validated fallback")
+        return encoded_path, {"passed": True, "codecFallbackUsed": True}
+
+    monkeypatch.setattr(bake, "write_validated_review_video_from_data_urls", encode)
+    bake.render_prechecked_baked_artifacts(None, artifacts, tmp_path)
+
+    assert artifacts[0].review_video_path == encoded_path
+    assert not requested_path.exists()
+    metadata = json.loads(encoded_path.with_suffix(".review_video.json").read_text())
+    assert metadata["reviewVideoQuality"]["passed"] is True
+    assert metadata["frameIndices"] == [0]
