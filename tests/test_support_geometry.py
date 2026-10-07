@@ -80,6 +80,50 @@ def supported_payload():
             'sourceFootSupportEvidence': {'bodySupport': evidence}}
 
 
+def test_validated_support_reference_preserves_observed_hinge_posture():
+    from exercise_motion_pkg.support_geometry import validated_support_reference
+
+    joints = {
+        'pelvis': [0., 0., 0.],
+        'left_hip': [0., 0., .15],
+        'right_hip': [0., 0., -.15],
+        'left_knee': [0., -.5, .15],
+        'right_knee': [0., -.5, -.15],
+        'left_ankle': [0., -1., .15],
+        'right_ankle': [0., -1., -.15],
+        'left_foot': [.1, -1., .15],
+        'right_foot': [.1, -1., -.15],
+        'spine1': [0., .1, 0.],
+        'spine2': [.16, .31, 0.],
+        'spine3': [.35, .53, 0.],
+        'neck': [.64, .87, 0.],
+        'left_collar': [.4225, .615, .1],
+        'right_collar': [.4225, .615, -.1],
+        'left_shoulder': [.524, .734, .15],
+        'right_shoulder': [.524, .734, -.15],
+    }
+    names = list(joints)
+    frames = [{
+        'joints': deepcopy(joints),
+        'supportCorrectedReferenceJoints': deepcopy(joints),
+    } for _ in range(8)]
+    payload = {
+        'jointNames': names,
+        'frames': frames,
+        'sourceFootSupportEvidence': {'bodySupport': {
+            'required': True,
+            'status': 'confirmed',
+            'stationaryJoints': ['left_hip', 'right_hip'],
+        }},
+    }
+
+    reference, reason = validated_support_reference(payload)
+
+    assert reason is None
+    np.testing.assert_allclose(reference, np.tile(
+        np.array([joints[name] for name in names]), (len(frames), 1, 1)))
+
+
 def test_detects_bounce_sag_and_wrong_surface_without_flattening_valid_arch():
     base = supported_payload()
     assert validate_support_geometry(base)['passed']

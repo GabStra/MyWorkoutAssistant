@@ -243,7 +243,7 @@ def _reference_is_valid(payload, reference, names, frame_count):
     from .support_alignment import validate_payload_alignment
     return (reference.shape == (frame_count, len(names), 3)
             and np.isfinite(reference).all()
-            and not np.any(repair_residuals(reference, names)[0]
+            and not np.any(repair_residuals(reference, names, reference=reference)[0]
                            > SUPPORT_REFERENCE_MATERIAL_TOLERANCE_METERS)
             and validate_support_geometry(payload, reference, names)['passed']
             and validate_payload_alignment(payload, reference)['passed'])
