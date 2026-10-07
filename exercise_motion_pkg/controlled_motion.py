@@ -6083,8 +6083,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         # anatomy/contact repair and thereby cause root-continuity rejection.
         support_frame_ok = support_reference_can_be_polished(report)
         needs_anatomy = not report['supportReferenceAnatomy']['passed']
-        needs_contacts = not report['supportReferenceContacts']['passed']
-        if (support_frame_ok and (needs_anatomy or needs_contacts)
+        if (support_frame_ok
+                and (needs_anatomy or not report['supportReferenceContacts']['passed'])
                 and monotonic() < started + timeout_seconds):
             anatomy_budget = max(6., 0.15 * float(timeout_seconds))
             # Plant-only clips already paid for keyframe plants; anatomy polish
@@ -6101,9 +6101,13 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                         rig, initialized_points, deadline=anatomy_deadline,
                         reference=anatomical_reference)
                     report['supportReferenceAnatomyPolish'] = support_anatomy_polish
-                if needs_contacts or needs_anatomy:
+                    reference_contact_error = float(np.max(
+                        np.linalg.norm((initialized_points - contact_targets)[pinned], axis=-1),
+                        initial=0.))
+                if not support_reference_contacts_pass(reference_contact_error):
                     # Anatomy repair can leave planted joints a few millimeters
-                    # off; incomplete projection often stops just above 0.5 mm.
+                    # off; project only when the post-repair pose still misses
+                    # the support-reference contact gate.
                     # Plant-only already deferred plant-chain TRF to the main fit —
                     # another full-clip plant here reintroduces the same stall.
                     if report.get('supportInitializationStrategy') == 'plant_projection':
@@ -6119,6 +6123,17 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                         'applied': True,
                         'maximumErrorMetersBefore': reference_contact_error,
                     }
+                    projected_errors, _ = repair_residuals(
+                        initialized_points, names, reference=anatomical_reference)
+                    if np.any(projected_errors > 1e-6):
+                        try:
+                            initialized_points, anatomy_repolish = repair_rig_anatomy(
+                                rig, initialized_points, deadline=anatomy_deadline,
+                                reference=anatomical_reference)
+                            report['supportReferenceAnatomyRepolish'] = anatomy_repolish
+                        except TimeoutError:
+                            report['supportReferenceAnatomyRepolish'] = {
+                                'passed': False, 'reason': 'time_budget'}
                 reference_errors, reference_labels = repair_residuals(
                     initialized_points, names, reference=anatomical_reference)
                 failed_reference_features = np.max(reference_errors, axis=0) > 1e-6

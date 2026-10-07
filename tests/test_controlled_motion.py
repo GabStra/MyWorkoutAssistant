@@ -3987,6 +3987,107 @@ def test_support_anatomy_polish_does_not_require_rigid_grip_to_pass_first():
     assert not motion.support_reference_can_be_polished(report)
 
 
+@pytest.mark.parametrize(
+    ('contact_error_meters', 'projector_reopens_anatomy'),
+    [(0., False), (.01, True)],
+)
+def test_support_reference_polish_preserves_contact_and_anatomy_gates(
+        monkeypatch, contact_error_meters, projector_reopens_anatomy):
+    from exercise_motion_pkg import anatomical_repair, controlled_motion as motion
+    from exercise_motion_pkg import (
+        equipment_constraints, rig_playback, support_alignment, support_geometry,
+    )
+
+    names, points = stance(12)
+    current = payload(names, points)
+    pinned = np.zeros((len(points), len(names)), dtype=bool)
+    targets = points.copy()
+    if contact_error_meters:
+        right_foot = names.index('right_foot')
+        pinned[:, right_foot] = True
+        targets[:, right_foot, 0] += contact_error_meters
+    stationary = ['pelvis', 'spine1', 'spine2']
+    evidence = {
+        'required': True,
+        'status': 'confirmed',
+        'stationaryJoints': stationary,
+        'coplanarGroups': [{
+            'joints': stationary,
+            'normal': [0., 1., 0.],
+            'planeOffsetMeters': float(points[0, names.index('pelvis'), 1]),
+        }],
+    }
+    current['sourceFootSupportEvidence'] = {'bodySupport': evidence}
+    monkeypatch.setattr(motion, 'contact_mask',
+                        lambda _payload, _names, _count: pinned.copy())
+    monkeypatch.setattr(rig_playback, 'rig_contact_targets',
+                        lambda *args, **kwargs: (targets.copy(), {}))
+    monkeypatch.setattr(motion, 'register_contact_placement',
+                        lambda values, *args, **kwargs: (
+                            values.copy(), {'observedGroundEpisodes': [1]}))
+    monkeypatch.setattr(support_geometry, 'support_evidence', lambda _payload: evidence)
+    monkeypatch.setattr(support_geometry, 'plant_only_body_support', lambda _evidence: False)
+    monkeypatch.setattr(support_geometry, 'calibrate_support_pose',
+                        lambda *args, **kwargs: (points[0], {}))
+    monkeypatch.setattr(support_geometry, 'initialize_supported_motion',
+                        lambda rig, *args, **kwargs: rig.decode(rig.initial))
+    monkeypatch.setattr(support_geometry, 'validate_support_geometry',
+                        lambda *args, **kwargs: {'passed': True})
+    monkeypatch.setattr(support_alignment, 'payload_alignment_reference', lambda _payload: points.copy())
+    monkeypatch.setattr(support_alignment, 'validate_alignment',
+                        lambda *args, **kwargs: {'passed': True})
+    monkeypatch.setattr(equipment_constraints, 'calibrated_grip_constraint',
+                        lambda *args, **kwargs: {})
+    monkeypatch.setattr(equipment_constraints, 'validate_grip',
+                        lambda *args, **kwargs: {'passed': True})
+    monkeypatch.setattr(motion, 'support_reference_can_be_polished', lambda _report: True)
+    monkeypatch.setattr(motion, 'root_motion_quality', lambda *args, **kwargs: {'passed': True})
+    repair_calls = []
+
+    def repair_anatomy(rig, *args, **kwargs):
+        repair_calls.append(True)
+        return rig.decode(rig.initial), {'passed': True}
+
+    monkeypatch.setattr(anatomical_repair, 'repair_rig_anatomy', repair_anatomy)
+
+    residual_calls = 0
+
+    def residuals(*args, **kwargs):
+        nonlocal residual_calls
+        residual_calls += 1
+        errors = np.zeros((len(points), 1))
+        if residual_calls == 2 or (projector_reopens_anatomy and residual_calls == 3):
+            errors[:, 0] = 1e-4
+        return errors, ['synthetic_anatomy_violation']
+
+    monkeypatch.setattr(anatomical_repair, 'repair_residuals', residuals)
+    contact_projections = []
+
+    def project_contacts(coordinates, *args, **kwargs):
+        contact_projections.append(True)
+        return coordinates
+
+    monkeypatch.setattr(motion, 'project_contact_plant_coordinates', project_contacts)
+
+    class MainFitReached(Exception):
+        pass
+
+    monkeypatch.setattr(motion, 'solve_trajectory',
+                        lambda *args, **kwargs: (_ for _ in ()).throw(MainFitReached()))
+    if contact_error_meters:
+        _, report = motion._fit_controlled_motion_impl(current, timeout_seconds=120.)
+        assert report['reason'] == 'support_reference_projection_incomplete'
+        assert not report['supportReferenceContacts']['passed']
+        assert report['supportReferenceAnatomy']['passed']
+        assert report['supportReferenceAnatomyRepolish']['passed']
+    else:
+        with pytest.raises(MainFitReached):
+            motion._fit_controlled_motion_impl(current, timeout_seconds=120.)
+
+    assert contact_projections == ([] if not contact_error_meters else [True])
+    assert len(repair_calls) == (2 if not projector_reopens_anatomy else 3)
+
+
 def test_support_reference_near_miss_reaches_fit_but_stays_below_playback_limit():
     from exercise_motion_pkg import controlled_motion as motion
 
