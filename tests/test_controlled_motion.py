@@ -1447,6 +1447,15 @@ def test_confirmed_source_support_adds_relative_pelvis_path_fit_rows():
         rig=rig,
         coordinates=rig.initial,
     )
+    reused_fk_jacobian = motion._source_support_relative_fit_jacobian(
+        material_constraint,
+        frame_count=len(points),
+        joint_count=len(names),
+        rig=rig,
+        coordinates=rig.initial,
+        fk_jacobian=rig.fk_jacobian(rig.initial),
+    )
+    assert (jacobian != reused_fk_jacobian).nnz == 0
     pair_count = len(motion._source_support_relative_fit_pairs(material_constraint))
     assert jacobian.shape == (pair_count * 2, len(rig.initial.ravel()))
     assert jacobian.nnz > 0
@@ -1687,6 +1696,15 @@ def test_artifact_state_selected_intervals_feed_endpoint_fit_rows_and_cycle_only
             rig=rig,
             coordinates=rig.initial,
         )
+        reused_fk_jacobian = motion._source_endpoint_posture_fit_jacobian(
+            constraint,
+            frame_count=len(points),
+            joint_count=len(names),
+            rig=rig,
+            coordinates=rig.initial,
+            fk_jacobian=rig.fk_jacobian(rig.initial),
+        )
+        assert (endpoint_jacobian != reused_fk_jacobian).nnz == 0
         assert endpoint_jacobian.shape[0] == endpoint_rows.size
         assert endpoint_jacobian.nnz > 0
 
@@ -2106,6 +2124,15 @@ def test_pinned_source_confirmed_foot_anchor_projects_with_low_trust_for_unknown
         rig=rig,
         coordinates=rig.initial,
     )
+    reused_fk_jacobian = motion._source_projection_fit_jacobian(
+        constraint,
+        frame_count=len(points),
+        joint_count=len(names),
+        rig=rig,
+        coordinates=rig.initial,
+        fk_jacobian=rig.fk_jacobian(rig.initial),
+    )
+    assert (fit_jacobian != reused_fk_jacobian).nnz == 0
     foot_observation_index = next(
         index for index, row in enumerate(constraint['observations']) if row is foot)
     assert fit_jacobian[foot_observation_index * 2:(foot_observation_index + 1) * 2].nnz > 0

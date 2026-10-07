@@ -4256,6 +4256,20 @@ def _prepare_source_projection_fit_constraints(payload, frames, names, points, p
         'end': {'available': False},
     }
     swap = camera.get('bilateralAssignment') == 'swapped'
+
+    def source_confidence(frame, joint_names):
+        values = frame.get('jointConfidence') or {}
+        confidences = []
+        for joint_name in joint_names:
+            try:
+                value = float(values.get(joint_name, .1))
+            except (TypeError, ValueError, OverflowError):
+                value = .1
+            if not np.isfinite(value):
+                value = .1
+            confidences.append(float(np.clip(value, 0., 1.)))
+        return min(confidences, default=.1)
+
     if selected_movement:
         source_times = np.asarray([float(frame['time']) for frame in source_frames], dtype=float)
         positive_source_deltas = np.diff(source_times)
@@ -4299,20 +4313,6 @@ def _prepare_source_projection_fit_constraints(payload, frames, names, points, p
         can_use_pelvis_center = 'pelvis' in fit_joint_index
         can_use_hip_center = {'left_hip', 'right_hip'} <= set(fit_joint_index)
         if can_use_pelvis_center or can_use_hip_center:
-
-            def source_confidence(frame, joint_names):
-                values = frame.get('jointConfidence') or {}
-                confidences = []
-                for joint_name in joint_names:
-                    try:
-                        value = float(values.get(joint_name, .1))
-                    except (TypeError, ValueError, OverflowError):
-                        value = .1
-                    if not np.isfinite(value):
-                        value = .1
-                    confidences.append(float(np.clip(value, 0., 1.)))
-                return min(confidences, default=.1)
-
             def source_center(frame):
                 joints = frame['joints']
                 pelvis_confidence = (
@@ -4948,7 +4948,7 @@ def _projected_source_support_delta(candidate, observation, projection):
 
 
 def _source_support_relative_fit_jacobian(
-    constraint, *, frame_count, joint_count, rig, coordinates,
+    constraint, *, frame_count, joint_count, rig, coordinates, fk_jacobian=None,
 ):
     pairs = _source_support_relative_fit_pairs(constraint)
     if not constraint.get('available') or not pairs:
@@ -4993,7 +4993,9 @@ def _source_support_relative_fit_jacobian(
         (values, (rows, columns)),
         shape=(len(pairs) * 2, frame_count * joint_count * 3),
     )
-    return point_jacobian @ rig.fk_jacobian(coordinates)
+    if fk_jacobian is None:
+        fk_jacobian = rig.fk_jacobian(coordinates)
+    return point_jacobian @ fk_jacobian
 
 
 def _source_support_relative_fit_evidence(candidate, constraint):
@@ -5103,7 +5105,9 @@ def _source_endpoint_posture_fit_rows(candidate, constraint):
     return np.asarray(rows, dtype=float)
 
 
-def _source_projection_fit_jacobian(constraint, *, frame_count, joint_count, rig, coordinates):
+def _source_projection_fit_jacobian(
+    constraint, *, frame_count, joint_count, rig, coordinates, fk_jacobian=None,
+):
     if not constraint.get('available'):
         return csr_matrix((0, frame_count * rig.width))
     rows, columns, values = [], [], []
@@ -5135,11 +5139,13 @@ def _source_projection_fit_jacobian(constraint, *, frame_count, joint_count, rig
         (values, (rows, columns)),
         shape=(len(constraint['observations']) * 2, frame_count * joint_count * 3),
     )
-    return point_jacobian @ rig.fk_jacobian(coordinates)
+    if fk_jacobian is None:
+        fk_jacobian = rig.fk_jacobian(coordinates)
+    return point_jacobian @ fk_jacobian
 
 
 def _source_endpoint_posture_fit_jacobian(
-    constraint, *, frame_count, joint_count, rig, coordinates,
+    constraint, *, frame_count, joint_count, rig, coordinates, fk_jacobian=None,
 ):
     observations = constraint.get('endpointPostureObservations') or []
     if not constraint.get('available') or not observations:
@@ -5180,7 +5186,9 @@ def _source_endpoint_posture_fit_jacobian(
         (values, (rows, columns)),
         shape=(len(observations) * 2, frame_count * joint_count * 3),
     )
-    return point_jacobian @ rig.fk_jacobian(coordinates)
+    if fk_jacobian is None:
+        fk_jacobian = rig.fk_jacobian(coordinates)
+    return point_jacobian @ fk_jacobian
 
 
 def joint_dependencies(rig, names):
@@ -7464,6 +7472,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 joint_count=joints,
                 rig=rig,
                 coordinates=coordinates,
+                fk_jacobian=fk,
             ))
             parts.append(_source_support_relative_fit_jacobian(
                 source_projection_constraint,
@@ -7471,6 +7480,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 joint_count=joints,
                 rig=rig,
                 coordinates=coordinates,
+                fk_jacobian=fk,
             ))
             parts.append(_source_endpoint_posture_fit_jacobian(
                 source_projection_constraint,
@@ -7478,6 +7488,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 joint_count=joints,
                 rig=rig,
                 coordinates=coordinates,
+                fk_jacobian=fk,
             ))
         check_optimizer_budget()
         return vstack(parts, format='csr')
