@@ -54,7 +54,7 @@ SUPPORT_REFERENCE_CONTACT_LIMIT_METERS = min(
     PLAYBACK_CONTACT_LIMIT_METERS * 0.5,
 )
 
-CONTROLLED_MOTION_STRATEGY = 'fixed_rig_controlled_motion_v73_retained_cycle_seam_ownership'
+CONTROLLED_MOTION_STRATEGY = 'fixed_rig_controlled_motion_v74_source_relative_anatomy'
 # Feasibility pre-flight threshold, calibrated from fit reports: every
 # successful fit's target bones matched the rig within ~0.002m, while
 # structurally conflicted fits measured 0.05-0.15m before burning their
@@ -412,6 +412,7 @@ def supported_reference_projection_metrics(
     payload,
     names,
     alignment_reference,
+    anatomy_reference,
     body_support,
     equipment,
     pinned,
@@ -423,7 +424,7 @@ def supported_reference_projection_metrics(
     from .support_alignment import validate_alignment
     from .support_geometry import validate_support_geometry
 
-    errors, labels = repair_residuals(points, names)
+    errors, labels = repair_residuals(points, names, reference=anatomy_reference)
     failed_features = np.max(errors, axis=0) > 1e-6
     anatomy = {
         'passed': not bool(np.any(failed_features)),
@@ -5797,6 +5798,9 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
     reference = np.asarray([[f.get('controlledArticulationReferenceJoints',f['joints'])[n] for n in names] for f in frames],dtype=float)
     if not np.isfinite(reference).all():
         return payload, {**report, 'reason': 'nonfinite_articulation_reference'}
+    # ``reference`` may later become a repaired/support-projected fit target.
+    # Anatomy limits keep using the original observed source pose.
+    anatomical_reference = reference.copy()
     # Keep temporal evidence immutable across camera/contact/anatomy variants.
     temporal_reference = reference.copy()
     # Match the final renderer's immutable before-processing spike evidence.
@@ -5882,25 +5886,26 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             minimum_seconds=(12. if bilateral_plant_only else ANATOMY_REPAIR_MIN_SECONDS),
         )
         initialized_points, anatomy_initialization = repair_rig_anatomy(
-            rig, points, deadline=anatomy_deadline,
+            rig, points, deadline=anatomy_deadline, reference=anatomical_reference,
             completion_deadline=(started + timeout_seconds - reserved_polish
                                  - validation_reserve - MIN_USEFUL_FIT_SECONDS))
         report['anatomicalInitialization'] = anatomy_initialization
         if bilateral_plant_only:
             report['anatomicalInitializationPlantOnlyBudget'] = True
-        source_violations, _ = repair_residuals(reference, names)
+        source_violations, _ = repair_residuals(
+            anatomical_reference, names, reference=anatomical_reference)
         if np.any(source_violations > 1e-6):
             # When the articulation reference is the working observation, one
             # projection already owns the outcome. A second identical solve only
             # burns the anatomy budget after an incomplete first pass.
-            if np.allclose(points, reference, atol=1e-10, rtol=0.):
+            if np.allclose(points, anatomical_reference, atol=1e-10, rtol=0.):
                 source_anatomy = {**anatomy_initialization, 'reusedInitialization': True,
                                   'evaluations': 0, 'residualBatchCount': 0, 'residualPointCount': 0,
                                   'warmStartedFrameCount': 0}
                 repaired_reference = initialized_points if anatomy_initialization.get('passed') else None
             else:
                 repaired_reference = transport_equivalent_anatomical_repair(
-                    points, initialized_points, reference, names)
+                    points, initialized_points, anatomical_reference, names)
                 if repaired_reference is not None:
                     # Repositioning the source does not require solving its same
                     # malformed frames twice. Articulation changes cannot reuse it.
@@ -5908,9 +5913,10 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                                       'evaluations': 0, 'residualBatchCount': 0, 'residualPointCount': 0,
                                       'warmStartedFrameCount': 0}
                 else:
-                    reference_rig = FixedRig(reference, names)
+                    reference_rig = FixedRig(anatomical_reference, names)
                     repaired_reference, source_anatomy = repair_rig_anatomy(
-                        reference_rig, reference, deadline=anatomy_deadline)
+                        reference_rig, anatomical_reference, deadline=anatomy_deadline,
+                        reference=anatomical_reference)
             report['anatomicalSourceRepair'] = source_anatomy
             if repaired_reference is None or not source_anatomy['passed']:
                 return payload, {**report, 'reason': 'anatomical_source_projection_incomplete'}
@@ -6061,7 +6067,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             'maximumErrorMeters': reference_contact_error,
             'toleranceMeters': SUPPORT_REFERENCE_CONTACT_LIMIT_METERS,
         }
-        reference_errors, reference_labels = repair_residuals(initialized_points, names)
+        reference_errors, reference_labels = repair_residuals(
+            initialized_points, names, reference=anatomical_reference)
         failed_reference_features = np.max(reference_errors, axis=0) > 1e-6
         report['supportReferenceAnatomy'] = {
             'passed': not bool(np.any(failed_reference_features)),
@@ -6091,7 +6098,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             try:
                 if needs_anatomy:
                     initialized_points, support_anatomy_polish = repair_rig_anatomy(
-                        rig, initialized_points, deadline=anatomy_deadline)
+                        rig, initialized_points, deadline=anatomy_deadline,
+                        reference=anatomical_reference)
                     report['supportReferenceAnatomyPolish'] = support_anatomy_polish
                 if needs_contacts or needs_anatomy:
                     # Anatomy repair can leave planted joints a few millimeters
@@ -6111,7 +6119,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                         'applied': True,
                         'maximumErrorMetersBefore': reference_contact_error,
                     }
-                reference_errors, reference_labels = repair_residuals(initialized_points, names)
+                reference_errors, reference_labels = repair_residuals(
+                    initialized_points, names, reference=anatomical_reference)
                 failed_reference_features = np.max(reference_errors, axis=0) > 1e-6
                 report['supportReferenceAnatomy'] = {
                     'passed': not bool(np.any(failed_reference_features)),
@@ -6171,7 +6180,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             candidate_points = rig.decode(continuous)
             contact_err = float(np.max(
                 np.linalg.norm((candidate_points - contact_targets)[pinned], axis=-1), initial=0.))
-            anatomy_errors, _ = repair_residuals(candidate_points, names)
+            anatomy_errors, _ = repair_residuals(
+                candidate_points, names, reference=anatomical_reference)
             anatomy_ok = not bool(np.any(anatomy_errors > 1e-6))
             support_ok = validate_support_geometry(payload, candidate_points, names)['passed']
             root_ok = root_motion_quality(
@@ -6250,6 +6260,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 payload=payload,
                 names=names,
                 alignment_reference=alignment_source,
+                anatomy_reference=anatomical_reference,
                 body_support=body_support,
                 equipment=equipment,
                 pinned=pinned,
@@ -6297,6 +6308,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                     payload=payload,
                     names=names,
                     alignment_reference=alignment_source,
+                    anatomy_reference=anatomical_reference,
                     body_support=body_support,
                     equipment=equipment,
                     pinned=pinned,
@@ -6795,7 +6807,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
     def anatomy_rows(unconstrained_candidate):
         structure = anatomical_structure_residuals(
             unconstrained_candidate,names,pose_only=True,margin=ANATOMY_FIT_MARGIN,
-            reference=reference)[0]
+            reference=anatomical_reference)[0]
         spans, _ = span_rigidity_fit_residuals(
             unconstrained_candidate, names, span_targets, body_scale_m=scale)
         return np.concatenate([ANATOMY_FIT_WEIGHT * structure,
@@ -6861,13 +6873,13 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         return np.concatenate(subframe_point_sections(subframe, contact_weight, grip_weight), axis=1)
 
     def subframe_anatomy_rows(unconstrained_subframe):
-        interpolated_reference = (
-            reference[subframe_first] * (1. - subframe_alpha)
-            + reference[subframe_last] * subframe_alpha
+        interpolated_anatomy_reference = (
+            anatomical_reference[subframe_first] * (1. - subframe_alpha)
+            + anatomical_reference[subframe_last] * subframe_alpha
         )
         structure = anatomical_structure_residuals(
             unconstrained_subframe,names,pose_only=True,margin=ANATOMY_FIT_MARGIN,
-            reference=interpolated_reference)[0]
+            reference=interpolated_anatomy_reference)[0]
         spans, _ = span_rigidity_fit_residuals(
             unconstrained_subframe, names, span_targets, body_scale_m=scale)
         return np.concatenate([ANATOMY_FIT_WEIGHT * structure,
@@ -7806,14 +7818,16 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             # reopen an already boundary-tight spine constraint afterward.
             rig.initial[:] = project_playback_neck_clearance(
                 rig.initial, rig, cyclic=cyclic, deadline=repair_deadline)
-            numerical_errors, _ = repair_residuals(rig.decode(rig.initial), names)
+            numerical_errors, _ = repair_residuals(
+                rig.decode(rig.initial), names, reference=anatomical_reference)
             largest_error = float(np.max(numerical_errors, initial=0.))
             if 1e-6 < largest_error <= ANATOMY_FIT_MARGIN and monotonic() < repair_deadline:
                 previous_coordinates, previous_offsets = rig.initial.copy(), rig.offsets.copy()
                 polish_started = monotonic()
                 try:
                     _, polish = repair_rig_anatomy(
-                        rig, rig.decode(rig.initial), deadline=repair_deadline)
+                        rig, rig.decode(rig.initial), deadline=repair_deadline,
+                        reference=anatomical_reference)
                 except TimeoutError:
                     polish = {'passed': False, 'reason': 'time_budget'}
                 polish['elapsedSeconds'] = monotonic()-polish_started
@@ -7931,7 +7945,9 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                     'attempts': _attempt_reports,
                 }
         bilateral_support = np.all(pinned[:,[names.index(n) for n in ('left_ankle','left_foot','right_ankle','right_foot')]],axis=1)
-        physical = validate_physical_motion(result,names,reference=reference,fps=fps,support_mask=bilateral_support)
+        physical = validate_physical_motion(
+            result, names, reference=reference, anatomy_reference=anatomical_reference,
+            fps=fps, support_mask=bilateral_support)
         # Fixed-rig lengths are checked directly below; source per-frame length
         # fidelity is intentionally superseded, not anatomical/branch checks.
         source_events = physical['events']
@@ -8192,7 +8208,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             rig.initial[:] = baseline_coordinates.reshape(count, rig.width)
             observed = rig.decode(rig.initial)
             _, repair_report = repair_rig_anatomy(
-                rig, observed, reference=reference,
+                rig, observed, reference=anatomical_reference,
                 deadline=min(started + timeout_seconds,
                              monotonic() + repair_budget))
             projection['repair'] = repair_report
@@ -8497,7 +8513,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                         from .anatomical_repair import repair_rig_anatomy
                         _, polish = repair_rig_anatomy(
                             rig, rig.decode(rig.initial),
-                            deadline=min(path_deadline, monotonic() + 8.))
+                            deadline=min(path_deadline, monotonic() + 8.),
+                            reference=anatomical_reference)
                         if polish.get('passed'):
                             anatomy_trial = rig.initial.copy()
                             if np.any(pinned):
@@ -8680,7 +8697,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 cyclic=cyclic, sigma=2.5,
                 deadline=min(started + timeout_seconds, monotonic() + min(18., max(6., started + timeout_seconds - monotonic()))),
                 floor=floor, fps=fps, spike_reference=spike_reference,
-                reference=reference)
+                reference=anatomical_reference)
             solved = SimpleNamespace(
                 x=strong.ravel(), nfev=solved.nfev, status=getattr(solved, 'status', 1))
             candidate, report = validate_solution(solved, project_playback_plants=False)
@@ -9263,7 +9280,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                     cyclic=cyclic, sigma=free_sigma,
                     deadline=min(started + timeout_seconds, monotonic() + min(16., max(5., remaining))),
                     floor=floor, fps=fps, spike_reference=spike_reference,
-                    reference=reference)
+                    reference=anatomical_reference)
                 solved = SimpleNamespace(
                     x=smoothed.ravel(), nfev=solved.nfev, status=getattr(solved, 'status', 1))
                 candidate, report = validate_solution(solved, project_playback_plants=False)

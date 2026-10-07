@@ -53796,6 +53796,104 @@ def test_spine_axis_alignment_unfolds_segment_past_anatomy_fold_cone() -> None:
     assert np.array_equal(corrected[:5], points[:5])
 
 
+def test_controlled_fit_passes_immutable_source_to_initial_anatomy_projection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The production fit binds anatomy repair to its observed source pose."""
+    import exercise_motion_pkg.anatomical_repair as anatomical_repair_module
+    import exercise_motion_pkg.controlled_motion as controlled_motion_module
+
+    names = list(SMPL_JOINT_NAMES)
+    source = {
+        "pelvis": (0.0, 1.0, 0.0),
+        "left_hip": (-0.15, 1.0, 0.0), "right_hip": (0.15, 1.0, 0.0),
+        "spine1": (0.0, 1.15, 0.0), "spine2": (0.0, 1.3, 0.0),
+        "spine3": (0.0, 1.45, 0.0), "neck": (0.0, 1.6, 0.0),
+        "head": (0.0, 1.8, 0.0),
+        "left_collar": (-0.1, 1.525, 0.0), "right_collar": (0.1, 1.525, 0.0),
+        "left_shoulder": (-0.2, 1.6, 0.0), "right_shoulder": (0.2, 1.6, 0.0),
+        "left_elbow": (-0.4, 1.3, 0.0), "right_elbow": (0.4, 1.3, 0.0),
+        "left_wrist": (-0.5, 1.1, 0.0), "right_wrist": (0.5, 1.1, 0.0),
+        "left_hand": (-0.55, 1.0, 0.0), "right_hand": (0.55, 1.0, 0.0),
+        "left_knee": (-0.15, 0.55, 0.0), "right_knee": (0.15, 0.55, 0.0),
+        "left_ankle": (-0.15, 0.12, 0.0), "right_ankle": (0.15, 0.12, 0.0),
+        "left_foot": (-0.15, 0.06, 0.14), "right_foot": (0.15, 0.06, 0.14),
+    }
+    source_pose = np.asarray([source[name] for name in names], dtype=float)
+    hinge = source_pose[names.index("spine1")].copy()
+    rotation = np.asarray([
+        [math.cos(math.radians(-40.0)), -math.sin(math.radians(-40.0)), 0.0],
+        [math.sin(math.radians(-40.0)), math.cos(math.radians(-40.0)), 0.0],
+        [0.0, 0.0, 1.0],
+    ])
+    fixed_lower_body = {"pelvis", "left_hip", "right_hip", "spine1",
+                        "left_knee", "right_knee", "left_ankle", "right_ankle",
+                        "left_foot", "right_foot"}
+    for name in names:
+        if name not in fixed_lower_body:
+            index = names.index(name)
+            source_pose[index] = (source_pose[index] - hinge) @ rotation.T + hinge
+
+    source_array = np.tile(source_pose[None], (7, 1, 1))
+    input_array = source_array + np.asarray([0.02, 0.0, 0.0])
+    payload = {
+        "fps": 30.0,
+        "jointNames": names,
+        "frames": [
+            {
+                "timeSec": frame_index / 30.0,
+                "joints": dict(zip(names, input_array[frame_index].tolist())),
+                "controlledArticulationReferenceJoints": dict(
+                    zip(names, source_array[frame_index].tolist())),
+            }
+            for frame_index in range(len(source_array))
+        ],
+    }
+    observed = {}
+
+    class ReachedInitialProjection(Exception):
+        pass
+
+    def capture_source_reference(
+        rig, points, *, deadline, reference=None, completion_deadline=None,
+    ):
+        observed["points"] = np.asarray(points).copy()
+        observed["reference"] = None if reference is None else np.asarray(reference).copy()
+        raise ReachedInitialProjection
+
+    monkeypatch.setattr(anatomical_repair_module, "repair_rig_anatomy", capture_source_reference)
+    monkeypatch.setattr(controlled_motion_module, "contact_mask", lambda _payload, _names, count: np.zeros((count, len(_names)), dtype=bool))
+    monkeypatch.setattr(controlled_motion_module, "root_motion_quality", lambda *_args, **_kwargs: {"passed": True})
+    monkeypatch.setattr(
+        controlled_motion_module,
+        "register_contact_placement",
+        lambda points, *_args, **_kwargs: (points.copy(), {"observedGroundEpisodes": []}),
+    )
+    monkeypatch.setattr(
+        controlled_motion_module,
+        "align_registered_contacts_above_floor",
+        lambda points, *_args, **_kwargs: (points, 0.0),
+    )
+
+    with pytest.raises(ReachedInitialProjection):
+        controlled_motion_module._fit_controlled_motion_impl(
+            payload, max_evaluations=1, timeout_seconds=60.0)
+
+    assert observed["reference"] is not None
+    assert np.array_equal(observed["reference"], source_array)
+    assert np.array_equal(observed["points"], input_array)
+    assert not np.array_equal(observed["reference"], observed["points"])
+
+    from exercise_motion_pkg.anatomical_repair import repair_residuals
+
+    folded_source = source_array[:1].copy()
+    folded_source[0, names.index("spine2"), 0] += 0.6
+    absolute, labels = repair_residuals(
+        folded_source, names, reference=source_array[:1])
+    assert absolute[0, labels.index("anatomy_spine_deviation:spine2")] > 0.0
+    assert absolute[0, labels.index("anatomy_spine_fold:spine3")] > 0.0
+
+
 def test_contact_sequence_correction_pins_floating_stationary_foot_to_support_plane() -> None:
     """A planted foot that floats and slides gets leg-chain pinned, not just translated.
 

@@ -361,14 +361,25 @@ def anatomical_structure_residuals(points, names, *, pose_only=False, margin=0.,
     return (np.stack(rows, axis=1) if rows else np.empty((len(points), 0))), labels
 
 
-def validate_physical_motion(points, names, *, reference=None, fps=30., support_mask=None):
+def validate_physical_motion(
+    points,
+    names,
+    *,
+    reference=None,
+    anatomy_reference=None,
+    fps=30.,
+    support_mask=None,
+):
     """Evaluate final coordinates, independently of optimizer success/cost."""
     if not np.isfinite(points).all():
         return {"passed": False, "reasons": ['nonfinite_pose'], "events": [{'reason': 'nonfinite_pose'}]}
     index = {name: i for i, name in enumerate(names)}
     scale = body_scale(reference if reference is not None else points, names)
     events = []
-    structure, labels = anatomical_structure_residuals(points, names, reference=reference)
+    structure, labels = anatomical_structure_residuals(
+        points, names,
+        reference=reference if anatomy_reference is None else anatomy_reference,
+    )
     for frame, column in np.argwhere(structure > 1e-6):
         reason, joint = labels[column].split(':', 1)
         events.append({'reason': reason, 'joint': joint, 'frameIndex': int(frame)})

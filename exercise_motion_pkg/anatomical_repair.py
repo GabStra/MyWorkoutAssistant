@@ -13,7 +13,7 @@ from .physical_validation import anatomical_structure_residuals, angles, body_sc
 from .smpl_joint_names import SMPL_JOINT_NAMES, SMPL_JOINT_PARENTS
 
 
-ANATOMICAL_REPAIR_STRATEGY = 'fixed_rig_anatomical_projection_v7_motion_transported_seed'
+ANATOMICAL_REPAIR_STRATEGY = 'fixed_rig_anatomical_projection_v8_source_relative_torso_floor'
 
 # Stop soft polishing once geometry is valid and overall lean matches the
 # observation to the same tolerance as the lean-preservation tests.
@@ -561,7 +561,8 @@ def transport_equivalent_anatomical_repair(observed, corrected, reference, names
     if not np.allclose(local @ rotation, reference_local, atol=1e-10, rtol=0.):
         return None
     transported = (corrected-origin) @ rotation+reference_origin
-    if not np.isfinite(transported).all() or np.max(repair_residuals(transported, names)[0], initial=0.) > 1e-6:
+    if (not np.isfinite(transported).all()
+            or np.max(repair_residuals(transported, names, reference=reference)[0], initial=0.) > 1e-6):
         return None
     return transported
 
