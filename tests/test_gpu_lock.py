@@ -136,10 +136,15 @@ def test_same_process_timeout_force_releases_pinned_holder(
     monkeypatch.setenv(GPU_LOCK_PATH_ENV_VAR, str(lock_path))
     monkeypatch.setenv(GPU_LOCK_SAME_PROCESS_TIMEOUT_SECONDS_ENV_VAR, "1")
     released: list[str] = []
+    callback_saw_lock: list[bool] = []
+
+    def stop_holder() -> None:
+        callback_saw_lock.append(lock_path.exists())
+        released.append("holder")
 
     holder = GlobalGpuLock(
         stage="llama_cpp_server",
-        on_force_release=lambda: released.append("holder"),
+        on_force_release=stop_holder,
     )
     holder.__enter__()
     failures: list[BaseException] = []
@@ -160,7 +165,71 @@ def test_same_process_timeout_force_releases_pinned_holder(
 
     assert not worker.is_alive()
     assert not failures
+    assert callback_saw_lock == [True]
     assert released == ["holder"]
+
+
+def test_failed_force_release_keeps_gpu_lease_until_owner_stops(tmp_path, monkeypatch):
+    lock_path = tmp_path / "gpu.lock"
+    monkeypatch.setenv(GPU_LOCK_PATH_ENV_VAR, str(lock_path))
+
+    def stop_failed_owner():
+        raise TimeoutError("server stop was not confirmed")
+
+    holder = GlobalGpuLock(stage="llama_cpp_server", on_force_release=stop_failed_owner)
+    holder.__enter__()
+    try:
+        assert not holder.force_release("test stop failure")
+        assert lock_path.exists()
+    finally:
+        holder.__exit__(None, None, None)
+    assert not lock_path.exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows kill-on-job-close ownership")
+def test_python_model_child_dies_if_its_owner_process_crashes():
+    import subprocess
+    import sys
+
+    from exercise_motion_pkg.process_lock import process_is_running
+
+    owner_script = (
+        "import os, subprocess, sys; "
+        "from exercise_motion_pkg.child_process import ChildProcessOwner; "
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+        "ChildProcessOwner(child); print(child.pid, flush=True); os._exit(0)"
+    )
+    owner = subprocess.run(
+        [sys.executable, "-c", owner_script],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=True,
+    )
+    child_pid = int(owner.stdout.strip())
+    deadline = time.monotonic() + 5
+    while process_is_running(child_pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not process_is_running(child_pid)
+
+    close_script = (
+        "import subprocess, sys; "
+        "from exercise_motion_pkg.child_process import ChildProcessOwner; "
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+        "owner = ChildProcessOwner(child); print(child.pid, flush=True); owner.close()"
+    )
+    closed_owner = subprocess.run(
+        [sys.executable, "-c", close_script],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=True,
+    )
+    child_pid = int(closed_owner.stdout.strip())
+    deadline = time.monotonic() + 5
+    while process_is_running(child_pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not process_is_running(child_pid)
 
 
 def test_old_gpu_and_wham_lock_metadata_does_not_evict_live_owner(tmp_path: Path):

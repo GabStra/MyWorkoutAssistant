@@ -217,21 +217,22 @@ class GlobalGpuLock:
                     _HOLDER_REGISTRY.pop(os.getpid(), None)
 
     def force_release(self, reason: str) -> bool:
-        """Last-resort repair: drop this holder's lease so starvation ends."""
+        """Stop the holder before releasing its lease so GPU use cannot overlap."""
         if self._handle is None:
             return False
-        self._force_released = True
         _gpu_lock_log(
             f"force-releasing GPU lock holder stage={self.stage} "
             f"threadId={threading.get_ident()}: {reason}"
         )
-        self._release_lease()
         callback = self.on_force_release
         if callback is not None:
             try:
                 callback()
-            except Exception as error:  # The lease is already gone; keep going.
+            except Exception as error:
                 _gpu_lock_log(f"force-release callback failed for stage={self.stage}: {error}")
+                return False
+        self._force_released = True
+        self._release_lease()
         return True
 
     def __enter__(self) -> float:

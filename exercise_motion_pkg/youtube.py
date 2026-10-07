@@ -9149,6 +9149,7 @@ class LlamaCppVisionRanker:
 
         self.settings = settings
         self.process: subprocess.Popen[str] | None = None
+        self._server_process_owner = None
         self.server_log_path: Path | None = None
         self._server_recovery_lock = threading.Lock()
         self.gpu_lock: GlobalGpuLock | None = None
@@ -9228,10 +9229,7 @@ class LlamaCppVisionRanker:
         # GPU stages. Stop the owned server so it cannot keep GPU memory while
         # the starved stage runs; in-flight requests fail and the client's
         # recovery path restarts the server on the next caption call.
-        try:
-            self._stop_owned_llama_cpp_server(force=True)
-        except Exception:
-            pass
+        self._stop_owned_llama_cpp_server(force=True)
 
     def _stop_owned_llama_cpp_server(self, *, force: bool = False) -> None:
         if self._attaches_shared_server():
@@ -9250,20 +9248,21 @@ class LlamaCppVisionRanker:
         if self.settings.keep_llama_cpp_server and not force:
             return
         process = self.process
-        self.process = None
         if force:
-            process.kill()
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=10.0)
+        else:
+            process.terminate()
             try:
-                process.wait(timeout=2.0)
+                process.wait(timeout=10.0)
             except subprocess.TimeoutExpired:
-                pass
-            return
-        process.terminate()
-        try:
-            process.wait(timeout=10.0)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=10.0)
+                process.kill()
+                process.wait(timeout=10.0)
+        self.process = None
+        if self._server_process_owner is not None:
+            self._server_process_owner.close()
+            self._server_process_owner = None
 
     def _recover_llama_cpp_server_after_vlm_failure(self) -> None:
         # Parallel VLM workers can fail together. Serialize stop/start so one
@@ -9456,6 +9455,9 @@ class LlamaCppVisionRanker:
                     text=True,
                     creationflags=creationflags,
                 )
+                from exercise_motion_pkg.child_process import ChildProcessOwner
+
+                self._server_process_owner = ChildProcessOwner(self.process)
             while time.monotonic() < deadline:
                 if self.process.poll() is not None:
                     break
@@ -9466,6 +9468,11 @@ class LlamaCppVisionRanker:
                 time.sleep(1.0)
             if self.process.poll() is None:
                 break
+            self.process.wait()
+            self.process = None
+            if self._server_process_owner is not None:
+                self._server_process_owner.close()
+                self._server_process_owner = None
             server_log_tail = self._server_log_tail()
             if (
                 args_without_mtp is not None

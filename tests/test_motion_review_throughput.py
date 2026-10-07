@@ -403,7 +403,54 @@ def test_browser_reuse_context_isolation_and_failed_job_recovery():
             workers.run(lambda: render(fail=True))
         assert first == workers.run(render)
         assert len(launches) == 2
-        assert len(set(launches)) == 1
     finally:
         workers.close()
     assert all(not thread.is_alive() for thread in workers._threads)
+    assert len(set(launches)) == 1
+
+
+def test_browser_caller_waits_for_running_operation_when_interrupted(monkeypatch):
+    import concurrent.futures
+    from exercise_motion_pkg import browser_workers
+
+    base_future = concurrent.futures.Future
+    started, release, caller_done = threading.Event(), threading.Event(), threading.Event()
+
+    class InterruptOnceFuture(base_future):
+        def __init__(self):
+            super().__init__()
+            self.first_result = True
+
+        def result(self, timeout=None):
+            if self.first_result:
+                self.first_result = False
+                assert started.wait(5)
+                raise KeyboardInterrupt
+            return super().result(timeout=timeout)
+
+    monkeypatch.setattr(browser_workers, "Future", InterruptOnceFuture)
+    workers = browser_workers.BrowserWorkers(workers=1)
+
+    def operation():
+        started.set()
+        assert release.wait(5)
+
+    def call():
+        try:
+            workers.run(operation)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            caller_done.set()
+
+    caller = threading.Thread(target=call)
+    caller.start()
+    try:
+        assert started.wait(5)
+        assert not caller_done.wait(0.1)
+    finally:
+        release.set()
+        caller.join(5)
+        workers.close()
+    assert not caller.is_alive()
+    assert caller_done.is_set()

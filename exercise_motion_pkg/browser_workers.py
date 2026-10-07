@@ -49,7 +49,11 @@ class BrowserWorkers:
                     if future.done():
                         raise
         except BaseException:
-            future.cancel()
+            if not future.cancel():
+                try:
+                    future.result()
+                except BaseException:
+                    pass
             raise
 
     def _work(self) -> None:
@@ -151,7 +155,7 @@ class BrowserWorkers:
             for _thread in self._threads:
                 self._queue.put(None)
         for thread in self._threads:
-            thread.join(timeout=5.0)
+            thread.join()
 
     def metrics(self) -> dict[str, Any]:
         with self._lock:

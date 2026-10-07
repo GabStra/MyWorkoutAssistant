@@ -1,6 +1,7 @@
 import json
 import threading
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import pytest
@@ -25,6 +26,38 @@ def test_revalidation_wait_is_bounded_and_interruptible(monkeypatch):
     with pytest.raises(KeyboardInterrupt):
         list(bake.interruptible_completed([future]))
     assert calls == [0.2, 0.2]
+
+
+def test_cancel_and_drain_executor_waits_for_running_work():
+    from exercise_motion_pkg.bake_and_rank import _cancel_and_drain_executor
+
+    executor = ThreadPoolExecutor(max_workers=1)
+    started, release, drain_started, drain_done = (
+        threading.Event(), threading.Event(), threading.Event(), threading.Event()
+    )
+
+    def operation():
+        started.set()
+        assert release.wait(5)
+
+    future = executor.submit(operation)
+    assert started.wait(5)
+
+    def drain():
+        drain_started.set()
+        _cancel_and_drain_executor(executor, [future])
+        drain_done.set()
+
+    worker = threading.Thread(target=drain)
+    worker.start()
+    try:
+        assert drain_started.wait(5)
+        assert not drain_done.wait(0.1)
+    finally:
+        release.set()
+        worker.join(5)
+    assert not worker.is_alive()
+    assert drain_done.is_set()
 
 
 def test_closed_vlm_client_cannot_send_or_recover(monkeypatch):

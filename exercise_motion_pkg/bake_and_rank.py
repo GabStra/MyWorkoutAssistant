@@ -3083,6 +3083,12 @@ def interruptible_completed(futures: Iterable[Any]) -> Iterable[Any]:
         yield from completed
 
 
+def _cancel_and_drain_executor(executor: Any, futures: Iterable[Any]) -> None:
+    for future in futures:
+        future.cancel()
+    executor.shutdown(wait=True, cancel_futures=True)
+
+
 class CandidateWallTimeBudgetExpired(TimeoutError):
     """A candidate deadline, rather than the VLM service, ended a request."""
 
@@ -18484,9 +18490,7 @@ def revalidate_library_workspace(
                     f"in {elapsed_seconds(deterministic_started):.1f}s."
                 )
     except KeyboardInterrupt:
-        for future in future_to_workspace:
-            future.cancel()
-        deterministic_executor.shutdown(wait=False, cancel_futures=True)
+        _cancel_and_drain_executor(deterministic_executor, future_to_workspace)
         raise
     else:
         deterministic_executor.shutdown(wait=True)
@@ -18863,9 +18867,7 @@ def revalidate_library_workspace(
                         f"totalElapsed={elapsed_seconds(revalidation_started):.1f}s)."
                     )
         except KeyboardInterrupt:
-            for future in futures:
-                future.cancel()
-            validation_executor.shutdown(wait=False, cancel_futures=True)
+            _cancel_and_drain_executor(validation_executor, futures)
             raise
         else:
             validation_executor.shutdown(wait=True)

@@ -600,6 +600,9 @@ def _run_with_managed_clef_server(
                     stderr=subprocess.STDOUT,
                     creationflags=creationflags,
                 )
+                from exercise_motion_pkg.child_process import ChildProcessOwner
+
+                process_owner = ChildProcessOwner(process)
                 try:
                     _wait_for_managed_server(
                         process,
@@ -613,7 +616,10 @@ def _run_with_managed_clef_server(
                     finally:
                         _ACTIVE_MANAGED_CLEF_ENDPOINT.reset(active_endpoint_token)
                 finally:
-                    _stop_managed_server(process)
+                    try:
+                        _stop_managed_server(process)
+                    finally:
+                        process_owner.close()
 
 
 def _exclusive_runner_from_source(source: Any) -> Callable[[Callable[[], Any]], Any] | None:

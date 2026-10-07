@@ -132,9 +132,17 @@ def test_visual_backend_and_comparative_switch_reach_bake_request(tmp_path, back
 
 @pytest.mark.parametrize("operation_fails", [False, True])
 def test_managed_clef_owner_releases_server_and_nested_lease(tmp_path, monkeypatch, operation_fails):
+    from exercise_motion_pkg import child_process
+
     process = object()
     stopped = []
     launched = []
+
+    class FakeProcessOwner:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(child_process, "ChildProcessOwner", lambda _process: FakeProcessOwner())
     monkeypatch.setattr(clef_systemone, "GlobalGpuLock", lambda **kwargs: nullcontext())
     monkeypatch.setattr(clef_systemone, "_endpoint_is_responding", lambda endpoint: False)
     monkeypatch.setattr(clef_systemone, "_managed_runtime_files", lambda: (
