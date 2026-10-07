@@ -21,7 +21,7 @@ Governing plan: `docs/exercise_motion_throughput_plan.md`.
 | Clef runtime | Managed profile is validated and included in final-review cache identity; 8K context and FP16 cache are retained | Cap 22 / flash-on is a host calibration, not a universal optimum or proof of review quality |
 | Fit/render | Post-pair policy fix `5adfe1da` is committed; current strategy v74, anatomical policy v8, and section cache42 | One production regression, four focused checks, and Python compile passed. RDL quality remains pending; the pair predates this fix |
 | Production stage optimizations | Browser frame batching and source-frame caching are production opt-ins; both default off | The current on/on arm is faster on this pair, but no qualified gain is claimed. Earlier parity and the separate 7.43% pair remain historical evidence; the 7.43% receipt is preserved |
-| Fresh discovery | Filter fix `a151da7b` is committed; a Python 3.13 attempt aborted because CUDA was unavailable (`CUDAprobeProduction=True` in its preserved receipt) | A clean CUDA Step-Up run is active in session 21215 with correct exercise IDs and exclusive model ownership; qualification is pending |
+| Fresh discovery | Filter fix `a151da7b` is committed; the corrected CUDA run completed with exclusive model ownership | Step-Up and Box Jump each yielded a downloaded candidate; Row yielded none within six reviews. Queries and contracts were reused; new source qualification is pending |
 | Source materialization | Policy 24 copies full-source intervals byte-for-byte and trims partial intervals | Prevents stale transcodes; it does not itself qualify a source or establish quality |
 | Staged waves | Persistent workspace queue remains serial; wrapper effective overlap is 1 | Parallel-wave execution is not implemented or promoted |
 | Step-Up | The run was stopped without accepted output; the current retained payload yields zero authorized confirmation candidates | Barbell/bench/box/rack match remains unresolved; do not relax requirements to qualify it |
@@ -177,6 +177,10 @@ Production-environment parity passed: `source_frame_cache_stage_parity_mwa_motio
 5. Following the current same-input two-exercise A/B, finish fresh source discovery after the committed filter fix and then confirm the result across the agreed six-exercise family. Do not treat two exercises as proof of library-wide generalization.
 6. Keep staged-wave overlap disabled. Revisit only with a concrete isolated-process design and a same-input pilot that preserves exclusive GPU ownership and accepted rendered/package parity.
 7. Treat the retained RDL v73 result and root-span fit result as stage-local evidence. Do not infer an end-to-end speedup or library-wide generalization from them.
+
+## Latest anatomy diagnosis
+
+Per-frame anatomy feasibility, least-squares residuals, and temporal replacement checks pass a one-frame candidate with the entire source-reference sequence. The anatomy validator discards a reference whose shape differs, so these inner checks silently apply the absolute 145-degree torso floor while final sequence checks use the source-relative floor. At frame30, the initial torso angle is137.05 degrees and the source-relative floor138.79 degrees: the wrong binding demands7.95 degrees of correction instead of1.74. Fix the per-frame reference binding before evaluating solver-objective changes. The earlier isolated one-frame comparison did not reproduce this shape mismatch and is not a faithful production quality comparison. Production fix and focused verification are pending.
 
 ## Reference artifacts
 
