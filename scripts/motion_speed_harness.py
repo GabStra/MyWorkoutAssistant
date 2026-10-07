@@ -863,7 +863,8 @@ def run_arm(arm: str, arm_dir: Path, plan_json: Path, timeout_seconds: float,
             cpu_prefetch_during_bake: bool = True,
             prefetch_workers: int = DEFAULT_PREFETCH_WORKERS,
             prefetch_queue_depth: int = DEFAULT_PREFETCH_QUEUE_DEPTH,
-            source_frame_decode_cache: bool = False) -> dict:
+            source_frame_decode_cache: bool = False,
+            browser_frame_batch: bool = False) -> dict:
     source_index = arm_dir / "source_outcome_index.json"
     if DEFAULT_SOURCE_OUTCOME_INDEX.is_file():
         shutil.copy2(DEFAULT_SOURCE_OUTCOME_INDEX, source_index)
@@ -906,6 +907,7 @@ def run_arm(arm: str, arm_dir: Path, plan_json: Path, timeout_seconds: float,
     runner_environment["EXERCISE_MOTION_SOURCE_FRAME_CACHE"] = (
         "on" if source_frame_decode_cache else "off"
     )
+    runner_environment["EXERCISE_MOTION_BROWSER_FRAME_BATCH"] = "on" if browser_frame_batch else "off"
     process = subprocess.Popen(
         args,
         stdout=log_handle,
@@ -1918,6 +1920,10 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Experimental bounded native-frame cache for short source-cut clips; default off.",
     )
     parser.add_argument(
+        "--browser-frame-batch", choices=("off", "on"), default="off",
+        help="Configure the production browser renderer once per frame batch; default off pending qualification.",
+    )
+    parser.add_argument(
         "--staged-wave-size",
         type=_non_negative_int,
         default=DEFAULT_STAGED_WAVE_SIZE,
@@ -2118,6 +2124,7 @@ def main() -> None:
             prefetch_workers=args.prefetch_workers,
             prefetch_queue_depth=args.prefetch_queue_depth,
             source_frame_decode_cache=args.source_frame_decode_cache == "on",
+            browser_frame_batch=args.browser_frame_batch == "on",
         )
         arm_result.update(run_identity)
         arm_result["requestedConfiguration"] = {
@@ -2127,6 +2134,7 @@ def main() -> None:
             "prefetchWorkers": args.prefetch_workers,
             "prefetchQueueDepth": args.prefetch_queue_depth,
             "sourceFrameDecodeCache": args.source_frame_decode_cache,
+            "browserFrameBatch": args.browser_frame_batch,
             **ARM_BACKEND_SETTINGS[arm],
         }
         arm_result["cacheRoots"] = {

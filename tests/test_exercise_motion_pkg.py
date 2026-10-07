@@ -36175,7 +36175,8 @@ def test_review_video_capture_samples_loop_frames_and_export_fps() -> None:
     assert parse_export_fps({"fps": 0}) == pytest.approx(30.0)
 
 
-def test_playwright_review_frames_transfer_the_motion_payload_once() -> None:
+def test_playwright_review_frames_transfer_the_motion_payload_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("EXERCISE_MOTION_BROWSER_FRAME_BATCH", raising=False)
     calls: list[tuple[str, dict[str, object]]] = []
 
     class FakePage:
@@ -36213,6 +36214,7 @@ def test_playwright_review_frames_transfer_the_motion_payload_once() -> None:
         "exportPayload": export_payload,
         "frameIndices": frame_indices,
         "options": options,
+        "allowFrameBatch": False,
     }
 
 

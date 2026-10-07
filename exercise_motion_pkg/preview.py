@@ -9817,6 +9817,14 @@ def _build_html(
         configureBakedWearPayloadForReview(exportPayload, options);
         return await renderDeterministicFrame(frameIndex);
       }},
+      async renderBakedWearFrames(exportPayload, frameIndices, options = {{}}) {{
+        configureBakedWearPayloadForReview(exportPayload, options);
+        const renderedFrames = [];
+        for (const frameIndex of frameIndices) {{
+          renderedFrames.push(await renderDeterministicFrame(frameIndex));
+        }}
+        return renderedFrames;
+      }},
     }};
 
     function applyUrlPreviewParameters() {{

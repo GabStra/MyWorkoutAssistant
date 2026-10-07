@@ -33837,7 +33837,7 @@ def render_baked_wear_frames_with_playwright(
     if not frame_indices:
         return []
     rendered = page.evaluate(
-        """async ({ exportPayload, frameIndices, options }) => {
+        """async ({ exportPayload, frameIndices, options, allowFrameBatch }) => {
             async function renderedPixelRatio(dataUrl) {
                 const image = new Image();
                 await new Promise((resolve, reject) => {
@@ -33880,6 +33880,11 @@ def render_baked_wear_frames_with_playwright(
                 throw new Error("Preview renderer did not produce a nonblank warm-up frame.");
             }
 
+            if (allowFrameBatch && typeof window.exerciseMotionAutomation.renderBakedWearFrames === "function") {
+                return await window.exerciseMotionAutomation.renderBakedWearFrames(
+                    structuredClone(exportPayload), frameIndices, structuredClone(options),
+                );
+            }
             const renderedFrames = [];
             for (const frameIndex of frameIndices) {
                 renderedFrames.push(
@@ -33896,6 +33901,7 @@ def render_baked_wear_frames_with_playwright(
             "exportPayload": export_payload,
             "frameIndices": frame_indices,
             "options": options,
+            "allowFrameBatch": os.environ.get("EXERCISE_MOTION_BROWSER_FRAME_BATCH", "off").strip().casefold() == "on",
         },
     )
     if not isinstance(rendered, list) or len(rendered) != len(frame_indices):
