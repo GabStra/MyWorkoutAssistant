@@ -130,6 +130,8 @@ Latest end-to-end comparison (supersedes pending pair-run notes below): frozen v
 
 The production fixes and scoped regressions are committed separately from the fit changes. Unrelated exercise-library and Wear edits remain outside these commits. Standalone Clef launcher syntax was checked; no new runtime-performance claim is made for that experimental profile.
 
+Cache-on post-run qualification now passed: exact current source/contract identities, strict package audit2/2, and independent actual contact-sheet/pose inspection2/2 (`qwen-full/source_control_preflight_audit.json`, `post_run_package_audit.json`, `visual_quality_trace_audit.json`). Both arms share fixture, plan, Git HEAD, tracked-diff and untracked-content hashes. Throughput9.055→9.729 usable outputs/hour (+7.43%), not the required10%. Skeleton bytes differ but full source spans and visually comparable movement are preserved. GVHMR already loads once for both jobs; generation234.593→234.184s is effectively unchanged. No extra prewarm or persistent cross-plan GPU residency is justified. Comparison receipt: `build/exercise_motion/controlled_frame_cache_comparison_20261007.json`.
+
 Experiment rule: isolate changes at the owning stage whenever retained inputs can answer the question. Prove frame-cache JPEG/contact-sheet parity and stage time without new extraction, fitting, or model review. Reserve full runs for end-to-end throughput qualification and fresh-discovery/generalization evidence.
 
 Production rule: behavior fixes belong in the production PowerShell runner or shared Python owner. Harness changes only select and measure experimental configurations; they must not substitute for production fixes.
