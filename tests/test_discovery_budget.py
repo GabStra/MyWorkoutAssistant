@@ -6,6 +6,51 @@ from exercise_motion_pkg.discovery_budget import DiscoveryBudget
 from exercise_motion_pkg.youtube import YouTubeCandidate, YouTubeRankingSettings, discover_and_rank_youtube_candidates
 
 
+def test_discovery_filters_selected_exercise_and_rejects_unknown_id_before_search(tmp_path):
+    plan = tmp_path / "library.json"
+    plan.write_text(json.dumps({"exerciseDefinitions": [
+        {"id": "step-up-id", "name": "Barbell Step-Up"},
+        {"id": "floor-press-id", "name": "Barbell Floor Press"},
+    ]}))
+    search_queries = []
+    settings = YouTubeRankingSettings(
+        exercise_motion_contract_enabled=False,
+        exercise_name_rewrite_enabled=False,
+        llama_cpp_base_url=None,
+        llama_cpp_auto_start_server=False,
+        semantic_gate_enabled=False,
+        rank_with_vision=False,
+        youtube_search_empty_retries=0,
+    )
+
+    result = discover_and_rank_youtube_candidates(
+        workout_plan_json=plan,
+        out_json=tmp_path / "selected.json",
+        settings=settings,
+        exercise_ids={"step-up-id"},
+        search_fn=lambda query, _count: search_queries.append(query) or [],
+    )
+
+    assert [exercise["exerciseId"] for exercise in result["exercises"]] == ["step-up-id"]
+    assert search_queries
+    assert all("floor" not in query.casefold() for query in search_queries)
+
+    unknown_output = tmp_path / "unknown.json"
+    try:
+        discover_and_rank_youtube_candidates(
+            workout_plan_json=plan,
+            out_json=unknown_output,
+            settings=settings,
+            exercise_ids={"missing-id"},
+            search_fn=lambda *_: (_ for _ in ()).throw(AssertionError("Unknown IDs must fail before search")),
+        )
+    except ValueError as error:
+        assert "missing-id" in str(error)
+    else:
+        raise AssertionError("Unknown exercise ID should fail before discovery starts")
+    assert not unknown_output.exists()
+
+
 def test_discovery_turn_budget_spans_expansion_and_resumes_reviews(tmp_path):
     plan = tmp_path / "plan.json"
     plan.write_text(json.dumps({"exercises": [{"name": "Barbell Bench Press"}]}))

@@ -8084,6 +8084,7 @@ def discover_and_rank_youtube_candidates(
     vision_ranker: VisionRankerFn | None = None,
     exercise_name_rewriter: ExerciseNameRewriteFn | None = None,
     exercise_motion_contract_provider: ExerciseMotionContractProviderFn | None = None,
+    exercise_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     run_started = time.monotonic()
     review_budget: DiscoveryBudget | None = None
@@ -8095,6 +8096,21 @@ def discover_and_rank_youtube_candidates(
             timeout_seconds=min(settings.youtube_search_timeout_seconds, remaining) if remaining is not None else settings.youtube_search_timeout_seconds,
             cookies_path=settings.youtube_cookies, cache_dir=settings.youtube_preview_cache_dir)
     effective_search_fn = search_fn or budgeted_search
+    exercises = load_workout_plan_exercises(
+        workout_plan_json,
+        include_disabled=settings.include_disabled,
+        equipment_path=equipment_json,
+    )
+    selected_ids = {str(value).strip() for value in (exercise_ids or set()) if str(value).strip()}
+    if selected_ids:
+        available_ids = {exercise.exercise_id for exercise in exercises}
+        unknown_ids = selected_ids - available_ids
+        if unknown_ids:
+            raise ValueError(
+                "Unknown exercise ID(s) selected for YouTube discovery: "
+                + ", ".join(sorted(unknown_ids))
+            )
+        exercises = [exercise for exercise in exercises if exercise.exercise_id in selected_ids]
     progress_path = out_json.with_name("youtube_discovery_progress.jsonl")
     if progress_path.exists():
         progress_path.unlink()
@@ -8118,11 +8134,6 @@ def discover_and_rank_youtube_candidates(
     exercise_name_rewrite_elapsed_total = 0.0
     exercise_motion_contract_elapsed_total = 0.0
     excluded_candidate_total = 0
-    exercises = load_workout_plan_exercises(
-        workout_plan_json,
-        include_disabled=settings.include_disabled,
-        equipment_path=equipment_json,
-    )
     prefetched_by_exercise_id = load_youtube_candidate_prefetch(
         prefetched_candidates_json,
         source_plan_path=workout_plan_json,

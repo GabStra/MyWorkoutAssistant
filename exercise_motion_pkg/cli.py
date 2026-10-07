@@ -1791,6 +1791,7 @@ def main() -> None:
                 if args.prefetched_candidates_json
                 else None
             ),
+            exercise_ids=set(args.only_exercise_id),
         )
         print(f"YouTube candidates JSON: {Path(args.out_json).resolve()}")
         print(f"Exercises: {len(manifest['exercises'])}")
