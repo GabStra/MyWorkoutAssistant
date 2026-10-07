@@ -92,6 +92,7 @@ MAX_TORSO_CORRECTION_METERS = 0.025
 MAX_STABLE_HEAD_TO_TORSO_ANGLE_RADIANS = math.radians(15.0)
 MAX_PLAUSIBLE_HEAD_TO_TORSO_ANGLE_RADIANS = math.radians(30.0)
 SOURCE_GUIDED_TRAJECTORY_FIT_TIMEOUT_SECONDS = 60.0
+SOURCE_GUIDED_TRAJECTORY_FIT_MAX_EVALUATIONS = 80
 SYMMETRY_MIN_RATIO = 0.55
 SYMMETRY_MIN_CORRELATION = 0.30
 SYMMETRY_MAX_MEDIAN_POSE_ERROR_BODY_RATIO = 0.08
@@ -3439,7 +3440,7 @@ def _align_body_to_source_pose(
                 for edge in zip(chain, chain[1:])
             )),
             timeout_seconds=SOURCE_GUIDED_TRAJECTORY_FIT_TIMEOUT_SECONDS,
-            max_evaluations=400,
+            max_evaluations=SOURCE_GUIDED_TRAJECTORY_FIT_MAX_EVALUATIONS,
         )
         fitted, report = fit_pose_and_temporal_trajectories(
             camera_clip, replace(camera_clip, frames=targets), tuple(edges),
@@ -3452,7 +3453,7 @@ def _align_body_to_source_pose(
             projection_segments=tuple(dict.fromkeys(edge for chain in pose_fidelity.ANGLE_CHAINS.values()
                                                    for edge in zip(chain, chain[1:]))),
             timeout_seconds=SOURCE_GUIDED_TRAJECTORY_FIT_TIMEOUT_SECONDS,
-            max_evaluations=400,
+            max_evaluations=SOURCE_GUIDED_TRAJECTORY_FIT_MAX_EVALUATIONS,
         )
     report['queueSeconds'] = queue_seconds
     return rotate(fitted, matrix.T) if report.get('applied') else clip, {
