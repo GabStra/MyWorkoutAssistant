@@ -15,6 +15,14 @@ Increase usable, production-rendered movements per elapsed hour and reduce time 
 - Use the agreed Dumbbell Overhead Press + Barbell Romanian Deadlift pair for iteration. Do not substitute the older provisional Step-Up pair.
 - Initial two-exercise arms have a 45-minute wall limit. Stop after a failed qualified-source replay and inspect the owning layer; permit one rerun after a concrete fix. Do not regenerate until a pass appears.
 
+## Iteration and full-run policy
+
+- Start with the smallest replay that exercises the changed owner: a focused test, retained artifact, cached stage, or one exercise stage. Keep unaffected discovery, model, and render stages out of the loop.
+- Launch a full fixed-pair run only when the change crosses stage boundaries or the isolated replay cannot answer the specific question. Before launch, record the question and the measurable outcome that would change the next decision.
+- Do not repeat an unchanged passing full run during implementation. Use matched end-to-end pairs, balanced for run order where practical, only to evaluate a throughput hypothesis; reserve repeatable runs and fresh-discovery checks for production promotion.
+- State which stages a fixture bypasses. In particular, prepared-candidate fixtures skip discovery, CPU/network candidate prefetch, and source downloads, so they cannot measure those stages or their overlap with baking.
+- If an isolated or full run fails, inspect its owning stage and retained evidence before any rerun. Repeat only after a concrete fix or when the first run is invalidated by a documented confounder.
+
 ## Current state
 
 Already present in the checkout:
@@ -29,7 +37,7 @@ The current library wrapper uses wave size 8 and partial-wave wait 300 seconds. 
 
 The speed harness now exposes wave size/wait, preserves unsuccessful artifacts, remaps copied workspace references, and gives each arm an isolated WHAM cache. Its default exercise pair remains a smoke pair; the fixed v4b pair below is the measured fixture. Older harness results may contain shared-cache or absolute-path contamination.
 
-The current-policy Floor Press run is `build/exercise_motion/speed-harness/20261008-floorpress-policy62/`: source review passed 1/1, but output acceptance was 0/1 after 212.112s of preview bake/fit and support/endpoint rejection. The v4b fixed-candidate pair then completed 2/2 in both sequential CPU-prefetch arms, with exact package-byte parity. That A/B is confounded: the on arm spent 285.1s running YOLO beside resident Qwen and 116.5s starting the reconstructor, versus 9.7s and 43.6s in the off arm. The two production YOLO callsites now use the exclusive GPU handoff; the comparison does not establish a prefetch effect. These are fixed candidates, not fresh discovery or broad-family throughput evidence. Keep source-frame caching off pending a balanced, repeatable end-to-end comparison.
+The current-policy Floor Press run is `build/exercise_motion/speed-harness/20261008-floorpress-policy62/`: source review passed 1/1, but output acceptance was 0/1 after 212.112s of preview bake/fit and support/endpoint rejection. The v4b fixed-candidate pair completed 2/2 after the GPU-ownership fix, with exact package-byte parity and zero YOLO/Qwen co-resident operations. It does not test CPU/network candidate prefetch: prepared-candidate mode bypasses discovery and that prefetch path, so the on/off flag had no effect. The earlier 285.1s YOLO/Qwen co-resident event is fixed at both production callers. These are fixed candidates, not fresh discovery or broad-family throughput evidence. A valid candidate-prefetch comparison must include fresh discovery; the current pair shows no prefetch or throughput gain.
 
 The 2026-10-08 migration audit found artifact-state lineage and fit-source evidence are already enforced in production; guarded legacy compatibility is not the measured bottleneck. The staged service is a single inline queue consumer under process-wide stdout/stderr redirection, and the PowerShell runner clamps active waves to one. Discovery, prefetch, and download remain separate bounded supervisor jobs; no current timing evidence justifies a generator-wide queue migration. GPU/server ownership guards exist, so removing only the clamp would not make overlapping waves safe. Production review and the harness are now Qwen-only; the harness has `qwen-full` and `qwen-shared` serial arms, neither yet qualified or measured on current-policy outputs.
 

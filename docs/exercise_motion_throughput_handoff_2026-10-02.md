@@ -15,7 +15,7 @@ Governing plan: `docs/exercise_motion_throughput_plan.md`.
 | Area | Current state | Qualification boundary |
 | --- | --- | --- |
 | Throughput goal | Active; no repeatable 10% increase in usable output is established | The latest fixed-candidate pair accepted and packaged 2/2, but the prefetch comparison is confounded by GPU ownership and warm-start differences |
-| Latest paired comparison | CPU-prefetch-on `20261008-092448-a02d575a` completed in 1020.1s; off `20261008-094342-10c8717a` completed in 650.1s | Same v4b manifest SHA and HEAD, with CPU prefetch as the only requested configuration difference; the on arm spent 285.1s running YOLO beside resident Qwen, while the off arm's co-resident call lasted 9.7s. Startup/source variance prevents attributing the wall-time gap to prefetch |
+| Latest paired comparison | Post-fix candidate-prefetch flag on `20261008-100037-f24af580` completed in 750.1s; off `20261008-101318-7bfd0d70` completed in 745.2s | Both used prepared candidates, which bypass candidate prefetch entirely; the flag had no effect. The pair verifies zero YOLO/Qwen co-resident ops and 2/2 exact-byte packages, but is not a prefetch A/B |
 | Source semantic authority | Policy62 / aggregate3 is committed as `cc6515a4`; clearance2 and contract30 remain current | Canonical primary equipment types preserve pair counts; generic repair cannot waive missing count evidence in either production caller. The latest pair reused fixed v4b sources and does not qualify new source families |
 | Production reviewer | Production CLI, PowerShell runners, selection manifests, and harness arms are Qwen-only; stale non-Qwen routes are rejected and there is no provider fallback | `qwen-full` and `qwen-shared` keep both review stages on Qwen; the shared-server arm is a serial pilot and has not been measured |
 | Clef | No production or throughput-harness route remains | Historical Clef comparisons are retained below as evidence for the backend decision; they do not establish a current-policy throughput result |
@@ -29,14 +29,16 @@ Governing plan: `docs/exercise_motion_throughput_plan.md`.
 
 ### Latest fixed-candidate prefetch trial — 2026-10-08
 
-Both sequential Qwen harness arms used v4b manifest SHA-256 `a6d2ac51f9c353aa04f32ac854b0e265c2abb1386860f78785077f0fa47de56f`, HEAD `5a64f6e7`, wave size 8, and the same prepared candidates. The only requested setting change was CPU render prefetch on versus off. Both completed 2/2, and both RDL117/OHP83 package entries are approved, terminal, lineage-complete, and byte-identical to their selected skeletons. The production contact sheets show an RDL hinge-and-return and an OHP press-and-lower; the renderer omits the exercise equipment in both.
+The four sequential Qwen harness runs used the same v4b manifest SHA-256 `a6d2ac51f9c353aa04f32ac854b0e265c2abb1386860f78785077f0fa47de56f` and prepared candidates. The `CpuPrefetchDuringBake` flag varied, but prepared-candidate mode explicitly bypasses discovery, CPU/network candidate prefetch, and source downloads. That flag therefore had no effect in any of these runs. The separately measured speculative CPU render worker ran in both settings and was abandoned for finalization each time.
 
-| Arm | Wall | Source / generation / final | Reconstructor startup | YOLO beside resident caption model | OHP prefetch worker |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Prefetch on | 1020.1s | 425.6s / 239.6s / 320.4s | 116.5s | 285.1s | 47.3s, abandoned for finalization |
-| Prefetch off | 650.1s | 152.6s / 164.8s / 298.2s | 43.6s | 9.7s | 43.7s, abandoned for finalization |
+| Run | Candidate-prefetch flag | Wall | Source / generation / final | GVHMR startup | YOLO beside Qwen | Speculative render worker |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Before fix `20261008-092448-a02d575a` | on, bypassed | 1020.1s | 425.6s / 239.6s / 320.4s | 116.5s | 285.1s | 47.3s, abandoned |
+| Before fix `20261008-094342-10c8717a` | off, bypassed | 650.1s | 152.6s / 164.8s / 298.2s | 43.6s | 9.7s | 43.7s, abandoned |
+| After fix `20261008-100037-f24af580` | on, bypassed | 750.1s | 182.8s / 197.8s / 331.1s | 83.6s | 0 | 77.4s, abandoned |
+| After fix `20261008-101318-7bfd0d70` | off, bypassed | 745.2s | 174.0s / 172.6s / 344.6s | 52.8s | 0 | 58.2s, abandoned |
 
-The large source-stage and worker-startup differences, plus run order, mean the 36.3% wall-time gap does not measure CPU-prefetch impact. The free-VRAM threshold had admitted GPU-heavy YOLO work while Qwen remained resident; both production callsites now use the regular exclusive handoff. Focused regression coverage passed (2 tests), and `bake_and_rank.py` compiled. Treat this pair as accepted-output evidence and a discovery of the ownership bug, not as a throughput win or a prefetch decision. A balanced repeat is still needed after the fix.
+All four arms accepted 2/2 and their RDL117/OHP83 package bytes exactly matched selected skeletons. The post-fix contact sheets show an RDL hinge-and-return and an OHP press-and-lower; the renderer omits the exercise equipment in both. The 285.1s pre-fix YOLO interval occurred with Qwen resident because a free-VRAM threshold did not enforce model exclusivity. Both production callsites now use the regular exclusive handoff, and both post-fix runs recorded zero co-resident operations. Focused regression coverage passed (2 tests), and `bake_and_rank.py` compiled. The 0.65% post-fix wall-time difference is within run-order/startup variation and cannot answer whether CPU/network candidate prefetch helps. A valid comparison needs fresh discovery; no candidate-prefetch throughput result is established.
 
 ### Latest cache-only production comparison — 2026-10-07
 
