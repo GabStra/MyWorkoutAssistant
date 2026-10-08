@@ -42,6 +42,17 @@ This is a coach-authored workout. Hard constraints:
   itself.
 - AMRAPs and rounds-for-time (when present): express as supersetGroups; no rest
   between members (restToNextSeconds=0) unless the workout specifies rest.
+- AMRAPs, rounds-for-time and any block with a stated time cap: set the superset's
+  timeCapSeconds to the window in seconds so the watch leaves the block by itself
+  when the cap expires. "In N' time cap" or "time cap N'" covering the whole
+  session applies to the block(s) it bounds.
+- "Every N minutes x T minutes" (EMOM) blocks: express as a superset with
+  roundDurationSeconds = N; never combine roundDurationSeconds with timeCapSeconds
+  on the same superset.
+- Rowing, biking, skiing or running distances/calories stated in the text ("max mt
+  row (target 1100/1000)", "24/20 cal", "800 mt run"): put the number into
+  targetDistanceMeters (in meters) or targetCalories on the timed set for that
+  movement, first value of male/female pairs.
 - Rep schemes written as male/female pairs ("@ 22.5/15", "24/20") use the first value.
 - BODY_WEIGHT exercises: bodyWeightPercentage must be in percentage form (e.g. 100.0),
   never a fraction like 1.0.
@@ -51,6 +62,10 @@ STANDARD_GUIDANCE = """
 This is a coach-authored workout. Constraints:
 - Use ONLY movements explicitly present in the workout text; respect the prescribed
   sets, reps, loads, and rest exactly as written.
+- When the text states a distance or calorie quantity for a timed row/bike/ski/run
+  movement, record it on the set as targetDistanceMeters (meters) or targetCalories.
+- When the text states a time cap bounding a multi-movement block expressed as a
+  superset, set the superset's timeCapSeconds.
 - BODY_WEIGHT exercises: bodyWeightPercentage must be in percentage form (e.g. 100.0),
   never a fraction like 1.0.
 """.strip()

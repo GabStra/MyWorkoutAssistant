@@ -128,31 +128,34 @@ JSON_SCHEMA = {
                 "subCategory": {"$ref": "#/$defs/SetSubCategory"}
             }                                                                                                                                                                                                                                    
         },                                                                                                                                                                                                                                       
-        "TimedDurationSet": {                                                                                                                                                                                                                    
-            "type": "object",                                                                                                                                                                                                                    
-            "additionalProperties": False,                                                                                                                                                                                                       
-            "required": ["id", "type", "timeInMillis", "autoStart", "autoStop"],                                                                                                                                                                 
-            "properties": {                                                                                                                                                                                                                      
-                "id": {"$ref": "#/$defs/UUID"},                                                                                                                                                                                                  
-                "type": {"const": "TimedDurationSet"},                                                                                                                                                                                           
-                "timeInMillis": {"type": "integer"},                                                                                                                                                                                             
-                "autoStart": {"type": "boolean"},                                                                                                                                                                                                
+        "TimedDurationSet": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["id", "type", "timeInMillis", "autoStart", "autoStop"],
+            "properties": {
+                "id": {"$ref": "#/$defs/UUID"},
+                "type": {"const": "TimedDurationSet"},
+                "timeInMillis": {"type": "integer"},
+                "autoStart": {"type": "boolean"},
                 "autoStop": {"type": "boolean"},
-                "targetWeight": {"type": ["number", "null"], "minimum": 0}
-            }                                                                                                                                                                                                                                    
-        },                                                                                                                                                                                                                                       
-        "EnduranceSet": {                                                                                                                                                                                                                        
-            "type": "object",                                                                                                                                                                                                                    
-            "additionalProperties": False,                                                                                                                                                                                                       
-            "required": ["id", "type", "timeInMillis", "autoStart", "autoStop"],                                                                                                                                                                 
-            "properties": {                                                                                                                                                                                                                      
-                "id": {"$ref": "#/$defs/UUID"},                                                                                                                                                                                                  
-                "type": {"const": "EnduranceSet"},                                                                                                                                                                                               
-                "timeInMillis": {"type": "integer"},                                                                                                                                                                                             
-                "autoStart": {"type": "boolean"},                                                                                                                                                                                                
+                "targetWeight": {"type": ["number", "null"], "minimum": 0},
+                "targetDistanceMeters": {"type": ["number", "null"], "minimum": 0},
+                "targetCalories": {"type": ["number", "null"], "minimum": 0}
+            }
+        },
+        "EnduranceSet": {            "type": "object",
+            "additionalProperties": False,
+            "required": ["id", "type", "timeInMillis", "autoStart", "autoStop"],
+            "properties": {
+                "id": {"$ref": "#/$defs/UUID"},
+                "type": {"const": "EnduranceSet"},
+                "timeInMillis": {"type": "integer"},
+                "autoStart": {"type": "boolean"},
                 "autoStop": {"type": "boolean"},
-                "targetWeight": {"type": ["number", "null"], "minimum": 0}
-            }                                                                                                                                                                                                                                    
+                "targetWeight": {"type": ["number", "null"], "minimum": 0},
+                "targetDistanceMeters": {"type": ["number", "null"], "minimum": 0},
+                "targetCalories": {"type": ["number", "null"], "minimum": 0}
+            }
         },                                                                                                                                                                                                                                       
         "RestSet": {                                                                                                                                                                                                                             
             "type": "object",                                                                                                                                                                                                                    
@@ -255,20 +258,22 @@ JSON_SCHEMA = {
                 "timeInSeconds": {"type": "integer"}                                                                                                                                                                                             
             }                                                                                                                                                                                                                                    
         },                                                                                                                                                                                                                                       
-        "Superset": {                                                                                                                                                                                                                            
-            "type": "object",                                                                                                                                                                                                                    
-            "additionalProperties": False,                                                                                                                                                                                                       
-            "required": ["id", "type", "enabled", "exercises", "restSecondsByExercise"],                                                                                                                                                         
-            "properties": {                                                                                                                                                                                                                      
-                "id": {"$ref": "#/$defs/UUID"},                                                                                                                                                                                                  
-                "type": {"const": "Superset"},                                                                                                                                                                                                   
-                "enabled": {"type": "boolean"},                                                                                                                                                                                                  
-                "exercises": {"type": "array", "items": {"$ref": "#/$defs/Exercise"}},                                                                                                                                                           
-                "restSecondsByExercise": {                                                                                                                                                                                                       
-                    "type": "object",                                                                                                                                                                                                            
-                    "additionalProperties": {"type": "integer"}                                                                                                                                                                                  
-                }                                                                                                                                                                                                                                
-            }                                                                                                                                                                                                                                    
+        "Superset": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["id", "type", "enabled", "exercises", "restSecondsByExercise"],
+            "properties": {
+                "id": {"$ref": "#/$defs/UUID"},
+                "type": {"const": "Superset"},
+                "enabled": {"type": "boolean"},
+                "exercises": {"type": "array", "items": {"$ref": "#/$defs/Exercise"}},
+                "restSecondsByExercise": {
+                    "type": "object",
+                    "additionalProperties": {"type": "integer"}
+                },
+                "timeCapSeconds": {"type": ["integer", "null"], "minimum": 1},
+                "roundDurationSeconds": {"type": ["integer", "null"], "minimum": 1}
+            }
         },                                                                                                                                                                                                                                       
         "WorkoutComponent": {                                                                                                                                                                                                                    
             "oneOf": [                                                                                                                                                                                                                           

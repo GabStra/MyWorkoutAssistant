@@ -446,7 +446,9 @@ fun SupersetForm(
                             id = superset?.id ?: UUID.randomUUID(),
                             exercises = selectedExercises,
                             restSecondsByExercise = restSecondsByExercise,
-                            enabled = superset?.enabled ?: true
+                            enabled = superset?.enabled ?: true,
+                            timeCapSeconds = superset?.timeCapSeconds,
+                            roundDurationSeconds = superset?.roundDurationSeconds
                         )
                         onSupersetUpsert(newOrUpdatedSuperset)
                     },

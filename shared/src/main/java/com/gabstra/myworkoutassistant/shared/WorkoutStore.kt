@@ -20,11 +20,15 @@ data class WorkoutStore(
     val progressionPercentageAmount: Double,
     val measuredMaxHeartRate: Int? = null,
     val restingHeartRate: Int? = null,
+    val sex: Boolean? = null,
+    val estimatedVo2MaxMlKgMin: Double? = null,
+    val vo2MaxSource: String? = null,
+    val vo2MaxEstimatedAtEpochDay: Long? = null,
     val deloadConfig: DeloadConfig = DeloadConfig(),
     val distanceUnit: DistanceUnit = defaultDistanceUnit(),
 ) {
     companion object {
-        const val CURRENT_SCHEMA_VERSION = 3
+        const val CURRENT_SCHEMA_VERSION = 4
     }
 }
 

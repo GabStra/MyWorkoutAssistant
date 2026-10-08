@@ -7,4 +7,6 @@ data class Superset(
     override val enabled: Boolean,
     val exercises: List<Exercise>,
     val restSecondsByExercise: Map<UUID, Int>,
+    val timeCapSeconds: Int? = null,
+    val roundDurationSeconds: Int? = null
 ) : WorkoutComponent(id,enabled)

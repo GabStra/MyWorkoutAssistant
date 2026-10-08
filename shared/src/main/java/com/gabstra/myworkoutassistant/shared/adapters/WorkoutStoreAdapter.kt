@@ -120,7 +120,11 @@ class WorkoutStoreAdapter : JsonDeserializer<WorkoutStore> {
         val restingHeartRate = jsonObject.get("restingHeartRate")?.let {
             if (it.isJsonNull) null else it.asInt
         }
-        
+        val sex = jsonObject.get("sex")?.takeUnless { it.isJsonNull }?.asBoolean
+        val estimatedVo2MaxMlKgMin = jsonObject.get("estimatedVo2MaxMlKgMin")?.takeUnless { it.isJsonNull }?.asDouble
+        val vo2MaxSource = jsonObject.get("vo2MaxSource")?.takeUnless { it.isJsonNull }?.asString
+        val vo2MaxEstimatedAtEpochDay = jsonObject.get("vo2MaxEstimatedAtEpochDay")?.takeUnless { it.isJsonNull }?.asLong
+
         return WorkoutStore(
             schemaVersion = schemaVersion,
             exerciseDefinitions = exerciseDefinitions,
@@ -136,6 +140,10 @@ class WorkoutStoreAdapter : JsonDeserializer<WorkoutStore> {
             deloadConfig = deloadConfig,
             measuredMaxHeartRate = measuredMaxHeartRate,
             restingHeartRate = restingHeartRate,
+            sex = sex,
+            estimatedVo2MaxMlKgMin = estimatedVo2MaxMlKgMin,
+            vo2MaxSource = vo2MaxSource,
+            vo2MaxEstimatedAtEpochDay = vo2MaxEstimatedAtEpochDay,
             distanceUnit = jsonObject.get("distanceUnit")?.takeUnless { it.isJsonNull }?.asString
                 ?.let { runCatching { DistanceUnit.valueOf(it) }.getOrNull() }
                 ?: defaultDistanceUnit()

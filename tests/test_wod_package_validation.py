@@ -103,6 +103,48 @@ def _validate_package(package: dict) -> None:
     del referenced_equipment_ids, referenced_accessory_ids
 
 
+def test_crossfit_mode_fields_pass_generator_schema():
+    """The CrossFit mode fields (superset cap/cadence, timed-set targets) are
+    teachable to the LLM generator: they validate against JSON_SCHEMA, including
+    explicit nulls, and bad values are rejected."""
+    import uuid
+
+    from jsonschema import validate
+    from jsonschema.exceptions import ValidationError
+
+    from workout_generator_pkg.constants import JSON_SCHEMA
+
+    def validate_against_def(instance, def_name):
+        # $defs at the root so nested "#/$defs/..." refs resolve; $ref selects the def.
+        validate(instance, {"$defs": JSON_SCHEMA["$defs"], "$ref": f"#/$defs/{def_name}"})
+
+    superset = {
+        "id": str(uuid.uuid4()), "type": "Superset", "enabled": True,
+        "exercises": [], "restSecondsByExercise": {},
+        "timeCapSeconds": 240, "roundDurationSeconds": None,
+    }
+    validate_against_def(superset, "Superset")
+
+    timed = {
+        "id": str(uuid.uuid4()), "type": "TimedDurationSet",
+        "timeInMillis": 240000, "autoStart": True, "autoStop": True,
+        "targetDistanceMeters": 1100.0, "targetCalories": None,
+    }
+    validate_against_def(timed, "TimedDurationSet")
+
+    endurance = {
+        "id": str(uuid.uuid4()), "type": "EnduranceSet",
+        "timeInMillis": 0, "autoStart": True, "autoStop": True,
+        "targetCalories": 24.0,
+    }
+    validate_against_def(endurance, "EnduranceSet")
+
+    with pytest.raises(ValidationError):
+        validate_against_def({**superset, "timeCapSeconds": 0}, "Superset")
+    with pytest.raises(ValidationError):
+        validate_against_def({**timed, "targetCalories": "many"}, "TimedDurationSet")
+
+
 def test_all_generated_packages_are_valid():
     packages = _packages()
     if not packages:

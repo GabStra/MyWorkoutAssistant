@@ -8,5 +8,7 @@ data class TimedDurationSet(
     val autoStart:Boolean,
     val autoStop:Boolean,
     override val shouldReapplyHistoryToSet: Boolean = true,
-    val targetWeight: Double? = null
+    val targetWeight: Double? = null,
+    val targetDistanceMeters: Double? = null,
+    val targetCalories: Double? = null
 ) : Set(id, shouldReapplyHistoryToSet)

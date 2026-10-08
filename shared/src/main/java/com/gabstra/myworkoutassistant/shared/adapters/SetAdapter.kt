@@ -47,12 +47,16 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
                 jsonObject.addProperty("autoStart", src.autoStart)
                 jsonObject.addProperty("autoStop", src.autoStop)
                 src.targetWeight?.let { jsonObject.addProperty("targetWeight", it) }
+                src.targetDistanceMeters?.let { jsonObject.addProperty("targetDistanceMeters", it) }
+                src.targetCalories?.let { jsonObject.addProperty("targetCalories", it) }
             }
             is EnduranceSet ->{
                 jsonObject.addProperty("timeInMillis", src.timeInMillis)
                 jsonObject.addProperty("autoStart", src.autoStart)
                 jsonObject.addProperty("autoStop", src.autoStop)
                 src.targetWeight?.let { jsonObject.addProperty("targetWeight", it) }
+                src.targetDistanceMeters?.let { jsonObject.addProperty("targetDistanceMeters", it) }
+                src.targetCalories?.let { jsonObject.addProperty("targetCalories", it) }
             }
             is RestSet ->{
                 jsonObject.addProperty("timeInSeconds", src.timeInSeconds)
@@ -131,7 +135,9 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
                     true
                 }
                 val targetWeight = if (jsonObject.has("targetWeight")) jsonObject.get("targetWeight").asDouble else null
-                TimedDurationSet(id,timeInMillis,autoStart,autoStop, shouldReapplyHistoryToSet, targetWeight)
+                val targetDistanceMeters = jsonObject.get("targetDistanceMeters")?.takeUnless { it.isJsonNull }?.asDouble
+                val targetCalories = jsonObject.get("targetCalories")?.takeUnless { it.isJsonNull }?.asDouble
+                TimedDurationSet(id,timeInMillis,autoStart,autoStop, shouldReapplyHistoryToSet, targetWeight, targetDistanceMeters, targetCalories)
             }
             "EnduranceSet" -> {
                 val timeInMillis = jsonObject.get("timeInMillis").asInt
@@ -143,7 +149,9 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
                     true
                 }
                 val targetWeight = if (jsonObject.has("targetWeight")) jsonObject.get("targetWeight").asDouble else null
-                EnduranceSet(id,timeInMillis,autoStart,autoStop, shouldReapplyHistoryToSet, targetWeight)
+                val targetDistanceMeters = jsonObject.get("targetDistanceMeters")?.takeUnless { it.isJsonNull }?.asDouble
+                val targetCalories = jsonObject.get("targetCalories")?.takeUnless { it.isJsonNull }?.asDouble
+                EnduranceSet(id,timeInMillis,autoStart,autoStop, shouldReapplyHistoryToSet, targetWeight, targetDistanceMeters, targetCalories)
             }
             "RestSet" -> {
                 val timeInSeconds = jsonObject.get("timeInSeconds").asInt
