@@ -1972,19 +1972,32 @@ def generate_index(
             f"Ensure all equipmentId and requiredAccessoryEquipmentIds values reference valid entries under that gear policy.\n\n"
         )
         if exercise_library:
+            equipment_names_by_id = {
+                item.get("id"): item.get("name", "")
+                for item in (provided_equipment or {}).get("equipments", [])
+            }
+            equipment_names_by_id.update({
+                item.get("id"): item.get("name", "")
+                for item in (provided_equipment or {}).get("accessoryEquipments", [])
+            })
             compact_library = [[
                 definition.get("id"),
                 definition.get("name"),
                 definition.get("exerciseType"),
-                definition.get("equipmentId"),
+                equipment_names_by_id.get(definition.get("equipmentId"), "none"),
                 definition.get("bodyWeightPercentage"),
             ] for definition in exercise_library]
             user_content += (
                 "Exercise library compact selection catalog. Each row is "
-                "[libraryDefinitionId,name,exerciseType,equipmentId,bodyWeightPercentage]:\n"
+                "[libraryDefinitionId,name,exerciseType,equipment,bodyWeightPercentage]:\n"
                 f"{json.dumps(compact_library, separators=(',', ':'))}\n"
                 "For BODY_WEIGHT rows, copy bodyWeightPercentage verbatim into the plan "
                 "exercise (it is already in percentage form, e.g. 100.0).\n"
+                "Select catalog entries by matching the WOD context, not just the movement "
+                "pattern: prefer the plain/unqualified variant unless the WOD states or "
+                "implies the qualifier (a '@ load' implies a weighted variant; 'ring', "
+                "'incline', 'assisted', 'rack' imply those variants); and the row's "
+                "equipment must be gear the WOD actually provides for that movement.\n"
                 "The catalog is the sole allowed source of movements. Every planned exercise "
                 "must copy one listed libraryDefinitionId. Do not invent or infer a movement that "
                 "is absent from this catalog. The generator will resolve the selected ID to the "

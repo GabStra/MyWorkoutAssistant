@@ -103,7 +103,10 @@ def audit_missing_candidates(client, equipment, wod_text: str, working_library: 
         "only existing inventory entry for a WOD movement is a poor match for how the "
         "movement appears here (different implement, or an irrelevant variant such as "
         "a weighted version of a bodyweight movement) - the candidate must be the more "
-        "appropriate version for this WOD."
+        "appropriate version for this WOD. This rule takes precedence over variation "
+        "exclusion: when only qualified variants of a movement exist (e.g. only "
+        "Weighted/Incline/Ring Push-Up), the plain unqualified version (Push-Up) is "
+        "missing and must be returned."
     )
     candidates = _call_inventory(
         client,
