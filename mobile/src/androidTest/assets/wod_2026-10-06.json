@@ -1,0 +1,833 @@
+{
+  "name": "WOD 2026-10-06 HYROX-PREP",
+  "workouts": [
+    {
+      "id": "389cfe1a-b8ff-4e99-9505-9afb6eb7e34e",
+      "name": "WOD 2026-10-06 HYROX-PREP",
+      "description": "Row, bike erg, GTOH, shuttle run conditioning",
+      "workoutComponents": [
+        {
+          "id": "48cdad64-5a11-4013-b51e-a9fca80ba55a",
+          "type": "Exercise",
+          "enabled": true,
+          "name": "Row",
+          "notes": "",
+          "placementNotes": "",
+          "sets": [
+            {
+              "id": "2bb77e05-9247-4ecd-aafb-f0f4f6a2eafa",
+              "type": "EnduranceSet",
+              "timeInMillis": 240000,
+              "autoStart": true,
+              "autoStop": true
+            }
+          ],
+          "exerciseType": "COUNTUP",
+          "equipmentId": "f88a9577-7380-5ac4-8a83-e357c79dbd72",
+          "bodyWeightPercentage": null,
+          "generateWarmUpSets": false,
+          "progressionMode": "OFF",
+          "keepScreenOn": false,
+          "showCountDownTimer": false,
+          "intraSetRestInSeconds": null,
+          "muscleGroups": [
+            "FRONT_QUADRICEPS",
+            "BACK_GLUTEAL",
+            "BACK_UPPER_BACK"
+          ],
+          "secondaryMuscleGroups": [
+            "BACK_HAMSTRING",
+            "BACK_LOWER_BACK",
+            "FRONT_BICEPS"
+          ],
+          "requiredAccessoryEquipmentIds": [],
+          "requiresLoadCalibration": false,
+          "exerciseCategory": null,
+          "exerciseDefinitionId": "083025fe-eae3-5281-b09c-3b3d021d52a8"
+        },
+        {
+          "id": "c687486b-b34c-40df-a65e-9484e8be446f",
+          "type": "Exercise",
+          "enabled": true,
+          "name": "Bike Erg Standing",
+          "notes": "",
+          "placementNotes": "",
+          "sets": [
+            {
+              "id": "701f29a9-64a5-47c8-a22b-fe04be56c488",
+              "type": "EnduranceSet",
+              "timeInMillis": 60000,
+              "autoStart": true,
+              "autoStop": true
+            }
+          ],
+          "exerciseType": "COUNTUP",
+          "equipmentId": "25f58251-2953-57e5-89b2-7cb14f12f0d4",
+          "bodyWeightPercentage": null,
+          "generateWarmUpSets": false,
+          "progressionMode": "OFF",
+          "keepScreenOn": false,
+          "showCountDownTimer": false,
+          "intraSetRestInSeconds": null,
+          "muscleGroups": [
+            "FRONT_QUADRICEPS",
+            "BACK_GLUTEAL"
+          ],
+          "secondaryMuscleGroups": [
+            "BACK_HAMSTRING",
+            "BACK_CALVES"
+          ],
+          "requiredAccessoryEquipmentIds": [],
+          "requiresLoadCalibration": false,
+          "exerciseCategory": null,
+          "exerciseDefinitionId": "b9ed4927-2e56-5bed-a42f-ab68126aa4dc"
+        },
+        {
+          "id": "93f0bfe5-d689-4c3a-8560-36d435298d6c",
+          "type": "Exercise",
+          "enabled": true,
+          "name": "Bike Erg Seated",
+          "notes": "",
+          "placementNotes": "",
+          "sets": [
+            {
+              "id": "e6f27629-b70a-4e38-86d0-a08d93f7b3d6",
+              "type": "EnduranceSet",
+              "timeInMillis": 60000,
+              "autoStart": true,
+              "autoStop": true
+            }
+          ],
+          "exerciseType": "COUNTUP",
+          "equipmentId": "25f58251-2953-57e5-89b2-7cb14f12f0d4",
+          "bodyWeightPercentage": null,
+          "generateWarmUpSets": false,
+          "progressionMode": "OFF",
+          "keepScreenOn": false,
+          "showCountDownTimer": false,
+          "intraSetRestInSeconds": null,
+          "muscleGroups": [
+            "FRONT_QUADRICEPS"
+          ],
+          "secondaryMuscleGroups": [
+            "BACK_GLUTEAL",
+            "BACK_HAMSTRING",
+            "BACK_CALVES"
+          ],
+          "requiredAccessoryEquipmentIds": [],
+          "requiresLoadCalibration": false,
+          "exerciseCategory": null,
+          "exerciseDefinitionId": "a0f37c8f-b7ad-535c-9b18-d957cbc45cb2"
+        },
+        {
+          "id": "492f26c9-2dbd-4824-9192-11e7946526b6",
+          "type": "Exercise",
+          "enabled": true,
+          "name": "Bike Erg Standing",
+          "notes": "",
+          "placementNotes": "",
+          "sets": [
+            {
+              "id": "11ed9098-8923-469b-bedd-a7ee25038483",
+              "type": "EnduranceSet",
+              "timeInMillis": 60000,
+              "autoStart": true,
+              "autoStop": true
+            }
+          ],
+          "exerciseType": "COUNTUP",
+          "equipmentId": "25f58251-2953-57e5-89b2-7cb14f12f0d4",
+          "bodyWeightPercentage": null,
+          "generateWarmUpSets": false,
+          "progressionMode": "OFF",
+          "keepScreenOn": false,
+          "showCountDownTimer": false,
+          "intraSetRestInSeconds": null,
+          "muscleGroups": [
+            "FRONT_QUADRICEPS",
+            "BACK_GLUTEAL"
+          ],
+          "secondaryMuscleGroups": [
+            "BACK_HAMSTRING",
+            "BACK_CALVES"
+          ],
+          "requiredAccessoryEquipmentIds": [],
+          "requiresLoadCalibration": false,
+          "exerciseCategory": null,
+          "exerciseDefinitionId": "b9ed4927-2e56-5bed-a42f-ab68126aa4dc"
+        },
+        {
+          "id": "e18e1e5a-0778-4cfb-ada1-5107ae56329e",
+          "type": "Exercise",
+          "enabled": true,
+          "name": "Bike Erg Seated",
+          "notes": "",
+          "placementNotes": "",
+          "sets": [
+            {
+              "id": "ae68ce3d-b7ce-456a-995b-912278191bc5",
+              "type": "EnduranceSet",
+              "timeInMillis": 60000,
+              "autoStart": true,
+              "autoStop": true
+            }
+          ],
+          "exerciseType": "COUNTUP",
+          "equipmentId": "25f58251-2953-57e5-89b2-7cb14f12f0d4",
+          "bodyWeightPercentage": null,
+          "generateWarmUpSets": false,
+          "progressionMode": "OFF",
+          "keepScreenOn": false,
+          "showCountDownTimer": false,
+          "intraSetRestInSeconds": null,
+          "muscleGroups": [
+            "FRONT_QUADRICEPS"
+          ],
+          "secondaryMuscleGroups": [
+            "BACK_GLUTEAL",
+            "BACK_HAMSTRING",
+            "BACK_CALVES"
+          ],
+          "requiredAccessoryEquipmentIds": [],
+          "requiresLoadCalibration": false,
+          "exerciseCategory": null,
+          "exerciseDefinitionId": "a0f37c8f-b7ad-535c-9b18-d957cbc45cb2"
+        },
+        {
+          "id": "bdcfe1be-c20f-4308-a9ee-3dc34c7932e6",
+          "type": "Superset",
+          "enabled": true,
+          "exercises": [
+            {
+              "id": "6a7af982-00e8-4daa-9d16-fbee631c8de5",
+              "type": "Exercise",
+              "enabled": true,
+              "name": "GTOH Plate",
+              "notes": "",
+              "placementNotes": "",
+              "sets": [
+                {
+                  "id": "a8758d70-4f3c-4415-96dc-f3cc54d38938",
+                  "type": "WeightSet",
+                  "reps": 20,
+                  "weight": 20.0,
+                  "subCategory": "WorkSet"
+                }
+              ],
+              "exerciseType": "WEIGHT",
+              "equipmentId": "3feff12b-f48a-5164-beeb-0e87af4d0f54",
+              "bodyWeightPercentage": null,
+              "generateWarmUpSets": false,
+              "progressionMode": "AUTO_REGULATION",
+              "keepScreenOn": false,
+              "showCountDownTimer": false,
+              "intraSetRestInSeconds": null,
+              "muscleGroups": [
+                "FRONT_DELTOIDS",
+                "FRONT_TRICEPS",
+                "FRONT_QUADRICEPS"
+              ],
+              "secondaryMuscleGroups": [
+                "BACK_GLUTEAL",
+                "BACK_HAMSTRING",
+                "BACK_TRAPEZIUS"
+              ],
+              "requiredAccessoryEquipmentIds": [],
+              "requiresLoadCalibration": false,
+              "exerciseCategory": "MODERATE_COMPOUND",
+              "minReps": 20,
+              "maxReps": 20,
+              "exerciseDefinitionId": "1dc7cabe-2ba7-56d9-ac8f-048abbb64fbf"
+            },
+            {
+              "id": "46266a8f-49ab-43c6-b887-e8a4c0bd469a",
+              "type": "Exercise",
+              "enabled": true,
+              "name": "Shuttle Run",
+              "notes": "",
+              "placementNotes": "",
+              "sets": [
+                {
+                  "id": "59b9ac57-1e15-4ee5-9dbd-754f32d77aff",
+                  "type": "BodyWeightSet",
+                  "reps": 20,
+                  "additionalWeight": 0.0,
+                  "subCategory": "WorkSet"
+                }
+              ],
+              "exerciseType": "BODY_WEIGHT",
+              "equipmentId": null,
+              "bodyWeightPercentage": 100,
+              "generateWarmUpSets": false,
+              "progressionMode": "OFF",
+              "keepScreenOn": false,
+              "showCountDownTimer": false,
+              "intraSetRestInSeconds": null,
+              "muscleGroups": [
+                "FRONT_QUADRICEPS",
+                "BACK_GLUTEAL",
+                "BACK_HAMSTRING"
+              ],
+              "secondaryMuscleGroups": [
+                "BACK_CALVES",
+                "FRONT_TIBIALIS"
+              ],
+              "requiredAccessoryEquipmentIds": [],
+              "requiresLoadCalibration": false,
+              "exerciseCategory": "MODERATE_COMPOUND",
+              "minReps": 20,
+              "maxReps": 20,
+              "exerciseDefinitionId": "138d29c5-7c4c-553a-b7b8-42f114c88a26"
+            }
+          ],
+          "restSecondsByExercise": {
+            "6a7af982-00e8-4daa-9d16-fbee631c8de5": 0,
+            "46266a8f-49ab-43c6-b887-e8a4c0bd469a": 0
+          }
+        }
+      ],
+      "order": 0,
+      "enabled": true,
+      "usePolarDevice": false,
+      "creationDate": "2026-10-08",
+      "previousVersionId": null,
+      "nextVersionId": null,
+      "isActive": true,
+      "timesCompletedInAWeek": null,
+      "globalId": "cb376220-c811-409a-afbd-58f4ec768060",
+      "type": 0,
+      "workoutPlanId": null
+    }
+  ],
+  "equipments": [
+    {
+      "id": "a247d19d-e625-4c84-af6a-f643bb1d076c",
+      "type": "BARBELL",
+      "name": "Barbell",
+      "availablePlates": [
+        {
+          "thickness": 20.0,
+          "weight": 2.5
+        },
+        {
+          "thickness": 20.0,
+          "weight": 1.25
+        },
+        {
+          "thickness": 16.0,
+          "weight": 1.0
+        },
+        {
+          "thickness": 25.0,
+          "weight": 5.0
+        },
+        {
+          "thickness": 25.0,
+          "weight": 5.0
+        },
+        {
+          "thickness": 25.0,
+          "weight": 5.0
+        },
+        {
+          "thickness": 33.0,
+          "weight": 10.0
+        },
+        {
+          "thickness": 42.0,
+          "weight": 20.0
+        },
+        {
+          "thickness": 10.0,
+          "weight": 0.25
+        },
+        {
+          "thickness": 15.0,
+          "weight": 0.5
+        }
+      ],
+      "barWeight": 10.0,
+      "sleeveLength": 270,
+      "capabilities": [
+        "LOADABLE_PLATES"
+      ]
+    },
+    {
+      "id": "fcecd1f6-25e1-4d8b-a3d1-58cdffd6b86c",
+      "type": "DUMBBELLS",
+      "name": "Dumbbell Pair",
+      "maxExtraWeightsPerLoadingPoint": 1,
+      "extraWeights": [
+        {
+          "weight": 0.25
+        },
+        {
+          "weight": 0.5
+        },
+        {
+          "weight": 1.0
+        }
+      ],
+      "dumbbells": [
+        {
+          "weight": 2.5
+        },
+        {
+          "weight": 3.5
+        },
+        {
+          "weight": 4.5
+        },
+        {
+          "weight": 5.5
+        },
+        {
+          "weight": 6.5
+        },
+        {
+          "weight": 8.0
+        },
+        {
+          "weight": 9.0
+        },
+        {
+          "weight": 10.0
+        },
+        {
+          "weight": 11.5
+        },
+        {
+          "weight": 13.5
+        },
+        {
+          "weight": 16.0
+        },
+        {
+          "weight": 18.0
+        },
+        {
+          "weight": 20.5
+        },
+        {
+          "weight": 22.5
+        },
+        {
+          "weight": 24.0
+        }
+      ],
+      "capabilities": [
+        "ADJUSTABLE_WEIGHT"
+      ]
+    },
+    {
+      "id": "e95fb928-2fc9-49b3-8dc9-2c60f5f48cd0",
+      "type": "WEIGHTVEST",
+      "name": "Weight Vest",
+      "availableWeights": [
+        {
+          "weight": 1.0
+        },
+        {
+          "weight": 2.0
+        },
+        {
+          "weight": 3.0
+        },
+        {
+          "weight": 4.0
+        },
+        {
+          "weight": 5.0
+        },
+        {
+          "weight": 6.0
+        },
+        {
+          "weight": 7.0
+        },
+        {
+          "weight": 8.0
+        },
+        {
+          "weight": 9.0
+        },
+        {
+          "weight": 10.0
+        },
+        {
+          "weight": 11.0
+        },
+        {
+          "weight": 12.0
+        },
+        {
+          "weight": 13.0
+        },
+        {
+          "weight": 14.0
+        },
+        {
+          "weight": 15.0
+        },
+        {
+          "weight": 16.0
+        },
+        {
+          "weight": 17.0
+        },
+        {
+          "weight": 18.0
+        },
+        {
+          "weight": 19.0
+        },
+        {
+          "weight": 20.0
+        }
+      ],
+      "capabilities": [
+        "ADJUSTABLE_WEIGHT"
+      ]
+    },
+    {
+      "id": "653678c3-70bf-4425-b6b7-14bf6b752c87",
+      "type": "PLATELOADEDCABLE",
+      "name": "Cable",
+      "availablePlates": [
+        {
+          "thickness": 20.0,
+          "weight": 2.5
+        },
+        {
+          "thickness": 20.0,
+          "weight": 1.25
+        },
+        {
+          "thickness": 16.0,
+          "weight": 1.0
+        },
+        {
+          "thickness": 25.0,
+          "weight": 5.0
+        },
+        {
+          "thickness": 25.0,
+          "weight": 5.0
+        },
+        {
+          "thickness": 25.0,
+          "weight": 5.0
+        },
+        {
+          "thickness": 33.0,
+          "weight": 10.0
+        },
+        {
+          "thickness": 42.0,
+          "weight": 20.0
+        },
+        {
+          "thickness": 10.0,
+          "weight": 0.25
+        },
+        {
+          "thickness": 15.0,
+          "weight": 0.5
+        },
+        {
+          "thickness": 25.0,
+          "weight": 5.0
+        },
+        {
+          "thickness": 25.0,
+          "weight": 5.0
+        },
+        {
+          "thickness": 25.0,
+          "weight": 5.0
+        },
+        {
+          "thickness": 10.0,
+          "weight": 0.25
+        },
+        {
+          "thickness": 15.0,
+          "weight": 0.5
+        },
+        {
+          "thickness": 16.0,
+          "weight": 1.0
+        },
+        {
+          "thickness": 20.0,
+          "weight": 1.25
+        },
+        {
+          "thickness": 20.0,
+          "weight": 2.5
+        }
+      ],
+      "sleeveLength": 170,
+      "capabilities": [
+        "HIGH_PULLEY",
+        "LOADABLE_PLATES",
+        "ROPE_ATTACHMENT",
+        "SINGLE_HANDLE_ATTACHMENT"
+      ]
+    },
+    {
+      "id": "f145a180-eaae-4fe1-b7b4-5527ec8adb04",
+      "type": "DUMBBELL",
+      "name": "Dumbbell",
+      "maxExtraWeightsPerLoadingPoint": 1,
+      "extraWeights": [
+        {
+          "weight": 0.25
+        },
+        {
+          "weight": 0.5
+        },
+        {
+          "weight": 1.0
+        }
+      ],
+      "dumbbells": [
+        {
+          "weight": 2.5
+        },
+        {
+          "weight": 3.5
+        },
+        {
+          "weight": 4.5
+        },
+        {
+          "weight": 5.5
+        },
+        {
+          "weight": 6.5
+        },
+        {
+          "weight": 8.0
+        },
+        {
+          "weight": 9.0
+        },
+        {
+          "weight": 10.0
+        },
+        {
+          "weight": 11.5
+        },
+        {
+          "weight": 13.5
+        },
+        {
+          "weight": 16.0
+        },
+        {
+          "weight": 18.0
+        },
+        {
+          "weight": 20.5
+        },
+        {
+          "weight": 22.5
+        },
+        {
+          "weight": 24.0
+        }
+      ],
+      "capabilities": [
+        "ADJUSTABLE_WEIGHT"
+      ]
+    },
+    {
+      "id": "567028fe-e672-41af-bc6d-bb1fc3089d10",
+      "type": "CARDIO_MACHINE",
+      "name": "Spin Bike",
+      "capabilities": [
+        "CARDIO_STATIONARY"
+      ]
+    },
+    {
+      "id": "f88a9577-7380-5ac4-8a83-e357c79dbd72",
+      "type": "CARDIO_MACHINE",
+      "name": "Rower",
+      "capabilities": [
+        "CARDIO_STATIONARY"
+      ]
+    },
+    {
+      "id": "25f58251-2953-57e5-89b2-7cb14f12f0d4",
+      "type": "CARDIO_MACHINE",
+      "name": "Bike Erg",
+      "capabilities": [
+        "CARDIO_STATIONARY"
+      ]
+    },
+    {
+      "id": "d3f4e231-5d2b-571a-9fdc-0ddae8a596c9",
+      "type": "CARDIO_MACHINE",
+      "name": "Assault Bike",
+      "capabilities": [
+        "CARDIO_STATIONARY"
+      ]
+    },
+    {
+      "id": "995e95fa-1db6-57a4-94ae-e13816ca5132",
+      "type": "CARDIO_MACHINE",
+      "name": "Ski Erg",
+      "capabilities": [
+        "CARDIO_STATIONARY"
+      ]
+    }
+  ],
+  "accessoryEquipments": [
+    {
+      "id": "ef01a523-f4f3-4aa9-8e85-68fc08b73a49",
+      "type": "ACCESSORY",
+      "name": "Nordic Curl Setup",
+      "capabilities": [
+        "NORDIC_CURL_SUPPORT"
+      ]
+    },
+    {
+      "id": "0150cff2-cce4-4c45-8d8a-631f915b80fe",
+      "type": "ACCESSORY",
+      "name": "Ab Wheel",
+      "capabilities": [
+        "CORE_ROLLER"
+      ]
+    },
+    {
+      "id": "49405aae-8e6d-4364-8bd5-cb551fb97631",
+      "type": "ACCESSORY",
+      "name": "Pull-Up Station",
+      "capabilities": [
+        "PULL_UP_BAR"
+      ]
+    },
+    {
+      "id": "860fedac-30a1-40fa-bfff-269484fa246b",
+      "type": "ACCESSORY",
+      "name": "Rings",
+      "capabilities": [
+        "GYMNASTIC_RINGS"
+      ]
+    },
+    {
+      "id": "e3f0e0ee-3433-4435-bed9-c926e23a8468",
+      "type": "ACCESSORY",
+      "name": "Adjustable Bench",
+      "capabilities": [
+        "ADJUSTABLE_BENCH",
+        "BENCH",
+        "FLAT_BENCH",
+        "INCLINE_BENCH"
+      ]
+    },
+    {
+      "id": "31159650-e64d-47ba-95b3-a63ce301dbac",
+      "type": "ACCESSORY",
+      "name": "Squat Rack",
+      "capabilities": [
+        "RACKED_BAR_SUPPORT"
+      ]
+    }
+  ],
+  "schemaVersion": 2,
+  "exerciseDefinitions": [
+    {
+      "name": "Row",
+      "exerciseType": "COUNTUP",
+      "equipmentId": "f88a9577-7380-5ac4-8a83-e357c79dbd72",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "BACK_UPPER_BACK"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING",
+        "BACK_LOWER_BACK",
+        "FRONT_BICEPS"
+      ],
+      "exerciseCategory": null,
+      "id": "083025fe-eae3-5281-b09c-3b3d021d52a8"
+    },
+    {
+      "name": "Bike Erg Standing",
+      "exerciseType": "COUNTUP",
+      "equipmentId": "25f58251-2953-57e5-89b2-7cb14f12f0d4",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_HAMSTRING",
+        "BACK_CALVES"
+      ],
+      "exerciseCategory": null,
+      "id": "b9ed4927-2e56-5bed-a42f-ab68126aa4dc"
+    },
+    {
+      "name": "Bike Erg Seated",
+      "exerciseType": "COUNTUP",
+      "equipmentId": "25f58251-2953-57e5-89b2-7cb14f12f0d4",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING",
+        "BACK_CALVES"
+      ],
+      "exerciseCategory": null,
+      "id": "a0f37c8f-b7ad-535c-9b18-d957cbc45cb2"
+    },
+    {
+      "name": "GTOH Plate",
+      "exerciseType": "WEIGHT",
+      "equipmentId": "3feff12b-f48a-5164-beeb-0e87af4d0f54",
+      "bodyWeightPercentage": null,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_DELTOIDS",
+        "FRONT_TRICEPS",
+        "FRONT_QUADRICEPS"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING",
+        "BACK_TRAPEZIUS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "1dc7cabe-2ba7-56d9-ac8f-048abbb64fbf"
+    },
+    {
+      "name": "Shuttle Run",
+      "exerciseType": "BODY_WEIGHT",
+      "equipmentId": null,
+      "bodyWeightPercentage": 100,
+      "requiredAccessoryEquipmentIds": [],
+      "muscleGroups": [
+        "FRONT_QUADRICEPS",
+        "BACK_GLUTEAL",
+        "BACK_HAMSTRING"
+      ],
+      "secondaryMuscleGroups": [
+        "BACK_CALVES",
+        "FRONT_TIBIALIS"
+      ],
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "id": "138d29c5-7c4c-553a-b7b8-42f114c88a26"
+    }
+  ],
+  "exerciseMovements": []
+}
