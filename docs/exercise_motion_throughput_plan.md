@@ -37,7 +37,7 @@ Retained run roots: `build/exercise_motion/speed-harness/20261008-121537-bc56093
 | Reconstruction worker startup | 108.102s | 53.899s | Material setup cost with substantial variation |
 | Vision startup, all sessions | 43.615s | 44.501s | Measured lifecycle cost; avoidability not established |
 | Source review requests / cumulative time | 28 / 278.994s | 28 / 302.245s | Meaningful workload, but no duplicate requests established |
-| Speculative render preparation | Disabled | 52.803s, abandoned for finalization | Actual unfinished/unused work; overlap may also contend with useful work |
+| Speculative render preparation | Disabled | 52.803s OHP worker elapsed, abandoned for finalization | Abandoned work is observed; overlap with RDL finalization and any causal slowdown are unproven |
 
 A's RDL `qwen-full/isolated/exercise_motion/workspace/barbell-romanian-deadlift/bake/barbell-romanian-deadlift-001-yqbsqckhvtm/baked_stage_checkpoint.json` separates:
 
@@ -68,16 +68,19 @@ The latest matched retained production-bake replay is in `build/exercise_motion/
 
 ### 2. Speculative render scheduling and CPU contention
 
-**Priority:** A concrete 52.803s abandoned job exists in B. It overlaps generation; causal effect on the structural-fit timeout remains unproven. This is an independent bounded hypothesis, not evidence that prefetch should always be disabled.
+**Priority:** B records 52.803s of OHP speculative-worker elapsed before abandonment. The retained trace does not establish how much overlapped RDL finalization or caused slowdown. This is an independent bounded hypothesis, not evidence that prefetch should always be disabled.
 
 **Owners:** `wave_pipeline.py::prepare_cpu_render_cache` and its submission/drain paths; `resource_budget.py`; `staged_wave_service.py`; `fit_runtime.py`. Coverage: `tests/test_wave_scheduling.py`, `tests/test_candidate_fit_session.py`, `tests/test_resource_budget.py`.
 
-- [x] Read retained timestamps: OHP speculative preparation ran for 52.803s and was abandoned at finalization. The retained stage result does not identify its exact cancellation point, so it proves overlap with the wave, not a measured RDL slowdown.
+- [x] Read retained timestamps: OHP speculative preparation ran for 52.803s, then was abandoned for finalization; the worker drained. This is worker wall time, not CPU time or proven time saved/lost. The exact RDL-finalizer overlap and cause are unknown. `renderPrefetchWaitSeconds=0.0` for both exercises, so no finalizer wait was measured.
 - [x] Verify exact retained pre-bake lineage in the 2026-10-08 12:28 run. `processing_evidence/motion.raw.json` and `motion.cleaned.json` match the generation checkpoint outputs. The selected HTML and wearable skeleton are post-bake and must not be reused. The exact source clips match the retained policy-v3 body-support observations. The matching cached WHAM outputs can regenerate the pruned retarget-source JSON without inference; the production preview writer can recreate the missing pre-bake HTML from the retained raw/cleaned clips.
-- [ ] Run OFF / ON / OFF in fresh candidate workspaces with no bake/fit checkpoints. For RDL, use `bake_preview_loops_with_playwright` under `prioritize_fit_workspaces([rdl_workspace])`; this is the production path that enters `candidate_fit_session`, the CPU fit slot, and priority/yield checks. For OHP, call the real `prepare_cpu_render_cache` with its captured request settings inside the production speculative contexts. `scripts/replay_trajectory_fit.py` is not valid here because it bypasses those scheduling owners.
-- [ ] Keep the RDL side to its first eligible loop and base preview settings to bound the comparison; the fit and validation gates remain unchanged. Use the full captured OHP prefetch settings. Seed only source-hash- and policy-matched support observations. Record process/thread CPU, fit elapsed/evaluations/gates, OHP prepared-versus-abandoned status, and combined elapsed time.
+- [x] Trace the production scheduling path: per-exercise finalizers run concurrently and abandon only their own unfinished prefetch before entering their priority context, so cross-exercise overlap is possible by control flow but was not established by the retained timestamps. Once speculative work reaches the fit slot, RDL priority makes it yield regardless of workspace. The retained launch used the `fast` profile: ranking off, adaptive settings on, maximum two variants, and six review frames (the wrapper's effective default). The original in-memory request was not retained.
+- [x] Run the bounded replay through OFF1 and ON. OFF1 completed in 191.569s wall (112.172s process CPU); its RDL full-clip candidate passed the pre-render gate and had a review video. The detected 2.0s crop was correctly rejected. ON hit the external 300s cap, so OFF2 was not run and no OFF/ON comparison is valid.
+- [x] Correct the RDL replay inventory before timing: the retained 2.0s detected crop was rejected in the selected production run; the full 117-frame candidate remained the selected fallback. Pass the complete production eligible-loop inventory so the comparison includes that full-clip path. A cycle-only replay would measure a fast rejection, not useful output.
+- [x] Use base preview settings and full eligible RDL inventory. The replay starts after production generation, so its retained checkpoint-identical cleaned motion and regenerated pre-bake preview are stage inputs; it does not measure raw-to-clean generation. Seed only source-hash- and policy-matched support observations. Count an RDL result as usable only when a pre-render gate passes and its review video exists.
+- [ ] Before any further replay, add append-only, flushed event telemetry at event occurrence for BrowserWorkers enqueue/start, CPU scheduler admission wait/acquire, fit-slot wait/acquire, and OHP abandon/yield. The ON adapter kept events in memory until both workers joined; the external timeout killed it before `arm_result.json` was written. The partial OHP fit failed its gates; RDL produced no baked artifact, so the stall stage is unknown. Do not call this a production deadlock or contention finding.
 
-**Experiment bound:** OFF / ON / OFF, one sequence, no model calls, reconstruction, or downloads. Use the production 360s candidate-fit budget and a 300s per-arm wall cap. Stop the sequence on an invalid input, cache reuse, or timeout; do not expand the run automatically.
+**Experiment bound:** The first sequence stopped after ON timed out at 300s; OFF2 was intentionally omitted. No model calls, reconstruction, or downloads occurred. If this hypothesis is resumed, first make the telemetry change in isolation; then do at most one capped diagnostic replay to identify the blocked stage, not another timing comparison. Keep the production 360s candidate-fit budget and external 300s process-tree cap. Do not launch it automatically or expand the experiment without a discriminating result.
 
 **Decision:** If speculation repeatedly slows useful fitting or is predictably abandoned, adjust generic admission/cancellation in production, preserving cases where useful work is consumed. If the captured workload is not reproducible or no causal loss appears, defer this area. A faster fitted rejection still does not qualify promotion.
 
@@ -132,7 +135,8 @@ No new browser worker-count or frame-batch sweep is scheduled. Revisit after lar
 
 ## Execution order and stop rules
 
-- Finish this plan first. Next, complete the read-only fit-subphase audit; independent lifecycle and request-identity audits can run in parallel without running timing work.
+- The read-only fit, lifecycle and request-identity audits are complete. The first fit optimization comparison was inconclusive at full-fit timing; the speculative-scheduling replay is also inconclusive because its ON arm timed out without live telemetry.
+- Before resuming the scheduling hypothesis, instrument its replay adapter in isolation as described in section 2. A diagnostic replay is justified only if those events will distinguish queue admission, fit-slot contention, or slow fitting within the cap. Otherwise defer this hypothesis and advance to the next ranked area with measurable removable work.
 - Select **one** hypothesis from the highest-priority area with demonstrated removable work. Record input hashes, intended change, skipped stages, metric, decision rule and runtime cap before launching it.
 - Keep each timing comparison sequential and bounded as above. If its budget cannot discriminate a gain, report the limit instead of expanding it automatically.
 - Maintain one short result per hypothesis: keep, reject or inconclusive, with evidence paths. No new full run to compensate for unexplained rejection; no repeated passing checks without changed evidence.
@@ -146,7 +150,7 @@ No new browser worker-count or frame-batch sweep is scheduled. Revisit after lar
 - Retained117-frame mask A/B/B/A: baseline2.840/2.849s; candidate0.604/0.487s; every mask identical. This cost is incurred while populating the first-Jacobian mask cache, not on every later Jacobian evaluation.
 - Complete Jacobian shape123363x7371:1,518,061 stored values; exact sparse difference zero. Profiled callback4.603s baseline/2.571s candidate is a single pair; use the balanced mask microbenchmark for repeatability evidence, not a claim of repeatable full-fit speed.
 - Owning Jacobian and deadline tests:2 passed; production Python compilation and independent scoped review passed. Source input SHA256 and raw reports are in `build/exercise_motion/diagnostics/throughput_execution_20261008/` alongside `progress.md`.
-- Change remains in isolated branch `experiment/motion-fit-throughput-20261008`; default promotion awaits representative accepted production-rendered/package comparisons. No generation/model calls occurred. Next: smallest matched production fit/bake comparison using qualified retained input, including OHP control; expand only for an exposed family risk. Do not rerun unchanged audits or microbenchmarks.
+- Change remains in isolated branch `experiment/motion-fit-throughput-20261008`; default promotion awaits representative accepted production-rendered/package comparisons. No generation/model calls occurred. The later speculative-scheduling replay and its limits are recorded in section 2; do not repeat unchanged audits or microbenchmarks.
 
 
 ### Controlled-fit optimization check - retained RDL, 2026-10-08
