@@ -27,9 +27,9 @@ DEFAULT_BASE_LIBRARY = Path("exercise_libraries/exercise_library_2026-08-17_1645
 DEFAULT_ACCUMULATED_LIBRARY = Path("exercise_libraries/wod_accumulated_library.json")
 DEFAULT_EQUIPMENT_FILE = Path(__file__).resolve().parent / "assets" / "gym_equipment.json"
 
-WOD_WORKOUT_GUIDANCE = """
-This is a coach-authored CrossFit/Hyrox WOD. Hard constraints:
-- Use ONLY movements explicitly present in the WOD text: no substitutions, no
+HANDS_FREE_GUIDANCE = """
+This is a coach-authored workout. Hard constraints:
+- Use ONLY movements explicitly present in the workout text: no substitutions, no
   warm-up, no cool-down, no extra exercises.
 - Respect the exact time structure: a block announced as "From a'-b'" must total
   exactly (b-a) minutes across its exercises; never exceed the window. Time caps
@@ -37,14 +37,27 @@ This is a coach-authored CrossFit/Hyrox WOD. Hard constraints:
 - The athlete cannot enter reps or weights mid-workout (at most one tap to advance),
   so prescribed reps/weights/time domains must be filled in as set defaults exactly
   as written in the request.
-- Timed blocks and per-minute EMOM slots: use exactly one TimedDurationSet with
-  autoStart=true and autoStop=true so the watch advances by itself.
-- AMRAP and rounds-for-time: express as supersetGroups; no rest between members
-  (restToNextSeconds=0) unless the WOD specifies rest.
+- Timed blocks and per-minute EMOM slots (when present): use exactly one
+  TimedDurationSet with autoStart=true and autoStop=true so the watch advances by
+  itself.
+- AMRAPs and rounds-for-time (when present): express as supersetGroups; no rest
+  between members (restToNextSeconds=0) unless the workout specifies rest.
 - Rep schemes written as male/female pairs ("@ 22.5/15", "24/20") use the first value.
 - BODY_WEIGHT exercises: bodyWeightPercentage must be in percentage form (e.g. 100.0),
   never a fraction like 1.0.
 """.strip()
+
+STANDARD_GUIDANCE = """
+This is a coach-authored workout. Constraints:
+- Use ONLY movements explicitly present in the workout text; respect the prescribed
+  sets, reps, loads, and rest exactly as written.
+- BODY_WEIGHT exercises: bodyWeightPercentage must be in percentage form (e.g. 100.0),
+  never a fraction like 1.0.
+""".strip()
+
+
+def guidance_for_style(style: str) -> str:
+    return HANDS_FREE_GUIDANCE if style == "hands-free" else STANDARD_GUIDANCE
 
 
 def _normalize(name: str) -> str:
@@ -78,11 +91,12 @@ def load_working_library(base_library: Path, accumulated_library: Path) -> tuple
     return library, accumulated_library
 
 
-def audit_missing_candidates(client, equipment, wod_text: str, working_library: dict) -> list[str]:
-    """Asks the exercise generator's audit mode for the WOD's missing movements.
+def audit_missing_candidates(client, equipment, workout_text: str, working_library: dict) -> list[str]:
+    """Asks the exercise generator's audit mode for the workout's missing movements.
 
-    The audit receives our library as the existing inventory and the WOD as the
-    scope; it returns candidate names for exactly the movements that are missing.
+    The audit receives our library as the existing inventory and the workout text
+    as the scope; it returns candidate names for exactly the movements that are
+    missing.
     """
     from exercise_library_generator_pkg.generator import _call_inventory
     from workout_generator_pkg.api_client import json_call_reasoner_only_with_loading
@@ -96,14 +110,16 @@ def audit_missing_candidates(client, equipment, wod_text: str, working_library: 
         for definition in working_library.get("exerciseDefinitions", [])
     ]
     request = (
-        "WOD coverage audit. Today's WOD:\n"
-        + wod_text
-        + "\nReturn only the distinct movements performed in this WOD that are "
-        "missing from the existing inventory. Also include a new candidate when the "
-        "only existing inventory entry for a WOD movement is a poor match for how the "
+        "Workout coverage audit. The workout text:\n"
+        + workout_text
+        + "\nFirst list every distinct movement performed in this workout, then check "
+        "each one against the existing inventory and return ONLY the movements that "
+        "are missing from it - do not skip or merge any movement from the text. Also "
+        "include a new candidate when the "
+        "only existing inventory entry for a workout movement is a poor match for how the "
         "movement appears here (different implement, or an irrelevant variant such as "
         "a weighted version of a bodyweight movement) - the candidate must be the more "
-        "appropriate version for this WOD. This rule takes precedence over variation "
+        "appropriate version for this workout. This rule takes precedence over variation "
         "exclusion: when only qualified variants of a movement exist (e.g. only "
         "Weighted/Incline/Ring Push-Up), the plain unqualified version (Push-Up) is "
         "missing and must be returned."
@@ -124,7 +140,7 @@ def audit_missing_candidates(client, equipment, wod_text: str, working_library: 
 
 def ensure_wod_coverage(
     client,
-    wod_text: str,
+    workout_text: str,
     working_library: dict,
     working_library_path: Path,
     equipment_file: Path = DEFAULT_EQUIPMENT_FILE,
@@ -157,13 +173,13 @@ def ensure_wod_coverage(
     created: list[str] = []
 
     for _attempt in range(2):
-        audit_names = audit_call(client, equipment, wod_text, working_library)
+        audit_names = audit_call(client, equipment, workout_text, working_library)
         still_missing = [name for name in audit_names if not _covered(name)]
         if not still_missing:
             break
         request = (
-            "Gym WOD coverage: generate ONLY these movements and nothing else "
-            "(canonical CrossFit names fine): "
+            "Workout coverage: generate ONLY these movements and nothing else "
+            "(canonical gym names fine): "
             + "; ".join(still_missing)
             + ". Exclude every other exercise."
         )
@@ -199,10 +215,11 @@ def ensure_wod_coverage(
 
 
 def generate_workout_package(
-    wod_text: str,
+    workout_text: str,
     library: dict,
     script_dir: Path = REPO,
     force_use_reasoner: str = "hybrid",
+    guidance: str = HANDS_FREE_GUIDANCE,
 ) -> dict:
     """Runs the workout generator in strict library mode; returns the package JSON."""
     from workout_generator_pkg.constants import BASE_SYSTEM_PROMPT
@@ -219,7 +236,7 @@ def generate_workout_package(
     )
     messages = [
         {"role": "system", "content": BASE_SYSTEM_PROMPT},
-        {"role": "user", "content": wod_text},
+        {"role": "user", "content": workout_text},
     ]
     provided = {
         "equipments": library.get("equipments", []),
@@ -230,7 +247,7 @@ def generate_workout_package(
     result = execute_workout_generation(
         client,
         messages,
-        custom_prompt=f"{wod_text}\n\n{WOD_WORKOUT_GUIDANCE}",
+        custom_prompt=f"{workout_text}\n\n{guidance}",
         provided_equipment=provided,
         script_dir=str(script_dir),
         force_use_reasoner=force_use_reasoner,
@@ -320,8 +337,13 @@ def backfill_equipment_from_catalog(package: dict, catalog: dict) -> list[str]:
     return added
 
 
-def sanitize_package_name(package: dict, date_iso: str) -> dict:
-    """Normalizes the LLM-chosen plan name to the WOD <date> convention."""
+def sanitize_package_name(package: dict, date_iso: str, explicit_name: str | None = None) -> dict:
+    """Normalizes the plan name; an explicit caller name is used verbatim."""
+    if explicit_name:
+        package["name"] = explicit_name
+        for workout in package.get("workouts", []):
+            workout["name"] = explicit_name
+        return package
     slug = re.sub(r"[^A-Za-z0-9]+", "-", package.get("name") or "WOD").strip("-")
     name = f"WOD {date_iso} {slug}".strip()
     package["name"] = name

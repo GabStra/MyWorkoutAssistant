@@ -88,8 +88,8 @@ def test_coverage_pass_generates_only_missing_and_persists(tmp_path):
     audits = []
     generations = []
 
-    def fake_audit(client, equipment, wod_text, library):
-        audits.append(wod_text)
+    def fake_audit(client, equipment, workout_text, library):
+        audits.append(workout_text)
         # the generator's audit sees Deadlift as covered, Wall Ball as missing
         return ["Deadlift", "Wall Ball"]
 
@@ -103,7 +103,7 @@ def test_coverage_pass_generates_only_missing_and_persists(tmp_path):
 
     library, created = ensure_wod_coverage(
         client=FakeClient(),
-        wod_text="WOD with wall balls",
+        workout_text="WOD with wall balls",
         working_library=working,
         working_library_path=library_path,
         equipment_file=tmp_path / "equipment.json",
@@ -124,7 +124,7 @@ def test_coverage_pass_skips_generation_when_all_covered(tmp_path):
     working = {"exerciseDefinitions": [_def("d1", "Row")], "equipments": [], "exerciseMovements": []}
     generations = []
 
-    def fake_audit(client, equipment, wod_text, library):
+    def fake_audit(client, equipment, workout_text, library):
         return ["Row"]  # audit says everything is covered
 
     def fake_generation(client, equipment_file, request, max_definitions):
@@ -133,7 +133,7 @@ def test_coverage_pass_skips_generation_when_all_covered(tmp_path):
 
     library, created = ensure_wod_coverage(
         client=FakeClient(),
-        wod_text="4 min row",
+        workout_text="4 min row",
         working_library=working,
         working_library_path=tmp_path / "accumulated.json",
         equipment_file=tmp_path / "equipment.json",

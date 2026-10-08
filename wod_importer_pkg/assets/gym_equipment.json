@@ -405,6 +405,12 @@
       "type": "GENERIC",
       "name": "Weight Plate",
       "capabilities": []
+    },
+    {
+      "id": "cceb234f-2704-5967-9f24-93d815a4fe49",
+      "type": "GENERIC",
+      "name": "Wall Ball",
+      "capabilities": []
     }
   ],
   "accessoryEquipments": [
