@@ -100,6 +100,10 @@ def run(date_iso: str, entry, output: Path, base_library: Path, accumulated_libr
     print("generating workout (LLM, strict library mode — a couple of minutes)...")
     package = generate_workout_package(entry.text, library)
     package = sanitize_package_name(package, date_iso)
+    from wod_importer_pkg.generators import backfill_equipment_from_catalog
+    added = backfill_equipment_from_catalog(package, catalog)
+    if added:
+        print(f"  equipment backfilled from catalog: {added}")
 
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(package, indent=2), encoding="utf-8")

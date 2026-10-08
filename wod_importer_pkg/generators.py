@@ -283,6 +283,43 @@ def make_deepseek_client():
     )
 
 
+def backfill_equipment_from_catalog(package: dict, catalog: dict) -> list[str]:
+    """Ensures every equipment/accessory referenced by the package resolves.
+
+    The workout generator emits only the equipment its plan declared; definitions
+    can reference more (a definition's equipmentId or required accessories). Since
+    import replaces the store's gear with the package's, anything dangling would
+    break at workout time. The catalog is the complete superset, so backfill from it.
+    """
+    catalog_by_id = {
+        item["id"]: item
+        for item in catalog.get("equipments", []) + catalog.get("accessoryEquipments", [])
+    }
+    referenced = set()
+    for definition in package.get("exerciseDefinitions", []):
+        if definition.get("equipmentId"):
+            referenced.add(definition["equipmentId"])
+        referenced.update(definition.get("requiredAccessoryEquipmentIds", []))
+
+    equipment_ids = {e["id"] for e in package.get("equipments", [])}
+    accessory_ids = {a["id"] for a in package.get("accessoryEquipments", [])}
+    added = []
+    for referenced_id in sorted(referenced):
+        item = catalog_by_id.get(referenced_id)
+        if item is None:
+            continue
+        if item["type"] == "ACCESSORY":
+            if referenced_id not in accessory_ids:
+                package.setdefault("accessoryEquipments", []).append(item)
+                accessory_ids.add(referenced_id)
+                added.append(item["name"])
+        elif referenced_id not in equipment_ids:
+            package.setdefault("equipments", []).append(item)
+            equipment_ids.add(referenced_id)
+            added.append(item["name"])
+    return added
+
+
 def sanitize_package_name(package: dict, date_iso: str) -> dict:
     """Normalizes the LLM-chosen plan name to the WOD <date> convention."""
     slug = re.sub(r"[^A-Za-z0-9]+", "-", package.get("name") or "WOD").strip("-")
