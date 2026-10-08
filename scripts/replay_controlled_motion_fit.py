@@ -46,6 +46,14 @@ def _prepare_payload(payload: dict[str, Any], *, captured_cycle: bool) -> tuple[
     if replay_payload.get("fixedRig"):
         raise ValueError("Cannot replay a source-cycle fit from a fixed-rig payload")
     selection = _captured_cycle_selection(replay_payload)
+    fit_report = replay_payload.get("controlledMotionFit")
+    source_preflight = (
+        fit_report.get("sourceCyclePreflight")
+        if isinstance(fit_report, dict)
+        else None
+    )
+    if isinstance(source_preflight, list):
+        replay_payload["sourceCyclePreflight"] = copy.deepcopy(source_preflight)
     frame_count = len(replay_payload.get("frames") or [])
     start = selection["startFrame"]
     stop = selection["stopFrameExclusive"]
