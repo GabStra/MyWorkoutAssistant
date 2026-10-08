@@ -1,6 +1,6 @@
 # Exercise-motion throughput handoff
 
-Updated 2026-10-08. Current task: evidence-based planning; experiments wait until the plan is delivered and reviewed.
+Updated 2026-10-08. Current task: execute the user-activated plan using bounded retained-stage experiments.
 
 ## Governing objective
 
@@ -14,7 +14,7 @@ Read `docs/exercise_motion_throughput_plan.md` for ranked evidence, bounded expe
 - Base exercises: Barbell Romanian Deadlift + Dumbbell Overhead Press. Fixed fixture: `build/exercise_motion/throughput_goal_fixtures_20261007_v4b/fixture_manifest.json`.
 - Retained runs `20261008-121537-bc560935` and `20261008-122851-cb085986` took 735.3s/780.2s and packaged 1/2 versus 2/2. Different revisions/configurations prevent a controlled speed claim.
 - Dominant attributed RDL cost: 228.253s fitting; browser startup/page ready 2.540s. First inspect fit subphases and exact reusable work; the two intervals are not interchangeable fit inputs.
-- Render speculation was off in the first run; on in the second. The second’s 52.803s OHP preparation was abandoned. Contention is a hypothesis requiring a matched captured-workload replay.
+- Render speculation was off in the first run; on in the second. The secondâ€™s 52.803s OHP preparation was abandoned. Contention is a hypothesis requiring a matched captured-workload replay.
 - Reconstruction startup 108.102s/53.899s and vision startup 43.615s/44.501s are measured opportunities; avoidability is unproven.
 - Browser frame batching is production-default on. Source-frame caching remains opt-in; these runs explicitly enabled it. Do not count already-enabled optimizations as new margin.
 
@@ -28,6 +28,6 @@ Rendered sample comparison: `build/exercise_motion/diagnostics/rdl-report-alias-
 
 ## Next action
 
-After plan review, inspect retained controlled-fit subphase/input identities and choose one measurable hypothesis. Independent lifecycle/request audits may use subagents; experiments remain sequential. No unbounded solver sweeps, arbitrary gate relaxation, backend retest, or full generation before isolated evidence warrants it.
+Fit/lifecycle/request audits are complete. One generic fit optimization is staged in isolated branch `experiment/motion-fit-throughput-20261008`: omit redundant sparse row deduplication before Boolean assignment. Balanced mask comparison saved about2.3s with exact parity; the complete117-frame Jacobian also matched exactly. Two owning tests and compilation passed. Evidence/ledger: `build/exercise_motion/diagnostics/throughput_execution_20261008/`. Default promotion is pending. Next: smallest matched qualified production fit/bake comparison plus OHP control; do not repeat the completed audits or microbenchmarks. Independent audits may use subagents; timing experiments remain sequential. No unbounded solver sweeps, arbitrary gate relaxation, backend retest, or full generation before isolated evidence warrants it.
 
 Floor Press remains source-cleared but output-rejected; Step-Up is source-unqualified. Other families need qualified original source evidence. The two base exercises do not establish broad exercise reliability. Preserve support/contact/source semantics during optimization.

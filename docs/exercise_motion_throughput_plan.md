@@ -14,7 +14,7 @@ Updated 2026-10-08. This replaces the earlier throughput experiment sequence.
 
 ## Constraints and success measures
 
-- Planning is the current task. No experiments or implementation start before this plan is delivered and reviewed.
+- The plan was delivered and the user activated its execution goal. Follow its bounds before each experiment.
 - Optimize elapsed time to a good output, first packaged usable output time, and usable outputs per elapsed hour. Record acceptance and attempts alongside timing. Faster rejection alone is not success.
 - Count startup, waits, retries, review and packaging. Cumulative concurrent job/request seconds are workload measures; they cannot be added to infer wall time.
 - Keep thresholds, valid articulation/range, support geometry and temporal quality. Classify failures as justified rejection, processing bug, or insufficient evidence before changing behavior.
@@ -57,7 +57,7 @@ The latest matched retained production-bake replay is in `build/exercise_motion/
 
 **Relevant coverage/tools:** `tests/test_candidate_fit_session.py`, `tests/test_source_cycle_proposals.py`, `tests/test_controlled_motion.py`; `scripts/replay_controlled_motion_fit.py`, `scripts/replay_trajectory_fit.py`, `scripts/replay_baked_preview.py`.
 
-- [ ] Audit existing attempt/subphase reports and exact input identities. Separate anatomy/support initialization, residual/Jacobian computation, optimizer evaluations, final checks and repair. Check existing source/anatomy caches before proposing another cache.
+- [x] Audit existing attempt/subphase reports and exact input identities. Separate anatomy/support initialization, residual/Jacobian computation, optimizer evaluations, final checks and repair. Check existing source/anatomy caches before proposing another cache.
 - [ ] Choose the largest proven repeated computation whose inputs and policy identities match across attempts. Reuse only that computation in the shared production owner. Different crops, source bindings, contacts or budgets must invalidate reuse where they affect the result.
 - [ ] If no reusable work is demonstrated, inspect which subphase dominates and select one specific algorithmic optimization there. Do not start a collection of solver settings sweeps.
 - [ ] Only if evidence shows a poor cycle attempt consumes time without progress, consider a bounded progress-based exit or narrower first-attempt budget. Preserve the retained-interval fallback and a passing source-cycle control. Current source preflight and endpoint gap alone do not justify skipping a fit.
@@ -82,11 +82,11 @@ The latest matched retained production-bake replay is in `build/exercise_motion/
 
 ### 3. Reconstruction startup amortization
 
-**Priority:** 53.899–108.102s measured startup versus only 2.441–3.838s reported prediction work across the pair. Prediction is only a subset of reconstruction; this does not mean all remaining reconstruction time is removable.
+**Priority:** 53.899â€“108.102s measured startup versus only 2.441â€“3.838s reported prediction work across the pair. Prediction is only a subset of reconstruction; this does not mean all remaining reconstruction time is removable.
 
 **Owners:** `wham_runner.py::ensure_warm_worker_ready`, `run_wham_with_warm_worker`; `gvhmr_warm_worker.py`; production PowerShell worker lifecycle. Coverage: `tests/test_wham_warm_worker_recovery.py` and existing worker ownership checks.
 
-- [ ] Inspect retained lifecycle events: container/process startup, import, checkpoint load, readiness, GPU acquisition, shutdown and existing warm-worker reuse. Determine whether the next request/wave can actually reuse this worker under exclusive GPU transitions.
+- [x] Inspect retained lifecycle events: container/process startup, import, checkpoint load, readiness, GPU acquisition, shutdown and existing warm-worker reuse. Determine whether the next request/wave can actually reuse this worker under exclusive GPU transitions.
 - [ ] Propose a change only for a demonstrated redundant startup/load or avoidable restart. Do not enable GPU co-residency or retain models that must release memory for review.
 
 **First experiment:** Initialization/readiness or loading-only replay with identical weights and lifecycle, followed by a second request to measure amortization. No full source pipeline. If output-affecting worker state changes, use one retained reconstruction and verify its downstream decisions before broader runs.
@@ -99,7 +99,7 @@ The latest matched retained production-bake replay is in `build/exercise_motion/
 
 **Owners:** Existing source/review question caches, vision-session lifecycle, `shared_llama_server.py`; `scripts/motion_speed_harness.py` supports serial `qwen-full` / `qwen-shared` arms.
 
-- [ ] Compare retained request identities and lifecycle events: exact images, prompts, contract, interval, model and policy. Distinguish independent evidence questions from exact duplicates.
+- [x] Compare retained request identities and lifecycle events: exact images, prompts, contract, interval, model and policy. Distinguish independent evidence questions from exact duplicates.
 - [ ] Fix only proven duplicate submissions or missing safe cache/coalescing reuse. Preserve source-semantic and final-render review requirements.
 - [ ] Consider serial shared-server ownership only if a retained lifecycle trace shows an avoidable restart compatible with exclusive GPU handoff. Multi-wave overlap is a separate architectural change and is deferred.
 
@@ -137,3 +137,12 @@ No new browser worker-count or frame-batch sweep is scheduled. Revisit after lar
 - Maintain one short result per hypothesis: keep, reject or inconclusive, with evidence paths. No new full run to compensate for unexplained rejection; no repeated passing checks without changed evidence.
 - Advance to the next ranked area when the current hypothesis is decided or its removable margin cannot be demonstrated. Reorder only when new evidence changes the expected value.
 - Update the short handoff and commit only qualified changes. The broad goal remains unfinished until representative fresh quality and timing evidence satisfies it.
+
+## Execution evidence — 2026-10-08
+
+- Six bounded independent source/evidence audits completed. Exact crop/full-fit reuse is already implemented. Each retained wave already reuses one loaded reconstruction worker for two requests; exclusive final VLM handoff requires release. Review traces prove no duplicate requests or avoidable restart; per-call identity evidence is incomplete. Defer startup/review experiments.
+- One fit callback profile exposed redundant `np.unique` over sparse dependency row IDs immediately before a same-value Boolean scatter. Removing deduplication preserves the mask for repeated/unsorted/empty indices. This is generic production fitting work, with no changed objectives/gates/settings.
+- Retained117-frame mask A/B/B/A: baseline2.840/2.849s; candidate0.604/0.487s; every mask identical. This cost is incurred while populating the first-Jacobian mask cache, not on every later Jacobian evaluation.
+- Complete Jacobian shape123363x7371:1,518,061 stored values; exact sparse difference zero. Profiled callback4.603s baseline/2.571s candidate is a single pair; use the balanced mask microbenchmark for repeatability evidence, not a claim of repeatable full-fit speed.
+- Owning Jacobian and deadline tests:2 passed; production Python compilation and independent scoped review passed. Source input SHA256 and raw reports are in `build/exercise_motion/diagnostics/throughput_execution_20261008/` alongside `progress.md`.
+- Change remains in isolated branch `experiment/motion-fit-throughput-20261008`; default promotion awaits representative accepted production-rendered/package comparisons. No generation/model calls occurred. Next: smallest matched production fit/bake comparison using qualified retained input, including OHP control; expand only for an exposed family risk. Do not rerun unchanged audits or microbenchmarks.
