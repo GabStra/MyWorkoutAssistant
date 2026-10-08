@@ -24,6 +24,25 @@ Updated 2026-10-08. This replaces the earlier throughput experiment sequence.
 - Use RDL + OHP for iteration. Broader exercise reliability requires the risk-based family qualification below.
 - Reuse existing tests. Add one focused regression only for an uncovered concrete defect/risk; run the smallest owning subset and compile edited Python once per combined change. Commit qualified production changes.
 
+## Current decision after parallel audits — 2026-10-08
+
+**Do not launch another timing experiment yet.** The remaining audited areas do not have both proven removable work and a retained replay that can measure a usable-output gain:
+
+- Controlled fitting is still expensive, but there is no exact accepted pre-fit capture or predictive signal that justifies skipping/reordering attempts. The sparse-mask micro-optimization did not improve completed-fit time repeatably.
+- The bounded scheduling pair found no material RDL wall-time penalty, and its CPU work differed. Reconstruction already reused one worker across two requests before the required GPU handoff. No exact duplicate review request or repeated browser/source decode was established.
+- Source-yield changes are unsupported: the same RDL source passed source preparation in both retained arms; A rejected later during bake/finalization while B selected it. Do not relax source gates or run a source-yield A/B on these fixtures.
+- The only quantified remaining optimization is the production foot-landmark cache transfer: 2.165–3.476s saved in the deterministic acceptance stage on retained OHP/RDL inputs. It is already in production. The A/B did not execute the actual selection caller or verify package lineage/playback, and the original candidate review videos are pruned. Do not repeat the cache A/B or present it as end-to-end throughput.
+
+The Floor Press two-scale artifact exposed a genuine historical fail-open: its saved aggregate passed despite contradictory evidence and a failed evidence-consistency gate. Current `bake_and_rank.py` includes the fix from `5750980f`, which adds those consistency failures to aggregate rejection reasons. The saved artifact predates that code, and its source still does not establish required rack setup use. Treat this as a source-qualification gap, not as a performance opportunity or a qualified family fixture.
+
+**Next work, in order:**
+
+1. **Completed:** `python -m pytest tests/test_two_scale_source_validation.py -k test_source_aggregate_honors_consistency_claims_and_routes_unknown_as_incomplete -q` passed (6 cases). It exercises the current aggregate with contradictory Floor Press identity/equipment/completeness evidence and requires rejection, without model calls. The persisted historical report itself was not replayed. Do not rerun source review or generation; this check does not qualify the ambiguous Floor Press clip.
+2. Keep the timing queue empty until a specific retained production artifact identifies avoidable finalization work, or an exact caller-to-acceptance replay can exercise the cache-transfer branch with pinned inputs. Such a replay must include the transfer cost and preserve gate decisions; it still cannot claim package/playback parity without those artifacts.
+3. If no exact fixture can answer the selected hypothesis, defer it. Do not spend a full generation run solely to recreate pruned review videos or to repeat already-settled audits. Reassess on the next naturally available source-qualified production output.
+
+The active goal remains in progress. These stop conditions are intentional: no current evidence supports a safe broad throughput change, and the remaining family matrix cannot be qualified from retained artifacts alone.
+
 ## Evidence and realistic improvement margin
 
 Retained run roots: `build/exercise_motion/speed-harness/20261008-121537-bc560935/` (A) and `build/exercise_motion/speed-harness/20261008-122851-cb085986/` (B). Values below come from their `results.json` and A's RDL checkpoint.
@@ -175,7 +194,7 @@ No new browser worker-count or frame-batch sweep is scheduled. Revisit after lar
 - Choose a new performance hypothesis only when retained evidence shows removable work or a concrete algorithmic mechanism. Record input hashes, intended change, skipped stages, metric, decision rule and runtime cap before launching it.
 - Keep each timing comparison sequential and bounded as above. If its budget cannot discriminate a gain, report the limit instead of expanding it automatically.
 - Maintain one short result per hypothesis: keep, reject or inconclusive, with evidence paths. No new full run to compensate for unexplained rejection; no repeated passing checks without changed evidence.
-- Advance to the next ranked area now that the cache hypothesis is decided. Continue only if retained evidence supports a specific bounded test with a discriminating metric and cap; do not repeat this A/B or launch full generation for the cache-only change.
+- The parallel audit found no next timing experiment that meets the evidence/cap criteria. First complete the deterministic source-consistency regression above; keep timing work deferred until an exact production artifact opens a discriminating test.
 - Update the short handoff and commit only qualified changes. The broad goal remains unfinished until representative fresh quality and timing evidence satisfies it.
 
 ## Execution evidence — 2026-10-08
