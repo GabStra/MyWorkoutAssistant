@@ -58,8 +58,8 @@ The latest matched retained production-bake replay is in `build/exercise_motion/
 **Relevant coverage/tools:** `tests/test_candidate_fit_session.py`, `tests/test_source_cycle_proposals.py`, `tests/test_controlled_motion.py`; `scripts/replay_controlled_motion_fit.py`, `scripts/replay_trajectory_fit.py`, `scripts/replay_baked_preview.py`.
 
 - [x] Audit existing attempt/subphase reports and exact input identities. Separate anatomy/support initialization, residual/Jacobian computation, optimizer evaluations, final checks and repair. Check existing source/anatomy caches before proposing another cache.
-- [ ] Choose the largest proven repeated computation whose inputs and policy identities match across attempts. Reuse only that computation in the shared production owner. Different crops, source bindings, contacts or budgets must invalidate reuse where they affect the result.
-- [ ] If no reusable work is demonstrated, inspect which subphase dominates and select one specific algorithmic optimization there. Do not start a collection of solver settings sweeps.
+- [x] Choose the largest proven repeated computation whose inputs and policy identities match across attempts. No uncached reuse across distinct RDL crop/full inputs was found; exact masks were the measured repeat work. Reuse only that computation in the shared production owner. Different crops, source bindings, contacts or budgets must invalidate reuse where they affect the result.
+- [x] If no reusable work is demonstrated, inspect which subphase dominates and select one specific algorithmic optimization there. Do not start a collection of solver settings sweeps.
 - [ ] Only if evidence shows a poor cycle attempt consumes time without progress, consider a bounded progress-based exit or narrower first-attempt budget. Preserve the retained-interval fallback and a passing source-cycle control. Current source preflight and endpoint gap alone do not justify skipping a fit.
 
 **First experiment after review:** One retained-input baseline/candidate pair at the chosen subphase, with identical evaluation/budget policy. No discovery, VLM, reconstruction or unrelated render. If promising, run one reverse-order pair plus a passing source-cycle/OHP control. At most four timing runs for the primary input before a decision; no automatic retry.
@@ -82,7 +82,7 @@ The latest matched retained production-bake replay is in `build/exercise_motion/
 
 ### 3. Reconstruction startup amortization
 
-**Priority:** 53.899â€“108.102s measured startup versus only 2.441â€“3.838s reported prediction work across the pair. Prediction is only a subset of reconstruction; this does not mean all remaining reconstruction time is removable.
+**Priority:** 53.899-108.102s measured startup versus only 2.441â€“3.838s reported prediction work across the pair. Prediction is only a subset of reconstruction; this does not mean all remaining reconstruction time is removable.
 
 **Owners:** `wham_runner.py::ensure_warm_worker_ready`, `run_wham_with_warm_worker`; `gvhmr_warm_worker.py`; production PowerShell worker lifecycle. Coverage: `tests/test_wham_warm_worker_recovery.py` and existing worker ownership checks.
 
@@ -146,3 +146,12 @@ No new browser worker-count or frame-batch sweep is scheduled. Revisit after lar
 - Complete Jacobian shape123363x7371:1,518,061 stored values; exact sparse difference zero. Profiled callback4.603s baseline/2.571s candidate is a single pair; use the balanced mask microbenchmark for repeatability evidence, not a claim of repeatable full-fit speed.
 - Owning Jacobian and deadline tests:2 passed; production Python compilation and independent scoped review passed. Source input SHA256 and raw reports are in `build/exercise_motion/diagnostics/throughput_execution_20261008/` alongside `progress.md`.
 - Change remains in isolated branch `experiment/motion-fit-throughput-20261008`; default promotion awaits representative accepted production-rendered/package comparisons. No generation/model calls occurred. Next: smallest matched production fit/bake comparison using qualified retained input, including OHP control; expand only for an exposed family risk. Do not rerun unchanged audits or microbenchmarks.
+
+
+### Controlled-fit optimization check - retained RDL, 2026-10-08
+
+The isolated branch `experiment/motion-fit-throughput-20261008` contains commit `ff857564`, which removes `np.unique` before a Boolean mask scatter in `hybrid_jacobian.pattern_joint_support`. The mask construction A/B/B/A preserved all three real RDL row masks and measured 2.840/2.849 seconds with deduplication versus 0.604/0.487 seconds without it. One complete profiled Jacobian measured 4.603 versus2.571 seconds; sparse matrix output matched exactly at1,518,061 values.
+
+A four-run baseline/candidate/candidate/baseline fit comparison then used the same retained117-frame RDL input, the production CUDA interpreter and180-second fit limits. Every fit applied and passed all controlled-motion checks; all four output pose digests were identical. Mean reported fit time was61.327s baseline versus62.643s candidate (candidate +1.317s); mean launcher wall was63.588 versus64.895s. The per-pair direction reversed with run order. This shows timing is within larger run-to-run variation and does **not** establish a full-fit throughput improvement. Input/report: `build/exercise_motion/diagnostics/throughput_execution_20261008/retained_fit_ab_summary.json`.
+
+The retained diagnostic input's source-cycle proposal was rejected as `selected_source_interval_source_evidence_incomplete`; the retained full interval passed. It has no complete source-captured/package lineage. This experiment qualifies controlled-fit check/output parity only. Do not promote the change to master or claim usable end-to-end throughput from it. The source change remains isolated for later disposition; don't repeat this four-run experiment.
