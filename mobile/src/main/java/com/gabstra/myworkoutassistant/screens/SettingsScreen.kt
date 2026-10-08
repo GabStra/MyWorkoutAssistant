@@ -56,6 +56,7 @@ import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.getHistoricalRestingHeartRateFromHealthConnect
+import com.gabstra.myworkoutassistant.getHistoricalVo2MaxFromHealthConnect
 import com.gabstra.myworkoutassistant.insights.LiteRtLmBackendPreference
 import com.gabstra.myworkoutassistant.insights.RemoteOpenAiConfig
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsMode
@@ -70,6 +71,7 @@ import com.gabstra.myworkoutassistant.shared.getEffectiveRestingHeartRate
 import com.gabstra.myworkoutassistant.shared.getMaxHeartRate
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.time.LocalDate
 import java.util.Calendar
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -139,6 +141,12 @@ fun SettingsScreen(
     val workoutInsightsCustomInstructionsState = remember { mutableStateOf(workoutInsightsCustomInstructions) }
 
     var isLoadingRestingHeartRate by remember { mutableStateOf(false) }
+    var isLoadingVo2Max by remember { mutableStateOf(false) }
+    // true = female, false = male, null = not set (calorie-engine semantics)
+    val sexState = remember { mutableStateOf(workoutStore.sex) }
+    val vo2MaxState = remember {
+        mutableStateOf(workoutStore.estimatedVo2MaxMlKgMin?.toString() ?: "")
+    }
     val currentYear = remember { Calendar.getInstance().get(Calendar.YEAR) }
     val fallbackBirthYear = birthDateYearState.value.toIntOrNull()
     val fallbackAge = fallbackBirthYear?.let { year ->
@@ -150,6 +158,19 @@ fun SettingsScreen(
         val startedAt = System.currentTimeMillis()
         return try {
             getHistoricalRestingHeartRateFromHealthConnect(healthConnectClient)
+        } finally {
+            val elapsed = System.currentTimeMillis() - startedAt
+            val remaining = 1000L - elapsed
+            if (remaining > 0L) {
+                delay(remaining)
+            }
+        }
+    }
+
+    suspend fun loadVo2MaxWithMinimumLoadingTime(): Double? {
+        val startedAt = System.currentTimeMillis()
+        return try {
+            getHistoricalVo2MaxFromHealthConnect(healthConnectClient)
         } finally {
             val elapsed = System.currentTimeMillis() - startedAt
             val remaining = 1000L - elapsed
@@ -174,6 +195,22 @@ fun SettingsScreen(
                 restingHeartRateState.value = defaultRestingHeartRate.toString()
             } finally {
                 isLoadingRestingHeartRate = false
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        if (workoutStore.estimatedVo2MaxMlKgMin == null && vo2MaxState.value.isBlank()) {
+            isLoadingVo2Max = true
+            try {
+                val historicalVo2Max = loadVo2MaxWithMinimumLoadingTime()
+                if (historicalVo2Max != null) {
+                    vo2MaxState.value = historicalVo2Max.toString()
+                }
+            } catch (_: Exception) {
+                // leave the field blank; the manual button and Save remain available
+            } finally {
+                isLoadingVo2Max = false
             }
         }
     }
@@ -259,6 +296,32 @@ fun SettingsScreen(
                             .fillMaxWidth()
                             .padding(vertical = Spacing.xs)
                     )
+
+                    ContentSubtitle(
+                        text = "Sex (used for calorie estimates; leave unset for an averaged estimate).",
+                        modifier = Modifier.padding(vertical = Spacing.xs)
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = Spacing.xs),
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+                    ) {
+                        AppPrimaryOutlinedButton(
+                            text = if (sexState.value == true) "Female ✓" else "Female",
+                            onClick = {
+                                sexState.value = if (sexState.value == true) null else true
+                            },
+                            modifier = Modifier.weight(1f)
+                        )
+                        AppPrimaryOutlinedButton(
+                            text = if (sexState.value == false) "Male ✓" else "Male",
+                            onClick = {
+                                sexState.value = if (sexState.value == false) null else false
+                            },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                 }
             }
             Spacer(modifier = Modifier.height(Spacing.sm))
@@ -342,6 +405,68 @@ fun SettingsScreen(
                                     ).show()
                                 } finally {
                                     isLoadingRestingHeartRate = false
+                                }
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = Spacing.xs)
+                    )
+
+                    OutlinedTextField(
+                        value = vo2MaxState.value,
+                        onValueChange = { input ->
+                            if (input.isEmpty() || (input.count { it == '.' } <= 1 && input.all { it.isDigit() || it == '.' } && !input.startsWith("."))) {
+                                vo2MaxState.value = input
+                            }
+                        },
+                        label = { Text("VO2max (ml/kg/min, optional)") },
+                        keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = Spacing.xs)
+                    )
+                    ContentSubtitle(
+                        text = "Sharpens calorie estimates (from a lab test, another device, or Health Connect). Leave blank to use the standard formula.",
+                        modifier = Modifier.padding(vertical = Spacing.xs)
+                    )
+
+                    AppPrimaryOutlinedButton(
+                        text = if (isLoadingVo2Max) {
+                            "Loading VO2max..."
+                        } else {
+                            "Use Health Connect VO2max"
+                        },
+                        onClick = {
+                            if (isLoadingVo2Max) {
+                                return@AppPrimaryOutlinedButton
+                            }
+                            coroutineScope.launch {
+                                isLoadingVo2Max = true
+                                try {
+                                    val historicalVo2Max = loadVo2MaxWithMinimumLoadingTime()
+                                    if (historicalVo2Max != null) {
+                                        vo2MaxState.value = historicalVo2Max.toString()
+                                        Toast.makeText(
+                                            context,
+                                            "VO2max loaded from Health Connect.",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    } else {
+                                        Toast.makeText(
+                                            context,
+                                            "No VO2max was found in Health Connect.",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                } catch (_: Exception) {
+                                    Toast.makeText(
+                                        context,
+                                        "Couldn't read VO2max from Health Connect.",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                } finally {
+                                    isLoadingVo2Max = false
                                 }
                             }
                         },
@@ -733,6 +858,25 @@ fun SettingsScreen(
                             Toast.makeText(context, "Enter a valid resting heart rate.", Toast.LENGTH_SHORT).show()
                             return@AppPrimaryButton
                         }
+
+                        val vo2Max = vo2MaxState.value.toDoubleOrNull()
+                        if (vo2MaxState.value.isNotBlank() &&
+                            (vo2Max == null || vo2Max !in 10.0..95.0)
+                        ) {
+                            Toast.makeText(context, "Enter a valid VO2max between 10 and 95.", Toast.LENGTH_SHORT).show()
+                            return@AppPrimaryButton
+                        }
+                        val vo2MaxChanged = vo2Max != workoutStore.estimatedVo2MaxMlKgMin
+                        val newVo2MaxSource = when {
+                            vo2Max == null -> null
+                            vo2MaxChanged -> "USER"
+                            else -> workoutStore.vo2MaxSource
+                        }
+                        val newVo2MaxEstimatedAtEpochDay = when {
+                            vo2Max == null -> null
+                            vo2MaxChanged -> LocalDate.now().toEpochDay()
+                            else -> workoutStore.vo2MaxEstimatedAtEpochDay
+                        }
                         val deloadFailedSessionsThreshold =
                             deloadFailedSessionsThresholdState.value.toIntOrNull()
                         if (deloadFailedSessionsThresholdState.value.isNotBlank() &&
@@ -803,6 +947,10 @@ fun SettingsScreen(
                             ),
                             measuredMaxHeartRate = measuredMaxHeartRate,
                             restingHeartRate = restingHeartRate,
+                            sex = sexState.value,
+                            estimatedVo2MaxMlKgMin = vo2Max,
+                            vo2MaxSource = newVo2MaxSource,
+                            vo2MaxEstimatedAtEpochDay = newVo2MaxEstimatedAtEpochDay,
                             distanceUnit = distanceUnitState.value
                         )
                         onSaveInsightsSettings(

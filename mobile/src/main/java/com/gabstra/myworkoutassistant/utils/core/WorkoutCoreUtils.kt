@@ -44,6 +44,7 @@ import androidx.health.connect.client.records.HeartRateRecord
 import androidx.health.connect.client.records.RestingHeartRateRecord
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.TotalCaloriesBurnedRecord
+import androidx.health.connect.client.records.Vo2MaxRecord
 import androidx.health.connect.client.records.metadata.Device
 import androidx.health.connect.client.records.metadata.Metadata
 import androidx.health.connect.client.units.Energy
@@ -59,7 +60,11 @@ import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
+import com.gabstra.myworkoutassistant.shared.getEffectiveMaxHeartRate
+import com.gabstra.myworkoutassistant.shared.getEffectiveRestingHeartRate
 import com.gabstra.myworkoutassistant.shared.utils.estimateCaloriesKcal
+import com.gabstra.myworkoutassistant.shared.utils.estimateVo2MaxFromRestingHr
+import com.gabstra.myworkoutassistant.shared.utils.estimateVo2MaxFromRun
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutPlan
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
@@ -405,6 +410,114 @@ suspend fun deleteWorkoutHistoriesFromHealthConnect(
         TotalCaloriesBurnedRecord::class,
         clientRecordIdsList = workoutHistories.map { it.id.toString() },
         recordIdsList = emptyList()
+    )
+}
+
+/**
+ * Median VO2max (mL/kg/min) from Health Connect records of the last [lookbackDays]
+ * days, or null when nothing usable is readable. Mirrors the resting-HR reader:
+ * requires the READ_VO2_MAX permission and ignores absent/out-of-range values.
+ */
+suspend fun getHistoricalVo2MaxFromHealthConnect(
+    healthConnectClient: HealthConnectClient,
+    lookbackDays: Long = 60
+): Double? {
+    val vo2MaxPermission = HealthPermission.getReadPermission(Vo2MaxRecord::class)
+    val grantedPermissions = healthConnectClient.permissionController.getGrantedPermissions()
+    if (!grantedPermissions.contains(vo2MaxPermission)) {
+        return null
+    }
+
+    val endTime = Instant.now()
+    val response = try {
+        healthConnectClient.readRecords(
+            ReadRecordsRequest(
+                recordType = Vo2MaxRecord::class,
+                timeRangeFilter = TimeRangeFilter.between(
+                    endTime.minus(Duration.ofDays(lookbackDays)),
+                    endTime
+                )
+            )
+        )
+    } catch (exception: Exception) {
+        Log.e("WorkoutCoreUtils", "Failed reading VO2max from Health Connect", exception)
+        return null
+    }
+
+    val values = response.records
+        .map { it.vo2MillilitersPerMinuteKilogram }
+        .filter { it in 10.0..95.0 }
+    if (values.isEmpty()) {
+        return null
+    }
+    val sorted = values.sorted()
+    val median = sorted[sorted.size / 2]
+    return (median * 10).roundToInt() / 10.0
+}
+
+/**
+ * Median run-based VO2max estimate over completed workout histories of the last
+ * [lookbackDays] days, or null when no run qualifies. Hyrox-style WOD runs already
+ * persist RunningResult(distance, duration, avgHR), so this accumulates for free.
+ */
+fun estimateVo2MaxFromRecentRuns(
+    workoutHistories: List<WorkoutHistory>,
+    maxHeartRateBpm: Int,
+    lookbackDays: Long = 90,
+): Double? {
+    val cutoff = LocalDate.now().minusDays(lookbackDays)
+    val estimates = workoutHistories.asSequence()
+        .filter { it.date >= cutoff }
+        .flatMap { it.runningResults }
+        .mapNotNull { estimateVo2MaxFromRun(it, maxHeartRateBpm) }
+        .sorted()
+        .toList()
+    if (estimates.isEmpty()) {
+        return null
+    }
+    return estimates[estimates.size / 2]
+}
+
+/** VO2max source ranks stored on the workout store; USER > HEALTH > RUN > RESTING. */
+private val VO2MAX_SOURCE_RANK = mapOf("USER" to 3, "HEALTH" to 2, "RUN" to 1, "RESTING" to 0)
+
+/**
+ * Computes the next persisted VO2max (run-based median preferred, resting-HR
+ * fallback) under the source ranking, and returns an updated store copy — or null
+ * when nothing should change (same value, or the current source outranks the new
+ * estimate: a manual or Health Connect value is never overwritten automatically).
+ */
+fun refreshVo2MaxEstimate(
+    workoutStore: WorkoutStore,
+    userAge: Int,
+    runEstimate: Double?,
+): WorkoutStore? {
+    val effectiveHrMax = getEffectiveMaxHeartRate(userAge, workoutStore.measuredMaxHeartRate)
+    val restingEstimate = estimateVo2MaxFromRestingHr(
+        effectiveHrMax,
+        getEffectiveRestingHeartRate(workoutStore.restingHeartRate),
+    )
+    val candidate = runEstimate ?: restingEstimate ?: return null
+    val candidateSource = if (runEstimate != null) "RUN" else "RESTING"
+
+    val current = workoutStore.estimatedVo2MaxMlKgMin
+        ?.takeIf { it in 15.0..90.0 }
+    val currentSource = workoutStore.vo2MaxSource
+        ?.takeIf { VO2MAX_SOURCE_RANK.containsKey(it) }
+    if (current != null && currentSource != null &&
+        VO2MAX_SOURCE_RANK[currentSource]!! > VO2MAX_SOURCE_RANK[candidateSource]!!
+    ) {
+        return null
+    }
+    if (current != null && currentSource == candidateSource &&
+        kotlin.math.abs(candidate - current) < 0.1
+    ) {
+        return null
+    }
+    return workoutStore.copy(
+        estimatedVo2MaxMlKgMin = candidate,
+        vo2MaxSource = candidateSource,
+        vo2MaxEstimatedAtEpochDay = LocalDate.now().toEpochDay(),
     )
 }
 

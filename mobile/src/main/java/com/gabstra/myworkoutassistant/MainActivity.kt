@@ -56,6 +56,7 @@ import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.ExerciseSessionRecord
 import androidx.health.connect.client.records.HeartRateRecord
 import androidx.health.connect.client.records.RestingHeartRateRecord
+import androidx.health.connect.client.records.Vo2MaxRecord
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.TotalCaloriesBurnedRecord
 import androidx.health.connect.client.records.WeightRecord
@@ -412,6 +413,7 @@ fun MyWorkoutAssistantNavHost(
             HealthPermission.getReadPermission(ExerciseSessionRecord::class),
             HealthPermission.getReadPermission(HeartRateRecord::class),
             HealthPermission.getReadPermission(RestingHeartRateRecord::class),
+            HealthPermission.getReadPermission(Vo2MaxRecord::class),
             HealthPermission.getWritePermission(TotalCaloriesBurnedRecord::class),
             HealthPermission.getWritePermission(WeightRecord::class),
             HealthPermission.getReadPermission(SleepSessionRecord::class),

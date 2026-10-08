@@ -10,6 +10,7 @@ import androidx.health.connect.client.HealthConnectClient
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreValidationException
+import com.gabstra.myworkoutassistant.shared.getEffectiveMaxHeartRate
 import com.gabstra.myworkoutassistant.shared.validateWorkoutStoreForRuntimeUse
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import kotlinx.coroutines.CoroutineScope
@@ -67,11 +68,11 @@ internal class MobileDataLayerReceiver(
             workoutViewModel.applyExternalSyncWorkoutStore(workoutStore)
             appViewModel.triggerUpdate()
 
-            try {
-                val currentYear = Calendar.getInstance().get(Calendar.YEAR)
-                val latestWorkoutStore = workoutStoreRepository.getWorkoutStore()
-                val age = currentYear - latestWorkoutStore.birthDateYear
+            val currentYear = Calendar.getInstance().get(Calendar.YEAR)
+            val latestWorkoutStore = workoutStoreRepository.getWorkoutStore()
+            val age = currentYear - latestWorkoutStore.birthDateYear
 
+            try {
                 sendWorkoutsToHealthConnect(
                     healthConnectClient = healthConnectClient,
                     workouts = latestWorkoutStore.workouts,
@@ -85,6 +86,26 @@ internal class MobileDataLayerReceiver(
                 Log.e(
                     "MyWorkoutAssistant",
                     "Error sending workouts to HealthConnect",
+                    exception
+                )
+            }
+
+            try {
+                val histories = workoutHistoryDao.getAllWorkoutHistoriesByIsDone()
+                val effectiveHrMax = getEffectiveMaxHeartRate(
+                    age,
+                    latestWorkoutStore.measuredMaxHeartRate,
+                )
+                val runEstimate = estimateVo2MaxFromRecentRuns(histories, effectiveHrMax)
+                val updatedStore = refreshVo2MaxEstimate(latestWorkoutStore, age, runEstimate)
+                if (updatedStore != null) {
+                    workoutStoreRepository.saveWorkoutStore(updatedStore)
+                    appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore(), false)
+                }
+            } catch (exception: Exception) {
+                Log.e(
+                    "MyWorkoutAssistant",
+                    "Error refreshing the VO2max estimate",
                     exception
                 )
             }
