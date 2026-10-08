@@ -875,8 +875,11 @@ def run_staged_bake_wave(
 ) -> dict[str, Any]:
     wave_started = time.perf_counter()
     # Speculative post-WHAM bake/fit must not oversubscribe the shared CPU fit.
+    from .resource_budget import render_prefetch_enabled as is_render_prefetch_enabled
     from .resource_budget import render_prefetch_worker_limit
-    prefetch_workers = render_prefetch_worker_limit(len(items))
+    render_prefetch_enabled = is_render_prefetch_enabled()
+    render_prefetch_worker_count = render_prefetch_worker_limit(len(items))
+    active_render_prefetch_workers = render_prefetch_worker_count if render_prefetch_enabled else 0
     render_futures: dict[str, Any] = {}
     render_workspaces: dict[str, Path] = {}
     try:
@@ -887,13 +890,14 @@ def run_staged_bake_wave(
                 wave_id=wave_id,
                 progress=progress,
                 render_executor=render_executor,
-                render_prefetch_workers=prefetch_workers,
+                render_prefetch_workers=active_render_prefetch_workers,
+                render_prefetch_enabled=render_prefetch_enabled,
                 render_futures=render_futures,
                 render_workspaces=render_workspaces,
             )
         else:
             with ThreadPoolExecutor(
-                max_workers=prefetch_workers,
+                max_workers=render_prefetch_worker_count,
                 thread_name_prefix="motion-render-prefetch",
             ) as owned_render_executor:
                 report = _run_staged_bake_wave(
@@ -902,7 +906,8 @@ def run_staged_bake_wave(
                     wave_id=wave_id,
                     progress=progress,
                     render_executor=owned_render_executor,
-                    render_prefetch_workers=prefetch_workers,
+                    render_prefetch_workers=active_render_prefetch_workers,
+                    render_prefetch_enabled=render_prefetch_enabled,
                     render_futures=render_futures,
                     render_workspaces=render_workspaces,
                 )
@@ -1028,6 +1033,7 @@ def _run_staged_bake_wave(
     render_futures: dict[str, Any],
     render_workspaces: dict[str, Path],
     render_prefetch_workers: int | None = None,
+    render_prefetch_enabled: bool = True,
 ) -> dict[str, Any]:
     """Run one cache-first VLM -> WHAM -> VLM wave.
 
@@ -1067,7 +1073,11 @@ def _run_staged_bake_wave(
     started_at = time.perf_counter()
     metrics: dict[str, Any] = {
         "sourceValidationWorkers": 0,
-        "renderPrefetchWorkers": max(1, int(render_prefetch_workers or 1)),
+        "renderPrefetchWorkers": max(
+            0,
+            int(1 if render_prefetch_workers is None else render_prefetch_workers),
+        ),
+        "renderPrefetchEnabled": render_prefetch_enabled,
         "sourceAttemptEvents": [],
         "acceleratorTransitions": [],
         "phaseTimings": {},
@@ -1558,7 +1568,7 @@ def _run_staged_bake_wave(
                     # Once extraction is finished, speculative work cannot overlap
                     # it and finalization immediately abandons an unfinished bake.
                     # Let final processing own that bake from the start instead.
-                    if len(ready_sources) == 1 and any(
+                    if render_prefetch_enabled and len(ready_sources) == 1 and any(
                         not pending.done() for pending in future_items
                     ):
                         candidate_key = _candidate_key(candidate)

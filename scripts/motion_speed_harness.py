@@ -840,7 +840,8 @@ def run_arm(arm: str, arm_dir: Path, plan_json: Path, timeout_seconds: float,
             prefetch_workers: int = DEFAULT_PREFETCH_WORKERS,
             prefetch_queue_depth: int = DEFAULT_PREFETCH_QUEUE_DEPTH,
             source_frame_decode_cache: bool = False,
-            browser_frame_batch: bool = False) -> dict:
+            browser_frame_batch: bool = False,
+            render_prefetch: str = "on") -> dict:
     source_index = arm_dir / "source_outcome_index.json"
     if DEFAULT_SOURCE_OUTCOME_INDEX.is_file():
         shutil.copy2(DEFAULT_SOURCE_OUTCOME_INDEX, source_index)
@@ -884,6 +885,7 @@ def run_arm(arm: str, arm_dir: Path, plan_json: Path, timeout_seconds: float,
         "on" if source_frame_decode_cache else "off"
     )
     runner_environment["EXERCISE_MOTION_BROWSER_FRAME_BATCH"] = "on" if browser_frame_batch else "off"
+    runner_environment["EXERCISE_MOTION_RENDER_PREFETCH"] = render_prefetch
     process = subprocess.Popen(
         args,
         stdout=log_handle,
@@ -1512,6 +1514,7 @@ def extract_metrics(arm_result: dict) -> dict:
         "cpuPrefetchDuringBake": None,
         "prefetchWorkers": None,
         "prefetchQueueDepth": None,
+        "renderPrefetchEnabled": None,
         "acceptedMovementArtifacts": [],
         "acceptedMovementArtifactErrors": [],
         "sourceCutScorecardBackends": [],
@@ -1639,6 +1642,7 @@ def extract_metrics(arm_result: dict) -> dict:
             "renderPrefetchWorkers": m.get("renderPrefetchWorkers"),
             "generationCpuWorkers": m.get("generationCpuWorkers"),
             "cpuRenderPrefetch": m.get("cpuRenderPrefetch"),
+            "renderPrefetchEnabled": m.get("renderPrefetchEnabled"),
             "unidepthModelCache": m.get("unidepthModelCache"),
             "acceleratorTransitions": m.get("acceleratorTransitions"),
         })
@@ -1791,6 +1795,16 @@ def extract_metrics(arm_result: dict) -> dict:
             ]
             metrics["reconstructorWorkerStartups"] = len(startup_seconds)
             metrics["reconstructorWorkerStartupSeconds"] = sum(startup_seconds)
+    render_prefetch_observations = [
+        row.get("renderPrefetchEnabled")
+        for row in metrics["resourceMetricsByWave"]
+    ]
+    if (
+        render_prefetch_observations
+        and all(isinstance(value, bool) for value in render_prefetch_observations)
+        and len(set(render_prefetch_observations)) == 1
+    ):
+        metrics["renderPrefetchEnabled"] = render_prefetch_observations[0]
     return metrics
 
 
@@ -1801,6 +1815,7 @@ def effective_configuration_error(
     cpu_prefetch_during_bake: bool = True,
     prefetch_workers: int = DEFAULT_PREFETCH_WORKERS,
     prefetch_queue_depth: int = DEFAULT_PREFETCH_QUEUE_DEPTH,
+    render_prefetch_enabled: bool | None = None,
 ) -> str | None:
     expected = ARM_EFFECTIVE_SETTINGS.get(arm)
     if expected is None:
@@ -1831,6 +1846,13 @@ def effective_configuration_error(
         observed = metrics.get(key)
         if observed != value:
             return f"effective {key}={observed!r}, requested {value!r}"
+    if requested_wave_size > 0 and render_prefetch_enabled is not None:
+        observed = metrics.get("renderPrefetchEnabled")
+        if observed is not render_prefetch_enabled:
+            return (
+                f"effective renderPrefetchEnabled={observed!r}, "
+                f"requested {render_prefetch_enabled!r}"
+            )
     expected_high_water = expected["effectiveMaxConcurrentStagedWaves"]
     expected_high_water = expected_high_water if expected_staged_enabled else 0
     if metrics.get("overlapHighWater") != expected_high_water:
@@ -1925,6 +1947,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Disable CPU/network candidate prefetch for this measurement.",
     )
     parser.set_defaults(cpu_prefetch_during_bake=True)
+    parser.add_argument(
+        "--render-prefetch",
+        choices=("on", "off"),
+        default="on",
+        help="Enable or disable only speculative CPU render prefetch in staged waves.",
+    )
     parser.add_argument(
         "--prefetch-workers",
         type=_positive_int,
@@ -2101,6 +2129,7 @@ def main() -> None:
             prefetch_queue_depth=args.prefetch_queue_depth,
             source_frame_decode_cache=args.source_frame_decode_cache == "on",
             browser_frame_batch=args.browser_frame_batch == "on",
+            render_prefetch=args.render_prefetch,
         )
         arm_result.update(run_identity)
         arm_result["requestedConfiguration"] = {
@@ -2111,6 +2140,7 @@ def main() -> None:
             "prefetchQueueDepth": args.prefetch_queue_depth,
             "sourceFrameDecodeCache": args.source_frame_decode_cache,
             "browserFrameBatch": args.browser_frame_batch,
+            "renderPrefetch": args.render_prefetch,
             **ARM_BACKEND_SETTINGS[arm],
         }
         arm_result["cacheRoots"] = {
@@ -2142,6 +2172,7 @@ def main() -> None:
             cpu_prefetch_during_bake=args.cpu_prefetch_during_bake,
             prefetch_workers=args.prefetch_workers,
             prefetch_queue_depth=args.prefetch_queue_depth,
+            render_prefetch_enabled=args.render_prefetch == "on",
         )
         arm_result["effectiveConfigurationValid"] = config_error is None
         if config_error:

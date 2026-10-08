@@ -33,9 +33,19 @@ def test_staged_source_portfolio_allows_two_when_recon_budget_is_two():
     assert wave.staged_source_portfolio_size(dual, readiness) == 2
 
 
-@pytest.mark.parametrize('candidate_count', [1, 2])
-def test_render_prefetch_only_overlaps_unfinished_generation(tmp_path, monkeypatch, candidate_count):
+@pytest.mark.parametrize(
+    "candidate_count,render_prefetch_enabled,expected_prefetch",
+    [(1, True, []), (2, True, ["first"]), (1, False, []), (2, False, [])],
+)
+def test_render_prefetch_setting_controls_overlap_with_unfinished_generation(
+    tmp_path, monkeypatch, candidate_count, render_prefetch_enabled, expected_prefetch
+):
     from exercise_motion_pkg import resource_budget
+
+    monkeypatch.setenv(
+        "EXERCISE_MOTION_RENDER_PREFETCH",
+        "on" if render_prefetch_enabled else "off",
+    )
 
     class Session:
         def __init__(self, request): pass
@@ -49,6 +59,7 @@ def test_render_prefetch_only_overlaps_unfinished_generation(tmp_path, monkeypat
     monkeypatch.setattr(wave, 'first_attempt_readiness_assessment',
         lambda *a, **k: {'eligible': True, 'portfolioSize': 1})
     monkeypatch.setattr(resource_budget, 'staged_generation_cpu_workers', lambda: 2)
+    monkeypatch.setattr(resource_budget, 'render_prefetch_worker_limit', lambda ready_count: 1)
     items = [wave.StagedWaveItem(name, name, bake.BakeAndRankRequest(
         candidates_json=tmp_path / 'candidates.json', workspace=tmp_path / name,
         wham_repo_path=None, body_model_root=None, fallback_candidates=0,
@@ -65,7 +76,10 @@ def test_render_prefetch_only_overlaps_unfinished_generation(tmp_path, monkeypat
 
     def generate(candidate, **kwargs):
         if candidate.exercise_id == 'last':
-            assert prefetch_started.wait(3), 'earlier render did not overlap generation'
+            if render_prefetch_enabled:
+                assert prefetch_started.wait(3), 'earlier render did not overlap generation'
+            else:
+                assert not prefetch_started.wait(0.2), 'disabled render prefetch still started'
         return SimpleNamespace(wham_cache_status='generated', wham_results_pkl=None)
 
     def prefetch(item, candidate, result, contract):
@@ -83,14 +97,18 @@ def test_render_prefetch_only_overlaps_unfinished_generation(tmp_path, monkeypat
     monkeypatch.setattr(wave, 'prepare_cpu_render_cache', prefetch)
     monkeypatch.setattr(wave, 'run_bake_and_rank_pipeline', finalize)
     report = wave.run_staged_bake_wave(items, workspace=tmp_path / 'wave', wave_id='prefetch')
-    assert prefetched == (['first'] if candidate_count == 2 else [])
+    assert prefetched == expected_prefetch
     assert sorted(finalized) == sorted(candidates)
     assert report['completedExerciseCount'] == candidate_count
+    assert report['metrics']['renderPrefetchEnabled'] is render_prefetch_enabled
+    assert report['metrics']['renderPrefetchWorkers'] == (1 if render_prefetch_enabled else 0)
 
 
 def test_persistent_render_prefetch_is_drained_before_wave_returns(tmp_path, monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
     from exercise_motion_pkg import resource_budget
+
+    monkeypatch.setenv("EXERCISE_MOTION_RENDER_PREFETCH", "on")
 
     class Session:
         def __init__(self, request): pass

@@ -1,3 +1,5 @@
+import pytest
+
 from exercise_motion_pkg import resource_budget
 
 
@@ -32,3 +34,17 @@ def test_render_prefetch_workers_never_exceed_fit_slots(monkeypatch):
     assert resource_budget.render_prefetch_worker_limit(1) == 1
     monkeypatch.setattr(resource_budget, "logical_core_count", lambda: 8)
     assert resource_budget.render_prefetch_worker_limit(8) == 1
+
+
+def test_render_prefetch_environment_defaults_on_and_accepts_only_on_or_off(monkeypatch):
+    monkeypatch.delenv("EXERCISE_MOTION_RENDER_PREFETCH", raising=False)
+    assert resource_budget.render_prefetch_enabled() is True
+
+    monkeypatch.setenv("EXERCISE_MOTION_RENDER_PREFETCH", "off")
+    assert resource_budget.render_prefetch_enabled() is False
+    monkeypatch.setenv("EXERCISE_MOTION_RENDER_PREFETCH", "on")
+    assert resource_budget.render_prefetch_enabled() is True
+
+    monkeypatch.setenv("EXERCISE_MOTION_RENDER_PREFETCH", "sometimes")
+    with pytest.raises(ValueError, match="EXERCISE_MOTION_RENDER_PREFETCH"):
+        resource_budget.render_prefetch_enabled()

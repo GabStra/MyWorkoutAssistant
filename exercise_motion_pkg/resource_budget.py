@@ -11,6 +11,7 @@ CODING_HEADROOM_LOGICAL_CORES = 4
 # bounded host policy; its production throughput optimum has not been measured.
 DEFAULT_CPU_FIT_SLOTS = 4
 MACHINE_FIT_LANES_ENV_VAR = "EXERCISE_MOTION_MACHINE_FIT_LANES"
+RENDER_PREFETCH_ENV_VAR = "EXERCISE_MOTION_RENDER_PREFETCH"
 DEFAULT_BROWSER_WORKER_CAP = 4
 # Overlap WHAM CPU prep while the GPU lock still serializes extraction. Four
 # workers match the measured 4-lane fit pool: with three, one fit slot idles
@@ -75,6 +76,14 @@ def final_validation_worker_limit(configured_parallelism: int, ready_count: int)
 def render_prefetch_worker_limit(ready_count: int) -> int:
     """Speculative post-WHAM bake/fit prep shares the same CPU fit slots."""
     return min(max(1, int(cpu_fit_slot_limit())), max(1, int(ready_count)))
+
+
+def render_prefetch_enabled() -> bool:
+    """Return whether speculative render preparation is enabled for this process."""
+    setting = os.environ.get(RENDER_PREFETCH_ENV_VAR, "on").strip().casefold()
+    if setting not in {"on", "off"}:
+        raise ValueError(f"{RENDER_PREFETCH_ENV_VAR} must be 'on' or 'off'")
+    return setting == "on"
 
 
 def browser_worker_limit() -> int:

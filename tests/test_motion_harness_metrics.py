@@ -6,7 +6,7 @@ from pathlib import Path
 from scripts import motion_speed_harness
 
 
-def _write_wave_report(workspace, wave_id, cumulative_handoffs):
+def _write_wave_report(workspace, wave_id, cumulative_handoffs, render_prefetch_enabled=True):
     wave_dir = workspace / "staged-waves" / wave_id
     wave_dir.mkdir(parents=True)
     snapshot = {
@@ -18,6 +18,7 @@ def _write_wave_report(workspace, wave_id, cumulative_handoffs):
         "items": [],
         "metrics": {
             "phaseTimings": {},
+            "renderPrefetchEnabled": render_prefetch_enabled,
             "sourceVisionSession": {
                 "visionRankerStartupCount": 2,
                 "sharedVisionSession": snapshot,
@@ -42,6 +43,17 @@ def test_shared_session_cumulative_counters_are_not_summed_across_snapshots(tmp_
     assert metrics["sharedQuiesceCount"] == 5
     assert metrics["sharedRestartRequests"] == 5
     assert metrics["visionStartups"] == 6
+    assert metrics["renderPrefetchEnabled"] is True
+
+
+def test_extract_metrics_records_disabled_render_prefetch(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _write_wave_report(workspace, "wave-1", cumulative_handoffs=0, render_prefetch_enabled=False)
+
+    metrics = motion_speed_harness.extract_metrics({"workspace": str(workspace)})
+
+    assert metrics["renderPrefetchEnabled"] is False
 
 
 def test_metric_input_snapshot_excludes_later_waves_and_mutated_manifests(tmp_path):
@@ -238,6 +250,7 @@ def test_effective_configuration_requires_requested_wave_size_and_arm_settings()
         "overlapHighWater": 1,
         "stagedWaveWorkerMode": "workspace_scoped_persistent_serial_queue",
         "waves": 1,
+        "renderPrefetchEnabled": True,
         "cpuPrefetchDuringBake": True,
         "prefetchWorkers": 8,
         "prefetchQueueDepth": 40,
@@ -255,6 +268,9 @@ def test_effective_configuration_requires_requested_wave_size_and_arm_settings()
     )
     assert "stagedWaveSize=2" in motion_speed_harness.effective_configuration_error(
         "qwen-shared", metrics, 1
+    )
+    assert "renderPrefetchEnabled=True" in motion_speed_harness.effective_configuration_error(
+        "qwen-shared", metrics, 2, render_prefetch_enabled=False
     )
 
 
@@ -464,6 +480,7 @@ def test_parser_allows_zero_wave_size_and_prefetch_overrides_and_rejects_invalid
     parser = motion_speed_harness.build_argument_parser()
     defaults = parser.parse_args(["--arms", "qwen-full"])
     assert defaults.staged_wave_size == 8
+    assert defaults.render_prefetch == "on"
     assert defaults.cpu_prefetch_during_bake is True
     assert defaults.prefetch_workers == 8
     assert defaults.prefetch_queue_depth == 40
@@ -473,12 +490,13 @@ def test_parser_allows_zero_wave_size_and_prefetch_overrides_and_rejects_invalid
     overridden = parser.parse_args([
         "--arms", "qwen-full", "--staged-wave-size", "0",
         "--disable-cpu-prefetch", "--prefetch-workers", "3",
-        "--prefetch-queue-depth", "12",
+        "--prefetch-queue-depth", "12", "--render-prefetch", "off",
     ])
     assert overridden.staged_wave_size == 0
     assert overridden.cpu_prefetch_during_bake is False
     assert overridden.prefetch_workers == 3
     assert overridden.prefetch_queue_depth == 12
+    assert overridden.render_prefetch == "off"
 
     enabled_cache = parser.parse_args([
         "--arms", "qwen-full", "--source-frame-decode-cache", "on", "--browser-frame-batch", "on",
@@ -490,6 +508,7 @@ def test_parser_allows_zero_wave_size_and_prefetch_overrides_and_rejects_invalid
         ["--arms", "qwen-full", "--staged-wave-size", "-1"],
         ["--arms", "qwen-full", "--prefetch-workers", "0"],
         ["--arms", "qwen-full", "--prefetch-queue-depth", "0"],
+        ["--arms", "qwen-full", "--render-prefetch", "sometimes"],
     ):
         try:
             parser.parse_args(invalid_args)
