@@ -844,6 +844,8 @@ open class AppViewModel : WorkoutViewModel() {
             userAge = userAge.value,
             measuredMaxHeartRate = workoutStore.measuredMaxHeartRate,
             restingHeartRate = workoutStore.restingHeartRate,
+            userFemale = workoutStore.sex,
+            userVo2MaxMlKgMin = workoutStore.estimatedVo2MaxMlKgMin,
             startWorkoutTime = startWorkoutTime,
             enableDimming = enableDimming.value,
             keepScreenOn = keepScreenOn.value,

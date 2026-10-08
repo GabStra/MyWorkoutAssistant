@@ -1519,7 +1519,9 @@ fun MyWorkoutAssistantNavHost(
                                                 workoutHistoryDao = workoutHistoryDao,
                                                 updateAll = true,
                                                 age = age,
-                                                weightKg = weight
+                                                weightKg = weight,
+                                                female = appViewModel.workoutStore.sex,
+                                                vo2MaxMlKgMin = appViewModel.workoutStore.estimatedVo2MaxMlKgMin
                                             )
                                         }
                                         Toast.makeText(

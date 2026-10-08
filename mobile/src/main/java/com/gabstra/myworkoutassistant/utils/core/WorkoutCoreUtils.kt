@@ -59,6 +59,7 @@ import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
+import com.gabstra.myworkoutassistant.shared.utils.estimateCaloriesKcal
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutPlan
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
@@ -174,24 +175,35 @@ fun getOneRepMax(weight: Double, reps: Int): Double {
     return weight / (1.0278f - (0.0278f * reps))
 }
 
+/**
+ * Per-workout calorie estimate in kcal. Delegates to the shared VO2max-aware engine
+ * (estimateCaloriesKcal): Keytel coefficients when no VO2max is available, the
+ * oxygen-cost method when it is.
+ */
 fun calculateKiloCaloriesBurned(
     age: Int,
     weightKg: Double,
     averageHeartRate: Double,
     durationMinutes: Double,
-    isMale: Boolean
+    female: Boolean?,
+    vo2MaxMlKgMin: Double? = null,
+    maxHeartRateBpm: Int? = null,
+    restingHeartRateBpm: Int? = null,
 ): Double {
     if (age <= 0 || weightKg <= 0 || averageHeartRate <= 0 || durationMinutes <= 0) {
         return 0.0
     }
 
-    val caloriesBurned = if (isMale) {
-        (age * 0.2017) + (weightKg * 0.199) + (averageHeartRate * 0.6309) - 55.0969
-    } else {
-        (age * 0.074) - (weightKg * 0.05741) + (averageHeartRate * 0.4472) - 20.4022
-    }
-
-    return caloriesBurned * durationMinutes / 4.184
+    return estimateCaloriesKcal(
+        heartRateBpm = averageHeartRate.roundToInt(),
+        durationMillis = (durationMinutes * 60_000).toLong(),
+        weightKg = weightKg,
+        ageYears = age,
+        female = female,
+        vo2MaxMlKgMin = vo2MaxMlKgMin,
+        maxHeartRateBpm = maxHeartRateBpm,
+        restingHeartRateBpm = restingHeartRateBpm,
+    ).toDouble()
 }
 
 @SuppressLint("RestrictedApi")
@@ -202,6 +214,8 @@ suspend fun sendWorkoutsToHealthConnect(
     updateAll: Boolean = false,
     age: Int,
     weightKg: Double,
+    female: Boolean? = null,
+    vo2MaxMlKgMin: Double? = null,
 ) {
     if (workouts.isEmpty()) return
 
@@ -317,7 +331,8 @@ suspend fun sendWorkoutsToHealthConnect(
                     weightKg = weightKg,
                     averageHeartRate = avgHeartRate,
                     durationMinutes = durationMinutes,
-                    isMale = true
+                    female = female,
+                    vo2MaxMlKgMin = vo2MaxMlKgMin,
                 )
 
                 if(kiloCaloriesBurned <= 0) {

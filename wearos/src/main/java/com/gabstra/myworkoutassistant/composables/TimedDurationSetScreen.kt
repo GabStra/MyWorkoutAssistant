@@ -46,6 +46,7 @@ import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.buildTimedSetGoalLabel
+import com.gabstra.myworkoutassistant.shared.getEffectiveMaxHeartRate
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.utils.estimateCaloriesKcal
@@ -444,9 +445,22 @@ fun TimedDurationSetScreen(
         val latestHeartRate by viewModel.latestHeartRateBpm
         val ageYears by viewModel.userAge
         val weightKg by viewModel.bodyWeight
+        val screenProfile = viewModel.screenState.value
         val caloriesKcal = if (showCalories && latestHeartRate > 0) {
             val elapsedMillis = (currentSet.startTimer - displayMillis).coerceAtLeast(0)
-            estimateCaloriesKcal(latestHeartRate, elapsedMillis.toLong(), weightKg, ageYears)
+            estimateCaloriesKcal(
+                heartRateBpm = latestHeartRate,
+                durationMillis = elapsedMillis.toLong(),
+                weightKg = weightKg,
+                ageYears = ageYears,
+                female = screenProfile.userFemale,
+                vo2MaxMlKgMin = screenProfile.userVo2MaxMlKgMin,
+                maxHeartRateBpm = getEffectiveMaxHeartRate(
+                    screenProfile.userAge,
+                    screenProfile.measuredMaxHeartRate,
+                ),
+                restingHeartRateBpm = screenProfile.restingHeartRate,
+            )
         } else {
             0
         }

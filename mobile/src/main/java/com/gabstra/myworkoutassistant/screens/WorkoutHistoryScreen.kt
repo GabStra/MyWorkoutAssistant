@@ -541,7 +541,8 @@ fun WorkoutHistoryScreen(
                 weightKg = weightForKcal,
                 averageHeartRate = avgHeartRate,
                 durationMinutes = durationMinutes,
-                isMale = true
+                female = appViewModel.workoutStore.sex,
+                vo2MaxMlKgMin = appViewModel.workoutStore.estimatedVo2MaxMlKgMin
             )
 
             LoadedWorkoutHistoryContent(

@@ -23,6 +23,9 @@ data class WorkoutScreenState(
     val userAge: Int,
     val measuredMaxHeartRate: Int?,
     val restingHeartRate: Int?,
+    // true = female, false = male, null = unknown (calorie-engine semantics)
+    val userFemale: Boolean? = null,
+    val userVo2MaxMlKgMin: Double? = null,
     val startWorkoutTime: LocalDateTime?,
     val enableDimming: Boolean,
     val keepScreenOn: Boolean,

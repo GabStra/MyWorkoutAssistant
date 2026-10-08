@@ -77,7 +77,9 @@ internal class MobileDataLayerReceiver(
                     workouts = latestWorkoutStore.workouts,
                     workoutHistoryDao = workoutHistoryDao,
                     age = age,
-                    weightKg = latestWorkoutStore.weightKg
+                    weightKg = latestWorkoutStore.weightKg,
+                    female = latestWorkoutStore.sex,
+                    vo2MaxMlKgMin = latestWorkoutStore.estimatedVo2MaxMlKgMin
                 )
             } catch (exception: Exception) {
                 Log.e(
