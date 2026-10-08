@@ -59,9 +59,22 @@ def _load_json(path: Path) -> dict:
 def load_working_library(base_library: Path, accumulated_library: Path) -> tuple[dict, Path]:
     """Returns the accumulated library if present, else a copy of the base."""
     if accumulated_library.exists():
-        return _load_json(accumulated_library), accumulated_library
-    library = _load_json(base_library)
-    library.setdefault("exerciseMovements", [])
+        library = _load_json(accumulated_library)
+    else:
+        library = _load_json(base_library)
+        library.setdefault("exerciseMovements", [])
+    # Some pre-upgrade library entries store bodyWeightPercentage as a unit fraction,
+    # and 74 implement-assisted BODY_WEIGHT entries carry null; the runtime consumes
+    # percent and the workout contract requires a positive value, so normalize at the
+    # boundary: fractions scale to percent, null defaults to full-bodyweight semantics.
+    for definition in library.get("exerciseDefinitions", []):
+        if definition.get("exerciseType") != "BODY_WEIGHT":
+            continue
+        percentage = definition.get("bodyWeightPercentage")
+        if isinstance(percentage, (int, float)) and 0 < percentage <= 1.0:
+            definition["bodyWeightPercentage"] = percentage * 100
+        elif percentage is None:
+            definition["bodyWeightPercentage"] = 100.0
     return library, accumulated_library
 
 
@@ -86,7 +99,11 @@ def audit_missing_candidates(client, equipment, wod_text: str, working_library: 
         "WOD coverage audit. Today's WOD:\n"
         + wod_text
         + "\nReturn only the distinct movements performed in this WOD that are "
-        "missing from the existing inventory."
+        "missing from the existing inventory. Also include a new candidate when the "
+        "only existing inventory entry for a WOD movement is a poor match for how the "
+        "movement appears here (different implement, or an irrelevant variant such as "
+        "a weighted version of a bodyweight movement) - the candidate must be the more "
+        "appropriate version for this WOD."
     )
     candidates = _call_inventory(
         client,
@@ -165,6 +182,12 @@ def ensure_wod_coverage(
             if equipment["id"] not in existing_equipment_ids:
                 working_library.setdefault("equipments", []).append(equipment)
                 existing_equipment_ids.add(equipment["id"])
+
+        existing_accessory_ids = {a["id"] for a in working_library.get("accessoryEquipments", [])}
+        for accessory in generated.get("accessoryEquipments", []):
+            if accessory["id"] not in existing_accessory_ids:
+                working_library.setdefault("accessoryEquipments", []).append(accessory)
+                existing_accessory_ids.add(accessory["id"])
 
     working_library_path.parent.mkdir(parents=True, exist_ok=True)
     working_library_path.write_text(json.dumps(working_library, indent=2), encoding="utf-8")

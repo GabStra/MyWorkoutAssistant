@@ -45,20 +45,13 @@ def run(date_iso: str, entry, output: Path, base_library: Path, accumulated_libr
         catalog = json.load(handle)
     client = make_deepseek_client()
 
-    print("equipment pass: LLM decides missing equipment...")
-    missing_equipment = plan_missing_equipment(client, entry.text, catalog, call=_default_llm_call)
-    print(f"  missing equipment: {[i['name'] for i in missing_equipment] or 'none'}")
-    if missing_equipment:
-        catalog, added = extend_equipment_catalog(catalog, missing_equipment)
-        equipment_file.write_text(json.dumps(catalog, indent=2), encoding="utf-8")
-        print(f"  catalog extended with: {[e['name'] for e in added]}")
-    if dry_run:
-        return
-
+    # 1) exercise coverage first: the exercise generator's audit reads the WOD with
+    #    the library as existing inventory and creates what's missing - or a more
+    #    appropriate version when the existing entry is a poor match for the WOD.
     if skip_library_generation:
         print("skipping exercise coverage (--skip-library-generation)")
     else:
-        print("coverage pass: exercise generator audit creates missing definitions...")
+        print("coverage pass: exercise generator audit creates missing/improved definitions...")
         library, created = ensure_wod_coverage(
             client=client,
             wod_text=entry.text,
@@ -66,8 +59,44 @@ def run(date_iso: str, entry, output: Path, base_library: Path, accumulated_libr
             working_library_path=library_path,
             equipment_file=equipment_file,
         )
-        print(f"  created: {created or 'nothing — all covered'}")
+        print(f"  created/improved: {created or 'nothing — all covered'}")
 
+    # 2) equipment for those exercises: deterministic catalog check for everything the
+    #    library references, plus the LLM equipment pass on the WOD as catch-all.
+    referenced_equipment_ids = {
+        d["equipmentId"] for d in library.get("exerciseDefinitions", []) if d.get("equipmentId")
+    }
+    referenced_equipment_ids |= {
+        accessory_id
+        for d in library.get("exerciseDefinitions", [])
+        for accessory_id in d.get("requiredAccessoryEquipmentIds", [])
+    }
+    catalog_equipment_ids = {e["id"] for e in catalog.get("equipments", [])} | {
+        a["id"] for a in catalog.get("accessoryEquipments", [])
+    }
+    unmet_ids = referenced_equipment_ids - catalog_equipment_ids
+    if unmet_ids:
+        unmet_names = [
+            d["name"] for d in library.get("exerciseDefinitions", [])
+            if d.get("equipmentId") in unmet_ids
+            or any(a in unmet_ids for a in d.get("requiredAccessoryEquipmentIds", []))
+        ]
+        print(f"  equipment gap for: {unmet_names} - extending catalog via LLM")
+    missing_equipment = plan_missing_equipment(client, entry.text, catalog, call=_default_llm_call)
+    if unmet_ids or missing_equipment:
+        catalog, added = extend_equipment_catalog(catalog, missing_equipment)
+        equipment_file.write_text(json.dumps(catalog, indent=2), encoding="utf-8")
+        print(f"  catalog extended with: {[e['name'] for e in added] or list(unmet_ids)}")
+    else:
+        print("  equipment: catalog covers everything")
+
+    # 3) workout generation - a WOD is just a workout; the catalog is the equipment
+    #    source of truth (it supersets everything the library references).
+    if dry_run:
+        print("dry run: skipping workout generation")
+        return
+    library["equipments"] = catalog["equipments"]
+    library["accessoryEquipments"] = catalog["accessoryEquipments"]
     print("generating workout (LLM, strict library mode — a couple of minutes)...")
     package = generate_workout_package(entry.text, library)
     package = sanitize_package_name(package, date_iso)

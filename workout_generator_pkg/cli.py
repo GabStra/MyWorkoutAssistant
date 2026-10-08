@@ -1977,11 +1977,14 @@ def generate_index(
                 definition.get("name"),
                 definition.get("exerciseType"),
                 definition.get("equipmentId"),
+                definition.get("bodyWeightPercentage"),
             ] for definition in exercise_library]
             user_content += (
                 "Exercise library compact selection catalog. Each row is "
-                "[libraryDefinitionId,name,exerciseType,equipmentId]:\n"
+                "[libraryDefinitionId,name,exerciseType,equipmentId,bodyWeightPercentage]:\n"
                 f"{json.dumps(compact_library, separators=(',', ':'))}\n"
+                "For BODY_WEIGHT rows, copy bodyWeightPercentage verbatim into the plan "
+                "exercise (it is already in percentage form, e.g. 100.0).\n"
                 "The catalog is the sole allowed source of movements. Every planned exercise "
                 "must copy one listed libraryDefinitionId. Do not invent or infer a movement that "
                 "is absent from this catalog. The generator will resolve the selected ID to the "
