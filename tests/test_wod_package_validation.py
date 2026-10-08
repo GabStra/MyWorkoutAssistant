@@ -22,7 +22,14 @@ REPO = Path(__file__).resolve().parents[1]
 
 
 def _packages() -> list[str]:
-    return sorted(glob.glob(str(REPO / "workouts" / "wod_2*.json")))
+    wod = glob.glob(str(REPO / "workouts" / "wod_2*.json"))
+    # Generic-path outputs are slug-named (workout_pushdaya.json); skip legacy
+    # timestamped artifacts (workout_plan_*, workout_2026-*).
+    generic = [
+        p for p in glob.glob(str(REPO / "workouts" / "workout_*.json"))
+        if not Path(p).name.startswith(("workout_plan_", "workout_2"))
+    ]
+    return sorted(wod + generic)
 
 
 def _walk_exercises(components):
@@ -49,6 +56,20 @@ def _validate_package(package: dict) -> None:
     for workout in package["workouts"]:
         components = workout.get("workoutComponents", [])
         assert components, f"{name}: workout has no components"
+        for component in components:
+            if component.get("type") != "Superset":
+                continue
+            cap = component.get("timeCapSeconds")
+            cadence = component.get("roundDurationSeconds")
+            if cap is not None:
+                assert isinstance(cap, int) and cap > 0, f"{name}: superset cap must be positive, got {cap!r}"
+            if cadence is not None:
+                assert isinstance(cadence, int) and cadence > 0, (
+                    f"{name}: superset cadence must be positive, got {cadence!r}"
+                )
+            assert not (cap is not None and cadence is not None), (
+                f"{name}: superset cannot carry both timeCapSeconds and roundDurationSeconds"
+            )
         for component in _walk_exercises(components):
             label = f"{name}: exercise '{component.get('name')}'"
             definition = definitions.get(component.get("exerciseDefinitionId"))
@@ -83,6 +104,12 @@ def _validate_package(package: dict) -> None:
                 set_type = set_data.get("type")
                 if set_type in ("TimedDurationSet", "EnduranceSet"):
                     assert set_data.get("timeInMillis", 0) > 0, f"{label}: timed set with no duration"
+                    for target_field in ("targetDistanceMeters", "targetCalories"):
+                        target = set_data.get(target_field)
+                        if target is not None:
+                            assert isinstance(target, (int, float)) and target > 0, (
+                                f"{label}: {target_field} must be positive, got {target!r}"
+                            )
                 elif set_type == "WeightSet":
                     assert set_data.get("reps", 0) > 0, f"{label}: weight set with no reps"
                     assert set_data.get("weight", -1) >= 0, f"{label}: negative weight"
@@ -189,3 +216,36 @@ def test_today_hyrox_package_structure():
     assert any("gtoh" in n or "groundtooverhead" in n for n in superset_names)
     rounds = {len(e["sets"]) for e in amrap[0]["exercises"]}
     assert len(rounds) == 1  # superset members advance in lock-step
+    assert amrap[0].get("timeCapSeconds") == 240, (
+        "the 8'-12' AMRAP window must carry timeCapSeconds=240"
+    )
+    row_sets = [
+        s for c in _walk_exercises(components) if c["name"].lower().startswith("row")
+        for s in c["sets"] if s["type"] == "EnduranceSet"
+    ]
+    assert row_sets and any(s.get("targetDistanceMeters") == 1100.0 for s in row_sets), (
+        "the max-mt-row block must carry targetDistanceMeters=1100"
+    )
+
+
+def test_2026_10_07_emom_amrap_structure():
+    path = REPO / "workouts" / "wod_2026-10-07.json"
+    if not path.exists():
+        pytest.skip("wod_2026-10-07.json not present")
+    package = json.loads(path.read_text(encoding="utf-8"))
+    _validate_package(package)
+
+    components = package["workouts"][0]["workoutComponents"]
+    supersets = [c for c in components if c["type"] == "Superset"]
+    assert len(supersets) == 2, "expected the EMOM block and the AMRAP block as two supersets"
+
+    emom = [c for c in supersets if c.get("roundDurationSeconds") is not None]
+    amrap = [c for c in supersets if c.get("timeCapSeconds") is not None]
+    assert len(emom) == 1 and emom[0]["roundDurationSeconds"] == 120, (
+        "the 'Every 2' x 10'' block must be one superset with roundDurationSeconds=120"
+    )
+    assert len(amrap) == 1 and amrap[0]["timeCapSeconds"] == 720, (
+        "the AMRAP 12' block must be one superset with timeCapSeconds=720"
+    )
+    emom_rounds = {len(e["sets"]) for e in emom[0]["exercises"]}
+    assert len(emom_rounds) == 1, "EMOM members advance in lock-step"

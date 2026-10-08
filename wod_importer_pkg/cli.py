@@ -43,6 +43,7 @@ def run(date_iso: str, workout_text: str, output: Path, base_library: Path, accu
         guidance_for_style,
         load_working_library,
         make_deepseek_client,
+        review_crossfit_mode_compliance,
         sanitize_package_name,
     )
     from wod_importer_pkg.setup import _default_llm_call, extend_equipment_catalog, plan_missing_equipment
@@ -104,13 +105,37 @@ def run(date_iso: str, workout_text: str, output: Path, base_library: Path, accu
         return
     library["equipments"] = catalog["equipments"]
     library["accessoryEquipments"] = catalog["accessoryEquipments"]
+    guidance = guidance_for_style(style)
     print(f"generating workout (LLM, strict library mode, style={style} — a couple of minutes)...")
     package = generate_workout_package(
         workout_text,
         library,
-        guidance=guidance_for_style(style),
+        guidance=guidance,
     )
+
+    # 4) compliance review: one cheap LLM audit of the encoding rules against the
+    #    text (caps, cadence, cardio targets, nothing dropped), with a single
+    #    corrective regeneration when it finds violations.
+    issues = review_crossfit_mode_compliance(client, workout_text, package)
+    if issues:
+        print(f"  compliance review found {len(issues)} issue(s); regenerating once with fixes:")
+        for issue in issues:
+            print(f"    - {issue}")
+        package = generate_workout_package(
+            workout_text,
+            library,
+            guidance=guidance,
+            corrective_context="\n".join(f"- {issue}" for issue in issues),
+        )
+    else:
+        print("  compliance review: ok")
+
     package = sanitize_package_name(package, date_iso, explicit_name)
+    # the workout generator emits only plan-declared equipment; the catalog is the
+    # complete superset, so backfill any definition-referenced gear it dropped.
+    backfilled = backfill_equipment_from_catalog(package, catalog)
+    if backfilled:
+        print(f"  equipment backfilled from catalog: {backfilled}")
 
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(package, indent=2), encoding="utf-8")
@@ -159,9 +184,13 @@ def main(argv: list[str] | None = None) -> int:
     print(f"workout [{date_iso}] ({len(workout_text)} chars)")
     output = args.output
     if output is None:
-        from wod_importer_pkg.generators import _normalize
-        slug_source = args.name or date_iso
-        output = Path("workouts") / f"workout_{_normalize(slug_source)[:60] or date_iso}.json"
+        if args.date:
+            # Daily-WOD runs keep the canonical gate-tracked name.
+            output = Path("workouts") / f"wod_{args.date}.json"
+        else:
+            from wod_importer_pkg.generators import _normalize
+            slug_source = args.name or workout_text
+            output = Path("workouts") / f"workout_{_normalize(slug_source)[:60] or 'import'}.json"
     run(
         date_iso=date_iso,
         workout_text=workout_text,

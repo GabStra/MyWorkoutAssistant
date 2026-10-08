@@ -1220,13 +1220,39 @@ def emit_workout_structure(
     for ex_id in workout_entry.get("exerciseIds", []) or []:
         if ex_id in exercise_index:
             ex = exercise_index[ex_id]
-            exercise_refs.append({
+            ref = {
                 "id": ex_id,
                 "name": ex.get("name", "Unknown"),
                 "exerciseType": ex.get("exerciseType", "WEIGHT")
-            })
-    
+            }
+            for target_field in ("targetDistanceMeters", "targetCalories"):
+                if ex.get(target_field) is not None:
+                    ref[target_field] = ex[target_field]
+            exercise_refs.append(ref)
+
     exercise_refs_json = json.dumps({"exercises": exercise_refs}, indent=2)
+
+    timed_target_instruction = ""
+    timed_targets = [
+        (ex_id, ex)
+        for ex_id in (workout_entry.get("exerciseIds", []) or [])
+        for ex in [exercise_index.get(ex_id) or {}]
+        if ex.get("targetDistanceMeters") is not None or ex.get("targetCalories") is not None
+    ]
+    if timed_targets:
+        target_parts = []
+        for ex_id, ex in timed_targets:
+            value_parts = []
+            if ex.get("targetDistanceMeters") is not None:
+                value_parts.append(f"targetDistanceMeters={ex['targetDistanceMeters']}")
+            if ex.get("targetCalories") is not None:
+                value_parts.append(f"targetCalories={ex['targetCalories']}")
+            target_parts.append(f"{ex_id}: {', '.join(value_parts)}")
+        timed_target_instruction = (
+            "CRITICAL - Cardio quantity targets: for each exercise below, copy the exact value(s) "
+            "into targetDistanceMeters/targetCalories on EVERY timed work set of that exercise:\n"
+            + "\n".join(f"- {part}" for part in target_parts) + "\n\n"
+        )
     
     # When plan entry provides restToNextSeconds (same order as exerciseIds), instruct to use those values exactly
     rest_to_next_instruction = ""
@@ -1266,8 +1292,17 @@ def emit_workout_structure(
                 f" Use these exact per-exercise rest values inside the Superset from restToNextSeconds: {', '.join(rest_parts)}."
                 if rest_parts else ""
             )
+            container_fields = []
+            if group.get("timeCapSeconds") is not None:
+                container_fields.append(f"timeCapSeconds={group['timeCapSeconds']}")
+            if group.get("roundDurationSeconds") is not None:
+                container_fields.append(f"roundDurationSeconds={group['roundDurationSeconds']}")
+            container_summary = (
+                f" The Superset component MUST set exactly: {', '.join(container_fields)} (copy verbatim)."
+                if container_fields else ""
+            )
             group_descriptions.append(
-                f"- Superset group: {group_exercise_ids}.{rest_summary}"
+                f"- Superset group: {group_exercise_ids}.{rest_summary}{container_summary}"
             )
         if group_descriptions:
             superset_instruction = (
@@ -1277,6 +1312,7 @@ def emit_workout_structure(
                 "- For each listed group, emit exactly one componentType='Superset' containing those exerciseIds in the same order.\n"
                 "- Do NOT emit grouped exercises as standalone Exercise components.\n"
                 "- Do NOT insert Rest components between exercises that belong to the same superset group.\n"
+                "- When a group lists timeCapSeconds or roundDurationSeconds, the emitted Superset component MUST carry those exact values at the top level.\n"
                 "- Populate restSecondsByExercise with exactly one entry for every grouped exercise, using its exact restToNextSeconds value.\n"
                 "- Each map value is rest immediately AFTER its keyed exercise during every round. For [A, B, C], A is rest before B, B is rest before C, and C is rest before A in the next round.\n"
                 "- The last grouped exercise's value is the between-round rest even if it is the final exercise in the workout. The runtime omits it after the final round.\n"
@@ -1294,6 +1330,7 @@ def emit_workout_structure(
     user_content = (
         "Base the workout on the plan entry; preserve user-specified day names and exercise order.\n\n"
         f"{rest_to_next_instruction}"
+        f"{timed_target_instruction}"
         f"{superset_instruction}"
         f"{retry_instruction}"
         f"Plan entry for {workout_id}:\n{workout_entry_json}\n\n"

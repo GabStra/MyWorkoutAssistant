@@ -1740,6 +1740,52 @@ def assemble_placeholder_workout_store(equipment_items, accessory_items, exercis
     # Build workouts array: use plan_index workout order so order field matches user-provided order (0, 1, 2, ...)
     workouts = []
     plan_workouts = plan_index.get("workouts", [])
+
+    # Deterministic CrossFit-mode carry-through: the planner encodes time caps, EMOM
+    # cadence and cardio quantities on the plan index (supersetGroups / timed
+    # prescriptions); copy them onto the assembled components here so emitter
+    # compliance cannot silently drop them.
+    plan_groups_by_members = {}
+    for wo in plan_workouts:
+        if not isinstance(wo, dict):
+            continue
+        for group in wo.get("supersetGroups", []) or []:
+            if isinstance(group, dict) and group.get("exerciseIds"):
+                plan_groups_by_members[frozenset(group["exerciseIds"])] = group
+    plan_exercises_by_id = {
+        ex.get("id"): ex
+        for ex in plan_index.get("exercises", []) or []
+        if isinstance(ex, dict) and ex.get("id")
+    }
+
+    def apply_plan_timed_targets(exercise, plan_exercise):
+        """Copies plan-index targetDistanceMeters/targetCalories onto timed work sets."""
+        if not isinstance(plan_exercise, dict):
+            return
+        if plan_exercise.get("exerciseType") not in ("COUNTUP", "COUNTDOWN"):
+            return
+        target_fields = ("targetDistanceMeters", "targetCalories")
+        if not any(plan_exercise.get(field) is not None for field in target_fields):
+            return
+        rebuilt_sets = []
+        for set_data in exercise.get("sets") or []:
+            if (
+                isinstance(set_data, dict)
+                and set_data.get("type") in ("TimedDurationSet", "EnduranceSet")
+                and any(
+                    plan_exercise.get(field) is not None and set_data.get(field) is None
+                    for field in target_fields
+                )
+            ):
+                # exercise_definitions entries are reused across workouts; copy before mutating
+                set_data = dict(set_data)
+                for field in target_fields:
+                    value = plan_exercise.get(field)
+                    if value is not None and set_data.get(field) is None:
+                        set_data[field] = value
+            rebuilt_sets.append(set_data)
+        exercise["sets"] = rebuilt_sets
+
     if plan_workouts:
         items_to_process = [(i, wo.get("id"), workout_structures.get(wo.get("id"))) for i, wo in enumerate(plan_workouts)]
     else:
@@ -1769,6 +1815,7 @@ def assemble_placeholder_workout_store(equipment_items, accessory_items, exercis
                     if "sets" in exercise:
                         exercise["sets"] = fix_set_errors(exercise["sets"])
                     strip_rep_range_fields_for_timed_exercises(exercise)
+                    apply_plan_timed_targets(exercise, plan_exercises_by_id.get(exercise_id))
                     exercise["enabled"] = component_spec.get("enabled", True)
                     workout_components.append(exercise)
                 else:
@@ -1807,6 +1854,7 @@ def assemble_placeholder_workout_store(equipment_items, accessory_items, exercis
                         if "sets" in exercise:
                             exercise["sets"] = fix_set_errors(exercise["sets"])
                         strip_rep_range_fields_for_timed_exercises(exercise)
+                        apply_plan_timed_targets(exercise, plan_exercises_by_id.get(ex_id_placeholder))
                         superset_exercises.append(exercise)
                         # Map the placeholder ID to rest seconds
                         rest_seconds = emitted_rest_map[ex_id_placeholder]
@@ -1827,6 +1875,12 @@ def assemble_placeholder_workout_store(equipment_items, accessory_items, exercis
                         "exercises": superset_exercises,
                         "restSecondsByExercise": rest_seconds_by_exercise
                     }
+                    plan_group = plan_groups_by_members.get(frozenset(exercise_ids_placeholder))
+                    if plan_group:
+                        if plan_group.get("timeCapSeconds") is not None:
+                            superset_component["timeCapSeconds"] = plan_group["timeCapSeconds"]
+                        if plan_group.get("roundDurationSeconds") is not None:
+                            superset_component["roundDurationSeconds"] = plan_group["roundDurationSeconds"]
                     workout_components.append(superset_component)
                 else:
                     print(f"  Warning: Superset component has no valid exercises, skipping")

@@ -120,6 +120,29 @@ def test_coverage_pass_generates_only_missing_and_persists(tmp_path):
     assert library_path.exists()
 
 
+def test_compliance_review_parses_issues_and_survives_bad_json():
+    from wod_importer_pkg.generators import review_crossfit_mode_compliance
+
+    package = {"workouts": [{"workoutComponents": [
+        {"type": "Exercise", "name": "Row",
+         "sets": [{"type": "TimedDurationSet", "timeInMillis": 240000}]},
+    ]}]}
+
+    def fake_call(client, system_prompt, user_prompt):
+        assert "timeCapSeconds" in system_prompt and "targetDistanceMeters" in system_prompt
+        assert "Row" in user_prompt
+        return json.dumps({"issues": ["AMRAP window missing timeCapSeconds", "", None]})
+
+    assert review_crossfit_mode_compliance(FakeClient(), "Amrap 4' of row", package, call=fake_call) == [
+        "AMRAP window missing timeCapSeconds"
+    ]
+
+    def bad_json(client, system_prompt, user_prompt):
+        return "not json"
+
+    assert review_crossfit_mode_compliance(FakeClient(), "text", package, call=bad_json) == []
+
+
 def test_coverage_pass_skips_generation_when_all_covered(tmp_path):
     working = {"exerciseDefinitions": [_def("d1", "Row")], "equipments": [], "exerciseMovements": []}
     generations = []

@@ -42,17 +42,19 @@ This is a coach-authored workout. Hard constraints:
   itself.
 - AMRAPs and rounds-for-time (when present): express as supersetGroups; no rest
   between members (restToNextSeconds=0) unless the workout specifies rest.
-- AMRAPs, rounds-for-time and any block with a stated time cap: set the superset's
-  timeCapSeconds to the window in seconds so the watch leaves the block by itself
-  when the cap expires. "In N' time cap" or "time cap N'" covering the whole
-  session applies to the block(s) it bounds.
-- "Every N minutes x T minutes" (EMOM) blocks: express as a superset with
-  roundDurationSeconds = N; never combine roundDurationSeconds with timeCapSeconds
-  on the same superset.
-- Rowing, biking, skiing or running distances/calories stated in the text ("max mt
-  row (target 1100/1000)", "24/20 cal", "800 mt run"): put the number into
-  targetDistanceMeters (in meters) or targetCalories on the timed set for that
-  movement, first value of male/female pairs.
+- MANDATORY time caps: every AMRAP, rounds-for-time, or block the text bounds with
+  a window ("time cap 25'", "In 12' time cap", "From 8'-12'") MUST set the
+  superset's timeCapSeconds to that window in seconds. Example: an 8-12 minute
+  block starting at minute 8 gets timeCapSeconds=240. Without it the watch never
+  leaves the block.
+- MANDATORY EMOM cadence: "Every N minutes x T minutes" MUST become one superset
+  with roundDurationSeconds=N and T/N work sets per member (e.g. "Every 2' x 10'"
+  -> roundDurationSeconds=120 and 5 work sets per member). Never combine
+  roundDurationSeconds with timeCapSeconds on the same superset.
+- MANDATORY cardio quantities: when the text states a distance or calories for a
+  row/bike/ski/run movement ("max mt row (target 1100/1000)", "24/20 cal", "800 mt
+  run"), the timed set for that movement MUST carry targetDistanceMeters (meters)
+  or targetCalories, first value of male/female pairs.
 - Rep schemes written as male/female pairs ("@ 22.5/15", "24/20") use the first value.
 - BODY_WEIGHT exercises: bodyWeightPercentage must be in percentage form (e.g. 100.0),
   never a fraction like 1.0.
@@ -235,6 +237,7 @@ def generate_workout_package(
     script_dir: Path = REPO,
     force_use_reasoner: str = "hybrid",
     guidance: str = HANDS_FREE_GUIDANCE,
+    corrective_context: str = "",
 ) -> dict:
     """Runs the workout generator in strict library mode; returns the package JSON."""
     from workout_generator_pkg.constants import BASE_SYSTEM_PROMPT
@@ -253,6 +256,9 @@ def generate_workout_package(
         {"role": "system", "content": BASE_SYSTEM_PROMPT},
         {"role": "user", "content": workout_text},
     ]
+    request = f"{guidance}\n\nWorkout text:\n{workout_text}"
+    if corrective_context:
+        request = f"{request}\n\nThe previous attempt had these fixable problems:\n{corrective_context}"
     provided = {
         "equipments": library.get("equipments", []),
         "accessoryEquipments": library.get("accessoryEquipments", []),
@@ -262,7 +268,7 @@ def generate_workout_package(
     result = execute_workout_generation(
         client,
         messages,
-        custom_prompt=f"{workout_text}\n\n{guidance}",
+        custom_prompt=request,
         provided_equipment=provided,
         script_dir=str(script_dir),
         force_use_reasoner=force_use_reasoner,
@@ -271,6 +277,108 @@ def generate_workout_package(
     if not result.get("success") or not result.get("filepath"):
         raise RuntimeError(f"Workout generation failed: {result.get('error')}")
     return _load_json(Path(result["filepath"]))
+
+
+COMPLIANCE_SYSTEM_PROMPT = """You audit a generated workout plan against the workout text it came from.
+First list every block and movement in the text, then check each one in the plan.
+The plan was built under these mandatory encoding rules:
+1. Every AMRAP, rounds-for-time, or block bounded by a stated time window must be a
+   superset whose timeCapSeconds equals that window in seconds.
+2. "Every N minutes x T minutes" (EMOM) blocks must be one superset with
+   roundDurationSeconds = N, and each member must carry T/N work sets (e.g.
+   "Every 2' x 10'" -> roundDurationSeconds 120 and 5 work sets per member).
+3. Distances (meters) or calories stated for a ROWING, BIKING, SKIING or RUNNING
+   movement only, must appear as targetDistanceMeters or targetCalories on that
+   movement's timed set. Rep counts on strength or gymnastics movements are NOT
+   targets - never report them as missing.
+4. Every distinct block and movement listed in the text must appear in the plan -
+   a missing block or movement is always an issue.
+Return strict JSON: {"issues": ["..."]}
+Each issue is one concrete, fixable violation. If the plan complies, return an
+empty list. Do not invent requirements that are not in the rules above.
+"""
+
+
+def review_crossfit_mode_compliance(client, workout_text: str, package: dict, call=None) -> list[str]:
+    """Two independent cheap LLM audits of the generated package against the text.
+
+    Returns the union of human-readable issues (one chat call each - cheap); empty
+    when both agree the plan complies. Two votes guard against a single audit
+    passing an incomplete plan. Judgment stays with the LLM - no text parsing.
+    """
+    if call is None:
+        from wod_importer_pkg.setup import _default_llm_call
+        call = _default_llm_call
+
+    def walk(components):
+        for component in components:
+            if component.get("type") == "Superset":
+                yield from walk(component.get("exercises", []))
+            elif component.get("type") == "Exercise":
+                yield component
+
+    compact = []
+    for workout in package.get("workouts", []):
+        for component in workout.get("workoutComponents", []):
+            if component.get("type") == "Superset":
+                compact.append({
+                    "type": "Superset",
+                    "timeCapSeconds": component.get("timeCapSeconds"),
+                    "roundDurationSeconds": component.get("roundDurationSeconds"),
+                    "exercises": [
+                        {
+                            "name": e.get("name"),
+                            "sets": [
+                                {
+                                    "type": s.get("type"),
+                                    "timeInMillis": s.get("timeInMillis"),
+                                    "targetDistanceMeters": s.get("targetDistanceMeters"),
+                                    "targetCalories": s.get("targetCalories"),
+                                }
+                                for s in e.get("sets", [])
+                            ],
+                        }
+                        for e in component.get("exercises", [])
+                    ],
+                })
+            elif component.get("type") == "Exercise":
+                compact.append({
+                    "type": "Exercise",
+                    "name": component.get("name"),
+                    "sets": [
+                        {
+                            "type": s.get("type"),
+                            "timeInMillis": s.get("timeInMillis"),
+                            "targetDistanceMeters": s.get("targetDistanceMeters"),
+                            "targetCalories": s.get("targetCalories"),
+                        }
+                        for s in component.get("sets", [])
+                    ],
+                })
+
+    user_prompt = (
+        f"Workout text:\n{workout_text}\n\n"
+        f"Generated plan components (compact):\n{json.dumps(compact, separators=(',', ':'))}"
+    )
+
+    def audit_once():
+        raw = call(client, COMPLIANCE_SYSTEM_PROMPT, user_prompt)
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, ValueError):
+            return []
+        issues = parsed.get("issues", [])
+        return [str(issue) for issue in issues if issue][:10]
+
+    seen: list[str] = []
+    seen_keys = set()
+    for _ in range(2):
+        for issue in audit_once():
+            key = _normalize(issue)[:80]
+            if key and key not in seen_keys:
+                seen_keys.add(key)
+                seen.append(issue)
+    return seen[:10]
 
 
 def scoped_library_generation(client, equipment_file: Path, request: str, max_definitions: int) -> dict:
