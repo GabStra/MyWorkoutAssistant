@@ -88,6 +88,8 @@ import com.gabstra.myworkoutassistant.screens.HistoryChatScreen
 import com.gabstra.myworkoutassistant.screens.HistoryChatScreenMode
 import com.gabstra.myworkoutassistant.screens.RestForm
 import com.gabstra.myworkoutassistant.screens.RestSetForm
+import com.gabstra.myworkoutassistant.screens.SensorSessionDetailScreen
+import com.gabstra.myworkoutassistant.screens.SensorSessionsScreen
 import com.gabstra.myworkoutassistant.screens.SetForm
 import com.gabstra.myworkoutassistant.screens.SettingsScreen
 import com.gabstra.myworkoutassistant.screens.SupersetForm
@@ -1549,6 +1551,9 @@ fun MyWorkoutAssistantNavHost(
                             onViewErrorLogs = {
                                 appViewModel.setScreenData(ScreenData.ErrorLogs())
                             },
+                            onViewSensorSessions = {
+                                appViewModel.setScreenData(ScreenData.SensorSessions())
+                            },
                             selectedTabIndex = appViewModel.selectedHomeTab
                         )
                     }
@@ -1623,6 +1628,44 @@ fun MyWorkoutAssistantNavHost(
                         ErrorLogsScreen(
                             errorLogDao = db.errorLogDao(),
                             dataClient = dataClient,
+                            onBack = {
+                                scope.launch {
+                                    appViewModel.flushWorkoutSave(
+                                        context,
+                                        workoutStoreRepository,
+                                        db
+                                    )
+                                    appViewModel.goBack()
+                                }
+                            }
+                        )
+                    }
+
+                    is ScreenData.SensorSessions -> {
+                        SensorSessionsScreen(
+                            syncDao = db.motionCaptureSyncDao(),
+                            onBack = {
+                                scope.launch {
+                                    appViewModel.flushWorkoutSave(
+                                        context,
+                                        workoutStoreRepository,
+                                        db
+                                    )
+                                    appViewModel.goBack()
+                                }
+                            },
+                            onOpenSession = { sessionId ->
+                                appViewModel.setScreenData(ScreenData.SensorSessionDetail(sessionId))
+                            }
+                        )
+                    }
+
+                    is ScreenData.SensorSessionDetail -> {
+                        val sessionDetailData = currentScreen
+                        SensorSessionDetailScreen(
+                            sessionId = sessionDetailData.sessionId,
+                            sessionDao = db.motionCaptureSessionDao(),
+                            syncDao = db.motionCaptureSyncDao(),
                             onBack = {
                                 scope.launch {
                                     appViewModel.flushWorkoutSave(

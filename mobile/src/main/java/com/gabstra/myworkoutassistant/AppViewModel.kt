@@ -84,6 +84,8 @@ sealed class ScreenData() {
     class ExternalWorkoutSession(
         val externalSessionId: String,
     ) : ScreenData()
+    class SensorSessions() : ScreenData()
+    class SensorSessionDetail(val sessionId: UUID) : ScreenData()
     class ExerciseDetail(
         val workoutId: UUID,
         val selectedExerciseId: UUID,
@@ -146,6 +148,8 @@ sealed class ScreenData() {
             is WorkoutDetail -> "WorkoutDetail_${workoutId}_${selectedTabIndex}_${workoutHistoryId?.toString() ?: "null"}"
             is WorkoutHistory -> "WorkoutHistory_${workoutId}_${workoutHistoryId?.toString() ?: "null"}_${selectedTabIndex}"
             is ExternalWorkoutSession -> "ExternalWorkoutSession_${externalSessionId}"
+            is SensorSessions -> "SensorSessions"
+            is SensorSessionDetail -> "SensorSessionDetail_${sessionId}"
             is ExerciseDetail -> "ExerciseDetail_${workoutId}_${selectedExerciseId}_${selectedTabIndex}_${workoutHistoryId?.toString() ?: "null"}"
             is ExerciseHistory -> "ExerciseHistory_${workoutId}_${selectedExerciseId}_${selectedTabIndex}_${workoutHistoryId?.toString() ?: "null"}"
             is HistoryChatExercise -> "HistoryChatExercise_${workoutId}_${exerciseId}"
@@ -184,6 +188,8 @@ sealed class ScreenData() {
             is WorkoutDetail -> "WorkoutDetail_${workoutId}"
             is WorkoutHistory -> "WorkoutDetail_${workoutId}"
             is ExternalWorkoutSession -> "ExternalWorkoutSession_${externalSessionId}"
+            is SensorSessions -> "SensorSessions"
+            is SensorSessionDetail -> "SensorSessionDetail_${sessionId}"
             is ExerciseDetail -> "ExerciseDetail_${workoutId}_${selectedExerciseId}"
             is ExerciseHistory -> "ExerciseDetail_${workoutId}_${selectedExerciseId}"
             is HistoryChatExercise -> "HistoryChatExercise_${workoutId}_${exerciseId}"

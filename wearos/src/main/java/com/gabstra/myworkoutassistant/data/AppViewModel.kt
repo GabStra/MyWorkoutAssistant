@@ -42,6 +42,7 @@ import com.gabstra.myworkoutassistant.shared.datalayer.WorkoutSessionHeartbeat
 import com.gabstra.myworkoutassistant.shared.datalayer.WorkoutSessionHeartbeatKeys
 import com.gabstra.myworkoutassistant.shared.workout.model.WATCH_SESSION_STATE_RETURNED_HOME
 import com.gabstra.myworkoutassistant.sync.PendingWorkoutHistorySyncTracker
+import com.gabstra.myworkoutassistant.sync.SensorSessionSyncWorker
 import com.gabstra.myworkoutassistant.sync.WearCompletedHistorySyncSender
 import com.gabstra.myworkoutassistant.sync.WearCompletedHistorySyncResult
 import com.gabstra.myworkoutassistant.sync.WearDirectHistorySyncClaim
@@ -71,6 +72,7 @@ import com.gabstra.myworkoutassistant.e2e.E2eRuntimePreferences
 import com.gabstra.myworkoutassistant.sync.WorkoutHistoryTransferCoordinator
 import com.gabstra.myworkoutassistant.sync.WorkoutHistorySyncWorker
 import com.gabstra.myworkoutassistant.shared.UNASSIGNED_PLAN_NAME
+import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureExerciseCandidate
 import com.gabstra.myworkoutassistant.shared.workout.recovery.CalibrationRecoveryChoice
 import com.gabstra.myworkoutassistant.shared.workout.recovery.DecodedRecoveryRuntimeSnapshot
 import com.gabstra.myworkoutassistant.shared.workout.recovery.RecoveryPromptUiState
@@ -79,6 +81,7 @@ import com.gabstra.myworkoutassistant.shared.workout.recovery.RecoveryStateType
 import com.gabstra.myworkoutassistant.shared.workout.recovery.TimerRecoveryChoice
 import com.gabstra.myworkoutassistant.shared.workout.recovery.WorkoutRecoveryCheckpoint
 import com.gabstra.myworkoutassistant.shared.workout.recovery.WorkoutRecoverySnapshotCodec
+import com.gabstra.myworkoutassistant.repository.MotionSensorRepository
 
 internal enum class WorkoutHistorySyncRequestMode {
     Debounced,
@@ -154,6 +157,7 @@ open class AppViewModel : WorkoutViewModel() {
     private var workoutSessionHeartbeatJob: Job? = null
     private var activeDirectSyncJob: Job? = null
     private var activeDirectSyncClaim: WearDirectHistorySyncClaim? = null
+    private var motionCaptureCoordinator: MotionCaptureCoordinator? = null
 
     /** Pending sync: transactionId -> workoutHistoryId. Cleared on process death; those histories stay unsynced and retry at start. */
     private val pendingSyncTransactions = mutableMapOf<String, UUID>()
@@ -172,10 +176,64 @@ open class AppViewModel : WorkoutViewModel() {
     fun initApplicationContext(context: android.content.Context) {
         applicationContext = context.applicationContext
         _alertSoundEnabled.value = AlertSoundPreferences.isEnabled(context.applicationContext)
+        _calorieDisplayEnabled.value = CalorieDisplayPreferences.isEnabled(context.applicationContext)
         (context.applicationContext as? MyApplication)?.coroutineExceptionHandler?.let {
             coroutineExceptionHandler = it
         }
+        if (motionCaptureCoordinator == null) {
+            val appContext = context.applicationContext
+            motionCaptureCoordinator = MotionCaptureCoordinator(
+                context = appContext,
+                appDatabase = AppDatabase.getDatabase(appContext),
+                sensorRepository = MotionSensorRepository(appContext),
+                scope = viewModelScope,
+                activeWorkoutHistoryIdProvider = { currentWorkoutHistory?.id ?: _workoutRecord?.workoutHistoryId },
+                appVersionProvider = {
+                    runCatching {
+                        val packageInfo = appContext.packageManager.getPackageInfo(appContext.packageName, 0)
+                        packageInfo.versionName ?: packageInfo.longVersionCode.toString()
+                    }.getOrDefault("unknown")
+                }
+            )
+        }
     }
+
+    val motionCaptureUiState: StateFlow<MotionCaptureUiState>
+        get() = motionCaptureCoordinator?.uiState ?: MutableStateFlow(MotionCaptureUiState()).asStateFlow()
+
+    fun setMotionCaptureEnabled(enabled: Boolean) {
+        motionCaptureCoordinator?.setCollectionEnabled(enabled)
+    }
+
+    suspend fun pauseMotionCaptureForBackground() {
+        motionCaptureCoordinator?.onPaused()
+    }
+
+    suspend fun stopMotionCaptureForExit() {
+        motionCaptureCoordinator?.onWorkoutExited()
+    }
+
+    suspend fun confirmMotionCaptureSegment(segmentId: UUID) {
+        motionCaptureCoordinator?.confirmSegment(segmentId)
+    }
+
+    suspend fun relabelMotionCaptureSegment(
+        segmentId: UUID,
+        candidate: MotionCaptureExerciseCandidate
+    ) {
+        motionCaptureCoordinator?.relabelSegment(segmentId, candidate)
+    }
+
+    suspend fun markMotionCaptureSegmentRest(segmentId: UUID) {
+        motionCaptureCoordinator?.markSegmentRest(segmentId)
+    }
+
+    suspend fun dropMotionCaptureSegment(segmentId: UUID) {
+        motionCaptureCoordinator?.dropSegment(segmentId)
+    }
+
+    suspend fun exportLatestMotionCaptureSession(): String? =
+        motionCaptureCoordinator?.exportLatestReviewSession()
 
     fun setAlertSoundEnabled(enabled: Boolean) {
         val context = applicationContext ?: return
@@ -185,6 +243,12 @@ open class AppViewModel : WorkoutViewModel() {
         rebuildScreenState()
     }
 
+    fun setCalorieDisplayEnabled(enabled: Boolean) {
+        val context = applicationContext ?: return
+        if (_calorieDisplayEnabled.value == enabled) return
+        CalorieDisplayPreferences.setEnabled(context, enabled)
+        _calorieDisplayEnabled.value = enabled
+    }
     private fun checkpointStore(): WorkoutRecoveryCheckpointStore? {
         val context = applicationContext ?: return null
         return WorkoutRecoveryCheckpointStore(context)
@@ -287,6 +351,9 @@ open class AppViewModel : WorkoutViewModel() {
     private var skipNextResumeLastState = false
     private val _alertSoundEnabled = mutableStateOf(AlertSoundPreferences.DEFAULT_ALERT_SOUND_ENABLED)
     val alertSoundEnabled: State<Boolean> = _alertSoundEnabled
+
+    private val _calorieDisplayEnabled = mutableStateOf(CalorieDisplayPreferences.DEFAULT_CALORIES_ENABLED)
+    val calorieDisplayEnabled: State<Boolean> = _calorieDisplayEnabled
 
     fun consumeRecoveredWorkoutNotice() {
         _showRecoveredWorkoutNotice.value = false
@@ -795,6 +862,7 @@ open class AppViewModel : WorkoutViewModel() {
 
         updateWorkoutSessionHeartbeat(newState)
         persistRecoveryCheckpointForCurrentState(newState)
+        motionCaptureCoordinator?.onScreenStateChanged(newState)
     }
 
     private fun updateWorkoutSessionHeartbeat(screenState: WorkoutScreenState) {
@@ -1658,6 +1726,9 @@ open class AppViewModel : WorkoutViewModel() {
                 if (syncContext != null && completedHistoryId != null) {
                     enqueuePendingWorkoutHistoryId(syncContext, completedHistoryId)
                 }
+                // Sensor-session capture sync is independent of the history channel: enqueue the
+                // WorkManager retry worker without blocking the workout-history sync path.
+                syncContext?.let { SensorSessionSyncWorker.enqueue(it) }
             }
             if (currentState is WorkoutState.Set) {
                 upsertWorkoutRecord(currentState.exerciseId, currentState.setIndex)

@@ -8,11 +8,16 @@ dependencies = [
     "openai>=1.0.0",
     "httpx>=0.27.0",
     "jsonschema>=4.0.0",
+    "numpy>=1.26.0",
 ]
 
 [project.optional-dependencies]
 test = [
     "pytest>=8.0.0",
+]
+analysis = [
+    "scipy>=1.11",
+    "matplotlib>=3.8",
 ]
 motion = [
     "mediapipe>=1.0.1,<2",
@@ -29,7 +34,7 @@ motion = [
 exercise-motion = "exercise_motion_pkg.cli:main"
 
 [tool.setuptools]
-packages = ["exercise_motion_pkg", "workout_history_mcp", "workout_generator_pkg"]
+packages = ["exercise_motion_pkg", "workout_history_mcp", "workout_generator_pkg", "motion_annotation_pkg"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

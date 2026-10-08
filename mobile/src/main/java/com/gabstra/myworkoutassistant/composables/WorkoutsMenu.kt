@@ -72,6 +72,7 @@ fun WorkoutsMenu(
     onExportEquipment: () -> Unit,
     onClearAllExerciseInfo: () -> Unit,
     onViewErrorLogs: () -> Unit,
+    onViewSensorSessions: () -> Unit,
     onMenuItemClick: ((() -> Unit) -> Unit)? = null,
 ) {
     var showClearHistoryDialog by remember { mutableStateOf(false) }
@@ -178,6 +179,7 @@ fun WorkoutsMenu(
 
             WorkoutsMenuPage.ADVANCED -> MenuActionGroup(
                 actions = listOf(
+                    "Sensor sessions" to { handleMenuItemClick(onViewSensorSessions) },
                     "Export workouts" to { handleMenuItemClick(onExportWorkouts) },
                     "Export workout plan" to { handleMenuItemClick(onExportWorkoutPlan) },
                     "Export data for AI" to {

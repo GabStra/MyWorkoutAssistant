@@ -20,6 +20,11 @@ import com.gabstra.myworkoutassistant.shared.typeconverters.TernaryTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.TimeTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.UIntConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.UUIDConverter
+import com.gabstra.myworkoutassistant.shared.datalayer.MotionCaptureSyncDao
+import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSegmentDao
+import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSegmentEntity
+import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSessionDao
+import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSessionEntity
 import com.gabstra.myworkoutassistant.shared.typeconverters.WorkoutSessionEndReasonTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.RunningResultsTypeConverter
 
@@ -32,9 +37,11 @@ import com.gabstra.myworkoutassistant.shared.typeconverters.RunningResultsTypeCo
         ExerciseInfo::class,
         WorkoutSchedule::class,
         ExerciseSessionProgression::class,
-        ErrorLog::class
+        ErrorLog::class,
+        MotionCaptureSessionEntity::class,
+        MotionCaptureSegmentEntity::class
     ],
-    version = 61,
+    version = 62,
     exportSchema = false
 )
 @TypeConverters(
@@ -63,11 +70,58 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun workoutScheduleDao(): WorkoutScheduleDao
     abstract fun exerciseSessionProgressionDao(): ExerciseSessionProgressionDao
     abstract fun errorLogDao(): ErrorLogDao
+    abstract fun motionCaptureSessionDao(): MotionCaptureSessionDao
+    abstract fun motionCaptureSegmentDao(): MotionCaptureSegmentDao
+    abstract fun motionCaptureSyncDao(): MotionCaptureSyncDao
 
     companion object {
         private val MIGRATION_60_61 = object : Migration(60, 61) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE workout_history ADD COLUMN runningResults TEXT NOT NULL DEFAULT '[]'")
+            }
+        }
+
+        private val MIGRATION_61_62 = object : Migration(61, 62) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `motion_capture_session` (
+                        `id` TEXT NOT NULL,
+                        `workoutId` TEXT NOT NULL,
+                        `workoutHistoryId` TEXT,
+                        `status` TEXT NOT NULL,
+                        `startedAtEpochMs` INTEGER NOT NULL,
+                        `endedAtEpochMs` INTEGER,
+                        `deviceManufacturer` TEXT NOT NULL,
+                        `deviceModel` TEXT NOT NULL,
+                        `deviceName` TEXT NOT NULL,
+                        `appVersion` TEXT NOT NULL,
+                        `sessionDirectoryName` TEXT NOT NULL,
+                        `sensorConfigJson` TEXT NOT NULL,
+                        `exerciseCandidatesJson` TEXT NOT NULL,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `motion_capture_segment` (
+                        `id` TEXT NOT NULL,
+                        `sessionId` TEXT NOT NULL,
+                        `sequenceIndex` INTEGER NOT NULL,
+                        `startedAtEpochMs` INTEGER NOT NULL,
+                        `endedAtEpochMs` INTEGER,
+                        `startedAtElapsedRealtimeNanos` INTEGER NOT NULL,
+                        `endedAtElapsedRealtimeNanos` INTEGER,
+                        `stateName` TEXT NOT NULL,
+                        `autoLabelJson` TEXT NOT NULL,
+                        `correctedLabelJson` TEXT,
+                        `reviewStatus` TEXT NOT NULL,
+                        `chunkFileNamesJson` TEXT NOT NULL,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent()
+                )
             }
         }
 
@@ -90,7 +144,7 @@ abstract class AppDatabase : RoomDatabase() {
                         AppDatabase::class.java,
                         "app_database_2",
                     )
-                        .addMigrations(MIGRATION_60_61)
+                        .addMigrations(MIGRATION_60_61, MIGRATION_61_62)
                         .fallbackToDestructiveMigration(dropAllTables = true)
                         .addCallback(object : RoomDatabase.Callback() {
                             override fun onOpen(db: SupportSQLiteDatabase) {

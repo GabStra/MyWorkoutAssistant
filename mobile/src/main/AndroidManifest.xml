@@ -55,6 +55,15 @@
                 <data android:pathPrefix="/workoutHistory/discard"/>
                 <data android:scheme="wear"/>
                 <data android:host="*"/>
+                <data android:pathPrefix="/sensorSession/start"/>
+                <data android:scheme="wear"/>
+                <data android:host="*"/>
+                <data android:pathPrefix="/sensorSession/chunk"/>
+                <data android:scheme="wear"/>
+                <data android:host="*"/>
+                <data android:pathPrefix="/sensorSession/discard"/>
+                <data android:scheme="wear"/>
+                <data android:host="*"/>
                 <data android:pathPrefix="/workoutSession/heartbeat"/>
                 <data android:scheme="wear"/>
                 <data android:host="*"/>
@@ -104,6 +113,15 @@
                 <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
             </intent-filter>
         </activity-alias>
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/sensor_session_export_paths" />
+        </provider>
     </application>
     <queries>
         <package android:name="com.google.android.apps.healthdata" />

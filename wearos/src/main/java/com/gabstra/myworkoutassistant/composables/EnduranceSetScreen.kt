@@ -47,6 +47,8 @@ import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
+import com.gabstra.myworkoutassistant.shared.utils.estimateCaloriesKcal
+import com.gabstra.myworkoutassistant.presentation.theme.tertiaryContent
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workout.timer.canResumeRunningEnduranceTimer
 import com.gabstra.myworkoutassistant.shared.workout.timer.elapsedMillisForEnduranceTimer
@@ -328,27 +330,48 @@ fun EnduranceSetScreen (
     fun EnduranceRunningDisplay(initialMillis: Int) {
         val displayMillis = resolveEnduranceDisplayMillis()
         val overLimit = displayMillis >= currentSet.startTimer && !set.autoStop
-        Row(
+        val showCalories by viewModel.calorieDisplayEnabled
+        val latestHeartRate by viewModel.latestHeartRateBpm
+        val ageYears by viewModel.userAge
+        val weightKg by viewModel.bodyWeight
+        val caloriesKcal = if (showCalories && latestHeartRate > 0) {
+            estimateCaloriesKcal(latestHeartRate, displayMillis.toLong(), weightKg, ageYears)
+        } else {
+            0
+        }
+        Column(
             modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            TimeViewer(
-                modifier = Modifier.combinedClickable(
-                    onClick = {},
-                    onLongClick = {
-                        if (showStartButton) {
-                            setTimerEditMode(!isTimerInEditMode)
-                            updateInteractionTime()
-                            hapticsViewModel.doGentleVibration()
-                        }
-                    },
-                    onDoubleClick = {}
-                ),
-                seconds = displayMillis / 1000,
-                style = itemStyle,
-                color = if (overLimit) Green else MaterialTheme.colorScheme.onBackground,
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                TimeViewer(
+                    modifier = Modifier.combinedClickable(
+                        onClick = {},
+                        onLongClick = {
+                            if (showStartButton) {
+                                setTimerEditMode(!isTimerInEditMode)
+                                updateInteractionTime()
+                                hapticsViewModel.doGentleVibration()
+                            }
+                        },
+                        onDoubleClick = {}
+                    ),
+                    seconds = displayMillis / 1000,
+                    style = itemStyle,
+                    color = if (overLimit) Green else MaterialTheme.colorScheme.onBackground,
+                )
+            }
+            if (caloriesKcal > 0) {
+                Text(
+                    text = "≈ $caloriesKcal kcal",
+                    style = MaterialTheme.typography.bodyExtraSmall,
+                    color = MaterialTheme.colorScheme.tertiaryContent
+                )
+            }
         }
     }
 

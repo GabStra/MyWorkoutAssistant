@@ -62,6 +62,7 @@ import com.gabstra.myworkoutassistant.composables.FullScreenLoadingIndicator
 import com.gabstra.myworkoutassistant.composables.TutorialOverlay
 import com.gabstra.myworkoutassistant.composables.TutorialStep
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.sync.SensorSessionSyncWorker
 import com.gabstra.myworkoutassistant.sync.WearWorkoutLifecycleFlushSource
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModelFactory
@@ -455,6 +456,8 @@ fun WearApp(
                     Log.d("MainActivity", "Skipping startup unsynced history sync for E2E")
                 } else {
                     appViewModel.sendUnsyncedHistories(localContext)
+                    // Startup resend for captured sensor sessions (failure-tolerant, WorkManager-backed).
+                    SensorSessionSyncWorker.enqueue(localContext)
                 }
             }
         }
