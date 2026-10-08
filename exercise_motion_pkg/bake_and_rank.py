@@ -77,7 +77,11 @@ from exercise_motion_pkg.contact_sheet_guidance import CONTACT_SHEET_READING_INS
 from exercise_motion_pkg.bilateral_evidence import exported_arm_symmetry_metrics, source_arm_symmetry_evidence
 from exercise_motion_pkg.contact_sheet_crop import persistent_border_crop
 from exercise_motion_pkg.contact_constraints import is_observed_ground_contact, is_stationary_contact
-from exercise_motion_pkg.foot_contact_observation import add_observed_foot_contacts, observe_foot_landmarks
+from exercise_motion_pkg.foot_contact_observation import (
+    add_observed_foot_contacts,
+    copy_foot_landmark_cache,
+    observe_foot_landmarks,
+)
 from exercise_motion_pkg.foot_kinematics import HEEL_BEHIND_ANKLE_RATIO, source_knee_angle_bounds
 from exercise_motion_pkg.kinematic_cut import (
     DEFAULT_SPAN_PAD_SECONDS,
@@ -26455,6 +26459,7 @@ def choose_pre_wham_source_cut_or_reject(
     ):
         if confirmed_video_path.resolve() != selected_segment_path.resolve():
             shutil.copy2(confirmed_video_path, selected_segment_path)
+            copy_foot_landmark_cache(confirmed_video_path, selected_segment_path)
         selected_segment_materialization = (
             ranking_payload.get("sourceCutDeterministicConfirmationSelectedMaterialization")
             or "deterministic_confirmation_copy"

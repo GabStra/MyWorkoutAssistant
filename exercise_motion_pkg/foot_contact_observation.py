@@ -7,6 +7,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import shutil
 import tempfile
 from typing import Any
 from urllib.request import urlopen
@@ -17,7 +18,7 @@ from .contact_constraints import contact_frame_bounds, is_stationary_contact
 MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task"
 POLICY_VERSION = 10
 # Classification changes reuse the exact same expensive landmark observations.
-OBSERVATION_CACHE_VERSION = 2
+OBSERVATION_CACHE_VERSION = 3
 LANDMARKS = {"left_shoulder": 11, "right_shoulder": 12,
              "left_elbow": 13, "right_elbow": 14, "left_wrist": 15, "right_wrist": 16,
              "left_hip": 23, "right_hip": 24, "left_knee": 25, "right_knee": 26,
@@ -26,12 +27,16 @@ LANDMARKS = {"left_shoulder": 11, "right_shoulder": 12,
 _RUNTIME_WARNING_EMITTED = False
 
 
-def _model_path() -> Path:
+def _model_asset_path() -> Path:
     configured = os.environ.get("EXERCISE_MOTION_FOOT_LANDMARK_MODEL")
-    path = Path(configured) if configured else Path.home() / ".cache/myworkoutassistant/pose_models/pose_landmarker_full.task"
+    return Path(configured) if configured else Path.home() / ".cache/myworkoutassistant/pose_models/pose_landmarker_full.task"
+
+
+def _model_path() -> Path:
+    path = _model_asset_path()
     if path.is_file():
         return path
-    if configured:
+    if os.environ.get("EXERCISE_MOTION_FOOT_LANDMARK_MODEL"):
         raise FileNotFoundError(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=path.parent, delete=False, suffix=".download") as stream:
@@ -53,22 +58,86 @@ def _model_path() -> Path:
     return path
 
 
-def observe_foot_landmarks(video_path: Path, *, cache_dir: Path | None = None) -> dict[str, Any]:
-    """Local tracked inference; cache identity includes exact video bytes."""
-    with video_path.open("rb") as stream:
-        hasher = hashlib.sha256()
+def _sha256_file(path: Path) -> str:
+    hasher = hashlib.sha256()
+    with path.open("rb") as stream:
         while block := stream.read(1024 * 1024):
             hasher.update(block)
-        digest = hasher.hexdigest()
+    return hasher.hexdigest()
+
+
+def _observation_cache_path(cache_dir: Path, video_sha256: str, model_sha256: str) -> Path:
+    return cache_dir / f"{video_sha256}.{model_sha256[:16]}.v{OBSERVATION_CACHE_VERSION}.json"
+
+
+def _valid_observation_cache(payload: Any, video_sha256: str, model_sha256: str) -> bool:
+    return bool(
+        isinstance(payload, dict)
+        and payload.get("available") is True
+        and payload.get("observationCacheVersion") == OBSERVATION_CACHE_VERSION
+        and payload.get("sourceVideoSha256") == video_sha256
+        and payload.get("modelSha256") == model_sha256
+    )
+
+
+def copy_foot_landmark_cache(source_video_path: Path, target_video_path: Path) -> bool:
+    """Copy verified observations only when both videos and model bytes match."""
+    if not source_video_path.is_file() or not target_video_path.is_file():
+        return False
+    temporary: Path | None = None
+    try:
+        source_sha256 = _sha256_file(source_video_path)
+        if source_sha256 != _sha256_file(target_video_path):
+            return False
+        model_path = _model_asset_path()
+        if not model_path.is_file():
+            return False
+        model_sha256 = _sha256_file(model_path)
+        source_cache = _observation_cache_path(
+            source_video_path.parent / "foot_landmarks", source_sha256, model_sha256
+        )
+        payload = json.loads(source_cache.read_text(encoding="utf-8"))
+        if not _valid_observation_cache(payload, source_sha256, model_sha256):
+            return False
+        target_cache = _observation_cache_path(
+            target_video_path.parent / "foot_landmarks", source_sha256, model_sha256
+        )
+        if source_cache.resolve() == target_cache.resolve():
+            return True
+        target_cache.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(mode="wb", dir=target_cache.parent, delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(source_cache.read_bytes())
+        temporary.replace(target_cache)
+        temporary = None
+        return True
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return False
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def observe_foot_landmarks(video_path: Path, *, cache_dir: Path | None = None) -> dict[str, Any]:
+    """Local tracked inference; cache identity includes exact video bytes."""
+    digest = _sha256_file(video_path)
     cache_dir = cache_dir or video_path.parent / "foot_landmarks"
     configured_model = os.environ.get("EXERCISE_MOTION_FOOT_LANDMARK_MODEL")
-    model_key = ""
-    if configured_model:
-        model_file = Path(configured_model)
-        model_key = "." + hashlib.sha256(model_file.read_bytes()).hexdigest()[:16]
-    cache = cache_dir / f"{digest}{model_key}.v{OBSERVATION_CACHE_VERSION}.json"
-    if cache.is_file():
-        return json.loads(cache.read_text(encoding="utf-8"))
+    model_path = _model_asset_path()
+    if configured_model and not model_path.is_file():
+        raise FileNotFoundError(model_path)
+    model_sha256 = _sha256_file(model_path) if model_path.is_file() else None
+    cache = _observation_cache_path(cache_dir, digest, model_sha256) if model_sha256 else None
+    if cache is not None and cache.is_file():
+        try:
+            payload = json.loads(cache.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            payload = None
+        if _valid_observation_cache(payload, digest, model_sha256):
+            return payload
     try:
         import cv2
         import mediapipe as mp
@@ -81,8 +150,11 @@ def observe_foot_landmarks(video_path: Path, *, cache_dir: Path | None = None) -
             )
             _RUNTIME_WARNING_EMITTED = True
         return {"available": False, "reason": f"foot_landmark_runtime_unavailable: {error}"}
+    model_path = _model_path()
+    model_sha256 = _sha256_file(model_path)
+    cache = _observation_cache_path(cache_dir, digest, model_sha256)
     options = mp.tasks.vision.PoseLandmarkerOptions(
-        base_options=mp.tasks.BaseOptions(model_asset_path=str(_model_path())),
+        base_options=mp.tasks.BaseOptions(model_asset_path=str(model_path)),
         running_mode=mp.tasks.vision.RunningMode.VIDEO,
         num_poses=1,
     )
@@ -115,7 +187,9 @@ def observe_foot_landmarks(video_path: Path, *, cache_dir: Path | None = None) -
                 index += 1
     finally:
         capture.release()
-    payload = {"available": True, "policyVersion": POLICY_VERSION, "sourceVideoSha256": digest,
+    payload = {"available": True, "policyVersion": POLICY_VERSION,
+               "observationCacheVersion": OBSERVATION_CACHE_VERSION,
+               "sourceVideoSha256": digest, "modelSha256": model_sha256,
                "source": "mediapipe_full_heel_forefoot", "fps": fps, "frames": frames,
                "imageWidth": image_width, "imageHeight": image_height}
     cache_dir.mkdir(parents=True, exist_ok=True)

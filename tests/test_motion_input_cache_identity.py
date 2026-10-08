@@ -1,6 +1,10 @@
+import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
+
+import pytest
 
 from exercise_motion_pkg import bake_and_rank as bake, youtube
 from exercise_motion_pkg.yolo_track_stabilize import load_workspace_yolo_pose_track
@@ -192,3 +196,49 @@ def test_stabilization_track_must_belong_to_selected_video(tmp_path):
     canonical.write_text(json.dumps({"sourceVideoSha256": file_identity(video)["sha256"],
                                     "pose": {"frames": ["current"]}}))
     assert load_workspace_yolo_pose_track(tmp_path) == {"frames": ["current"]}
+
+
+def test_foot_landmark_cache_follows_identical_video_and_current_model(tmp_path, monkeypatch):
+    from exercise_motion_pkg import foot_contact_observation as foot
+
+    source = tmp_path / "source_candidate_A" / "selected_segment.mp4"
+    target = tmp_path / "input" / "selected_segment.mp4"
+    source.parent.mkdir()
+    target.parent.mkdir()
+    source.write_bytes(b"same selected clip")
+    target.write_bytes(source.read_bytes())
+    model = tmp_path / "pose_landmarker.task"
+    model.write_bytes(b"model v1")
+    monkeypatch.delenv("EXERCISE_MOTION_FOOT_LANDMARK_MODEL", raising=False)
+    monkeypatch.setattr(foot, "_model_asset_path", lambda: model)
+
+    video_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+    model_hash = hashlib.sha256(model.read_bytes()).hexdigest()
+    cache = source.parent / "foot_landmarks" / (
+        f"{video_hash}.{model_hash[:16]}.v{foot.OBSERVATION_CACHE_VERSION}.json"
+    )
+    payload = {
+        "available": True,
+        "policyVersion": foot.POLICY_VERSION,
+        "observationCacheVersion": foot.OBSERVATION_CACHE_VERSION,
+        "sourceVideoSha256": video_hash,
+        "modelSha256": model_hash,
+        "source": "mediapipe_full_heel_forefoot",
+        "fps": 30.0,
+        "frames": [],
+    }
+    cache.parent.mkdir()
+    cache.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert foot.copy_foot_landmark_cache(source, target)
+    monkeypatch.setattr(foot, "_model_path", lambda: pytest.fail("cache hit must not load a model"))
+    assert foot.observe_foot_landmarks(target) == payload
+
+    target.write_bytes(b"different clip")
+    assert not foot.copy_foot_landmark_cache(source, target)
+    shutil.copy2(source, target)
+    cache.write_bytes(b"\xff")
+    assert not foot.copy_foot_landmark_cache(source, target)
+    cache.write_text(json.dumps(payload), encoding="utf-8")
+    model.write_bytes(b"model v2")
+    assert not foot.copy_foot_landmark_cache(source, target)
