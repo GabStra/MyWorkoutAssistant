@@ -92,10 +92,14 @@ fun showWorkoutInProgressNotification(
             WorkoutTimerService.TimerType.REST -> "Rest"
             WorkoutTimerService.TimerType.TIMED_DURATION_SET -> "Set"
             WorkoutTimerService.TimerType.ENDURANCE_SET -> "Set elapsed"
+            WorkoutTimerService.TimerType.SUPERSET_CAP -> "Time left"
+            WorkoutTimerService.TimerType.SUPERSET_ROUND_CADENCE -> "Round"
         }
         val timerPart = when (timerUiState.timerType) {
             WorkoutTimerService.TimerType.REST,
-            WorkoutTimerService.TimerType.TIMED_DURATION_SET ->
+            WorkoutTimerService.TimerType.TIMED_DURATION_SET,
+            WorkoutTimerService.TimerType.SUPERSET_CAP,
+            WorkoutTimerService.TimerType.SUPERSET_ROUND_CADENCE ->
                 Status.TimerPart(elapsedRealtime + timerUiState.displayMillis)
 
             WorkoutTimerService.TimerType.ENDURANCE_SET ->

@@ -432,6 +432,123 @@ open class WorkoutViewModel(
         onTimerProgressChanged = { rebuildScreenState() }
     )
 
+    // Superset container timer (time cap or round cadence) currently registered, if any.
+    private var activeSupersetTimerId: UUID? = null
+
+    private val supersetCapCallbacks = WorkoutTimerService.TimerCallbacks(
+        onTimerEnd = {
+            val supersetId = activeSupersetTimerId ?: return@TimerCallbacks
+            onSupersetCapExpired(supersetId)
+        },
+        onTimerEnabled = {},
+        onTimerDisabled = {}
+    )
+
+    private val supersetCadenceCallbacks = WorkoutTimerService.TimerCallbacks(
+        onTimerEnd = {
+            val supersetId = activeSupersetTimerId ?: return@TimerCallbacks
+            onSupersetRoundBoundary(supersetId)
+        },
+        onTimerEnabled = {},
+        onTimerDisabled = {}
+    )
+
+    /**
+     * (Re)aligns the superset container timer (time cap / round cadence) with the
+     * current state's container. Called after every current-state change.
+     */
+    private fun syncSupersetTimers() {
+        val machine = stateMachine ?: return
+        val containerSupersetId = machine.getCurrentSupersetContainer()?.supersetId
+
+        if (activeSupersetTimerId != null && activeSupersetTimerId != containerSupersetId) {
+            workoutTimerService.unregisterTimer(activeSupersetTimerId!!)
+            activeSupersetTimerId = null
+        }
+
+        if (containerSupersetId == null || containerSupersetId == activeSupersetTimerId) return
+
+        val superset = selectedWorkout.value.workoutComponents
+            .filterIsInstance<Superset>()
+            .firstOrNull { it.id == containerSupersetId } ?: return
+
+        when {
+            superset.timeCapSeconds != null && superset.timeCapSeconds > 0 -> {
+                activeSupersetTimerId = containerSupersetId
+                workoutTimerService.registerSupersetCapTimer(
+                    supersetId = containerSupersetId,
+                    capSeconds = superset.timeCapSeconds,
+                    callbacks = supersetCapCallbacks
+                )
+            }
+            superset.roundDurationSeconds != null && superset.roundDurationSeconds > 0 -> {
+                activeSupersetTimerId = containerSupersetId
+                workoutTimerService.registerSupersetCadenceTimer(
+                    supersetId = containerSupersetId,
+                    roundDurationSeconds = superset.roundDurationSeconds,
+                    callbacks = supersetCadenceCallbacks
+                )
+            }
+        }
+    }
+
+    /**
+     * The 1-based round of the current state inside its superset container, when one applies.
+     */
+    fun getCurrentSupersetRound(): UInt? {
+        val machine = stateMachine ?: return null
+        machine.getCurrentSupersetContainer() ?: return null
+        return roundOfSupersetState(machine.currentState)
+    }
+
+    private fun roundOfSupersetState(state: WorkoutState): UInt? = when (state) {
+        is WorkoutState.Set -> state.supersetRound
+        is WorkoutState.Rest -> state.order
+        else -> null
+    }
+
+    /**
+     * Time-cap expiry: hard-cut past the block (confirmed semantics). The interrupted
+     * set is left unexecuted; advancing through goToNextState reuses the platform
+     * overrides (active set timer stop, phone sync) and completes naturally when the
+     * block is the last component.
+     */
+    open fun onSupersetCapExpired(supersetId: UUID) {
+        advancePastSuperset(supersetId)
+    }
+
+    /**
+     * Round-cadence boundary: cue + jump to the first state of the next round; when
+     * no further round exists, leave the block. Skipped sets stay unexecuted.
+     */
+    open fun onSupersetRoundBoundary(supersetId: UUID) {
+        val machine = stateMachine ?: return
+        val currentRound = roundOfSupersetState(machine.currentState) ?: return
+        val nextRoundIndex = machine.findSupersetRoundStartIndex(supersetId, currentRound + 1u)
+        if (nextRoundIndex == null) {
+            advancePastSuperset(supersetId)
+            return
+        }
+        if (machine.currentIndex != nextRoundIndex) {
+            // A forced round change invalidates any live per-set timers of skipped states.
+            workoutTimerService.unregisterAllExcept(setOf(supersetId))
+            stateMachine = machine.withCurrentIndex(nextRoundIndex)
+            updateStateFlowsFromMachine()
+        }
+    }
+
+    private fun advancePastSuperset(supersetId: UUID) {
+        workoutTimerService.unregisterAllExcept(setOf(supersetId))
+        var guard = 0
+        while (guard++ < 1000) {
+            val machine = stateMachine ?: return
+            val range = machine.getSupersetFlatRange(supersetId) ?: return
+            if (machine.currentIndex < range.first || machine.currentIndex >= range.second) return
+            if (_workoutState.value is WorkoutState.Completed) return
+            goToNextState()
+        }
+    }
+
     fun pauseWorkout() {
         _isPaused.value = true
         rebuildScreenState()
@@ -859,6 +976,7 @@ open class WorkoutViewModel(
                 _sessionPhase.value = WorkoutSessionPhase.ACTIVE
             }
             _calibrationContext.value = calibrationContextFromState(machine)
+            syncSupersetTimers()
         } else {
             _calibrationContext.value = null
         }

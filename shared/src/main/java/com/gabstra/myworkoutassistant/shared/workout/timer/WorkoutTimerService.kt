@@ -34,6 +34,8 @@ fun formatTimerNotificationStatus(timerUiState: WorkoutTimerService.TimerUiState
         WorkoutTimerService.TimerType.REST -> "Rest"
         WorkoutTimerService.TimerType.TIMED_DURATION_SET -> "Set"
         WorkoutTimerService.TimerType.ENDURANCE_SET -> "Set elapsed"
+        WorkoutTimerService.TimerType.SUPERSET_CAP -> "Time left"
+        WorkoutTimerService.TimerType.SUPERSET_ROUND_CADENCE -> "Round"
     }
     val pausedSuffix = if (timerUiState.isRunning) "" else " (paused)"
     return "$timerLabel · $formattedTime$pausedSuffix"
@@ -53,7 +55,9 @@ class WorkoutTimerService(
     enum class TimerType {
         ENDURANCE_SET,
         TIMED_DURATION_SET,
-        REST
+        REST,
+        SUPERSET_CAP,
+        SUPERSET_ROUND_CADENCE
     }
 
     data class TimerUiState(
@@ -77,7 +81,10 @@ class WorkoutTimerService(
         val callbacks: TimerCallbacks,
         val type: TimerType,
         var baseRealtimeMs: Long,
-        var baseElapsedMs: Long
+        var baseElapsedMs: Long,
+        // Container-level timers (superset cap / round cadence) have no WorkoutState;
+        // setId in the maps is the superset id and this is their full duration in ms.
+        val containerTotalMs: Long = 0L
     )
 
     private companion object {
@@ -160,6 +167,51 @@ class WorkoutTimerService(
     }
 
     /**
+     * Register a superset time-cap countdown keyed by superset id.
+     * Fires [TimerCallbacks.onTimerEnd] once when the cap expires, then unregisters.
+     */
+    fun registerSupersetCapTimer(
+        supersetId: UUID,
+        capSeconds: Int,
+        callbacks: TimerCallbacks
+    ) {
+        require(capSeconds > 0) { "Cap must be positive" }
+        activeTimers[supersetId] = ActiveTimer(
+            callbacks = callbacks,
+            type = TimerType.SUPERSET_CAP,
+            containerTotalMs = capSeconds * 1000L,
+            baseRealtimeMs = monotonicNowMs(),
+            baseElapsedMs = 0L
+        )
+        publishTimerUiState(supersetId)
+        ensureUpdateLoopRunning()
+        callbacks.onTimerEnabled()
+    }
+
+    /**
+     * Register a repeating round-cadence timer keyed by superset id.
+     * Fires [TimerCallbacks.onTimerEnd] at every round boundary and restarts the
+     * round clock automatically; runs until [unregisterTimer] is called.
+     */
+    fun registerSupersetCadenceTimer(
+        supersetId: UUID,
+        roundDurationSeconds: Int,
+        callbacks: TimerCallbacks
+    ) {
+        require(roundDurationSeconds > 0) { "Round duration must be positive" }
+        activeTimers[supersetId] = ActiveTimer(
+            callbacks = callbacks,
+            type = TimerType.SUPERSET_ROUND_CADENCE,
+            containerTotalMs = roundDurationSeconds * 1000L,
+            baseRealtimeMs = monotonicNowMs(),
+            baseElapsedMs = 0L
+        )
+        publishTimerUiState(supersetId)
+        ensureUpdateLoopRunning()
+        callbacks.onTimerEnabled()
+    }
+
+    /**
      * Unregister a timer (e.g., when set is completed or stopped).
      */
     fun unregisterTimer(setId: UUID) {
@@ -181,6 +233,15 @@ class WorkoutTimerService(
         _timerUiStates.value = emptyMap()
         updateJob?.cancel()
         updateJob = null
+    }
+
+    /**
+     * Unregister every timer except the given ids. Used when a container timer
+     * force-advances past states whose per-set timers would otherwise fire stale
+     * auto-advances.
+     */
+    fun unregisterAllExcept(keepIds: Set<UUID>) {
+        activeTimers.keys.filter { it !in keepIds }.forEach { unregisterTimer(it) }
     }
 
     /**
@@ -245,6 +306,7 @@ class WorkoutTimerService(
                 // Update all active timers
                 val updateNowMs = monotonicNowMs()
                 val timersToRemove = mutableListOf<UUID>()
+                val roundBoundaries = mutableListOf<UUID>()
                 activeTimers.forEach { (timerId, timer) ->
                     if (pausedTimers.containsKey(timerId)) {
                         publishTimerUiState(timerId)
@@ -254,8 +316,20 @@ class WorkoutTimerService(
                     val completed = updateTimerProgress(timer, nowMs = updateNowMs)
                     publishTimerUiState(timerId)
                     if (completed) {
-                        timersToRemove.add(timerId)
+                        if (timer.type == TimerType.SUPERSET_ROUND_CADENCE) {
+                            // Repeating timer: restart the round clock and signal the boundary.
+                            timer.baseRealtimeMs = updateNowMs
+                            timer.baseElapsedMs = 0L
+                            roundBoundaries.add(timerId)
+                        } else {
+                            timersToRemove.add(timerId)
+                        }
                     }
+                }
+
+                // Signal repeating round boundaries without tearing the timer down
+                roundBoundaries.forEach { timerId ->
+                    activeTimers[timerId]?.callbacks?.onTimerEnd?.invoke()
                 }
 
                 // Remove completed timers
@@ -368,6 +442,17 @@ class WorkoutTimerService(
                 }
                 return false
             }
+
+            TimerType.SUPERSET_CAP -> {
+                val remainingMs = (timer.containerTotalMs - elapsedMs).coerceAtLeast(0L)
+                return remainingMs <= 0L
+            }
+
+            TimerType.SUPERSET_ROUND_CADENCE -> {
+                // baseElapsed/baseRealtime restart at every boundary, so elapsed is
+                // the in-round time; the loop restarts the clock when this crosses.
+                return elapsedMs >= timer.containerTotalMs
+            }
         }
     }
 
@@ -427,6 +512,37 @@ class WorkoutTimerService(
                     isRunning = isRunning
                 )
             }
+
+            TimerType.SUPERSET_CAP -> {
+                val remainingMs = (timer.containerTotalMs - elapsedForUiMs(timer, setId)).coerceAtLeast(0L)
+                TimerUiState(
+                    setId = setId,
+                    timerType = TimerType.SUPERSET_CAP,
+                    displaySeconds = (remainingMs / 1000L).toInt(),
+                    displayMillis = remainingMs.toInt(),
+                    startValue = (timer.containerTotalMs / 1000L).toInt(),
+                    isRunning = isRunning
+                )
+            }
+
+            TimerType.SUPERSET_ROUND_CADENCE -> {
+                val remainingMs = (timer.containerTotalMs - elapsedForUiMs(timer, setId)).coerceAtLeast(0L)
+                TimerUiState(
+                    setId = setId,
+                    timerType = TimerType.SUPERSET_ROUND_CADENCE,
+                    displaySeconds = (remainingMs / 1000L).toInt(),
+                    displayMillis = remainingMs.toInt(),
+                    startValue = (timer.containerTotalMs / 1000L).toInt(),
+                    isRunning = isRunning
+                )
+            }
         }
     }
+
+    private fun elapsedForUiMs(timer: ActiveTimer, setId: UUID): Long =
+        if (pausedTimers.containsKey(setId)) {
+            (timer.baseElapsedMs + (pausedTimers[setId]!! - timer.baseRealtimeMs)).coerceAtLeast(0L)
+        } else {
+            (timer.baseElapsedMs + (monotonicNowMs() - timer.baseRealtimeMs)).coerceAtLeast(0L)
+        }
 }

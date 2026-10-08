@@ -84,6 +84,8 @@ fun showActiveWorkoutNotification(
                     WorkoutTimerService.TimerType.REST -> "Rest timer"
                     WorkoutTimerService.TimerType.TIMED_DURATION_SET -> "Set timer"
                     WorkoutTimerService.TimerType.ENDURANCE_SET -> "Set elapsed"
+                    WorkoutTimerService.TimerType.SUPERSET_CAP -> "Time left"
+                    WorkoutTimerService.TimerType.SUPERSET_ROUND_CADENCE -> "Round"
                 },
             )
             .setWhen(timerBaseWallClockMillis)

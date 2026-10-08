@@ -120,6 +120,8 @@ sealed class WorkoutState {
         val isCalibrationManagedWorkSet: Boolean = false, // Normal work set under an exercise that requires calibration
         val isAutoRegulationWorkSet: Boolean = false, // Non-last work set when progressionMode == AUTO_REGULATION
         var hasBeenExecuted: Boolean = false,
+        // 1-based round inside a superset container; set by the superset assembly.
+        var supersetRound: UInt? = null,
     ) : WorkoutState() {
         var currentSetData by currentSetDataState // <-- observe changes
     }

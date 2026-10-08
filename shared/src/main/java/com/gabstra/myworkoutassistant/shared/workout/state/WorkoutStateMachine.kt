@@ -472,6 +472,52 @@ data class WorkoutStateMachine(
     }
 
     /**
+     * Flattened index range of a superset container as (firstIndex, endExclusiveIndex),
+     * or null when no container with that id exists.
+     */
+    fun getSupersetFlatRange(supersetId: UUID): Pair<Int, Int>? {
+        var currentFlatPos = 0
+        for (item in stateSequence) {
+            when (item) {
+                is WorkoutStateSequenceItem.Container -> {
+                    val container = item.container
+                    if (container is WorkoutStateContainer.SupersetState && container.supersetId == supersetId) {
+                        return Pair(currentFlatPos, currentFlatPos + container.childStates.size)
+                    }
+                    currentFlatPos += when (container) {
+                        is WorkoutStateContainer.ExerciseState ->
+                            WorkoutStateSequenceOps.flattenExerciseContainer(container).size
+                        is WorkoutStateContainer.SupersetState -> container.childStates.size
+                    }
+                }
+                is WorkoutStateSequenceItem.RestBetweenExercises -> currentFlatPos++
+            }
+        }
+        return null
+    }
+
+    /**
+     * Flattened index of the first state belonging to [round] (1-based, as stored on
+     * [WorkoutState.Set.supersetRound] / [WorkoutState.Rest.order]) inside the superset
+     * container, or null when the container has no such round.
+     */
+    fun findSupersetRoundStartIndex(supersetId: UUID, round: UInt): Int? {
+        val range = getSupersetFlatRange(supersetId) ?: return null
+        for (index in range.first until range.second) {
+            val state = allStates[index]
+            val stateRound = when (state) {
+                is WorkoutState.Set -> state.supersetRound
+                is WorkoutState.Rest -> state.order
+                else -> null
+            }
+            if (stateRound == round) {
+                return index
+            }
+        }
+        return null
+    }
+
+    /**
      * Get all states for a specific exercise from its container (flattened order).
      */
     fun getStatesForExercise(exerciseId: UUID): List<WorkoutState> {

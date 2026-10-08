@@ -137,7 +137,11 @@ class WorkoutSupersetAssemblyService {
                     continue
                 }
 
-                out.addAll(removeNextSetBlock(q))
+                val block = removeNextSetBlock(q)
+                block.forEach { state ->
+                    if (state is WorkoutState.Set) state.supersetRound = (round + 1).toUInt()
+                }
+                out.addAll(block)
 
                 val restSec = superset.restSecondsByExercise[s.exerciseId] ?: 0
                 if (restSec > 0) {

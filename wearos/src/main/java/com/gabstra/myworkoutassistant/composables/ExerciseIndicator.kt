@@ -179,7 +179,9 @@ fun ExerciseIndicator(
             WorkoutTimerService.TimerType.ENDURANCE_SET ->
                 (timerUiState.displayMillis / timerUiState.startValue.toFloat()).coerceIn(0f, 1f)
             WorkoutTimerService.TimerType.TIMED_DURATION_SET,
-            WorkoutTimerService.TimerType.REST ->
+            WorkoutTimerService.TimerType.REST,
+            WorkoutTimerService.TimerType.SUPERSET_CAP,
+            WorkoutTimerService.TimerType.SUPERSET_ROUND_CADENCE ->
                 (1 - (timerUiState.displayMillis / timerUiState.startValue.toFloat())).coerceIn(0f, 1f)
         }
     }
