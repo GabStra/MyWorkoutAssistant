@@ -72,17 +72,18 @@ The latest matched retained production-bake replay is in `build/exercise_motion/
 
 **Owners:** `wave_pipeline.py::prepare_cpu_render_cache` and its submission/drain paths; `resource_budget.py`; `staged_wave_service.py`; `fit_runtime.py`. Coverage: `tests/test_wave_scheduling.py`, `tests/test_candidate_fit_session.py`, `tests/test_resource_budget.py`.
 
-- [ ] Read retained timestamps to establish the exact overlapping jobs and whether the speculative result was consumed. Use process/thread attribution; host CPU samples alone cannot identify the culprit.
-- [ ] If the overlap is confirmed, replay the captured RDL trajectory fit with and without the real OHP CPU preparation workload, holding fit inputs, native thread limits and deadline fixed. `scripts/replay_trajectory_fit.py` is the existing fitter entry; `prepare_cpu_render_cache` is the production competing workload.
-- [ ] Use a small diagnostics-only adapter only if needed to reproduce that overlap. Ordinary `replay_baked_preview.py` does not exercise the wave prefetch switch; prepared candidates bypass CPU/network candidate prefetch, which is a separate feature.
+- [x] Read retained timestamps: OHP speculative preparation ran for 52.803s and was abandoned at finalization. The retained stage result does not identify its exact cancellation point, so it proves overlap with the wave, not a measured RDL slowdown.
+- [x] Verify exact retained pre-bake lineage in the 2026-10-08 12:28 run. `processing_evidence/motion.raw.json` and `motion.cleaned.json` match the generation checkpoint outputs. The selected HTML and wearable skeleton are post-bake and must not be reused. The exact source clips match the retained policy-v3 body-support observations. The matching cached WHAM outputs can regenerate the pruned retarget-source JSON without inference; the production preview writer can recreate the missing pre-bake HTML from the retained raw/cleaned clips.
+- [ ] Run OFF / ON / OFF in fresh candidate workspaces with no bake/fit checkpoints. For RDL, use `bake_preview_loops_with_playwright` under `prioritize_fit_workspaces([rdl_workspace])`; this is the production path that enters `candidate_fit_session`, the CPU fit slot, and priority/yield checks. For OHP, call the real `prepare_cpu_render_cache` with its captured request settings inside the production speculative contexts. `scripts/replay_trajectory_fit.py` is not valid here because it bypasses those scheduling owners.
+- [ ] Keep the RDL side to its first eligible loop and base preview settings to bound the comparison; the fit and validation gates remain unchanged. Use the full captured OHP prefetch settings. Seed only source-hash- and policy-matched support observations. Record process/thread CPU, fit elapsed/evaluations/gates, OHP prepared-versus-abandoned status, and combined elapsed time.
 
-**Experiment bound:** OFF / ON / OFF, one sequence, no model calls/reconstruction/downloads. Use the captured production fit budget and report preparation time, consumed/abandoned work, fit evaluations, timeout, gates and combined elapsed time.
+**Experiment bound:** OFF / ON / OFF, one sequence, no model calls, reconstruction, or downloads. Use the production 360s candidate-fit budget and a 300s per-arm wall cap. Stop the sequence on an invalid input, cache reuse, or timeout; do not expand the run automatically.
 
 **Decision:** If speculation repeatedly slows useful fitting or is predictably abandoned, adjust generic admission/cancellation in production, preserving cases where useful work is consumed. If the captured workload is not reproducible or no causal loss appears, defer this area. A faster fitted rejection still does not qualify promotion.
 
 ### 3. Reconstruction startup amortization
 
-**Priority:** 53.899-108.102s measured startup versus only 2.441â€“3.838s reported prediction work across the pair. Prediction is only a subset of reconstruction; this does not mean all remaining reconstruction time is removable.
+**Priority:** 53.899-108.102s measured startup versus only 2.441-3.838s reported prediction work across the pair. Prediction is only a subset of reconstruction; this does not mean all remaining reconstruction time is removable.
 
 **Owners:** `wham_runner.py::ensure_warm_worker_ready`, `run_wham_with_warm_worker`; `gvhmr_warm_worker.py`; production PowerShell worker lifecycle. Coverage: `tests/test_wham_warm_worker_recovery.py` and existing worker ownership checks.
 
