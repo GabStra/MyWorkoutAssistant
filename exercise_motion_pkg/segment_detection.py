@@ -1768,11 +1768,18 @@ class LlamaCppVisionClient:
                     and any(marker in error_body for marker in (
                         "unsupported", "not supported", "unknown", "unrecognized", "unexpected"))
                 ]
-                if unsupported_format_fields:
+                compatibility_fallback_fields = unsupported_format_fields
+                if (
+                    "response_format" in payload
+                    and "unexpected empty grammar stack after accepting piece: <think>" in error_body
+                ):
+                    # Qwen's empty thought prefix can conflict with llama.cpp JSON grammar.
+                    compatibility_fallback_fields = ["response_format"]
+                if compatibility_fallback_fields:
                     # Compatibility fallback must not turn thinking back on or
                     # repeat context-limit/server failures with altered semantics.
                     fallback_payload = dict(payload)
-                    for field in unsupported_format_fields:
+                    for field in compatibility_fallback_fields:
                         fallback_payload.pop(field)
                     remaining = (None if request_deadline is None
                                  else request_deadline - time.monotonic())

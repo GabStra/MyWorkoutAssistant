@@ -9,6 +9,7 @@ from exercise_motion_pkg.vlm_errors import CriticalVlmInteractionError
 @pytest.mark.parametrize("status,body,removed", [
     (400, "unsupported response_format", "response_format"),
     (422, "unknown reasoning_format parameter", "reasoning_format"),
+    (400, "Failed to initialize samplers: Unexpected empty grammar stack after accepting piece: <think> (248068)", "response_format"),
     (400, "request exceeds context size", None),
     (500, "server unavailable", None),
     (400, "unsupported chat_template_kwargs", None),
