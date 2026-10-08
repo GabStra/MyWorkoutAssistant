@@ -2,12 +2,12 @@
   "name": "WOD 2026-10-06 HYROX-PREP",
   "workouts": [
     {
-      "id": "389cfe1a-b8ff-4e99-9505-9afb6eb7e34e",
+      "id": "ea816b7e-bf6e-49f9-884b-186b87f29946",
       "name": "WOD 2026-10-06 HYROX-PREP",
-      "description": "Row, bike erg, GTOH, shuttle run conditioning",
+      "description": "Row, Bike Erg, GTOH, Shuttle Run",
       "workoutComponents": [
         {
-          "id": "48cdad64-5a11-4013-b51e-a9fca80ba55a",
+          "id": "dd698685-ea1e-4126-9bc2-206d8c27ccaa",
           "type": "Exercise",
           "enabled": true,
           "name": "Row",
@@ -15,11 +15,12 @@
           "placementNotes": "",
           "sets": [
             {
-              "id": "2bb77e05-9247-4ecd-aafb-f0f4f6a2eafa",
+              "id": "76eadeef-4a6f-4b25-a9f3-2546ca68202d",
               "type": "EnduranceSet",
               "timeInMillis": 240000,
               "autoStart": true,
-              "autoStop": true
+              "autoStop": true,
+              "targetDistanceMeters": 1100
             }
           ],
           "exerciseType": "COUNTUP",
@@ -46,160 +47,130 @@
           "exerciseDefinitionId": "083025fe-eae3-5281-b09c-3b3d021d52a8"
         },
         {
-          "id": "c687486b-b34c-40df-a65e-9484e8be446f",
-          "type": "Exercise",
+          "id": "11ec0b1e-0807-4b27-a4d2-d1c13fb6083e",
+          "type": "Rest",
           "enabled": true,
-          "name": "Bike Erg Standing",
-          "notes": "",
-          "placementNotes": "",
-          "sets": [
-            {
-              "id": "701f29a9-64a5-47c8-a22b-fe04be56c488",
-              "type": "EnduranceSet",
-              "timeInMillis": 60000,
-              "autoStart": true,
-              "autoStop": true
-            }
-          ],
-          "exerciseType": "COUNTUP",
-          "equipmentId": "25f58251-2953-57e5-89b2-7cb14f12f0d4",
-          "bodyWeightPercentage": null,
-          "generateWarmUpSets": false,
-          "progressionMode": "OFF",
-          "keepScreenOn": false,
-          "showCountDownTimer": false,
-          "intraSetRestInSeconds": null,
-          "muscleGroups": [
-            "FRONT_QUADRICEPS",
-            "BACK_GLUTEAL"
-          ],
-          "secondaryMuscleGroups": [
-            "BACK_HAMSTRING",
-            "BACK_CALVES"
-          ],
-          "requiredAccessoryEquipmentIds": [],
-          "requiresLoadCalibration": false,
-          "exerciseCategory": null,
-          "exerciseDefinitionId": "b9ed4927-2e56-5bed-a42f-ab68126aa4dc"
+          "timeInSeconds": 60
         },
         {
-          "id": "93f0bfe5-d689-4c3a-8560-36d435298d6c",
-          "type": "Exercise",
-          "enabled": true,
-          "name": "Bike Erg Seated",
-          "notes": "",
-          "placementNotes": "",
-          "sets": [
-            {
-              "id": "e6f27629-b70a-4e38-86d0-a08d93f7b3d6",
-              "type": "EnduranceSet",
-              "timeInMillis": 60000,
-              "autoStart": true,
-              "autoStop": true
-            }
-          ],
-          "exerciseType": "COUNTUP",
-          "equipmentId": "25f58251-2953-57e5-89b2-7cb14f12f0d4",
-          "bodyWeightPercentage": null,
-          "generateWarmUpSets": false,
-          "progressionMode": "OFF",
-          "keepScreenOn": false,
-          "showCountDownTimer": false,
-          "intraSetRestInSeconds": null,
-          "muscleGroups": [
-            "FRONT_QUADRICEPS"
-          ],
-          "secondaryMuscleGroups": [
-            "BACK_GLUTEAL",
-            "BACK_HAMSTRING",
-            "BACK_CALVES"
-          ],
-          "requiredAccessoryEquipmentIds": [],
-          "requiresLoadCalibration": false,
-          "exerciseCategory": null,
-          "exerciseDefinitionId": "a0f37c8f-b7ad-535c-9b18-d957cbc45cb2"
-        },
-        {
-          "id": "492f26c9-2dbd-4824-9192-11e7946526b6",
-          "type": "Exercise",
-          "enabled": true,
-          "name": "Bike Erg Standing",
-          "notes": "",
-          "placementNotes": "",
-          "sets": [
-            {
-              "id": "11ed9098-8923-469b-bedd-a7ee25038483",
-              "type": "EnduranceSet",
-              "timeInMillis": 60000,
-              "autoStart": true,
-              "autoStop": true
-            }
-          ],
-          "exerciseType": "COUNTUP",
-          "equipmentId": "25f58251-2953-57e5-89b2-7cb14f12f0d4",
-          "bodyWeightPercentage": null,
-          "generateWarmUpSets": false,
-          "progressionMode": "OFF",
-          "keepScreenOn": false,
-          "showCountDownTimer": false,
-          "intraSetRestInSeconds": null,
-          "muscleGroups": [
-            "FRONT_QUADRICEPS",
-            "BACK_GLUTEAL"
-          ],
-          "secondaryMuscleGroups": [
-            "BACK_HAMSTRING",
-            "BACK_CALVES"
-          ],
-          "requiredAccessoryEquipmentIds": [],
-          "requiresLoadCalibration": false,
-          "exerciseCategory": null,
-          "exerciseDefinitionId": "b9ed4927-2e56-5bed-a42f-ab68126aa4dc"
-        },
-        {
-          "id": "e18e1e5a-0778-4cfb-ada1-5107ae56329e",
-          "type": "Exercise",
-          "enabled": true,
-          "name": "Bike Erg Seated",
-          "notes": "",
-          "placementNotes": "",
-          "sets": [
-            {
-              "id": "ae68ce3d-b7ce-456a-995b-912278191bc5",
-              "type": "EnduranceSet",
-              "timeInMillis": 60000,
-              "autoStart": true,
-              "autoStop": true
-            }
-          ],
-          "exerciseType": "COUNTUP",
-          "equipmentId": "25f58251-2953-57e5-89b2-7cb14f12f0d4",
-          "bodyWeightPercentage": null,
-          "generateWarmUpSets": false,
-          "progressionMode": "OFF",
-          "keepScreenOn": false,
-          "showCountDownTimer": false,
-          "intraSetRestInSeconds": null,
-          "muscleGroups": [
-            "FRONT_QUADRICEPS"
-          ],
-          "secondaryMuscleGroups": [
-            "BACK_GLUTEAL",
-            "BACK_HAMSTRING",
-            "BACK_CALVES"
-          ],
-          "requiredAccessoryEquipmentIds": [],
-          "requiresLoadCalibration": false,
-          "exerciseCategory": null,
-          "exerciseDefinitionId": "a0f37c8f-b7ad-535c-9b18-d957cbc45cb2"
-        },
-        {
-          "id": "bdcfe1be-c20f-4308-a9ee-3dc34c7932e6",
+          "id": "3d7be626-5a28-47f2-933f-a73bb4c77776",
           "type": "Superset",
           "enabled": true,
           "exercises": [
             {
-              "id": "6a7af982-00e8-4daa-9d16-fbee631c8de5",
+              "id": "3b7a70fd-6130-46fd-a24b-579497468fad",
+              "type": "Exercise",
+              "enabled": true,
+              "name": "Bike Erg Standing",
+              "notes": "",
+              "placementNotes": "",
+              "sets": [
+                {
+                  "id": "41215c4a-a7a7-4cbc-bdb9-38404f138a69",
+                  "type": "EnduranceSet",
+                  "timeInMillis": 60000,
+                  "autoStart": true,
+                  "autoStop": true
+                },
+                {
+                  "id": "19f67812-0b58-4850-8fbd-3499f76e90b4",
+                  "type": "RestSet",
+                  "timeInSeconds": 0,
+                  "subCategory": "WorkSet"
+                },
+                {
+                  "id": "0a865807-bd59-4cdd-a235-b5f77557baee",
+                  "type": "EnduranceSet",
+                  "timeInMillis": 60000,
+                  "autoStart": true,
+                  "autoStop": true
+                }
+              ],
+              "exerciseType": "COUNTUP",
+              "equipmentId": "25f58251-2953-57e5-89b2-7cb14f12f0d4",
+              "bodyWeightPercentage": null,
+              "generateWarmUpSets": false,
+              "progressionMode": "OFF",
+              "keepScreenOn": false,
+              "showCountDownTimer": false,
+              "intraSetRestInSeconds": null,
+              "muscleGroups": [
+                "FRONT_QUADRICEPS",
+                "BACK_GLUTEAL"
+              ],
+              "secondaryMuscleGroups": [
+                "BACK_HAMSTRING",
+                "BACK_CALVES"
+              ],
+              "requiredAccessoryEquipmentIds": [],
+              "requiresLoadCalibration": false,
+              "exerciseCategory": null,
+              "exerciseDefinitionId": "b9ed4927-2e56-5bed-a42f-ab68126aa4dc"
+            },
+            {
+              "id": "23009447-a011-4a0f-a97a-320ed06d6365",
+              "type": "Exercise",
+              "enabled": true,
+              "name": "Bike Erg Seated",
+              "notes": "",
+              "placementNotes": "",
+              "sets": [
+                {
+                  "id": "c1d07a1b-39d5-490f-8a3d-d0eeb8c7975c",
+                  "type": "EnduranceSet",
+                  "timeInMillis": 60000,
+                  "autoStart": true,
+                  "autoStop": true
+                },
+                {
+                  "id": "8883904b-3257-4381-a5e8-8c3ae5caf309",
+                  "type": "RestSet",
+                  "timeInSeconds": 0,
+                  "subCategory": "WorkSet"
+                },
+                {
+                  "id": "d7bdb003-178a-4d1d-a569-d10d68c8233c",
+                  "type": "EnduranceSet",
+                  "timeInMillis": 60000,
+                  "autoStart": true,
+                  "autoStop": true
+                }
+              ],
+              "exerciseType": "COUNTUP",
+              "equipmentId": "25f58251-2953-57e5-89b2-7cb14f12f0d4",
+              "bodyWeightPercentage": null,
+              "generateWarmUpSets": false,
+              "progressionMode": "OFF",
+              "keepScreenOn": false,
+              "showCountDownTimer": false,
+              "intraSetRestInSeconds": null,
+              "muscleGroups": [
+                "FRONT_QUADRICEPS"
+              ],
+              "secondaryMuscleGroups": [
+                "BACK_GLUTEAL",
+                "BACK_HAMSTRING",
+                "BACK_CALVES"
+              ],
+              "requiredAccessoryEquipmentIds": [],
+              "requiresLoadCalibration": false,
+              "exerciseCategory": null,
+              "exerciseDefinitionId": "a0f37c8f-b7ad-535c-9b18-d957cbc45cb2"
+            }
+          ],
+          "restSecondsByExercise": {
+            "3b7a70fd-6130-46fd-a24b-579497468fad": 0,
+            "23009447-a011-4a0f-a97a-320ed06d6365": 60
+          },
+          "timeCapSeconds": 240
+        },
+        {
+          "id": "dcbe4397-fec3-4937-b2d6-ed4173da1892",
+          "type": "Superset",
+          "enabled": true,
+          "exercises": [
+            {
+              "id": "e9fbec7e-815c-42c0-a18a-4f2d916e9928",
               "type": "Exercise",
               "enabled": true,
               "name": "GTOH Plate",
@@ -207,7 +178,7 @@
               "placementNotes": "",
               "sets": [
                 {
-                  "id": "a8758d70-4f3c-4415-96dc-f3cc54d38938",
+                  "id": "eac8705d-f860-44f3-a49c-d22ecc47d126",
                   "type": "WeightSet",
                   "reps": 20,
                   "weight": 20.0,
@@ -240,7 +211,7 @@
               "exerciseDefinitionId": "1dc7cabe-2ba7-56d9-ac8f-048abbb64fbf"
             },
             {
-              "id": "46266a8f-49ab-43c6-b887-e8a4c0bd469a",
+              "id": "debf421f-ef31-426b-97c4-53efb0805be2",
               "type": "Exercise",
               "enabled": true,
               "name": "Shuttle Run",
@@ -248,7 +219,7 @@
               "placementNotes": "",
               "sets": [
                 {
-                  "id": "59b9ac57-1e15-4ee5-9dbd-754f32d77aff",
+                  "id": "a9934bd9-ce56-44ae-8d75-59aef35f8e6e",
                   "type": "BodyWeightSet",
                   "reps": 20,
                   "additionalWeight": 0.0,
@@ -281,9 +252,10 @@
             }
           ],
           "restSecondsByExercise": {
-            "6a7af982-00e8-4daa-9d16-fbee631c8de5": 0,
-            "46266a8f-49ab-43c6-b887-e8a4c0bd469a": 0
-          }
+            "e9fbec7e-815c-42c0-a18a-4f2d916e9928": 0,
+            "debf421f-ef31-426b-97c4-53efb0805be2": 0
+          },
+          "timeCapSeconds": 240
         }
       ],
       "order": 0,
@@ -294,7 +266,7 @@
       "nextVersionId": null,
       "isActive": true,
       "timesCompletedInAWeek": null,
-      "globalId": "cb376220-c811-409a-afbd-58f4ec768060",
+      "globalId": "bb10d65f-7d05-401c-b38d-c4b195fea0b8",
       "type": 0,
       "workoutPlanId": null
     }
@@ -681,6 +653,12 @@
       "capabilities": [
         "CARDIO_STATIONARY"
       ]
+    },
+    {
+      "id": "3feff12b-f48a-5164-beeb-0e87af4d0f54",
+      "type": "GENERIC",
+      "name": "Weight Plate",
+      "capabilities": []
     }
   ],
   "accessoryEquipments": [
@@ -733,6 +711,47 @@
       "name": "Squat Rack",
       "capabilities": [
         "RACKED_BAR_SUPPORT"
+      ]
+    },
+    {
+      "id": "02f9b48d-e3f5-534b-b52d-6c4a75d29203",
+      "type": "ACCESSORY",
+      "name": "Wall Ball Target",
+      "capabilities": []
+    },
+    {
+      "id": "f0b7fbee-2740-5a57-bff7-10d17d7ae483",
+      "type": "ACCESSORY",
+      "name": "Plyo Box",
+      "capabilities": []
+    },
+    {
+      "id": "9728b459-6e8a-59d1-81c7-2c542b8af8ec",
+      "type": "ACCESSORY",
+      "name": "Jump Rope",
+      "capabilities": []
+    },
+    {
+      "id": "6e4325dc-8514-5065-9467-1b14e8ac0614",
+      "type": "ACCESSORY",
+      "name": "Ab Mat",
+      "capabilities": []
+    },
+    {
+      "id": "e43888d2-1322-518e-89aa-204b5d993085",
+      "type": "ACCESSORY",
+      "name": "Pull-Up Bar",
+      "capabilities": [
+        "PULL_UP_BAR",
+        "MUSCLE_UP_CLEARANCE"
+      ]
+    },
+    {
+      "id": "7aaa4597-86aa-5c61-adcd-75e340437a33",
+      "type": "ACCESSORY",
+      "name": "Gymnastic Rings",
+      "capabilities": [
+        "GYMNASTIC_RINGS"
       ]
     }
   ],

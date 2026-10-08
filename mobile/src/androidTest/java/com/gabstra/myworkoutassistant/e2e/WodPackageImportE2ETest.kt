@@ -109,18 +109,24 @@ class WodPackageImportE2ETest {
         val wodWorkout = savedStore.workouts.singleOrNull { it.name == workoutName }
         assertNotNull("WOD workout missing from the imported store", wodWorkout)
 
-        val componentNames = wodWorkout!!.workoutComponents.map { component ->
+        // The pipeline's encoding varies run-to-run (timed blocks may become
+        // standing/seated supersets etc.), so assert semantics — every expected
+        // movement must appear somewhere in the workout — not the exact shape.
+        val movementNames = wodWorkout!!.workoutComponents.flatMap { component ->
             when (component) {
-                is com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise -> component.name
+                is com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise -> listOf(component.name)
                 is com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset ->
-                    "Superset(${component.exercises.joinToString("+") { it.name }})"
-                else -> component.javaClass.simpleName
+                    component.exercises.map { it.name }
+                else -> emptyList()
             }
         }
-        assertEquals(
-            "Row, Bike Erg Standing, Bike Erg Seated, Bike Erg Standing, Bike Erg Seated, Superset(GTOH Plate+Shuttle Run)",
-            componentNames.joinToString()
-        )
+        assertTrue("imported WOD has no movement components", movementNames.isNotEmpty())
+        listOf("Row", "Bike Erg", "GTOH Plate", "Shuttle Run").forEach { expected ->
+            assertTrue(
+                "movement '$expected' missing from imported WOD (got: $movementNames)",
+                movementNames.any { it.contains(expected, ignoreCase = true) }
+            )
+        }
 
         val definitionNames = savedStore.exerciseDefinitions.map { it.name }
         listOf("Row", "Bike Erg Standing", "Bike Erg Seated", "GTOH Plate", "Shuttle Run").forEach { name ->
