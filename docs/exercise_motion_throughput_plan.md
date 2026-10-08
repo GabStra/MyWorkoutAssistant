@@ -135,12 +135,13 @@ No new browser worker-count or frame-batch sweep is scheduled. Revisit after lar
 
 ## Execution order and stop rules
 
-- The read-only fit, lifecycle and request-identity audits are complete. The first fit optimization comparison was inconclusive at full-fit timing; the speculative-scheduling replay is also inconclusive because its ON arm timed out without live telemetry.
-- The scheduling diagnostic found immediate CPU and fit-slot admission, followed by an RDL fit that remained active when the 300s harness cap killed it. Since the cap is below the 360s fit budget and OFF2 was omitted, this hypothesis has no valid timing conclusion; defer it and advance to the next ranked area with measurable removable work.
-- Select **one** hypothesis from the highest-priority area with demonstrated removable work. Record input hashes, intended change, skipped stages, metric, decision rule and runtime cap before launching it.
+- The read-only fit, lifecycle and request-identity audits are complete. The sparse-mask optimization preserved outputs but did not produce repeatable full-fit savings. The structural-fit profile and follow-up screens are recorded below; no production throughput change has qualified.
+- The scheduling diagnostic found immediate CPU and fit-slot admission, followed by an RDL fit that remained active when the 300s harness cap killed it. Since the cap is below the 360s fit budget and OFF2 was omitted, this hypothesis has no valid timing conclusion; defer it.
+- Before another solver experiment, reconcile the retained RDL production selection and source-guided replay evidence: establish which fitted candidate produced the accepted packaged motion and why the retained `x_scale="jac"` replay fails the existing diagnostics. Use source, manifest and stage reports first. Only run a same-input unit-scale postprocess control if that lineage review cannot answer the gate question; do not sweep solver settings.
+- Choose a new performance hypothesis only when retained evidence shows removable work or a concrete algorithmic mechanism. Record input hashes, intended change, skipped stages, metric, decision rule and runtime cap before launching it.
 - Keep each timing comparison sequential and bounded as above. If its budget cannot discriminate a gain, report the limit instead of expanding it automatically.
 - Maintain one short result per hypothesis: keep, reject or inconclusive, with evidence paths. No new full run to compensate for unexplained rejection; no repeated passing checks without changed evidence.
-- Advance to the next ranked area when the current hypothesis is decided or its removable margin cannot be demonstrated. Reorder only when new evidence changes the expected value.
+- Advance to the next ranked area when the current hypothesis is decided or its removable margin cannot be demonstrated. Current measured margin is concentrated in trajectory fitting, but the experiments below have not identified a safe, quality-preserving reduction. Reorder only when new evidence changes the expected value.
 - Update the short handoff and commit only qualified changes. The broad goal remains unfinished until representative fresh quality and timing evidence satisfies it.
 
 ## Execution evidence — 2026-10-08
@@ -160,3 +161,19 @@ The isolated branch `experiment/motion-fit-throughput-20261008` contains commit 
 A four-run baseline/candidate/candidate/baseline fit comparison then used the same retained117-frame RDL input, the production CUDA interpreter and180-second fit limits. Every fit applied and passed all controlled-motion checks; all four output pose digests were identical. Mean reported fit time was61.327s baseline versus62.643s candidate (candidate +1.317s); mean launcher wall was63.588 versus64.895s. The per-pair direction reversed with run order. This shows timing is within larger run-to-run variation and does **not** establish a full-fit throughput improvement. Input/report: `build/exercise_motion/diagnostics/throughput_execution_20261008/retained_fit_ab_summary.json`.
 
 The retained diagnostic input's source-cycle proposal was rejected as `selected_source_interval_source_evidence_incomplete`; the retained full interval passed. It has no complete source-captured/package lineage. This experiment qualifies controlled-fit check/output parity only. Do not promote the change to master or claim usable end-to-end throughput from it. The source change remains isolated for later disposition; don't repeat this four-run experiment.
+
+### Structural-refinement profile and bounded follow-ups - 2026-10-08
+
+The retained 117-frame RDL postprocess profile took 80.801s, including 71.451s in structural refinement. Profiling attributes that cost to `_align_body_to_source_pose` and its trajectory fit. Although the profile reports five `least_squares` calls, only one was the expensive trajectory solve (~53.386s); the other four were tiny camera-registration fits (~0.027s combined), so this is not evidence of repeated full solves. The trajectory fit used 69 Jacobians, 108 color groups, 8,424 variables and 7,535 residual evaluations. The source-preserving acceptance checks cover distinct proposals; no safe duplicate check or solve was identified.
+
+Two exact-pattern coloring screens kept all 108 valid groups: descending column nonzero count and descending distinct-conflict degree. The pattern was 31,491 x 8,424 with 734,451 nonzeros. Neither screen invoked the optimizer, so no fit replay is justified by coloring.
+
+The retained accepted production run B reports RDL/OHP structural-refinement stages of 66.805s/37.275s. Its captured RDL source-guided fit ran 60.016s, hit `time_limit`, and was not applied; the OHP fit ran 34.922s, reached its 80-evaluation limit, and was applied inside an outer selection that ultimately chose the cyclic rebake. These are distinct exercise outcomes, not evidence for reusing one result across them.
+
+An isolated `x_scale="jac"` RDL postprocess replay on run B's retained input took 30.525s overall (28.658s structural refinement; 24.547s trajectory fit). The fit applied after 80 evaluations and reduced its reported objective from 151,166 to 3,725, but postprocess diagnostics failed `root_translation_discontinuity`, `physical_pose_constraint_violation`, and `limb_velocity_spike_penalty`. This is not an accepted or packaged output and is not a production timing win.
+
+The direct same-input fitter A/B, repeated in reverse order, consistently favored Jacobian scaling by only 0.669-1.401s per fit (unit: 27.719s/27.409s; Jacobian: 26.318s/26.740s). Both arms stopped at the same 80-evaluation limit; the Jacobian arm had a modestly lower objective and source-target RMS, but produced a different pose (maximum coordinate delta 3.80cm). The downstream replay failure means this fit-only edge does not qualify as equal-quality throughput.
+
+A missing-camera preflight candidate rejected the stripped diagnostic interval before anatomy initialization, but the retained accepted RDL and OHP artifacts have source camera references. No qualified production incidence was found, so keep that change isolated and do not promote it.
+
+**Decision:** No change from this batch qualifies for production. The main measurable cost remains trajectory fitting, but redundant solves, coloring reductions, and a quality-preserving `x_scale="jac"` gain have not been demonstrated. First reconcile the retained RDL production selection with the failed replay diagnostics; do not launch another solver sweep or a full generation run to compensate.
