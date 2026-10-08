@@ -8213,7 +8213,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             return
 
         baseline_candidate = candidate
-        baseline_report = report
+        baseline_report = deepcopy(report)
         baseline_coordinates = solved.x.copy()
         baseline_nfev = solved.nfev
         baseline_status = getattr(solved, 'status', 0)

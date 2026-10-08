@@ -216,6 +216,56 @@ def test_fit_continuation_must_strictly_improve_failed_checks():
     })
 
 
+def test_bounded_anatomy_projection_compares_trial_with_baseline_report(monkeypatch):
+    from types import SimpleNamespace
+
+    from exercise_motion_pkg import controlled_motion as motion
+
+    names, points = stance(12)
+    current = payload(names, points)
+    original_validation = motion.validate_physical_motion
+    original_acceptance_comparison = motion.fit_report_improves_acceptance
+    validation_calls = 0
+    compared_reports = []
+
+    def fail_initial_anatomy_checks(*args, **kwargs):
+        nonlocal validation_calls
+        validation_calls += 1
+        result = original_validation(*args, **kwargs)
+        if validation_calls <= 2:
+            return {
+                **result,
+                'passed': False,
+                'reasons': ['anatomy_torso_bend'],
+                'events': [{'reason': 'anatomy_torso_bend'}],
+            }
+        return {**result, 'passed': True, 'reasons': [], 'events': []}
+
+    def compare_reports(baseline, trial):
+        compared_reports.append((baseline, trial))
+        return original_acceptance_comparison(baseline, trial)
+
+    monkeypatch.setattr(motion, 'validate_physical_motion', fail_initial_anatomy_checks)
+    monkeypatch.setattr(motion, 'fit_report_improves_acceptance', compare_reports)
+    monkeypatch.setattr(
+        motion, 'solve_trajectory',
+        lambda _residual, initial, *_args, **_kwargs:
+            SimpleNamespace(x=initial.copy(), nfev=1, status=0),
+    )
+
+    _, report = motion._fit_controlled_motion(current, timeout_seconds=60.)
+
+    assert 'postFitAnatomicalProjection' in report, {
+        'validationCalls': validation_calls,
+        'checks': report.get('checks'),
+        'reasons': report.get('physicalReasons'),
+        'reason': report.get('reason'),
+    }
+    assert report['postFitAnatomicalProjection']['attempted'] is True
+    assert compared_reports
+    assert compared_reports[0][0] is not compared_reports[0][1]
+
+
 def test_swapped_materialized_sole_support_reaches_fit_without_mutating_source(monkeypatch):
     from copy import deepcopy
 
