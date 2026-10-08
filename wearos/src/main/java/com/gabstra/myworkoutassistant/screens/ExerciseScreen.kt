@@ -321,6 +321,12 @@ fun ExerciseScreen(
             hasWarmupSets = viewModel.hasWarmupSetsForExercise(state.exerciseId),
             unilateralSideIndex = viewModel.getUnilateralSideIndex(state),
             intraSetTotal = state.intraSetTotal,
+            supersetRound = viewModel.getCurrentSupersetRound()?.let { currentRound ->
+                val totalRounds = viewModel.activeSupersetTimer.value
+                    ?.takeIf { it.supersetId == viewModel.getCurrentSupersetId() }
+                    ?.totalRounds
+                if (totalRounds != null) "$currentRound/$totalRounds" else "$currentRound"
+            },
         )
         val exerciseNameComposable: @Composable () -> Unit = {
             ExerciseNameText(
@@ -1533,7 +1539,9 @@ private fun buildActiveExerciseContextLabel(
     hasWarmupSets: Boolean,
     unilateralSideIndex: UInt?,
     intraSetTotal: UInt?,
+    supersetRound: String? = null,
 ): String? = listOfNotNull(
+    supersetRound?.let { "ROUND $it" },
     setCounter
         ?.let { (current, total) ->
             "${buildActiveSetCounterLabel(setCounterKind, hasWarmupSets)} $current/$total"

@@ -1384,6 +1384,24 @@ open class AppViewModel : WorkoutViewModel() {
         syncWearActiveStateAfterTransition()
     }
 
+    // Superset container timer cues (cap expiry, round boundary); WorkoutScreen wires
+    // this to haptics because HapticsViewModel is UI-scoped.
+    private var supersetCueHook: (() -> Unit)? = null
+
+    fun setSupersetCueHook(hook: (() -> Unit)?) {
+        supersetCueHook = hook
+    }
+
+    override fun onSupersetCapExpired(supersetId: UUID) {
+        supersetCueHook?.invoke()
+        super.onSupersetCapExpired(supersetId)
+    }
+
+    override fun onSupersetRoundBoundary(supersetId: UUID) {
+        supersetCueHook?.invoke()
+        super.onSupersetRoundBoundary(supersetId)
+    }
+
     /**
      * Wear-specific navigation entrypoint that ensures active timer services are not left running
      * when navigating backward to a previous set.

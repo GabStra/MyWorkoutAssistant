@@ -435,6 +435,15 @@ open class WorkoutViewModel(
     // Superset container timer (time cap or round cadence) currently registered, if any.
     private var activeSupersetTimerId: UUID? = null
 
+    data class SupersetTimerInfo(
+        val supersetId: UUID,
+        val isCadence: Boolean,
+        val totalRounds: UInt?
+    )
+
+    private val _activeSupersetTimer = MutableStateFlow<SupersetTimerInfo?>(null)
+    val activeSupersetTimer: StateFlow<SupersetTimerInfo?> = _activeSupersetTimer.asStateFlow()
+
     private val supersetCapCallbacks = WorkoutTimerService.TimerCallbacks(
         onTimerEnd = {
             val supersetId = activeSupersetTimerId ?: return@TimerCallbacks
@@ -464,6 +473,7 @@ open class WorkoutViewModel(
         if (activeSupersetTimerId != null && activeSupersetTimerId != containerSupersetId) {
             workoutTimerService.unregisterTimer(activeSupersetTimerId!!)
             activeSupersetTimerId = null
+            _activeSupersetTimer.value = null
         }
 
         if (containerSupersetId == null || containerSupersetId == activeSupersetTimerId) return
@@ -475,6 +485,11 @@ open class WorkoutViewModel(
         when {
             superset.timeCapSeconds != null && superset.timeCapSeconds > 0 -> {
                 activeSupersetTimerId = containerSupersetId
+                _activeSupersetTimer.value = SupersetTimerInfo(
+                    supersetId = containerSupersetId,
+                    isCadence = false,
+                    totalRounds = null
+                )
                 workoutTimerService.registerSupersetCapTimer(
                     supersetId = containerSupersetId,
                     capSeconds = superset.timeCapSeconds,
@@ -483,6 +498,13 @@ open class WorkoutViewModel(
             }
             superset.roundDurationSeconds != null && superset.roundDurationSeconds > 0 -> {
                 activeSupersetTimerId = containerSupersetId
+                _activeSupersetTimer.value = SupersetTimerInfo(
+                    supersetId = containerSupersetId,
+                    isCadence = true,
+                    totalRounds = machine.getStatesForSuperset(containerSupersetId)
+                        .mapNotNull { roundOfSupersetState(it) }
+                        .maxOrNull()
+                )
                 workoutTimerService.registerSupersetCadenceTimer(
                     supersetId = containerSupersetId,
                     roundDurationSeconds = superset.roundDurationSeconds,
@@ -499,6 +521,13 @@ open class WorkoutViewModel(
         val machine = stateMachine ?: return null
         machine.getCurrentSupersetContainer() ?: return null
         return roundOfSupersetState(machine.currentState)
+    }
+
+    /**
+     * Id of the superset container holding the current state, when one applies.
+     */
+    fun getCurrentSupersetId(): UUID? {
+        return stateMachine?.getCurrentSupersetContainer()?.supersetId
     }
 
     private fun roundOfSupersetState(state: WorkoutState): UInt? = when (state) {

@@ -107,6 +107,18 @@ fun WorkoutStateHeader(
         }
     }
 
+    val activeSupersetTimer by viewModel.activeSupersetTimer.collectAsState()
+    var supersetTimerUiState by remember {
+        mutableStateOf<WorkoutTimerService.TimerUiState?>(null)
+    }
+    LaunchedEffect(activeSupersetTimer?.supersetId) {
+        supersetTimerUiState = null
+        val info = activeSupersetTimer ?: return@LaunchedEffect
+        viewModel.workoutTimerService.timerUiState(info.supersetId).collect { latest ->
+            supersetTimerUiState = latest
+        }
+    }
+
     val interactionSource = remember { MutableInteractionSource() }
     val restTimerSeconds = restTimerUiState?.displaySeconds ?: restSetData?.endTimer ?: 0
     val setTimerSeconds = when {
@@ -118,7 +130,12 @@ fun WorkoutStateHeader(
         else -> 0
     }
     val shouldShowSetTimer = showSetTimerInHeader
-    val showWorkoutElapsedTime = !showRestTimerInHeader && !shouldShowSetTimer && displayMode != 0
+    // Superset cap / cadence countdown fills the header slot when the current set
+    // has no countdown of its own (the typical AMRAP case: rep-based members).
+    val showSupersetTimerInHeader =
+        !showRestTimerInHeader && !shouldShowSetTimer && supersetTimerUiState != null
+    val showWorkoutElapsedTime =
+        !showRestTimerInHeader && !shouldShowSetTimer && !showSupersetTimerInHeader && displayMode != 0
     val headerClockTime = rememberHeaderClockTime(enabled = showWorkoutElapsedTime)
 
     Row(
@@ -131,7 +148,8 @@ fun WorkoutStateHeader(
                 if (
                     workoutState is WorkoutState.Preparing ||
                     showRestTimerInHeader ||
-                    shouldShowSetTimer
+                    shouldShowSetTimer ||
+                    showSupersetTimerInHeader
                 ) return@clickable
                 viewModel.switchHeaderDisplayMode()
                 hapticsViewModel.doGentleVibration()
@@ -168,6 +186,30 @@ fun WorkoutStateHeader(
                 )
                 TimeViewer(
                     seconds = setTimerSeconds.coerceAtLeast(0),
+                    color = MaterialTheme.colorScheme.onBackground,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium)
+                )
+            }
+        } else if (showSupersetTimerInHeader) {
+            Row(
+                modifier = Modifier.padding(top = 5.dp),
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (activeSupersetTimer?.isCadence == true) {
+                    Text(
+                        text = "ROUND",
+                        color = MaterialTheme.colorScheme.onBackground,
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium)
+                    )
+                }
+                Icon(
+                    modifier = Modifier.size(15.dp),
+                    imageVector = Icons.Filled.AccessTimeFilled,
+                    contentDescription = "superset timer",
+                )
+                TimeViewer(
+                    seconds = (supersetTimerUiState?.displaySeconds ?: 0).coerceAtLeast(0),
                     color = MaterialTheme.colorScheme.onBackground,
                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium)
                 )

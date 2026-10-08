@@ -18,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -142,6 +143,15 @@ fun WorkoutScreen(
 
     val context = LocalContext.current
     val scope = rememberWearCoroutineScope()
+
+    // Superset cap/cadence cues are raised by the shared view model; haptics live in a
+    // UI-scoped view model, so the hook is wired here.
+    SideEffect {
+        viewModel.setSupersetCueHook { hapticsViewModel.doHardVibrationTwiceWithBeep() }
+    }
+    DisposableEffect(Unit) {
+        onDispose { viewModel.setSupersetCueHook(null) }
+    }
     val screenState by viewModel.screenState.collectAsState()
     val workoutState = screenState.workoutState
     val timerUiStates by viewModel.workoutTimerService.timerUiStates.collectAsState()
