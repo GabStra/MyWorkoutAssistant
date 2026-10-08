@@ -35,7 +35,7 @@ The bounded native source-frame decode cache is qualified for the production def
 - Production playback review found no cache-specific regression. In pair 1, RDL pixels and skeleton frames matched exactly; OHP differed by at most 13.59mm with the same visible range/support/timing. In pair 2, OHP skeleton frames matched exactly; RDL differed by at most 0.852mm and was visually equivalent. All movement references resolve to terminal packaged skeletons. Shared limitations remain: the RDL elbow-flexion mismatch is already present in source joints; OHP does not show dumbbells and stops short of full elbow lockout.
 - Focused checks passed: source-cache edge cases (7), harness default parser (1), Qwen compatibility retry (7), and Python compilation. Exact Qwen grammar replay validates the narrow `response_format` retry; neither production pair triggered it, so runtime incidence is unknown.
 
-Do not run another full generation solely to retest this cache. Other audited areas remain deferred: controlled-fit changes lack a safe attempt-reuse signal; the scheduling pair did not use comparable CPU work; exact duplicate review requests were not found; reconstruction already reused one worker before its required GPU handoff. Do not change gates or relax source qualification. An older Floor Press two-scale artifact remains unqualified because its source does not establish required rack use, despite the current consistency-gate fix. A separate verified Barbell Floor Press source cleared the source-only review under policy 60 with the policy-30 contract; it still needs the current policy-62 source review and selected-output fidelity check. The broad goal remains active: the two exercise types and generic cache-path tests do not qualify every movement family.
+Do not run another full generation solely to retest this cache. Other audited areas remain deferred: controlled-fit changes lack a safe attempt-reuse signal; the scheduling pair did not use comparable CPU work; exact duplicate review requests were not found; reconstruction already reused one worker before its required GPU handoff. Do not change gates or relax source qualification. The 2026-10-08 policy-62 source-only review of `ZzEQWEZZDik` showed a complete floor-press repetition, but did not establish the required rack-supported setup; it is not a qualified family fixture, and selected-output fidelity work on this source is not justified. The harness's `cleared` status records source-selection provenance, while its resolved disagreement repair allowed semantic preflight to return despite contradictory base evidence. Treat that path as a quality-risk lead, not a demonstrated throughput saving: no reconstruction or downstream production output was run. The broad goal remains active; the two exercise types and generic cache-path tests do not qualify every movement family.
 
 ## Evidence and realistic improvement margin
 
@@ -152,8 +152,8 @@ OFF's RDL CPU task took 5.922s wall / 1.563s thread CPU to slot acquisition, wit
 **Owners:** Existing source/review question caches, vision-session lifecycle, `shared_llama_server.py`; `scripts/motion_speed_harness.py` supports serial `qwen-full` / `qwen-shared` arms.
 
 - [x] Compare retained request identities and lifecycle events: exact images, prompts, contract, interval, model and policy. Distinguish independent evidence questions from exact duplicates.
-- [ ] Fix only proven duplicate submissions or missing safe cache/coalescing reuse. Preserve source-semantic and final-render review requirements.
-- [ ] Consider serial shared-server ownership only if a retained lifecycle trace shows an avoidable restart compatible with exclusive GPU handoff. Multi-wave overlap is a separate architectural change and is deferred.
+- [x] Audit found no proven duplicate submissions or safe cache/coalescing opportunity. Run A's nine retained source-question checkpoints contain no exact prompt/image duplicate; Run B's per-call caches were pruned. Preserve source-semantic and final-render review requirements.
+- [x] Audit found no avoidable server restart compatible with exclusive GPU handoff. The worker stops before Qwen, and multi-wave overlap remains deferred.
 
 **First experiment:** Reuse a retained exact request sequence; establish identical decisions and fewer actual calls/restarts. Run one baseline/candidate pair, with reverse order only if a promising timing benefit needs confirmation. Defer when no duplicate or avoidable lifecycle event is demonstrated.
 
@@ -161,8 +161,8 @@ OFF's RDL CPU task took 5.922s wall / 1.563s thread CPU to slot acquisition, wit
 
 **Priority:** The bounded source-frame decode cache is qualified and enabled by default after two opposite-order production pairs. Do not run another full comparison for this change. Browser frame batching is already enabled, and RDL browser-start/page-ready cost is only 2.540s; no additional rendering margin is currently demonstrated.
 
-- [ ] Inspect existing render/cache identities only if a trace shows duplicate content-identical rendering or decoding. Reuse `browser_workers.py` and `stage_cache.py`; do not introduce another renderer/cache framework.
-- [ ] Any experiment must compare the same frames, timestamps, production renderer state and image bytes. Reject reuse that hides changed motion or stale source evidence.
+- [x] Existing identities show preview-sheet calls reuse the same render checkpoint; no other duplicate rendering was demonstrated. The source-frame decoder cache is already qualified and enabled. Browser startup/page-ready is 2.540s on the retained RDL trace; no additional rendering margin is demonstrated.
+- [x] Preserve frame, timestamp, production-renderer and image-byte parity in any future cache change; reject reuse that can hide changed motion or stale source evidence.
 
 No new browser worker-count or frame-batch sweep is scheduled. Revisit after larger costs are addressed or evidence shows a different workload dominated by rendering.
 
