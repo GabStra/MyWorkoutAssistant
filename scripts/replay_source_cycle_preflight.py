@@ -22,6 +22,7 @@ from exercise_motion_pkg.bake_and_rank import (
 from exercise_motion_pkg.controlled_motion import fit_controlled_motion
 from exercise_motion_pkg.pose_fidelity import source_pose_reference_for_motion
 from exercise_motion_pkg.sequence_stabilization import stabilize_exported_sequence
+from scripts.replay_contracts import unwrap_exercise_motion_contract
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -167,7 +168,7 @@ def main() -> int:
     if not isinstance(source_pose, dict):
         parser.error("Source-pose JSON must contain a pose object or pose fields directly")
     contract_wrapper = load_json(args.contract)
-    contract = contract_wrapper.get("exerciseMotionContract", contract_wrapper)
+    contract = unwrap_exercise_motion_contract(contract_wrapper)
     if not isinstance(contract, dict):
         parser.error("Contract JSON must contain an exercise motion contract object")
 

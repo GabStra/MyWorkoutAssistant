@@ -17,6 +17,7 @@ if str(REPOSITORY_ROOT) not in sys.path:
 from exercise_motion_pkg import bake_and_rank as bake
 from exercise_motion_pkg.chunking import ChunkEstimate
 from exercise_motion_pkg.segment_detection import DetectionWindow
+from scripts.replay_contracts import unwrap_exercise_motion_contract
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -239,7 +240,7 @@ def main() -> int:
     pose = reference.get("pose", reference)
     prefilter_payload = source_pose_prefilter_payload(reference)
     contract_wrapper = load_json(args.contract)
-    contract = contract_wrapper.get("exerciseMotionContract", contract_wrapper)
+    contract = unwrap_exercise_motion_contract(contract_wrapper)
     frames = pose["frames"]
     pose_start = float(frames[0]["sourceTimeSec"])
     pose_end = float(frames[-1]["sourceTimeSec"])

@@ -31,6 +31,7 @@ from exercise_motion_pkg.bake_and_rank import (
 )
 from exercise_motion_pkg import clef_systemone
 from exercise_motion_pkg.segment_detection import DetectionWindow
+from scripts.replay_contracts import unwrap_exercise_motion_contract
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -189,7 +190,7 @@ def main() -> int:
         parser.error("--cached-responses applies only to one-candidate parser replays")
 
     contract_wrapper = load_json(args.contract)
-    contract = contract_wrapper.get("exerciseMotionContract", contract_wrapper)
+    contract = unwrap_exercise_motion_contract(contract_wrapper)
     exercise_name = str(contract.get("exerciseName") or "").strip()
     if not exercise_name:
         parser.error("Contract is missing exerciseName")

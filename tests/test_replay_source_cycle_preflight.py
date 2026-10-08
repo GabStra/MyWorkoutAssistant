@@ -5,6 +5,15 @@ import pytest
 
 from scripts import replay_source_cycle_preflight
 from scripts.replay_source_cycle_preflight import fit_report_summary
+from scripts.replay_contracts import unwrap_exercise_motion_contract
+
+
+@pytest.mark.parametrize("wrapped_key", ["contract", "exerciseMotionContract", None])
+def test_contract_loader_accepts_cache_wrapper_and_raw_contract(wrapped_key):
+    contract = {"exerciseName": "Barbell Floor Press", "completionMode": "return_to_start"}
+    payload = {wrapped_key: contract} if wrapped_key else contract
+
+    assert unwrap_exercise_motion_contract(payload) == contract
 
 
 def test_fit_report_summary_preserves_failure_owner_for_each_cycle():
@@ -153,6 +162,43 @@ def test_production_constrained_cli_rejects_cleaned_motion_without_source_joints
 
     assert error.value.code == 2
     assert "sourceJoints and joints on every frame" in capsys.readouterr().err
+
+
+def test_cli_unwraps_contract_cache_payload(tmp_path, monkeypatch, capsys):
+    payload_path = tmp_path / "baked.json"
+    source_pose_path = tmp_path / "source-pose.json"
+    contract_path = tmp_path / "contract-cache.json"
+    payload_path.write_text(json.dumps({"frames": []}), encoding="utf-8")
+    source_pose_path.write_text(json.dumps({"pose": {"frames": []}}), encoding="utf-8")
+    cached_contract = {
+        "exerciseName": "Barbell Floor Press",
+        "completionMode": "return_to_start",
+    }
+    contract_path.write_text(
+        json.dumps({"schemaVersion": 1, "contract": cached_contract}),
+        encoding="utf-8",
+    )
+    received = {}
+
+    def capture_contract(_payload, _source_pose, contract):
+        received["contract"] = contract
+        return [], []
+
+    monkeypatch.setattr(
+        replay_source_cycle_preflight,
+        "source_validated_cycle_proposals",
+        capture_contract,
+    )
+    monkeypatch.setattr(sys, "argv", [
+        "replay_source_cycle_preflight.py",
+        str(payload_path),
+        "--source-pose", str(source_pose_path),
+        "--contract", str(contract_path),
+    ])
+
+    assert replay_source_cycle_preflight.main() == 0
+    assert received["contract"] == cached_contract
+    capsys.readouterr()
 
 
 def test_cli_rejects_abbreviated_output_clip_option(tmp_path, monkeypatch):
