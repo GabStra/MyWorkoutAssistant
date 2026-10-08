@@ -51345,6 +51345,7 @@ def test_exact_source_phase_validation_cache_reuses_identical_clips_across_works
     second_video.write_bytes(b"same exact video bytes")
     shared_cache = tmp_path / "shared-cache"
     calls: list[Path] = []
+    handoff_options: list[dict[str, object]] = []
 
     def fake_validate(**kwargs: object) -> dict[str, object]:
         source_path = Path(str(kwargs["source_video_path"]))
@@ -51363,10 +51364,18 @@ def test_exact_source_phase_validation_cache_reuses_identical_clips_across_works
         "validate_exact_pre_wham_source_video",
         fake_validate,
     )
+    def run_with_exclusive_handoff(
+        _caption: object,
+        operation: Callable[[], object],
+        **stage_options: object,
+    ) -> object:
+        handoff_options.append(stage_options)
+        return operation()
+
     monkeypatch.setattr(
         bake_and_rank_module,
         "run_with_caption_gpu_exclusive",
-        lambda _caption, operation, **_stage_options: operation(),
+        run_with_exclusive_handoff,
     )
 
     contract = {"observableMotionSpec": {"requiresReturnToStart": True}}
@@ -51392,6 +51401,7 @@ def test_exact_source_phase_validation_cache_reuses_identical_clips_across_works
     assert second["cacheStatus"] == "reused"
     assert second["sourceVideoPath"] == str(second_video.resolve())
     assert (tmp_path / "workspace-b" / "exact_source_phase_validation.json").is_file()
+    assert handoff_options == [{}]
 
     different_contract = {"observableMotionSpec": {"requiresReturnToStart": False}}
     bake_and_rank_module.validate_exact_source_with_cached_gpu_handoff(
@@ -51403,6 +51413,69 @@ def test_exact_source_phase_validation_cache_reuses_identical_clips_across_works
         shared_cache_dir=shared_cache,
     )
     assert len(calls) == 2
+    assert handoff_options == [{}, {}]
+
+
+def test_pre_wham_source_pose_prefilter_uses_exclusive_gpu_handoff(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    video_path = tmp_path / "source.mp4"
+    video_path.write_bytes(b"video")
+    handoff_options: list[dict[str, object]] = []
+
+    def run_with_exclusive_handoff(
+        _caption: object,
+        operation: Callable[[], object],
+        **stage_options: object,
+    ) -> object:
+        handoff_options.append(stage_options)
+        return operation()
+
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "run_with_caption_gpu_exclusive",
+        run_with_exclusive_handoff,
+    )
+    monkeypatch.setattr(
+        pose_prefilter_module,
+        "refresh_legacy_spread_pose_evidence",
+        lambda payload, **_kwargs: payload or {"validChunks": []},
+    )
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "expand_detection_source_for_kinematic_cut",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "rank_source_video_cut_candidates_with_caption_images",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "write_pre_wham_source_selection_manifest",
+        lambda **_kwargs: None,
+    )
+
+    with pytest.raises(bake_and_rank_module.SourceCandidateRejected):
+        bake_and_rank_module.choose_pre_wham_source_cut_or_reject(
+            ranked_candidate=SimpleNamespace(
+                exercise_name="Bench Press",
+                candidate={},
+                title="Bench Press",
+            ),
+            candidate_workspace=tmp_path / "workspace",
+            source_video_path=video_path,
+            detection_source_video_path=video_path,
+            source_window=DetectionWindow(index=0, start_seconds=0.0, end_seconds=2.0),
+            detection_source_offset_seconds=0.0,
+            source_chunk_hint=None,
+            caption_images=lambda **_kwargs: "{}",
+            source_chunk_estimate=SimpleNamespace(rep_duration_min_sec=1.0, rep_duration_max_sec=2.0),
+        )
+
+    assert handoff_options == [{}]
 
 
 @pytest.mark.parametrize("reference_content", ["{", '{"sourceVideoSha256": "another-video", "pose": {}}'])

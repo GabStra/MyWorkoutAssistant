@@ -44,7 +44,7 @@ from exercise_motion_pkg.boundary_evidence import (
     explicit_endpoint_requirements,
 )
 from exercise_motion_pkg.observation_cache import ObservationCache
-from exercise_motion_pkg.gpu_lock import query_free_gpu_memory_mib, small_gpu_stage_lock
+from exercise_motion_pkg.gpu_lock import small_gpu_stage_lock
 from exercise_motion_pkg.process_lock import InterProcessFileLock, exclusive_workspace_lease
 import inspect
 import json
@@ -550,16 +550,6 @@ SOURCE_CUT_ROBUST_MIN_ESTIMATED_DURATION_RATIO = 1.0
 ACTIVE_TRAVEL_SOURCE_CUT_MIN_SECONDS = 2.0
 SOURCE_SELECTION_POLICY_VERSION = 62
 SOURCE_SELECTION_CLEARANCE_POLICY_VERSION = 2
-
-# Free-VRAM gates for co-residing small CUDA ops beside the resident llama.cpp
-# server instead of evicting it (each eviction costs a server stop plus a ~40s
-# lazy restart on the next vision request). Both gated sites run the YOLO26x
-# pose prefilter (the legacy-spread refresh and the exact-source-validation
-# full scan); measured 2026-10-01 on the RTX 4070 SUPER beside a production
-# server: prefilter peak ~300 MiB (batch 16), steady free VRAM beside the
-# server ranged ~0.6-3 GiB depending on desktop load. UniDepth no longer runs
-# on the gvhmr path (video-world alignment is backend-gated in pipeline.py).
-POSE_PREFILTER_CO_RESIDENT_MIN_FREE_MIB = 600
 
 SOURCE_OVERLAY_VISIBILITY_INSTRUCTIONS = (
     "Ignore the meaning of source text and logos, but assess their visual obstruction. "
@@ -26202,18 +26192,14 @@ def choose_pre_wham_source_cut_or_reject(
         else None
     )
     from .pose_prefilter import refresh_legacy_spread_pose_evidence
-    # The refresh runs YOLO on the GPU; go through the exclusive handoff so the
-    # resident caption session releases the global GPU lock first instead of
-    # deadlocking the source lane behind it. The refresh is small enough to
-    # usually co-reside with the caption server instead of evicting it.
+    # Free VRAM does not prove that the caption model is idle; keep this GPU
+    # work behind the exclusive handoff.
     source_pose_prefilter_payload = run_with_caption_gpu_exclusive(
         caption_images,
         lambda: refresh_legacy_spread_pose_evidence(
             source_pose_prefilter_payload, video_path=source_video_path, output_dir=selection_dir,
             exercise_name=ranked_candidate.exercise_name, contract=exercise_motion_contract,
         ),
-        small_stage="yolo_pose_prefilter",
-        small_min_free_mib=POSE_PREFILTER_CO_RESIDENT_MIN_FREE_MIB,
     )
     expanded_detection = expand_detection_source_for_kinematic_cut(
         source_video_path=source_video_path,
@@ -26718,11 +26704,6 @@ def validate_exact_source_with_cached_gpu_handoff(
             cached = run_with_caption_gpu_exclusive(
                 caption_images,
                 compute_or_reuse,
-                # The exact validation's GPU work is the YOLO pose prefilter
-                # (full-scan phase completeness); co-reside it with the caption
-                # server instead of forcing an eviction cycle.
-                small_stage="yolo_pose_prefilter",
-                small_min_free_mib=POSE_PREFILTER_CO_RESIDENT_MIN_FREE_MIB,
             )
             if load_cached_exact_source_phase_validation(
                 cache_path=shared_cache_path,
