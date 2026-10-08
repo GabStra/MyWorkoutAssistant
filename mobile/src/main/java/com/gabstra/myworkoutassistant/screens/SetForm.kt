@@ -200,6 +200,18 @@ fun SetForm(
                             equipment = equipment,
                         )
                     }
+
+                    SetType.RUNNING_SET -> {
+                        // Running sets are created from the exercise's running
+                        // prescription, not hand-edited here.
+                        val context = LocalContext.current
+                        Toast.makeText(
+                            context,
+                            "Running sets are managed by the exercise's running prescription.",
+                            Toast.LENGTH_LONG,
+                        ).show()
+                        onCancel()
+                    }
                 }
             }
         }

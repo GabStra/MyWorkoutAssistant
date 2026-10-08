@@ -77,7 +77,9 @@ import com.gabstra.myworkoutassistant.shared.running.RunningResult
 import com.gabstra.myworkoutassistant.shared.running.RunningRoutePoint
 import com.gabstra.myworkoutassistant.shared.running.RunningTargetType
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
+import com.gabstra.myworkoutassistant.shared.setdata.RunningSetData
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
+import com.gabstra.myworkoutassistant.shared.sets.RunningSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
@@ -189,8 +191,10 @@ internal fun RunningSetScreen(
         viewModel.closeRunningControlsDialog()
         RunningTrackingService.stop(context)
         state.hasBeenExecuted = true
-        (state.currentSetData as? EnduranceSetData)?.let { data ->
-            state.currentSetData = data.copy(endTimer = elapsedMillis.toInt(), hasBeenExecuted = true)
+        when (val data = state.currentSetData) {
+            is RunningSetData -> state.currentSetData = data.copy(hasBeenExecuted = true)
+            is EnduranceSetData -> state.currentSetData = data.copy(endTimer = elapsedMillis.toInt(), hasBeenExecuted = true)
+            else -> {}
         }
         if (isOutdoor) {
             saveResult(viewModel, state, tracker, elapsedMillis, correctionMeters, true, onComplete)
@@ -305,7 +309,8 @@ internal fun RunningSetScreen(
                         }
                     }
                 }
-            } else {
+            } else if (tracker.running || completed || elapsedMillis > 0L) {
+                // Hidden while the run has never started (no tracking, no accrued time).
                 SetValueSection(label = "ELAPSED", headerStyle = MaterialTheme.typography.bodyExtraSmall) {
                     Text(
                         text = formatElapsed(elapsedMillis),
@@ -314,21 +319,20 @@ internal fun RunningSetScreen(
                     )
                 }
             }
-            if (!tracker.running && !completed) {
-                IconButton(
-                    modifier = Modifier.size(WearStandardIconButtonSize),
-                    onClick = ::startTracking,
-                    colors = IconButtonDefaults.iconButtonColors(containerColor = Green),
-                ) {
-                    Icon(
-                        modifier = Modifier.size(WearStandardIconButtonIconSize),
-                        imageVector = Icons.Default.PlayArrow,
-                        contentDescription = "Start run",
-                        tint = MaterialTheme.colorScheme.onBackground,
+            if (!completed) {
+                if (!tracker.running) {
+                    RunPlayIconButton(contentDescription = "Start run", onClick = ::startTracking)
+                } else if (tracker.paused) {
+                    RunPlayIconButton(
+                        contentDescription = "Resume run",
+                        onClick = {
+                            RunningTrackingService.resume(context)
+                            hapticsViewModel.doGentleVibration()
+                        },
                     )
                 }
             }
-            if (tracker.running && !completed) {
+            if (tracker.running && !tracker.paused && !completed) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.Center,
@@ -471,6 +475,22 @@ internal fun RunningSetScreen(
             },
             onFinish = ::finishRun,
             onDismiss = viewModel::closeRunningControlsDialog,
+        )
+    }
+}
+
+@Composable
+private fun RunPlayIconButton(contentDescription: String, onClick: () -> Unit) {
+    IconButton(
+        modifier = Modifier.size(WearStandardIconButtonSize),
+        onClick = onClick,
+        colors = IconButtonDefaults.iconButtonColors(containerColor = Green),
+    ) {
+        Icon(
+            modifier = Modifier.size(WearStandardIconButtonIconSize),
+            imageVector = Icons.Default.PlayArrow,
+            contentDescription = contentDescription,
+            tint = MaterialTheme.colorScheme.onBackground,
         )
     }
 }
@@ -742,6 +762,25 @@ private class RunningSetScreenPreviewProvider : PreviewParameterProvider<Running
             RunningSetScreenPreviewState(activeOutdoor.copy(paused = true)),
         ),
         RunningSetScreenPreviewCase(
+            "Outdoor · paused · run controls",
+            RunningEnvironment.OUTDOOR,
+            RunningTargetType.DISTANCE,
+            5_000.0,
+            RunningSetScreenPreviewState(activeOutdoor.copy(paused = true), showControlsDialog = true),
+        ),
+        RunningSetScreenPreviewCase(
+            "Outdoor · finished",
+            RunningEnvironment.OUTDOOR,
+            RunningTargetType.TIME,
+            300.0,
+            RunningSetScreenPreviewState(
+                tracker = activeOutdoor.copy(running = false, elapsedTimeMillis = 300_000),
+                elapsedMillis = 300_000,
+                completed = true,
+                targetAlerted = true,
+            ),
+        ),
+        RunningSetScreenPreviewCase(
             "Outdoor · GPS lost · route retained",
             RunningEnvironment.OUTDOOR,
             RunningTargetType.DISTANCE,
@@ -800,6 +839,21 @@ private class RunningSetScreenPreviewProvider : PreviewParameterProvider<Running
             ),
         ),
         RunningSetScreenPreviewCase(
+            "Treadmill · paused",
+            RunningEnvironment.TREADMILL,
+            RunningTargetType.TIME,
+            1_800.0,
+            RunningSetScreenPreviewState(
+                RunningTrackingState(
+                    running = true,
+                    paused = true,
+                    elapsedTimeMillis = 540_000,
+                    distanceMeters = 1_200.0,
+                    heartRates = listOf(128, 133, 139),
+                ),
+            ),
+        ),
+        RunningSetScreenPreviewCase(
             "Treadmill · correct distance",
             RunningEnvironment.TREADMILL,
             RunningTargetType.DISTANCE,
@@ -833,20 +887,15 @@ private fun buildRunningSetPreviewFixture(
     targetValue: Double,
 ): RunningSetPreviewFixture {
     val exerciseId = UUID.fromString("51000000-0000-0000-0000-000000000001")
-    val set = EnduranceSet(
+    val set = RunningSet(
         id = UUID.fromString("52000000-0000-0000-0000-000000000001"),
-        timeInMillis = 1_800_000,
-        autoStart = false,
-        autoStop = false,
     )
     val state = WorkoutState.Set(
         exerciseId = exerciseId,
         set = set,
         setIndex = 0u,
         previousSetData = null,
-        currentSetDataState = mutableStateOf(
-            EnduranceSetData(startTimer = 0, endTimer = 0, autoStart = false, autoStop = false)
-        ),
+        currentSetDataState = mutableStateOf(RunningSetData()),
         hasNoHistory = true,
         skipped = false,
         currentBodyWeight = 75.0,

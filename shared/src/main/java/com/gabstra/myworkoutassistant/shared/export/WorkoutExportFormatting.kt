@@ -6,6 +6,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
+import com.gabstra.myworkoutassistant.shared.sets.RunningSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
@@ -47,6 +48,7 @@ internal fun formatSetInlineForExport(
             val seconds = (set.timeInMillis % 60000) / 1000
             "${minutes}:${String.format(Locale.US, "%02d", seconds)} (endurance)"
         }
+        is RunningSet -> "Run"
         is RestSet -> "${set.timeInSeconds} seconds rest"
     }
 }

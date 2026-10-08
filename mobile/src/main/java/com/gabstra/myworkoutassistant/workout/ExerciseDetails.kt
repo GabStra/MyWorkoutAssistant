@@ -23,6 +23,7 @@ import com.gabstra.myworkoutassistant.notifications.showTimerCompletedNotificati
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
+import com.gabstra.myworkoutassistant.shared.sets.RunningSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
@@ -159,6 +160,32 @@ fun ExerciseDetail(
                 customComponentWrapper = customComponentWrapper
             )
         }
+
+        is RunningSet -> EnduranceSetScreen(
+            viewModel = viewModel,
+            hapticsViewModel = hapticsViewModel,
+            modifier = modifier,
+            state = updatedState,
+            onTimerEnd = {
+                if (!isAppInForeground()) {
+                    showTimerCompletedNotification(
+                        context = context,
+                        title = "Run finished",
+                        message = "Time for your next set",
+                    )
+                }
+                viewModel.storeSetData()
+                viewModel.pushAndStoreWorkoutData(false, context) {
+                    viewModel.goToNextState()
+                    viewModel.lightScreenUp()
+                }
+            },
+            onTimerDisabled = onTimerDisabled,
+            onTimerEnabled = onTimerEnabled,
+            extraInfo = extraInfo,
+            exerciseTitleComposable = { exerciseTitleComposable {} },
+            customComponentWrapper = customComponentWrapper,
+        )
 
         is EnduranceSet -> EnduranceSetScreen(
             viewModel = viewModel,

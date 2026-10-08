@@ -233,6 +233,12 @@ private fun createHistoricalSupersetDataRow(
             monospacePrimary = true,
         )
 
+        is com.gabstra.myworkoutassistant.shared.setdata.RunningSetData -> SetTableRowUiModel.Data(
+            identifier = identifier,
+            primaryValue = "RUN",
+            primaryLabel = "RUN",
+        )
+
         is RestSetData -> error("Rest histories must be rendered as rest rows")
     }
 }

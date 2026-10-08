@@ -1774,13 +1774,13 @@ def assemble_placeholder_workout_store(equipment_items, accessory_items, exercis
                         "targetValue": distance,
                     }
                 # Running exercises count up until the distance goal is reached.
+                # The set id must satisfy the placeholder-ID pattern (no hyphens)
+                # or the step-6 self-heal rewrites the whole set.
+                safe_id = re.sub(r"[^A-Za-z0-9_]", "_", str(exercise.get("id")))
                 exercise["sets"] = [
                     {
-                        "id": (exercise.get("sets") or [{}])[0].get("id") or f"{exercise.get('id')}-run",
-                        "type": "EnduranceSet",
-                        "timeInMillis": 0,
-                        "autoStart": False,
-                        "autoStop": False,
+                        "id": f"SET_{safe_id}_RUN",
+                        "type": "RunningSet",
                         "shouldReapplyHistoryToSet": False,
                     }
                 ]

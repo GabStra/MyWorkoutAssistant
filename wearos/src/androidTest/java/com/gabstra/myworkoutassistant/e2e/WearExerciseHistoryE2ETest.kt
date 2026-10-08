@@ -2164,6 +2164,9 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
                 ?: return@forEach // Set may be skipped (e.g. warmup) or not completed in flow
 
             when (val setData = setHistory.setData) {
+                is com.gabstra.myworkoutassistant.shared.setdata.RunningSetData -> {
+                    // Running sets don't participate in value-modification verification.
+                }
                 is WeightSetData -> {
                     modification.modifiedReps?.let { modifiedReps ->
                         modification.originalReps?.let { originalReps ->
@@ -2278,6 +2281,11 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
 
                 // Verify setData type matches set type
                 when (set) {
+                    is com.gabstra.myworkoutassistant.shared.sets.RunningSet -> {
+                        require(setHistory.setData is com.gabstra.myworkoutassistant.shared.setdata.RunningSetData) {
+                            "SetHistory setData should be RunningSetData for RunningSet"
+                        }
+                    }
                     is com.gabstra.myworkoutassistant.shared.sets.WeightSet -> {
                         require(setHistory.setData is WeightSetData) {
                             "SetHistory setData should be WeightSetData for WeightSet"

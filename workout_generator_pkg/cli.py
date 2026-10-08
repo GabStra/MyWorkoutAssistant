@@ -1267,7 +1267,7 @@ def emit_workout_structure(
         timed_target_instruction += (
             "CRITICAL - Running exercises: for each exercise below emit exerciseType='RUNNING' "
             "with a runningPrescription {environment: 'OUTDOOR', targetType: 'DISTANCE', targetValue: <meters>} "
-            "and exactly one EnduranceSet work set with timeInMillis=0, autoStart=false, autoStop=false:\n"
+            "and exactly one RunningSet work set:\n"
             + "\n".join(f"- {part}" for part in run_parts) + "\n\n"
         )
     

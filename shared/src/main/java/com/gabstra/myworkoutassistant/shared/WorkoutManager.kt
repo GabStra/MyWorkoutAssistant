@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.shared
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
+import com.gabstra.myworkoutassistant.shared.sets.RunningSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
@@ -254,6 +255,7 @@ class WorkoutManager {
                             is BodyWeightSet -> it.copy(id = UUID.randomUUID())
                             is WeightSet -> it.copy(id = UUID.randomUUID())
                             is EnduranceSet -> it.copy(id = UUID.randomUUID())
+                            is RunningSet -> it.copy(id = UUID.randomUUID())
                             is TimedDurationSet -> it.copy(id = UUID.randomUUID())
                             is RestSet -> it.copy(id = UUID.randomUUID())
                         }
@@ -365,6 +367,7 @@ class WorkoutManager {
                     is BodyWeightSet -> it.copy(id = UUID.randomUUID())
                     is WeightSet -> it.copy(id = UUID.randomUUID())
                     is EnduranceSet -> it.copy(id = UUID.randomUUID())
+                    is RunningSet -> it.copy(id = UUID.randomUUID())
                     is TimedDurationSet -> it.copy(id = UUID.randomUUID())
                     is RestSet -> it.copy(id = UUID.randomUUID())
                 }

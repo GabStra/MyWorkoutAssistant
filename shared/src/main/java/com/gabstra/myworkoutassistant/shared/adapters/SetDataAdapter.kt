@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.shared.adapters
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
+import com.gabstra.myworkoutassistant.shared.setdata.RunningSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
@@ -24,6 +25,7 @@ class SetDataAdapter: JsonSerializer<SetData>, JsonDeserializer<SetData> {
             is BodyWeightSetData -> "BodyWeightSetData"
             is TimedDurationSetData -> "TimedDurationSetData"
             is EnduranceSetData -> "EnduranceSetData"
+            is RunningSetData -> "RunningSetData"
             is RestSetData -> "RestSetData"
         }
         jsonObject.addProperty("type", exerciseType)
@@ -63,6 +65,9 @@ class SetDataAdapter: JsonSerializer<SetData>, JsonDeserializer<SetData> {
                 jsonObject.addProperty("startTimer", src.startTimer)
                 jsonObject.addProperty("endTimer", src.endTimer)
                 jsonObject.addProperty("subCategory", src.subCategory.name)
+            }
+            is RunningSetData ->{
+                jsonObject.addProperty("hasBeenExecuted", src.hasBeenExecuted)
             }
         }
         return jsonObject
@@ -151,6 +156,10 @@ class SetDataAdapter: JsonSerializer<SetData>, JsonDeserializer<SetData> {
                     if (isRestPause) SetSubCategory.RestPauseSet else SetSubCategory.WorkSet
                 }
                 RestSetData(startTimer,endTimer,subCategory)
+            }
+            "RunningSetData" -> {
+                val hasBeenExecuted = if(jsonObject.has("hasBeenExecuted")) jsonObject.get("hasBeenExecuted").asBoolean else false
+                RunningSetData(hasBeenExecuted)
             }
             else -> throw RuntimeException("Unsupported set type")
         }

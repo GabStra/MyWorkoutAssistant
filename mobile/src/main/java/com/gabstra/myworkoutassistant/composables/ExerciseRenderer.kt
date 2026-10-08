@@ -34,6 +34,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
+import com.gabstra.myworkoutassistant.shared.sets.RunningSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
@@ -157,6 +158,26 @@ fun buildExerciseTemplatePreviewItems(
                             secondaryValue = targetWeightText?.let { formatTime(set.timeInMillis / 1000) },
                             primaryLabel = if (targetWeightText != null) "LOAD" else "DURATION",
                             secondaryLabel = if (targetWeightText != null) "DURATION" else null,
+                        )
+                    ),
+                )
+            }
+
+            is RunningSet -> {
+                val prescription = exercise.runningPrescription
+                val goalText = when {
+                    prescription == null -> "RUN"
+                    prescription.targetType == com.gabstra.myworkoutassistant.shared.running.RunningTargetType.DISTANCE ->
+                        String.format(java.util.Locale.US, "%.2f km", prescription.targetValue / 1000)
+                    else -> formatTime(prescription.targetValue.toInt())
+                }
+                previewItems += SetPreviewItemUiModel(
+                    setId = set.id,
+                    rows = listOf(
+                        SetTableRowUiModel.Data(
+                            identifier = identifierCounter.nextIdentifier(null),
+                            primaryValue = goalText,
+                            primaryLabel = "RUN",
                         )
                     ),
                 )
@@ -333,6 +354,20 @@ internal fun buildExerciseHistoryRows(
                                 secondaryValue = actualWeightText?.let { formatHistoricalTimedSetValue(setData.startTimer, setData.endTimer) },
                                 primaryLabel = if (actualWeightText != null) "LOAD" else "DURATION",
                                 secondaryLabel = if (actualWeightText != null) "DURATION" else null,
+                            ),
+                        )
+                    }
+
+                    is com.gabstra.myworkoutassistant.shared.setdata.RunningSetData -> {
+                        appendHistoricalDataRows(
+                            rows = rows,
+                            exercise = exercise,
+                            setData = null,
+                            followingRestText = followingRestText,
+                            row = SetTableRowUiModel.Data(
+                                identifier = identifier,
+                                primaryValue = "RUN",
+                                primaryLabel = "RUN",
                             ),
                         )
                     }

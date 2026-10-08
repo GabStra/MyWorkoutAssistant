@@ -4,6 +4,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
+import com.gabstra.myworkoutassistant.shared.sets.RunningSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
@@ -83,7 +84,8 @@ fun displayCounterKindForSet(set: Set): SetDisplayCounterKind? {
         is WeightSet -> displayCounterKindForSubCategory(set.subCategory)
         is BodyWeightSet -> displayCounterKindForSubCategory(set.subCategory)
         is TimedDurationSet,
-        is EnduranceSet -> SetDisplayCounterKind.Work
+        is EnduranceSet,
+        is RunningSet -> SetDisplayCounterKind.Work
         is RestSet -> null
     }
 }

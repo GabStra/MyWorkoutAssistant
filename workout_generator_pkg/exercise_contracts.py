@@ -249,7 +249,7 @@ COUNTUP_EXERCISE_SCHEMA = _build_type_specific_exercise_schema(
 
 RUNNING_EXERCISE_SCHEMA = _build_type_specific_exercise_schema(
     exercise_type="RUNNING",
-    work_set_def="EnduranceSet",
+    work_set_def="RunningSet",
     allow_rest_sets=False,
     require_rep_range=False,
     body_weight_schema={"type": "null"},
@@ -443,20 +443,22 @@ EXERCISE_EMISSION_PROFILES = {
     ),
     "RUNNING": _build_emission_profile(
         exercise_type="RUNNING",
-        allowed_work_set_type="EnduranceSet",
+        allowed_work_set_type="RunningSet",
         required_top_level_fields=[*COMMON_EXERCISE_REQUIRED_TOP_LEVEL_FIELDS, "runningPrescription"],
         forbidden_top_level_fields=TIMED_FORBIDDEN_TOP_LEVEL_FIELDS,
-        required_set_level_fields=TIMED_REQUIRED_SET_LEVEL_FIELDS,
-        forbidden_set_level_fields=TIMED_FORBIDDEN_SET_LEVEL_FIELDS,
+        required_set_level_fields=["id", "type"],
+        forbidden_set_level_fields=[
+            "reps", "weight", "additionalWeight", "timeInMillis", "timeInSeconds",
+            "autoStart", "autoStop", "subCategory",
+        ],
         schema=RUNNING_EXERCISE_SCHEMA,
         instruction_text=(
             "RUNNING contract:\n"
             "- Output one Exercise object shaped exactly like the RUNNING schema.\n"
-            "- Work sets must be exactly one EnduranceSet with timeInMillis=0, autoStart=false, autoStop=false "
-            "(the runtime counts up until the distance goal is reached).\n"
+            "- Work sets must be exactly one RunningSet (no other fields on it).\n"
             "- runningPrescription is REQUIRED: {environment: 'OUTDOOR', targetType: 'DISTANCE', targetValue: <meters>} "
             "using the plan's targetDistanceMeters.\n"
-            "- Do not emit reps, weight, additionalWeight, or subCategory on the work set.\n"
+            "- Do not emit reps, weight, additionalWeight, subCategory, timeInMillis, autoStart, or autoStop on the work set.\n"
             "- Do not output minReps or maxReps.\n"
             "- bodyWeightPercentage must be present and set to null.\n"
             "- exerciseCategory must be null.\n"
@@ -466,7 +468,7 @@ EXERCISE_EMISSION_PROFILES = {
             exercise_id="EXERCISE_3",
             name="Run",
             sets=[
-                {"id": "SET_11", "type": "EnduranceSet", "timeInMillis": 0, "autoStart": False, "autoStop": False},
+                {"id": "SET_11", "type": "RunningSet"},
             ],
             exercise_type="RUNNING",
             equipment_id=None,

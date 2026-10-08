@@ -100,14 +100,17 @@ def _validate_package(package: dict) -> None:
 
             sets = component.get("sets", [])
             assert sets, f"{label}: no sets"
+            if component["exerciseType"] == "RUNNING":
+                assert all(s.get("type") == "RunningSet" for s in sets), (
+                    f"{label}: RUNNING exercises must use RunningSet work sets"
+                )
+                continue
             for set_data in sets:
                 set_type = set_data.get("type")
                 if set_type in ("TimedDurationSet", "EnduranceSet"):
-                    # RUNNING sets count up to the distance goal (timeInMillis 0).
-                    if component["exerciseType"] != "RUNNING":
-                        assert set_data.get("timeInMillis", 0) > 0, (
-                            f"{label}: timed set with no duration"
-                        )
+                    assert set_data.get("timeInMillis", 0) > 0, (
+                        f"{label}: timed set with no duration"
+                    )
                     for target_field in ("targetDistanceMeters", "targetCalories"):
                         target = set_data.get(target_field)
                         if target is not None:

@@ -32,6 +32,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
+import com.gabstra.myworkoutassistant.shared.setdata.RunningSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
@@ -39,6 +40,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
+import com.gabstra.myworkoutassistant.shared.sets.RunningSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
@@ -586,6 +588,7 @@ fun initializeSetData(set: Set): SetData = when (set) {
     is TimedDurationSet -> TimedDurationSetData(set.timeInMillis,set.timeInMillis,set.autoStart,set.autoStop, actualWeight = set.targetWeight)
     is EnduranceSet -> EnduranceSetData(set.timeInMillis,0,set.autoStart,set.autoStop, actualWeight = set.targetWeight)
     is RestSet -> RestSetData(set.timeInSeconds,set.timeInSeconds,set.subCategory)
+    is RunningSet -> RunningSetData()
 }
 
 fun getNewSet(set: Set): Set = when (set) {
@@ -594,6 +597,7 @@ fun getNewSet(set: Set): Set = when (set) {
     is TimedDurationSet -> TimedDurationSet(UUID.randomUUID(),set.timeInMillis,set.autoStart,set.autoStop, set.shouldReapplyHistoryToSet, set.targetWeight)
     is EnduranceSet -> EnduranceSet(UUID.randomUUID(),set.timeInMillis,set.autoStart,set.autoStop, set.shouldReapplyHistoryToSet, set.targetWeight)
     is RestSet -> RestSet(UUID.randomUUID(),set.timeInSeconds,set.subCategory, set.shouldReapplyHistoryToSet)
+    is RunningSet -> RunningSet(UUID.randomUUID(),set.shouldReapplyHistoryToSet)
 }
 
 fun copySetData(setData: SetData): SetData = when (setData) {
@@ -602,6 +606,7 @@ fun copySetData(setData: SetData): SetData = when (setData) {
     is TimedDurationSetData -> setData.copy()
     is EnduranceSetData -> setData.copy()
     is RestSetData -> setData.copy()
+    is RunningSetData -> setData.copy()
 }
 
 fun isSetDataValid(set: Set, setData: SetData): Boolean {
@@ -611,6 +616,7 @@ fun isSetDataValid(set: Set, setData: SetData): Boolean {
         is TimedDurationSet -> setData is TimedDurationSetData
         is EnduranceSet -> setData is EnduranceSetData
         is RestSet -> setData is RestSetData
+        is RunningSet -> setData is RunningSetData
     }
 }
 
@@ -681,6 +687,13 @@ fun getNewSetFromSetHistory(
                 id = setHistory.setId,
                 timeInSeconds = setData.startTimer,
                 subCategory = setData.subCategory,
+                shouldReapplyHistoryToSet = shouldReapplyHistoryToSet ?: false
+            )
+        }
+
+        is RunningSetData -> {
+            return RunningSet(
+                id = setHistory.setId,
                 shouldReapplyHistoryToSet = shouldReapplyHistoryToSet ?: false
             )
         }
@@ -1182,7 +1195,7 @@ fun getVersionName(context: Context): String? {
 }
 
 enum class SetType {
-    COUNTUP_SET, BODY_WEIGHT_SET, COUNTDOWN_SET, WEIGHT_SET
+    COUNTUP_SET, BODY_WEIGHT_SET, COUNTDOWN_SET, WEIGHT_SET, RUNNING_SET
 }
 
 enum class ExerciseType {
@@ -1205,6 +1218,7 @@ fun getSetTypeFromSet(set: Set): SetType {
         is BodyWeightSet -> SetType.BODY_WEIGHT_SET
         is EnduranceSet -> SetType.COUNTUP_SET
         is TimedDurationSet -> SetType.COUNTDOWN_SET
+        is RunningSet -> SetType.RUNNING_SET
         is RestSet -> throw IllegalArgumentException("RestSet is not a valid set type")
     }
 }
@@ -1215,6 +1229,7 @@ fun getExerciseTypeFromSet(set: Set): ExerciseType {
         SetType.BODY_WEIGHT_SET -> ExerciseType.BODY_WEIGHT
         SetType.COUNTUP_SET -> ExerciseType.COUNTUP
         SetType.COUNTDOWN_SET -> ExerciseType.COUNTDOWN
+        SetType.RUNNING_SET -> ExerciseType.RUNNING
     }
 }
 

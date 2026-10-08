@@ -4,6 +4,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
+import com.gabstra.myworkoutassistant.shared.sets.RunningSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
@@ -24,6 +25,7 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
             is BodyWeightSet -> "BodyWeightSet"
             is TimedDurationSet -> "TimedDurationSet"
             is EnduranceSet -> "EnduranceSet"
+            is RunningSet -> "RunningSet"
             is RestSet -> "RestSet"
         }
 
@@ -61,6 +63,9 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
             is RestSet ->{
                 jsonObject.addProperty("timeInSeconds", src.timeInSeconds)
                 jsonObject.addProperty("subCategory", src.subCategory.name)
+            }
+            is RunningSet ->{
+                // No payload: the goal lives on the exercise's runningPrescription.
             }
         }
         return jsonObject
@@ -172,6 +177,15 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
                     false
                 }
                 RestSet(id,timeInSeconds,subCategory, shouldReapplyHistoryToSet)
+            }
+
+            "RunningSet" -> {
+                val shouldReapplyHistoryToSet = if (jsonObject.has("shouldReapplyHistoryToSet")) {
+                    jsonObject.get("shouldReapplyHistoryToSet").asBoolean
+                } else {
+                    false
+                }
+                RunningSet(id, shouldReapplyHistoryToSet)
             }
 
             else -> throw RuntimeException("Unsupported set type")

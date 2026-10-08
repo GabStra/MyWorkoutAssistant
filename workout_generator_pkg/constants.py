@@ -157,6 +157,16 @@ JSON_SCHEMA = {
                 "targetCalories": {"type": ["number", "null"], "minimum": 0}
             }
         },                                                                                                                                                                                                                                       
+        "RunningSet": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["id", "type"],
+            "properties": {
+                "id": {"$ref": "#/$defs/UUID"},
+                "type": {"const": "RunningSet"},
+                "shouldReapplyHistoryToSet": {"type": "boolean"}
+            }
+        },
         "RestSet": {                                                                                                                                                                                                                             
             "type": "object",                                                                                                                                                                                                                    
             "additionalProperties": False,                                                                                                                                                                                                       
@@ -173,7 +183,8 @@ JSON_SCHEMA = {
                 {"$ref": "#/$defs/WeightSet"},                                                                                                                                                                                                   
                 {"$ref": "#/$defs/BodyWeightSet"},                                                                                                                                                                                               
                 {"$ref": "#/$defs/TimedDurationSet"},                                                                                                                                                                                            
-                {"$ref": "#/$defs/EnduranceSet"},                                                                                                                                                                                                
+                {"$ref": "#/$defs/EnduranceSet"},
+                {"$ref": "#/$defs/RunningSet"},                                                                                                                                                                                                
                 {"$ref": "#/$defs/RestSet"}                                                                                                                                                                                                      
             ]                                                                                                                                                                                                                                    
         },                                                                                                                                                                                                                                       

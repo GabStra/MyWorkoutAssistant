@@ -95,6 +95,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
+import com.gabstra.myworkoutassistant.shared.sets.RunningSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
@@ -677,6 +678,7 @@ fun ExerciseDetailScreen(
                                                         is WeightSet -> it.copy(id = java.util.UUID.randomUUID())
                                                         is BodyWeightSet -> it.copy(id = java.util.UUID.randomUUID())
                                                         is EnduranceSet -> it.copy(id = java.util.UUID.randomUUID())
+                                                        is RunningSet -> it.copy(id = java.util.UUID.randomUUID())
                                                         is TimedDurationSet -> it.copy(id = java.util.UUID.randomUUID())
                                                         is RestSet -> it.copy(id = java.util.UUID.randomUUID())
                                                     }

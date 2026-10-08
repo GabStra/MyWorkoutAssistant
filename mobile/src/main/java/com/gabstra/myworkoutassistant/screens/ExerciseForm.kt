@@ -88,6 +88,7 @@ import com.gabstra.myworkoutassistant.shared.resolveDeloadConfig
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
+import com.gabstra.myworkoutassistant.shared.sets.RunningSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.running.DistanceUnit
@@ -1317,11 +1318,8 @@ fun ExerciseForm(
                         }.ifEmpty {
                             if (selectedExerciseType.value == ExerciseType.RUNNING) {
                                 listOf(
-                                    EnduranceSet(
+                                    RunningSet(
                                         id = UUID.randomUUID(),
-                                        timeInMillis = 0,
-                                        autoStart = false,
-                                        autoStop = false,
                                         shouldReapplyHistoryToSet = false
                                     )
                                 )
