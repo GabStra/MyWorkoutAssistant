@@ -1914,8 +1914,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--source-frame-decode-cache",
         choices=("off", "on"),
-        default="off",
-        help="Experimental bounded native-frame cache for short source-cut clips; default off.",
+        default="on",
+        help="Bounded native-frame cache for source-cut clips; default on.",
     )
     parser.add_argument(
         "--browser-frame-batch", choices=("off", "on"), default="on",

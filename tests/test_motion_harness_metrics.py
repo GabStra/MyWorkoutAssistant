@@ -484,7 +484,7 @@ def test_parser_allows_zero_wave_size_and_prefetch_overrides_and_rejects_invalid
     assert defaults.cpu_prefetch_during_bake is True
     assert defaults.prefetch_workers == 8
     assert defaults.prefetch_queue_depth == 40
-    assert defaults.source_frame_decode_cache == "off"
+    assert defaults.source_frame_decode_cache == "on"
     assert defaults.browser_frame_batch == "on"
 
     overridden = parser.parse_args([

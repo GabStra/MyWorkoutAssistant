@@ -1,29 +1,16 @@
 # Exercise-motion throughput handoff
 
-Updated 2026-10-08. The persistent throughput goal is active and unfinished. The ranked evidence and experiment bounds live in `docs/exercise_motion_throughput_plan.md`.
+Updated 2026-10-08. The active goal is still open; the full evidence and qualification matrix are in `docs/exercise_motion_throughput_plan.md`.
 
-## Objective and constraints
+## Current result
 
-Reduce time to genuinely usable production movements across representative exercise types, preserving quality and all existing source, fit, render, review, and packaging gates. Any repeatable decrease beyond timing noise counts; there is no percentage target.
+- The bounded native source-frame cache is enabled by default in production and the speed harness. Two matched production pairs in opposite orders both favored ON: 40.1s and 85.1s lower total wall time, and 37.957s and 85.423s earlier first packaged output. All four arms packaged both RDL/OHP results with complete lineage.
+- Source windows and selected MP4 bytes matched. Playback review found no cache-specific regression: one exercise matched exactly in each pair; the other had small joint deltas with equivalent visible range, support and timing. Shared RDL elbow and OHP lockout/equipment-visibility limitations remain.
+- Do not run another full cache comparison. Other audited stages do not yet have a measured, safely removable cost plus a retained replay that can distinguish an improvement. The Floor Press source remains unqualified for rack-use semantics.
+- The narrow Qwen JSON-grammar compatibility retry passed its exact saved-request replay and focused regression; neither production pair triggered it, so production incidence is unknown.
 
-Keep Qwen fixed with no provider fallback. Use retained inputs and production paths first, isolate experiments, run timing arms sequentially with explicit caps, avoid full generation when focused replay answers the question, and commit only qualified production changes. Preserve unrelated workspace edits.
+## Next work
 
-## Current findings
+Use the plan's risk-based family qualification on the next source-qualified representative output. For performance changes, begin with retained evidence and proceed only when it demonstrates removable work and a bounded replay. Keep Qwen fixed, preserve all gates and motion quality, and commit only qualified production changes.
 
-- Base iteration set: Barbell Romanian Deadlift and Dumbbell Overhead Press. Retained A/B runs took 735.3s/780.2s and accepted 1/2 versus 2/2 outputs; they are not a controlled speed comparison.
-- The RDL's largest attributed cost is fitting (228.253s), but accepted-fit replay did not establish safely removable attempts or repeatable speed savings. The sparse-index optimization remains isolated and unpromoted.
-- A possible pre-fit rejection saved 2.6–3.7s on repeated runs of one diagnostic fixture, but it lacked source-camera evidence and is not a qualified accepted-stage input. The accepted Run B prefit object is pruned; defer attempt changes until an exact, quality-qualified capture exists.
-- Selection/materialized acceptance takes 44.534–47.519s across three accepted outputs. The accepted Run B OHP profile matched all 42 comparable gate fields after path normalization; source clearance matched. The original review WEBM is missing, so video-quality parity remains unverified.
-- The profile took 12.143s for core metrics and 0.077s for clearance; its 87-frame MediaPipe pass took 5.150s including cold imports. OHP and RDL A/Bs that include the production cache-transfer helper saved 3.300/2.730s and 3.476/2.165s respectively beyond their timing spreads; transfer itself cost 0.038–0.055s. All compared deterministic gates and cache payloads matched; warm arms made zero detector calls. Production carries a cache across the deterministic-confirmation copy only when video bytes, model bytes, and schema v3 match. Both original candidate review WEBMs are missing, so video-quality parity remains unverified.
-- The full speculative-scheduling replay remains inconclusive: its 300s cap was below the 360s fit budget. A separate 60s-capped OFF/ON pre-fit diagnostic found RDL task wall/thread CPU of 5.922/1.563s OFF and 5.585/2.125s ON, with near-zero fit-slot wait and matching RDL inputs. OHP prefetch yielded under RDL priority and was abandoned. One pair shows no wall-time penalty, but differing CPU work leaves small/order effects unresolved; no production scheduling change is justified.
-- Independent audits found no removable reconstruction reload, exact duplicate review request, duplicate source render, or second source-frame decode. Run B's request-level review cache is pruned, so it cannot prove cross-call identity parity.
-- Parallel margin audit found no new timing experiment justified: the fit, scheduling, reconstruction, review, browser/decode, and source-yield paths lack proven removable work with a discriminating retained replay. The retained cache-transfer win remains acceptance-stage only (2.165–3.476s on retained RDL/OHP). Follow-up 60s-capped caller-to-acceptance replays now exercise the production selection caller on OHP/RDL: each transferred the exact cache, read it without model inference, and matched all 42 comparable gate fields. Replay time is not a new speedup measurement; the original confirmed candidate, package lineage, and rendered playback remain unverified.
-- The Floor Press two-scale artifact exposed a real historical fail-open (`passed: true` with failed evidence consistency and contradictory rack/floor evidence). Current aggregation closes it in commit `5750980f`; the saved report predates that code. Rack setup remains ambiguous, so the clip is not a qualified fixture.
-
-## Next action
-
-The focused no-model regression passed: `python -m pytest tests/test_two_scale_source_validation.py -k test_source_aggregate_honors_consistency_claims_and_routes_unknown_as_incomplete -q` (6 passed). It covers contradictory Floor Press identity/equipment/completeness evidence; the persisted historical report was not replayed and the ambiguous source is still unqualified. The bounded cache caller-to-acceptance replay also passed on both base exercises, preserving 42 comparable gate fields; it does not establish new timing savings, original candidate lineage, package lineage, or production playback. Keep timing experiments deferred until a specific retained artifact supports a discriminating replay. Do not recreate pruned videos or launch full generation solely to repeat settled audits. The broad goal remains unfinished until representative fresh outputs are accepted, packaged and checked in production-rendered playback.
-
-Prefit diagnostic arms: `build/exercise_motion/diagnostics/throughput_execution_20261008/prefetch_contention/runs/20261008T180039Z-prefit-4b722e/{off_1,on}/arm_result.json`. Launch arguments used `run_arm_capped.ps1 -ReplayScript run_prefit_overlap_diagnostic.py -ExpectedStatus stage_limited -WallLimitSeconds 60`.
-
-Profile and reconciliation artifacts: `build/exercise_motion/diagnostics/materialized_acceptance_profile_20261008/20261008T170817Z/`. Duplicate retained cache evidence: `build/exercise_motion/speed-harness/20261007-183657-ba82ab23/`. Other exercise families still need source-qualified production-rendered evidence; the two-exercise base is not proof of universal reliability.
+Cache A/B roots: `build/exercise_motion/speed-harness/20261008-210549-f07e8576/`, `.../20261008-211843-39688924/`, `.../20261008-213659-88077694/`, `.../20261008-214936-c97ed79e/`.

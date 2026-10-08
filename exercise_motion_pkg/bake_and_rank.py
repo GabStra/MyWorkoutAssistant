@@ -43770,7 +43770,7 @@ def rank_source_video_cut_candidates_with_caption_images(
         for index, spec in enumerate(candidate_window_specs)
     ]
     source_frame_cache_requested = (
-        os.environ.get("EXERCISE_MOTION_SOURCE_FRAME_CACHE", "off").strip().lower() == "on"
+        os.environ.get("EXERCISE_MOTION_SOURCE_FRAME_CACHE", "on").strip().lower() == "on"
     )
     source_frame_cache_index: NativeFrameIndex | None = None
     source_frame_cache_diagnostics: dict[str, Any] = {
