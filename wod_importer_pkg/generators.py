@@ -65,35 +65,82 @@ def load_working_library(base_library: Path, accumulated_library: Path) -> tuple
     return library, accumulated_library
 
 
-def ensure_definitions(
-    movement_names: list[str],
+def audit_missing_candidates(client, equipment, wod_text: str, working_library: dict) -> list[str]:
+    """Asks the exercise generator's audit mode for the WOD's missing movements.
+
+    The audit receives our library as the existing inventory and the WOD as the
+    scope; it returns candidate names for exactly the movements that are missing.
+    """
+    from exercise_library_generator_pkg.generator import _call_inventory
+    from workout_generator_pkg.api_client import json_call_reasoner_only_with_loading
+
+    audit_existing = [
+        {
+            "name": definition["name"],
+            "exerciseType": definition.get("exerciseType"),
+            "equipmentId": definition.get("equipmentId"),
+        }
+        for definition in working_library.get("exerciseDefinitions", [])
+    ]
+    request = (
+        "WOD coverage audit. Today's WOD:\n"
+        + wod_text
+        + "\nReturn only the distinct movements performed in this WOD that are "
+        "missing from the existing inventory."
+    )
+    candidates = _call_inventory(
+        client,
+        equipment,
+        request,
+        audit_existing=audit_existing,
+        scope_description=None,
+        allowed_equipment_ids=None,
+        require_any_accessory=False,
+        show_loading=False,
+        call_json=json_call_reasoner_only_with_loading,
+    )
+    return [candidate["name"] for candidate in candidates]
+
+
+def ensure_wod_coverage(
+    client,
+    wod_text: str,
     working_library: dict,
     working_library_path: Path,
     equipment_file: Path = DEFAULT_EQUIPMENT_FILE,
-    make_client=None,
+    audit_call=None,
     generate_library=None,
-) -> tuple[dict, list[str], list[str]]:
-    """Creates missing movement definitions via the LLM library generator.
+) -> tuple[dict, list[str]]:
+    """Makes the exercise generator cover every movement in the WOD.
 
-    Returns (updated_library, created_names, skipped_names). When every movement is
-    already covered, returns the working library untouched with zero LLM calls.
+    The generator's audit mode identifies the missing movements (our library is the
+    existing inventory, the WOD is the scope); those flow through the generator's
+    normal scoped emission + reviews. No heuristic parsing and no separate
+    coverage LLM are involved.
     """
-    missing = list(movement_names)
-    if not missing:
-        return working_library, [], []
+    from workout_generator_pkg.cli import load_equipment_from_file
 
-    if make_client is None or generate_library is None:
-        make_client = make_deepseek_client
+    if audit_call is None:
+        audit_call = audit_missing_candidates
+    if generate_library is None:
         generate_library = scoped_library_generation
 
-    client = make_client()
-    # The generator's max_definitions cap keeps the alphabetically-first candidates,
-    # so an exact cap would silently drop requested movements if the reasoner
-    # over-returns (e.g. "bike erg standing/seated" variants). Keep the cap generous
-    # and retry whatever is still missing once.
+    # The equipment catalog is only consumed by the real audit path; injected
+    # test audits don't need the file to exist.
+    equipment = load_equipment_from_file(str(equipment_file)) if audit_call is audit_missing_candidates else None
+
+    def _covered(name: str) -> bool:
+        key = _normalize(name)
+        return any(key in known or known in key for known in known_keys)
+
+    known_keys = {_normalize(d["name"]) for d in working_library.get("exerciseDefinitions", [])}
     created: list[str] = []
-    still_missing = list(missing)
-    for attempt in range(2):
+
+    for _attempt in range(2):
+        audit_names = audit_call(client, equipment, wod_text, working_library)
+        still_missing = [name for name in audit_names if not _covered(name)]
+        if not still_missing:
+            break
         request = (
             "Gym WOD coverage: generate ONLY these movements and nothing else "
             "(canonical CrossFit names fine): "
@@ -104,36 +151,25 @@ def ensure_definitions(
         generated = generate_library(client, equipment_file, request, cap)
 
         existing_ids = {d["id"] for d in working_library.get("exerciseDefinitions", [])}
-        existing_names = {_normalize(d["name"]) for d in working_library.get("exerciseDefinitions", [])}
         for definition in generated.get("exerciseDefinitions", []):
             normalized = _normalize(definition["name"])
-            if definition["id"] in existing_ids or normalized in existing_names:
+            if definition["id"] in existing_ids or _covered(definition["name"]):
                 continue
             working_library.setdefault("exerciseDefinitions", []).append(definition)
             existing_ids.add(definition["id"])
-            existing_names.add(normalized)
+            known_keys.add(normalized)
             created.append(definition["name"])
 
-        # Existing equipment entries stay; new generated equipment joins the library.
         existing_equipment_ids = {e["id"] for e in working_library.get("equipments", [])}
         for equipment in generated.get("equipments", []):
             if equipment["id"] not in existing_equipment_ids:
                 working_library.setdefault("equipments", []).append(equipment)
                 existing_equipment_ids.add(equipment["id"])
 
-        known_keys = {_normalize(d["name"]) for d in working_library.get("exerciseDefinitions", [])}
-        still_missing = [
-            name for name in still_missing
-            if not any(name_key in known_key or known_key in name_key
-                       for known_key in known_keys
-                       for name_key in [_normalize(name)])
-        ]
-        if not still_missing:
-            break
-
     working_library_path.parent.mkdir(parents=True, exist_ok=True)
     working_library_path.write_text(json.dumps(working_library, indent=2), encoding="utf-8")
-    return working_library, created, [name for name in movement_names if name not in missing]
+    return working_library, created
+
 
 
 def generate_workout_package(

@@ -1,9 +1,8 @@
-"""The setup step: one LLM call that decides what the WOD needs.
+"""The equipment setup step: one LLM call that decides what equipment the WOD needs.
 
-Input: the whole WOD text, the gym equipment catalog, and the names of every
-exercise already in the library. Output (structured JSON): which equipment is
-missing from the catalog and which movements need new definitions. There is no
-heuristic parsing anywhere — the LLM reads the WOD directly.
+Input: the whole WOD text and the gym equipment catalog. Output: equipment the WOD
+requires that the catalog lacks (the exercise generator handles exercise coverage
+itself via its audit mode — see generators.ensure_wod_coverage).
 """
 
 from __future__ import annotations
@@ -11,31 +10,15 @@ from __future__ import annotations
 import json
 import re
 
-SETUP_SYSTEM_PROMPT = """You are the exercise-coverage planner for a gym workout tracker.
-You receive today's WOD text, the gym's available equipment (name + type), and the
-names of every exercise already defined in the tracker's library.
+EQUIPMENT_SYSTEM_PROMPT = """You are the equipment planner for a gym workout tracker.
+You receive today's WOD text and the gym's available equipment (name + type).
 Return strict JSON:
-{
-  "exercisesToCreate": ["<movement>", ...],       // movements performed in the WOD that
-                                                  // do NOT exist in the library (canonical
-                                                  // CrossFit names, e.g. "Wall Ball")
-  "missingEquipment": [{"name": "...", "type": "..."}]  // equipment the WOD requires that
-                                                        // is NOT in the available equipment;
-                                                        // type must be one of:
-                                                        // GENERIC, BARBELL, DUMBBELLS,
-                                                        // DUMBBELL, PLATELOADEDCABLE,
-                                                        // WEIGHTVEST, MACHINE,
-                                                        // CARDIO_MACHINE, ACCESSORY
-}
-Rules:
-- Only movements actually performed in the WOD; ignore warm-up chatter and section titles.
-- A movement is covered when an existing exercise is the same movement, even if the
-  library name carries equipment/equipment-position qualifiers (e.g. "Barbell Deadlift"
-  covers "Deadlift"); prefer the library over creating duplicates.
-- Sub-variations that are genuinely different movements (e.g. "Burpee Box Jump Over"
-  vs "Burpee") count as missing.
-- Machine cardio (row, bike erg, assault bike, ski erg) is a timed movement on that machine.
-- Never invent equipment types outside the enum; never return equipment the WOD does not use.
+{"missingEquipment": [{"name": "...", "type": "..."}]}
+Each entry is equipment the WOD requires that is NOT in the available equipment list.
+type must be one of: GENERIC, BARBELL, DUMBBELLS, DUMBBELL, PLATELOADEDCABLE,
+WEIGHTVEST, MACHINE, CARDIO_MACHINE, ACCESSORY.
+Rules: only equipment actually required by movements in the WOD; never invent
+equipment types outside the enum; return an empty list when the catalog suffices.
 """
 
 VALID_EQUIPMENT_TYPES = {
@@ -44,37 +27,22 @@ VALID_EQUIPMENT_TYPES = {
 }
 
 
-def plan_missing(
-    client,
-    wod_text: str,
-    equipment_catalog: dict,
-    exercise_names: list[str],
-    call=None,
-) -> dict:
-    """Returns {"exercisesToCreate": [names], "missingEquipment": [{name, type}]}."""
+def plan_missing_equipment(client, wod_text: str, equipment_catalog: dict, call=None) -> list[dict]:
+    """Returns [{"name", "type"}] for equipment the WOD needs but the catalog lacks."""
     if call is None:
         call = _default_llm_call
     equipment_lines = "\n".join(
         f"- {item['name']} ({item['type']})"
         for item in equipment_catalog.get("equipments", []) + equipment_catalog.get("accessoryEquipments", [])
     )
-    exercise_lines = "\n".join(f"- {name}" for name in exercise_names)
-    user_prompt = (
-        f"Available equipment:\n{equipment_lines}\n\n"
-        f"Existing exercises:\n{exercise_lines}\n\n"
-        f"Today's WOD:\n{wod_text}"
-    )
-    raw = call(client, SETUP_SYSTEM_PROMPT, user_prompt)
+    user_prompt = f"Available equipment:\n{equipment_lines}\n\nToday's WOD:\n{wod_text}"
+    raw = call(client, EQUIPMENT_SYSTEM_PROMPT, user_prompt)
     parsed = json.loads(raw)
-    equipment = [
+    return [
         {"name": item["name"], "type": item["type"]}
         for item in parsed.get("missingEquipment", [])
         if item.get("name") and item.get("type") in VALID_EQUIPMENT_TYPES
     ]
-    exercises = [
-        name.strip() for name in parsed.get("exercisesToCreate", []) if name.strip()
-    ]
-    return {"exercisesToCreate": exercises, "missingEquipment": equipment}
 
 
 def _default_llm_call(client, system_prompt: str, user_prompt: str) -> str:

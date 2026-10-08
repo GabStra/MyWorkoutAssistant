@@ -23,7 +23,6 @@ import sys
 from pathlib import Path
 
 from wod_importer_pkg.fetch import fetch_wod
-from wod_importer_pkg.setup import plan_missing
 
 DEFAULT_BASE_LIBRARY = Path("exercise_libraries/exercise_library_2026-08-17_164507_with_movements.json")
 DEFAULT_ACCUMULATED_LIBRARY = Path("exercise_libraries/wod_accumulated_library.json")
@@ -33,44 +32,41 @@ DEFAULT_EQUIPMENT_FILE = Path(__file__).resolve().parent / "assets" / "gym_equip
 def run(date_iso: str, entry, output: Path, base_library: Path, accumulated_library: Path,
         equipment_file: Path, skip_library_generation: bool, dry_run: bool) -> None:
     from wod_importer_pkg.generators import (
-        ensure_definitions,
+        ensure_wod_coverage,
         generate_workout_package,
         load_working_library,
         make_deepseek_client,
         sanitize_package_name,
     )
-    from wod_importer_pkg.setup import _default_llm_call, extend_equipment_catalog, plan_missing
+    from wod_importer_pkg.setup import _default_llm_call, extend_equipment_catalog, plan_missing_equipment
 
     library, library_path = load_working_library(base_library, accumulated_library)
     with open(equipment_file, encoding="utf-8") as handle:
         catalog = json.load(handle)
+    client = make_deepseek_client()
 
-    exercise_names = [d["name"] for d in library.get("exerciseDefinitions", [])]
-    print("setup step: LLM decides missing equipment + exercises...")
-    plan = plan_missing(
-        make_deepseek_client(), entry.text, catalog, exercise_names,
-        call=_default_llm_call,
-    )
-    print(f"  exercises to create: {plan['exercisesToCreate'] or 'nothing — all covered'}")
-    print(f"  missing equipment:   {[i['name'] for i in plan['missingEquipment']] or 'none'}")
+    print("equipment pass: LLM decides missing equipment...")
+    missing_equipment = plan_missing_equipment(client, entry.text, catalog, call=_default_llm_call)
+    print(f"  missing equipment: {[i['name'] for i in missing_equipment] or 'none'}")
+    if missing_equipment:
+        catalog, added = extend_equipment_catalog(catalog, missing_equipment)
+        equipment_file.write_text(json.dumps(catalog, indent=2), encoding="utf-8")
+        print(f"  catalog extended with: {[e['name'] for e in added]}")
     if dry_run:
         return
 
-    if plan["missingEquipment"]:
-        catalog, added = extend_equipment_catalog(catalog, plan["missingEquipment"])
-        equipment_file.parent.mkdir(parents=True, exist_ok=True)
-        equipment_file.write_text(json.dumps(catalog, indent=2), encoding="utf-8")
-        print(f"  catalog extended with: {[e['name'] for e in added]}")
-
-    if plan["exercisesToCreate"] and not skip_library_generation:
-        print("creating exercise definitions (LLM, scoped)...")
-        library, created, _ = ensure_definitions(
-            movement_names=plan["exercisesToCreate"],
+    if skip_library_generation:
+        print("skipping exercise coverage (--skip-library-generation)")
+    else:
+        print("coverage pass: exercise generator audit creates missing definitions...")
+        library, created = ensure_wod_coverage(
+            client=client,
+            wod_text=entry.text,
             working_library=library,
             working_library_path=library_path,
             equipment_file=equipment_file,
         )
-        print(f"  created: {created or 'nothing — merged as duplicates'}")
+        print(f"  created: {created or 'nothing — all covered'}")
 
     print("generating workout (LLM, strict library mode — a couple of minutes)...")
     package = generate_workout_package(entry.text, library)

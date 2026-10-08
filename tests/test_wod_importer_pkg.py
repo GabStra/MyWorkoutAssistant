@@ -1,37 +1,26 @@
-"""Tests for the no-parser WOD importer: setup-plan parsing, catalog extension,
-and the definition merge. LLM calls are injected fakes — no network.
+"""Tests for the no-parser WOD importer: equipment planning, catalog extension,
+the generator-native coverage pass, and the definition merge. All LLM calls are
+injected fakes — no network.
 """
 
 import json
 
-from wod_importer_pkg.generators import ensure_definitions
-from wod_importer_pkg.setup import extend_equipment_catalog, plan_missing
-
-FAKE_SETUP_JSON = json.dumps({
-    "exercisesToCreate": ["Wall Ball", "Burpee Box Jump Over"],
-    "missingEquipment": [{"name": "Medicine Ball", "type": "GENERIC"}],
-})
+from wod_importer_pkg.generators import ensure_wod_coverage
+from wod_importer_pkg.setup import extend_equipment_catalog, plan_missing_equipment
 
 
-class FakeCompletion:
-    class Choice:
-        class Message:
-            content = FAKE_SETUP_JSON
+class _FakeMessage:
+    content = json.dumps({"missingEquipment": [{"name": "Sled", "type": "GENERIC"}]})
 
-        message = Message()
 
-    choices = [Choice()]
+class _FakeCompletions:
+    @staticmethod
+    def create(**kwargs):
+        return type("R", (), {"choices": [type("C", (), {"message": _FakeMessage()})]})()
 
 
 class FakeClient:
-    def chat(self):
-        raise NotImplementedError
-
-    class completions:
-        @staticmethod
-        def create(**kwargs):
-            completion = FakeCompletion()
-            return completion
+    completions = _FakeCompletions()
 
 
 def _def(id_, name):
@@ -44,29 +33,32 @@ def _eq(id_, name):
     return {"id": id_, "type": "GENERIC", "name": name}
 
 
-def test_plan_missing_parses_llm_json_and_filters_invalid_types():
+def test_plan_missing_equipment_parses_and_filters_invalid_types():
     calls = []
 
     def fake_call(client, system_prompt, user_prompt):
         calls.append((system_prompt, user_prompt))
         return json.dumps({
-            "exercisesToCreate": ["Wall Ball", "  "],
             "missingEquipment": [
                 {"name": "Sled", "type": "GENERIC"},
-                {"name": "Magic Wand", "type": "NOT_A_TYPE"},  # must be filtered
+                {"name": "Magic Wand", "type": "NOT_A_TYPE"},  # filtered out
             ],
         })
 
     catalog = {"equipments": [_eq("e1", "Barbell")], "accessoryEquipments": []}
-    plan = plan_missing(FakeClient(), "some WOD text", catalog, ["Deadlift"], call=fake_call)
+    missing = plan_missing_equipment(FakeClient(), "WOD with sled pushes", catalog, call=fake_call)
 
-    assert plan["exercisesToCreate"] == ["Wall Ball"]
-    assert plan["missingEquipment"] == [{"name": "Sled", "type": "GENERIC"}]
-    # the prompt carried the whole WOD, the equipment catalog and the exercise names
+    assert missing == [{"name": "Sled", "type": "GENERIC"}]
     system_prompt, user_prompt = calls[0]
-    assert "Available equipment" in user_prompt and "Barbell" in user_prompt
-    assert "Existing exercises" in user_prompt and "Deadlift" in user_prompt
-    assert "Today's WOD" in user_prompt and "some WOD text" in user_prompt
+    assert "Barbell" in user_prompt and "WOD with sled pushes" in user_prompt
+
+
+def test_plan_missing_equipment_empty_when_catalog_suffices():
+    def fake_call(client, system_prompt, user_prompt):
+        return json.dumps({"missingEquipment": []})
+
+    catalog = {"equipments": [_eq("e1", "Rower")], "accessoryEquipments": []}
+    assert plan_missing_equipment(FakeClient(), "4 min row", catalog, call=fake_call) == []
 
 
 def test_extend_equipment_catalog_adds_missing_and_skips_known():
@@ -77,73 +69,77 @@ def test_extend_equipment_catalog_adds_missing_and_skips_known():
         [{"name": "Sled", "type": "GENERIC"}, {"name": "barbell", "type": "BARBELL"}],
     )
 
-    names = [e["name"] for e in catalog["equipments"]]
-    assert names == ["Barbell", "Sled"]  # "barbell" normalized-duplicate skipped
-    assert added == [{"id": catalog["equipments"][1]["id"], "type": "GENERIC", "name": "Sled", "capabilities": []}]
+    assert [e["name"] for e in catalog["equipments"]] == ["Barbell", "Sled"]
+    assert len(added) == 1
 
     # deterministic ids: same request re-run adds nothing new
     _, added_again = extend_equipment_catalog(catalog, [{"name": "Sled", "type": "GENERIC"}])
     assert added_again == []
 
 
-def test_ensure_definitions_merges_generated_and_skips_duplicates(tmp_path):
+def test_coverage_pass_generates_only_missing_and_persists(tmp_path):
+    """The generator's audit decides coverage; generation emits only the missing."""
     working = {
         "exerciseDefinitions": [_def("d-existing", "Deadlift")],
         "equipments": [_eq("e1", "Barbell")],
         "exerciseMovements": [{"movementRef": {"movementId": "m1"}}],
     }
     library_path = tmp_path / "accumulated.json"
-    calls = []
+    audits = []
+    generations = []
+
+    def fake_audit(client, equipment, wod_text, library):
+        audits.append(wod_text)
+        # the generator's audit sees Deadlift as covered, Wall Ball as missing
+        return ["Deadlift", "Wall Ball"]
 
     def fake_generation(client, equipment_file, request, max_definitions):
-        calls.append(request)
+        generations.append(request)
+        assert "Wall Ball" in request and "Deadlift" not in request
         return {
-            "exerciseDefinitions": [
-                _def("d-new", "Wall Ball"),
-                _def("d-existing", "Deadlift"),  # duplicate: must be skipped
-            ],
-            "equipments": [_eq("e1", "Barbell"), _eq("e2", "Medicine Ball")],
+            "exerciseDefinitions": [_def("d-new", "Wall Ball")],
+            "equipments": [_eq("e2", "Medicine Ball")],
         }
 
-    library, created, _ = ensure_definitions(
-        movement_names=["Wall Ball"],
+    library, created = ensure_wod_coverage(
+        client=FakeClient(),
+        wod_text="WOD with wall balls",
         working_library=working,
         working_library_path=library_path,
         equipment_file=tmp_path / "equipment.json",
-        make_client=lambda: object(),
+        audit_call=fake_audit,
         generate_library=fake_generation,
     )
 
-    assert [d["name"] for d in library["exerciseDefinitions"]] == ["Deadlift", "Wall Ball"]
+    names = [d["name"] for d in library["exerciseDefinitions"]]
+    assert names == ["Deadlift", "Wall Ball"]
     assert created == ["Wall Ball"]
-    assert len(calls) == 1
-    assert library["exerciseMovements"] == working["exerciseMovements"]  # sidecar preserved
-    assert library_path.exists()  # accumulated sidecar written
+    # audit -> generate -> re-audit: the loop verifies coverage after generating
+    assert len(audits) == 2 and len(generations) == 1
+    assert library["exerciseMovements"] == working["exerciseMovements"]
+    assert library_path.exists()
 
 
-def test_ensure_definitions_retries_when_generation_missed_names(tmp_path):
-    working = {"exerciseDefinitions": [], "equipments": [], "exerciseMovements": []}
-    library_path = tmp_path / "accumulated.json"
-    requests = []
+def test_coverage_pass_skips_generation_when_all_covered(tmp_path):
+    working = {"exerciseDefinitions": [_def("d1", "Row")], "equipments": [], "exerciseMovements": []}
+    generations = []
+
+    def fake_audit(client, equipment, wod_text, library):
+        return ["Row"]  # audit says everything is covered
 
     def fake_generation(client, equipment_file, request, max_definitions):
-        requests.append(request)
-        if len(requests) == 1:
-            # first pass over-returns variants and misses the second requested movement
-            return {"exerciseDefinitions": [_def("d1", "Bike Erg Standing")], "equipments": []}
-        return {"exerciseDefinitions": [_def("d2", "Shuttle Run")], "equipments": []}
+        generations.append(request)
+        return {"exerciseDefinitions": [], "equipments": []}
 
-    library, created, _ = ensure_definitions(
-        movement_names=["Bike Erg Standing", "Shuttle Run"],
+    library, created = ensure_wod_coverage(
+        client=FakeClient(),
+        wod_text="4 min row",
         working_library=working,
-        working_library_path=library_path,
+        working_library_path=tmp_path / "accumulated.json",
         equipment_file=tmp_path / "equipment.json",
-        make_client=lambda: object(),
+        audit_call=fake_audit,
         generate_library=fake_generation,
     )
 
-    assert len(requests) == 2
-    assert "Bike Erg Standing" in requests[0]
-    assert "Shuttle Run" in requests[1]
-    assert sorted(created) == ["Bike Erg Standing", "Shuttle Run"]
-    assert {d["name"] for d in library["exerciseDefinitions"]} == {"Bike Erg Standing", "Shuttle Run"}
+    assert created == [] and generations == []
+    assert [d["name"] for d in library["exerciseDefinitions"]] == ["Row"]
