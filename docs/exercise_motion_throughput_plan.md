@@ -63,13 +63,29 @@ The latest matched retained production-bake replay is in `build/exercise_motion/
 - [x] Audit the accepted RDL attempt sequence. The first source-preflight-valid cycle fit failed only after fitted anatomy/seam checks; the retained-interval fit reused 40 anatomy frames and shared support calibration. The exact prefit payload is absent, so no attempt-skip predictor can be evaluated on this fixture.
 - [ ] Do not change attempt ordering, budgets, or fit reuse unless exact prefit captures across multiple qualified inputs demonstrate a predictive prefit signal and preserve a passing source-cycle case. Source-phase preflight and endpoint gap alone do not justify skipping a fit.
 
-**Next action:** Establish whether an exact pre-controlled-fit payload, source manifest, and contract can be captured or replayed without discovery/reconstruction. Require input identity to match the accepted stage record. If that requires full generation or cannot reproduce the prefit input, stop this hypothesis and audit the next-largest accepted stage; do not substitute the final cyclic-rebaked artifact.
+**Decision:** The 2026-10-08 bounded Run A replay captured the exact 117-frame object passed to `fit_controlled_motion`, proving the capture route works without discovery or reconstruction. Its raw/cleaned hashes differ from accepted Run B, and both fit attempts failed, so it is tooling validation only. Run B's prefit object is pruned; the recorded fit digest hashes the pre-transform payload and cannot establish equality with the fitter's `working` input. Do not repeat Run A or reconstruct Run B to manufacture a plausible substitute. Defer attempt-skip/budget changes unless a future quality-qualified accepted-stage capture provides the required identity and a predictive signal.
+
+**Next action:** Continue with the next measured accepted production stage below. Preserve the captured Run A payload only as an exact replay fixture for fit diagnostics; it is not a quality or throughput baseline.
 
 **First performance experiment, only after exact capture and a concrete predictor exist:** One retained-input baseline/candidate pair at the selected subphase, with identical evaluation/budget policy. No discovery, VLM, reconstruction or unrelated render. If promising, run one reverse-order pair plus a qualified source-cycle control. At most four timing runs for the primary input before a decision; no automatic retry.
 
 **Keep only if:** Less measured computation and repeatable lower completed-fit time, unchanged fit/pre-render decisions, equivalent source articulation/support/temporal quality. Check the resulting production playback before claiming a usable improvement. Reject if the gain comes from dropping valid motion, bypassing a fallback, or moving a failure to a later gate.
 
-### 2. Speculative render scheduling and CPU contention
+### 2. Materialized selection and output acceptance
+
+**Priority:** The accepted-output chooser/acceptance path took 47.519s for OHP in A, then 45.813s for OHP and 44.534s for RDL in B. This is stable elapsed time on three accepted outputs, but none of it is assumed removable.
+
+**Production owners:** `bake_and_rank.py::choose_best_materialized_review_item`, `materialize_selection_candidate`, `apply_materialized_output_acceptance_gate`, `materialized_metrics_with_gpu_handoff`, and `final_output_validation_metrics`.
+
+**Evidence:** `run.log` for A/B and B's `staged_wave_report.json` attribute the time separately from candidate processing, review ranking, manifest construction, and artifact retention. The saved selected-item reports provide nested timing: B RDL/OHP final visual review preparation was 24.163s/23.776s and final caption+parse was 6.562s/8.946s. A OHP's corresponding timings were 23.591s and 9.142s. Preparation includes the required two-scale source review as well as rendering, prompt/cache identity work and file hashing; it is not pure renderer time. B used four final-validation preview-sheet browser jobs totaling 16.678 job-seconds across both outputs; this is cumulative work, not wall time. The final-validation session made 22 Qwen requests totaling 181.672 request-seconds, also cumulative. Do not add these nested/concurrent values or credit them as removable savings.
+
+The outer evidence capture and `validate_final_output_with_caption_images` both request the same materialized preview sheets; they use the same paths and cache identity, so the second call should reuse the render checkpoint. Do not treat that call pair as duplicate rendering. Source-clearance helpers also hash source inputs and frame evidence; measure file sizes and cache behavior before deciding that repeated hashes have meaningful cost.
+
+**First diagnostic:** The retained selected skeleton (SHA256 `a5295ced101214a232ce8f31bba5c52e4f7c1ba2c7a5422a433c0140c4a04ed6`), source manifest (`515c47f218f59b158d5bcfa71fe7de51957f893099e51a9b2c2c3e9fed8d3727`), selected/source clip (`b76c494eb6ec44b3c16f4f27e1526d1274d3969f81d0bba2a70eeecda9b01b48`), exact-source pose reference (`4cbb785a45716b0efe713a51b05d74819b4e76718662246e4f575faae39e35d2`), and the three source-clearance images survive with matching hashes. The original selected `ReviewItem.reviewVideoPath` was pruned; the retained package preview video is not proven byte-identical. Therefore do not claim or compare the exported-preview-video-quality submetric, and do not substitute that different video. Profile source clearance and core deterministic materialized-acceptance metrics on an isolated copy of the accepted B OHP selected artifact; compare every other deterministic field, pass state, and rejection reason to the retained gate. A full selection replay would make new Qwen calls, and final review cache files were pruned; do not launch one. Do not invoke final Qwen/source review, render contact sheets, or change any gate. Cap at 120s and stop on any other missing/mismatched input or decision. Preserve skeleton, contract, source-evidence, validator, and configuration hashes in the profile output.
+
+**Keep a production optimization only if:** The profile identifies a concrete repeated or avoidable computation with measurable wall-time cost. Any isolated fix must preserve every deterministic metric and decision, then pass a matched accepted RDL/OHP production comparison with identical gates and rendered/package lineage. If the deterministic subphase is not a meaningful source of removable work, leave production unchanged and advance to the next evidence-backed area.
+
+### 3. Speculative render scheduling and CPU contention
 
 **Priority:** B records 52.803s of OHP speculative-worker elapsed before abandonment. The retained trace does not establish how much overlapped RDL finalization or caused slowdown. This is an independent bounded hypothesis, not evidence that prefetch should always be disabled.
 
@@ -87,20 +103,20 @@ The latest matched retained production-bake replay is in `build/exercise_motion/
 
 **Decision:** Defer production scheduling changes. The forced replay showed no browser scheduler or fit-slot admission delay, but it did not measure whether speculative work slowed the subsequent fit. Do not run OFF2 or repeat this replay without new production evidence or a diagnostic that can distinguish a specific cause inside the 300s cap. A faster fitted rejection still does not qualify promotion.
 
-### 3. Reconstruction startup amortization
+### 4. Reconstruction startup amortization
 
 **Priority:** 53.899-108.102s measured startup versus only 2.441-3.838s reported prediction work across the pair. Prediction is only a subset of reconstruction; this does not mean all remaining reconstruction time is removable.
 
 **Owners:** `wham_runner.py::ensure_warm_worker_ready`, `run_wham_with_warm_worker`; `gvhmr_warm_worker.py`; production PowerShell worker lifecycle. Coverage: `tests/test_wham_warm_worker_recovery.py` and existing worker ownership checks.
 
 - [x] Inspect retained lifecycle events: container/process startup, import, checkpoint load, readiness, GPU acquisition, shutdown and existing warm-worker reuse. Determine whether the next request/wave can actually reuse this worker under exclusive GPU transitions.
-- [ ] Propose a change only for a demonstrated redundant startup/load or avoidable restart. Do not enable GPU co-residency or retain models that must release memory for review.
+- [x] Propose a change only for a demonstrated redundant startup/load or avoidable restart. The retained runs start one worker for two requests; final VLM requires the GPU handoff. The 53.899s/108.102s cold-load spread is unattributed, not proof of removable work. No lifecycle change is justified.
 
-**First experiment:** Initialization/readiness or loading-only replay with identical weights and lifecycle, followed by a second request to measure amortization. No full source pipeline. If output-affecting worker state changes, use one retained reconstruction and verify its downstream decisions before broader runs.
+**First experiment:** None is currently justified: the worker already loads once for both requests and stops for the required final VLM handoff. Revisit only if new traces identify a redundant load subphase or unexpected restart.
 
 **Decision:** Keep only measured setup reduction with safe GPU ownership, cancellation/recovery and deterministic source handling. Defer if exclusive transitions require the same reload or benefit exists only in an artificial warm state.
 
-### 4. Review call identity and model handoffs
+### 5. Review call identity and model handoffs
 
 **Priority:** Material workload; zero recorded question-cache hits does not prove a defect or duplicate calls.
 
@@ -112,7 +128,7 @@ The latest matched retained production-bake replay is in `build/exercise_motion/
 
 **First experiment:** Reuse a retained exact request sequence; establish identical decisions and fewer actual calls/restarts. Run one baseline/candidate pair, with reverse order only if a promising timing benefit needs confirmation. Defer when no duplicate or avoidable lifecycle event is demonstrated.
 
-### 5. Browser and source-frame extraction
+### 6. Browser and source-frame extraction
 
 **Priority:** Low additional margin on the current retained path. Browser frame batching is already enabled; source decode cache is on in A/B. The RDL browser-start/page-ready cost is only 2.540s.
 
@@ -138,19 +154,20 @@ No new browser worker-count or frame-batch sweep is scheduled. Revisit after lar
 
 ## Execution order and stop rules
 
-- The read-only fit, lifecycle and request-identity audits are complete. The sparse-mask optimization preserved outputs but did not produce repeatable full-fit savings. The structural-fit profile and follow-up screens are recorded below; no production throughput change has qualified.
+- The read-only fit, reconstruction-lifecycle and request-identity audits are complete. The sparse-mask optimization preserved outputs but did not produce repeatable full-fit savings. The structural-fit profile and follow-up screens are recorded below; no production throughput change has qualified.
 - The scheduling diagnostic found immediate CPU and fit-slot admission, followed by an RDL fit that remained active when the 300s harness cap killed it. Since the cap is below the 360s fit budget and OFF2 was omitted, this hypothesis has no valid timing conclusion; defer it.
 - The RDL lineage question is resolved below. Do not treat the rejected `x_scale="jac"` postprocess as a production regression or rerun a unit-scale control: it stops at a different stage from the accepted cyclic-rebake output.
-- The highest measured remaining cost is controlled-motion fitting, including a 99s failed source-cycle attempt before a 109s passing retained-interval fit. Do not skip, shorten, or reuse the failed fit based on this one case: source preflight passed, failure came from the fitted candidate, and equivalent pre-fit input is not retained. First establish whether an exact, bounded controlled-fit capture is possible without repeating discovery/reconstruction; otherwise defer cycle-attempt optimization and audit the next measured production cost.
+- Controlled-motion fitting remains the largest single measured cost, but no safe attempt reuse/skip is supported. Run A capture validates the exact capture boundary only; accepted Run B prefit identity is not recoverable. Defer cycle-attempt optimization and profile the new 44–48s selection/acceptance stage as specified in section 2.
 - Choose a new performance hypothesis only when retained evidence shows removable work or a concrete algorithmic mechanism. Record input hashes, intended change, skipped stages, metric, decision rule and runtime cap before launching it.
 - Keep each timing comparison sequential and bounded as above. If its budget cannot discriminate a gain, report the limit instead of expanding it automatically.
 - Maintain one short result per hypothesis: keep, reject or inconclusive, with evidence paths. No new full run to compensate for unexplained rejection; no repeated passing checks without changed evidence.
-- Advance to the next ranked area when the current hypothesis is decided or its removable margin cannot be demonstrated. Current measured margin is concentrated in trajectory fitting, but the experiments below have not identified a safe, quality-preserving reduction. Reorder only when new evidence changes the expected value.
+- Advance to the next ranked area when the current hypothesis is decided or its removable margin cannot be demonstrated. Controlled fitting remains the largest single measured stage, but no safe attempt reuse or fit reduction is supported. The next diagnostic is the accepted selection/acceptance stage at 44–48s; its removable margin is not yet known. Reorder only when new evidence changes the expected value.
 - Update the short handoff and commit only qualified changes. The broad goal remains unfinished until representative fresh quality and timing evidence satisfies it.
 
 ## Execution evidence — 2026-10-08
 
 - Six bounded independent source/evidence audits completed. Exact crop/full-fit reuse is already implemented. Each retained wave already reuses one loaded reconstruction worker for two requests; exclusive final VLM handoff requires release. Review traces prove no duplicate requests or avoidable restart; per-call identity evidence is incomplete. Defer startup/review experiments.
+- Current-state audit found selection/acceptance at 44.534–47.519s on three accepted outputs. B's nested visual review records 23.776–24.163s preparation and 6.562–8.946s final caption+parse; preparation includes source validation, not just rendering. The retained selected items use the same skeleton as the sole ranked item, with no selected-range cut or rescore. Exact selected skeleton, clip, source manifest, pose reference, and source-clearance images survive, but the original review video does not; profile only source clearance and deterministic metrics, excluding that video-quality field.
 - One fit callback profile exposed redundant `np.unique` over sparse dependency row IDs immediately before a same-value Boolean scatter. Removing deduplication preserves the mask for repeated/unsorted/empty indices. This is generic production fitting work, with no changed objectives/gates/settings.
 - Retained117-frame mask A/B/B/A: baseline2.840/2.849s; candidate0.604/0.487s; every mask identical. This cost is incurred while populating the first-Jacobian mask cache, not on every later Jacobian evaluation.
 - Complete Jacobian shape123363x7371:1,518,061 stored values; exact sparse difference zero. Profiled callback4.603s baseline/2.571s candidate is a single pair; use the balanced mask microbenchmark for repeatability evidence, not a claim of repeatable full-fit speed.
@@ -190,4 +207,4 @@ The second attempt reused the 40 cached anatomy-repair frames, and support calib
 
 The exact enriched skeleton entering this controlled fit is absent from retained run B: only raw/cleaned motion, source evidence, the final cyclic-rebaked skeleton, and attempt summaries/digests remain; the original bake workspace and pre-bake payload were pruned. `replay_controlled_motion_fit.py` on the final artifact would start from already fitted/rebaked poses, while the other replay routes would regenerate a non-identical upstream payload. Neither can reproduce this attempt faithfully.
 
-**Decision and next step:** No code or fit-budget experiment is justified from this artifact. Before testing a predictor or attempt reduction, establish a bounded way to capture the exact pre-controlled-fit payload, source manifest, and contract while skipping discovery/reconstruction. If the capture would require a full generation run or cannot preserve exact input identity, defer this hypothesis and profile the next-largest accepted production stage. Preserve the existing anatomy, seam, fallback, and packaging gates.
+**Decision and next step:** No code or fit-budget experiment is justified from this artifact. Run B's exact pre-controlled-fit payload is pruned, and Run A is not a valid substitute. Defer fit-attempt changes. The current next action is the bounded deterministic selection/acceptance profile in section 2; preserve the existing anatomy, seam, fallback, and packaging gates.
