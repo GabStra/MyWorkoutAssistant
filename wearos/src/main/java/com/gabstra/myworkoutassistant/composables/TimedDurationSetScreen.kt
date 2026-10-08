@@ -45,6 +45,7 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.Red
+import com.gabstra.myworkoutassistant.shared.buildTimedSetGoalLabel
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.utils.estimateCaloriesKcal
@@ -536,6 +537,16 @@ fun TimedDurationSetScreen(
                     textComposable()
                 } else {
                     TimedDurationRunningDisplay(initialMillis = currentSet.startTimer)
+                }
+            }
+
+            val timedSetGoalLabel = buildTimedSetGoalLabel(state.set)
+            if (timedSetGoalLabel != null) {
+                SetValueSection(label = "GOAL", headerStyle = headerStyle) {
+                    Text(
+                        text = timedSetGoalLabel,
+                        style = itemStyle,
+                    )
                 }
             }
 

@@ -1053,6 +1053,37 @@ fun getEffectiveRestingHeartRate(restingHeartRate: Int? = null): Int {
     return restingHeartRate ?: 60
 }
 
+/**
+ * Human-readable label for the distance/calorie targets a timed set may carry
+ * (CrossFit cardio quantities, e.g. "1.10 km · 24 cal"), or null when none apply.
+ */
+fun buildTimedSetGoalLabel(set: Set): String? {
+    val distanceMeters = when (set) {
+        is TimedDurationSet -> set.targetDistanceMeters
+        is EnduranceSet -> set.targetDistanceMeters
+        else -> null
+    }
+    val calories = when (set) {
+        is TimedDurationSet -> set.targetCalories
+        is EnduranceSet -> set.targetCalories
+        else -> null
+    }
+    val parts = mutableListOf<String>()
+    if (distanceMeters != null && distanceMeters > 0) {
+        parts.add(
+            if (distanceMeters >= 1000) "${(distanceMeters / 1000.0).round(2)} km"
+            else "${distanceMeters.toInt()} m"
+        )
+    }
+    if (calories != null && calories > 0) {
+        parts.add(
+            if (calories % 1.0 == 0.0) "${calories.toInt()} cal"
+            else "${calories.round(1)} cal"
+        )
+    }
+    return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+}
+
 fun getMaxHearthRatePercentage(
     heartRate: Int,
     age: Int,
