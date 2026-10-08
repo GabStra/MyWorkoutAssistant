@@ -920,20 +920,37 @@ def test_nested_clef_decision_reuses_the_active_managed_lease(monkeypatch):
     assert result == "reused"
 
 
-@pytest.mark.parametrize("backend", ["qwen-chat", "clef-systemone"])
-def test_visual_backend_and_comparative_switch_reach_bake_request(tmp_path, backend):
-    from exercise_motion_pkg.cli import build_parser, build_bake_and_rank_request
+def test_production_cli_rejects_clef_backend_options(tmp_path):
+    from pathlib import Path
+    from exercise_motion_pkg.cli import build_parser
 
-    args = build_parser().parse_args([
+    parser = build_parser()
+    base_args = [
         "bake-and-rank", "--candidates-json", str(tmp_path / "candidates.json"),
         "--workspace", str(tmp_path), "--wham-repo-path", str(tmp_path),
-        "--body-model-root", str(tmp_path), "--visual-decision-backend", backend,
-        "--final-output-review-backend", backend, "--comparative-segment-selection",
-    ])
-    request = build_bake_and_rank_request(args)
-    assert request.visual_decision_backend == backend
-    assert request.final_output_review_backend == backend
-    assert request.comparative_segment_selection_enabled is True
+        "--body-model-root", str(tmp_path),
+    ]
+    with pytest.raises(SystemExit):
+        parser.parse_args([*base_args, "--visual-decision-backend", "clef-systemone"])
+    with pytest.raises(SystemExit):
+        parser.parse_args([*base_args, "--final-output-review-backend", "clef-systemone"])
+    with pytest.raises(SystemExit):
+        parser.parse_args([
+            "detect-segment", "--video-path", str(tmp_path / "source.mp4"),
+            "--out-json", str(tmp_path / "segment.json"), "--frames-dir", str(tmp_path / "frames"),
+            "--visual-decision-backend", "clef-systemone",
+        ])
+
+    for script_name in (
+        "run_exercise_motion_workout_plan.ps1",
+        "run_exercise_motion_bake_and_rank.ps1",
+        "run_exercise_motion_youtube_bake_and_rank.ps1",
+    ):
+        script = (Path(__file__).resolve().parents[1] / "scripts" / script_name).read_text(
+            encoding="utf-8"
+        )
+        assert "clef-systemone" not in script
+        assert "ClefSystemOne" not in script
 
 
 def test_production_visual_backend_defaults_to_qwen_and_manifest_defaults_are_independent(tmp_path):
@@ -948,32 +965,44 @@ def test_production_visual_backend_defaults_to_qwen_and_manifest_defaults_are_in
     assert request.visual_decision_backend == "qwen-chat"
     assert bake.effective_final_output_review_backend(request) == "qwen-chat"
     assert DetectionSettings().visual_decision_backend == "qwen-chat"
+    with pytest.raises(ValueError, match="Qwen-only"):
+        DetectionSettings(visual_decision_backend="clef-systemone")
     detect_args = build_parser().parse_args([
         "detect-segment", "--video-path", str(tmp_path / "source.mp4"),
         "--out-json", str(tmp_path / "segment.json"),
         "--frames-dir", str(tmp_path / "frames"),
     ])
-    assert detect_args.visual_decision_backend == "qwen-chat"
+    assert not hasattr(detect_args, "visual_decision_backend")
 
-    manifest_request = bake.bake_and_rank_request_from_selection_manifest(
+    for stale_manifest in (
         {"finalOutputReviewBackend": "clef-systemone"},
-        workspace=tmp_path,
-        min_selected_score=None,
-        review_frames=None,
-        max_review_windows=None,
-    )
-    assert manifest_request.visual_decision_backend == "qwen-chat"
-    assert bake.effective_final_output_review_backend(manifest_request) == "clef-systemone"
-
-    source_only_clef = bake.bake_and_rank_request_from_selection_manifest(
         {"visualDecisionBackend": "clef-systemone"},
-        workspace=tmp_path,
-        min_selected_score=None,
-        review_frames=None,
-        max_review_windows=None,
-    )
-    assert source_only_clef.visual_decision_backend == "clef-systemone"
-    assert bake.effective_final_output_review_backend(source_only_clef) == "qwen-chat"
+    ):
+        with pytest.raises(ValueError, match="Qwen-only"):
+            bake.bake_and_rank_request_from_selection_manifest(
+                stale_manifest,
+                workspace=tmp_path,
+                min_selected_score=None,
+                review_frames=None,
+                max_review_windows=None,
+            )
+
+    with pytest.raises(ValueError, match="Qwen-only"):
+        bake.BakeAndRankRequest(
+            candidates_json=tmp_path / "candidates.json",
+            workspace=tmp_path,
+            wham_repo_path=None,
+            body_model_root=None,
+            visual_decision_backend="clef-systemone",
+        )
+    with pytest.raises(ValueError, match="Qwen-only"):
+        bake.BakeAndRankRequest(
+            candidates_json=tmp_path / "candidates.json",
+            workspace=tmp_path,
+            wham_repo_path=None,
+            body_model_root=None,
+            final_output_review_backend="clef-systemone",
+        )
 
 
 def test_qwen_support_result_records_actual_backend():
@@ -1076,73 +1105,12 @@ def test_managed_clef_server_profile_rejects_invalid_environment(monkeypatch, na
         clef_systemone.managed_clef_server_profile()
 
 
-def test_final_review_cache_identity_includes_managed_clef_profile(tmp_path, monkeypatch):
-    item = bake.ReviewItem(
-        exercise_index=0,
-        candidate_rank=0,
-        loop_index=-1,
-        exercise_name="Weighted Pull-Up",
-        candidate_title="Weighted pull up demo",
-        candidate_workspace=tmp_path / "candidate",
-        preview_html_path=tmp_path / "candidate" / "preview.html",
-        skeleton_path=tmp_path / "candidate" / "selected.json",
-        review_video_path=tmp_path / "candidate" / "selected.webm",
-        duration_sec=2.0,
-        loop_start_seconds=0.0,
-        loop_end_seconds=2.0,
-        candidate={"videoId": "pullup"},
-    )
-    item.skeleton_path.parent.mkdir(parents=True, exist_ok=True)
-    item.skeleton_path.write_text(json.dumps({"frames": [{}]}), encoding="utf-8")
-    preview_sheet = tmp_path / "preview.jpg"
-    preview_sheet.write_bytes(b"preview")
-    monkeypatch.setattr(
-        bake,
-        "final_output_preview_contact_sheets",
-        lambda _item, *, output_dir: [preview_sheet],
-    )
-    monkeypatch.setattr(bake, "final_output_review_frame_indices", lambda *_args, **_kwargs: [0])
-    monkeypatch.setattr(bake, "build_final_output_validation_prompt", lambda **_kwargs: "review")
-    monkeypatch.setattr(bake, "exercise_motion_contract_for_review_item", lambda *_args: {})
-    monkeypatch.setattr(bake, "load_cached_final_output_validation", lambda **_kwargs: None)
-    monkeypatch.setattr(
-        clef_systemone,
-        "request_final_preview_review_with_managed_server",
-        lambda **_kwargs: {"rawSystemOneResponse": {}},
-    )
-
-    original_cache_key = bake.final_output_validation_cache_key
-    observed = []
-
-    def capture_cache_identity(**kwargs):
-        settings = kwargs["model_settings"]
-        observed.append((settings.get("clefManagedServerProfile"), original_cache_key(**kwargs)))
-        return observed[-1][1]
-
-    monkeypatch.setattr(bake, "final_output_validation_cache_key", capture_cache_identity)
-    request = bake.BakeAndRankRequest(
-        candidates_json=tmp_path / "candidates.json",
-        workspace=tmp_path,
-        wham_repo_path=None,
-        body_model_root=None,
-        final_output_validation=True,
-        visual_decision_backend="clef-systemone",
-        final_output_review_backend="clef-systemone",
-    )
-    ranking = bake.LoopRanking(score=0.9, reasons=[], payload={"modelScore": 0.9})
-
-    for gpu_layers, flash_attn in (("22", "on"), ("23", "off")):
-        monkeypatch.setenv("EXERCISE_MOTION_CLEF_GPU_LAYERS", gpu_layers)
-        monkeypatch.setenv("EXERCISE_MOTION_CLEF_FLASH_ATTN", flash_attn)
-        bake.validate_final_output_with_caption_images(
-            item,
-            ranking,
-            request=request,
-            caption_images=None,
+def test_production_request_rejects_clef_final_review(tmp_path):
+    with pytest.raises(ValueError, match="Qwen-only"):
+        bake.BakeAndRankRequest(
+            candidates_json=tmp_path / "candidates.json",
+            workspace=tmp_path,
+            wham_repo_path=None,
+            body_model_root=None,
+            final_output_review_backend="clef-systemone",
         )
-
-    assert [profile for profile, _ in observed] == [
-        {"gpuLayers": 22, "flashAttention": "on"},
-        {"gpuLayers": 23, "flashAttention": "off"},
-    ]
-    assert observed[0][1] != observed[1][1]

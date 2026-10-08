@@ -3074,6 +3074,13 @@ class BakeAndRankRequest:
     authoritative_exercise_motion_context: dict[str, Any] | None = None
     artifact_retention: str = ARTIFACT_RETENTION_DEBUG
 
+    def __post_init__(self) -> None:
+        if self.visual_decision_backend != "qwen-chat" or self.final_output_review_backend not in {
+            None,
+            "qwen-chat",
+        }:
+            raise ValueError("Production motion review is Qwen-only.")
+
 
 def effective_final_output_review_backend(request: BakeAndRankRequest) -> str:
     return request.final_output_review_backend or request.visual_decision_backend
@@ -20019,6 +20026,10 @@ def bake_and_rank_request_from_selection_manifest(
     max_review_windows: int | None,
     max_selected_results: int | None = None,
 ) -> BakeAndRankRequest:
+    if manifest.get("visualDecisionBackend", "qwen-chat") != "qwen-chat" or manifest.get(
+        "finalOutputReviewBackend", "qwen-chat"
+    ) != "qwen-chat":
+        raise ValueError("Selection manifest requests a non-Qwen backend; production motion review is Qwen-only.")
     source_candidates = manifest.get("sourceCandidatesJson")
     candidates_json = Path(str(source_candidates)) if source_candidates else workspace / "youtube_candidates.json"
     manifest_max_source_window_attempts = parse_optional_int(manifest.get("maxSourceWindowAttempts"))

@@ -110,6 +110,10 @@ class DetectionSettings:
     health_timeout_seconds: float = 180.0
     request_timeout_seconds: float = 240.0
 
+    def __post_init__(self) -> None:
+        if self.visual_decision_backend != "qwen-chat":
+            raise ValueError("Production motion review is Qwen-only.")
+
 
 @dataclass(frozen=True)
 class VideoMetadata:

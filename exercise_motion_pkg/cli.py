@@ -326,14 +326,6 @@ def build_parser() -> argparse.ArgumentParser:
     detect.add_argument("--base-url", default="http://127.0.0.1:8090")
     detect.add_argument("--model", default="local-vision")
     detect.add_argument(
-        "--visual-decision-backend",
-        choices=("qwen-chat", "clef-systemone"),
-        default="qwen-chat",
-        help="Backend for the optional comparative candidate-window choice. Clef can be selected explicitly.",
-    )
-    detect.add_argument("--clef-systemone-base-url", default="http://127.0.0.1:8091")
-    detect.add_argument("--clef-systemone-model", default="ggml-org/Clef-Flash-GGUF:Q4_K_M")
-    detect.add_argument(
         "--comparative-selection",
         action="store_true",
         help="Use the selected visual-decision backend to break close candidate-window ties.",
@@ -970,30 +962,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_FINAL_OUTPUT_VALIDATION_MIN_SCORE,
         help="Minimum final-output validator score required for automatic acceptance.",
     )
-    bake_and_rank.add_argument(
-        "--visual-decision-backend",
-        choices=("qwen-chat", "clef-systemone"),
-        default="qwen-chat",
-        help=(
-            "Backend for source and support visual reviews. Clef can be selected explicitly for an experiment."
-        ),
-    )
-    bake_and_rank.add_argument(
-        "--final-output-review-backend",
-        choices=("qwen-chat", "clef-systemone"),
-        default="qwen-chat",
-        help="Backend for the advisory review of the final rendered preview. Clef can be selected explicitly.",
-    )
-    bake_and_rank.add_argument(
-        "--clef-systemone-base-url",
-        default="http://127.0.0.1:8091",
-        help="Local Clef llama.cpp endpoint; typed visual decisions start and stop its server on demand.",
-    )
-    bake_and_rank.add_argument(
-        "--clef-systemone-model",
-        default="ggml-org/Clef-Flash-GGUF:Q4_K_M",
-        help="Model id served at --clef-systemone-base-url.",
-    )
     bake_and_rank.add_argument("--no-classify-support-dominance", action="store_true")
     bake_and_rank.add_argument("--llama-cpp-base-url", default="http://127.0.0.1:8090")
     bake_and_rank.add_argument("--llama-cpp-model", default=DEFAULT_LLAMA_CPP_MODEL)
@@ -1610,9 +1578,6 @@ def main() -> None:
             raise ValueError("--llama-cpp-n-predict must be greater than 0.")
         if args.fast_segment_profile:
             settings = DetectionSettings(
-                visual_decision_backend=args.visual_decision_backend,
-                clef_systemone_base_url=args.clef_systemone_base_url,
-                clef_systemone_model=args.clef_systemone_model,
                 comparative_selection_enabled=args.comparative_selection,
                 llama_cpp_backend=args.llama_cpp_backend,
                 llama_cpp_n_predict=args.llama_cpp_n_predict,
@@ -1651,9 +1616,6 @@ def main() -> None:
             )
         else:
             settings = DetectionSettings(
-                visual_decision_backend=args.visual_decision_backend,
-                clef_systemone_base_url=args.clef_systemone_base_url,
-                clef_systemone_model=args.clef_systemone_model,
                 comparative_selection_enabled=args.comparative_selection,
                 llama_cpp_backend=args.llama_cpp_backend,
                 llama_cpp_n_predict=args.llama_cpp_n_predict,

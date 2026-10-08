@@ -241,17 +241,20 @@ def test_effective_configuration_requires_requested_wave_size_and_arm_settings()
         "cpuPrefetchDuringBake": True,
         "prefetchWorkers": 8,
         "prefetchQueueDepth": 40,
+        "sourceCutScorecardBackends": ["qwen-chat"],
+        "supportDominanceBackends": ["qwen_chat"],
+        "finalOutputValidationBackends": ["llama_cpp_vision"],
     }
 
-    assert motion_speed_harness.effective_configuration_error("shared", metrics, 2) is None
+    assert motion_speed_harness.effective_configuration_error("qwen-shared", metrics, 2) is None
     assert "expected 1" in motion_speed_harness.effective_configuration_error(
-        "shared", dict(metrics, effectiveMaxConcurrentStagedWaves=2), 2
+        "qwen-shared", dict(metrics, effectiveMaxConcurrentStagedWaves=2), 2
     )
     assert "overlap high-water=2" in motion_speed_harness.effective_configuration_error(
-        "shared", dict(metrics, overlapHighWater=2), 2
+        "qwen-shared", dict(metrics, overlapHighWater=2), 2
     )
     assert "stagedWaveSize=2" in motion_speed_harness.effective_configuration_error(
-        "shared", metrics, 1
+        "qwen-shared", metrics, 1
     )
 
 
@@ -267,29 +270,32 @@ def test_disabled_wave_mode_and_prefetch_settings_are_checked():
         "cpuPrefetchDuringBake": False,
         "prefetchWorkers": 3,
         "prefetchQueueDepth": 12,
+        "sourceCutScorecardBackends": ["qwen-chat"],
+        "supportDominanceBackends": ["qwen_chat"],
+        "finalOutputValidationBackends": ["llama_cpp_vision"],
     }
 
     assert motion_speed_harness.effective_configuration_error(
-        "shared", metrics, 0, False, 3, 12
+        "qwen-shared", metrics, 0, False, 3, 12
     ) is None
     assert "stagedWavesEnabled=True" in motion_speed_harness.effective_configuration_error(
-        "shared", dict(metrics, stagedWavesEnabled=True), 0, False, 3, 12
+        "qwen-shared", dict(metrics, stagedWavesEnabled=True), 0, False, 3, 12
     )
     assert "prefetchWorkers=8" in motion_speed_harness.effective_configuration_error(
-        "shared", dict(metrics, prefetchWorkers=8), 0, False, 3, 12
+        "qwen-shared", dict(metrics, prefetchWorkers=8), 0, False, 3, 12
     )
 
 
 def test_runner_command_passes_production_prefetch_and_arm_local_preview_cache(tmp_path):
-    first_arm = tmp_path / "baseline"
-    second_arm = tmp_path / "shared"
+    first_arm = tmp_path / "qwen-full"
+    second_arm = tmp_path / "qwen-shared"
     plan = tmp_path / "plan.json"
 
     first_command = motion_speed_harness.build_runner_command(
-        "baseline", first_arm, plan, 8, 300
+        "qwen-full", first_arm, plan, 8, 300
     )
     second_command = motion_speed_harness.build_runner_command(
-        "shared", second_arm, plan, 0, 300,
+        "qwen-shared", second_arm, plan, 0, 300,
         cpu_prefetch_during_bake=False,
         prefetch_workers=3,
         prefetch_queue_depth=12,
@@ -314,49 +320,20 @@ def test_runner_command_passes_production_prefetch_and_arm_local_preview_cache(t
     assert second_command[second_command.index("-StagedWaveSize") + 1] == "0"
 
 
-def test_qwen_visual_arm_is_opt_in_and_keeps_clef_final_review(tmp_path):
+def test_every_supported_harness_arm_uses_qwen_for_all_visual_reviews(tmp_path):
     parser = motion_speed_harness.build_argument_parser()
     assert parser.parse_args([]).arms == "qwen-full"
-
-    command = motion_speed_harness.build_runner_command(
-        "qwen-visual", tmp_path / "qwen-visual", tmp_path / "plan.json", 8, 300
+    assert set(motion_speed_harness.ARMS) == {"qwen-full", "qwen-shared"}
+    assert all(
+        settings == {"visualDecisionBackend": "qwen-chat", "finalOutputReviewBackend": "qwen-chat"}
+        for settings in motion_speed_harness.ARM_BACKEND_SETTINGS.values()
     )
-
-    assert "-WarmWhamWorker:$true" in command
-    assert "-KeepLlamaCppServer:$true" in command
-    assert command[command.index("-VisualDecisionBackend") + 1] == "qwen-chat"
-    assert command[command.index("-FinalOutputReviewBackend") + 1] == "clef-systemone"
-    assert motion_speed_harness.ARM_EFFECTIVE_SETTINGS["qwen-visual"] == {
-        "sharedLlamaServerEnabled": False,
-        "effectiveMaxConcurrentStagedWaves": 1,
-    }
-    assert motion_speed_harness.ARM_BACKEND_SETTINGS["qwen-visual"] == {
-        "visualDecisionBackend": "qwen-chat",
-        "finalOutputReviewBackend": "clef-systemone",
-    }
-
-
-def test_qwen_full_is_default_and_clef_comparison_arms_keep_explicit_identity(tmp_path):
-    parser = motion_speed_harness.build_argument_parser()
-    assert parser.parse_args([]).arms == "qwen-full"
-
-    qwen_command = motion_speed_harness.build_runner_command(
-        "qwen-full", tmp_path / "qwen-full", tmp_path / "plan.json", 8, 300
-    )
-    assert qwen_command[qwen_command.index("-VisualDecisionBackend") + 1] == "qwen-chat"
-    assert qwen_command[qwen_command.index("-FinalOutputReviewBackend") + 1] == "qwen-chat"
-
-    for arm in ("baseline", "shared"):
+    for arm in motion_speed_harness.ARMS:
         command = motion_speed_harness.build_runner_command(
             arm, tmp_path / arm, tmp_path / "plan.json", 8, 300
         )
-        assert command[command.index("-VisualDecisionBackend") + 1] == "clef-systemone"
-        assert command[command.index("-FinalOutputReviewBackend") + 1] == "clef-systemone"
-
-    assert motion_speed_harness.ARM_BACKEND_SETTINGS["qwen-full"] == {
-        "visualDecisionBackend": "qwen-chat",
-        "finalOutputReviewBackend": "qwen-chat",
-    }
+        assert "-VisualDecisionBackend" not in command
+        assert "-FinalOutputReviewBackend" not in command
     assert motion_speed_harness.ARM_REVIEW_ARTIFACT_SETTINGS["qwen-full"] == {
         "sourceCutScorecardBackends": ["qwen-chat"],
         "supportDominanceBackends": ["qwen_chat"],
@@ -417,7 +394,7 @@ def test_qwen_full_is_default_and_clef_comparison_arms_keep_explicit_identity(tm
     )
 
 
-def test_production_powerShell_entrypoints_default_source_and_final_review_to_qwen():
+def test_production_powerShell_entrypoints_do_not_expose_clef_routing():
     for script_name in (
         "run_exercise_motion_workout_plan.ps1",
         "run_exercise_motion_bake_and_rank.ps1",
@@ -426,15 +403,11 @@ def test_production_powerShell_entrypoints_default_source_and_final_review_to_qw
         source = (motion_speed_harness.REPO_ROOT / "scripts" / script_name).read_text(
             encoding="utf-8"
         )
-        assert re.search(
-            r'\$VisualDecisionBackend\s*=\s*"qwen-chat"', source
-        ), script_name
-        assert re.search(
-            r'\$FinalOutputReviewBackend\s*=\s*"qwen-chat"', source
-        ), script_name
+        assert "ClefSystemOne" not in source, script_name
+        assert "clef-systemone" not in source, script_name
 
 
-def test_qwen_visual_qualification_uses_completed_review_artifacts(tmp_path):
+def test_qwen_qualification_rejects_completed_non_qwen_review_artifacts(tmp_path):
     workspace = tmp_path / "workspace"
     selected = workspace / "rdl" / "selected"
     segment_detection = selected / "segment_detection"
@@ -477,19 +450,19 @@ def test_qwen_visual_qualification_uses_completed_review_artifacts(tmp_path):
         "prefetchQueueDepth": 40,
     }
     assert motion_speed_harness.effective_configuration_error(
-        "qwen-visual", effective_metrics, 8
-    ) is None
+        "qwen-full", effective_metrics, 8
+    ) is not None
     assert "source-review artifact backend" in motion_speed_harness.effective_configuration_error(
-        "qwen-visual", dict(effective_metrics, sourceCutScorecardBackends=["clef-systemone"]), 8
+        "qwen-full", dict(effective_metrics, sourceCutScorecardBackends=["clef-systemone"]), 8
     )
     assert "rendered-validation artifact backend" in motion_speed_harness.effective_configuration_error(
-        "qwen-visual", dict(effective_metrics, finalOutputValidationBackends=["llama_cpp_vision"]), 8
+        "qwen-full", dict(effective_metrics, finalOutputValidationBackends=["clef_flash_systemone"]), 8
     )
 
 
 def test_parser_allows_zero_wave_size_and_prefetch_overrides_and_rejects_invalid_values():
     parser = motion_speed_harness.build_argument_parser()
-    defaults = parser.parse_args(["--arms", "baseline"])
+    defaults = parser.parse_args(["--arms", "qwen-full"])
     assert defaults.staged_wave_size == 8
     assert defaults.cpu_prefetch_during_bake is True
     assert defaults.prefetch_workers == 8
@@ -498,7 +471,7 @@ def test_parser_allows_zero_wave_size_and_prefetch_overrides_and_rejects_invalid
     assert defaults.browser_frame_batch == "on"
 
     overridden = parser.parse_args([
-        "--arms", "baseline", "--staged-wave-size", "0",
+        "--arms", "qwen-full", "--staged-wave-size", "0",
         "--disable-cpu-prefetch", "--prefetch-workers", "3",
         "--prefetch-queue-depth", "12",
     ])
@@ -508,15 +481,15 @@ def test_parser_allows_zero_wave_size_and_prefetch_overrides_and_rejects_invalid
     assert overridden.prefetch_queue_depth == 12
 
     enabled_cache = parser.parse_args([
-        "--arms", "baseline", "--source-frame-decode-cache", "on", "--browser-frame-batch", "on",
+        "--arms", "qwen-full", "--source-frame-decode-cache", "on", "--browser-frame-batch", "on",
     ])
     assert enabled_cache.source_frame_decode_cache == "on"
     assert enabled_cache.browser_frame_batch == "on"
 
     for invalid_args in (
-        ["--arms", "baseline", "--staged-wave-size", "-1"],
-        ["--arms", "baseline", "--prefetch-workers", "0"],
-        ["--arms", "baseline", "--prefetch-queue-depth", "0"],
+        ["--arms", "qwen-full", "--staged-wave-size", "-1"],
+        ["--arms", "qwen-full", "--prefetch-workers", "0"],
+        ["--arms", "qwen-full", "--prefetch-queue-depth", "0"],
     ):
         try:
             parser.parse_args(invalid_args)
@@ -580,7 +553,7 @@ def test_current_shared_overlap_arm_is_rejected_before_model_run():
 
 def test_default_harness_wave_size_matches_production_library_wrapper():
     harness_args = motion_speed_harness.build_argument_parser().parse_args(
-        ["--fixtures", "fixture_manifest.json", "--arms", "shared"]
+        ["--fixtures", "fixture_manifest.json", "--arms", "qwen-shared"]
     )
     library_wrapper = (
         motion_speed_harness.REPO_ROOT / "scripts" / "run_exercise_motion_library.ps1"

@@ -11,9 +11,9 @@ GVHMR timings, per-wave resource budgets, immutable arm inputs, host CPU/RAM and
 GPU/VRAM high-water samples, and terminal statuses.
 
 Usage:
-  python scripts/motion_speed_harness.py --arms baseline,shared
-  python scripts/motion_speed_harness.py --arms baseline --exercises slug-a,slug-b
-  python scripts/motion_speed_harness.py --fixtures <fixture_manifest.json> --arms baseline
+  python scripts/motion_speed_harness.py --arms qwen-full,qwen-shared
+  python scripts/motion_speed_harness.py --arms qwen-full --exercises slug-a,slug-b
+  python scripts/motion_speed_harness.py --fixtures <fixture_manifest.json> --arms qwen-full
 """
 from __future__ import annotations
 
@@ -54,28 +54,11 @@ DEFAULT_EXERCISES = (
 )
 
 ARMS: dict[str, list[str]] = {
-    # Historical Clef comparison arms keep their backend identity explicit.
-    "baseline": [
-        "-WarmWhamWorker:$true", "-KeepLlamaCppServer:$true",
-        "-VisualDecisionBackend", "clef-systemone",
-        "-FinalOutputReviewBackend", "clef-systemone",
-    ],
-    "shared": [
-        "-WarmWhamWorker:$true", "-KeepLlamaCppServer:$true", "-SharedLlamaServer",
-        "-VisualDecisionBackend", "clef-systemone",
-        "-FinalOutputReviewBackend", "clef-systemone",
-    ],
-    # Production route: Qwen handles source/support decisions and final review.
     "qwen-full": [
         "-WarmWhamWorker:$true", "-KeepLlamaCppServer:$true",
-        "-VisualDecisionBackend", "qwen-chat",
-        "-FinalOutputReviewBackend", "qwen-chat",
     ],
-    # Qwen handles bounded visual decisions; Clef remains the final preview reviewer.
-    "qwen-visual": [
-        "-WarmWhamWorker:$true", "-KeepLlamaCppServer:$true",
-        "-VisualDecisionBackend", "qwen-chat",
-        "-FinalOutputReviewBackend", "clef-systemone",
+    "qwen-shared": [
+        "-WarmWhamWorker:$true", "-KeepLlamaCppServer:$true", "-SharedLlamaServer",
     ],
 }
 
@@ -87,27 +70,20 @@ UNSUPPORTED_ARMS = {
 }
 
 ARM_EFFECTIVE_SETTINGS = {
-    "baseline": {"sharedLlamaServerEnabled": False, "effectiveMaxConcurrentStagedWaves": 1},
-    "shared": {"sharedLlamaServerEnabled": True, "effectiveMaxConcurrentStagedWaves": 1},
     "qwen-full": {"sharedLlamaServerEnabled": False, "effectiveMaxConcurrentStagedWaves": 1},
-    "qwen-visual": {"sharedLlamaServerEnabled": False, "effectiveMaxConcurrentStagedWaves": 1},
+    "qwen-shared": {"sharedLlamaServerEnabled": True, "effectiveMaxConcurrentStagedWaves": 1},
 }
 ARM_BACKEND_SETTINGS = {
-    "baseline": {"visualDecisionBackend": "clef-systemone", "finalOutputReviewBackend": "clef-systemone"},
-    "shared": {"visualDecisionBackend": "clef-systemone", "finalOutputReviewBackend": "clef-systemone"},
     "qwen-full": {"visualDecisionBackend": "qwen-chat", "finalOutputReviewBackend": "qwen-chat"},
-    "qwen-visual": {"visualDecisionBackend": "qwen-chat", "finalOutputReviewBackend": "clef-systemone"},
+    "qwen-shared": {"visualDecisionBackend": "qwen-chat", "finalOutputReviewBackend": "qwen-chat"},
 }
 ARM_REVIEW_ARTIFACT_SETTINGS = {
-    "qwen-full": {
+    arm: {
         "sourceCutScorecardBackends": ["qwen-chat"],
         "supportDominanceBackends": ["qwen_chat"],
         "finalOutputValidationBackends": ["llama_cpp_vision"],
-    },
-    "qwen-visual": {
-        "sourceCutScorecardBackends": ["qwen-chat"],
-        "finalOutputValidationBackends": ["clef_flash_systemone"],
-    },
+    }
+    for arm in ARMS
 }
 
 
@@ -1893,7 +1869,7 @@ def effective_configuration_error(
 
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--arms", default="qwen-full", help="Comma-separated arm names")
+    parser.add_argument("--arms", default="qwen-full", help="Comma-separated Qwen-only arm names")
     source_group = parser.add_mutually_exclusive_group()
     source_group.add_argument(
         "--exercises", default=None,
