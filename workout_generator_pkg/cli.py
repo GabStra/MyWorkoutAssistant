@@ -1239,6 +1239,12 @@ def emit_workout_structure(
         for ex in [exercise_index.get(ex_id) or {}]
         if ex.get("targetDistanceMeters") is not None or ex.get("targetCalories") is not None
     ]
+    running_targets = [
+        (ex_id, ex)
+        for ex_id in (workout_entry.get("exerciseIds", []) or [])
+        for ex in [exercise_index.get(ex_id) or {}]
+        if ex.get("exerciseType") == "RUNNING" and ex.get("targetDistanceMeters") is not None
+    ]
     if timed_targets:
         target_parts = []
         for ex_id, ex in timed_targets:
@@ -1252,6 +1258,17 @@ def emit_workout_structure(
             "CRITICAL - Cardio quantity targets: for each exercise below, copy the exact value(s) "
             "into targetDistanceMeters/targetCalories on EVERY timed work set of that exercise:\n"
             + "\n".join(f"- {part}" for part in target_parts) + "\n\n"
+        )
+    if running_targets:
+        run_parts = [
+            f"{ex_id}: targetValue={ex['targetDistanceMeters']} meters"
+            for ex_id, ex in running_targets
+        ]
+        timed_target_instruction += (
+            "CRITICAL - Running exercises: for each exercise below emit exerciseType='RUNNING' "
+            "with a runningPrescription {environment: 'OUTDOOR', targetType: 'DISTANCE', targetValue: <meters>} "
+            "and exactly one EnduranceSet work set with timeInMillis=0, autoStart=false, autoStop=false:\n"
+            + "\n".join(f"- {part}" for part in run_parts) + "\n\n"
         )
     
     # When plan entry provides restToNextSeconds (same order as exerciseIds), instruct to use those values exactly

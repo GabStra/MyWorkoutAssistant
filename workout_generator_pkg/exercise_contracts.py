@@ -247,6 +247,20 @@ COUNTUP_EXERCISE_SCHEMA = _build_type_specific_exercise_schema(
     exercise_category_schema={"type": "null"},
 )
 
+RUNNING_EXERCISE_SCHEMA = _build_type_specific_exercise_schema(
+    exercise_type="RUNNING",
+    work_set_def="EnduranceSet",
+    allow_rest_sets=False,
+    require_rep_range=False,
+    body_weight_schema={"type": "null"},
+    show_countdown_schema={"type": "boolean"},
+    exercise_category_schema={"type": "null"},
+)
+RUNNING_EXERCISE_SCHEMA["properties"]["runningPrescription"] = {
+    "oneOf": [{"$ref": "#/$defs/RunningPrescription"}, {"type": "null"}],
+}
+RUNNING_EXERCISE_SCHEMA["required"] = RUNNING_EXERCISE_SCHEMA.get("required", []) + ["runningPrescription"]
+
 EXERCISE_EMISSION_PROFILES = {
     "WEIGHT": _build_emission_profile(
         exercise_type="WEIGHT",
@@ -413,6 +427,48 @@ EXERCISE_EMISSION_PROFILES = {
                 {"id": "SET_10", "type": "EnduranceSet", "timeInMillis": 60000, "autoStart": True, "autoStop": True},
             ],
             exercise_type="COUNTUP",
+            equipment_id=None,
+            body_weight_percentage=None,
+            generate_warm_up_sets=False,
+            progression_mode="OFF",
+            keep_screen_on=False,
+            show_countdown_timer=False,
+            intra_set_rest_in_seconds=None,
+            muscle_groups=["FRONT_QUADRICEPS"],
+            secondary_muscle_groups=[],
+            required_accessory_equipment_ids=[],
+            requires_load_calibration=False,
+            exercise_category=None,
+        ),
+    ),
+    "RUNNING": _build_emission_profile(
+        exercise_type="RUNNING",
+        allowed_work_set_type="EnduranceSet",
+        required_top_level_fields=[*COMMON_EXERCISE_REQUIRED_TOP_LEVEL_FIELDS, "runningPrescription"],
+        forbidden_top_level_fields=TIMED_FORBIDDEN_TOP_LEVEL_FIELDS,
+        required_set_level_fields=TIMED_REQUIRED_SET_LEVEL_FIELDS,
+        forbidden_set_level_fields=TIMED_FORBIDDEN_SET_LEVEL_FIELDS,
+        schema=RUNNING_EXERCISE_SCHEMA,
+        instruction_text=(
+            "RUNNING contract:\n"
+            "- Output one Exercise object shaped exactly like the RUNNING schema.\n"
+            "- Work sets must be exactly one EnduranceSet with timeInMillis=0, autoStart=false, autoStop=false "
+            "(the runtime counts up until the distance goal is reached).\n"
+            "- runningPrescription is REQUIRED: {environment: 'OUTDOOR', targetType: 'DISTANCE', targetValue: <meters>} "
+            "using the plan's targetDistanceMeters.\n"
+            "- Do not emit reps, weight, additionalWeight, or subCategory on the work set.\n"
+            "- Do not output minReps or maxReps.\n"
+            "- bodyWeightPercentage must be present and set to null.\n"
+            "- exerciseCategory must be null.\n"
+            "- Copy exact plan-owned values for id, exerciseType, and requiredAccessoryEquipmentIds.\n"
+        ),
+        example_object=_exercise_example_base(
+            exercise_id="EXERCISE_3",
+            name="Run",
+            sets=[
+                {"id": "SET_11", "type": "EnduranceSet", "timeInMillis": 0, "autoStart": False, "autoStop": False},
+            ],
+            exercise_type="RUNNING",
             equipment_id=None,
             body_weight_percentage=None,
             generate_warm_up_sets=False,

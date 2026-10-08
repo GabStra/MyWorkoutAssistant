@@ -40,10 +40,10 @@ JSON_SCHEMA = {
             "type": "string",                                                                                                                                                                                                                    
             "enum": ["WorkSet", "WarmupSet", "RestPauseSet", "BackOffSet", "CalibrationPendingSet", "CalibrationSet"]
         },                                                                                                                                                                                                                                       
-        "ExerciseType": {                                                                                                                                                                                                                        
-            "type": "string",                                                                                                                                                                                                                    
-            "enum": ["COUNTUP", "BODY_WEIGHT", "COUNTDOWN", "WEIGHT"]                                                                                                                                                                            
-        },                                                                                                                                                                                                                                       
+        "ExerciseType": {
+            "type": "string",
+            "enum": ["COUNTUP", "BODY_WEIGHT", "COUNTDOWN", "WEIGHT", "RUNNING"]
+        },
         "ProgressionMode": {
             "type": "string",
             "enum": ["OFF", "DOUBLE_PROGRESSION", "AUTO_REGULATION"]
@@ -244,6 +244,12 @@ JSON_SCHEMA = {
                         {"$ref": "#/$defs/ExerciseCategory"},
                         {"type": "null"}
                     ]
+                },
+                "runningPrescription": {
+                    "oneOf": [
+                        {"$ref": "#/$defs/RunningPrescription"},
+                        {"type": "null"}
+                    ]
                 }
             }                                                                                                                                                                                                    
         },                                                                                                                                                                                                                                       
@@ -258,6 +264,16 @@ JSON_SCHEMA = {
                 "timeInSeconds": {"type": "integer"}                                                                                                                                                                                             
             }                                                                                                                                                                                                                                    
         },                                                                                                                                                                                                                                       
+        "RunningPrescription": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["environment", "targetType", "targetValue"],
+            "properties": {
+                "environment": {"enum": ["OUTDOOR", "TREADMILL"]},
+                "targetType": {"enum": ["TIME", "DISTANCE"]},
+                "targetValue": {"type": "number", "exclusiveMinimum": 0}
+            }
+        },
         "Superset": {
             "type": "object",
             "additionalProperties": False,

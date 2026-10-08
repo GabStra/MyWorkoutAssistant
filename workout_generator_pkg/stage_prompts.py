@@ -512,6 +512,7 @@ PLAN_INDEX_SYSTEM_PROMPT = (
     "- Exercise names must be movement-only labels (remove equipment/accessory wording and set/time details).\n"
     "- Examples: 'Barbell Back Squat' -> 'Back Squat', 'Cable Triceps Pushdown' -> 'Triceps Pushdown', 'Warm up (spin bike)' -> 'Warm Up'.\n"
     f"- exerciseType must use one of: {EXERCISE_TYPE_ENUM_VALUES}.\n"
+    "- MANDATORY runs: a stated run ('800 mt run', '1200 mt run') MUST use the 'Run' library entry (exerciseType RUNNING) and its prescription MUST carry targetDistanceMeters in meters. Never encode a run as reps or as a different movement.\n"
     f"- exerciseCategory (when present) must use one of: {EXERCISE_CATEGORY_ENUM_VALUES}.\n"
     "- For accessory-dependent exercises, use requiredAccessoryEquipmentIds with ACCESSORY_X IDs; use [] when none.\n"
     f"- Use valid MuscleGroup enum values only: {MUSCLE_GROUP_ENUM_VALUES}.\n"

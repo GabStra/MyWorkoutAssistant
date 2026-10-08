@@ -44,13 +44,27 @@ This is a coach-authored workout. Hard constraints:
   between members (restToNextSeconds=0) unless the workout specifies rest.
 - MANDATORY time caps: every AMRAP, rounds-for-time, or block the text bounds with
   a window ("time cap 25'", "In 12' time cap", "From 8'-12'") MUST set the
-  superset's timeCapSeconds to that window in seconds. Example: an 8-12 minute
+  superset's timeCapSeconds to the window in seconds. Example: an 8-12 minute
   block starting at minute 8 gets timeCapSeconds=240. Without it the watch never
   leaves the block.
+- Superset members repeat in lock-step: every member MUST carry the same number of
+  work sets (the watch repeats the round at the smallest member's count and
+  silently truncates the rest). Encode ladders like 20-15-10-5 as one set per
+  movement per step (4 sets each, reps 20/15/10/5). A one-off movement (buy-in /
+  buy-out run) that does NOT repeat goes OUTSIDE the superset as its own
+  component; the cap then belongs to the repeating block.
 - MANDATORY EMOM cadence: "Every N minutes x T minutes" MUST become one superset
   with roundDurationSeconds=N and T/N work sets per member (e.g. "Every 2' x 10'"
   -> roundDurationSeconds=120 and 5 work sets per member). Never combine
   roundDurationSeconds with timeCapSeconds on the same superset.
+- MANDATORY cardio quantities: when the text states a distance or calories for a
+  row/bike/ski/run movement ("max mt row (target 1100/1000)", "24/20 cal", "800 mt
+  run"), that movement MUST be a timed/running exercise whose sets carry
+  targetDistanceMeters (in meters) or targetCalories, first value of male/female
+  pairs. NEVER encode a stated distance as a rep count.
+- MANDATORY runs: a stated run ("800 mt run") MUST use the 'Run' library entry
+  (exerciseType RUNNING) with targetDistanceMeters; the watch tracks it with GPS
+  and shows the distance goal. Never encode a run as reps or as another movement.
 - MANDATORY cardio quantities: when the text states a distance or calories for a
   row/bike/ski/run movement ("max mt row (target 1100/1000)", "24/20 cal", "800 mt
   run"), the timed set for that movement MUST carry targetDistanceMeters (meters)
@@ -75,6 +89,40 @@ This is a coach-authored workout. Constraints:
 
 def guidance_for_style(style: str) -> str:
     return HANDS_FREE_GUIDANCE if style == "hands-free" else STANDARD_GUIDANCE
+
+
+def ensure_running_definition(working_library: dict, working_library_path: Path) -> bool:
+    """Guarantees one canonical RUNNING 'Run' definition in the working library.
+
+    The exercise library contains no RUNNING entries and the library generator does
+    not create them, but the app fully supports RUNNING exercises (GPS tracking +
+    distance prescriptions). The definition is content-derived and idempotent, so
+    stated runs can be prescribed as real running exercises. Returns True when the
+    definition was added.
+    """
+    import uuid
+
+    for definition in working_library.get("exerciseDefinitions", []):
+        if definition.get("exerciseType") == "RUNNING":
+            return False
+
+    ns = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+    working_library.setdefault("exerciseDefinitions", []).append({
+        "id": str(uuid.uuid5(ns, "myworkoutassistant:exercise:Run")),
+        "name": "Run",
+        "exerciseType": "RUNNING",
+        "equipmentId": None,
+        "bodyWeightPercentage": None,
+        "requiredAccessoryEquipmentIds": [],
+        "muscleGroups": ["FRONT_QUADRICEPS", "BACK_HAMSTRING", "BACK_CALVES"],
+        "secondaryMuscleGroups": [],
+        "exerciseCategory": "MODERATE_COMPOUND",
+    })
+    working_library_path.parent.mkdir(parents=True, exist_ok=True)
+    working_library_path.write_text(
+        json.dumps(working_library, indent=2), encoding="utf-8"
+    )
+    return True
 
 
 def _normalize(name: str) -> str:
@@ -293,6 +341,13 @@ The plan was built under these mandatory encoding rules:
    targets - never report them as missing.
 4. Every distinct block and movement listed in the text must appear in the plan -
    a missing block or movement is always an issue.
+5. All members of one superset must carry the SAME number of work sets (the
+   runtime repeats them in lock-step at the smallest member's count and silently
+   truncates longer members). Unequal work-set counts across members are always
+   an issue.
+6. A movement whose stated quantity is a distance ("800 mt run") must NOT be
+   encoded as rep-based sets; runs must be RUNNING exercises carrying a distance
+   prescription. Rep counts on a run-shaped movement are always an issue.
 Return strict JSON: {"issues": ["..."]}
 Each issue is one concrete, fixable violation. If the plan complies, return an
 empty list. Do not invent requirements that are not in the rules above.
@@ -328,6 +383,7 @@ def review_crossfit_mode_compliance(client, workout_text: str, package: dict, ca
                     "exercises": [
                         {
                             "name": e.get("name"),
+                            "exerciseType": e.get("exerciseType"),
                             "sets": [
                                 {
                                     "type": s.get("type"),
@@ -345,6 +401,7 @@ def review_crossfit_mode_compliance(client, workout_text: str, package: dict, ca
                 compact.append({
                     "type": "Exercise",
                     "name": component.get("name"),
+                    "exerciseType": component.get("exerciseType"),
                     "sets": [
                         {
                             "type": s.get("type"),

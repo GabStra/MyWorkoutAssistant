@@ -101,6 +101,7 @@ def _work_set_type_for_exercise_type(exercise_type: str) -> Optional[str]:
         "BODY_WEIGHT": "BodyWeightSet",
         "COUNTDOWN": "TimedDurationSet",
         "COUNTUP": "EnduranceSet",
+        "RUNNING": "EnduranceSet",
     }
     return mapping.get(exercise_type)
 

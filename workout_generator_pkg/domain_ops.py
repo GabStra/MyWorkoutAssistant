@@ -596,7 +596,7 @@ def validate_exercise_type_profile(
             f"Exercise '{exercise_name}' must set showCountDownTimer=true for COUNTDOWN exercises."
         )
 
-    if exercise_type in ("COUNTDOWN", "COUNTUP"):
+    if exercise_type in ("COUNTDOWN", "COUNTUP", "RUNNING"):
         if "minReps" in exercise or "maxReps" in exercise:
             errors.append(
                 f"Exercise '{exercise_name}' must not emit minReps or maxReps for timed exercises."
@@ -1684,7 +1684,7 @@ def sanitize_rep_range_fields_on_exercise_dict(exercise: Dict[str, Any]) -> None
     if not isinstance(exercise, dict):
         return
     et = exercise.get("exerciseType")
-    if et in ("COUNTDOWN", "COUNTUP"):
+    if et in ("COUNTDOWN", "COUNTUP", "RUNNING"):
         exercise.pop("minReps", None)
         exercise.pop("maxReps", None)
         return
@@ -1759,8 +1759,31 @@ def assemble_placeholder_workout_store(equipment_items, accessory_items, exercis
     }
 
     def apply_plan_timed_targets(exercise, plan_exercise):
-        """Copies plan-index targetDistanceMeters/targetCalories onto timed work sets."""
+        """Copies plan-index targetDistanceMeters/targetCalories onto timed work sets
+        and materializes RUNNING prescriptions deterministically."""
         if not isinstance(plan_exercise, dict):
+            return
+        if plan_exercise.get("exerciseType") == "RUNNING":
+            distance = plan_exercise.get("targetDistanceMeters")
+            if distance is not None and distance > 0:
+                exercise["exerciseType"] = "RUNNING"
+                if not isinstance(exercise.get("runningPrescription"), dict):
+                    exercise["runningPrescription"] = {
+                        "environment": "OUTDOOR",
+                        "targetType": "DISTANCE",
+                        "targetValue": distance,
+                    }
+                # Running exercises count up until the distance goal is reached.
+                exercise["sets"] = [
+                    {
+                        "id": (exercise.get("sets") or [{}])[0].get("id") or f"{exercise.get('id')}-run",
+                        "type": "EnduranceSet",
+                        "timeInMillis": 0,
+                        "autoStart": False,
+                        "autoStop": False,
+                        "shouldReapplyHistoryToSet": False,
+                    }
+                ]
             return
         if plan_exercise.get("exerciseType") not in ("COUNTUP", "COUNTDOWN"):
             return
@@ -2075,7 +2098,7 @@ def fix_exercise_errors(exercises, allow_educated_load_guesses=True):
         ex_copy = ex.copy()
         
         # Fix invalid exercise types
-        valid_exercise_types = ["COUNTUP", "BODY_WEIGHT", "COUNTDOWN", "WEIGHT"]
+        valid_exercise_types = ["COUNTUP", "BODY_WEIGHT", "COUNTDOWN", "WEIGHT", "RUNNING"]
         if "exerciseType" in ex_copy:
             ex_type = ex_copy["exerciseType"]
             if ex_type not in valid_exercise_types:

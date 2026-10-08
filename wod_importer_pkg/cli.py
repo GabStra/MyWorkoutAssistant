@@ -53,6 +53,13 @@ def run(date_iso: str, workout_text: str, output: Path, base_library: Path, accu
         catalog = json.load(handle)
     client = make_deepseek_client()
 
+    # 0) running support: the library has no RUNNING definitions and the exercise
+    #    generator cannot create them; guarantee the canonical 'Run' entry so
+    #    stated runs become real GPS-tracked running exercises.
+    from wod_importer_pkg.generators import ensure_running_definition
+    if ensure_running_definition(library, library_path):
+        print("  added RUNNING 'Run' definition to the working library")
+
     # 1) exercise coverage first: the exercise generator's audit reads the workout
     #    with the library as existing inventory and creates what's missing - or a
     #    more appropriate version when the existing entry is a poor match.
