@@ -796,7 +796,9 @@ private fun HeartRateView(
                         .then(zoneSegmentsModifier),
                     startAngle = lowerBoundRotationAngle,
                     endAngle = upperBoundRotationAngle,
-                    color = if (inBounds) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                    // "Lit" must follow inBounds exactly: the same color at reduced
+                    // alpha still reads as on once the wearer has left the target.
+                    color = if (inBounds) MaterialTheme.colorScheme.primary else MediumDarkGray,
                     strokeWidth = 18.dp,
                     borderWidth = 6.dp,
                     innerBorderWidth = 4.dp
