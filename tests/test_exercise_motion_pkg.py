@@ -12505,9 +12505,9 @@ def test_llama_cpp_server_model_matching_uses_model_basename() -> None:
     )
 
 
-def test_llama_cpp_defaults_use_b10424_qwen35_and_mmproj() -> None:
+def test_llama_cpp_defaults_use_current_master_qwen35_and_mmproj() -> None:
     assert llama_defaults_module.DEFAULT_LLAMA_CPP_SERVER_COMMAND.endswith(
-        "llama-b10424-bin-win-cuda-12.4-x64\\llama-server.exe"
+        "build-master\\bin\\Release\\llama-server.exe"
     )
     assert llama_defaults_module.DEFAULT_LLAMA_CPP_MODEL.endswith(
         "Qwen3.5-9B-UD-Q4_K_XL.gguf"

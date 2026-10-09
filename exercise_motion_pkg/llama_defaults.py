@@ -1,4 +1,4 @@
-DEFAULT_LLAMA_CPP_BIN_DIR = "C:\\Users\\gabri\\Downloads\\llama-b10424-bin-win-cuda-12.4-x64"
+DEFAULT_LLAMA_CPP_BIN_DIR = "C:\\Users\\gabri\\Documents\\llama.cpp\\build-master\\bin\\Release"
 DEFAULT_LLAMA_CPP_SERVER_COMMAND = f"{DEFAULT_LLAMA_CPP_BIN_DIR}\\llama-server.exe"
 DEFAULT_LLAMA_CPP_MODEL = "C:\\Users\\gabri\\Downloads\\Qwen3.5-9B-UD-Q4_K_XL.gguf"
 DEFAULT_LLAMA_CPP_MMPROJ = "C:\\Users\\gabri\\Downloads\\mmproj-BF16(6).gguf"
