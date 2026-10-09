@@ -44,8 +44,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.equipments.isCompatibleWith
 import com.gabstra.myworkoutassistant.shared.workout.calibration.CalibrationUiLabels
 import com.gabstra.myworkoutassistant.shared.workout.display.SetDisplayCounterKind
-import com.gabstra.myworkoutassistant.shared.workout.display.buildActiveSetCounterLabel
-import com.gabstra.myworkoutassistant.shared.workout.display.buildUnilateralSideLabel
+import com.gabstra.myworkoutassistant.shared.workout.display.buildActiveExerciseContextLabel
 import com.gabstra.myworkoutassistant.shared.workout.display.displayCounterKindForSetState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
@@ -504,21 +503,6 @@ private fun buildTargetRepRange(
         else "${exercise.minReps}-${exercise.maxReps}"
     } else null
 }
-
-private fun buildActiveExerciseContextLabel(
-    setCounter: Pair<Int, Int>?,
-    setCounterKind: SetDisplayCounterKind?,
-    hasWarmupSets: Boolean,
-    unilateralSideIndex: UInt?,
-    intraSetTotal: UInt?,
-): String? = listOfNotNull(
-    setCounter?.let { (current, total) ->
-        "${buildActiveSetCounterLabel(setCounterKind, hasWarmupSets)} $current/$total"
-    },
-    buildUnilateralSideLabel(unilateralSideIndex, intraSetTotal)
-        ?.removePrefix("-")
-        ?.let { side -> "SIDE $side" },
-).takeIf { it.isNotEmpty() }?.joinToString(" · ")
 
 private fun PageType.mobileLabel(): String = when (this) {
     PageType.BUTTONS -> "Workout controls"

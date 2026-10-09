@@ -43,4 +43,38 @@ class ExerciseSetDisplayIdentifiersTest {
         assertEquals("05:30", formatWorkoutDurationSecondsForDisplay(330))
         assertEquals("01:05:30", formatWorkoutDurationSecondsForDisplay(3930))
     }
+
+    @Test
+    fun `active context label omits the counter when the flow has a single set`() {
+        assertNull(
+            buildActiveExerciseContextLabel(
+                setCounter = Pair(1, 1),
+                setCounterKind = SetDisplayCounterKind.Work,
+                hasWarmupSets = false,
+                unilateralSideIndex = null,
+                intraSetTotal = null,
+            )
+        )
+        assertEquals(
+            "SET 1/2",
+            buildActiveExerciseContextLabel(
+                setCounter = Pair(1, 2),
+                setCounterKind = SetDisplayCounterKind.Work,
+                hasWarmupSets = false,
+                unilateralSideIndex = null,
+                intraSetTotal = null,
+            )
+        )
+        assertEquals(
+            "ROUND A · SIDE L",
+            buildActiveExerciseContextLabel(
+                setCounter = Pair(1, 1),
+                setCounterKind = null,
+                hasWarmupSets = false,
+                unilateralSideIndex = 1u,
+                intraSetTotal = 2u,
+                supersetRound = "A",
+            )
+        )
+    }
 }

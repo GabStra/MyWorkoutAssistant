@@ -84,8 +84,7 @@ import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.gabstra.myworkoutassistant.shared.workout.display.SetDisplayCounterKind
-import com.gabstra.myworkoutassistant.shared.workout.display.buildActiveSetCounterLabel
-import com.gabstra.myworkoutassistant.shared.workout.display.buildUnilateralSideLabel
+import com.gabstra.myworkoutassistant.shared.workout.display.buildActiveExerciseContextLabel
 import com.gabstra.myworkoutassistant.shared.workout.display.displayCounterKindForSetState
 import com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
@@ -1532,21 +1531,3 @@ private fun buildTargetRepRange(
         null
     }
 }
-
-private fun buildActiveExerciseContextLabel(
-    setCounter: Pair<Int, Int>?,
-    setCounterKind: SetDisplayCounterKind?,
-    hasWarmupSets: Boolean,
-    unilateralSideIndex: UInt?,
-    intraSetTotal: UInt?,
-    supersetRound: String? = null,
-): String? = listOfNotNull(
-    supersetRound?.let { "ROUND $it" },
-    setCounter
-        ?.let { (current, total) ->
-            "${buildActiveSetCounterLabel(setCounterKind, hasWarmupSets)} $current/$total"
-        },
-    buildUnilateralSideLabel(unilateralSideIndex, intraSetTotal)
-        ?.removePrefix("-")
-        ?.let { side -> "SIDE $side" }
-).takeIf { it.isNotEmpty() }?.joinToString(" · ")

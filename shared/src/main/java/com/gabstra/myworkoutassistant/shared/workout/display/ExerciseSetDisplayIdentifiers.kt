@@ -143,6 +143,30 @@ fun buildUnilateralSideLabel(
     }
 }
 
+/**
+ * "ROUND A · SET 2/3 · SIDE L" context line for the active-set header.
+ * The counter part is omitted when the exercise's flow has a single set of
+ * its kind: "SET 1/1" carries no information.
+ */
+fun buildActiveExerciseContextLabel(
+    setCounter: Pair<Int, Int>?,
+    setCounterKind: SetDisplayCounterKind?,
+    hasWarmupSets: Boolean,
+    unilateralSideIndex: UInt?,
+    intraSetTotal: UInt?,
+    supersetRound: String? = null,
+): String? = listOfNotNull(
+    supersetRound?.let { "ROUND $it" },
+    setCounter
+        ?.takeIf { (_, total) -> total > 1 }
+        ?.let { (current, total) ->
+            "${buildActiveSetCounterLabel(setCounterKind, hasWarmupSets)} $current/$total"
+        },
+    buildUnilateralSideLabel(unilateralSideIndex, intraSetTotal)
+        ?.removePrefix("-")
+        ?.let { side -> "SIDE $side" }
+).takeIf { it.isNotEmpty() }?.joinToString(" · ")
+
 /** Same formatting as phone/wear workout timers: MM:SS, or HH:MM:SS if hours > 0. */
 fun formatWorkoutDurationSecondsForDisplay(seconds: Int): String {
     val hours = seconds / 3600
