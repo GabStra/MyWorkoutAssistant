@@ -24,7 +24,14 @@ internal object LiteRtLmModelHealth {
         val maxContextTokens: Int?,
     )
 
-    private const val LOW_MEMORY_MARGIN_BYTES = 1L * 1024 * 1024 * 1024
+    /**
+     * KV cache, activations and backend copies allocate on top of the mapped
+     * weights, so the guard demands headroom beyond the file size. The margin
+     * is deliberately modest: since inference moved to the isolated :llm
+     * process, an overshoot kills only that process and surfaces as a
+     * readable, recoverable error — not an app crash.
+     */
+    private const val LOW_MEMORY_MARGIN_BYTES = 512L * 1024 * 1024
 
     /**
      * Parses the bundle header only (weights are not loaded). Throws
