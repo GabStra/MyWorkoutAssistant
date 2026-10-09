@@ -340,7 +340,7 @@ def test_normalize_dumbbell_pair_prescriptions_only_touches_unambiguous_per_hand
     weights = [item["weight"] for item in plan["exercises"][0]["targetSetPrescriptions"]]
     assert weights == [45.0, 23.0, 9.0, 12.5]
     assert len(rewrites) == 1
-    assert "normalized per-hand weight 22.5 to pair total 45.0" in rewrites[0]
+    assert "normalized per-implement weight 22.5 to pair total 45.0" in rewrites[0]
 
 
 
@@ -434,7 +434,7 @@ def test_validate_equipment_weights_points_per_hand_dumbbell_load_at_pair_total(
 
     assert is_valid is False
     assert invalid_weights == [(0, 22.5, "WeightSet")]
-    assert "per-hand dumbbell weight" in error_message
+    assert "per-implement weight" in error_message
     assert "use 45.0kg" in error_message
 
 

@@ -381,15 +381,12 @@ def validate_equipment_weight_combinations(exercise, equipment_dict):
             return min(sorted_valid, key=lambda valid_weight: abs(valid_weight - value))
 
         for set_idx, weight_val, set_type_name in invalid_weights:
-            # Coach dumbbell loads are per hand; pair selectable loads are totals.
-            # Point the repair at the doubled value instead of the nearest total.
-            doubled = next(
-                (v for v in sorted_valid if abs(v - weight_val * 2) < EPSILON),
-                None,
-            ) if eq_type == "DUMBBELLS" else None
+            # Coach loads for pair-implement equipment name ONE implement; point
+            # the repair at the doubled pair total instead of the nearest total.
+            doubled = pair_implement_total_for(eq_type, weight_val, sorted_valid)
             if doubled is not None:
                 invalid_details.append(
-                    f"Set {set_idx} ({set_type_name}): {weight_val}kg is a per-hand dumbbell weight; "
+                    f"Set {set_idx} ({set_type_name}): {weight_val}kg is a per-implement weight; "
                     f"pair loads are PER-PAIR TOTALS - use {doubled}kg "
                     f"(the app displays it as '{_format_weight_value_for_prompt(weight_val)} x 2')"
                 )
@@ -465,15 +462,11 @@ def fix_equipment_weights(exercise, equipment_dict):
         return closest
 
     def repair_weight(weight_val):
-        # A per-hand dumbbell weight on pair equipment repairs to the doubled
-        # pair total, never to the nearest unrelated total.
-        if eq_type == "DUMBBELLS":
-            doubled = next(
-                (v for v in valid_combinations if abs(v - weight_val * 2) < EPSILON),
-                None,
-            )
-            if doubled is not None:
-                return doubled
+        # A per-implement weight on pair-implement equipment repairs to the
+        # doubled pair total, never to the nearest unrelated total.
+        doubled = pair_implement_total_for(eq_type, weight_val, valid_combinations)
+        if doubled is not None:
+            return doubled
         return find_closest_valid_weight(weight_val)
 
     for set_index, set_item in enumerate(sets):
@@ -1064,6 +1057,31 @@ def get_selectable_weights_for_exercise(exercise_type, equipment):
     if exercise_type == "BODY_WEIGHT":
         valid_combinations.add(0.0)
     return valid_combinations
+
+
+# Equipment whose selectable loads are SUMS over a pair of implements while
+# coach-authored loads name ONE implement (its stamped weight) — e.g. dumbbell
+# pairs. Bilateral-ness alone is not the trigger: a barbell is also two-sided,
+# but coaches program its total, which already matches the stored value. New
+# pair-implement equipment types must be added here to get per-implement
+# normalization.
+PAIR_IMPLEMENT_EQUIPMENT_TYPES = {"DUMBBELLS"}
+
+
+def pair_implement_total_for(eq_type, load_value, selectable_weights):
+    """
+    Pair total for a per-implement coach load on pair-implement equipment.
+
+    Returns the selectable total equal to 2 x load_value, or None when the
+    equipment type is not pair-implement or the doubled value is not selectable
+    (leaving the value to the ordinary nearest/repair handling).
+    """
+    if eq_type not in PAIR_IMPLEMENT_EQUIPMENT_TYPES:
+        return None
+    return next(
+        (valid for valid in selectable_weights if abs(valid - load_value * 2) < 0.01),
+        None,
+    )
 
 
 def _format_weight_value_for_prompt(weight: float) -> str:

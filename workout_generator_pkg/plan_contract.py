@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .domain_ops import (
     get_selectable_weights_for_exercise,
+    pair_implement_total_for,
     validate_equipment_exercise_type_compatibility,
     validate_exercise_type_profile,
 )
@@ -202,11 +203,12 @@ def _alternate_load_field(expected_load_field: str) -> Optional[str]:
 
 
 def normalize_dumbbell_pair_prescription_loads(plan_index: Dict[str, Any]) -> List[str]:
-    """Rewrite per-hand dumbbell loads in targetSetPrescriptions to pair totals.
+    """Rewrite per-implement loads in targetSetPrescriptions to pair totals.
 
-    DUMBBELLS selectable loads are per-pair totals (2 x one dumbbell) while
-    coach-authored loads are per hand. A prescription value that is NOT
-    selectable as written but IS selectable when doubled is a per-hand reading:
+    Pair-implement equipment (see PAIR_IMPLEMENT_EQUIPMENT_TYPES — dumbbell
+    pairs) stores selectable loads as per-pair totals while coach-authored
+    loads name one implement. A prescription value that is NOT selectable as
+    written but IS selectable when doubled is a per-implement reading:
     normalize it deterministically instead of failing the contract and relying
     on the model to double it during repair. Canonical values and ambiguous
     values (both the value and its double selectable) are left untouched.
@@ -227,7 +229,7 @@ def normalize_dumbbell_pair_prescription_loads(plan_index: Dict[str, Any]) -> Li
         if not isinstance(prescriptions, list):
             continue
         equipment = equipments.get(ex.get("equipmentId"))
-        if not isinstance(equipment, dict) or str(equipment.get("type", "")).upper() != "DUMBBELLS":
+        if not isinstance(equipment, dict):
             continue
         selectable = get_selectable_weights_for_exercise(ex.get("exerciseType"), equipment)
         if not selectable:
@@ -241,15 +243,14 @@ def normalize_dumbbell_pair_prescription_loads(plan_index: Dict[str, Any]) -> Li
                 continue
             if any(abs(load_value - valid) < 0.01 for valid in selectable):
                 continue
-            doubled = next(
-                (valid for valid in selectable if abs(valid - load_value * 2) < 0.01),
-                None,
+            doubled = pair_implement_total_for(
+                str(equipment.get("type", "")).upper(), load_value, selectable
             )
             if doubled is None:
                 continue
             item[expected_load_field] = doubled
             rewrites.append(
-                f"Exercise '{ex_name}' targetSetPrescriptions[{idx}]: normalized per-hand "
+                f"Exercise '{ex_name}' targetSetPrescriptions[{idx}]: normalized per-implement "
                 f"{expected_load_field} {load_value} to pair total {doubled}"
             )
     return rewrites
@@ -614,20 +615,22 @@ def _collect_contract_issues_plan_index(
                             target_load = float(item[expected_load_field])
                             if target_load in selectable_weights:
                                 continue
-                            if (
-                                str(equipment_type).upper() == "DUMBBELLS"
-                                and target_load * 2 in selectable_weights
-                            ):
-                                # Coach dumbbell loads are per hand; pair selectable
-                                # loads are totals. Point the repair at the doubled
-                                # value instead of the nearest unrelated total.
+                            # Coach loads on pair-implement equipment name one
+                            # implement; point the repair at the doubled total
+                            # instead of the nearest unrelated total.
+                            pair_total = pair_implement_total_for(
+                                str(equipment_type).upper(),
+                                target_load,
+                                selectable_weights,
+                            )
+                            if pair_total is not None:
                                 issues.append(
                                     ContractIssue(
                                         "unselectable_target_set_prescription_load",
                                         f"Exercise '{ex_name}' targetSetPrescriptions[{idx}] {expected_load_field}="
-                                        f"{_format_contract_weight(target_load)} is a per-hand dumbbell weight. Dumbbell pair "
-                                        f"loads are PER-PAIR TOTALS: prescribe {expected_load_field}="
-                                        f"{_format_contract_weight(target_load * 2)} (= 2 x {_format_contract_weight(target_load)}; "
+                                        f"{_format_contract_weight(target_load)} is a per-implement weight. Pair loads "
+                                        f"are PER-PAIR TOTALS: prescribe {expected_load_field}="
+                                        f"{_format_contract_weight(pair_total)} (= 2 x {_format_contract_weight(target_load)}; "
                                         f"the app displays it as '{_format_contract_weight(target_load)} x 2').",
                                     )
                                 )
