@@ -2,6 +2,8 @@
 
 Updated 2026-10-09. This replaces the earlier throughput experiment sequence.
 
+**Artifact availability after cleanup (2026-10-09):** The entire repository `build` folder was deleted at the user's request, including cached stages, generated selections, checkpoints and retained replay fixtures. Historical measurements below remain documented findings, but their artifact paths are unavailable. Re-establish exact inputs before any future comparison; do not repeatedly search or attempt to replay the deleted runs. Pending worktree changes were backed up outside the repository before those worktrees were removed.
+
 > For agentic workers: execute one evidence-backed task at a time using the existing production paths. Independent source/timing audits may use subagents; timing experiments run sequentially. Read this plan before launching work.
 
 **Goal:** Reduce time to usable production movement across representative exercise types, preserving or improving motion quality and all existing gates. Any repeatable reduction beyond normal timing noise counts; there is no percentage target.

@@ -2,6 +2,8 @@
 
 Updated 2026-10-09. The active goal is still open; the full evidence and qualification matrix are in `docs/exercise_motion_throughput_plan.md`.
 
+**Build cleanup (2026-10-09):** The user requested deletion of the entire repository `build` folder. Its generated selections, caches, checkpoints, diagnostic evidence and retained replay inputs are now gone; paths below are historical. Pending changes and untracked files from nested worktrees were verified and backed up outside the repository, and their base commits were preserved by Git refs. Keep the documented conclusions; do not attempt old retained replays without new inputs.
+
 ## Current result
 
 - The bounded native source-frame cache is enabled by default in production and the speed harness. Two matched production pairs in opposite orders both favored ON: 40.1s and 85.1s lower total wall time, and 37.957s and 85.423s earlier first packaged output. All four arms packaged both RDL/OHP results with complete lineage.
