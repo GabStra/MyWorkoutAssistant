@@ -25,6 +25,28 @@ def test_storage_guard_checks_existing_volume_before_creating_outputs(tmp_path, 
     storage.require_storage_reserve(missing, reserve_bytes=99)
 
 
+def test_storage_guard_queries_parent_of_existing_checkpoint(tmp_path, monkeypatch):
+    checkpoint = tmp_path / 'checkpoint.json'
+    checkpoint.write_text('{}')
+    seen = []
+
+    def usage(path):
+        seen.append(path)
+        return SimpleNamespace(free=99)
+
+    monkeypatch.setattr(storage.shutil, 'disk_usage', usage)
+    with pytest.raises(storage.InsufficientStorageError):
+        storage.require_storage_reserve(checkpoint, reserve_bytes=100)
+    storage.require_storage_reserve(checkpoint, reserve_bytes=99)
+    assert seen == [tmp_path.resolve(), tmp_path.resolve()]
+
+
+def test_storage_guard_stops_when_no_directory_is_available(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, 'is_dir', lambda path: False)
+    with pytest.raises(FileNotFoundError, match='No directory available'):
+        storage.require_storage_reserve(tmp_path / 'checkpoint.json')
+
+
 def test_actual_disk_exhaustion_has_same_stop_semantics():
     assert storage.is_storage_failure(OSError(errno.ENOSPC, 'full'))
     assert not storage.is_storage_failure(PermissionError(errno.EACCES, 'denied'))

@@ -19,8 +19,12 @@ def is_storage_failure(error: Exception) -> bool:
 
 def require_storage_reserve(path: Path, *, reserve_bytes: int = DEFAULT_STORAGE_RESERVE_BYTES) -> None:
     existing = path.expanduser().resolve()
-    while not existing.exists():
-        existing = existing.parent
+    # Windows disk-space queries can reject long checkpoint file paths.
+    while not existing.is_dir():
+        parent = existing.parent
+        if parent == existing:
+            raise FileNotFoundError(errno.ENOENT, "No directory available for storage check", str(existing))
+        existing = parent
     free = shutil.disk_usage(existing).free
     if free < reserve_bytes:
         raise InsufficientStorageError(
