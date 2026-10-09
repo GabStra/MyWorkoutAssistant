@@ -325,7 +325,7 @@ private fun HeartRateDisplay(
     Row(
         modifier = modifier.offset(x = centerlineOffset),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally)
+        horizontalArrangement = Arrangement.spacedBy(2.5.dp, Alignment.CenterHorizontally)
     ) {
         PulsingHeartWithBpm(
             bpm = bpm,
