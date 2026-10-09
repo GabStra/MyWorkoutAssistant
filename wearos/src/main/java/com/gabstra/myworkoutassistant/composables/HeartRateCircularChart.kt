@@ -777,15 +777,16 @@ private fun HeartRateView(
             }
 
             if (lowerBoundRotationAngle != null && upperBoundRotationAngle != null) {
-                val inBounds = remember(
-                    hr,
-                    mhrPercentage,
-                    lowerBoundMaxHRPercent,
-                    upperBoundMaxHRPercent,
-                    screenState.userAge,
-                    screenState.measuredMaxHeartRate,
-                    screenState.restingHeartRate
-                ) {
+                // Lit means "the zone chip currently shows the target zone". When the
+                // flagged bounds are a preset zone, lighting follows zone equality —
+                // a numeric range can never light the arc inside a different zone.
+                // A custom range is not a zone, so it falls back to the raw bounds.
+                val targetZone = zoneRanges.indexOfFirst {
+                    it.first == lowerBoundMaxHRPercent && it.second == upperBoundMaxHRPercent
+                }.takeIf { it > 0 }
+                val arcLit = if (targetZone != null) {
+                    currentZone == targetZone
+                } else {
                     mhrPercentage in lowerBoundMaxHRPercent!!..upperBoundMaxHRPercent!!
                 }
 
@@ -796,7 +797,7 @@ private fun HeartRateView(
                         .then(zoneSegmentsModifier),
                     startAngle = lowerBoundRotationAngle,
                     endAngle = upperBoundRotationAngle,
-                    color = if (inBounds) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                    color = if (arcLit) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
                     strokeWidth = 18.dp,
                     borderWidth = 6.dp,
                     innerBorderWidth = 4.dp
