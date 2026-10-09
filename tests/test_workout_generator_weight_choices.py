@@ -30,6 +30,7 @@ from workout_generator_pkg.exercise_contracts import (
     WEIGHT_EXERCISE_SCHEMA,
 )
 from workout_generator_pkg.plan_contract import ContractValidationError
+from workout_generator_pkg.plan_contract import normalize_dumbbell_pair_prescription_loads
 from workout_generator_pkg.plan_contract import validate_plan_index_contract
 from workout_generator_pkg.plan_contract import validate_exercise_definitions_contract
 from workout_generator_pkg.plan_contract import validate_workout_structures_contract
@@ -290,10 +291,57 @@ def test_plan_contract_repair_points_per_hand_dumbbell_load_at_pair_total():
         "workouts": [],
     }
 
-    # 22.5 is a selectable SINGLE but not a pair total; the repair must point at
-    # the doubled pair total (45.0), not the nearest unrelated total (23.0).
-    with pytest.raises(ContractValidationError, match=r"weight=45\.0 \(= 2 x 22\.5"):
-        validate_plan_index_contract(plan)
+    # Per-hand 22.5 is normalized to the pair total 45.0 before validation, so
+    # the contract passes without a repair round trip.
+    normalize_dumbbell_pair_prescription_loads(plan)
+    validate_plan_index_contract(plan)
+
+    assert plan["exercises"][0]["targetSetPrescriptions"][0]["weight"] == 45.0
+
+
+def test_normalize_dumbbell_pair_prescriptions_only_touches_unambiguous_per_hand_values():
+    equipment = [{
+        "id": "EQUIPMENT_0",
+        "type": "DUMBBELLS",
+        "name": "Dumbbell Pair",
+        # Singles 2.5/4.5/11.5/22.5 -> pair totals include 5.0, 9.0, 18.0, 23.0, 45.0.
+        "dumbbells": [
+            {"weight": 2.5},
+            {"weight": 4.5},
+            {"weight": 11.5},
+            {"weight": 22.5},
+        ],
+    }]
+    plan = {
+        "planName": "Dumbbell Plan",
+        "equipments": equipment,
+        "accessoryEquipments": [],
+        "exercises": [{
+            "id": "EXERCISE_0",
+            "name": "Dumbbell Bench Press",
+            "exerciseType": "WEIGHT",
+            "equipmentId": "EQUIPMENT_0",
+            "requiredAccessoryEquipmentIds": [],
+            "minReps": 8,
+            "maxReps": 10,
+            "numWorkSets": 4,
+            "targetSetPrescriptions": [
+                {"workSetIndex": 0, "reps": 10, "weight": 22.5},  # per hand -> 45.0
+                {"workSetIndex": 1, "reps": 10, "weight": 23.0},  # already a canonical total
+                {"workSetIndex": 2, "reps": 10, "weight": 9.0},   # ambiguous: 9.0 AND 18.0 are totals
+                {"workSetIndex": 3, "reps": 10, "weight": 12.5},  # neither 12.5 nor 25.0 selectable
+            ],
+        }],
+        "workouts": [],
+    }
+
+    rewrites = normalize_dumbbell_pair_prescription_loads(plan)
+
+    weights = [item["weight"] for item in plan["exercises"][0]["targetSetPrescriptions"]]
+    assert weights == [45.0, 23.0, 9.0, 12.5]
+    assert len(rewrites) == 1
+    assert "normalized per-hand weight 22.5 to pair total 45.0" in rewrites[0]
+
 
 
 def test_planner_equipment_context_separates_primary_and_accessory_roles_and_lists_selectable_loads():

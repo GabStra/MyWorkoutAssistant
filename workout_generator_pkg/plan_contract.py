@@ -201,6 +201,60 @@ def _alternate_load_field(expected_load_field: str) -> Optional[str]:
     return mapping.get(expected_load_field)
 
 
+def normalize_dumbbell_pair_prescription_loads(plan_index: Dict[str, Any]) -> List[str]:
+    """Rewrite per-hand dumbbell loads in targetSetPrescriptions to pair totals.
+
+    DUMBBELLS selectable loads are per-pair totals (2 x one dumbbell) while
+    coach-authored loads are per hand. A prescription value that is NOT
+    selectable as written but IS selectable when doubled is a per-hand reading:
+    normalize it deterministically instead of failing the contract and relying
+    on the model to double it during repair. Canonical values and ambiguous
+    values (both the value and its double selectable) are left untouched.
+    """
+    rewrites: List[str] = []
+    equipments = {
+        eq.get("id"): eq
+        for eq in plan_index.get("equipments", []) or []
+        if isinstance(eq, dict) and eq.get("id")
+    }
+    for ex in plan_index.get("exercises", []) or []:
+        if not isinstance(ex, dict):
+            continue
+        expected_load_field = _load_field_for_exercise_type(ex.get("exerciseType"))
+        if expected_load_field is None:
+            continue
+        prescriptions = ex.get("targetSetPrescriptions")
+        if not isinstance(prescriptions, list):
+            continue
+        equipment = equipments.get(ex.get("equipmentId"))
+        if not isinstance(equipment, dict) or str(equipment.get("type", "")).upper() != "DUMBBELLS":
+            continue
+        selectable = get_selectable_weights_for_exercise(ex.get("exerciseType"), equipment)
+        if not selectable:
+            continue
+        ex_name = ex.get("name", ex.get("id", "Unknown"))
+        for idx, item in enumerate(prescriptions):
+            if not isinstance(item, dict):
+                continue
+            load_value = item.get(expected_load_field)
+            if not isinstance(load_value, (int, float)) or isinstance(load_value, bool):
+                continue
+            if any(abs(load_value - valid) < 0.01 for valid in selectable):
+                continue
+            doubled = next(
+                (valid for valid in selectable if abs(valid - load_value * 2) < 0.01),
+                None,
+            )
+            if doubled is None:
+                continue
+            item[expected_load_field] = doubled
+            rewrites.append(
+                f"Exercise '{ex_name}' targetSetPrescriptions[{idx}]: normalized per-hand "
+                f"{expected_load_field} {load_value} to pair total {doubled}"
+            )
+    return rewrites
+
+
 def _normalize_target_set_prescriptions(
     target_set_prescriptions: Any,
     ex_name: str,

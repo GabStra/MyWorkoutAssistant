@@ -15,6 +15,7 @@ from .domain_ops import strip_rep_range_fields_for_timed_exercises_in_workout_st
 from .plan_contract import (
     ContractValidationError,
     hydrate_plan_index_from_exercise_library,
+    normalize_dumbbell_pair_prescription_loads,
     validate_exercise_definitions_contract,
     validate_plan_index_contract,
     validate_uuid_conversion_parity,
@@ -554,6 +555,8 @@ def execute_workout_generation(
                     plan_index,
                     provided_equipment.get("exerciseDefinitions", []) if provided_equipment else [],
                 )
+                for rewrite in normalize_dumbbell_pair_prescription_loads(plan_index):
+                    _gen_print(f"  {rewrite}")
                 try:
                     validate_plan_index_contract(plan_index, provided_equipment)
                     break
@@ -640,6 +643,8 @@ def execute_workout_generation(
                     plan_index,
                     provided_equipment.get("exerciseDefinitions", []) if provided_equipment else [],
                 )
+                for rewrite in normalize_dumbbell_pair_prescription_loads(plan_index):
+                    _gen_print(f"  {rewrite}")
                 validate_plan_index_contract(plan_index, provided_equipment)
             except ContractValidationError as e:
                 _log_step_error("Step 1", e, prefix="Contract validation failed")
