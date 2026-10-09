@@ -11,14 +11,12 @@ from exercise_library_generator_pkg.generator import (
     _confirm_capability_suggestions,
     _apply_requirement_verification_patch,
     _capabilities_for_equipment_ids,
-    _canonicalize_instruction_requirement_shape,
     _emit_definition,
     _emit_definition_batch,
     _apply_capability_file,
     _add_confirmation_only_capability_questions,
     _format_equipment_context,
     _generate_capability_suggestions,
-    _instruction_authority_issues,
     _normalize_and_filter_candidates,
     _normalize_candidate_semantics,
     _normalize_matrix_group_requirements,
@@ -27,20 +25,14 @@ from exercise_library_generator_pkg.generator import (
     _review_definition_batch_resilient,
     _review_equipment_context,
     _run_global_semantic_consistency_review,
-    _run_instruction_authority_review,
-    _run_instruction_completeness_review,
-    _run_instruction_entailment_audit,
-    _run_post_rewrite_semantic_fixed_point,
     _reviews_by_id,
     _save_library_atomic,
     _structured_definition_errors,
     _validate_candidate,
     _validate_definition,
-    _validate_instruction_requirements,
     generate_exercise_library,
     review_library_feasibility,
     review_library_checkpoint,
-    review_library_instruction_entailment,
     review_library_muscle_semantics,
 )
 
@@ -260,6 +252,10 @@ def test_generator_overlaps_independent_reviews_within_worker_budget(
         assert generated["exerciseDefinitions"][0]["secondaryMuscleGroups"] == [
             "FRONT_BICEPS"
         ]
+        # The muscle/feasibility merge rewrites content; the content-derived ID
+        # must be re-derived or it goes stale.
+        merged = generated["exerciseDefinitions"][0]
+        assert merged["id"] == build_exercise_definition_id(merged)
         assert any(
             snapshot["exerciseDefinitions"][0]["muscleGroups"] == ["BACK_UPPER_BACK"]
             for snapshot in checkpoints
@@ -599,11 +595,10 @@ def test_definition_parser_accepts_wrapped_legacy_emitter_field_names() -> None:
         candidate,
     )
 
-    assert parsed["instructions"].startswith("Brace before descending.")
-    assert len(parsed["instructions"]) <= 500
     assert parsed["muscleGroups"] == ["FRONT_QUADRICEPS", "BACK_GLUTEAL"]
     assert parsed["secondaryMuscleGroups"] == []
     assert "notes" not in parsed
+    assert "instructions" not in parsed
 
 
 def test_definition_parser_normalizes_model_metadata_to_canonical_enums() -> None:
@@ -1170,62 +1165,6 @@ def test_semantic_filter_uses_movement_fingerprints_and_disambiguates_names() ->
     assert len(filtered) == 1
 
 
-def test_instruction_equipment_hallucination_is_repaired_with_json_patch() -> None:
-    candidate = {
-        "name": "Weighted Squat",
-        "exerciseType": "BODY_WEIGHT",
-        "equipmentId": "vest-id",
-        "bodyWeightPercentage": 100.0,
-        "requiredAccessoryEquipmentIds": [],
-        "exerciseCategory": "MODERATE_COMPOUND",
-    }
-    equipment = {
-        "equipments": [{"id": "vest-id", "type": "WEIGHTVEST", "name": "Weight Vest"}],
-        "accessoryEquipments": [],
-    }
-    responses = iter(
-        [
-            {
-                **candidate,
-                "instructions": "Place a barbell on your back and squat.",
-                "instructionEquipmentIds": ["barbell-id"],
-                "muscleGroups": ["FRONT_QUADRICEPS"],
-                "secondaryMuscleGroups": ["BACK_GLUTEAL"],
-                "exerciseCategory": "STRENGTH",
-            },
-            {
-                "patch": [
-                    {
-                        "op": "replace",
-                        "path": "/instructions",
-                        "value": "Wear the vest, brace, and squat under control.",
-                    },
-                    {
-                        "op": "replace",
-                        "path": "/instructionEquipmentIds",
-                        "value": ["vest-id"],
-                    },
-                ]
-            },
-        ]
-    )
-
-    def fake_call(_client, _messages, _loading_message, show_loading=False):
-        return json.dumps(next(responses))
-
-    emitted = _emit_definition(
-        client=None,
-        candidate=candidate,
-        equipment=equipment,
-        use_reasoner=False,
-        call_reasoner=fake_call,
-        call_chat=fake_call,
-    )
-
-    assert "barbell" not in emitted["instructions"].casefold()
-    assert "vest" in emitted["instructions"].casefold()
-
-
 def test_independent_semantic_review_discards_infeasible_and_patches_metadata() -> None:
     equipment = {
         "equipments": [
@@ -1237,7 +1176,6 @@ def test_independent_semantic_review_discards_infeasible_and_patches_metadata() 
     infeasible = {
         "id": "infeasible-id",
         "name": "Cable Leg Curl",
-        "instructions": "Attach an ankle cuff and curl the leg.",
         "exerciseType": "WEIGHT",
         "equipmentId": "cable-id",
         "bodyWeightPercentage": None,
@@ -1249,7 +1187,6 @@ def test_independent_semantic_review_discards_infeasible_and_patches_metadata() 
     repairable = {
         "id": "repairable-id",
         "name": "Goblet Squat",
-        "instructions": "Hold the weight at the chest and squat.",
         "exerciseType": "WEIGHT",
         "equipmentId": "dumbbell-id",
         "bodyWeightPercentage": None,
@@ -1260,7 +1197,10 @@ def test_independent_semantic_review_discards_infeasible_and_patches_metadata() 
     }
 
     def fake_review(_client, _messages, loading_message, show_loading=False):
-        if loading_message == "Verifying physical requirements":
+        if loading_message in (
+            "Verifying physical requirements",
+            "Adjudicating proposed infeasibility",
+        ):
             return json.dumps({"patch": []})
         return json.dumps(
             {
@@ -1278,12 +1218,12 @@ def test_independent_semantic_review_discards_infeasible_and_patches_metadata() 
                         "requiredEquipmentIds": ["dumbbell-id"],
                         "requirementClauses": [],
                         "missingEquipment": [],
-                        "issues": ["Instructions should name the declared dumbbell"],
+                        "issues": ["Secondary muscle is not materially trained"],
                         "patch": [
                             {
                                 "op": "replace",
-                                "path": "/instructions",
-                                "value": "Hold the dumbbell at the chest and squat.",
+                                "path": "/secondaryMuscleGroups",
+                                "value": [],
                             }
                         ],
                     },
@@ -1300,7 +1240,7 @@ def test_independent_semantic_review_discards_infeasible_and_patches_metadata() 
 
     assert [item["name"] for item in kept] == ["Goblet Squat"]
     assert kept[0]["exerciseCategory"] == "MODERATE_COMPOUND"
-    assert "dumbbell" in kept[0]["instructions"].casefold()
+    assert kept[0]["secondaryMuscleGroups"] == []
     assert kept[0]["id"] == build_exercise_definition_id(kept[0])
     assert len(discarded) == 1
     assert discarded[0].startswith("Cable Leg Curl: Requires an ankle cuff that is not supplied")
@@ -1752,1207 +1692,16 @@ def test_matrix_normalizes_capabilities_misplaced_as_missing_equipment() -> None
             "SINGLE_HANDLE_ATTACHMENT",
             "Cable single handle attachment",
             "second cable station",
+            "portable power rack",
         ],
         "rationale": "A handle and second station are required.",
     })
 
     assert normalized["requirementClauses"] == [
-        {"anyOf": ["SINGLE_HANDLE_ATTACHMENT"]}
+        {"anyOf": ["SINGLE_HANDLE_ATTACHMENT"]},
+        {"anyOf": ["SECOND_CABLE_STATION"]},
     ]
-    assert normalized["missingEquipment"] == ["second cable station"]
-
-
-def test_instruction_entailment_uses_evidence_and_available_capability_alternatives() -> None:
-    definitions = [
-        {
-            "id": definition_id,
-            "name": name,
-            "instructions": instructions,
-            "exerciseType": "WEIGHT",
-            "equipmentId": "cable-id",
-            "bodyWeightPercentage": None,
-            "requiredAccessoryEquipmentIds": [],
-            "muscleGroups": ["BACK_UPPER_BACK"],
-            "secondaryMuscleGroups": [],
-            "exerciseCategory": "MODERATE_COMPOUND",
-        }
-        for definition_id, name, instructions in (
-            ("wide-id", "Wide Attachment Movement", "Grasp the wide bar and pull down."),
-            ("rope-id", "Alternative Movement", "Grasp the bar or rope and pull down."),
-        )
-    ]
-
-    audit_by_id = {
-        "wide-id": {
-            "id": "wide-id",
-            "requirements": [{
-                "evidence": "wide bar",
-                "anyOfEquipmentRefs": [],
-                "anyOfCapabilities": ["WIDE_BAR_ATTACHMENT"],
-                "mandatory": True,
-            }, {
-                "evidence": "pull down",
-                "anyOfEquipmentRefs": ["PRIMARY_CABLE_1"],
-                "anyOfCapabilities": [],
-                "mandatory": True,
-            }],
-            "instructionPatch": [],
-        },
-        "rope-id": {
-            "id": "rope-id",
-            "requirements": [{
-                "evidence": "bar or rope",
-                "anyOfEquipmentRefs": [],
-                "anyOfCapabilities": ["STRAIGHT_BAR_ATTACHMENT", "ROPE_ATTACHMENT"],
-                "mandatory": True,
-            }, {
-                "evidence": "pull down",
-                "anyOfEquipmentRefs": ["PRIMARY_CABLE_1"],
-                "anyOfCapabilities": [],
-                "mandatory": True,
-            }],
-            "instructionPatch": [],
-        },
-    }
-    extraction_calls = 0
-
-    def fake_call(_client, messages, loading_message, show_loading=False):
-        nonlocal extraction_calls
-        if loading_message.startswith("Verifying instruction entailment"):
-            return json.dumps({"patch": []})
-        extraction_calls += 1
-        requested = json.loads(messages[-1]["content"])["definitions"]
-        requested_ids = [definition["id"] for definition in requested]
-        if extraction_calls == 1:
-            requested_ids = requested_ids[:1]
-        return json.dumps({"audits": [audit_by_id[value] for value in requested_ids]})
-
-    kept, discarded = _run_instruction_entailment_audit(
-        None,
-        definitions,
-        [],
-        {
-            "equipments": [{
-                "id": "cable-id",
-                "name": "Cable",
-                "type": "PLATELOADEDCABLE",
-                "capabilities": ["ROPE_ATTACHMENT"],
-            }],
-            "accessoryEquipments": [],
-        },
-        fake_call,
-    )
-
-    assert [definition["name"] for definition in kept] == ["Alternative Movement"]
-    assert extraction_calls == 2
-    assert discarded == [
-        "Wide Attachment Movement: instructions require unavailable capability alternatives "
-        "[{'equipmentRefs': [], 'capabilities': ['WIDE_BAR_ATTACHMENT']}]"
-    ]
-
-
-def test_instruction_entailment_repairs_invalid_verified_requirement() -> None:
-    definition = {
-        "id": "rope-id",
-        "name": "Cable Rope Pushdown",
-        "instructions": "Attach the rope to the high pulley and press down.",
-        "exerciseType": "WEIGHT",
-        "equipmentId": "cable-id",
-        "bodyWeightPercentage": None,
-        "requiredAccessoryEquipmentIds": [],
-        "muscleGroups": ["BACK_TRICEPS"],
-        "secondaryMuscleGroups": [],
-        "exerciseCategory": "ISOLATION",
-    }
-    loading_messages: list[str] = []
-    repair_request = ""
-    repair_call_count = 0
-    saw_rejection_feedback = False
-
-    def fake_call(_client, messages, loading_message, show_loading=False):
-        nonlocal repair_call_count, repair_request, saw_rejection_feedback
-        loading_messages.append(loading_message)
-        if loading_message.startswith("Instruction entailment batch"):
-            return json.dumps({
-                "audits": [{
-                    "id": "rope-id",
-                    "requirements": [{
-                        "evidence": "rope",
-                        "anyOfEquipmentRefs": [],
-                        "anyOfCapabilities": ["ROPE_ATTACHMENT"],
-                        "mandatory": True,
-                    }, {
-                        "evidence": "high pulley",
-                        "anyOfEquipmentRefs": [],
-                        "anyOfCapabilities": ["HIGH_PULLEY"],
-                        "mandatory": True,
-                    }, {
-                        "evidence": "press down",
-                        "anyOfEquipmentRefs": ["PRIMARY_CABLE_1"],
-                        "anyOfCapabilities": [],
-                        "mandatory": True,
-                    }],
-                    "instructionPatch": [],
-                }]
-            })
-        if loading_message.startswith("Verifying instruction entailment"):
-            return json.dumps({
-                "patch": [{
-                    "op": "replace",
-                    "path": "/audits/0/requirements/0/evidence",
-                    "value": "a rope attachment",
-                }, {
-                    "op": "replace",
-                    "path": "/audits/0/requirements/1/evidence",
-                    "value": "an elevated pulley",
-                }]
-            })
-        repair_request = str(messages[-1]["content"])
-        saw_rejection_feedback = saw_rejection_feedback or (
-            "previous repair response was rejected" in repair_request
-        )
-        repair_call_count += 1
-        if repair_call_count == 1:
-            return json.dumps({
-                "patch": [{
-                    "op": "replace",
-                    "path": "/audits/0/requirements/0/evidence",
-                    "value": "rope",
-                }]
-            })
-        requirement_index = 0 if "a rope attachment" in repair_request else 1
-        evidence = "rope" if requirement_index == 0 else "high pulley"
-        return json.dumps({
-            "patch": [{
-                "op": "replace",
-                "path": f"/audit/requirements/{requirement_index}/evidence",
-                "value": evidence,
-            }]
-        })
-
-    kept, discarded = _run_instruction_entailment_audit(
-        None,
-        [definition],
-        [],
-        {
-            "equipments": [{
-                "id": "cable-id",
-                "name": "Cable",
-                "type": "PLATELOADEDCABLE",
-                "capabilities": ["ROPE_ATTACHMENT", "HIGH_PULLEY"],
-            }],
-            "accessoryEquipments": [],
-        },
-        fake_call,
-    )
-
-    assert [item["name"] for item in kept] == ["Cable Rope Pushdown"]
-    assert discarded == []
-    assert loading_messages == [
-        "Instruction entailment batch 1/1",
-        "Verifying instruction entailment 1/1",
-        "Repairing instruction entailment 1/1 for Cable Rope Pushdown (pass 1/3)",
-        "Repairing instruction entailment 1/1 for Cable Rope Pushdown (pass 2/3)",
-        "Repairing instruction entailment 1/1 for Cable Rope Pushdown (pass 3/3)",
-    ]
-    assert "evidence is not an exact instruction substring" in repair_request
-    assert saw_rejection_feedback is True
-
-
-def test_instruction_entailment_satisfies_dumbbell_by_declared_equipment_reference() -> None:
-    definition = {
-        "id": "raise-id",
-        "name": "Dumbbell Front Raise",
-        "instructions": "Hold a dumbbell in each hand and raise them to shoulder height.",
-        "exerciseType": "WEIGHT",
-        "equipmentId": "dumbbells-id",
-        "bodyWeightPercentage": None,
-        "requiredAccessoryEquipmentIds": [],
-        "muscleGroups": ["FRONT_DELTOIDS"],
-        "secondaryMuscleGroups": [],
-        "exerciseCategory": "ISOLATION",
-    }
-
-    def fake_call(_client, _messages, loading_message, show_loading=False):
-        if loading_message.startswith("Verifying instruction entailment"):
-            return json.dumps({
-                "patch": [{
-                    "op": "replace",
-                    "path": "/audits/0/id",
-                    "value": "unauthorized-id-change",
-                }]
-            })
-        return json.dumps({
-            "audits": [{
-                "id": "raise-id",
-                "requirements": [{
-                    "evidence": "a dumbbell in each hand",
-                    "equipmentRef": "PRIMARY_DUMBBELL_2",
-                    "required": "true",
-                    "reason": "The instructions explicitly use a dumbbell.",
-                }, {
-                    "evidence": "raise them to shoulder height",
-                    "anyOfEquipmentRefs": [],
-                    "anyOfCapabilities": [],
-                    "mandatory": True,
-                    "reason": "This is a movement cue, not an equipment requirement.",
-                }],
-                "instructionPatch": [],
-            }]
-        })
-
-    kept, discarded = _run_instruction_entailment_audit(
-        None,
-        [definition],
-        [],
-        {
-            "equipments": [{
-                "id": "dumbbells-id",
-                "name": "Dumbbells",
-                "type": "DUMBBELLS",
-                "capabilities": ["ADJUSTABLE_WEIGHT"],
-            }, {
-                "id": "single-dumbbell-id",
-                "name": "Dumbbell",
-                "type": "DUMBBELL",
-                "capabilities": ["ADJUSTABLE_WEIGHT"],
-            }],
-            "accessoryEquipments": [],
-        },
-        fake_call,
-    )
-
-    assert [item["name"] for item in kept] == ["Dumbbell Front Raise"]
-    assert discarded == []
-
-
-def test_instruction_requirement_container_shapes_are_canonicalized() -> None:
-    requirement = {
-        "evidence": "rings",
-        "equipmentRef": "ACCESSORY_RINGS_1",
-        "required": True,
-    }
-
-    single = _canonicalize_instruction_requirement_shape({"requirements": requirement})
-    wrapped = _canonicalize_instruction_requirement_shape({
-        "requirements": {"items": [requirement]}
-    })
-    keyed = _canonicalize_instruction_requirement_shape({
-        "requirements": {"primary": requirement}
-    })
-    empty = _canonicalize_instruction_requirement_shape({"requirements": None})
-
-    for result in (single, wrapped, keyed):
-        assert result["requirements"] == [{
-            "evidence": "rings",
-            "anyOfEquipmentRefs": ["ACCESSORY_RINGS_1"],
-            "anyOfCapabilities": [],
-            "mandatory": True,
-        }]
-    assert empty["requirements"] == []
-
-
-def test_instruction_authority_allows_only_undeclared_equipment_to_be_optional() -> None:
-    equipment = {
-        "equipments": [{
-            "id": "vest-id", "name": "Weight Vest", "type": "WEIGHTVEST"
-        }],
-        "accessoryEquipments": [{
-            "id": "bench-id", "name": "Bench", "type": "ACCESSORY"
-        }],
-    }
-    original = {"instructions": "Perform the movement with control."}
-    definition = {
-        "equipmentId": "vest-id",
-        "requiredAccessoryEquipmentIds": [],
-        "instructions": "Optional: wear a weight vest. You may use a bench for balance.",
-    }
-
-    issues = _instruction_authority_issues(original, definition, equipment)
-
-    assert issues == [
-        "instructions describe structurally declared equipment as optional"
-    ]
-
-
-def test_instruction_authority_rejects_internal_tokens_and_invented_loads() -> None:
-    issues = _instruction_authority_issues(
-        {"instructions": "Swing the dumbbell with control."},
-        {
-            "equipmentId": "dumbbell-id",
-            "requiredAccessoryEquipmentIds": [],
-            "instructions": "Swing PRIMARY_DUMBBELL_1, the primary dumbbell, at 5 lb.",
-        },
-        {
-            "equipments": [{
-                "id": "dumbbell-id", "name": "Dumbbell", "type": "DUMBBELL"
-            }],
-            "accessoryEquipments": [],
-        },
-    )
-
-    assert issues == [
-        "instructions expose an internal semantic equipment placeholder",
-        "instructions expose internal primary/accessory role terminology",
-        "instructions invented exact load values ['5 lb']",
-    ]
-
-
-def test_instruction_authority_requires_natural_declared_equipment_name() -> None:
-    equipment = {
-        "equipments": [{
-            "id": "vest-id", "name": "Weight Vest", "type": "WEIGHTVEST"
-        }],
-        "accessoryEquipments": [],
-    }
-    issues = _instruction_authority_issues(
-        {"instructions": "Perform the weighted movement with control."},
-        {
-            "equipmentId": "vest-id",
-            "requiredAccessoryEquipmentIds": [],
-            "instructions": "Hold weight securely and perform the movement with control.",
-        },
-        equipment,
-    )
-
-    assert issues == [
-        "instructions do not explicitly name structurally declared equipment ['Weight Vest']"
-    ]
-    assert _instruction_authority_issues(
-        {"instructions": "Perform the movement with control."},
-        {
-            "equipmentId": "vest-id",
-            "requiredAccessoryEquipmentIds": [],
-            "instructions": "Secure the vest and perform the movement with control.",
-        },
-        equipment,
-    ) == []
-
-
-def test_instruction_authority_escalates_from_patch_to_llm_rewrite() -> None:
-    definition = {
-        "id": "weighted-id",
-        "name": "Weighted Hold",
-        "instructions": "Hold the position with control.",
-        "exerciseType": "WEIGHT",
-        "equipmentId": "vest-id",
-        "bodyWeightPercentage": None,
-        "requiredAccessoryEquipmentIds": [],
-        "muscleGroups": ["FRONT_ABS"],
-        "secondaryMuscleGroups": [],
-        "exerciseCategory": "ISOLATION",
-    }
-    loading_messages = []
-
-    def fake_call(_client, _messages, loading_message, show_loading=False):
-        loading_messages.append(loading_message)
-        if loading_message.startswith("Rewriting instruction authority"):
-            return json.dumps({
-                "instructions": "Wear the weight vest and hold the position with control."
-            })
-        return json.dumps({"patch": []})
-
-    reviewed = _run_instruction_authority_review(
-        None,
-        [definition],
-        [definition],
-        {
-            "equipments": [{
-                "id": "vest-id", "name": "Weight Vest", "type": "WEIGHTVEST"
-            }],
-            "accessoryEquipments": [],
-        },
-        fake_call,
-    )
-
-    assert reviewed[0]["instructions"].startswith("Wear the weight vest")
-    assert len([
-        value for value in loading_messages
-        if value.startswith("Repairing instruction authority")
-    ]) == 3
-    assert len([
-        value for value in loading_messages
-        if value.startswith("Rewriting instruction authority")
-    ]) == 1
-
-
-def test_post_rewrite_semantic_cycle_discards_new_unavailable_attachment() -> None:
-    definition = {
-        "id": "pulldown-id",
-        "name": "Cable Lat Pulldown",
-        "instructions": "Sit at the cable on the bench, grasp the wide bar, and pull it to your chest.",
-        "exerciseType": "WEIGHT",
-        "equipmentId": "cable-id",
-        "bodyWeightPercentage": None,
-        "requiredAccessoryEquipmentIds": ["bench-id"],
-        "muscleGroups": ["BACK_LATS"],
-        "secondaryMuscleGroups": [],
-        "exerciseCategory": "MODERATE_COMPOUND",
-    }
-
-    def fake_call(_client, _messages, loading_message, show_loading=False):
-        if loading_message.startswith("Verifying instruction entailment"):
-            return json.dumps({"patch": []})
-        return json.dumps({
-            "audits": [{
-                "id": "pulldown-id",
-                "requirements": [
-                    {
-                        "evidence": "wide bar",
-                        "anyOfEquipmentRefs": [],
-                        "anyOfCapabilities": ["WIDE_BAR_ATTACHMENT"],
-                        "mandatory": True,
-                    },
-                    {
-                        "evidence": "cable",
-                        "anyOfEquipmentRefs": ["PRIMARY_CABLE_1"],
-                        "anyOfCapabilities": [],
-                        "mandatory": True,
-                    },
-                    {
-                        "evidence": "bench",
-                        "anyOfEquipmentRefs": ["ACCESSORY_BENCH_1"],
-                        "anyOfCapabilities": [],
-                        "mandatory": True,
-                    },
-                ],
-                "instructionPatch": [],
-            }]
-        })
-
-    reviewed, discards = _run_post_rewrite_semantic_fixed_point(
-        None,
-        [definition],
-        [definition],
-        [],
-        {
-            "equipments": [{
-                "id": "cable-id",
-                "name": "Cable",
-                "type": "PLATELOADEDCABLE",
-                "capabilities": ["ROPE_ATTACHMENT", "HIGH_PULLEY"],
-            }],
-            "accessoryEquipments": [{
-                "id": "bench-id",
-                "name": "Bench",
-                "type": "ACCESSORY",
-                "capabilities": ["BENCH"],
-            }],
-        },
-        fake_call,
-        {"Cable Lat Pulldown"},
-    )
-
-    assert reviewed == []
-    assert "WIDE_BAR_ATTACHMENT" in discards[0]
-
-
-def test_semantic_completeness_discards_implicit_unavailable_support() -> None:
-    definition = {
-        "id": "incline-id",
-        "name": "Barbell Incline Bench Press",
-        "instructions": "Lie on the incline bench and press the barbell from the upper chest.",
-        "exerciseType": "WEIGHT",
-        "equipmentId": "barbell-id",
-        "bodyWeightPercentage": None,
-        "requiredAccessoryEquipmentIds": ["bench-id"],
-        "muscleGroups": ["FRONT_CHEST"],
-        "secondaryMuscleGroups": [],
-        "exerciseCategory": "HEAVY_COMPOUND",
-    }
-
-    def fake_call(_client, _messages, _loading_message, show_loading=False):
-        if _loading_message.startswith("Verifying semantic completeness"):
-            return json.dumps({"patch": []})
-        if _loading_message.startswith("Adjudicating semantic completeness"):
-            return json.dumps({"patch": []})
-        return json.dumps({"reviews": [{
-            "id": "incline-id",
-            "requirements": [{
-                "description": "The loaded bar must start above the athlete.",
-                "supportingText": "press the barbell from the upper chest",
-                "rationale": "A rack or human handoff is needed to reach the start position.",
-                "anyOfEquipmentRefs": [],
-                "anyOfCapabilities": ["RACKED_BAR_SUPPORT", "HUMAN_HANDOFF_SUPPORT"],
-                "mandatory": True,
-            }],
-            "missingEquipment": [],
-            "contradictions": [],
-            "instructionPatch": [],
-        }]})
-
-    kept, discards, changed = _run_instruction_completeness_review(
-        None,
-        [definition],
-        [],
-        {
-            "equipments": [{"id": "barbell-id", "name": "Barbell", "type": "BARBELL"}],
-            "accessoryEquipments": [{
-                "id": "bench-id", "name": "Bench", "type": "ACCESSORY",
-                "capabilities": ["INCLINE_BENCH"],
-            }],
-        },
-        fake_call,
-    )
-
-    assert kept == []
-    assert changed == set()
-    assert "RACKED_BAR_SUPPORT" in discards[0]
-
-
-def test_semantic_completeness_challenger_adds_omitted_requirement() -> None:
-    definition = {
-        "id": "press-id", "name": "Incline Press",
-        "instructions": "Lie on the incline bench and press the barbell from your chest.",
-        "exerciseType": "WEIGHT", "equipmentId": "barbell-id",
-        "bodyWeightPercentage": None, "requiredAccessoryEquipmentIds": ["bench-id"],
-        "muscleGroups": ["FRONT_CHEST"], "secondaryMuscleGroups": [],
-        "exerciseCategory": "HEAVY_COMPOUND",
-    }
-
-    def fake_call(_client, messages, loading_message, show_loading=False):
-        if loading_message.startswith("Verifying semantic completeness"):
-            return json.dumps({"patch": [{
-                "op": "add", "path": "/reviews/0/requirements/-",
-                "value": {
-                    "description": "The loaded bar needs elevated starting support.",
-                    "supportingText": "press the barbell from your chest",
-                    "rationale": "The athlete cannot safely receive a loaded bar there from the floor.",
-                    "anyOfEquipmentRefs": [],
-                    "anyOfCapabilities": ["RACKED_BAR_SUPPORT", "HUMAN_HANDOFF_SUPPORT"],
-                    "mandatory": True,
-                },
-            }]})
-        if loading_message.startswith("Adjudicating semantic completeness"):
-            return json.dumps({"patch": []})
-        requested = json.loads(messages[-1]["content"])["definitions"][0]
-        return json.dumps({"reviews": [{
-            "id": requested["id"], "requirements": [], "missingEquipment": [],
-            "contradictions": [], "instructionPatch": [],
-        }]})
-
-    kept, discards, _ = _run_instruction_completeness_review(
-        None, [definition], [],
-        {"equipments": [{"id": "barbell-id", "name": "Barbell", "type": "BARBELL"}],
-         "accessoryEquipments": [{"id": "bench-id", "name": "Bench", "type": "ACCESSORY",
-                                    "capabilities": ["INCLINE_BENCH"]}]},
-        fake_call,
-    )
-
-    assert kept == []
-    assert "RACKED_BAR_SUPPORT" in discards[0]
-
-
-def test_semantic_completeness_adjudicator_removes_capability_overreach() -> None:
-    definition = {
-        "id": "snatch-id", "name": "Dumbbell Snatch",
-        "instructions": "Lift the dumbbell from the floor and lock it out overhead.",
-        "exerciseType": "WEIGHT", "equipmentId": "dumbbell-id",
-        "bodyWeightPercentage": None, "requiredAccessoryEquipmentIds": [],
-        "muscleGroups": ["BACK_UPPER_BACK"], "secondaryMuscleGroups": [],
-        "exerciseCategory": "HEAVY_COMPOUND",
-    }
-
-    def fake_call(_client, messages, loading_message, show_loading=False):
-        if loading_message.startswith("Verifying semantic completeness"):
-            return json.dumps({"patch": []})
-        if loading_message.startswith("Adjudicating semantic completeness"):
-            return json.dumps({"patch": [{
-                "op": "remove", "path": "/review/requirements/1",
-            }]})
-        requested = json.loads(messages[-1]["content"])["definitions"][0]
-        return json.dumps({"reviews": [{
-            "id": requested["id"],
-            "requirements": [{
-                "description": "The dumbbell supplies resistance.",
-                "supportingText": "dumbbell",
-                "rationale": "The instruction names the implement.",
-                "anyOfEquipmentRefs": ["PRIMARY_DUMBBELL_1"],
-                "anyOfCapabilities": [], "mandatory": True,
-            }, {
-                "description": "Overhead clearance is required.",
-                "supportingText": "lock it out overhead",
-                "rationale": "This incorrectly treats ordinary overhead motion as a transition.",
-                "anyOfEquipmentRefs": [],
-                "anyOfCapabilities": ["OVER_IMPLEMENT_TRANSITION_CLEARANCE"],
-                "mandatory": True,
-            }],
-            "missingEquipment": [], "contradictions": [], "instructionPatch": [],
-        }]})
-
-    kept, discards, _ = _run_instruction_completeness_review(
-        None, [definition], [],
-        {"equipments": [{"id": "dumbbell-id", "name": "Dumbbell", "type": "DUMBBELL"}],
-         "accessoryEquipments": []},
-        fake_call,
-    )
-
-    assert len(kept) == 1
-    assert discards == []
-
-
-def test_semantic_completeness_invalid_verifier_isolates_every_definition() -> None:
-    definition = {
-        "id": "curl-id", "name": "Dumbbell Curl",
-        "instructions": "Curl the dumbbell with control.",
-        "exerciseType": "WEIGHT", "equipmentId": "dumbbell-id",
-        "bodyWeightPercentage": None, "requiredAccessoryEquipmentIds": [],
-        "muscleGroups": ["FRONT_BICEPS"], "secondaryMuscleGroups": [],
-        "exerciseCategory": "ISOLATION",
-    }
-    adjudication_calls = 0
-
-    def fake_call(_client, messages, loading_message, show_loading=False):
-        nonlocal adjudication_calls
-        if loading_message.startswith("Verifying semantic completeness"):
-            return json.dumps({"reviews": []})
-        if loading_message.startswith("Adjudicating semantic completeness"):
-            adjudication_calls += 1
-            return json.dumps({"patch": []})
-        requested = json.loads(messages[-1]["content"])["definitions"][0]
-        return json.dumps({"reviews": [{
-            "id": requested["id"], "requirements": [{
-                "description": "The dumbbell supplies resistance.",
-                "supportingText": "dumbbell",
-                "rationale": "The instruction explicitly names it.",
-                "anyOfEquipmentRefs": ["PRIMARY_DUMBBELL_1"],
-                "anyOfCapabilities": [], "mandatory": True,
-            }], "missingEquipment": [], "contradictions": [], "instructionPatch": [],
-        }]})
-
-    kept, discards, _ = _run_instruction_completeness_review(
-        None, [definition], [],
-        {"equipments": [{"id": "dumbbell-id", "name": "Dumbbell", "type": "DUMBBELL"}],
-         "accessoryEquipments": []},
-        fake_call,
-    )
-
-    assert len(kept) == 1
-    assert discards == []
-    assert adjudication_calls == 1
-
-
-def test_semantic_completeness_repairs_contradiction_and_keeps_optional_equipment() -> None:
-    definition = {
-        "id": "pullover-id",
-        "name": "Cable Pullover",
-        "instructions": "Lie on the bench, then step forward and hinge while pulling the rope.",
-        "exerciseType": "WEIGHT",
-        "equipmentId": "cable-id",
-        "bodyWeightPercentage": None,
-        "requiredAccessoryEquipmentIds": [],
-        "muscleGroups": ["BACK_UPPER_BACK"],
-        "secondaryMuscleGroups": [],
-        "exerciseCategory": "ISOLATION",
-    }
-    call_count = 0
-
-    def fake_call(_client, messages, _loading_message, show_loading=False):
-        nonlocal call_count
-        if _loading_message.startswith("Verifying semantic completeness"):
-            return json.dumps({"patch": []})
-        if _loading_message.startswith("Adjudicating semantic completeness"):
-            return json.dumps({"patch": []})
-        call_count += 1
-        requested_definition = json.loads(messages[-1]["content"])["definitions"][0]
-        instructions = requested_definition["instructions"]
-        contradiction = "Lie on the bench" in instructions
-        return json.dumps({"reviews": [{
-            "id": requested_definition["id"],
-            "requirements": [{
-                "description": "A rope attachment is used.",
-                "supportingText": "rope",
-                "rationale": "The rope is explicitly grasped for the movement.",
-                "anyOfEquipmentRefs": [],
-                "anyOfCapabilities": ["ROPE_ATTACHMENT"],
-                "mandatory": True,
-            }, {
-                "description": "A bench may support a pullover variation.",
-                "supportingText": "bench" if contradiction else "pullover",
-                "rationale": "This support is optional and must not block feasibility.",
-                "anyOfEquipmentRefs": [],
-                "anyOfCapabilities": ["BENCH"],
-                "mandatory": False,
-            }],
-            "missingEquipment": [],
-            "contradictions": ([{
-                "description": "Lying down is incompatible with stepping and hinging.",
-                "supportingText": "Lie on the bench, then step forward and hinge",
-            }] if contradiction else []),
-            "instructionPatch": ([{
-                "op": "replace",
-                "path": "/instructions",
-                "value": "Stand facing the cable, hinge slightly, and pull the rope toward your thighs in a pullover arc.",
-            }] if contradiction else []),
-        }]})
-
-    kept, discards, changed = _run_instruction_completeness_review(
-        None,
-        [definition],
-        [],
-        {
-            "equipments": [{
-                "id": "cable-id", "name": "Cable", "type": "PLATELOADEDCABLE",
-                "capabilities": ["ROPE_ATTACHMENT"],
-            }],
-            "accessoryEquipments": [],
-        },
-        fake_call,
-    )
-
-    assert discards == []
-    assert call_count == 2
-    assert changed == {"Cable Pullover"}
-    assert kept[0]["instructions"].startswith("Stand facing the cable")
-
-
-def test_semantic_completeness_json_patch_repairs_invalid_requirement() -> None:
-    definition = {
-        "id": "deadlift-id",
-        "name": "Barbell Snatch Grip Deadlift",
-        "instructions": "Grip the barbell wide and lift it from the floor.",
-        "exerciseType": "WEIGHT",
-        "equipmentId": "barbell-id",
-        "bodyWeightPercentage": None,
-        "requiredAccessoryEquipmentIds": [],
-        "muscleGroups": ["BACK_LOWER_BACK"],
-        "secondaryMuscleGroups": [],
-        "exerciseCategory": "HEAVY_COMPOUND",
-    }
-    repair_calls = 0
-
-    def fake_call(_client, _messages, loading_message, show_loading=False):
-        nonlocal repair_calls
-        if loading_message.startswith("Verifying semantic completeness"):
-            return json.dumps({"patch": []})
-        if " repair " in loading_message:
-            repair_calls += 1
-            return json.dumps({"patch": [{
-                "op": "replace",
-                "path": "/review/requirements/0/supportingText",
-                "value": "barbell",
-            }]})
-        requested = json.loads(_messages[-1]["content"])["definitions"][0]
-        return json.dumps({"reviews": [{
-            "id": requested["id"],
-            "requirements": [{
-                "description": "The movement requires the barbell.",
-                "supportingText": "a barbell",
-                "rationale": "The named implement supplies the load.",
-                "anyOfEquipmentRefs": ["PRIMARY_BARBELL_1"],
-                "anyOfCapabilities": [],
-                "mandatory": True,
-            }],
-            "missingEquipment": [],
-            "contradictions": [],
-            "instructionPatch": [],
-        }]})
-
-    kept, discards, changed = _run_instruction_completeness_review(
-        None,
-        [definition],
-        [],
-        {
-            "equipments": [{"id": "barbell-id", "name": "Barbell", "type": "BARBELL"}],
-            "accessoryEquipments": [],
-        },
-        fake_call,
-    )
-
-    assert len(kept) == 1
-    assert discards == []
-    assert changed == set()
-    assert repair_calls == 1
-
-
-def test_semantic_completeness_uses_isolated_rewrite_after_patch_repairs_fail() -> None:
-    definition = {
-        "id": "bridge-id", "name": "Single-Leg Glute Bridge on Bench",
-        "instructions": "Place one foot on the bench and raise your hips.",
-        "exerciseType": "BODY_WEIGHT", "equipmentId": None,
-        "bodyWeightPercentage": 60.0,
-        "requiredAccessoryEquipmentIds": ["bench-id"],
-        "muscleGroups": ["BACK_GLUTES"], "secondaryMuscleGroups": [],
-        "exerciseCategory": "ISOLATION",
-    }
-    isolated_calls = 0
-
-    def fake_call(_client, messages, loading_message, show_loading=False):
-        nonlocal isolated_calls
-        if loading_message.startswith("Verifying semantic completeness"):
-            return json.dumps({"patch": []})
-        if " isolated rewrite " in loading_message:
-            isolated_calls += 1
-            request = json.loads(messages[-1]["content"])
-            repaired = request["review"]
-            repaired["requirements"][0]["supportingText"] = "bench"
-            return json.dumps({"review": repaired})
-        if " repair " in loading_message:
-            return json.dumps({"patch": []})
-        requested = json.loads(messages[-1]["content"])["definitions"][0]
-        return json.dumps({"reviews": [{
-            "id": requested["id"],
-            "requirements": [{
-                "description": "The foot is supported by a bench.",
-                "supportingText": "a stable elevated bench",
-                "rationale": "The elevated foot requires the declared bench.",
-                "anyOfEquipmentRefs": ["ACCESSORY_BENCH_1"],
-                "anyOfCapabilities": [], "mandatory": True,
-            }],
-            "missingEquipment": [], "contradictions": [], "instructionPatch": [],
-        }]})
-
-    kept, discards, _ = _run_instruction_completeness_review(
-        None, [definition], [],
-        {"equipments": [], "accessoryEquipments": [{
-            "id": "bench-id", "name": "Bench", "type": "ACCESSORY",
-            "capabilities": ["BENCH"],
-        }]},
-        fake_call,
-    )
-
-    assert len(kept) == 1
-    assert discards == []
-    assert isolated_calls == 1
-
-
-def test_semantic_completeness_grounds_paraphrased_evidence_by_offsets() -> None:
-    definition = {
-        "id": "twist-id", "name": "Single Dumbbell Twist",
-        "instructions": "Hold one dumbbell at your chest and rotate your torso.",
-        "exerciseType": "WEIGHT", "equipmentId": "dumbbell-id",
-        "bodyWeightPercentage": None, "requiredAccessoryEquipmentIds": [],
-        "muscleGroups": ["FRONT_ABS"], "secondaryMuscleGroups": [],
-        "exerciseCategory": "ISOLATION",
-    }
-
-    def malformed_review(review_id):
-        return {
-            "id": review_id,
-            "requirements": [{
-                "description": "One dumbbell supplies resistance.",
-                "supportingText": "a single dumbbell held at the chest",
-                "rationale": "The instruction names one dumbbell.",
-                "anyOfEquipmentRefs": ["PRIMARY_DUMBBELL_1"],
-                "anyOfCapabilities": [], "mandatory": True,
-            }],
-            "missingEquipment": [], "contradictions": [], "instructionPatch": [],
-        }
-
-    def fake_call(_client, messages, loading_message, show_loading=False):
-        if loading_message.startswith("Verifying semantic completeness"):
-            return json.dumps({"patch": []})
-        if " evidence grounding " in loading_message:
-            instructions = definition["instructions"]
-            start = instructions.index("one dumbbell")
-            return json.dumps({
-                "requirementSpans": [{"index": 0, "start": start, "end": start + len("one dumbbell")}],
-                "contradictionSpans": [],
-            })
-        if " isolated rewrite " in loading_message:
-            return json.dumps({"review": malformed_review(definition["id"])})
-        if " repair " in loading_message:
-            return json.dumps({"patch": []})
-        requested = json.loads(messages[-1]["content"])["definitions"][0]
-        return json.dumps({"reviews": [malformed_review(requested["id"])]})
-
-    kept, discards, _ = _run_instruction_completeness_review(
-        None, [definition], [],
-        {"equipments": [{"id": "dumbbell-id", "name": "Dumbbell", "type": "DUMBBELL"}],
-         "accessoryEquipments": []},
-        fake_call,
-    )
-
-    assert len(kept) == 1
-    assert discards == []
-
-
-def test_semantic_completeness_falls_back_to_one_finding_evidence_span() -> None:
-    definition = {
-        "id": "fly-id", "name": "Single-Arm Incline Fly",
-        "instructions": "Lie on the incline bench and arc one dumbbell over the chest.",
-        "exerciseType": "WEIGHT", "equipmentId": "dumbbell-id",
-        "bodyWeightPercentage": None, "requiredAccessoryEquipmentIds": ["bench-id"],
-        "muscleGroups": ["FRONT_CHEST"], "secondaryMuscleGroups": [],
-        "exerciseCategory": "ISOLATION",
-    }
-
-    def malformed(review_id):
-        return {"id": review_id, "requirements": [{
-            "description": "One dumbbell supplies resistance.",
-            "supportingText": "the single weight",
-            "rationale": "The instruction names one dumbbell.",
-            "anyOfEquipmentRefs": ["PRIMARY_DUMBBELL_1"],
-            "anyOfCapabilities": [], "mandatory": True,
-        }], "missingEquipment": [], "contradictions": [], "instructionPatch": []}
-
-    def fake_call(_client, messages, loading_message, show_loading=False):
-        if loading_message.startswith("Verifying semantic completeness"):
-            return json.dumps({"patch": []})
-        if " isolated evidence " in loading_message:
-            start = definition["instructions"].index("one dumbbell")
-            return json.dumps({"start": start, "end": start + len("one dumbbell")})
-        if " evidence grounding " in loading_message:
-            return json.dumps({"requirementSpans": [], "contradictionSpans": []})
-        if " isolated rewrite " in loading_message:
-            return json.dumps({"review": malformed(definition["id"])})
-        if " repair " in loading_message:
-            return json.dumps({"patch": []})
-        requested = json.loads(messages[-1]["content"])["definitions"][0]
-        return json.dumps({"reviews": [malformed(requested["id"])]})
-
-    kept, discards, _ = _run_instruction_completeness_review(
-        None, [definition], [],
-        {"equipments": [{"id": "dumbbell-id", "name": "Dumbbell", "type": "DUMBBELL"}],
-         "accessoryEquipments": [{"id": "bench-id", "name": "Bench", "type": "ACCESSORY"}]},
-        fake_call,
-    )
-
-    assert len(kept) == 1
-    assert discards == []
-
-
-def test_semantic_completeness_progress_resumes_after_completed_batch() -> None:
-    definitions = [{
-        "id": f"curl-{index}", "name": f"Dumbbell Curl {index}",
-        "instructions": "Curl the dumbbell with control.",
-        "exerciseType": "WEIGHT", "equipmentId": "dumbbell-id",
-        "bodyWeightPercentage": None, "requiredAccessoryEquipmentIds": [],
-        "muscleGroups": ["FRONT_BICEPS"], "secondaryMuscleGroups": [],
-        "exerciseCategory": "ISOLATION",
-    } for index in range(2)]
-    snapshots = []
-
-    def valid_review(requested):
-        return {"reviews": [{
-            "id": requested["id"],
-            "requirements": [{
-                "description": "The movement uses a dumbbell.",
-                "supportingText": "dumbbell",
-                "rationale": "The instruction explicitly names it.",
-                "anyOfEquipmentRefs": ["PRIMARY_DUMBBELL_1"],
-                "anyOfCapabilities": [], "mandatory": True,
-            }],
-            "missingEquipment": [], "contradictions": [], "instructionPatch": [],
-        }]}
-
-    def failing_second_call(_client, messages, _loading_message, show_loading=False):
-        if _loading_message.startswith("Verifying semantic completeness"):
-            return json.dumps({"patch": []})
-        requested = json.loads(messages[-1]["content"])["definitions"][0]
-        if requested["id"] == "curl-1":
-            return json.dumps({"reviews": []})
-        return json.dumps(valid_review(requested))
-
-    with pytest.raises(ValueError, match="batch 2 remained invalid"):
-        _run_instruction_completeness_review(
-            None, definitions, [],
-            {"equipments": [{"id": "dumbbell-id", "name": "Dumbbell", "type": "DUMBBELL"}],
-             "accessoryEquipments": []},
-            failing_second_call, batch_size=1,
-            batch_completed_callback=lambda current, discards, completed: snapshots.append(
-                (current, discards, completed)
-            ),
-        )
-
-    resumed_requests = []
-    current, discards, completed = snapshots[-1]
-
-    def resumed_call(_client, messages, _loading_message, show_loading=False):
-        if _loading_message.startswith("Verifying semantic completeness"):
-            return json.dumps({"patch": []})
-        requested = json.loads(messages[-1]["content"])["definitions"][0]
-        resumed_requests.append(requested["id"])
-        return json.dumps(valid_review(requested))
-
-    kept, _, _ = _run_instruction_completeness_review(
-        None, current, discards,
-        {"equipments": [{"id": "dumbbell-id", "name": "Dumbbell", "type": "DUMBBELL"}],
-         "accessoryEquipments": []},
-        resumed_call, batch_size=1, completed_definition_ids=completed,
-    )
-
-    assert len(kept) == 2
-    assert resumed_requests == ["curl-1"]
-
-
-def test_instruction_entailment_repairs_instructions_for_omitted_declared_equipment() -> None:
-    definition = {
-        "id": "weighted-id",
-        "name": "Weighted Bicycle Crunch",
-        "instructions": "Alternate opposite elbow and knee with control.",
-        "exerciseType": "WEIGHT",
-        "equipmentId": "vest-id",
-        "bodyWeightPercentage": None,
-        "requiredAccessoryEquipmentIds": [],
-        "muscleGroups": ["FRONT_ABS"],
-        "secondaryMuscleGroups": [],
-        "exerciseCategory": "MODERATE_COMPOUND",
-    }
-
-    def fake_call(_client, _messages, loading_message, show_loading=False):
-        if loading_message.startswith("Instruction entailment batch"):
-            return json.dumps({
-                "audits": [{
-                    "id": "weighted-id",
-                    "requirements": [],
-                    "instructionPatch": [],
-                }]
-            })
-        if loading_message.startswith("Verifying instruction entailment"):
-            return json.dumps({"patch": []})
-        return json.dumps({
-            "patch": [
-                {
-                    "op": "replace",
-                    "path": "/definition/instructions",
-                    "value": "Wear the weight vest and alternate opposite elbow and knee with control.",
-                },
-                {
-                    "op": "replace",
-                    "path": "/audit/requirements",
-                    "value": [{
-                        "evidence": "weight vest",
-                        "anyOfEquipmentRefs": ["PRIMARY_WEIGHT_VEST_1"],
-                        "anyOfCapabilities": [],
-                        "mandatory": True,
-                    }],
-                },
-            ]
-        })
-
-    kept, discarded = _run_instruction_entailment_audit(
-        None,
-        [definition],
-        [],
-        {
-            "equipments": [{
-                "id": "vest-id",
-                "name": "Weight Vest",
-                "type": "WEIGHTVEST",
-                "capabilities": ["ADJUSTABLE_WEIGHT"],
-            }],
-            "accessoryEquipments": [],
-        },
-        fake_call,
-    )
-
-    assert discarded == []
-    assert kept[0]["instructions"].startswith("Wear the weight vest")
-
-
-def test_instruction_entailment_rejects_legacy_reduced_baseline() -> None:
-    with pytest.raises(ValueError, match="old instruction-entailment contract"):
-        review_library_instruction_entailment(
-            None,
-            {
-                "exerciseDefinitions": [{"id": "reduced-id"}],
-                "preInstructionEntailmentDefinitions": [{"id": "reduced-id"}],
-                "sourceExerciseDefinitions": [
-                    {"id": "reduced-id"},
-                    {"id": "falsely-discarded-id"},
-                ],
-                "equipments": [],
-                "accessoryEquipments": [],
-                "semanticDiscards": [
-                    "Movement: instructions require unavailable capability alternatives []"
-                ],
-            },
-        )
-
-
-def test_instruction_entailment_persists_and_resumes_completed_batches() -> None:
-    definition = {
-        "id": "curl-id",
-        "name": "Dumbbell Curl",
-        "instructions": "Curl the dumbbell with control.",
-        "exerciseType": "WEIGHT",
-        "equipmentId": "dumbbell-id",
-        "bodyWeightPercentage": None,
-        "requiredAccessoryEquipmentIds": [],
-        "muscleGroups": ["FRONT_BICEPS"],
-        "secondaryMuscleGroups": [],
-        "exerciseCategory": "ISOLATION",
-    }
-    checkpoint = {
-        "exerciseDefinitions": [definition],
-        "equipments": [{
-            "id": "dumbbell-id",
-            "name": "Dumbbell",
-            "type": "DUMBBELL",
-            "capabilities": ["ADJUSTABLE_WEIGHT"],
-        }],
-        "accessoryEquipments": [],
-        "semanticDiscards": [],
-        "generationFailures": [],
-    }
-    call_count = 0
-
-    def fake_call(_client, _messages, loading_message, show_loading=False):
-        nonlocal call_count
-        call_count += 1
-        if loading_message.startswith("Verifying semantic completeness"):
-            return json.dumps({"patch": []})
-        if loading_message.startswith("Semantic completeness batch"):
-            requested = json.loads(_messages[-1]["content"])["definitions"][0]
-            return json.dumps({"reviews": [{
-                "id": requested["id"],
-                "requirements": [{
-                    "description": "The movement uses a dumbbell.",
-                    "supportingText": "dumbbell",
-                    "rationale": "The instruction explicitly names the implement.",
-                    "anyOfEquipmentRefs": ["PRIMARY_DUMBBELL_1"],
-                    "anyOfCapabilities": [],
-                    "mandatory": True,
-                }],
-                "missingEquipment": [],
-                "contradictions": [],
-                "instructionPatch": [],
-            }]})
-        if loading_message.startswith("Verifying instruction entailment"):
-            return json.dumps({"patch": []})
-        return json.dumps({
-            "audits": [{
-                "id": "curl-id",
-                "requirements": [{
-                    "evidence": "dumbbell",
-                    "anyOfEquipmentRefs": ["PRIMARY_DUMBBELL_1"],
-                    "anyOfCapabilities": [],
-                    "mandatory": True,
-                }],
-                "instructionPatch": [],
-            }]
-        })
-
-    snapshots = []
-    result = review_library_instruction_entailment(
-        None,
-        checkpoint,
-        instruction_entailment_call=fake_call,
-        progress_callback=snapshots.append,
-    )
-    assert len(result["exerciseDefinitions"]) == 1
-    assert len(snapshots) == 2
-    assert call_count == 4
-
-    call_count = 0
-    resumed = review_library_instruction_entailment(
-        None,
-        snapshots[-1],
-        instruction_entailment_call=fake_call,
-    )
-    assert len(resumed["exerciseDefinitions"]) == 1
-    assert call_count == 0
-
-    call_count = 0
-
-    completed_rerun = review_library_instruction_entailment(
-        None,
-        result,
-        instruction_entailment_call=fake_call,
-    )
-    assert len(completed_rerun["exerciseDefinitions"]) == 1
-    assert call_count == 0
+    assert normalized["missingEquipment"] == ["portable power rack"]
 
 
 def test_failed_review_batch_adaptively_splits_before_stopping() -> None:
@@ -3257,7 +2006,7 @@ def test_candidate_enforces_cardio_machine_exercise_type_compatibility() -> None
     assert _validate_candidate(timed_with_weights, equipment)["equipmentId"] == "machine-id"
 
 
-def test_definition_rejects_undeclared_equipment_and_capabilities_in_instructions() -> None:
+def test_definition_rejects_unknown_declared_equipment_ids() -> None:
     equipment = {
         "equipments": [{"id": "bar-id", "type": "BARBELL", "name": "Barbell"}],
         "accessoryEquipments": [{"id": "bench-id", "type": "ACCESSORY", "name": "Bench"}],
@@ -3270,15 +2019,23 @@ def test_definition_rejects_undeclared_equipment_and_capabilities_in_instruction
         "requiredAccessoryEquipmentIds": [],
         "exerciseCategory": "ISOLATION",
     }
-    raw = {
+    unknown_primary = {
         **candidate,
-        "instructions": "Sit on a bench and curl the barbell.",
-        "instructionEquipmentIds": ["bar-id"],
+        "equipmentId": "ghost-id",
         "muscleGroups": ["FRONT_BICEPS"],
         "secondaryMuscleGroups": [],
     }
-    with pytest.raises(ValueError, match="undeclared equipment: Bench"):
-        _validate_definition(raw, candidate, equipment)
+    errors = _structured_definition_errors(unknown_primary, equipment)
+    assert any(error["code"] == "UNKNOWN_PRIMARY_EQUIPMENT" for error in errors)
+
+    unknown_accessory = {
+        **candidate,
+        "requiredAccessoryEquipmentIds": ["ghost-accessory-id"],
+        "muscleGroups": ["FRONT_BICEPS"],
+        "secondaryMuscleGroups": [],
+    }
+    errors = _structured_definition_errors(unknown_accessory, equipment)
+    assert any(error["code"] == "UNKNOWN_ACCESSORY_EQUIPMENT" for error in errors)
 
     cable_equipment = {
         "equipments": [{
@@ -3292,15 +2049,12 @@ def test_definition_rejects_undeclared_equipment_and_capabilities_in_instruction
         "name": "Cable Pushdown",
         "equipmentId": "cable-id",
     }
-    cable_raw = {
+    cable_definition = {
         **cable_candidate,
-        "instructions": "Attach a rope to the high pulley and press down.",
-        "instructionEquipmentIds": ["cable-id"],
         "muscleGroups": ["BACK_TRICEPS"],
         "secondaryMuscleGroups": [],
     }
-    with pytest.raises(ValueError, match="undeclared capabilities: rope attachment"):
-        _validate_definition(cable_raw, cable_candidate, cable_equipment)
+    assert _structured_definition_errors(cable_definition, cable_equipment) == []
 
 
 def test_llm_equipment_context_distinguishes_single_dumbbell_from_pair() -> None:
@@ -3318,23 +2072,6 @@ def test_llm_equipment_context_distinguishes_single_dumbbell_from_pair() -> None
     assert "Single Dumbbell" in context
     assert equipment["equipments"][0]["name"] == "Dumbbells"
     assert equipment["equipments"][1]["name"] == "Dumbbell"
-
-
-def test_instruction_setup_rules_catch_explicit_incline_capability_language() -> None:
-    equipment = {
-        "equipments": [{"id": "bar-id", "type": "BARBELL", "name": "Barbell"}],
-        "accessoryEquipments": [
-            {"id": "bench-id", "type": "ACCESSORY", "name": "Bench", "capabilities": ["BENCH"]},
-        ],
-    }
-    linked = {
-        "name": "Generic Press",
-        "equipmentId": "bar-id",
-        "requiredAccessoryEquipmentIds": ["bench-id"],
-    }
-
-    with pytest.raises(ValueError, match="incline bench"):
-        _validate_instruction_requirements("Lie on an incline bench and press the barbell.", linked, equipment)
 
 
 def test_capability_implications_satisfy_more_specific_requirements() -> None:
@@ -3614,7 +2351,6 @@ def test_review_checkpoint_normalizes_none_and_preserves_source_on_mass_rejectio
     definition = {
         "id": "definition-id",
         "name": "Generated Movement",
-        "instructions": "Perform the movement under control.",
         "exerciseType": "WEIGHT",
         "equipmentId": "weight-id",
         "bodyWeightPercentage": None,
@@ -3664,7 +2400,6 @@ def test_review_checkpoint_persists_and_resumes_completed_batches() -> None:
         {
             "id": f"definition-{index}",
             "name": f"Generated Movement {index}",
-            "instructions": "Perform the movement under control.",
             "exerciseType": "WEIGHT",
             "equipmentId": "weight-id",
             "bodyWeightPercentage": None,
@@ -3743,3 +2478,158 @@ def test_review_checkpoint_persists_and_resumes_completed_batches() -> None:
     assert completed is True
     assert len(resumed_result["exerciseDefinitions"]) == 21
     assert call_count == 4
+
+
+def test_review_pipeline_survives_definitions_without_instructions() -> None:
+    definitions = [
+        {
+            "id": "definition-a",
+            "name": "Overhead Press",
+            "exerciseType": "WEIGHT",
+            "equipmentId": "barbell-id",
+            "bodyWeightPercentage": None,
+            "requiredAccessoryEquipmentIds": [],
+            "muscleGroups": ["FRONT_DELTOIDS"],
+            "secondaryMuscleGroups": ["BACK_TRICEPS"],
+            "exerciseCategory": "HEAVY_COMPOUND",
+        },
+        {
+            "id": "definition-b",
+            "name": "Barbell Row",
+            "exerciseType": "WEIGHT",
+            "equipmentId": "barbell-id",
+            "bodyWeightPercentage": None,
+            "requiredAccessoryEquipmentIds": [],
+            "muscleGroups": ["BACK_UPPER_BACK"],
+            "secondaryMuscleGroups": ["FRONT_BICEPS"],
+            "exerciseCategory": "MODERATE_COMPOUND",
+        },
+    ]
+    checkpoint = {
+        "exerciseDefinitions": definitions,
+        "equipments": [{"id": "barbell-id", "type": "BARBELL", "name": "Barbell"}],
+        "accessoryEquipments": [],
+        "generationFailures": [],
+    }
+
+    def fake_call(_client, messages, loading_message, show_loading=False):
+        if loading_message.startswith("Global matrix batch "):
+            return json.dumps({
+                "groups": [{
+                    "setup": "No additional physical setup",
+                    "memberIds": [definition["id"] for definition in definitions],
+                    "requirementClauses": [],
+                    "missingEquipment": [],
+                    "rationale": "All supplied definitions use their declared equipment",
+                }]
+            })
+        if loading_message in (
+            "Verifying global requirement matrix",
+            "Verifying physical requirements",
+            "Adjudicating proposed infeasibility",
+        ):
+            return json.dumps({"patch": []})
+        serialized = "\n".join(str(message.get("content", "")) for message in messages)
+        ids = [
+            definition["id"]
+            for definition in definitions
+            if f'"id": "{definition["id"]}"' in serialized
+        ]
+        return json.dumps({
+            "reviews": [
+                {
+                    "id": definition_id,
+                    "requiredEquipmentIds": ["barbell-id"],
+                    "requirementClauses": [],
+                    "missingEquipment": [],
+                    "issues": [],
+                    "patch": [],
+                }
+                for definition_id in ids
+            ]
+        })
+
+    result, completed = review_library_checkpoint(
+        None,
+        checkpoint,
+        max_workers=1,
+        semantic_review_call=fake_call,
+    )
+
+    assert completed is True
+    assert result["reviewStatus"] == "COMPLETE"
+    assert [item["name"] for item in result["exerciseDefinitions"]] == [
+        "Overhead Press",
+        "Barbell Row",
+    ]
+    assert all("instructions" not in item for item in result["exerciseDefinitions"])
+
+
+def test_candidate_normalization_strips_redundant_name_qualifiers() -> None:
+    normalized = _normalize_candidate_semantics(
+        {
+            "name": "Single-Arm Dumbbell One-Arm Row",
+            "exerciseType": "WEIGHT",
+            "equipmentId": "dumbbell",
+            "bodyWeightPercentage": None,
+            "requiredAccessoryEquipmentIds": [],
+        },
+        {"equipments": [], "accessoryEquipments": []},
+    )
+
+    assert normalized["name"] == "Single-Arm Dumbbell Row"
+    # A single qualifier is preserved untouched.
+    untouched = _normalize_candidate_semantics(
+        {
+            "name": "One-Arm Dumbbell Row",
+            "exerciseType": "WEIGHT",
+            "equipmentId": "dumbbell",
+            "bodyWeightPercentage": None,
+            "requiredAccessoryEquipmentIds": [],
+        },
+        {"equipments": [], "accessoryEquipments": []},
+    )
+    assert untouched["name"] == "One-Arm Dumbbell Row"
+
+
+def test_max_definitions_caps_emitted_definitions() -> None:
+    equipment = {
+        "equipments": [{"id": "dumbbells", "type": "DUMBBELLS", "name": "Dumbbells"}],
+        "accessoryEquipments": [],
+    }
+    candidates = [
+        {
+            "name": name,
+            "exerciseType": "WEIGHT",
+            "equipmentId": "dumbbells",
+            "bodyWeightPercentage": None,
+            "requiredAccessoryEquipmentIds": [],
+        }
+        for name in ("Dumbbell Row", "Dumbbell Press", "Dumbbell Curl")
+    ]
+    generated = generate_exercise_library(
+        None,
+        equipment,
+        audit_passes=0,
+        max_workers=1,
+        scope_inventory_by_equipment=False,
+        inventory_call=lambda *_args, **_kwargs: json.dumps({"exercises": candidates}),
+        reasoner_call=_generator_review_response,
+        chat_call=lambda _client, messages, _loading_message, show_loading=False: _definition_response(
+            messages,
+            lambda exercise: {
+                **exercise,
+                "muscleGroups": ["FRONT_CHEST"],
+                "secondaryMuscleGroups": [],
+                "exerciseCategory": "MODERATE_COMPOUND",
+            },
+        ),
+        max_definitions=2,
+    )
+
+    # Candidates are sorted by name before emission, so the cap keeps the
+    # alphabetically-first definitions deterministically.
+    assert [d["name"] for d in generated["exerciseDefinitions"]] == [
+        "Dumbbell Curl",
+        "Dumbbell Press",
+    ]

@@ -314,18 +314,23 @@ private fun HeartRateDisplay(
 
     val labelStyle = MaterialTheme.typography.labelMedium
 
-    // The chip is always laid out (zone 0 renders in its gray palette color) so the
-    // centered ensemble keeps the same width and nothing shifts as zones change.
-    Row(
-        modifier = modifier,
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp)
-    ) {
-        Spacer(modifier = Modifier.weight(1f))
+    val heartSize = 15.dp
+    val chipWidth = 27.5.dp
 
+    // The chip is wider than the heart; without compensation the value would sit left
+    // of the screen centerline by half their difference. All slots are fixed-width, so
+    // nothing shifts as the value, zone, or display mode changes.
+    val centerlineOffset = (chipWidth - heartSize) / 2
+
+    Row(
+        modifier = modifier.offset(x = centerlineOffset),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally)
+    ) {
         PulsingHeartWithBpm(
             bpm = bpm,
-            tint = heartColor
+            tint = heartColor,
+            size = heartSize
         )
 
         BasicText(
@@ -348,7 +353,7 @@ private fun HeartRateDisplay(
         )
 
         Box(
-            modifier = Modifier.width(27.5.dp),
+            modifier = Modifier.width(chipWidth),
             contentAlignment = Alignment.Center
         ) {
             Box(
@@ -381,8 +386,6 @@ private fun HeartRateDisplay(
                 )
             }
         }
-
-        Spacer(modifier = Modifier.weight(1f))
     }
 }
 
