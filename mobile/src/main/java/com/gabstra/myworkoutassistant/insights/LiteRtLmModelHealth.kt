@@ -57,7 +57,8 @@ internal object LiteRtLmModelHealth {
      * Refusing early turns that into a readable message instead.
      */
     fun requireEnoughFreeMemory(context: Context, modelPath: String) {
-        val modelBytes = File(modelPath).length()
+        val modelFile = File(modelPath)
+        val modelBytes = modelFile.length()
         if (modelBytes <= 0L) return
         val activityManager =
             context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager ?: return
@@ -66,9 +67,25 @@ internal object LiteRtLmModelHealth {
         if (memoryInfo.availMem < requiredBytes) {
             throw UnsafeModelException(
                 "Not enough free memory to load this model (${modelBytes / 1_000_000} MB file, " +
-                    "${memoryInfo.availMem / 1_000_000} MB free). Close other apps, or use a " +
-                    "smaller model (for example Gemma 4 E2B).",
+                    "${memoryInfo.availMem / 1_000_000} MB free). ${adviceFor(modelFile.name)}",
             )
+        }
+    }
+
+    /**
+     * Suggesting a smaller model is only useful when a smaller one exists;
+     * for the compact tier the realistic fix is freeing memory (a reboot is
+     * the fastest reliable way on Samsung devices).
+     */
+    private fun adviceFor(modelFileName: String): String {
+        val name = modelFileName.lowercase()
+        return when {
+            "e2b" in name ->
+                "This is already the smallest model — restart the phone to free memory, then try again."
+            "e4b" in name ->
+                "Close other apps, or use a smaller model (for example Gemma 4 E2B)."
+            else ->
+                "Close other apps, restart the phone, or use a smaller model."
         }
     }
 }
