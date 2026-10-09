@@ -12,7 +12,6 @@ import com.google.ai.edge.litertlm.ExperimentalApi
 import com.google.ai.edge.litertlm.ExperimentalFlags
 import com.google.ai.edge.litertlm.LogSeverity
 import com.google.ai.edge.litertlm.Message
-import com.google.ai.edge.litertlm.ModelInfo
 import com.google.ai.edge.litertlm.SamplerConfig
 import com.google.ai.edge.litertlm.ToolProvider
 import kotlinx.coroutines.Dispatchers
@@ -143,6 +142,9 @@ private object LiteRtLmEnginePool {
             return cached
         }
         Engine.setNativeMinLogSeverity(LogSeverity.ERROR)
+        // Refuse oversized loads before native code maps the file; a mid-load
+        // low-memory kill cannot be caught or reported.
+        LiteRtLmModelHealth.requireEnoughFreeMemory(appContext, modelPath)
 
         cachedHandle?.engine?.close()
         val created = createEngine(
@@ -181,18 +183,64 @@ private object LiteRtLmEnginePool {
         visionEnabled: Boolean,
         backendPreference: LiteRtLmBackendPreference,
     ): EngineHandle {
+        // Header-only validation (weights not loaded): an unreadable bundle or
+        // one without GPU support is resolved here instead of crashing in the
+        // native engine. Also decides speculative decoding from the same read.
+        val report = LiteRtLmModelHealth.inspect(modelPath)
+        ExperimentalFlags.enableSpeculativeDecoding = report.speculativeDecodingSupported
+
+        var resolvedPreference = backendPreference
+        if (backendPreference == LiteRtLmBackendPreference.GPU && !report.gpuSupported) {
+            Log.w(
+                LiteRtLmInsightsRepository.LOG_TAG,
+                "Model bundle does not list GPU support; using the CPU backend instead."
+            )
+            resolvedPreference = LiteRtLmBackendPreference.CPU
+        }
+
+        val engine = try {
+            initializeEngine(modelPath, resolvedPreference, visionEnabled, cacheDir)
+        } catch (firstFailure: Throwable) {
+            // GPU delegates can fail at initialization on some drivers; one CPU
+            // retry is the catchable safety net (a native abort is not).
+            if (resolvedPreference == LiteRtLmBackendPreference.CPU) throw firstFailure
+            Log.w(
+                LiteRtLmInsightsRepository.LOG_TAG,
+                "GPU engine initialization failed; retrying with the CPU backend.",
+                firstFailure,
+            )
+            resolvedPreference = LiteRtLmBackendPreference.CPU
+            try {
+                initializeEngine(modelPath, resolvedPreference, visionEnabled, cacheDir)
+            } catch (cpuFailure: Throwable) {
+                throw LiteRtLmModelHealth.UnsafeModelException(
+                    "The local model failed to initialize on both the GPU and CPU backends: " +
+                        (cpuFailure.message ?: cpuFailure.javaClass.simpleName),
+                    cpuFailure,
+                )
+            }
+        }
+        return EngineHandle(
+            engine = engine,
+            modelPath = modelPath,
+            backendName = resolvedPreference.label,
+            visionEnabled = visionEnabled,
+            // The user preference stays the cache key; backendName reports what
+            // actually runs (it can differ after a GPU -> CPU fallback).
+            backendPreference = backendPreference
+        )
+    }
+
+    private fun initializeEngine(
+        modelPath: String,
+        backendPreference: LiteRtLmBackendPreference,
+        visionEnabled: Boolean,
+        cacheDir: String,
+    ): Engine {
         val backend = when (backendPreference) {
             LiteRtLmBackendPreference.GPU -> Backend.GPU()
             LiteRtLmBackendPreference.CPU -> Backend.CPU()
         }
-        // Speculative decoding needs a model bundle that carries a draft model;
-        // gate it per import by reading the bundle metadata (ModelInfo parses
-        // the header without loading the weights).
-        ExperimentalFlags.enableSpeculativeDecoding = runCatching {
-            ModelInfo.from(modelPath).use { info ->
-                (info as? ModelInfo.Llm)?.hasSpeculativeDecodingSupport() ?: false
-            }
-        }.getOrDefault(false)
         val engine = Engine(
             EngineConfig(
                 modelPath = modelPath,
@@ -202,13 +250,7 @@ private object LiteRtLmEnginePool {
             )
         )
         engine.initialize()
-        return EngineHandle(
-            engine = engine,
-            modelPath = modelPath,
-            backendName = backendPreference.label,
-            visionEnabled = visionEnabled,
-            backendPreference = backendPreference
-        )
+        return engine
     }
 }
 

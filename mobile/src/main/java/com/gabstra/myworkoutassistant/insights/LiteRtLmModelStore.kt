@@ -82,6 +82,16 @@ object LiteRtLmModelStore {
             }
         } ?: error("Unable to read the selected model file.")
 
+        // Reject files the runtime cannot parse before they become the active
+        // model — a bad bundle would otherwise crash inside native code on the
+        // next generation instead of failing here with a readable message.
+        try {
+            LiteRtLmModelHealth.inspect(targetFile.absolutePath)
+        } catch (t: Throwable) {
+            targetFile.delete()
+            throw t
+        }
+
         context.getSharedPreferences(INSIGHTS_PREFS, Context.MODE_PRIVATE).edit {
             putString(MODEL_PATH_KEY, targetFile.absolutePath)
             putString(MODEL_NAME_KEY, sourceName)
