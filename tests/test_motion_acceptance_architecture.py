@@ -17,7 +17,7 @@ from exercise_motion_pkg import bake_and_rank as bake
 
 def _attach_current_source_clearance(tmp_path, source, manifest):
     source_manifest = tmp_path / "source_segment_selection.json"
-    source_manifest.write_text('{"sourcePrepReason":"pre_wham_source_window_choice"}')
+    source_manifest.write_text('{"sourcePrepReason":"pre_reconstruction_source_window_choice"}')
     reviewed_image = tmp_path / "reviewed_source_frame.jpg"
     reviewed_image.write_bytes(b"reviewed image")
     profile = {"sourceSelectionPolicyVersion": bake.SOURCE_SELECTION_POLICY_VERSION}
@@ -63,7 +63,7 @@ def test_identity_changes_for_source_skeleton_contract_and_policy(tmp_path):
     source.write_bytes(b"source")
     skeleton.write_text("{}")
     manifest = {
-        "preWhamSourceValidationEnabled": True,
+        "preReconstructionSourceValidationEnabled": True,
         "sourceSelectionPolicyVersion": bake.SOURCE_SELECTION_POLICY_VERSION,
         "selected": {
             "loopIndex": 0,
@@ -106,7 +106,7 @@ def test_normal_selection_identity_requires_current_source_clearance(tmp_path):
     (tmp_path / "x_selected_input.mp4").write_bytes(b"source")
     (tmp_path / "x_wear_skeleton.json").write_text("{}")
     manifest = {
-        "preWhamSourceValidationEnabled": True,
+        "preReconstructionSourceValidationEnabled": True,
         "sourceSelectionPolicyVersion": bake.SOURCE_SELECTION_POLICY_VERSION,
         "selected": {
             "loopIndex": 0,
@@ -135,7 +135,7 @@ def test_normal_selection_identity_requires_current_source_clearance(tmp_path):
     manifest["selected"].pop("sourceSelectionClearance")
     assert selected_artifact_identity(tmp_path, manifest, policies=policies) is None
 
-    manifest["preWhamSourceValidationEnabled"] = False
+    manifest["preReconstructionSourceValidationEnabled"] = False
     assert selected_artifact_identity(tmp_path, manifest, policies=policies) is None
 
 

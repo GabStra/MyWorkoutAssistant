@@ -1,4 +1,4 @@
-﻿[CmdletBinding(PositionalBinding = $false)]
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [Parameter(Mandatory = $true)]
     [string]$WorkoutPlanJson,
@@ -20,7 +20,6 @@ param(
     # (schemaVersion 1, kind "prepared_exercise_candidates") that bypasses
     # discovery and source-download stages entirely.
     [string]$PreparedCandidatesManifest,
-    [string]$WhamRepoPath,
     [string]$BodyModelRoot,
     [string]$YouTubePreviewCacheDir,
     [string]$YouTubeSourceCacheDir,
@@ -112,25 +111,17 @@ param(
     [switch]$AllowDirtyWorktree,
     [switch]$DeferAfterFirstAttempt,
     [switch]$IncludeDisabled,
-    [switch]$RequireWhamCache,
-    [switch]$NoWhamDocker,
-    [string]$WhamDockerImage = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1",
-    [ValidateSet("wham", "gvhmr")]
-    [string]$MotionReconstructor = "gvhmr",
-    [string]$GvhmrDockerImage = "myworkoutassistant/gvhmr:torch2.3-cu121",
+    [switch]$RequireReconstructionCache,
+    [string]$ReconstructionDockerImage = "myworkoutassistant/gvhmr:torch2.3-cu121",
     [switch]$FastProfile,
-    [string]$WhamDockerGpus = "all",
-    [string]$WhamDockerShmSize = "16g",
-    [bool]$WarmWhamWorker = $false,
-    [switch]$SkipWarmWhamWorker,
-    [string]$WhamWorkerSessionDir,
+    [string]$ReconstructionDockerGpus = "all",
+    [string]$ReconstructionDockerShmSize = "16g",
+    [bool]$WarmGvhmrWorker = $false,
+    [switch]$SkipWarmGvhmrWorker,
     [string]$GvhmrWorkerSessionDir,
-    [double]$WhamWorkerStartupTimeoutSeconds = 600.0,
-    [double]$WhamWorkerJobTimeoutSeconds = 1200.0,
-    [double]$WhamTimeoutSeconds = 1200.0,
-    [switch]$FullWhamCameraSlam,
-    [switch]$SkipSmplify,
-    [switch]$RunSmplify,
+    [double]$GvhmrWorkerStartupTimeoutSeconds = 600.0,
+    [double]$GvhmrWorkerJobTimeoutSeconds = 1200.0,
+    [double]$ReconstructionTimeoutSeconds = 1200.0,
     [switch]$SkipMotionTuning,
     [switch]$SkipSourceSegmentDetection,
     [string]$SegmentBaseUrl,
@@ -143,7 +134,7 @@ param(
     [double]$SegmentEndPaddingSeconds = 0.35,
     [double]$SegmentMinSeconds = 2.0,
     [double]$SegmentMaxSeconds = 0.0,
-    [switch]$SkipPreWhamSourceValidation,
+    [switch]$SkipPreReconstructionSourceValidation,
     [int]$SegmentClassificationWorkers = 4,
     [switch]$RankPreviewVariants,
     [switch]$AdaptivePreviewSettings,
@@ -225,6 +216,7 @@ $StagedWaveAmbiguousRecoveryExitCode = 76
 $StagedWaveAmbiguousRecoveryStatus = "ambiguous_recovery"
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "reconstruction_compat.ps1")
 Import-Module (Join-Path $PSScriptRoot "motion_source_identity.psm1") -Force
 . (Join-Path $PSScriptRoot "motion_run_interrupt.ps1")
 trap {
@@ -243,7 +235,7 @@ $script:LiveLogStateByPath = @{}
 $script:LastStagedWaveCheckpointVersionByPath = @{}
 $script:StagedWaveCheckpointStageCacheByPath = @{}
 $script:AnnouncedIndividualGeneration = $false
-$script:WhamWorkerStartedOnce = $false
+$script:GvhmrWorkerStartedOnce = $false
 $discoveryStagePolicyVersion = 5
 $sourceDownloadStagePolicyVersion = 2
 # Scheduler timeline telemetry (<WorkspaceRoot>/scheduler_timeline.json). This
@@ -587,7 +579,7 @@ function Get-CandidateManifestCounts {
         return $counts
     }
     try {
-        $payload = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+        $payload = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
         foreach ($exercise in @($payload.exercises)) {
             foreach ($item in @($exercise.candidates)) {
                 $counts.candidateCount += 1
@@ -726,14 +718,14 @@ function Get-SelectionTimingSummary {
         reviewRankingSeconds = $null
         selectionMaterializationSeconds = $null
         sourcePreparationSeconds = 0.0
-        whamRunSeconds = 0.0
-        whamDockerLockWaitSeconds = 0.0
+        reconstructionRunSeconds = 0.0
+        reconstructionDockerLockWaitSeconds = 0.0
         previewBakeSeconds = 0.0
-        whamGeneratedCount = 0
-        whamReusedCount = 0
-        whamExplicitCount = 0
-        whamNotUsedCount = 0
-        warmWhamWorkerJobCount = 0
+        reconstructionGeneratedCount = 0
+        reconstructionReusedCount = 0
+        reconstructionExplicitCount = 0
+        reconstructionNotUsedCount = 0
+        warmReconstructionWorkerJobCount = 0
     }
     if ($null -eq $Selection) {
         return $summary
@@ -747,21 +739,21 @@ function Get-SelectionTimingSummary {
         $generationTimings = Get-ObjectProperty -Object $candidate -Name "generationTimings"
         $summary.sourcePreparationSeconds = Add-OptionalSeconds -Current $summary.sourcePreparationSeconds -Value (Get-ObjectProperty -Object $generationTimings -Name "sourcePreparationSeconds")
         $summary.previewBakeSeconds = Add-OptionalSeconds -Current $summary.previewBakeSeconds -Value (Get-ObjectProperty -Object $candidateTimings -Name "previewBakeSeconds")
-        $whamTiming = Get-ObjectProperty -Object $generationTimings -Name "wham"
-        if ((Get-ObjectProperty -Object $whamTiming -Name "warmWorker") -eq $true) {
-            $summary.warmWhamWorkerJobCount += 1
+        $reconstructionTiming = Get-ObjectProperty -Object $generationTimings -Name "reconstruction"
+        if ((Get-ObjectProperty -Object $reconstructionTiming -Name "warmWorker") -eq $true) {
+            $summary.warmReconstructionWorkerJobCount += 1
         }
-        $summary.whamRunSeconds = Add-OptionalSeconds -Current $summary.whamRunSeconds -Value (Get-ObjectProperty -Object $whamTiming -Name "elapsedSeconds")
-        $summary.whamDockerLockWaitSeconds = Add-OptionalSeconds -Current $summary.whamDockerLockWaitSeconds -Value (Get-ObjectProperty -Object $whamTiming -Name "dockerLockWaitSeconds")
-        $whamCacheStatus = [string](Get-ObjectProperty -Object $candidate -Name "whamCacheStatus")
-        if ([string]::IsNullOrWhiteSpace($whamCacheStatus)) {
-            $whamCacheStatus = [string](Get-ObjectProperty -Object $whamTiming -Name "cacheStatus")
+        $summary.reconstructionRunSeconds = Add-OptionalSeconds -Current $summary.reconstructionRunSeconds -Value (Get-ObjectProperty -Object $reconstructionTiming -Name "elapsedSeconds")
+        $summary.reconstructionDockerLockWaitSeconds = Add-OptionalSeconds -Current $summary.reconstructionDockerLockWaitSeconds -Value (Get-ObjectProperty -Object $reconstructionTiming -Name "dockerLockWaitSeconds")
+        $reconstructionCacheStatus = [string](Get-ObjectProperty -Object $candidate -Name "reconstructionCacheStatus")
+        if ([string]::IsNullOrWhiteSpace($reconstructionCacheStatus)) {
+            $reconstructionCacheStatus = [string](Get-ObjectProperty -Object $reconstructionTiming -Name "cacheStatus")
         }
-        switch -Regex ($whamCacheStatus) {
-            "^generated" { $summary.whamGeneratedCount += 1; break }
-            "^reused" { $summary.whamReusedCount += 1; break }
-            "^explicit" { $summary.whamExplicitCount += 1; break }
-            "^not_used" { $summary.whamNotUsedCount += 1; break }
+        switch -Regex ($reconstructionCacheStatus) {
+            "^generated" { $summary.reconstructionGeneratedCount += 1; break }
+            "^reused" { $summary.reconstructionReusedCount += 1; break }
+            "^explicit" { $summary.reconstructionExplicitCount += 1; break }
+            "^not_used" { $summary.reconstructionNotUsedCount += 1; break }
         }
     }
     return $summary
@@ -929,7 +921,7 @@ function Update-PackagedSelectionArtifactReferences {
     if (-not (Test-Path -LiteralPath $SelectionManifestPath -PathType Leaf)) {
         throw "Selected output manifest disappeared before its artifact paths were updated."
     }
-    $selection = Get-Content -LiteralPath $SelectionManifestPath -Raw | ConvertFrom-Json
+    $selection = Get-Content -LiteralPath $SelectionManifestPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
     $selectedIndex = $OptionIndex - 1
     $selectedResults = @(Get-ObjectProperty -Object $selection -Name "selectedResults")
     $record = @($selectedResults | Where-Object {
@@ -1002,7 +994,7 @@ function Get-WearSkeletonIdentity {
     if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         throw "Cannot identify missing Wear skeleton: $Path"
     }
-    $payload = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+    $payload = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
     $frames = Get-ObjectProperty -Object $payload -Name "frames"
     return [ordered]@{
         sha256 = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -1084,7 +1076,7 @@ function Assert-PersistedMovementArtifactState {
     if ([string]::IsNullOrWhiteSpace($validationJson)) {
         throw "Python artifact state validator returned no movement state."
     }
-    $validatedState = $validationJson | ConvertFrom-Json -ErrorAction Stop
+    $validatedState = $validationJson | ConvertFrom-Json -ErrorAction Stop | Convert-ReconstructionMetadata
     $entryArtifactClass = [string](Get-ObjectProperty -Object $SelectionEntry -Name "artifactClass")
     if ([string]$validatedState.artifactClass -ne $entryArtifactClass) {
         throw "Selected movement artifact class differs from its persisted state."
@@ -1129,7 +1121,7 @@ function New-PackagedArtifactState {
     if ([string]::IsNullOrWhiteSpace($builderJson)) {
         throw "Python artifact state builder returned no packaged state."
     }
-    return ($builderJson | ConvertFrom-Json -ErrorAction Stop)
+    return ($builderJson | ConvertFrom-Json -ErrorAction Stop | Convert-ReconstructionMetadata)
 }
 
 function Assert-SelectedSkeletonReviewParity {
@@ -1144,7 +1136,7 @@ function Assert-SelectedSkeletonReviewParity {
     $artifactClass = $movementState.artifactClass
     $artifactHistory = $movementState.history
 
-    $sourcePayload = Get-Content -LiteralPath $SourcePath -Raw | ConvertFrom-Json
+    $sourcePayload = Get-Content -LiteralPath $SourcePath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
     $embeddedArtifactState = Get-ObjectProperty -Object $sourcePayload -Name "artifactState"
     if ($null -eq $embeddedArtifactState) {
         throw "Selected skeleton is missing its persisted artifact state."
@@ -1306,7 +1298,7 @@ function Record-PackagedSkeletonReviewParity {
         -not (Test-Path -LiteralPath $SelectionManifestPath -PathType Leaf)) {
         throw "Copied selection manifest is missing; cannot persist packaged skeleton identity."
     }
-    $selection = Get-Content -LiteralPath $SelectionManifestPath -Raw | ConvertFrom-Json
+    $selection = Get-Content -LiteralPath $SelectionManifestPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
     if ($ManualReviewFallback) {
         $record = Get-ObjectProperty -Object $selection -Name "manualReviewFallback"
         if ($null -eq $record) {
@@ -1442,7 +1434,7 @@ function Copy-SelectedSourceAuditEvidence {
     $sourceSelection = $null
     if (Test-Path -LiteralPath $sourceSelectionPath -PathType Leaf) {
         try {
-            $sourceSelection = Get-Content -LiteralPath $sourceSelectionPath -Raw | ConvertFrom-Json
+            $sourceSelection = Get-Content -LiteralPath $sourceSelectionPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
         } catch {
             $sourceSelection = $null
         }
@@ -1494,13 +1486,13 @@ function Copy-SelectedSourceAuditEvidence {
 
     if ($destinationPosePath -and $destinationValidationPath) {
         try {
-            $validation = Get-Content -LiteralPath $destinationValidationPath -Raw | ConvertFrom-Json
+            $validation = Get-Content -LiteralPath $destinationValidationPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
             if ($validation.metrics) {
                 $validation.metrics.sourcePoseReferencePath = [System.IO.Path]::GetFullPath($destinationPosePath)
                 Write-AtomicJsonDocument -Path $destinationValidationPath -InputObject $validation -Depth 100
             }
             if ($destinationSelectionPath) {
-                $selection = Get-Content -LiteralPath $destinationSelectionPath -Raw | ConvertFrom-Json
+                $selection = Get-Content -LiteralPath $destinationSelectionPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
                 if ($selection.exactSourcePhaseValidation -and $selection.exactSourcePhaseValidation.metrics) {
                     $selection.exactSourcePhaseValidation.metrics.sourcePoseReferencePath = [System.IO.Path]::GetFullPath($destinationPosePath)
                     Write-AtomicJsonDocument -Path $destinationSelectionPath -InputObject $selection -Depth 100
@@ -1579,7 +1571,7 @@ function ConvertTo-SelectedPreviewOptionsJson {
     }
     if (-not [string]::IsNullOrWhiteSpace($WearSkeletonPath) -and (Test-Path -LiteralPath $WearSkeletonPath)) {
         try {
-            $skeletonPayload = Get-Content -Raw -LiteralPath $WearSkeletonPath | ConvertFrom-Json
+            $skeletonPayload = Get-Content -Raw -LiteralPath $WearSkeletonPath | ConvertFrom-Json | Convert-ReconstructionMetadata
             $selectedPreviewSettings = Get-ObjectProperty -Object $skeletonPayload -Name "selectedPreviewSettings"
             $wearDisplay = Get-ObjectProperty -Object $skeletonPayload -Name "wearDisplay"
             $cameraYawDegrees = Get-OptionalDouble -Value (
@@ -1815,7 +1807,7 @@ function Get-SharedLlamaLiveInflightCounters {
     $live = @()
     foreach ($counterFile in @(Get-ChildItem -LiteralPath $inflightDir -Filter "*.json" -File -ErrorAction SilentlyContinue)) {
         try {
-            $payload = Get-Content -LiteralPath $counterFile.FullName -Raw | ConvertFrom-Json
+            $payload = Get-Content -LiteralPath $counterFile.FullName -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
         } catch {
             continue
         }
@@ -1936,7 +1928,7 @@ function Get-MotionServiceRuntimeState {
                         $listExitCode = [int]$LASTEXITCODE
                     }
                 }
-                # WHAM containers use --rm. During removal, inspect and list
+                # RECONSTRUCTION containers use --rm. During removal, inspect and list
                 # can briefly disagree; retry that transient state before
                 # retaining a stale owner record as unconfirmed.
                 if ($listExitCode -eq 0 -and
@@ -2346,11 +2338,11 @@ function Test-SharedLlamaServerStoppedByLiveExclusiveHandoff {
 function Get-SharedLlamaBakeRestartCounts {
     param([object[]]$RunningJobs)
 
-    # A staged wave owns the exclusive GPU only during WHAM generation. Its
+    # A staged wave owns the exclusive GPU only during RECONSTRUCTION generation. Its
     # source and final validation phases need the shared vision server, so a
     # blanket "any bake job" gate can strand those phases after a model
     # handoff. Treat unknown/missing checkpoints conservatively.
-    $safeStages = @("source_validation", "wham_released", "final_validation")
+    $safeStages = @("source_validation", "reconstruction_released", "final_validation")
     $safeCount = 0
     $unsafeCount = 0
     foreach ($job in @($RunningJobs)) {
@@ -2367,7 +2359,7 @@ function Get-SharedLlamaBakeRestartCounts {
             continue
         }
         try {
-            $checkpoint = Get-Content -LiteralPath $checkpointPath -Raw | ConvertFrom-Json
+            $checkpoint = Get-Content -LiteralPath $checkpointPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
             if ([string]$checkpoint.stage -in $safeStages) {
                 $safeCount++
             } else {
@@ -2446,25 +2438,22 @@ function Stop-SharedLlamaServer {
     }
 }
 
-function Start-WhamWarmWorker {
+function Start-GvhmrWarmWorker {
     param(
         [string]$SessionDir,
         [string]$MountRoot,
-        [string]$WorkerScriptPath,
-        [ValidateSet("wham", "gvhmr")]
-        [string]$Backend = "wham"
+        [string]$WorkerScriptPath
     )
 
     $sessionLeaseKey = Acquire-MotionServiceSessionLease `
         -SessionDirectory $SessionDir `
-        -Stage "$Backend warm-worker service"
+        -Stage "GVHMR warm-worker service"
     New-Item -ItemType Directory -Force -Path $SessionDir | Out-Null
     $workerQueueDirectories = @("jobs", "running", "results", "job_logs", "ambiguous")
     foreach ($child in $workerQueueDirectories) {
         New-Item -ItemType Directory -Force -Path (Join-Path $SessionDir $child) | Out-Null
     }
-    # Each backend worker now preserves unclaimed jobs and classifies claimed
-    # jobs before loading its model; never clear either queue at supervisor start.
+    # Preserve unclaimed jobs; the worker classifies claimed jobs before model loading.
     foreach ($staleFile in @("ready.json", "heartbeat.json", "startup_error.json", "stop", "stopped.json")) {
         $path = Join-Path $SessionDir $staleFile
         if (Test-Path -LiteralPath $path) {
@@ -2472,10 +2461,10 @@ function Start-WhamWarmWorker {
         }
     }
 
-    $containerName = "mwa-$Backend-worker-$([guid]::NewGuid().ToString('N'))"
+    $containerName = "mwa-gvhmr-worker-$([guid]::NewGuid().ToString('N'))"
     $runtimeOwner = [ordered]@{
         kind = "docker"
-        service = "$Backend-warm-worker"
+        service = "gvhmr-warm-worker"
         containerName = $containerName
         containerId = $null
     }
@@ -2484,11 +2473,10 @@ function Start-WhamWarmWorker {
         -RuntimeOwner $runtimeOwner `
         -ServiceState "starting"
     $dockerArgs = @("run", "-d", "--rm", "--name", $containerName)
-    if (-not [string]::IsNullOrWhiteSpace($WhamDockerGpus)) {
-        $dockerArgs += @("--gpus", $WhamDockerGpus)
+    if (-not [string]::IsNullOrWhiteSpace($ReconstructionDockerGpus)) {
+        $dockerArgs += @("--gpus", $ReconstructionDockerGpus)
     }
     $warmWorkerRetentionPath = Join-Path (Split-Path -Parent $WorkerScriptPath) "warm_worker_retention.py"
-    if ($Backend -eq "gvhmr") {
         $dockerArgs += @("--shm-size", "8g")
         $dockerArgs += @(
             "-v", "$((Join-Path (Split-Path -Parent $WorkerScriptPath) 'gvhmr_inference.py')):/worker/gvhmr_inference.py:ro",
@@ -2498,43 +2486,20 @@ function Start-WhamWarmWorker {
             "-v", "$($WorkerScriptPath):/worker/gvhmr_warm_worker.py:ro",
             "-v", "$($warmWorkerRetentionPath):/worker/warm_worker_retention.py:ro",
             "-w", "/opt/gvhmr",
-            $GvhmrDockerImage,
+            $ReconstructionDockerImage,
             "python", "-u", "/worker/gvhmr_warm_worker.py",
             "--state-dir", "/worker_state"
         )
-    } else {
-        if (-not [string]::IsNullOrWhiteSpace($WhamDockerShmSize)) {
-            $dockerArgs += @("--shm-size", $WhamDockerShmSize)
-        }
-        $dockerArgs += @(
-            "-e", "WHAM_POSE_BACKEND=vitpose",
-            "-e", "WHAM_POSE_BATCH_SIZE=16",
-            "-e", "WHAM_FEATURE_BATCH_SIZE=32",
-            "-e", "WHAM_MAX_TRACK_GAP_FRAMES=3"
-        )
-        $dockerArgs += @(
-            "-v", "$((Join-Path (Split-Path -Parent $WorkerScriptPath) 'wham_tracking_preflight.py')):/worker/wham_tracking_preflight.py:ro",
-            "-v", "$((Join-Path (Split-Path -Parent $WorkerScriptPath) 'wham_tracking_coverage.py')):/worker/wham_tracking_coverage.py:ro",
-            "-v", "$($MountRoot):/workspace",
-            "-v", "$($SessionDir):/worker_state",
-            "-v", "$($WorkerScriptPath):/worker/wham_warm_worker.py:ro",
-            "-v", "$($warmWorkerRetentionPath):/worker/warm_worker_retention.py:ro",
-            "-w", "/opt/wham-src",
-            $WhamDockerImage,
-            "python", "-u", "/worker/wham_warm_worker.py",
-            "--state-dir", "/worker_state"
-        )
-    }
 
-    if ($script:WhamWorkerStartedOnce) {
+    if ($script:GvhmrWorkerStartedOnce) {
         Write-Host "Restarting motion extractor..."
     } else {
         Write-Host "Starting motion extractor..."
-        $script:WhamWorkerStartedOnce = $true
+        $script:GvhmrWorkerStartedOnce = $true
     }
     $containerId = (& docker @dockerArgs 2>&1)
     if ($LASTEXITCODE -ne 0) {
-        throw "Failed to start warm WHAM worker container: $containerId"
+        throw "Failed to start warm GVHMR worker container: $containerId"
     }
     $containerId = ([string]$containerId).Trim()
     $runtimeOwner.containerId = $containerId
@@ -2544,7 +2509,7 @@ function Start-WhamWarmWorker {
         -ServiceState "running"
     $readyPath = Join-Path $SessionDir "ready.json"
     $startupErrorPath = Join-Path $SessionDir "startup_error.json"
-    $deadline = (Get-Date).AddSeconds($WhamWorkerStartupTimeoutSeconds)
+    $deadline = (Get-Date).AddSeconds($GvhmrWorkerStartupTimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
         if (Test-Path -LiteralPath $readyPath) {
             $ready = Get-Content -LiteralPath $readyPath -Raw | ConvertFrom-Json
@@ -2569,12 +2534,12 @@ function Start-WhamWarmWorker {
                 & docker stop $containerName | Out-Null
             } catch {
             }
-            throw "Warm WHAM worker failed during startup: $errorPayload"
+            throw "Warm GVHMR worker failed during startup: $errorPayload"
         }
         $running = (& docker inspect -f "{{.State.Running}}" $containerName 2>$null)
         if ($LASTEXITCODE -ne 0 -or "$running".Trim().ToLowerInvariant() -ne "true") {
             $logs = (& docker logs $containerName 2>&1)
-            throw "Warm WHAM worker container exited before ready. Logs: $logs"
+            throw "Warm GVHMR worker container exited before ready. Logs: $logs"
         }
         Start-Sleep -Seconds 2
     }
@@ -2586,10 +2551,10 @@ function Start-WhamWarmWorker {
         & docker stop $containerName | Out-Null
     } catch {
     }
-    throw "Timed out waiting for warm WHAM worker startup after $WhamWorkerStartupTimeoutSeconds seconds."
+    throw "Timed out waiting for warm GVHMR worker startup after $GvhmrWorkerStartupTimeoutSeconds seconds."
 }
 
-function Stop-WhamWarmWorker {
+function Stop-GvhmrWarmWorker {
     param([object]$Worker)
     if ($null -eq $Worker) {
         return
@@ -2605,7 +2570,7 @@ function Stop-WhamWarmWorker {
     try {
         & docker stop --time 10 $Worker.containerName | Out-Null
     } catch {
-        Write-Warning "Failed to stop warm WHAM worker container '$($Worker.containerName)': $($_.Exception.Message)"
+        Write-Warning "Failed to stop warm RECONSTRUCTION worker container '$($Worker.containerName)': $($_.Exception.Message)"
     }
     $runtimeState = Release-MotionServiceSessionLease -SessionDirectory $Worker.sessionLeaseKey
     if ($runtimeState -ne "stopped") {
@@ -2659,7 +2624,7 @@ function Remove-ExerciseIntermediateArtifacts {
             $selectionPath = Join-Path $bakeRoot "selection_manifest.json"
             if (Test-Path -LiteralPath $selectionPath -PathType Leaf) {
                 try {
-                    $bakeSelection = Get-Content -LiteralPath $selectionPath -Raw | ConvertFrom-Json
+                    $bakeSelection = Get-Content -LiteralPath $selectionPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
                     $selected = $bakeSelection.selected
                     $clearance = if ($selected) { $selected.sourceSelectionClearance } else { $null }
                     if ($clearance -and $clearance.status -in @("cleared", "not_required")) {
@@ -2670,7 +2635,7 @@ function Remove-ExerciseIntermediateArtifacts {
                                 $proofPaths += [string]$image.path
                             }
                             try {
-                                $sourceManifest = Get-Content -LiteralPath $clearance.sourceManifestPath -Raw | ConvertFrom-Json
+                                $sourceManifest = Get-Content -LiteralPath $clearance.sourceManifestPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
                                 $proofPaths += [string]$sourceManifest.exactSourcePhaseValidation.sourcePoseReferencePath
                             } catch {
                             }
@@ -2768,8 +2733,8 @@ function Test-SourceSelectionClearanceCurrent {
     }
     $clearance = $Selection.selected.sourceSelectionClearance
     $rawSkip = $AllowRawSkip -and
-        $Selection.preWhamSourceValidationEnabled -eq $false -and
-        $Selection.preWhamSourceValidationExplicitlyDisabled -eq $true
+        $Selection.preReconstructionSourceValidationEnabled -eq $false -and
+        $Selection.preReconstructionSourceValidationExplicitlyDisabled -eq $true
     $expectedStatus = if ($rawSkip) { "not_required" } else { "cleared" }
     if ($clearance.status -ne $expectedStatus -or
         [int]$clearance.sourceSelectionPolicyVersion -ne $SourceSelectionPolicyVersion -or
@@ -2864,7 +2829,7 @@ function Get-ExistingSelectedSummary {
 
     $selection = $null
     try {
-        $selection = Get-Content -LiteralPath $selectionPath -Raw | ConvertFrom-Json
+        $selection = Get-Content -LiteralPath $selectionPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
     } catch {
         $selection = $null
     }
@@ -2872,7 +2837,7 @@ function Get-ExistingSelectedSummary {
     $currentRevalidation = $null
     if (Test-Path -LiteralPath $revalidationPath) {
         try {
-            $candidateRevalidation = Get-Content -LiteralPath $revalidationPath -Raw | ConvertFrom-Json
+            $candidateRevalidation = Get-Content -LiteralPath $revalidationPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
             $matchesSelection = -not ($candidateRevalidation.PSObject.Properties.Name -contains 'selectedManifestSha256') -or
                 $candidateRevalidation.selectedManifestSha256 -eq (Get-FileHash -LiteralPath $selectionPath -Algorithm SHA256).Hash
             if (-not $matchesSelection) { return $null }
@@ -2918,7 +2883,7 @@ function Get-ExistingSelectedSummary {
         [string]$manifestSelected.sourceSelectionClearance.status
     } else { "" }
     $selectedInputPath = if ($inputFiles.Count -gt 0) { $inputFiles[0].FullName } else { "" }
-    if (-not (Test-SourceSelectionClearanceCurrent -Selection $selection -SelectedInputPath $selectedInputPath -ExpectedExerciseName ([string]$WorkItem.exerciseName) -ExpectedContractSha256 ([string]$WorkItem.currentContractSha256) -AllowRawSkip $SkipPreWhamSourceValidation)) {
+    if (-not (Test-SourceSelectionClearanceCurrent -Selection $selection -SelectedInputPath $selectedInputPath -ExpectedExerciseName ([string]$WorkItem.exerciseName) -ExpectedContractSha256 ([string]$WorkItem.currentContractSha256) -AllowRawSkip $SkipPreReconstructionSourceValidation)) {
         return $null
     }
     $manifestSelectedOptions = if ($selection -and $selection.PSObject.Properties.Name -contains "selectedResults" -and $selection.selectedResults) {
@@ -2989,7 +2954,7 @@ function Test-SelectionNeedsPolicyReaudit {
         return $false
     }
     try {
-        $selection = Get-Content -LiteralPath $artifacts.SelectionPath -Raw | ConvertFrom-Json
+        $selection = Get-Content -LiteralPath $artifacts.SelectionPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
     } catch {
         return $false
     }
@@ -3000,7 +2965,7 @@ function Test-SelectionNeedsPolicyReaudit {
         return -not $manifestCurrent
     }
     try {
-        $marker = Get-Content -LiteralPath $revalidationPath -Raw | ConvertFrom-Json
+        $marker = Get-Content -LiteralPath $revalidationPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
         if ("$($marker.status)" -in @("invalid", "needs_manual_review")) {
             return $false
         }
@@ -3041,7 +3006,7 @@ function Test-SelectionNeedsPolicyReaudit {
             [string]$selected.sourceSelectionClearance.status
         } else { "" }
         $inputPath = if ($artifacts.InputFiles.Count -gt 0) { $artifacts.InputFiles[0].FullName } else { "" }
-        if (-not (Test-SourceSelectionClearanceCurrent -Selection $selection -SelectedInputPath $inputPath -ExpectedExerciseName ([string]$WorkItem.exerciseName) -ExpectedContractSha256 ([string]$WorkItem.currentContractSha256) -AllowRawSkip $SkipPreWhamSourceValidation)) {
+        if (-not (Test-SourceSelectionClearanceCurrent -Selection $selection -SelectedInputPath $inputPath -ExpectedExerciseName ([string]$WorkItem.exerciseName) -ExpectedContractSha256 ([string]$WorkItem.currentContractSha256) -AllowRawSkip $SkipPreReconstructionSourceValidation)) {
             return $true
         }
         return $false
@@ -3087,7 +3052,7 @@ function Invoke-SelectionPolicyReaudit {
 function Resume-YieldedDiscovery {
     param([object]$WorkItem, [object]$PendingQueue)
 
-    $payload = Get-Content -LiteralPath $WorkItem.exerciseCandidatesPath -Raw | ConvertFrom-Json
+    $payload = Get-Content -LiteralPath $WorkItem.exerciseCandidatesPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
     $turn = @($payload.exercises)[0].candidateExpansion.discoveryTurn
     if ($turn.stopReason -ne 'scheduler_yield') { return $false }
 
@@ -3172,7 +3137,7 @@ function Start-InitialDiscoveryJob {
             $recommendedCount = 0
             if (Test-Path -LiteralPath $Path) {
                 try {
-                    $payload = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+                    $payload = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
                     foreach ($exercise in @($payload.exercises)) {
                         foreach ($item in @($exercise.candidates)) {
                             $candidateCount += 1
@@ -3211,7 +3176,7 @@ function Start-InitialDiscoveryJob {
             $exitCode = $LASTEXITCODE
             if ($exitCode -eq 0 -and (Test-Path -LiteralPath $CandidatesPath)) {
                 try {
-                    $candidatePayload = Get-Content -LiteralPath $CandidatesPath -Raw | ConvertFrom-Json
+                    $candidatePayload = Get-Content -LiteralPath $CandidatesPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
                     $candidatePayload | Add-Member -NotePropertyName wrapperDiscoverySignature -NotePropertyValue ([pscustomobject]@{
                         schemaVersion = 1
                         policyVersion = $StagePolicyVersion
@@ -3304,7 +3269,7 @@ function Start-CandidatePrefetchJob {
         $exitCode = $LASTEXITCODE
         if ($exitCode -eq 0 -and (Test-Path -LiteralPath $PrefetchPath)) {
             try {
-                $prefetchPayload = Get-Content -LiteralPath $PrefetchPath -Raw | ConvertFrom-Json
+                $prefetchPayload = Get-Content -LiteralPath $PrefetchPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
                 $prefetchPayload | Add-Member -NotePropertyName wrapperPrefetchSignature -NotePropertyValue ([pscustomobject]@{
                     schemaVersion = 1
                     argumentsSha256 = $ArgumentsSha256
@@ -3376,7 +3341,7 @@ function Start-SourceDownloadJob {
         $exitCode = $LASTEXITCODE
         if ($exitCode -eq 0 -and (Test-Path -LiteralPath $ReportPath) -and (Test-Path -LiteralPath $CandidatesPath)) {
             try {
-                $sourcePayload = Get-Content -LiteralPath $ReportPath -Raw | ConvertFrom-Json
+                $sourcePayload = Get-Content -LiteralPath $ReportPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
                 $candidateSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $CandidatesPath).Hash.ToLowerInvariant()
                 $sourcePayload | Add-Member -NotePropertyName wrapperSourceDownloadSignature -NotePropertyValue ([pscustomobject]@{
                     schemaVersion = 1
@@ -3418,7 +3383,7 @@ function Test-CandidatePrefetchReady {
         return $false
     }
     try {
-        $payload = Get-Content -LiteralPath $WorkItem.prefetchPath -Raw | ConvertFrom-Json
+        $payload = Get-Content -LiteralPath $WorkItem.prefetchPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
         if ($payload.kind -ne "youtube_candidate_prefetch") {
             return $false
         }
@@ -3452,7 +3417,7 @@ function Test-DiscoveryStageReady {
         return $false
     }
     try {
-        $payload = Get-Content -LiteralPath $WorkItem.exerciseCandidatesPath -Raw | ConvertFrom-Json
+        $payload = Get-Content -LiteralPath $WorkItem.exerciseCandidatesPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
         $signature = $payload.wrapperDiscoverySignature
         if ($null -eq $signature -or [int]$signature.schemaVersion -ne 1) {
             return $false
@@ -3518,7 +3483,7 @@ function Test-DiscoveryStageReady {
         $previousSelectionPath = Join-Path $WorkItem.bakeWorkspace "selection_manifest.json"
         $hasPreviousSelection = $false
         if (Test-Path -LiteralPath $previousSelectionPath) {
-            $previousSelection = Get-Content -LiteralPath $previousSelectionPath -Raw | ConvertFrom-Json
+            $previousSelection = Get-Content -LiteralPath $previousSelectionPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
             $hasPreviousSelection = (
                 $null -ne $previousSelection.selected -or
                 @($previousSelection.selectedResults).Count -gt 0
@@ -3549,7 +3514,7 @@ function Test-MovementSkeletonIntegrity {
         return $false
     }
     try {
-        $payload = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+        $payload = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
         return (
             @($payload.jointNames).Count -gt 0 -and
             @($payload.frames).Count -gt 1 -and
@@ -3569,7 +3534,7 @@ function Test-BakeStageReady {
         return $false
     }
     try {
-        $selection = Get-Content -LiteralPath $selectionPath -Raw | ConvertFrom-Json
+        $selection = Get-Content -LiteralPath $selectionPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
         if ([int]$selection.selectionValidationPolicyVersion -lt $SelectionValidationPolicyVersion) {
             return $false
         }
@@ -3608,7 +3573,7 @@ function Test-SelectionHasNeedsMotionProcessing {
         return $false
     }
     try {
-        $selection = Get-Content -LiteralPath $SelectionPath -Raw | ConvertFrom-Json
+        $selection = Get-Content -LiteralPath $SelectionPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
         $results = @()
         if ($selection.PSObject.Properties.Name -contains "candidateResults") {
             $results += @($selection.candidateResults)
@@ -3674,7 +3639,7 @@ function Test-HasIdentityReviewedRecommendedCandidate {
         return $false
     }
     try {
-        $payload = Get-Content -LiteralPath $CandidatesPath -Raw | ConvertFrom-Json
+        $payload = Get-Content -LiteralPath $CandidatesPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
         foreach ($exercise in @($payload.exercises)) {
             foreach ($candidate in @($exercise.candidates)) {
                 if (Test-CandidateIdentityEvidenceComplete -Candidate $candidate) {
@@ -3696,7 +3661,7 @@ function Test-PreparedCandidatesJson {
     )
 
     try {
-        $payload = Get-Content -LiteralPath $CandidatesJsonPath -Raw | ConvertFrom-Json
+        $payload = Get-Content -LiteralPath $CandidatesJsonPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
     } catch {
         throw "Prepared candidates JSON for '$ExerciseSlug' is not valid JSON: $CandidatesJsonPath. $($_.Exception.Message)"
     }
@@ -3735,7 +3700,7 @@ function Import-PreparedCandidatesManifest {
         throw "Prepared candidates manifest not found: $ManifestPath"
     }
     try {
-        $manifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
+        $manifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
     } catch {
         throw "Prepared candidates manifest is not valid JSON: $ManifestPath. $($_.Exception.Message)"
     }
@@ -3784,7 +3749,7 @@ function Import-PreparedCandidatesManifest {
 function Test-MotionProcessingResumeReady {
     param([object]$WorkItem)
 
-    # Incomplete controlled-motion fits already paid WHAM/bake. Resume bake even
+    # Incomplete controlled-motion fits already paid RECONSTRUCTION/bake. Resume bake even
     # when DisableStageResume blocks discovery/download stage reuse.
     if ([string]::IsNullOrWhiteSpace($WorkItem.exerciseCandidatesPath) -or
         -not (Test-Path -LiteralPath $WorkItem.exerciseCandidatesPath)) {
@@ -3887,7 +3852,7 @@ function Test-SourceDownloadStageReady {
         return $false
     }
     try {
-        $payload = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
+        $payload = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
         $signature = $payload.wrapperSourceDownloadSignature
         if ($null -eq $signature -or [int]$signature.schemaVersion -ne 1) {
             return $false
@@ -3987,7 +3952,7 @@ function Start-BakeJob {
                 return 0
             }
             try {
-                $payload = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+                $payload = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
                 $recommended = 0
                 foreach ($exercise in @($payload.exercises)) {
                     foreach ($item in @($exercise.candidates)) {
@@ -4008,7 +3973,7 @@ function Start-BakeJob {
                 return "candidate_evidence_exhausted"
             }
             try {
-                $payload = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+                $payload = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
                 foreach ($exercise in @($payload.exercises)) {
                     $reason = "$($exercise.candidateExpansion.terminalReason)".Trim()
                     if (-not [string]::IsNullOrWhiteSpace($reason)) {
@@ -4027,7 +3992,7 @@ function Start-BakeJob {
                 return 0
             }
             try {
-                $selection = Get-Content -LiteralPath $selectionPath -Raw | ConvertFrom-Json
+                $selection = Get-Content -LiteralPath $selectionPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
                 if ($selection -and $selection.PSObject.Properties.Name -contains "selectedResults" -and $selection.selectedResults) {
                     return @($selection.selectedResults).Count
                 }
@@ -4083,7 +4048,7 @@ function Start-BakeJob {
                     Sort-Object FullName |
                     ForEach-Object {
                         try {
-                            $snapshot = Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json
+                            $snapshot = Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
                             $signature = $snapshot.wrapperDiscoverySignature
                             $cachedArgumentsHash = "$($signature.argumentsSha256)".ToLowerInvariant()
                             $expectedArgumentsHash = "$DiscoveryArgumentsSha256".ToLowerInvariant()
@@ -4116,7 +4081,7 @@ function Start-BakeJob {
                 return @()
             }
             try {
-                $payload = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+                $payload = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
             } catch {
                 return @()
             }
@@ -4198,7 +4163,7 @@ function Start-BakeJob {
                 return -1.0
             }
             try {
-                $selection = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+                $selection = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
                 $score = [double]@($selection.candidateResults).Count
                 $score += 1000.0 * [double]@($selection.reviewItems).Count
                 if ($selection.rejectedBest) {
@@ -4241,7 +4206,7 @@ function Start-BakeJob {
                 return $false
             }
             try {
-                $candidatePayload = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+                $candidatePayload = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
                 $candidatePayload | Add-Member -NotePropertyName wrapperDiscoverySignature -NotePropertyValue ([pscustomobject]@{
                     schemaVersion = 1
                     policyVersion = $DiscoveryStagePolicyVersion
@@ -4383,7 +4348,7 @@ function Start-BakeJob {
                         Restore-BestNoSelectionManifest
                         $restoredSelectionPath = Join-Path $BakeWorkspace "selection_manifest.json"
                         $restoredSelection = if (Test-Path -LiteralPath $restoredSelectionPath) {
-                            Get-Content -LiteralPath $restoredSelectionPath -Raw | ConvertFrom-Json
+                            Get-Content -LiteralPath $restoredSelectionPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
                         } else {
                             $null
                         }
@@ -4444,15 +4409,15 @@ function Start-BakeJob {
             if ($bakeAttemptCount -gt 0 -or $ReusePreviousTerminalResults) {
                 $attemptBakeArguments += "--reuse-previous-terminal-results"
             }
-            $previousWhamLazyStart = $env:EXERCISE_MOTION_WHAM_LAZY_START
+            $previousReconstructionLazyStart = $env:EXERCISE_MOTION_RECONSTRUCTION_LAZY_START
             $previousGvhmrLazyStart = $env:EXERCISE_MOTION_GVHMR_LAZY_START
             try {
                 # The legacy retry runs outside the staged service process. Let
                 # its warm-worker client request a supervised restart when a
                 # prior GPU handoff stopped the worker. Python publishes that
                 # request only after acquiring the shared GPU and Docker locks.
-                if ($attemptBakeArguments -contains "--warm-wham-worker") {
-                    $env:EXERCISE_MOTION_WHAM_LAZY_START = "1"
+                if ($attemptBakeArguments -contains "--warm-reconstruction-worker") {
+                    $env:EXERCISE_MOTION_RECONSTRUCTION_LAZY_START = "1"
                 }
                 if ($attemptBakeArguments -contains "--warm-gvhmr-worker") {
                     $env:EXERCISE_MOTION_GVHMR_LAZY_START = "1"
@@ -4461,8 +4426,8 @@ function Start-BakeJob {
                 $bakeExitCode = $LASTEXITCODE
             }
             finally {
-                if ($null -eq $previousWhamLazyStart) { Remove-Item Env:EXERCISE_MOTION_WHAM_LAZY_START -ErrorAction SilentlyContinue }
-                else { $env:EXERCISE_MOTION_WHAM_LAZY_START = $previousWhamLazyStart }
+                if ($null -eq $previousReconstructionLazyStart) { Remove-Item Env:EXERCISE_MOTION_RECONSTRUCTION_LAZY_START -ErrorAction SilentlyContinue }
+                else { $env:EXERCISE_MOTION_RECONSTRUCTION_LAZY_START = $previousReconstructionLazyStart }
                 if ($null -eq $previousGvhmrLazyStart) { Remove-Item Env:EXERCISE_MOTION_GVHMR_LAZY_START -ErrorAction SilentlyContinue }
                 else { $env:EXERCISE_MOTION_GVHMR_LAZY_START = $previousGvhmrLazyStart }
             }
@@ -4478,7 +4443,7 @@ function Start-BakeJob {
             $selectedResultCount = Get-SelectedResultCount -Workspace $BakeWorkspace
             $attemptSelectionSnapshotPath = Save-AttemptSelectionManifest -Workspace $BakeWorkspace -AttemptIndex $attemptIndex
             if ($selectedResultCount -eq 0 -and $attemptSelectionSnapshotPath) {
-                $attemptSelection = Get-Content -LiteralPath $attemptSelectionSnapshotPath -Raw | ConvertFrom-Json
+                $attemptSelection = Get-Content -LiteralPath $attemptSelectionSnapshotPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
                 if (@($attemptSelection.candidateResults | Where-Object { $_.status -eq 'needs_motion_processing' }).Count -gt 0) {
                     [pscustomobject]@{
                         exitCode = 0
@@ -4753,7 +4718,7 @@ function Get-StagedBakeServiceConfigurationFingerprint {
     }
     # The service always enables lazy warm-worker startup, regardless of the
     # caller's ambient values. Fingerprint the effective values it receives.
-    $serviceEnvironment["EXERCISE_MOTION_WHAM_LAZY_START"] = "1"
+    $serviceEnvironment["EXERCISE_MOTION_RECONSTRUCTION_LAZY_START"] = "1"
     $serviceEnvironment["EXERCISE_MOTION_GVHMR_LAZY_START"] = "1"
     $payload = [ordered]@{
         pythonCommand = $resolvedPythonCommand
@@ -4782,7 +4747,7 @@ function Get-StagedWaveAdmissionMutexNames {
     if (Test-Path -LiteralPath $statePath -PathType Leaf) {
         try {
             $state = Get-Content -LiteralPath $statePath -Raw -ErrorAction Stop |
-                ConvertFrom-Json -ErrorAction Stop
+                ConvertFrom-Json -ErrorAction Stop | Convert-ReconstructionMetadata
             if ([int]$state.admissionLockVersion -ne 2) {
                 $lockVersion = 1
             }
@@ -4909,9 +4874,9 @@ function Start-StagedBakeQueueServiceGeneration {
             $startArguments = $commandArguments
         }
 
-        $previousWhamLazyStart = $env:EXERCISE_MOTION_WHAM_LAZY_START
+        $previousReconstructionLazyStart = $env:EXERCISE_MOTION_RECONSTRUCTION_LAZY_START
         $previousGvhmrLazyStart = $env:EXERCISE_MOTION_GVHMR_LAZY_START
-        $env:EXERCISE_MOTION_WHAM_LAZY_START = "1"
+        $env:EXERCISE_MOTION_RECONSTRUCTION_LAZY_START = "1"
         $env:EXERCISE_MOTION_GVHMR_LAZY_START = "1"
         try {
             $stopRequestPath = Join-Path $QueueRoot "stop.request"
@@ -4932,8 +4897,8 @@ function Start-StagedBakeQueueServiceGeneration {
                 -PassThru `
                 -ErrorAction Stop
         } finally {
-            if ($null -eq $previousWhamLazyStart) { Remove-Item Env:EXERCISE_MOTION_WHAM_LAZY_START -ErrorAction SilentlyContinue }
-            else { $env:EXERCISE_MOTION_WHAM_LAZY_START = $previousWhamLazyStart }
+            if ($null -eq $previousReconstructionLazyStart) { Remove-Item Env:EXERCISE_MOTION_RECONSTRUCTION_LAZY_START -ErrorAction SilentlyContinue }
+            else { $env:EXERCISE_MOTION_RECONSTRUCTION_LAZY_START = $previousReconstructionLazyStart }
             if ($null -eq $previousGvhmrLazyStart) { Remove-Item Env:EXERCISE_MOTION_GVHMR_LAZY_START -ErrorAction SilentlyContinue }
             else { $env:EXERCISE_MOTION_GVHMR_LAZY_START = $previousGvhmrLazyStart }
         }
@@ -5233,14 +5198,14 @@ function Stop-StagedBakeQueueService {
 function Stop-MotionModelServicesAfterStagedWorker {
     param(
         [bool]$StagedWaveShutdownConfirmed,
-        [object]$WarmWhamWorker,
+        [object]$WarmGvhmrWorker,
         [object]$SharedLlamaServer
     )
 
     if (-not $StagedWaveShutdownConfirmed) {
         return $false
     }
-    Stop-WhamWarmWorker -Worker $WarmWhamWorker
+    Stop-GvhmrWarmWorker -Worker $WarmGvhmrWorker
     Stop-SharedLlamaServer -Server $SharedLlamaServer
     return $true
 }
@@ -5282,9 +5247,6 @@ function Start-StagedBakeWaveJob {
     }
     $wavePayload | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath $waveManifestPath -Encoding UTF8
     # A resumed worker may have left a request after its caller exited.
-    if ($effectiveWarmWhamWorker) {
-        Remove-Item -LiteralPath (Join-Path $resolvedWhamWorkerSessionDir 'start_requested.json') -Force -ErrorAction SilentlyContinue
-    }
     if ($effectiveWarmGvhmrWorker) {
         Remove-Item -LiteralPath (Join-Path $resolvedGvhmrWorkerSessionDir 'start_requested.json') -Force -ErrorAction SilentlyContinue
     }
@@ -5552,7 +5514,7 @@ function Complete-BakeJob {
     $selectionPath = Join-Path $workItem.bakeWorkspace "selection_manifest.json"
     $selection = $null
     if (Test-Path -LiteralPath $selectionPath) {
-        $selection = Get-Content -LiteralPath $selectionPath -Raw | ConvertFrom-Json
+        $selection = Get-Content -LiteralPath $selectionPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
     }
     $selectionTimingSummary = Get-SelectionTimingSummary -Selection $selection
     $selected = if ($selection -and $selection.selected) { $selection.selected } else { $null }
@@ -5602,7 +5564,7 @@ function Complete-BakeJob {
     $recommendedCandidateCount = 0
     if (Test-Path -LiteralPath $workItem.exerciseCandidatesPath) {
         try {
-            $exerciseCandidateManifest = Get-Content -LiteralPath $workItem.exerciseCandidatesPath -Raw | ConvertFrom-Json
+            $exerciseCandidateManifest = Get-Content -LiteralPath $workItem.exerciseCandidatesPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
             if ($exerciseCandidateManifest.exercises -and $exerciseCandidateManifest.exercises.Count -gt 0) {
                 $candidateCount = @($exerciseCandidateManifest.exercises[0].candidates).Count
                 foreach ($item in @($exerciseCandidateManifest.exercises[0].candidates)) {
@@ -6174,7 +6136,7 @@ function Get-StagedWaveActivityText {
         return "Starting batch"
     }
     try {
-        $checkpoint = Get-Content -LiteralPath $checkpointPath -Raw | ConvertFrom-Json
+        $checkpoint = Get-Content -LiteralPath $checkpointPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
         $items = @($checkpoint.items)
         $latestName = [string](Get-ObjectProperty -Object $checkpoint -Name "latestExerciseName")
         $latestSuffix = if (-not [string]::IsNullOrWhiteSpace($latestName)) { " — $latestName" } else { "" }
@@ -6210,23 +6172,23 @@ function Get-StagedWaveActivityText {
                 }
                 return "Checking sources: $finished/$($items.Count)$metaText$latestSuffix$workText"
             }
-            "wham_generation" {
+            "reconstruction_generation" {
                 $eligible = @($items | Where-Object { "$($_.source.status)" -eq "prepared" })
-                $finished = @($eligible | Where-Object { "$($_.wham.status)" -ne "pending" }).Count
-                $failed = @($eligible | Where-Object { "$($_.wham.status)" -eq "failed" }).Count
+                $finished = @($eligible | Where-Object { "$($_.reconstruction.status)" -ne "pending" }).Count
+                $failed = @($eligible | Where-Object { "$($_.reconstruction.status)" -eq "failed" }).Count
                 $stillRunning = [Math]::Max(0, $eligible.Count - $finished)
                 $bits = @("$finished/$($eligible.Count) done")
                 if ($failed -gt 0) { $bits += "$failed fail" }
                 if ($stillRunning -gt 0) { $bits += "$stillRunning run" }
                 return "Extracting: $($bits -join ', ')$latestSuffix"
             }
-            "wham_released" {
+            "reconstruction_released" {
                 $eligible = @($items | Where-Object { "$($_.source.status)" -eq "prepared" })
-                $ready = @($eligible | Where-Object { "$($_.wham.status)" -eq "prepared" }).Count
+                $ready = @($eligible | Where-Object { "$($_.reconstruction.status)" -eq "prepared" }).Count
                 return "Extraction done ($ready ready) → validate"
             }
             "final_validation" {
-                $eligible = @($items | Where-Object { "$($_.wham.status)" -eq "prepared" })
+                $eligible = @($items | Where-Object { "$($_.reconstruction.status)" -eq "prepared" })
                 $finished = @($eligible | Where-Object {
                     $status = "$($_.finalValidation.status)"
                     $status -ne "" -and $status -ne "pending"
@@ -6353,7 +6315,7 @@ function Get-StagedWaveCheckpointStage {
         return "$($cachedStage.stage)"
     }
     try {
-        $checkpoint = Get-Content -LiteralPath $checkpointPath -Raw | ConvertFrom-Json
+        $checkpoint = Get-Content -LiteralPath $checkpointPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
         $stage = "$($checkpoint.stage)"
         $script:StagedWaveCheckpointStageCacheByPath[$checkpointPath] = @{
             version = $checkpointVersion
@@ -6386,7 +6348,7 @@ function Get-FlaggedJobCount {
 # Wave-overlap admission (MaxConcurrentStagedWaves). A new staged wave may
 # start only while:
 #   - every running staged wave is parked in final_validation (CPU-bound
-#     fits; source_validation and wham_generation would oversubscribe the
+#     fits; source_validation and reconstruction_generation would oversubscribe the
 #     per-process CPU fit lanes or contend for the exclusive GPU), and
 #   - the running staged wave count is below the overlap cap, and
 #   - no full GPU-capable pipeline (legacy fallback bake) is queued or
@@ -6447,7 +6409,7 @@ function Write-StagedWaveProgressUpdates {
         }
         $script:LastStagedWaveCheckpointVersionByPath[$checkpointPath] = $checkpointVersion
         try {
-            $checkpoint = Get-Content -LiteralPath $checkpointPath -Raw | ConvertFrom-Json
+            $checkpoint = Get-Content -LiteralPath $checkpointPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
             $events = @(Get-ObjectProperty -Object $checkpoint.metrics -Name 'sourceAttemptEvents')
             $eventKey = "$checkpointPath/source-attempts"
             $seen = if ($script:LastStagedWaveCheckpointVersionByPath.ContainsKey($eventKey)) {
@@ -6643,8 +6605,6 @@ if ($PSBoundParameters.ContainsKey("LlamaCppCtxSize") -and -not $PSBoundParamete
     $LlamaCppFitCtx = $LlamaCppCtxSize
 }
 Ensure-LlamaCppParallelContext
-# SMPLify quality is independent of scheduling speed; skip only when explicitly requested.
-$effectiveSkipSmplify = $SkipSmplify
 $llamaParallelSlots = if ($null -ne $LlamaCppParallel) { [Math]::Max(1, [int]$LlamaCppParallel) } else { 1 }
 $visionLlmWorkersExplicit = $PSBoundParameters.ContainsKey("VisionLlmWorkers")
 if (-not $PSBoundParameters.ContainsKey("ReviewLlmWorkers")) {
@@ -6764,14 +6724,10 @@ if ($resolvedMaxCandidateReviewTargetSuitableCount -gt 0 -and $resolvedMaxCandid
     throw "MaxCandidateReviewTargetSuitableCount must be greater than or equal to CandidateReviewTargetSuitableCount and MaxSelectedResults."
 }
 
-if ([string]::IsNullOrWhiteSpace($WhamRepoPath)) {
-    $WhamRepoPath = Join-Path $repoRoot "third_party\WHAM"
-}
 if ([string]::IsNullOrWhiteSpace($BodyModelRoot)) {
-    $BodyModelRoot = Join-Path $WhamRepoPath "dataset\body_models"
+    $BodyModelRoot = Join-Path $repoRoot "third_party\GVHMR\inputs\checkpoints\body_models"
 }
 
-$resolvedWhamRepoPath = Resolve-StrictPath $WhamRepoPath
 $resolvedBodyModelRoot = Resolve-StrictPath $BodyModelRoot
 
 function Assert-StagedWaveWorkspaceIsQuiescent {
@@ -6919,7 +6875,7 @@ function Release-MotionWorkspaceLease {
     try {
         if (Test-Path -LiteralPath $Lease.ownerPath) {
             $owner = Get-Content -LiteralPath $Lease.ownerPath -Raw -ErrorAction SilentlyContinue |
-                ConvertFrom-Json -ErrorAction SilentlyContinue
+                ConvertFrom-Json -ErrorAction SilentlyContinue | Convert-ReconstructionMetadata
             if ($owner -and "$($owner.ownerToken)" -eq "$($Lease.ownerToken)") {
                 if (-not $PreserveOwner) {
                     $runtimeOwner = Get-ObjectProperty -Object $owner -Name "runtimeOwner"
@@ -7105,39 +7061,15 @@ $resolvedSourceOutcomeIndexJson = if ([System.IO.Path]::IsPathRooted($SourceOutc
     [System.IO.Path]::GetFullPath((Join-Path $repoRoot $SourceOutcomeIndexJson))
 }
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $resolvedSourceOutcomeIndexJson) | Out-Null
-# The persistent WHAM worker imports WHAM's demo/network directly, and the
-# persistent GVHMR worker keeps the GVHMR preprocessing/prediction models
-# resident. Only the worker matching the active reconstruction backend may
-# start; the other would load an unrelated model stack onto the same GPU.
-$effectiveWarmWhamWorker = (
-    $WarmWhamWorker -and
-    -not $SkipWarmWhamWorker -and
-    -not $RequireWhamCache -and
-    -not $NoWhamDocker -and
-    $MotionReconstructor -eq "wham"
-)
+# The persistent RECONSTRUCTION worker imports RECONSTRUCTION's demo/network directly, and the
+# persistent GVHMR worker keeps preprocessing and prediction models resident.
 $effectiveWarmGvhmrWorker = (
-    $WarmWhamWorker -and
-    -not $SkipWarmWhamWorker -and
-    -not $RequireWhamCache -and
-    $MotionReconstructor -eq "gvhmr"
+    $WarmGvhmrWorker -and
+    -not $SkipWarmGvhmrWorker -and
+    -not $RequireReconstructionCache
 )
-$resolvedWhamWorkerSessionDir = $null
 $resolvedGvhmrWorkerSessionDir = $null
-$whamWarmWorkerScriptPath = Join-Path $repoRoot "exercise_motion_pkg\wham_warm_worker.py"
 $gvhmrWarmWorkerScriptPath = Join-Path $repoRoot "exercise_motion_pkg\gvhmr_warm_worker.py"
-if ($effectiveWarmWhamWorker) {
-    if (-not (Test-Path -LiteralPath $whamWarmWorkerScriptPath)) {
-        throw "Warm WHAM worker script not found: $whamWarmWorkerScriptPath"
-    }
-    $activeWhamWorkerSessionDir = if ([string]::IsNullOrWhiteSpace($WhamWorkerSessionDir)) {
-        Join-Path $resolvedWorkspaceRoot "wham-warm-worker"
-    } else {
-        $WhamWorkerSessionDir
-    }
-    New-Item -ItemType Directory -Force -Path $activeWhamWorkerSessionDir | Out-Null
-    $resolvedWhamWorkerSessionDir = (Resolve-Path -LiteralPath $activeWhamWorkerSessionDir).Path
-}
 if ($effectiveWarmGvhmrWorker) {
     if (-not (Test-Path -LiteralPath $gvhmrWarmWorkerScriptPath)) {
         throw "Warm GVHMR worker script not found: $gvhmrWarmWorkerScriptPath"
@@ -7494,10 +7426,9 @@ foreach ($exercise in $exerciseList.exercises) {
         "--youtube-preview-cache-dir", $previewCachePath,
         "--source-outcome-index", $resolvedSourceOutcomeIndexJson,
         "--workspace", $bakeWorkspace,
-        "--wham-repo-path", $resolvedWhamRepoPath,
         "--body-model-root", $resolvedBodyModelRoot,
-        "--wham-python", "python",
-        "--wham-timeout-seconds", "$WhamTimeoutSeconds",
+        "--reconstruction-python", "python",
+        "--reconstruction-timeout-seconds", "$ReconstructionTimeoutSeconds",
         "--segment-confidence-threshold", "$SegmentConfidenceThreshold",
         "--segment-padding-seconds", "$SegmentPaddingSeconds",
         "--segment-end-padding-seconds", "$SegmentEndPaddingSeconds",
@@ -7586,37 +7517,25 @@ foreach ($exercise in $exerciseList.exercises) {
     if ($null -ne $SegmentFramesPerWindow) {
         $bakeArgs += @("--segment-frames-per-window", "$SegmentFramesPerWindow")
     }
-    if (-not $NoWhamDocker) {
-        $bakeArgs += @(
-            "--use-wham-docker",
-            "--wham-docker-image", $(if ($MotionReconstructor -eq "gvhmr") { $GvhmrDockerImage } else { $WhamDockerImage }),
-            "--wham-docker-gpus", $WhamDockerGpus,
-            "--wham-docker-shm-size", $WhamDockerShmSize
-        )
-    }
-    if ($MotionReconstructor -eq "gvhmr") {
-        $bakeArgs += @("--motion-reconstructor", "gvhmr")
-    }
-    if ($RequireWhamCache) {
-        $bakeArgs += "--require-wham-cache"
+    $bakeArgs += @(
+        "--use-reconstruction-docker",
+        "--reconstruction-docker-image", $ReconstructionDockerImage,
+        "--reconstruction-docker-gpus", $ReconstructionDockerGpus,
+        "--reconstruction-docker-shm-size", $ReconstructionDockerShmSize
+    )
+    $bakeArgs += @("--motion-reconstructor", "gvhmr")
+    if ($RequireReconstructionCache) {
+        $bakeArgs += "--require-reconstruction-cache"
     }
     if ($FastProfile) {
         $bakeArgs += @("--structural-refinement-vertical-only")
-    }
-    if ($effectiveWarmWhamWorker) {
-        $bakeArgs += @(
-            "--warm-wham-worker",
-            "--wham-worker-session-dir", $resolvedWhamWorkerSessionDir,
-            "--wham-worker-mount-root", $resolvedWorkspaceRoot,
-            "--wham-worker-timeout-seconds", "$WhamWorkerJobTimeoutSeconds"
-        )
     }
     if ($effectiveWarmGvhmrWorker) {
         $bakeArgs += @(
             "--warm-gvhmr-worker",
             "--gvhmr-worker-session-dir", $resolvedGvhmrWorkerSessionDir,
             "--gvhmr-worker-mount-root", $resolvedWorkspaceRoot,
-            "--gvhmr-worker-timeout-seconds", "$WhamWorkerJobTimeoutSeconds"
+            "--gvhmr-worker-timeout-seconds", "$GvhmrWorkerJobTimeoutSeconds"
         )
     }
     if ($effectiveSharedLlamaServer) {
@@ -7624,12 +7543,6 @@ foreach ($exercise in $exerciseList.exercises) {
             "--shared-llama-server",
             "--shared-llama-server-session-dir", $resolvedSharedLlamaServerSessionDir
         )
-    }
-    if (-not $FullWhamCameraSlam) {
-        $bakeArgs += "--estimate-local-only"
-    }
-    if ($effectiveSkipSmplify) {
-        $bakeArgs += "--skip-smplify"
     }
     if ($SkipMotionTuning) {
         $bakeArgs += "--skip-motion-tuning"
@@ -7643,11 +7556,11 @@ foreach ($exercise in $exerciseList.exercises) {
     if ($SkipSourceSegmentDetection) {
         $bakeArgs += "--skip-source-segment-detection"
     }
-    if (-not $SkipPreWhamSourceValidation) {
-        $bakeArgs += "--pre-wham-source-validation"
+    if (-not $SkipPreReconstructionSourceValidation) {
+        $bakeArgs += "--pre-reconstruction-source-validation"
     }
-    if ($SkipPreWhamSourceValidation) {
-        $bakeArgs += "--skip-pre-wham-source-validation"
+    if ($SkipPreReconstructionSourceValidation) {
+        $bakeArgs += "--skip-pre-reconstruction-source-validation"
     }
     $workItems += [pscustomobject]@{
         index = $exerciseIndex
@@ -7775,7 +7688,7 @@ if (-not $NoExerciseMotionContract -and -not $SkipVisionRanking -and -not $SkipE
         Write-Host ("Preparing contracts for {0} retained selection(s) and the first {1} new exercise(s) before reuse." -f $retainedContractWorkItems.Count, $newContractWorkItems.Count)
         $contractPrefetchStarted = Get-Date
         Invoke-PythonModule -Arguments $contractPrefetchArgs
-        $contractPrefetchReport = Get-Content -LiteralPath $contractPrefetchReportPath -Raw | ConvertFrom-Json
+        $contractPrefetchReport = Get-Content -LiteralPath $contractPrefetchReportPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
         foreach ($result in @($contractPrefetchReport.exercises)) {
             $matchingItem = $workItems | Where-Object { [string]$_.exerciseId -eq [string]$result.exerciseId } | Select-Object -First 1
             if ($matchingItem -and $result.status -in @("generated", "reused") -and
@@ -7955,7 +7868,7 @@ foreach ($workItem in $workItems) {
         continue
     }
     # Incomplete fits keep discovery advancement disabled, but skip cold
-    # rediscovery so retained WHAM/bake can finish this pass.
+    # rediscovery so retained RECONSTRUCTION/bake can finish this pass.
     if ($script:MotionSourceIdentityMatchesPriorRun -and
         -not $DisableStageResume -and
         -not $DisableMotionProcessingResume -and
@@ -8036,8 +7949,8 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
     # Absolute cadence from run start (slot 0, 1, 2, ...) so reports stay on
     # ProgressIntervalSeconds boundaries instead of drifting after each late poll.
     $lastProgressSlot = -1
-    $warmWhamWorkerInstance = $null
-    $script:WhamWorkerStartedOnce = $false
+    $warmGvhmrWorkerInstance = $null
+    $script:GvhmrWorkerStartedOnce = $false
     $schedulerCompleted = $false
     $reusedCount = $completedCount
     if ($reusedCount -gt 0) {
@@ -8062,15 +7975,15 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
             if (Test-MotionRunCancelRequested) {
                 break
             }
-            if ($null -ne $warmWhamWorkerInstance) {
-                $workerRunning = (& docker inspect -f "{{.State.Running}}" $warmWhamWorkerInstance.containerName 2>$null)
+            if ($null -ne $warmGvhmrWorkerInstance) {
+                $workerRunning = (& docker inspect -f "{{.State.Running}}" $warmGvhmrWorkerInstance.containerName 2>$null)
                 if ($LASTEXITCODE -ne 0 -or "$workerRunning".Trim().ToLowerInvariant() -ne "true") {
                     if ($bakeRunningJobs.Count -gt 0) {
                         Write-Host "Motion extractor stopped for the expected GPU model handoff; it will be restarted before the next extraction."
                     } else {
                         Write-Warning "Motion extractor exited while idle; it will be restarted before the next extraction."
                     }
-                    $warmWhamWorkerInstance = $null
+                    $warmGvhmrWorkerInstance = $null
                 }
             }
             if ($effectiveSharedLlamaServer) {
@@ -8111,7 +8024,7 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                 ) {
                     # Restart after an observed exit even when ready.json is
                     # stale. Staged-wave checkpoints admit startup only after
-                    # WHAM has released the GPU; unknown phases remain blocked.
+                    # RECONSTRUCTION has released the GPU; unknown phases remain blocked.
                     # Start-SharedLlamaServer clears stale markers.
                     $sharedLlamaServerInstance = Start-SharedLlamaServer -SessionDir $resolvedSharedLlamaServerSessionDir
                     if ($null -ne $sharedLlamaServerInstance) {
@@ -8132,13 +8045,13 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
             # from the ready queue; stopping here forced a cold model reload
             # during the admission wait even though reconstruction work remained.
             if (
-                $null -ne $warmWhamWorkerInstance -and
+                $null -ne $warmGvhmrWorkerInstance -and
                 $pendingBakeItems.Count -eq 0 -and
                 $pendingLegacyBakeItems.Count -eq 0 -and
                 $bakeRunningJobs.Count -eq 0
             ) {
-                Stop-WhamWarmWorker -Worker $warmWhamWorkerInstance
-                $warmWhamWorkerInstance = $null
+                Stop-GvhmrWarmWorker -Worker $warmGvhmrWorkerInstance
+                $warmGvhmrWorkerInstance = $null
             }
 
             if ($pendingBakeItems.Count -eq 0) { $readyWaveSince = $null }
@@ -8237,10 +8150,9 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                 Write-ProgressCheckpoint
             }
 
-            $lazyWarmWorkerBackend = if ($effectiveWarmGvhmrWorker) { "gvhmr" } else { "wham" }
-            $lazyWarmWorkerSessionDir = if ($effectiveWarmGvhmrWorker) { $resolvedGvhmrWorkerSessionDir } else { $resolvedWhamWorkerSessionDir }
-            $lazyWarmWorkerScriptPath = if ($effectiveWarmGvhmrWorker) { $gvhmrWarmWorkerScriptPath } else { $whamWarmWorkerScriptPath }
-            $lazyWarmWorkerEffective = ($effectiveWarmWhamWorker -or $effectiveWarmGvhmrWorker)
+            $lazyWarmWorkerSessionDir = $resolvedGvhmrWorkerSessionDir
+            $lazyWarmWorkerScriptPath = $gvhmrWarmWorkerScriptPath
+            $lazyWarmWorkerEffective = $effectiveWarmGvhmrWorker
             $lazyWorkerRequested = $lazyWarmWorkerEffective -and $bakeRunningJobs.Count -gt 0 -and (
                 Test-Path -LiteralPath (Join-Path $lazyWarmWorkerSessionDir 'start_requested.json')
             )
@@ -8248,12 +8160,11 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
             # after its requesting Python stage has acquired the shared GPU
             # lease; speculative starts from the pending queue bypass that
             # admission boundary.
-            if ($canLaunchBake -and $lazyWorkerRequested -and $null -eq $warmWhamWorkerInstance -and $lazyWarmWorkerEffective) {
-                $warmWhamWorkerInstance = Start-WhamWarmWorker `
+            if ($canLaunchBake -and $lazyWorkerRequested -and $null -eq $warmGvhmrWorkerInstance -and $lazyWarmWorkerEffective) {
+                $warmGvhmrWorkerInstance = Start-GvhmrWarmWorker `
                     -SessionDir $lazyWarmWorkerSessionDir `
                     -MountRoot $resolvedWorkspaceRoot `
-                    -WorkerScriptPath $lazyWarmWorkerScriptPath `
-                    -Backend $lazyWarmWorkerBackend
+                    -WorkerScriptPath $lazyWarmWorkerScriptPath
                 Remove-Item -LiteralPath (Join-Path $lazyWarmWorkerSessionDir 'start_requested.json') -Force -ErrorAction SilentlyContinue
             }
 
@@ -8529,7 +8440,7 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                                         if ($recoveredExitCode -eq 0) {
                                             $recoveredReportPath = Join-Path $job.WaveWorkspace "staged_wave_report.json"
                                             if (Test-Path -LiteralPath $recoveredReportPath) {
-                                                $recoveredReport = Get-Content -LiteralPath $recoveredReportPath -Raw | ConvertFrom-Json
+                                                $recoveredReport = Get-Content -LiteralPath $recoveredReportPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
                                                 if ($recoveredReport.waveId -ne $job.WaveId) {
                                                     $recoveredReport = $null
                                                     $recoveredStatus = $StagedWaveAmbiguousRecoveryStatus
@@ -8579,7 +8490,7 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                         }
                         $waveAmbiguousRecovery = (Get-ObjectProperty -Object $waveResult -Name "serviceStatus") -eq $StagedWaveAmbiguousRecoveryStatus
                         # A successful staged coordinator stops the resident
-                        # WHAM worker before loading the final-validation VLM.
+                        # RECONSTRUCTION worker before loading the final-validation VLM.
                         # On an early failure, stop it here before retrying -
                         # unless an overlapping staged batch is still running
                         # and may be mid-generation on that same worker; the
@@ -8596,11 +8507,11 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                             if ($siblingStagedWaveRunning) {
                                 Write-Host "Motion extractor left for the overlapping staged batch; that batch stops it before its validation phase."
                             } else {
-                                Stop-WhamWarmWorker -Worker $warmWhamWorkerInstance
+                                Stop-GvhmrWarmWorker -Worker $warmGvhmrWorkerInstance
                             }
                         }
                         if (-not $siblingStagedWaveRunning -and -not $waveAmbiguousRecovery) {
-                            $warmWhamWorkerInstance = $null
+                            $warmGvhmrWorkerInstance = $null
                         }
                         if ($waveResult -and $waveResult.exitCode -eq 75) {
                             Write-Host "Movement generation stopped: insufficient free storage. Free space and resume."
@@ -8763,7 +8674,7 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
         if ($stagedWaveShutdownConfirmed) {
             Stop-MotionModelServicesAfterStagedWorker `
                 -StagedWaveShutdownConfirmed $stagedWaveShutdownConfirmed `
-                -WarmWhamWorker $warmWhamWorkerInstance `
+                -WarmGvhmrWorker $warmGvhmrWorkerInstance `
                 -SharedLlamaServer $sharedLlamaServerInstance
         } else {
             $script:MotionServiceShutdownUnconfirmed = $true
@@ -8867,15 +8778,11 @@ $summary = [ordered]@{
         imageMaxTokens = $LlamaCppImageMaxTokens
         mtmdBatchMaxTokens = $LlamaCppMtmdBatchMaxTokens
     }
-    warmWhamWorkerEnabled = $effectiveWarmWhamWorker
     sharedLlamaServerEnabled = $effectiveSharedLlamaServer
     sharedLlamaServerSessionDir = $resolvedSharedLlamaServerSessionDir
-    whamWorkerSessionDir = $resolvedWhamWorkerSessionDir
-    whamWorkerMountRoot = if ($effectiveWarmWhamWorker) { $resolvedWorkspaceRoot } else { $null }
     warmGvhmrWorkerEnabled = $effectiveWarmGvhmrWorker
     gvhmrWorkerSessionDir = $resolvedGvhmrWorkerSessionDir
     gvhmrWorkerMountRoot = if ($effectiveWarmGvhmrWorker) { $resolvedWorkspaceRoot } else { $null }
-    smplifyEnabled = -not $effectiveSkipSmplify
     effectiveCandidateBudget = [ordered]@{
         maxCandidates = $MaxCandidates
         candidateReviewBatchSize = $CandidateReviewBatchSize

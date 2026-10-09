@@ -201,7 +201,7 @@ def run(args: argparse.Namespace) -> dict:
         result = json.loads(result_path.read_text(encoding="utf-8"))
         if result.get("status") != "completed":
             raise RuntimeError(f"GVHMR job failed: {result.get('error') or result}")
-        candidate_pkl = out_dir / video.stem / "wham_output.pkl"
+        candidate_pkl = out_dir / video.stem / "reconstruction_output.pkl"
         if not candidate_pkl.is_file():
             raise FileNotFoundError(f"GVHMR job result omitted output pkl: {candidate_pkl}")
         parity = compare_motion_outputs(reference_pkl, candidate_pkl)

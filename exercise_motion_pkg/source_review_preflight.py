@@ -22,7 +22,7 @@ def review_prepared_source(candidate: bake.RankedCandidate, *, request: bake.Bak
         candidate.candidate, source_review_video_path=selected_video)
     output = workspace / "review" / "source-preflight"
     sheets = bake.final_output_source_contact_sheets(item, output_dir=output / "source")
-    phase = bake.pre_wham_exact_source_phase_reference_metrics(item) or {}
+    phase = bake.pre_reconstruction_exact_source_phase_reference_metrics(item) or {}
     endpoints = phase.get("sourcePoseEndpointFeatures")
     deterministic = {
         "sourceVideoFullRepetitionPhaseCompletenessMetrics": phase,

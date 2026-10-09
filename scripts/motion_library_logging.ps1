@@ -30,9 +30,9 @@ function ConvertTo-MotionLibraryReasons {
         fit_evaluation_limit = 'Motion fitting hit its evaluation limit before a validated cycle.'
         no_validated_loop_cycle = 'No validated repetition cycle was produced.'
         pre_fit_source_articulation_fidelity_failed = 'Source articulation already mismatches the reference before fitting.'
-        raw_wham_motion_validation_failed = 'The raw reconstructed motion failed validation.'
-        raw_wham_rigid_two_hand_spacing_instability = 'Hand spacing in the reconstruction is unstable.'
-        raw_wham_kinematic_artifact = 'The raw reconstruction has kinematic artifacts.'
+        raw_reconstruction_motion_validation_failed = 'The raw reconstructed motion failed validation.'
+        raw_reconstruction_rigid_two_hand_spacing_instability = 'Hand spacing in the reconstruction is unstable.'
+        raw_reconstruction_kinematic_artifact = 'The raw reconstruction has kinematic artifacts.'
         physical_pose_constraint_violation = 'The pose violates anatomical or physical constraints.'
         controlled_motion_fit_rejected = 'The motion fit failed its validation checks.'
         source_confirmed_baseline_support_drift = 'The planted foot drifts from its source-confirmed position.'
@@ -60,8 +60,8 @@ function ConvertTo-MotionLibraryReasons {
         retained_selection_artifacts_missing = 'No retained movement artifacts were found to revalidate.'
         retained_selected_artifact_rejected_under_current_policy = 'The retained movement failed the current validation policy.'
     }
-    $informational = @('pre_wham_validated_source_interval_review',
-        'post_wham_movement_cut_blocked_by_source_authority', 'loop_continuity_not_required',
+    $informational = @('pre_reconstruction_validated_source_interval_review',
+        'post_reconstruction_movement_cut_blocked_by_source_authority', 'loop_continuity_not_required',
         'loop_bridge_mismatch_ignored_loop_not_required', 'source_candidate_scorecard_passed',
         'source_candidate_window_choice', 'progressive_source_cut_stable_level_selection')
     $codes = @($Reasons -split ',' | ForEach-Object {

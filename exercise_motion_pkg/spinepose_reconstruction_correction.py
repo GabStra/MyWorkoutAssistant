@@ -8,7 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from exercise_motion_pkg.models import MotionClip, MotionFrame, Point3
-from exercise_motion_pkg.wham_results import load_wham_results, select_wham_subject
+from exercise_motion_pkg.reconstruction_results import load_reconstruction_results, select_reconstruction_subject
 
 
 SPINEPOSE_SPINE_COUNT = 9
@@ -36,7 +36,7 @@ UPPER_TORSO_FOLLOW_JOINTS = (
 
 
 @dataclass(frozen=True)
-class SpinePoseWhamCorrectionStats:
+class SpinePoseReconstructionCorrectionStats:
     frame_count: int
     source_frame_count: int
     applied_frame_count: int
@@ -98,9 +98,9 @@ class SpinePoseProfileSelection:
     skipped_reason: str | None = None
 
 
-def apply_spinepose_to_wham_pkl(
+def apply_spinepose_to_reconstruction_pkl(
     *,
-    wham_results_pkl: Path,
+    reconstruction_results_pkl: Path,
     spinepose_json_dir: Path,
     output_pkl: Path,
     subject_id: int | str | None = None,
@@ -110,21 +110,21 @@ def apply_spinepose_to_wham_pkl(
     invert: bool = False,
     smoothing_window: int = 9,
     arm_counter_rotation: float = DEFAULT_ARM_COUNTER_ROTATION,
-) -> SpinePoseWhamCorrectionStats:
+) -> SpinePoseReconstructionCorrectionStats:
     try:
         import joblib  # type: ignore
         import numpy as np  # type: ignore
     except ImportError as exc:
-        raise RuntimeError("SpinePose/WHAM correction requires joblib and numpy.") from exc
+        raise RuntimeError("SpinePose/RECONSTRUCTION correction requires joblib and numpy.") from exc
 
-    raw_results = load_wham_results(wham_results_pkl)
-    selected_subject_id, payload = select_wham_subject(raw_results, subject_id=subject_id)
+    raw_results = load_reconstruction_results(reconstruction_results_pkl)
+    selected_subject_id, payload = select_reconstruction_subject(raw_results, subject_id=subject_id)
     corrected_results = deepcopy(raw_results)
     corrected_payload = corrected_results[selected_subject_id]
 
     pose = payload.get("pose")
     if not hasattr(pose, "shape") or len(pose.shape) != 2 or pose.shape[1] != 72:  # type: ignore[attr-defined]
-        raise ValueError("WHAM camera pose must be shaped like [frames, 72].")
+        raise ValueError("RECONSTRUCTION camera pose must be shaped like [frames, 72].")
     frame_count = int(pose.shape[0])  # type: ignore[index]
 
     flexion = _load_spinepose_flexion_signal(spinepose_json_dir, frame_count=frame_count)
@@ -174,7 +174,7 @@ def apply_spinepose_to_wham_pkl(
     joblib.dump(corrected_results, output_pkl)
 
     abs_deltas = [abs(value) for value in deltas]
-    return SpinePoseWhamCorrectionStats(
+    return SpinePoseReconstructionCorrectionStats(
         frame_count=frame_count,
         source_frame_count=len(list(spinepose_json_dir.glob("*.json"))),
         applied_frame_count=len(deltas),
@@ -250,7 +250,7 @@ def apply_spinepose_to_motion_clip(
     propagated_joint_names: set[str] = set()
     fused_frames: list[MotionFrame] = []
     for frame, profile in zip(clip.frames, profiles, strict=True):
-        torso_basis = _build_wham_torso_basis(frame.joints)
+        torso_basis = _build_reconstruction_torso_basis(frame.joints)
         if torso_basis is None:
             fused_frames.append(frame)
             continue
@@ -896,7 +896,7 @@ def _apply_joint_depth_offset(
     return True
 
 
-def _build_wham_torso_basis(joints: dict[str, Point3]) -> tuple[Point3, Point3, Point3, Point3, float] | None:
+def _build_reconstruction_torso_basis(joints: dict[str, Point3]) -> tuple[Point3, Point3, Point3, Point3, float] | None:
     base = _joint_or_midpoint(joints, "pelvis", ("left_hip", "right_hip"))
     top = _joint_or_first(joints, ("neck", "spine3", "head", "spine"))
     if base is None or top is None:

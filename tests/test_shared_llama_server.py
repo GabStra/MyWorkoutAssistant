@@ -135,7 +135,6 @@ def _shared_request(tmp_path: Path) -> BakeAndRankRequest:
     return BakeAndRankRequest(
         candidates_json=tmp_path / "candidates.json",
         workspace=tmp_path,
-        wham_repo_path=None,
         body_model_root=None,
         llama_cpp_auto_start_server=False,
         shared_llama_server=True,
@@ -184,7 +183,6 @@ def test_flag_off_close_keeps_today_force_stop_behavior(tmp_path, monkeypatch):
     request = BakeAndRankRequest(
         candidates_json=tmp_path / "candidates.json",
         workspace=tmp_path,
-        wham_repo_path=None,
         body_model_root=None,
     )
     session = LazyLlamaCppVisionSession(request)
@@ -546,7 +544,7 @@ def test_cli_flags_plumb_into_requests(tmp_path):
         "bake-and-rank",
         "--candidates-json", str(tmp_path / "candidates.json"),
         "--workspace", str(tmp_path),
-        "--wham-repo-path", str(tmp_path / "wham"),
+        "--reconstruction-repo-path", str(tmp_path / "reconstruction"),
         "--body-model-root", str(tmp_path / "body"),
     ]
     default_request = build_bake_and_rank_request(parser.parse_args(base_args))
@@ -824,8 +822,6 @@ def test_stop_before_vlm_skips_while_foreign_generation_active(tmp_path) -> None
 
     item = SimpleNamespace(
         request=SimpleNamespace(
-            use_warm_wham_worker=False,
-            wham_worker_session_dir=None,
             use_warm_gvhmr_worker=True,
             gvhmr_worker_session_dir=worker_dir,
             shared_llama_server=True,
@@ -846,7 +842,7 @@ def test_stop_before_vlm_skips_while_foreign_generation_active(tmp_path) -> None
 
     responder = threading.Thread(target=fake_worker_answers_stop, daemon=True)
     responder.start()
-    release = wave_pipeline._stop_warm_wham_worker_before_vlm([item])
+    release = wave_pipeline._stop_warm_reconstruction_worker_before_vlm([item])
     assert release["stopped"] is True
     responder.join(timeout=5)
 
@@ -866,7 +862,7 @@ def test_stop_before_vlm_skips_while_foreign_generation_active(tmp_path) -> None
             "holder": "wave-0009",
             "startedAtUnixSeconds": time.time(),
         }), encoding="utf-8")
-        release = wave_pipeline._stop_warm_wham_worker_before_vlm([item])
+        release = wave_pipeline._stop_warm_reconstruction_worker_before_vlm([item])
         assert release["stopped"] is False
         assert release["skippedForForeignGeneration"] is True
         assert release["foreignHolders"] == ["wave-0009"]

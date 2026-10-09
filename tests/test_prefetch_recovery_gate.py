@@ -26,17 +26,17 @@ def test_prefetch_uses_production_recovery_without_bypassing_rejections(tmp_path
         path.write_text("fixture")
     candidate = bake.RankedCandidate(0, 1, "curl", "Curl", "curl", {"videoId": "id"})
     request = bake.BakeAndRankRequest(candidates_json=tmp_path / "candidates.json", workspace=tmp_path,
-                                      wham_repo_path=None, body_model_root=None)
+                                      body_model_root=None)
     calls, renders = [], []
 
     def gate(path, **kwargs):
         calls.append(path)
         return {"passed": path == cleaned and cleaned_passes, "rejectionReasons": ["original defect"]}
 
-    monkeypatch.setattr(bake, "evaluate_raw_wham_motion_gate", gate)
-    monkeypatch.setattr(bake, "raw_wham_motion_gate_allows_cleaned_recovery", lambda result: recoverable)
-    monkeypatch.setattr(bake, "pre_wham_source_interval_authority", lambda **kwargs: {})
-    monkeypatch.setattr(bake, "pre_wham_source_foot_support_evidence", lambda workspace: {})
+    monkeypatch.setattr(bake, "evaluate_raw_reconstruction_motion_gate", gate)
+    monkeypatch.setattr(bake, "raw_reconstruction_motion_gate_allows_cleaned_recovery", lambda result: recoverable)
+    monkeypatch.setattr(bake, "pre_reconstruction_source_interval_authority", lambda **kwargs: {})
+    monkeypatch.setattr(bake, "pre_reconstruction_source_foot_support_evidence", lambda workspace: {})
     monkeypatch.setattr(bake, "load_motion_json", lambda path: path)
     monkeypatch.setattr(bake, "build_candidate_review_eligible_loops", lambda *args, **kwargs: [])
 

@@ -116,7 +116,7 @@ def test_power_shell_services_preserve_leases_until_runtime_exit():
     acquire = _powershell_function(script, "Acquire-MotionWorkspaceLease")
     release = _powershell_function(script, "Release-MotionServiceSessionLease")
     llama_stop = _powershell_function(script, "Stop-SharedLlamaServer")
-    worker_stop = _powershell_function(script, "Stop-WhamWarmWorker")
+    worker_stop = _powershell_function(script, "Stop-ReconstructionWarmWorker")
 
     assert "Get-MotionServiceRuntimeState -RuntimeOwner $previousRuntime" in acquire
     assert '$runtimeState -ne "stopped"' in acquire
@@ -300,9 +300,9 @@ if (-not $safeSourceRestart) {{ throw 'A source-validation wave could not restar
 $safeCheckpoint = [pscustomobject]@{{ stage = 'final_validation' }}
 $safeFinalCounts = Get-SharedLlamaBakeRestartCounts -RunningJobs @($safeWave)
 if ($safeFinalCounts.safeBakeRunningJobCount -ne 1 -or $safeFinalCounts.unsafeBakeRunningJobCount -ne 0) {{ throw 'Final validation was not classified as restart-safe work.' }}
-$safeCheckpoint = [pscustomobject]@{{ stage = 'wham_generation' }}
+$safeCheckpoint = [pscustomobject]@{{ stage = 'reconstruction_generation' }}
 $unsafeBakeCounts = Get-SharedLlamaBakeRestartCounts -RunningJobs @($safeWave)
-if ($unsafeBakeCounts.safeBakeRunningJobCount -ne 0 -or $unsafeBakeCounts.unsafeBakeRunningJobCount -ne 1) {{ throw 'WHAM generation did not block the shared vision server restart.' }}
+if ($unsafeBakeCounts.safeBakeRunningJobCount -ne 0 -or $unsafeBakeCounts.unsafeBakeRunningJobCount -ne 1) {{ throw 'RECONSTRUCTION generation did not block the shared vision server restart.' }}
 $unknownWave = [pscustomobject]@{{ IsStagedWave = $true; WaveWorkspace = 'unknown-wave' }}
 function Test-Path {{ return $false }}
 $unknownBakeCounts = Get-SharedLlamaBakeRestartCounts -RunningJobs @($unknownWave)

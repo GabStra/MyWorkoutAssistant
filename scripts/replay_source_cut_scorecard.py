@@ -222,7 +222,6 @@ def main() -> int:
         settings_request = BakeAndRankRequest(
             candidates_json=args.contract.resolve(),
             workspace=REPOSITORY_ROOT / "build" / "exercise_motion",
-            wham_repo_path=None,
             body_model_root=None,
         )
         settings = build_llama_cpp_vision_settings(settings_request)

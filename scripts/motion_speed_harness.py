@@ -55,10 +55,10 @@ DEFAULT_EXERCISES = (
 
 ARMS: dict[str, list[str]] = {
     "qwen-full": [
-        "-WarmWhamWorker:$true", "-KeepLlamaCppServer:$true",
+        "-WarmGvhmrWorker:$true", "-KeepLlamaCppServer:$true",
     ],
     "qwen-shared": [
-        "-WarmWhamWorker:$true", "-KeepLlamaCppServer:$true", "-SharedLlamaServer",
+        "-WarmGvhmrWorker:$true", "-KeepLlamaCppServer:$true", "-SharedLlamaServer",
     ],
 }
 
@@ -181,7 +181,7 @@ def _rewrite_absolute_workspace_references(
 def assemble_workspace(arm_dir: Path, slugs: list[str], base_workspace: Path) -> int:
     if arm_dir.exists():
         shutil.rmtree(arm_dir)
-    # The production pipeline places its content-addressed WHAM cache under
+    # The production pipeline places its content-addressed RECONSTRUCTION cache under
     # the nearest ancestor named "exercise_motion". Give each arm its own
     # such root so a preceding arm cannot warm the next arm's cache.
     workspace = arm_dir / "isolated" / "exercise_motion" / "workspace"
@@ -629,7 +629,6 @@ def build_runner_command(
         "-IncrementalMobilePackageOutputJson", str(arm_dir / "movements_out.json"),
         "-YouTubePreviewCacheDir", str(preview_cache_dir),
         "-YouTubeSourceCacheDir", str(source_cache_dir),
-        "-MotionReconstructor", "gvhmr",
         "-StagedWaveSize", str(staged_wave_size),
         "-StagedWaveMaxWaitSeconds", str(staged_wave_max_wait_seconds),
         "-PrefetchWorkers", str(prefetch_workers),
@@ -958,7 +957,7 @@ def run_arm(arm: str, arm_dir: Path, plan_json: Path, timeout_seconds: float,
         "shutdownDetails": shutdown,
         "wallSeconds": round(elapsed, 1),
         "workspace": str(workspace),
-        "whamCacheRoot": str(arm_dir / "isolated" / "exercise_motion" / "wham-cache"),
+        "reconstructionCacheRoot": str(arm_dir / "isolated" / "exercise_motion" / "reconstruction-cache"),
         "previewCacheRoot": str(arm_dir / "cache" / "youtube-preview-cache"),
         "sourceCacheRoot": str(source_cache_root),
         "log": str(log_path),
@@ -1070,10 +1069,10 @@ def capture_metric_input_snapshot(workspace: Path, snapshot_path: Path) -> dict:
             for item in (checkpoint or {}).get("items") or []:
                 if not isinstance(item, dict):
                     continue
-                wham = item.get("wham") or {}
-                if not isinstance(wham, dict):
+                reconstruction = item.get("reconstruction") or {}
+                if not isinstance(reconstruction, dict):
                     continue
-                for attempt in wham.get("attempts") or []:
+                for attempt in reconstruction.get("attempts") or []:
                     if not isinstance(attempt, dict):
                         continue
                     selected_video = attempt.get("selectedVideoPath")
@@ -1624,7 +1623,7 @@ def extract_metrics(arm_result: dict) -> dict:
         )
         timings = m.get("phaseTimings", {})
         metrics["phases"]["source"] += timings.get("sourceValidationSeconds", 0.0)
-        metrics["phases"]["generation"] += timings.get("whamGenerationSeconds", 0.0)
+        metrics["phases"]["generation"] += timings.get("reconstructionGenerationSeconds", 0.0)
         metrics["phases"]["final"] += timings.get("finalValidationSeconds", 0.0)
         browser_workers = m.get("browserWorkers") or {}
         by_task = browser_workers.get("byTask")
@@ -1667,9 +1666,9 @@ def extract_metrics(arm_result: dict) -> dict:
         if not isinstance(checkpoint, dict):
             continue
         for item in checkpoint.get("items", []):
-            wham = item.get("wham") or {}
+            reconstruction = item.get("reconstruction") or {}
             candidates = [
-                attempt for attempt in (wham.get("attempts") or [])
+                attempt for attempt in (reconstruction.get("attempts") or [])
                 if isinstance(attempt, dict) and isinstance(attempt.get("elapsedSeconds"), (int, float))
             ]
             for attempt in candidates:
@@ -1700,10 +1699,10 @@ def extract_metrics(arm_result: dict) -> dict:
                 if not isinstance(generation_timings, dict) or not generation_timings:
                     continue
                 metrics["candidateGenerationTimingSamples"] += 1
-                stage_seconds = _metric_seconds(generation_timings.get("whamRunSeconds"))
+                stage_seconds = _metric_seconds(generation_timings.get("reconstructionRunSeconds"))
                 if stage_seconds is not None:
                     metrics["reconstructionStageWallSeconds"] += stage_seconds
-                runner_timings = generation_timings.get("wham") or {}
+                runner_timings = generation_timings.get("reconstruction") or {}
                 backend = runner_timings.get("backend")
                 runner_was_invoked = bool(
                     (isinstance(backend, str) and backend)

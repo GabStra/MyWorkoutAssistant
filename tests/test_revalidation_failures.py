@@ -94,11 +94,11 @@ def test_pose_release_drops_worker_models_before_emptying_allocator(monkeypatch)
 def test_exclusive_worker_releases_models_before_unlocking(tmp_path, monkeypatch, fails):
     session = bake.LazyLlamaCppVisionSession(bake.BakeAndRankRequest(
         candidates_json=tmp_path / 'candidates.json', workspace=tmp_path,
-        wham_repo_path=None, body_model_root=None))
+        body_model_root=None))
     monkeypatch.setattr(session, '_close_ranker_locked', lambda **kwargs: None)
     events = []
     def release():
-        assert session._wham_active
+        assert session._reconstruction_active
         events.append('release')
     monkeypatch.setattr(session, '_release_cached_exclusive_models', release)
     def operation():
@@ -112,7 +112,7 @@ def test_exclusive_worker_releases_models_before_unlocking(tmp_path, monkeypatch
     else:
         assert session.run_without_llama_overlap(operation) == 42
     assert events == ['operation', 'release']
-    assert not session._wham_active
+    assert not session._reconstruction_active
 
 
 def test_revalidation_reuses_current_cache_with_matching_context(tmp_path):

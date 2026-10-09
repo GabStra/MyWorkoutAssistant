@@ -1,6 +1,6 @@
 # Exercise Motion YouTube E2E Runbook
 
-Use this when you want to start from an exercise name, find a suitable YouTube clip, reconstruct and rank the generated motion, and produce the Wear skeleton JSON. The repo-level wrappers use GVHMR by default; WHAM is an explicit alternate backend.
+Use this when you want to start from an exercise name, find a suitable YouTube clip, reconstruct and rank the generated motion, and produce the Wear skeleton JSON. GVHMR in Docker is the only movement reconstruction backend.
 
 The current default path is optimized for source quality first:
 
@@ -15,13 +15,11 @@ The current default path is optimized for source quality first:
 ## Prerequisites
 
 - Run from the repo root: `C:\Users\gabri\Documents\MyWorkoutAssistant`.
-- Docker Desktop must be running for the default GVHMR Docker path, which uses `myworkoutassistant/gvhmr:torch2.3-cu121`.
-- The default body-model root is `third_party/WHAM/dataset/body_models`. Initialize the submodule with `git submodule update --init third_party/WHAM` if that directory or its required model files are missing.
-- To select WHAM instead of the default GVHMR, pass `-MotionReconstructor wham`; its Docker image is `myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1`.
-- The default VLM path uses llama.cpp with:
+- Docker Desktop with GPU support must be running; GVHMR uses `myworkoutassistant/gvhmr:torch2.3-cu121`.
+- All exercise movement model work uses Qwen3.5-9B UD-Q4_K_XL through llama.cpp:
   - `C:\Users\gabri\Downloads\Qwen3.5-9B-UD-Q4_K_XL.gguf`
   - `C:\Users\gabri\Downloads\mmproj-BF16(6).gguf`
-  - The same Qwen 3.5 9B model handles text-only stages without the projector and visual stages with the projector. Context/fit context is `8192`, image min tokens is `1024`, memory mapping is enabled, and `mlock` is disabled.
+  - The same model handles text-only stages without the projector and visual stages with the projector. The configured context is `8192`, image minimum is `1024` tokens, memory mapping is enabled, and `mlock` is disabled.
 - A YouTube cookies file is strongly recommended for reliable downloads.
 
 Use a long shell/tool timeout when running these. A good source can finish much faster, but difficult searches or first-time cache misses can take 10-25 minutes.
@@ -41,7 +39,7 @@ For generated app-ready movements, prefer the first and third scripts. The direc
 
 ## Single Exercise By Name
 
-This is the normal single-exercise movement generator. It searches YouTube using the exercise name, validates source chunks before reconstruction, bakes/ranks generated movement, and writes the selected preview and Wear skeleton. It uses GVHMR by default; pass `-MotionReconstructor wham` to choose WHAM.
+This is the normal single-exercise movement generator. It searches YouTube using the exercise name, validates source chunks before reconstruction, bakes/ranks generated movement, and writes the selected preview and Wear skeleton. It runs GVHMR in Docker.
 
 ```powershell
 pwsh ./scripts/run_exercise_motion_youtube_bake_and_rank.ps1 `
@@ -117,8 +115,7 @@ pwsh ./scripts/run_exercise_motion_generation.ps1 `
   -SegmentEndSeconds 7.0
 ```
 
-These direct-generation examples use the script's default GVHMR path. For WHAM,
-add `-MotionReconstructor wham -UseWhamDocker`.
+The direct-generation wrapper also runs GVHMR in Docker.
 
 If you do not pass `-SegmentStartSeconds` and `-SegmentEndSeconds`, this script runs segment detection unless you pass `-UseSourceAsIs` or `-SkipSegmentDetection`.
 

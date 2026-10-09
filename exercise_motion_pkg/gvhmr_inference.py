@@ -1,7 +1,7 @@
 """Run GVHMR prediction without producing unused visualization videos.
 
 This bridge executes inside the GVHMR Docker image. The generation pipeline
-consumes ``hmr4d_results.pt`` through the WHAM-schema exporter and renders its
+consumes ``hmr4d_results.pt`` through the RECONSTRUCTION-schema exporter and renders its
 own previews later, so GVHMR's camera/global MP4s are redundant work.
 """
 

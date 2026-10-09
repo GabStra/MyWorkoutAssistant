@@ -3,22 +3,11 @@ param(
     [string]$CandidatesJson,
 
     [string]$Workspace = "build/exercise_motion",
-    [string]$WhamRepoPath,
     [string]$BodyModelRoot,
-    [string]$WhamPython = "python",
-    [switch]$UseWhamDocker,
-    [string]$WhamDockerImage = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1",
-    [ValidateSet("wham", "gvhmr")]
-    [string]$MotionReconstructor = "gvhmr",
-    [string]$GvhmrDockerImage = "myworkoutassistant/gvhmr:torch2.3-cu121",
-    [string]$WhamDockerGpus = "all",
-    [string]$WhamDockerShmSize = "16g",
-    [bool]$WarmWhamWorker = $false,
-    [switch]$SkipWarmWhamWorker,
-    [string]$WhamWorkerSessionDir,
-    [double]$WhamWorkerStartupTimeoutSeconds = 600.0,
-    [double]$WhamWorkerJobTimeoutSeconds = 0.0,
-    [double]$WhamTimeoutSeconds = 0.0,
+    [string]$ReconstructionDockerImage = "myworkoutassistant/gvhmr:torch2.3-cu121",
+    [string]$ReconstructionDockerGpus = "all",
+    [string]$ReconstructionDockerShmSize = "16g",
+    [double]$ReconstructionTimeoutSeconds = 0.0,
     [Alias("YoutubeCookiesPath")]
     [string]$YoutubeCookies,
     [int]$FallbackCandidates = 12,
@@ -26,11 +15,9 @@ param(
     [int]$MaxFinalOutputRejections = 3,
     [int]$MaxSelectedResults = 1,
     [int]$CandidateWorkers = 1,
-    [switch]$EstimateLocalOnly,
-    [switch]$SkipSmplify,
-    [switch]$NoReuseWhamCache,
+    [switch]$NoReuseReconstructionCache,
     [switch]$SkipMotionTuning,
-    [switch]$ExportWhamSmplPreview,
+    [switch]$ExportReconstructionSmplPreview,
     [switch]$SkipSpinePose,
     [string]$SpinePoseJsonDir,
     [string]$SpinePoseCommand,
@@ -41,12 +28,9 @@ param(
     [switch]$NoReuseSpinePoseCache,
     [double]$SpinePoseGain = 1.0,
     [double]$SpinePoseMaxDegrees = 35.0,
-    [ValidateSet(0, 1, 2)]
-    [int]$SpinePoseAxis = 0,
     [switch]$SpinePoseInvert,
     [int]$SpinePoseSmoothingWindow = 9,
-    [double]$SpinePoseArmCounterRotation = 1.0,
-    [ValidateSet("motion", "legacy-pkl")]
+    [ValidateSet("motion")]
     [string]$SpinePoseMergeMode = "motion",
     [switch]$EnableSpinePose,
     [switch]$SkipSourceSegmentDetection,
@@ -62,7 +46,7 @@ param(
     [double]$SegmentMinSeconds = 2.0,
     [double]$SegmentMaxSeconds = 0.0,
     [switch]$ComparativeSegmentSelection,
-    [switch]$SkipPreWhamSourceValidation,
+    [switch]$SkipPreReconstructionSourceValidation,
     [switch]$NoExerciseMotionContract,
     [switch]$RankPreviewVariants,
     [switch]$AdaptivePreviewSettings,
@@ -126,6 +110,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "reconstruction_compat.ps1")
 
 function Resolve-StrictPath {
     param([string]$PathValue)
@@ -181,116 +166,6 @@ function Get-BasicPythonCommand {
     return $pythonCommand.Path
 }
 
-function Start-WhamWarmWorker {
-    param(
-        [string]$SessionDir,
-        [string]$MountRoot,
-        [string]$WorkerScriptPath
-    )
-
-    New-Item -ItemType Directory -Force -Path $SessionDir | Out-Null
-    foreach ($child in @("jobs", "running", "results", "job_logs")) {
-        New-Item -ItemType Directory -Force -Path (Join-Path $SessionDir $child) | Out-Null
-    }
-    foreach ($staleFile in @("ready.json", "startup_error.json", "stop", "stopped.json")) {
-        $path = Join-Path $SessionDir $staleFile
-        if (Test-Path -LiteralPath $path) {
-            Remove-Item -LiteralPath $path -Force
-        }
-    }
-
-    $containerName = "mwa-wham-worker-$([guid]::NewGuid().ToString('N'))"
-    $dockerArgs = @("run", "-d", "--rm", "--name", $containerName)
-    if (-not [string]::IsNullOrWhiteSpace($WhamDockerGpus)) {
-        $dockerArgs += @("--gpus", $WhamDockerGpus)
-    }
-    if (-not [string]::IsNullOrWhiteSpace($WhamDockerShmSize)) {
-        $dockerArgs += @("--shm-size", $WhamDockerShmSize)
-    }
-    $workerModuleDir = Split-Path -Parent $WorkerScriptPath
-    $trackingPreflightPath = Join-Path $workerModuleDir "wham_tracking_preflight.py"
-    $trackingCoveragePath = Join-Path $workerModuleDir "wham_tracking_coverage.py"
-    $warmWorkerRetentionPath = Join-Path $workerModuleDir "warm_worker_retention.py"
-    $dockerArgs += @(
-        "-v", "$($MountRoot):/workspace",
-        "-v", "$($SessionDir):/worker_state",
-        "-v", "$($WorkerScriptPath):/worker/wham_warm_worker.py:ro",
-        "-v", "$($warmWorkerRetentionPath):/worker/warm_worker_retention.py:ro",
-        "-v", "$($trackingPreflightPath):/worker/wham_tracking_preflight.py:ro",
-        "-v", "$($trackingCoveragePath):/worker/wham_tracking_coverage.py:ro",
-        "-w", "/opt/wham-src",
-        $WhamDockerImage,
-        "python", "-u", "/worker/wham_warm_worker.py",
-        "--state-dir", "/worker_state"
-    )
-
-    Write-Host "Starting motion extractor..."
-    $containerId = (& docker @dockerArgs 2>&1)
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to start warm WHAM worker container: $containerId"
-    }
-    $containerId = ([string]$containerId).Trim()
-    $readyPath = Join-Path $SessionDir "ready.json"
-    $startupErrorPath = Join-Path $SessionDir "startup_error.json"
-    $deadline = (Get-Date).AddSeconds($WhamWorkerStartupTimeoutSeconds)
-    while ((Get-Date) -lt $deadline) {
-        if (Test-Path -LiteralPath $readyPath) {
-            $ready = Get-Content -LiteralPath $readyPath -Raw | ConvertFrom-Json
-            Write-Host ("Motion extractor ready in {0}s ({1})." -f $ready.loadSeconds, $ready.gpuName)
-            return [pscustomobject]@{
-                containerName = $containerName
-                containerId = $containerId
-                sessionDir = $SessionDir
-                mountRoot = $MountRoot
-                readyPath = $readyPath
-            }
-        }
-        if (Test-Path -LiteralPath $startupErrorPath) {
-            $errorPayload = Get-Content -LiteralPath $startupErrorPath -Raw
-            try {
-                & docker logs $containerName 2>&1 | Add-Content -LiteralPath (Join-Path $SessionDir "container.log") -Encoding UTF8
-            } catch {
-            }
-            try {
-                & docker stop $containerName | Out-Null
-            } catch {
-            }
-            throw "Warm WHAM worker failed during startup: $errorPayload"
-        }
-        $running = (& docker inspect -f "{{.State.Running}}" $containerName 2>$null)
-        if ($LASTEXITCODE -ne 0 -or "$running".Trim().ToLowerInvariant() -ne "true") {
-            $logs = (& docker logs $containerName 2>&1)
-            throw "Warm WHAM worker container exited before ready. Logs: $logs"
-        }
-        Start-Sleep -Seconds 2
-    }
-    try {
-        & docker logs $containerName 2>&1 | Add-Content -LiteralPath (Join-Path $SessionDir "container.log") -Encoding UTF8
-    } catch {
-    }
-    try {
-        & docker stop $containerName | Out-Null
-    } catch {
-    }
-    throw "Timed out waiting for warm WHAM worker startup after $WhamWorkerStartupTimeoutSeconds seconds."
-}
-
-function Stop-WhamWarmWorker {
-    param([object]$Worker)
-    if ($null -eq $Worker) {
-        return
-    }
-    try {
-        "stop" | Set-Content -LiteralPath (Join-Path $Worker.sessionDir "stop") -Encoding UTF8
-    } catch {
-    }
-    try {
-        & docker stop --time 10 $Worker.containerName | Out-Null
-    } catch {
-        Write-Warning "Failed to stop warm WHAM worker container '$($Worker.containerName)': $($_.Exception.Message)"
-    }
-}
-
 function Ensure-LlamaCppParallelContext {
     $minContextPerSlot = 4096
     $parallelSlots = if ($null -ne $LlamaCppParallel) { [Math]::Max(1, [int]$LlamaCppParallel) } else { 1 }
@@ -332,35 +207,13 @@ if ($ReselectExisting) {
 
 $pythonCommand = Get-PythonCommand
 
-$defaultWhamRepoPath = Join-Path $repoRoot "third_party\WHAM"
-if ([string]::IsNullOrWhiteSpace($WhamRepoPath)) {
-    $WhamRepoPath = $defaultWhamRepoPath
-}
 if ([string]::IsNullOrWhiteSpace($BodyModelRoot)) {
-    $BodyModelRoot = Join-Path $WhamRepoPath "dataset\body_models"
+    $BodyModelRoot = Join-Path $repoRoot "third_party\GVHMR\inputs\checkpoints\body_models"
 }
 
-$resolvedWhamRepoPath = Resolve-StrictPath $WhamRepoPath
 $resolvedBodyModelRoot = Resolve-StrictPath $BodyModelRoot
 New-Item -ItemType Directory -Force -Path $Workspace | Out-Null
 $resolvedWorkspaceRoot = (Resolve-Path -LiteralPath $Workspace).Path
-# The persistent WHAM worker imports WHAM's demo/network directly; never start
-# it for GVHMR runs (it would hold an unrelated model stack on the same GPU).
-$effectiveWarmWhamWorker = $WarmWhamWorker -and -not $SkipWarmWhamWorker -and $UseWhamDocker -and ($MotionReconstructor -ne "gvhmr")
-$resolvedWhamWorkerSessionDir = $null
-$whamWarmWorkerScriptPath = Join-Path $repoRoot "exercise_motion_pkg\wham_warm_worker.py"
-if ($effectiveWarmWhamWorker) {
-    if (-not (Test-Path -LiteralPath $whamWarmWorkerScriptPath)) {
-        throw "Warm WHAM worker script not found: $whamWarmWorkerScriptPath"
-    }
-    $activeWhamWorkerSessionDir = if ([string]::IsNullOrWhiteSpace($WhamWorkerSessionDir)) {
-        Join-Path $resolvedWorkspaceRoot "wham-warm-worker"
-    } else {
-        $WhamWorkerSessionDir
-    }
-    New-Item -ItemType Directory -Force -Path $activeWhamWorkerSessionDir | Out-Null
-    $resolvedWhamWorkerSessionDir = (Resolve-Path -LiteralPath $activeWhamWorkerSessionDir).Path
-}
 
 $argsList = @(
     "-m", "exercise_motion_pkg.cli",
@@ -372,10 +225,8 @@ $argsList = @(
     "--max-selected-results", "$MaxSelectedResults",
     "--candidate-workers", "$CandidateWorkers",
     "--workspace", $Workspace,
-    "--wham-repo-path", $resolvedWhamRepoPath,
     "--body-model-root", $resolvedBodyModelRoot,
-    "--wham-python", $WhamPython,
-    "--wham-timeout-seconds", "$WhamTimeoutSeconds",
+    "--reconstruction-timeout-seconds", "$ReconstructionTimeoutSeconds",
     "--segment-window-seconds", "$SegmentWindowSeconds",
     "--segment-overlap-seconds", "$SegmentOverlapSeconds",
     "--segment-frames-per-window", "$SegmentFramesPerWindow",
@@ -508,40 +359,21 @@ if (-not [string]::IsNullOrWhiteSpace($YoutubeCookies)) {
 if ($KeepLlamaCppServer) {
     $argsList += "--keep-llama-cpp-server"
 }
-if ($UseWhamDocker) {
-    $effectiveBakeDockerImage = if ($MotionReconstructor -eq "gvhmr") { $GvhmrDockerImage } else { $WhamDockerImage }
-    $argsList += @(
-        "--use-wham-docker",
-        "--wham-docker-image", $effectiveBakeDockerImage,
-        "--wham-docker-gpus", $WhamDockerGpus,
-        "--wham-docker-shm-size", $WhamDockerShmSize
-    )
-}
-if ($MotionReconstructor -eq "gvhmr") {
-    $argsList += @("--motion-reconstructor", "gvhmr")
-}
-if ($effectiveWarmWhamWorker) {
-    $argsList += @(
-        "--warm-wham-worker",
-        "--wham-worker-session-dir", $resolvedWhamWorkerSessionDir,
-        "--wham-worker-mount-root", $resolvedWorkspaceRoot,
-        "--wham-worker-timeout-seconds", "$WhamWorkerJobTimeoutSeconds"
-    )
-}
-if ($EstimateLocalOnly) {
-    $argsList += "--estimate-local-only"
-}
-if ($SkipSmplify) {
-    $argsList += "--skip-smplify"
-}
-if ($NoReuseWhamCache) {
-    $argsList += "--no-reuse-wham-cache"
+$argsList += @(
+    "--use-reconstruction-docker",
+    "--reconstruction-docker-image", $ReconstructionDockerImage,
+    "--reconstruction-docker-gpus", $ReconstructionDockerGpus,
+    "--reconstruction-docker-shm-size", $ReconstructionDockerShmSize
+)
+$argsList += @("--motion-reconstructor", "gvhmr")
+if ($NoReuseReconstructionCache) {
+    $argsList += "--no-reuse-reconstruction-cache"
 }
 if ($SkipMotionTuning) {
     $argsList += "--skip-motion-tuning"
 }
-if ($ExportWhamSmplPreview) {
-    $argsList += "--export-wham-smpl-preview"
+if ($ExportReconstructionSmplPreview) {
+    $argsList += "--export-reconstruction-smpl-preview"
 }
 if ($SkipSpinePose -or -not $EnableSpinePose) {
     $argsList += "--skip-spinepose"
@@ -554,9 +386,7 @@ else {
         "--spinepose-device", $SpinePoseDevice,
         "--spinepose-gain", "$SpinePoseGain",
         "--spinepose-max-degrees", "$SpinePoseMaxDegrees",
-        "--spinepose-axis", "$SpinePoseAxis",
-        "--spinepose-smoothing-window", "$SpinePoseSmoothingWindow",
-        "--spinepose-arm-counter-rotation", "$SpinePoseArmCounterRotation"
+        "--spinepose-smoothing-window", "$SpinePoseSmoothingWindow"
     )
     $argsList += "--enable-spinepose"
     if (-not [string]::IsNullOrWhiteSpace($SpinePoseJsonDir)) {
@@ -587,36 +417,24 @@ if ($ComparativeSegmentSelection) {
 if ($SkipSourceSegmentDetection) {
     $argsList += "--skip-source-segment-detection"
 }
-if (-not $SkipPreWhamSourceValidation) {
-    $argsList += "--pre-wham-source-validation"
+if (-not $SkipPreReconstructionSourceValidation) {
+    $argsList += "--pre-reconstruction-source-validation"
 }
-if ($SkipPreWhamSourceValidation) {
-    $argsList += "--skip-pre-wham-source-validation"
+if ($SkipPreReconstructionSourceValidation) {
+    $argsList += "--skip-pre-reconstruction-source-validation"
 }
 if ($NoExerciseMotionContract) {
     $argsList += "--no-exercise-motion-contract"
 }
 
-try {
-    $warmWhamWorkerInstance = $null
-    if ($effectiveWarmWhamWorker) {
-        $warmWhamWorkerInstance = Start-WhamWarmWorker `
-            -SessionDir $resolvedWhamWorkerSessionDir `
-            -MountRoot $resolvedWorkspaceRoot `
-            -WorkerScriptPath $whamWarmWorkerScriptPath
-    }
-    & $pythonCommand @argsList
-    if ($LASTEXITCODE -ne 0) {
-        throw "exercise motion bake-and-rank failed with exit code $LASTEXITCODE."
-    }
-}
-finally {
-    Stop-WhamWarmWorker -Worker $warmWhamWorkerInstance
+& $pythonCommand @argsList
+if ($LASTEXITCODE -ne 0) {
+    throw "exercise motion bake-and-rank failed with exit code $LASTEXITCODE."
 }
 
 $selectionPath = Join-Path $Workspace "selection_manifest.json"
 if (Test-Path -LiteralPath $selectionPath) {
-    $selection = Get-Content -LiteralPath $selectionPath -Raw | ConvertFrom-Json
+    $selection = Get-Content -LiteralPath $selectionPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
     if ($selection.selected) {
         Write-Host "Wear skeleton JSON: $($selection.selected.selectedWearSkeletonPath)"
         if ($selection.PSObject.Properties.Name -contains "selectedResults" -and @($selection.selectedResults).Count -gt 1) {

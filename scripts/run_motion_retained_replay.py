@@ -234,7 +234,7 @@ def run_replay(config_path: Path, run_root: Path, python_command: str | None,
         "-DisableMotionProcessingResume",
     ]
     if retained_reconstruction:
-        command.append("-RequireWhamCache")
+        command.append("-RequireReconstructionCache")
     # Let the production wrapper select EXERCISE_MOTION_PYTHON or its CUDA
     # default. Passing this runner's sys.executable would silently override
     # that selection with a CPU-only interpreter on many developer machines.
@@ -266,7 +266,7 @@ def run_replay(config_path: Path, run_root: Path, python_command: str | None,
         "reconstructionBoundary": (
             "hash-bound retained raw motion; inference/cache lookup not covered"
             if retained_reconstruction
-            else "fresh WHAM inference with cache reuse disabled and attempt outputs isolated"
+            else "fresh RECONSTRUCTION inference with cache reuse disabled and attempt outputs isolated"
         ),
         "visualReviewBoundary": "production models; no fabricated positive review responses",
     }, indent=2), encoding="utf-8")

@@ -31,8 +31,8 @@ import exercise_motion_pkg.llama_defaults as llama_defaults_module
 import exercise_motion_pkg.preview as preview_module
 import exercise_motion_pkg.source_outcomes as source_outcomes_module
 import exercise_motion_pkg.target_motion as target_motion_module
-import exercise_motion_pkg.wham_runner as wham_runner_module
-from exercise_motion_pkg.wham_results import select_wham_subject
+from exercise_motion_pkg.reconstruction_results import select_reconstruction_subject
+import exercise_motion_pkg.reconstruction_runner as reconstruction_runner_module
 import exercise_motion_pkg.youtube as youtube_module
 from exercise_motion_pkg.vlm_errors import CriticalVlmInteractionError
 from exercise_motion_pkg.contact_sheet_guidance import CONTACT_SHEET_READING_INSTRUCTIONS
@@ -113,7 +113,7 @@ from exercise_motion_pkg.motion_io import load_motion_json, save_motion_json
 from exercise_motion_pkg.pipeline import (
     GenerateRequest,
     GenerateResult,
-    IncompleteWhamTrackingError,
+    IncompleteReconstructionTrackingError,
     run_generation_pipeline,
 )
 import exercise_motion_pkg.pipeline as pipeline
@@ -131,7 +131,7 @@ import exercise_motion_pkg.pose_prefilter as pose_prefilter_module
 from exercise_motion_pkg.physics_bundle import write_physics_bundle
 from exercise_motion_pkg.physics_sim import PhysicsSimulationConfig, run_physics_simulation
 from exercise_motion_pkg.render_geometry import UNIFORM_CAPSULE_RADIUS, support_joint_height_for_surface, support_surface_height
-from exercise_motion_pkg.spinepose_wham_correction import (
+from exercise_motion_pkg.spinepose_reconstruction_correction import (
     SPINEPOSE_FULL_SPINE_INDICES,
     _build_spinepose_profile_candidate,
     _extract_spinepose_points,
@@ -176,13 +176,12 @@ from exercise_motion_pkg.segment_detection import (
     parse_detection_payload,
 )
 from exercise_motion_pkg.video_utils import BasicVideoMetadata, convert_video_to_webm, read_basic_video_metadata, trim_video
-from exercise_motion_pkg.wham_runner import WhamRunResult, build_wham_command, run_wham_locally
-from exercise_motion_pkg.wham_smpl_preview import (
-    WhamSmplMeshSequence,
-    build_baked_wham_smpl_preview_payload,
+from exercise_motion_pkg.reconstruction_smpl_preview import (
+    ReconstructionSmplMeshSequence,
+    build_baked_reconstruction_smpl_preview_payload,
 )
 from exercise_motion_pkg.smpl_joint_names import SMPL_JOINT_NAMES, SMPL_JOINT_PARENTS
-import exercise_motion_pkg.wham_retarget_source as wham_retarget_source_module
+import exercise_motion_pkg.reconstruction_retarget_source as reconstruction_retarget_source_module
 from exercise_motion_pkg.paths import PipelinePaths
 from exercise_motion_pkg.youtube import (
     ExerciseEntry,
@@ -249,7 +248,7 @@ def pose_contract_fields(
     }
 
 
-def test_wham_retarget_source_describes_preserved_smpl_rotations(
+def test_reconstruction_retarget_source_describes_preserved_smpl_rotations(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -257,8 +256,8 @@ def test_wham_retarget_source_describes_preserved_smpl_rotations(
     pose[1, 7 * 3 : 7 * 3 + 3] = [0.1, -0.2, 0.3]
     translation = np.asarray([[0.0, 0.0, 0.0], [0.1, 0.0, 0.0]], dtype=np.float32)
     monkeypatch.setattr(
-        wham_retarget_source_module,
-        "load_wham_results",
+        reconstruction_retarget_source_module,
+        "load_reconstruction_results",
         lambda _path: {
             4: {
                 "pose_world": pose,
@@ -269,8 +268,8 @@ def test_wham_retarget_source_describes_preserved_smpl_rotations(
         },
     )
 
-    payload = wham_retarget_source_module.build_wham_retarget_source_payload(
-        wham_results_pkl=tmp_path / "wham_output.pkl",
+    payload = reconstruction_retarget_source_module.build_reconstruction_retarget_source_payload(
+        reconstruction_results_pkl=tmp_path / "reconstruction_output.pkl",
         coordinate_space="world",
     )
 
@@ -547,7 +546,7 @@ def test_crop_motion_clip_to_input_window_rebases_inference_context() -> None:
     assert cropped.metadata["inferenceContextCrop"]["outputFrameCount"] == 4
 
 
-def test_crop_motion_clip_to_input_window_rejects_incomplete_wham_track() -> None:
+def test_crop_motion_clip_to_input_window_rejects_incomplete_reconstruction_track() -> None:
     clip = MotionClip(
         fps=30.0,
         joint_names=["pelvis"],
@@ -557,7 +556,7 @@ def test_crop_motion_clip_to_input_window_rejects_incomplete_wham_track() -> Non
         ],
     )
 
-    with pytest.raises(IncompleteWhamTrackingError, match="does not cover the complete requested output window"):
+    with pytest.raises(IncompleteReconstructionTrackingError, match="does not cover the complete requested output window"):
         pipeline.crop_motion_clip_to_input_window(
             clip,
             start_seconds=1.25,
@@ -587,7 +586,7 @@ def test_crop_motion_clip_to_input_window_accepts_small_proportional_boundary_lo
     assert crop_metadata["boundaryToleranceSeconds"] == pytest.approx(0.289)
 
 
-def test_crop_motion_clip_can_retain_boundary_truncated_wham_track_for_later_validation() -> None:
+def test_crop_motion_clip_can_retain_boundary_truncated_reconstruction_track_for_later_validation() -> None:
     clip = MotionClip(
         fps=30.0,
         joint_names=["pelvis"],
@@ -621,7 +620,7 @@ def test_crop_motion_clip_never_accepts_internal_tracking_gap_as_boundary_trunca
         ],
     )
 
-    with pytest.raises(IncompleteWhamTrackingError, match="internal .* tracking gap"):
+    with pytest.raises(IncompleteReconstructionTrackingError, match="internal .* tracking gap"):
         pipeline.crop_motion_clip_to_input_window(
             clip,
             start_seconds=0.0,
@@ -641,7 +640,7 @@ def test_crop_motion_clip_to_input_window_rejects_internal_tracking_gap() -> Non
         ],
     )
 
-    with pytest.raises(IncompleteWhamTrackingError, match="internal .* tracking gap"):
+    with pytest.raises(IncompleteReconstructionTrackingError, match="internal .* tracking gap"):
         pipeline.crop_motion_clip_to_input_window(
             clip,
             start_seconds=0.0,
@@ -675,7 +674,7 @@ def test_canonicalize_camera_motion_clip_converts_to_y_up_world_without_mutating
     assert canonical.metadata["coordinateNormalization"]["transform"] == "rotate_x_180_degrees"
 
 
-def _wham_track(frame_ids: list[int], *, translation_x: float = 0.0) -> dict[str, object]:
+def _reconstruction_track(frame_ids: list[int], *, translation_x: float = 0.0) -> dict[str, object]:
     frame_count = len(frame_ids)
     return {
         "frame_ids": np.asarray(frame_ids),
@@ -687,23 +686,23 @@ def _wham_track(frame_ids: list[int], *, translation_x: float = 0.0) -> dict[str
     }
 
 
-def test_select_wham_subject_stitches_contiguous_compatible_id_fragments() -> None:
-    first = _wham_track(list(range(0, 6)), translation_x=0.0)
-    continuation = _wham_track(list(range(5, 11)), translation_x=0.04)
+def test_select_reconstruction_subject_stitches_contiguous_compatible_id_fragments() -> None:
+    first = _reconstruction_track(list(range(0, 6)), translation_x=0.0)
+    continuation = _reconstruction_track(list(range(5, 11)), translation_x=0.04)
 
-    subject_id, payload = select_wham_subject({0: first, 3: continuation})
+    subject_id, payload = select_reconstruction_subject({0: first, 3: continuation})
 
     assert subject_id == "0+3"
     assert payload["frame_ids"].tolist() == list(range(11))  # type: ignore[union-attr]
     assert payload["pose"].shape == (11, 72)  # type: ignore[union-attr]
 
 
-def test_select_wham_subject_stitches_short_compatible_overlap_chain() -> None:
-    first = _wham_track(list(range(0, 8)), translation_x=0.0)
-    middle = _wham_track(list(range(6, 12)), translation_x=0.04)
-    last = _wham_track(list(range(13, 17)), translation_x=0.08)
+def test_select_reconstruction_subject_stitches_short_compatible_overlap_chain() -> None:
+    first = _reconstruction_track(list(range(0, 8)), translation_x=0.0)
+    middle = _reconstruction_track(list(range(6, 12)), translation_x=0.04)
+    last = _reconstruction_track(list(range(13, 17)), translation_x=0.08)
 
-    subject_id, payload = select_wham_subject({0: first, 1: middle, 2: last})
+    subject_id, payload = select_reconstruction_subject({0: first, 1: middle, 2: last})
 
     assert subject_id == "0+1+2"
     assert payload["frame_ids"].tolist() == list(range(12)) + list(range(13, 17))  # type: ignore[union-attr]
@@ -715,21 +714,21 @@ def test_select_wham_subject_stitches_short_compatible_overlap_chain() -> None:
     assert float(np.max(np.abs(pose_steps))) < 0.05
 
 
-def test_select_wham_subject_does_not_stitch_spatially_different_people() -> None:
-    first = _wham_track(list(range(0, 6)), translation_x=0.0)
-    different_person = _wham_track(list(range(5, 13)), translation_x=1.5)
+def test_select_reconstruction_subject_does_not_stitch_spatially_different_people() -> None:
+    first = _reconstruction_track(list(range(0, 6)), translation_x=0.0)
+    different_person = _reconstruction_track(list(range(5, 13)), translation_x=1.5)
 
-    subject_id, payload = select_wham_subject({0: first, 3: different_person})
+    subject_id, payload = select_reconstruction_subject({0: first, 3: different_person})
 
     assert subject_id == 3
     assert payload is different_person
 
 
-def test_select_wham_subject_keeps_explicit_subject_selection_unstitched() -> None:
-    first = _wham_track(list(range(0, 6)), translation_x=0.0)
-    continuation = _wham_track(list(range(5, 11)), translation_x=0.04)
+def test_select_reconstruction_subject_keeps_explicit_subject_selection_unstitched() -> None:
+    first = _reconstruction_track(list(range(0, 6)), translation_x=0.0)
+    continuation = _reconstruction_track(list(range(5, 11)), translation_x=0.04)
 
-    subject_id, payload = select_wham_subject({0: first, 3: continuation}, subject_id=0)
+    subject_id, payload = select_reconstruction_subject({0: first, 3: continuation}, subject_id=0)
 
     assert subject_id == 0
     assert payload is first
@@ -739,11 +738,10 @@ def test_candidate_attempt_budget_adds_source_window_allowance_instead_of_multip
     request = BakeAndRankRequest(
         candidates_json=Path("candidates.json"),
         workspace=Path("build"),
-        wham_repo_path=None,
         body_model_root=None,
         fallback_candidates=2,
         max_source_window_attempts=3,
-        pre_wham_source_validation=True,
+        pre_reconstruction_source_validation=True,
     )
 
     assert bake_and_rank_module.candidate_attempt_budget_for_request(request) == 4
@@ -753,7 +751,6 @@ def test_candidate_attempt_budget_is_unlimited_by_default() -> None:
     request = BakeAndRankRequest(
         candidates_json=Path("candidates.json"),
         workspace=Path("build"),
-        wham_repo_path=None,
         body_model_root=None,
     )
 
@@ -765,7 +762,6 @@ def test_automatic_segment_max_uses_long_duration_exercise_estimate() -> None:
     request = BakeAndRankRequest(
         candidates_json=Path("candidates.json"),
         workspace=Path("build"),
-        wham_repo_path=None,
         body_model_root=None,
         segment_max_seconds=0.0,
     )
@@ -791,7 +787,6 @@ def test_explicit_segment_max_still_overrides_automatic_estimate() -> None:
     request = BakeAndRankRequest(
         candidates_json=Path("candidates.json"),
         workspace=Path("build"),
-        wham_repo_path=None,
         body_model_root=None,
         segment_max_seconds=12.0,
     )
@@ -1221,7 +1216,7 @@ def test_contact_corrected_parent_seeds_exact_cycle_fit_only_for_matching_source
     ) is None
 
 
-def test_validated_pre_wham_return_cycle_detects_cycles_within_full_clip_fallback(
+def test_validated_pre_reconstruction_return_cycle_detects_cycles_within_full_clip_fallback(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1234,7 +1229,7 @@ def test_validated_pre_wham_return_cycle_detects_cycles_within_full_clip_fallbac
     (segment_detection / "segment_selection.json").write_text(
         json.dumps(
             {
-                "role": "pre_wham_validated_source_cut",
+                "role": "pre_reconstruction_validated_source_cut",
                 "selectedSegmentPath": str(selected_segment),
                 "selectedSpan": {"startSeconds": 12.01, "endSeconds": 16.85},
             }
@@ -1267,7 +1262,7 @@ def test_validated_pre_wham_return_cycle_detects_cycles_within_full_clip_fallbac
         "observableMotionSpec": {"requiresReturnToStart": True},
     }
 
-    authority = bake_and_rank_module.pre_wham_source_interval_authority(
+    authority = bake_and_rank_module.pre_reconstruction_source_interval_authority(
         candidate_workspace=workspace,
         exercise_motion_contract=contract,
     )
@@ -1297,7 +1292,7 @@ def test_validated_pre_wham_return_cycle_detects_cycles_within_full_clip_fallbac
     )
 
     assert authority["authoritative"] is True
-    assert authority["reason"] == "exact_pre_wham_return_cycle_validated"
+    assert authority["reason"] == "exact_pre_reconstruction_return_cycle_validated"
     assert authority["selectedDurationSeconds"] == pytest.approx(4.84)
     assert detected_clip_ids == [id(clip)]
     assert len(loops) == 2
@@ -1309,7 +1304,7 @@ def test_validated_pre_wham_return_cycle_detects_cycles_within_full_clip_fallbac
     assert loops[1].end_seconds == pytest.approx(143 / 30.0)
 
 
-def test_validated_pre_wham_distinct_end_state_blocks_post_wham_return_loop_recropping(
+def test_validated_pre_reconstruction_distinct_end_state_blocks_post_reconstruction_return_loop_recropping(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1322,7 +1317,7 @@ def test_validated_pre_wham_distinct_end_state_blocks_post_wham_return_loop_recr
     (segment_detection / "segment_selection.json").write_text(
         json.dumps(
             {
-                "role": "pre_wham_validated_source_cut",
+                "role": "pre_reconstruction_validated_source_cut",
                 "selectedSegmentPath": str(selected_segment),
                 "selectedSpan": {"startSeconds": 13.59, "endSeconds": 19.0},
             }
@@ -1355,7 +1350,7 @@ def test_validated_pre_wham_distinct_end_state_blocks_post_wham_return_loop_recr
         "observableMotionSpec": {"requiresReturnToStart": False},
     }
 
-    authority = bake_and_rank_module.pre_wham_source_interval_authority(
+    authority = bake_and_rank_module.pre_reconstruction_source_interval_authority(
         candidate_workspace=workspace,
         exercise_motion_contract=contract,
     )
@@ -1370,12 +1365,12 @@ def test_validated_pre_wham_distinct_end_state_blocks_post_wham_return_loop_recr
     )
 
     assert authority["authoritative"] is True
-    assert authority["reason"] == "exact_pre_wham_distinct_end_state_validated"
+    assert authority["reason"] == "exact_pre_reconstruction_distinct_end_state_validated"
     assert len(loops) == 1
     assert loops[0].loop_index == -1
 
 
-def test_pre_wham_interval_is_authoritative_when_endpoint_contract_is_unavailable(
+def test_pre_reconstruction_interval_is_authoritative_when_endpoint_contract_is_unavailable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1388,7 +1383,7 @@ def test_pre_wham_interval_is_authoritative_when_endpoint_contract_is_unavailabl
     (segment_detection / "segment_selection.json").write_text(
         json.dumps(
             {
-                "role": "pre_wham_validated_source_cut",
+                "role": "pre_reconstruction_validated_source_cut",
                 "selectedSegmentPath": str(selected_segment),
                 "selectedSpan": {"startSeconds": 8.01, "endSeconds": 15.88},
             }
@@ -1421,7 +1416,7 @@ def test_pre_wham_interval_is_authoritative_when_endpoint_contract_is_unavailabl
         "observableMotionSpec": {"requiresReturnToStart": True},
     }
 
-    authority = bake_and_rank_module.pre_wham_source_interval_authority(
+    authority = bake_and_rank_module.pre_reconstruction_source_interval_authority(
         candidate_workspace=workspace,
         exercise_motion_contract=contract,
     )
@@ -1445,7 +1440,7 @@ def test_pre_wham_interval_is_authoritative_when_endpoint_contract_is_unavailabl
     )
 
     assert authority["authoritative"] is True
-    assert authority["reason"] == "exact_pre_wham_return_cycle_validated"
+    assert authority["reason"] == "exact_pre_reconstruction_return_cycle_validated"
     assert len(loops) == 2
     assert loops[0].artifact_class == bake_and_rank_module.CYCLE_SELECTION
     assert loops[1].loop_index == -1
@@ -1453,7 +1448,7 @@ def test_pre_wham_interval_is_authoritative_when_endpoint_contract_is_unavailabl
     assert loops[1].end_seconds == pytest.approx(236 / 30.0)
 
 
-def test_pre_wham_interval_uses_exact_validation_embedded_in_selection(
+def test_pre_reconstruction_interval_uses_exact_validation_embedded_in_selection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1466,7 +1461,7 @@ def test_pre_wham_interval_uses_exact_validation_embedded_in_selection(
     (segment_detection / "segment_selection.json").write_text(
         json.dumps(
             {
-                "role": "pre_wham_validated_source_cut",
+                "role": "pre_reconstruction_validated_source_cut",
                 "selectedSegmentPath": str(selected_segment),
                 "selectedSpan": {"startSeconds": 2.0, "endSeconds": 6.5},
                 "exactSourcePhaseValidation": {
@@ -1494,7 +1489,7 @@ def test_pre_wham_interval_uses_exact_validation_embedded_in_selection(
         "observableMotionSpec": {"requiresReturnToStart": True},
     }
 
-    authority = bake_and_rank_module.pre_wham_source_interval_authority(
+    authority = bake_and_rank_module.pre_reconstruction_source_interval_authority(
         candidate_workspace=workspace,
         exercise_motion_contract=contract,
     )
@@ -1525,7 +1520,7 @@ def test_pre_wham_interval_uses_exact_validation_embedded_in_selection(
     assert loops[1].end_seconds == pytest.approx(135 / 30.0)
 
 
-def test_pre_wham_interval_is_not_authoritative_without_exact_phase_pass(tmp_path: Path) -> None:
+def test_pre_reconstruction_interval_is_not_authoritative_without_exact_phase_pass(tmp_path: Path) -> None:
     workspace = tmp_path / "candidate"
     selected_segment = workspace / "input" / "selected_segment.mp4"
     selected_segment.parent.mkdir(parents=True)
@@ -1535,7 +1530,7 @@ def test_pre_wham_interval_is_not_authoritative_without_exact_phase_pass(tmp_pat
     (segment_detection / "segment_selection.json").write_text(
         json.dumps(
             {
-                "role": "pre_wham_validated_source_cut",
+                "role": "pre_reconstruction_validated_source_cut",
                 "selectedSegmentPath": str(selected_segment),
                 "selectedSpan": {"startSeconds": 1.0, "endSeconds": 3.0},
             }
@@ -1547,7 +1542,7 @@ def test_pre_wham_interval_is_not_authoritative_without_exact_phase_pass(tmp_pat
         encoding="utf-8",
     )
 
-    authority = bake_and_rank_module.pre_wham_source_interval_authority(
+    authority = bake_and_rank_module.pre_reconstruction_source_interval_authority(
         candidate_workspace=workspace,
         exercise_motion_contract={
             "completionMode": "return_to_start",
@@ -1562,7 +1557,7 @@ def test_pre_wham_interval_is_not_authoritative_without_exact_phase_pass(tmp_pat
     }
 
 
-def test_pre_wham_interval_is_not_authoritative_with_bad_exact_endpoints(tmp_path: Path) -> None:
+def test_pre_reconstruction_interval_is_not_authoritative_with_bad_exact_endpoints(tmp_path: Path) -> None:
     workspace = tmp_path / "candidate"
     selected_segment = workspace / "input" / "selected_segment.mp4"
     selected_segment.parent.mkdir(parents=True)
@@ -1572,7 +1567,7 @@ def test_pre_wham_interval_is_not_authoritative_with_bad_exact_endpoints(tmp_pat
     (segment_detection / "segment_selection.json").write_text(
         json.dumps(
             {
-                "role": "pre_wham_validated_source_cut",
+                "role": "pre_reconstruction_validated_source_cut",
                 "selectedSegmentPath": str(selected_segment),
                 "selectedSpan": {"startSeconds": 1.0, "endSeconds": 4.0},
             }
@@ -1607,7 +1602,7 @@ def test_pre_wham_interval_is_not_authoritative_with_bad_exact_endpoints(tmp_pat
         encoding="utf-8",
     )
 
-    authority = bake_and_rank_module.pre_wham_source_interval_authority(
+    authority = bake_and_rank_module.pre_reconstruction_source_interval_authority(
         candidate_workspace=workspace,
         exercise_motion_contract={
             "completionMode": "return_to_start",
@@ -1622,7 +1617,7 @@ def test_pre_wham_interval_is_not_authoritative_with_bad_exact_endpoints(tmp_pat
     }
 
 
-def test_pre_wham_interval_is_not_authoritative_with_stale_exact_phase_policy(
+def test_pre_reconstruction_interval_is_not_authoritative_with_stale_exact_phase_policy(
     tmp_path: Path,
 ) -> None:
     workspace = tmp_path / "candidate"
@@ -1634,7 +1629,7 @@ def test_pre_wham_interval_is_not_authoritative_with_stale_exact_phase_policy(
     (segment_detection / "segment_selection.json").write_text(
         json.dumps(
             {
-                "role": "pre_wham_validated_source_cut",
+                "role": "pre_reconstruction_validated_source_cut",
                 "selectedSegmentPath": str(selected_segment),
                 "selectedSpan": {"startSeconds": 1.0, "endSeconds": 4.0},
             }
@@ -1657,7 +1652,7 @@ def test_pre_wham_interval_is_not_authoritative_with_stale_exact_phase_policy(
         encoding="utf-8",
     )
 
-    authority = bake_and_rank_module.pre_wham_source_interval_authority(
+    authority = bake_and_rank_module.pre_reconstruction_source_interval_authority(
         candidate_workspace=workspace,
         exercise_motion_contract={
             "completionMode": "return_to_start",
@@ -1888,7 +1883,7 @@ def test_choose_readable_preview_camera_yaw_avoids_severe_bilateral_overlap() ->
     assert diagnostics["visibilityOverrideApplied"] is False
 
 
-def test_prepare_wham_inference_video_adds_context_and_returns_exact_output_crop(
+def test_prepare_reconstruction_inference_video_adds_context_and_returns_exact_output_crop(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1925,12 +1920,12 @@ def test_prepare_wham_inference_video_adds_context_and_returns_exact_output_crop
 
     monkeypatch.setattr(bake_and_rank_module, "trim_video", fake_trim_video)
 
-    inference_video, crop_start, crop_end = bake_and_rank_module.prepare_wham_inference_video(
+    inference_video, crop_start, crop_end = bake_and_rank_module.prepare_reconstruction_inference_video(
         candidate_workspace=workspace,
         selected_video_path=selected_video,
     )
 
-    assert inference_video.name == "wham_inference_segment.mp4"
+    assert inference_video.name == "reconstruction_inference_segment.mp4"
     assert observed["source_path"] == source_video.resolve()
     assert observed["start_seconds"] == pytest.approx(2.75)
     assert observed["end_seconds"] == pytest.approx(9.25)
@@ -1939,7 +1934,7 @@ def test_prepare_wham_inference_video_adds_context_and_returns_exact_output_crop
     assert crop_end == pytest.approx(5.25)
 
 
-def test_prepare_wham_inference_video_clamps_output_crop_to_source_duration(
+def test_prepare_reconstruction_inference_video_clamps_output_crop_to_source_duration(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1975,7 +1970,7 @@ def test_prepare_wham_inference_video_clamps_output_crop_to_source_duration(
 
     monkeypatch.setattr(bake_and_rank_module, "trim_video", fake_trim_video)
 
-    _, crop_start, crop_end = bake_and_rank_module.prepare_wham_inference_video(
+    _, crop_start, crop_end = bake_and_rank_module.prepare_reconstruction_inference_video(
         candidate_workspace=workspace,
         selected_video_path=selected_video,
     )
@@ -2123,18 +2118,18 @@ def test_yolo_track_stabilization_keeps_moving_marker_in_crop(tmp_path: Path) ->
     assert normalized_center_drift < 24.0 / float(plan.crop_width)
 
 
-def test_stabilize_wham_inference_video_to_yolo_track_writes_metadata(
+def test_stabilize_reconstruction_inference_video_to_yolo_track_writes_metadata(
     tmp_path: Path,
 ) -> None:
     frames = [
         np.full((48, 64, 3), 40 + index * 8, dtype=np.uint8)
         for index in range(6)
     ]
-    inference = write_quality_test_video(tmp_path / "input" / "wham_inference_segment.mp4", frames, fps=10.0)
+    inference = write_quality_test_video(tmp_path / "input" / "reconstruction_inference_segment.mp4", frames, fps=10.0)
     reference_path = (
         tmp_path
         / "segment_detection"
-        / "pre_wham_source_candidates"
+        / "pre_reconstruction_source_candidates"
         / "deterministic_confirmation"
         / "source_candidate_A"
         / "exact_source_pose_reference.json"
@@ -2145,17 +2140,17 @@ def test_stabilize_wham_inference_video_to_yolo_track_writes_metadata(
         encoding="utf-8",
     )
 
-    result = bake_and_rank_module.stabilize_wham_inference_video_to_yolo_track(
+    result = bake_and_rank_module.stabilize_reconstruction_inference_video_to_yolo_track(
         candidate_workspace=tmp_path,
         inference_video_path=inference,
         selected_start_seconds=0.0,
     )
     metadata = json.loads(
-        (tmp_path / "input" / "wham_yolo_track_stabilization.json").read_text(encoding="utf-8")
+        (tmp_path / "input" / "reconstruction_yolo_track_stabilization.json").read_text(encoding="utf-8")
     )
     assert metadata["policyVersion"] == 3
     if metadata["applied"]:
-        assert result.name == "wham_inference_yolo_stabilized.mp4"
+        assert result.name == "reconstruction_inference_yolo_stabilized.mp4"
         assert metadata["outputWidth"] >= metadata["cropWidth"]
         assert metadata["outputHeight"] >= metadata["cropHeight"]
     else:
@@ -2170,8 +2165,8 @@ def test_generate_candidate_motion_retries_unstabilized_input_after_tracking_los
     source.write_bytes(b"source")
     workspace = tmp_path / "build"
     candidate_workspace = workspace / "nordic-curl-001-nordic-curl"
-    inference = candidate_workspace / "input" / "wham_inference_segment.mp4"
-    stabilized = candidate_workspace / "input" / "wham_inference_yolo_stabilized.mp4"
+    inference = candidate_workspace / "input" / "reconstruction_inference_segment.mp4"
+    stabilized = candidate_workspace / "input" / "reconstruction_inference_yolo_stabilized.mp4"
     inference.parent.mkdir(parents=True)
     inference.write_bytes(b"inference")
     stabilized.write_bytes(b"stabilized")
@@ -2184,17 +2179,17 @@ def test_generate_candidate_motion_retries_unstabilized_input_after_tracking_los
     )
     monkeypatch.setattr(
         bake_and_rank_module,
-        "prepare_wham_inference_video",
+        "prepare_reconstruction_inference_video",
         lambda **kwargs: (inference, 0.0, 5.0),
     )
     monkeypatch.setattr(
         bake_and_rank_module,
-        "stabilize_wham_inference_video_to_yolo_track",
+        "stabilize_reconstruction_inference_video_to_yolo_track",
         lambda **kwargs: stabilized,
     )
     monkeypatch.setattr(
         bake_and_rank_module,
-        "normalize_wham_input_orientation",
+        "normalize_reconstruction_input_orientation",
         lambda **kwargs: (Path(kwargs["selected_video_path"]), 0.0),
     )
 
@@ -2202,7 +2197,7 @@ def test_generate_candidate_motion_retries_unstabilized_input_after_tracking_los
         assert request.video_path is not None
         calls.append(request.video_path)
         if request.video_path == stabilized:
-            raise IncompleteWhamTrackingError(
+            raise IncompleteReconstructionTrackingError(
                 "lost start",
                 requested_start_seconds=0.0,
                 requested_end_seconds=5.0,
@@ -2225,7 +2220,6 @@ def test_generate_candidate_motion_retries_unstabilized_input_after_tracking_los
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=workspace,
-            wham_repo_path=None,
             body_model_root=None,
             detect_source_segment=False,
         ),
@@ -2234,7 +2228,7 @@ def test_generate_candidate_motion_retries_unstabilized_input_after_tracking_los
     assert result.timings is not None
     assert calls == [stabilized, inference]
     metadata = json.loads(
-        (candidate_workspace / "input" / "wham_yolo_track_stabilization.json").read_text(
+        (candidate_workspace / "input" / "reconstruction_yolo_track_stabilization.json").read_text(
             encoding="utf-8"
         )
     )
@@ -5712,8 +5706,8 @@ def test_write_preview_html_embeds_motion_payload(tmp_path: Path) -> None:
     assert "cursorAdvanced && drawSchedule.due" in text
     assert "const customModelUsesFusedSpine = Boolean(payload.spineposeMotionFusion" in text
     assert "if (!customModelUsesFusedSpine && pelvisJoint && spine1Joint && spine2Joint && neckJoint && hipAxis && shoulderAxis)" in text
-    assert "Show WHAM SMPL mesh" not in text
-    assert "Download baked WHAM SMPL mesh" not in text
+    assert "Show RECONSTRUCTION SMPL mesh" not in text
+    assert "Download baked RECONSTRUCTION SMPL mesh" not in text
     assert "function ensureSmplMeshGeometry(meshPayload, vertexCount)" not in text
     assert "smplMeshPositionAttribute.setUsage(THREE.DynamicDrawUsage);" not in text
     assert "payload.smplMesh" not in text
@@ -6029,7 +6023,7 @@ def test_center_preview_clip_for_render_removes_camera_space_offset() -> None:
             ),
         ],
         metadata={
-            "upstream": "wham",
+            "upstream": "reconstruction",
             "ground": {
                 "renderGroundPlane": {"normal": [0.0, 1.0, 0.0], "offset": 0.0},
                 "renderGroundOrigin": {"point": [10.0, 0.0, 20.0]},
@@ -7166,15 +7160,15 @@ def test_write_preview_html_marks_motion_tuning_disabled_as_raw_passthrough(tmp_
         joint_names=clip.joint_names,
         frames=clip.frames,
         source=clip.source,
-        metadata={"upstream": "wham", "motionTuning": {"enabled": False}},
+        metadata={"upstream": "reconstruction", "motionTuning": {"enabled": False}},
     )
-    output = tmp_path / "preview-raw-wham.html"
+    output = tmp_path / "preview-raw-reconstruction.html"
 
-    write_preview_html(output, clip, title="raw-wham")
+    write_preview_html(output, clip, title="raw-reconstruction")
 
     text = output.read_text(encoding="utf-8")
     assert "\"motionTuningEnabled\": false" in text
-    assert "\"rawWhamPassthrough\": true" in text
+    assert "\"rawReconstructionPassthrough\": true" in text
 
 
 def test_write_preview_debug_json_exports_rendered_joint_coordinates(tmp_path: Path) -> None:
@@ -7269,8 +7263,8 @@ def test_write_preview_html_does_not_embed_smpl_mesh_payload(tmp_path: Path) -> 
 
     text = output.read_text(encoding="utf-8")
     assert '"smplMesh":' not in text
-    assert "Show WHAM SMPL mesh" not in text
-    assert "Download baked WHAM SMPL mesh" not in text
+    assert "Show RECONSTRUCTION SMPL mesh" not in text
+    assert "Download baked RECONSTRUCTION SMPL mesh" not in text
     assert "payload.smplMesh" not in text
     assert "showSmplMesh" not in text
     assert "updateSmplMeshForFrame" not in text
@@ -7295,7 +7289,7 @@ def test_write_preview_html_marks_custom_model_as_fused_spine(tmp_path: Path) ->
     assert "if (!customModelUsesFusedSpine && pelvisJoint && spine1Joint && spine2Joint && neckJoint && hipAxis && shoulderAxis)" in text
 
 
-def test_baked_wham_smpl_preview_applies_cleanup_delta_and_exports_loop_metadata() -> None:
+def test_baked_reconstruction_smpl_preview_applies_cleanup_delta_and_exports_loop_metadata() -> None:
     raw_clip = MotionClip(
         fps=30.0,
         joint_names=["pelvis", "left_foot", "right_foot"],
@@ -7309,7 +7303,7 @@ def test_baked_wham_smpl_preview_applies_cleanup_delta_and_exports_loop_metadata
                 },
             )
         ],
-        metadata={"upstream": "wham"},
+        metadata={"upstream": "reconstruction"},
     )
     cleaned_clip = MotionClip(
         fps=30.0,
@@ -7325,14 +7319,14 @@ def test_baked_wham_smpl_preview_applies_cleanup_delta_and_exports_loop_metadata
             )
         ],
         metadata={
-            "upstream": "wham",
+            "upstream": "reconstruction",
             "cleanup": {
                 "trimmedStartFrames": 0,
                 "trimmedEndFrames": 0,
             },
         },
     )
-    sequence = WhamSmplMeshSequence(
+    sequence = ReconstructionSmplMeshSequence(
         fps=30.0,
         subject_id="0",
         coordinate_space="camera",
@@ -7347,7 +7341,7 @@ def test_baked_wham_smpl_preview_applies_cleanup_delta_and_exports_loop_metadata
         ],
     )
 
-    payload = build_baked_wham_smpl_preview_payload(
+    payload = build_baked_reconstruction_smpl_preview_payload(
         sequence=sequence,
         raw_clip=raw_clip,
         cleaned_clip=cleaned_clip,
@@ -7355,7 +7349,7 @@ def test_baked_wham_smpl_preview_applies_cleanup_delta_and_exports_loop_metadata
         selected_loop_index=-1,
     )
 
-    assert payload["kind"] == "whamBakedSmplMeshPreview"
+    assert payload["kind"] == "reconstructionBakedSmplMeshPreview"
     assert payload["bodyModel"] == "smpl"
     assert payload["faces"] == [[0, 1, 2]]
     assert payload["loop"]["enabled"] is False
@@ -7364,7 +7358,7 @@ def test_baked_wham_smpl_preview_applies_cleanup_delta_and_exports_loop_metadata
     assert first_frame["cleanupDeltaApplied"] == pytest.approx([0.25, 0.2, -0.25])
 
 
-def test_baked_wham_smpl_preview_warps_mesh_to_fused_spine_reference() -> None:
+def test_baked_reconstruction_smpl_preview_warps_mesh_to_fused_spine_reference() -> None:
     joint_names = ["pelvis", "spine1", "spine2", "spine3", "neck"]
     reference_clip = MotionClip(
         fps=30.0,
@@ -7381,7 +7375,7 @@ def test_baked_wham_smpl_preview_warps_mesh_to_fused_spine_reference() -> None:
                 },
             )
         ],
-        metadata={"upstream": "wham"},
+        metadata={"upstream": "reconstruction"},
     )
     fused_clip = MotionClip(
         fps=30.0,
@@ -7399,12 +7393,12 @@ def test_baked_wham_smpl_preview_warps_mesh_to_fused_spine_reference() -> None:
             )
         ],
         metadata={
-            "upstream": "wham",
+            "upstream": "reconstruction",
             "motionTuning": {"enabled": False},
             "spineposeMotionFusion": {"appliedFrames": 1},
         },
     )
-    sequence = WhamSmplMeshSequence(
+    sequence = ReconstructionSmplMeshSequence(
         fps=30.0,
         subject_id="0",
         coordinate_space="camera",
@@ -7419,14 +7413,14 @@ def test_baked_wham_smpl_preview_warps_mesh_to_fused_spine_reference() -> None:
         ],
     )
 
-    unwarped_payload = build_baked_wham_smpl_preview_payload(
+    unwarped_payload = build_baked_reconstruction_smpl_preview_payload(
         sequence=sequence,
         raw_clip=fused_clip,
         cleaned_clip=fused_clip,
         title="spine-unwarped",
         selected_loop_index=-1,
     )
-    warped_payload = build_baked_wham_smpl_preview_payload(
+    warped_payload = build_baked_reconstruction_smpl_preview_payload(
         sequence=sequence,
         raw_clip=fused_clip,
         cleaned_clip=fused_clip,
@@ -7465,7 +7459,7 @@ def test_wear_skeleton_payload_bakes_preview_alignment_root_lock_and_centering()
             "transform": "none",
         },
         "selectedLoopIndex": -1,
-        "rawWhamPassthrough": False,
+        "rawReconstructionPassthrough": False,
     }
     assert payload["loop"]["enabled"] is False
     assert payload["bounds"]["center"] == pytest.approx([0.0, 0.0, 0.0])
@@ -7759,10 +7753,10 @@ def test_generation_pipeline_uses_normalized_input_without_extractor_stage(tmp_p
     assert Path(manifest["groundMetadataPath"]).exists()
     assert Path(manifest["targetRigContractPath"]).exists()
     assert manifest["retargetSourcePath"] is None
-    assert manifest["whamRetargetSourcePath"] is None
-    assert manifest["whamSmplPreviewJsonPath"] is None
-    assert manifest["whamResultsPkl"] is None
-    assert manifest["whamCacheStatus"] == "not_used_normalized_motion"
+    assert manifest["reconstructionRetargetSourcePath"] is None
+    assert manifest["reconstructionSmplPreviewJsonPath"] is None
+    assert manifest["reconstructionResultsPkl"] is None
+    assert manifest["reconstructionCacheStatus"] == "not_used_normalized_motion"
     assert manifest["groundMetadata"]["renderGroundPlane"]["space"] == "motion"
     assert manifest["groundMetadata"]["renderGroundOrigin"]["space"] == "motion"
     assert manifest["postProcessing"]["steps"] == [
@@ -7776,8 +7770,8 @@ def test_generation_pipeline_uses_normalized_input_without_extractor_stage(tmp_p
     assert manifest["nextStage"]["status"] == "wear_preview_skeleton_ready"
     assert Path(manifest["nextStage"]["wearSkeletonJsonPath"]).exists()
     assert manifest["nextStage"]["retargetSourcePath"] is None
-    assert manifest["nextStage"]["whamRetargetSourcePath"] is None
-    assert manifest["nextStage"]["whamSmplPreviewJsonPath"] is None
+    assert manifest["nextStage"]["reconstructionRetargetSourcePath"] is None
+    assert manifest["nextStage"]["reconstructionSmplPreviewJsonPath"] is None
 
     cleaned_clip = load_motion_json(result.cleaned_motion_json_path)
     assert cleaned_clip.metadata["ground"]["renderGroundPlane"]["space"] == "motion"
@@ -7796,52 +7790,52 @@ def test_generation_pipeline_uses_normalized_input_without_extractor_stage(tmp_p
     assert "\"renderGroundOrigin\"" in preview_html
 
 
-def test_resolve_wham_results_source_reuses_default_cache(tmp_path: Path) -> None:
+def test_resolve_reconstruction_results_source_reuses_default_cache(tmp_path: Path) -> None:
     input_video = tmp_path / "input" / "selected_segment.mp4"
     input_video.parent.mkdir(parents=True)
     input_video.write_bytes(b"video")
-    wham_output_dir = tmp_path / "raw" / "wham"
-    cached_pkl = wham_output_dir / "selected_segment" / "wham_output.pkl"
+    reconstruction_output_dir = tmp_path / "raw" / "reconstruction"
+    cached_pkl = reconstruction_output_dir / "selected_segment" / "reconstruction_output.pkl"
     cached_pkl.parent.mkdir(parents=True)
     cached_pkl.write_bytes(b"pkl")
 
-    source = pipeline.resolve_wham_results_source(
+    source = pipeline.resolve_reconstruction_results_source(
         explicit_results_pkl=None,
-        wham_output_dir=wham_output_dir,
+        reconstruction_output_dir=reconstruction_output_dir,
         input_video_path=input_video,
-        reuse_wham_cache=True,
+        reuse_reconstruction_cache=True,
     )
 
     assert source.path == cached_pkl
     assert source.cache_status == "reused"
-    assert source.should_run_wham is False
+    assert source.should_run_reconstruction is False
 
 
-def test_resolve_wham_results_source_can_force_regeneration(tmp_path: Path) -> None:
+def test_resolve_reconstruction_results_source_can_force_regeneration(tmp_path: Path) -> None:
     input_video = tmp_path / "input" / "selected_segment.mp4"
     input_video.parent.mkdir(parents=True)
     input_video.write_bytes(b"video")
-    wham_output_dir = tmp_path / "raw" / "wham"
-    cached_pkl = wham_output_dir / "selected_segment" / "wham_output.pkl"
+    reconstruction_output_dir = tmp_path / "raw" / "reconstruction"
+    cached_pkl = reconstruction_output_dir / "selected_segment" / "reconstruction_output.pkl"
     cached_pkl.parent.mkdir(parents=True)
     cached_pkl.write_bytes(b"pkl")
 
-    source = pipeline.resolve_wham_results_source(
+    source = pipeline.resolve_reconstruction_results_source(
         explicit_results_pkl=None,
-        wham_output_dir=wham_output_dir,
+        reconstruction_output_dir=reconstruction_output_dir,
         input_video_path=input_video,
-        reuse_wham_cache=False,
+        reuse_reconstruction_cache=False,
     )
 
     assert source.path == cached_pkl
     assert source.cache_status == "generated"
-    assert source.should_run_wham is True
+    assert source.should_run_reconstruction is True
 
 
-def test_uncached_wham_generation_isolates_stale_completion_outputs(
+def test_uncached_reconstruction_generation_isolates_stale_completion_outputs(
     tmp_path: Path,
 ) -> None:
-    output_root = tmp_path / "raw" / "wham"
+    output_root = tmp_path / "raw" / "reconstruction"
     content_key = "same-source-and-runtime"
     input_video = tmp_path / "input" / "selected_segment.mp4"
     input_video.parent.mkdir(parents=True)
@@ -7857,22 +7851,22 @@ def test_uncached_wham_generation_isolates_stale_completion_outputs(
         workspace=tmp_path / "workspace",
         video_path=input_video,
         motion_reconstruction_backend="gvhmr",
-        reuse_wham_cache=False,
+        reuse_reconstruction_cache=False,
     )
-    cache_miss_request = replace(fresh_request, reuse_wham_cache=True)
-    first_attempt = pipeline.wham_output_dir_for_uncached_generation(
+    cache_miss_request = replace(fresh_request, reuse_reconstruction_cache=True)
+    first_attempt = pipeline.reconstruction_output_dir_for_uncached_generation(
         output_root,
         cache_key_value=content_key,
         input_video_path=input_video,
         request=fresh_request,
     )
-    second_attempt = pipeline.wham_output_dir_for_uncached_generation(
+    second_attempt = pipeline.reconstruction_output_dir_for_uncached_generation(
         output_root,
         cache_key_value=content_key,
         input_video_path=input_video,
         request=fresh_request,
     )
-    stale_cache_miss_attempt = pipeline.wham_output_dir_for_uncached_generation(
+    stale_cache_miss_attempt = pipeline.reconstruction_output_dir_for_uncached_generation(
         output_root,
         cache_key_value=content_key,
         input_video_path=input_video,
@@ -7885,7 +7879,7 @@ def test_uncached_wham_generation_isolates_stale_completion_outputs(
     assert not (first_attempt / "demo" / "selected_segment" / "hmr4d_results.pt").exists()
 
 
-def test_uncached_wham_generation_reuses_content_key_root_without_stale_outputs(
+def test_uncached_reconstruction_generation_reuses_content_key_root_without_stale_outputs(
     tmp_path: Path,
 ) -> None:
     input_video = tmp_path / "selected_segment.mp4"
@@ -7895,20 +7889,20 @@ def test_uncached_wham_generation_reuses_content_key_root_without_stale_outputs(
         workspace=tmp_path / "workspace",
         video_path=input_video,
         motion_reconstruction_backend="gvhmr",
-        reuse_wham_cache=True,
+        reuse_reconstruction_cache=True,
     )
 
-    output_dir = pipeline.wham_output_dir_for_uncached_generation(
-        tmp_path / "raw" / "wham",
+    output_dir = pipeline.reconstruction_output_dir_for_uncached_generation(
+        tmp_path / "raw" / "reconstruction",
         cache_key_value="same-source-and-runtime",
         input_video_path=input_video,
         request=request,
     )
 
-    assert output_dir == tmp_path / "raw" / "wham" / "same-source-and-runtime"
+    assert output_dir == tmp_path / "raw" / "reconstruction" / "same-source-and-runtime"
 
 
-def test_generation_pipeline_requires_precomputed_wham_without_entering_gpu_stage(
+def test_generation_pipeline_requires_precomputed_reconstruction_without_entering_gpu_stage(
     tmp_path: Path,
 ) -> None:
     input_video = tmp_path / "source.mp4"
@@ -7920,22 +7914,22 @@ def test_generation_pipeline_requires_precomputed_wham_without_entering_gpu_stag
         exclusive_calls += 1
         return operation()
 
-    with pytest.raises(FileNotFoundError, match="requires a precomputed WHAM cache"):
+    with pytest.raises(FileNotFoundError, match="requires a precomputed RECONSTRUCTION cache"):
         run_generation_pipeline(
             GenerateRequest(
                 exercise_slug="squat",
                 workspace=tmp_path / "workspace",
                 video_path=input_video,
                 body_model_root=tmp_path / "body-models",
-                require_wham_cache=True,
+                require_reconstruction_cache=True,
             ),
-            run_wham_exclusive=run_exclusive,
+            run_reconstruction_exclusive=run_exclusive,
         )
 
     assert exclusive_calls == 0
 
 
-def test_candidate_generation_keeps_llama_stopped_for_post_wham_gpu_stages(
+def test_candidate_generation_keeps_llama_stopped_for_post_reconstruction_gpu_stages(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -7959,17 +7953,17 @@ def test_candidate_generation_keeps_llama_stopped_for_post_wham_gpu_stages(
 
     monkeypatch.setattr(
         bake_and_rank_module,
-        "prepare_wham_inference_video",
+        "prepare_reconstruction_inference_video",
         lambda **_kwargs: (prepared_video, 0.0, 1.0),
     )
     monkeypatch.setattr(
         bake_and_rank_module,
-        "stabilize_wham_inference_video_to_yolo_track",
+        "stabilize_reconstruction_inference_video_to_yolo_track",
         lambda **_kwargs: prepared_video,
     )
     monkeypatch.setattr(
         bake_and_rank_module,
-        "normalize_wham_input_orientation",
+        "normalize_reconstruction_input_orientation",
         lambda **_kwargs: (prepared_video, 0.0),
     )
 
@@ -7978,7 +7972,7 @@ def test_candidate_generation_keeps_llama_stopped_for_post_wham_gpu_stages(
         **kwargs: object,
     ) -> object:
         events.append("pipeline")
-        assert "run_wham_exclusive" not in kwargs
+        assert "run_reconstruction_exclusive" not in kwargs
         return expected_result
 
     def run_exclusive(operation: object) -> object:
@@ -7998,10 +7992,9 @@ def test_candidate_generation_keeps_llama_stopped_for_post_wham_gpu_stages(
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=workspace,
-            wham_repo_path=None,
             body_model_root=None,
         ),
-        run_wham_exclusive=run_exclusive,
+        run_reconstruction_exclusive=run_exclusive,
         prepared_video_path=prepared_video,
     )
 
@@ -8009,152 +8002,105 @@ def test_candidate_generation_keeps_llama_stopped_for_post_wham_gpu_stages(
     assert events == ["exclusive_start", "pipeline", "exclusive_end"]
 
 
-def test_reusable_wham_results_rejects_local_cache_for_different_video_content(tmp_path: Path) -> None:
-    input_video = tmp_path / "input" / "wham_inference_segment.mp4"
+def test_reusable_reconstruction_results_rejects_local_cache_for_different_video_content(tmp_path: Path) -> None:
+    input_video = tmp_path / "input" / "reconstruction_inference_segment.mp4"
     input_video.parent.mkdir(parents=True)
     input_video.write_bytes(b"old-segment")
     request = GenerateRequest(
         exercise_slug="farmers-carry",
         workspace=tmp_path / "workspace",
         video_path=input_video,
-        wham_global_cache_dir=tmp_path / "shared-wham-cache",
+        reconstruction_global_cache_dir=tmp_path / "shared-reconstruction-cache",
     )
     local_pkl = (
         pipeline.PipelinePaths.create(request.workspace, request.exercise_slug).raw_dir
-        / "wham"
+        / "reconstruction"
         / input_video.stem
-        / "wham_output.pkl"
+        / "reconstruction_output.pkl"
     )
     local_pkl.parent.mkdir(parents=True)
-    local_pkl.write_bytes(b"old-wham-result")
-    pipeline.write_local_wham_cache_manifest(
+    local_pkl.write_bytes(b"old-reconstruction-result")
+    pipeline.write_local_reconstruction_cache_manifest(
         request,
         input_video_path=input_video,
         results_pkl=local_pkl,
     )
 
-    assert pipeline.reusable_wham_results_pkl(request, input_video) == local_pkl
+    assert pipeline.reusable_reconstruction_results_pkl(request, input_video) == local_pkl
 
     input_video.write_bytes(b"new-shorter-segment")
 
-    assert pipeline.reusable_wham_results_pkl(request, input_video) is None
+    assert pipeline.reusable_reconstruction_results_pkl(request, input_video) is None
 
 
-def test_reusable_wham_results_rejects_unversioned_local_cache(tmp_path: Path) -> None:
-    input_video = tmp_path / "input" / "wham_inference_segment.mp4"
+def test_reusable_reconstruction_results_rejects_unversioned_local_cache(tmp_path: Path) -> None:
+    input_video = tmp_path / "input" / "reconstruction_inference_segment.mp4"
     input_video.parent.mkdir(parents=True)
     input_video.write_bytes(b"current-segment")
     request = GenerateRequest(
         exercise_slug="farmers-carry",
         workspace=tmp_path / "workspace",
         video_path=input_video,
-        wham_global_cache_dir=tmp_path / "shared-wham-cache",
+        reconstruction_global_cache_dir=tmp_path / "shared-reconstruction-cache",
     )
     local_pkl = (
         pipeline.PipelinePaths.create(request.workspace, request.exercise_slug).raw_dir
-        / "wham"
+        / "reconstruction"
         / input_video.stem
-        / "wham_output.pkl"
+        / "reconstruction_output.pkl"
     )
     local_pkl.parent.mkdir(parents=True)
-    local_pkl.write_bytes(b"legacy-wham-result")
+    local_pkl.write_bytes(b"legacy-reconstruction-result")
 
-    assert pipeline.reusable_wham_results_pkl(request, input_video) is None
+    assert pipeline.reusable_reconstruction_results_pkl(request, input_video) is None
 
 
-def test_resolve_wham_results_source_prefers_explicit_pkl(tmp_path: Path) -> None:
+def test_resolve_reconstruction_results_source_prefers_explicit_pkl(tmp_path: Path) -> None:
     input_video = tmp_path / "input" / "selected_segment.mp4"
     input_video.parent.mkdir(parents=True)
     input_video.write_bytes(b"video")
-    explicit_pkl = tmp_path / "external" / "wham_output.pkl"
+    explicit_pkl = tmp_path / "external" / "reconstruction_output.pkl"
     explicit_pkl.parent.mkdir(parents=True)
     explicit_pkl.write_bytes(b"pkl")
 
-    source = pipeline.resolve_wham_results_source(
+    source = pipeline.resolve_reconstruction_results_source(
         explicit_results_pkl=explicit_pkl,
-        wham_output_dir=tmp_path / "raw" / "wham",
+        reconstruction_output_dir=tmp_path / "raw" / "reconstruction",
         input_video_path=input_video,
-        reuse_wham_cache=False,
+        reuse_reconstruction_cache=False,
     )
 
     assert source.path == explicit_pkl.resolve()
     assert source.cache_status == "explicit"
-    assert source.should_run_wham is False
+    assert source.should_run_reconstruction is False
 
 
-def test_global_wham_cache_is_content_addressed_and_reusable(tmp_path: Path) -> None:
+def test_global_reconstruction_cache_is_content_addressed_and_reusable(tmp_path: Path) -> None:
     input_video = tmp_path / "selected_segment.mp4"
     input_video.write_bytes(b"same-video-content")
     request = GenerateRequest(
         exercise_slug="bench",
         workspace=tmp_path / "workspace",
         video_path=input_video,
-        wham_global_cache_dir=tmp_path / "shared-wham-cache",
+        reconstruction_global_cache_dir=tmp_path / "shared-reconstruction-cache",
     )
-    generated_results = tmp_path / "generated" / "wham_output.pkl"
+    generated_results = tmp_path / "generated" / "reconstruction_output.pkl"
     generated_results.parent.mkdir(parents=True)
-    generated_results.write_bytes(b"wham-results")
+    generated_results.write_bytes(b"reconstruction-results")
 
-    published = pipeline.publish_global_wham_results(
+    published = pipeline.publish_global_reconstruction_results(
         request,
         input_video_path=input_video,
         results_pkl=generated_results,
     )
 
-    assert published.read_bytes() == b"wham-results"
-    assert pipeline.reusable_wham_results_pkl(request, input_video) == published
+    assert published.read_bytes() == b"reconstruction-results"
+    assert pipeline.reusable_reconstruction_results_pkl(request, input_video) == published
     input_video.write_bytes(b"different-video-content")
-    assert pipeline.reusable_wham_results_pkl(request, input_video) is None
+    assert pipeline.reusable_reconstruction_results_pkl(request, input_video) is None
 
 
-def test_global_wham_cache_key_includes_preprocessing_settings(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    input_video = tmp_path / "selected_segment.mp4"
-    input_video.write_bytes(b"same-video-content")
-    request = GenerateRequest(
-        exercise_slug="bench",
-        workspace=tmp_path / "workspace",
-        video_path=input_video,
-    )
-
-    original_key = pipeline.wham_content_cache_key(request, input_video)
-    monkeypatch.setattr(wham_runner_module, "DEFAULT_WHAM_POSE_BATCH_SIZE", 8)
-
-    assert pipeline.wham_content_cache_key(request, input_video) != original_key
-
-
-def test_build_wham_tracking_preflight_command_reuses_wham_output_directory(tmp_path: Path) -> None:
-    wham_repo = tmp_path / "WHAM"
-    script = tmp_path / "pkg" / "wham_tracking_preflight.py"
-    input_video = tmp_path / "input" / "clip.mp4"
-    output_root = tmp_path / "raw" / "wham"
-    report = tmp_path / "logs" / "preflight.json"
-    command = wham_runner_module.build_wham_tracking_preflight_command(
-        wham_repo_path=wham_repo,
-        script_path=script,
-        input_video=input_video,
-        output_root=output_root,
-        report_path=report,
-        python_command="python",
-        required_start_seconds=0.5,
-        required_end_seconds=3.5,
-        use_docker=True,
-        docker_image="wham:test",
-        docker_gpus="all",
-        docker_shm_size="8g",
-    )
-
-    assert f"{output_root.resolve()}:/output" in command
-    assert f"{script.parent.resolve()}:/mwa" in command
-    assert command[command.index("-w") + 1] == "/opt/wham-src"
-    assert not any("WHAM:/code" in item or item.endswith(":/code") for item in command)
-    assert command[command.index("--required-start-seconds") + 1] == "0.500000"
-    assert command[command.index("--required-end-seconds") + 1] == "3.500000"
-
-
-def test_spinepose_motion_fusion_fits_curve_into_wham_torso_frame(tmp_path: Path) -> None:
+def test_spinepose_motion_fusion_fits_curve_into_reconstruction_torso_frame(tmp_path: Path) -> None:
     spinepose_dir = tmp_path / "spinepose"
     spinepose_dir.mkdir()
     for frame_index in range(3):
@@ -8283,7 +8229,7 @@ def test_spinepose_motion_fusion_aligns_profiles_by_source_video_time(tmp_path: 
             MotionFrame(time_sec=4.0, joints=base_joints),
             MotionFrame(time_sec=5.0, joints=base_joints),
         ],
-        metadata={"upstream": "wham", "wham": {"frameIds": [90, 120, 150]}},
+        metadata={"upstream": "reconstruction", "reconstruction": {"frameIds": [90, 120, 150]}},
     )
 
     fused_clip, stats = apply_spinepose_to_motion_clip(
@@ -8611,139 +8557,23 @@ def test_spinepose_motion_fusion_skips_when_curve_quality_is_unreliable(tmp_path
     assert fused_clip.metadata["spineposeMotionFusion"]["skippedReason"] == "unreliable_spinepose_curve"
 
 
-def test_generation_pipeline_can_feed_spinepose_corrected_wham_to_downstream_stages(
+def test_generation_pipeline_skips_reconstruction_smpl_preview_by_default(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(pipeline, "read_basic_video_metadata", lambda _: BasicVideoMetadata(fps=24.0, frame_count=48, width=640, height=480))
     source_video = tmp_path / "source.mp4"
     source_video.write_bytes(b"video")
-    wham_pkl = tmp_path / "wham_output.pkl"
-    wham_pkl.write_bytes(b"wham")
-    spinepose_dir = tmp_path / "spinepose"
-    spinepose_dir.mkdir()
-    (spinepose_dir / "frame_00000.json").write_text(
-        json.dumps({"people": [{"pose_keypoints_3d": [0.0, 0.0, 0.0, 1.0]}]}),
-        encoding="utf-8",
-    )
-    body_model_root = tmp_path / "body_models"
-    body_model_root.mkdir()
-    captured: dict[str, object] = {}
-
-    class FakeSpinePoseStats:
-        frame_count = 2
-        source_frame_count = 2
-        applied_frame_count = 2
-        max_delta_degrees = 12.5
-        mean_abs_delta_degrees = 6.25
-        pose_keys = ("pose", "pose_world")
-        arm_counter_rotation = 0.5
-
-    def fake_apply_spinepose_to_wham_pkl(**kwargs: object) -> FakeSpinePoseStats:
-        captured["spinepose_kwargs"] = kwargs
-        output_pkl = Path(kwargs["output_pkl"])
-        output_pkl.parent.mkdir(parents=True, exist_ok=True)
-        output_pkl.write_bytes(b"corrected")
-        return FakeSpinePoseStats()
-
-    def fake_normalize_wham_output(**kwargs: object) -> None:
-        assert kwargs["fps"] == 24.0
-        captured["normalized_wham_results_pkl"] = Path(kwargs["wham_results_pkl"])
-        save_motion_json(Path(kwargs["output_json"]), build_fixture_clip())
-
-    def fake_export_wham_retarget_source(**kwargs: object) -> Path:
-        assert kwargs["fps"] == 24.0
-        captured["retarget_wham_results_pkl"] = Path(kwargs["wham_results_pkl"])
-        output_json = Path(kwargs["output_json"])
-        output_json.parent.mkdir(parents=True, exist_ok=True)
-        output_json.write_text("{}", encoding="utf-8")
-        return output_json
-
-    def fake_load_wham_smpl_mesh_sequence(**kwargs: object) -> WhamSmplMeshSequence:
-        assert kwargs["fps"] == 24.0
-        captured["smpl_wham_results_pkl"] = Path(kwargs["wham_results_pkl"])
-        return WhamSmplMeshSequence(
-            fps=30.0,
-            subject_id="0",
-            coordinate_space="camera",
-            frame_ids=[0],
-            faces=[],
-            vertices=[[]],
-        )
-
-    def fake_write_baked_wham_smpl_preview_json(path: Path, **kwargs: object) -> dict[str, object]:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("{}", encoding="utf-8")
-        return {}
-
-    monkeypatch.setattr(pipeline, "apply_spinepose_to_wham_pkl", fake_apply_spinepose_to_wham_pkl)
-    monkeypatch.setattr(pipeline, "normalize_wham_output", fake_normalize_wham_output)
-    monkeypatch.setattr(pipeline, "export_wham_retarget_source", fake_export_wham_retarget_source)
-    monkeypatch.setattr(pipeline, "load_wham_smpl_mesh_sequence", fake_load_wham_smpl_mesh_sequence)
-    monkeypatch.setattr(pipeline, "write_baked_wham_smpl_preview_json", fake_write_baked_wham_smpl_preview_json)
-
-    result = run_generation_pipeline(
-        GenerateRequest(
-            exercise_slug="squat-spinepose",
-            workspace=tmp_path / "workspace",
-            video_path=source_video,
-            wham_results_pkl=wham_pkl,
-            body_model_root=body_model_root,
-            spinepose_json_dir=spinepose_dir,
-            spinepose_enabled=True,
-            spinepose_gain=0.8,
-            spinepose_max_degrees=20.0,
-            spinepose_axis=2,
-            spinepose_invert=True,
-            spinepose_smoothing_window=5,
-            spinepose_arm_counter_rotation=0.5,
-            spinepose_merge_mode="legacy_pkl",
-            motion_tuning_enabled=False,
-            export_wham_smpl_preview=True,
-        )
-    )
-
-    corrected_pkl = tmp_path / "workspace" / "squat-spinepose" / "raw" / "wham_spinepose" / "wham_output.pkl"
-    assert corrected_pkl.exists()
-    assert result.wham_results_pkl == corrected_pkl
-    assert result.wham_cache_status == "explicit_spinepose_corrected"
-    assert captured["normalized_wham_results_pkl"] == corrected_pkl
-    assert captured["retarget_wham_results_pkl"] == corrected_pkl
-    assert captured["smpl_wham_results_pkl"] == corrected_pkl
-    spinepose_kwargs = captured["spinepose_kwargs"]
-    assert isinstance(spinepose_kwargs, dict)
-    assert spinepose_kwargs["wham_results_pkl"] == wham_pkl.resolve()
-    assert spinepose_kwargs["spinepose_json_dir"] == spinepose_dir.resolve()
-    assert spinepose_kwargs["gain"] == pytest.approx(0.8)
-    assert spinepose_kwargs["max_degrees"] == pytest.approx(20.0)
-    assert spinepose_kwargs["axis"] == 2
-    assert spinepose_kwargs["invert"] is True
-    assert spinepose_kwargs["smoothing_window"] == 5
-    assert spinepose_kwargs["arm_counter_rotation"] == pytest.approx(0.5)
-
-    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
-    assert manifest["whamResultsPkl"] == str(corrected_pkl)
-    assert manifest["whamCacheStatus"] == "explicit_spinepose_corrected"
-    assert manifest["timings"]["spineposeWhamCorrection"]["correctedResultsPkl"] == str(corrected_pkl)
-
-
-def test_generation_pipeline_skips_wham_smpl_preview_by_default(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(pipeline, "read_basic_video_metadata", lambda _: BasicVideoMetadata(fps=24.0, frame_count=48, width=640, height=480))
-    source_video = tmp_path / "source.mp4"
-    source_video.write_bytes(b"video")
-    wham_pkl = tmp_path / "wham_output.pkl"
-    wham_pkl.write_bytes(b"wham")
+    reconstruction_pkl = tmp_path / "reconstruction_output.pkl"
+    reconstruction_pkl.write_bytes(b"reconstruction")
     body_model_root = tmp_path / "body_models"
     body_model_root.mkdir()
 
-    def fake_normalize_wham_output(**kwargs: object) -> None:
+    def fake_normalize_reconstruction_output(**kwargs: object) -> None:
         assert kwargs["fps"] == 24.0
         save_motion_json(Path(kwargs["output_json"]), build_fixture_clip())
 
-    def fake_export_wham_retarget_source(**kwargs: object) -> Path:
+    def fake_export_reconstruction_retarget_source(**kwargs: object) -> Path:
         assert kwargs["fps"] == 24.0
         output_json = Path(kwargs["output_json"])
         output_json.parent.mkdir(parents=True, exist_ok=True)
@@ -8751,19 +8581,19 @@ def test_generation_pipeline_skips_wham_smpl_preview_by_default(
         return output_json
 
     def fail_smpl_preview_call(**_: object) -> None:
-        raise AssertionError("WHAM SMPL preview should be opt-in.")
+        raise AssertionError("RECONSTRUCTION SMPL preview should be opt-in.")
 
-    monkeypatch.setattr(pipeline, "normalize_wham_output", fake_normalize_wham_output)
-    monkeypatch.setattr(pipeline, "export_wham_retarget_source", fake_export_wham_retarget_source)
-    monkeypatch.setattr(pipeline, "load_wham_smpl_mesh_sequence", fail_smpl_preview_call)
-    monkeypatch.setattr(pipeline, "write_baked_wham_smpl_preview_json", fail_smpl_preview_call)
+    monkeypatch.setattr(pipeline, "normalize_reconstruction_output", fake_normalize_reconstruction_output)
+    monkeypatch.setattr(pipeline, "export_reconstruction_retarget_source", fake_export_reconstruction_retarget_source)
+    monkeypatch.setattr(pipeline, "load_reconstruction_smpl_mesh_sequence", fail_smpl_preview_call)
+    monkeypatch.setattr(pipeline, "write_baked_reconstruction_smpl_preview_json", fail_smpl_preview_call)
 
     result = run_generation_pipeline(
         GenerateRequest(
             exercise_slug="bench-press",
             workspace=tmp_path / "workspace",
             video_path=source_video,
-            wham_results_pkl=wham_pkl,
+            reconstruction_results_pkl=reconstruction_pkl,
             body_model_root=body_model_root,
             motion_tuning_enabled=False,
         )
@@ -8771,9 +8601,9 @@ def test_generation_pipeline_skips_wham_smpl_preview_by_default(
 
     assert result.smpl_preview_json_path is None
     manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
-    assert manifest["whamSmplPreviewJsonPath"] is None
-    assert manifest["timings"]["loadWhamSmplMeshSeconds"] == 0.0
-    assert manifest["timings"]["whamSmplPreview"] == {"enabled": False, "status": "disabled"}
+    assert manifest["reconstructionSmplPreviewJsonPath"] is None
+    assert manifest["timings"]["loadReconstructionSmplMeshSeconds"] == 0.0
+    assert manifest["timings"]["reconstructionSmplPreview"] == {"enabled": False, "status": "disabled"}
 
 
 def test_generation_pipeline_fuses_spinepose_motion_by_default(
@@ -8783,8 +8613,8 @@ def test_generation_pipeline_fuses_spinepose_motion_by_default(
     monkeypatch.setattr(pipeline, "read_basic_video_metadata", lambda _: BasicVideoMetadata(fps=24.0, frame_count=48, width=640, height=480))
     source_video = tmp_path / "source.mp4"
     source_video.write_bytes(b"video")
-    wham_pkl = tmp_path / "wham_output.pkl"
-    wham_pkl.write_bytes(b"wham")
+    reconstruction_pkl = tmp_path / "reconstruction_output.pkl"
+    reconstruction_pkl.write_bytes(b"reconstruction")
     spinepose_dir = tmp_path / "spinepose"
     spinepose_dir.mkdir()
     for frame_index in range(3):
@@ -8801,9 +8631,9 @@ def test_generation_pipeline_fuses_spinepose_motion_by_default(
     body_model_root.mkdir()
     captured: dict[str, object] = {}
 
-    def fake_normalize_wham_output(**kwargs: object) -> None:
+    def fake_normalize_reconstruction_output(**kwargs: object) -> None:
         assert kwargs["fps"] == 24.0
-        captured["normalized_wham_results_pkl"] = Path(kwargs["wham_results_pkl"])
+        captured["normalized_reconstruction_results_pkl"] = Path(kwargs["reconstruction_results_pkl"])
         joint_names = [
             "pelvis",
             "left_hip",
@@ -8834,24 +8664,24 @@ def test_generation_pipeline_fuses_spinepose_motion_by_default(
         ]
         save_motion_json(Path(kwargs["output_json"]), MotionClip(fps=30.0, joint_names=joint_names, frames=frames))
 
-    def fake_export_wham_retarget_source(**kwargs: object) -> Path:
+    def fake_export_reconstruction_retarget_source(**kwargs: object) -> Path:
         assert kwargs["fps"] == 24.0
-        captured["retarget_wham_results_pkl"] = Path(kwargs["wham_results_pkl"])
+        captured["retarget_reconstruction_results_pkl"] = Path(kwargs["reconstruction_results_pkl"])
         output_json = Path(kwargs["output_json"])
         output_json.parent.mkdir(parents=True, exist_ok=True)
         output_json.write_text("{}", encoding="utf-8")
         return output_json
 
-    monkeypatch.setattr(pipeline, "normalize_wham_output", fake_normalize_wham_output)
-    monkeypatch.setattr(pipeline, "export_wham_retarget_source", fake_export_wham_retarget_source)
-    monkeypatch.setattr(pipeline, "load_wham_smpl_mesh_sequence", lambda **_: None)
+    monkeypatch.setattr(pipeline, "normalize_reconstruction_output", fake_normalize_reconstruction_output)
+    monkeypatch.setattr(pipeline, "export_reconstruction_retarget_source", fake_export_reconstruction_retarget_source)
+    monkeypatch.setattr(pipeline, "load_reconstruction_smpl_mesh_sequence", lambda **_: None)
 
     result = run_generation_pipeline(
         GenerateRequest(
             exercise_slug="cat-cow-spinepose",
             workspace=tmp_path / "workspace",
             video_path=source_video,
-            wham_results_pkl=wham_pkl,
+            reconstruction_results_pkl=reconstruction_pkl,
             body_model_root=body_model_root,
             spinepose_json_dir=spinepose_dir,
             spinepose_enabled=True,
@@ -8859,10 +8689,10 @@ def test_generation_pipeline_fuses_spinepose_motion_by_default(
         )
     )
 
-    assert result.wham_results_pkl == wham_pkl.resolve()
-    assert result.wham_cache_status == "explicit_spinepose_motion_fused"
-    assert captured["normalized_wham_results_pkl"] == wham_pkl.resolve()
-    assert captured["retarget_wham_results_pkl"] == wham_pkl.resolve()
+    assert result.reconstruction_results_pkl == reconstruction_pkl.resolve()
+    assert result.reconstruction_cache_status == "explicit_spinepose_motion_fused"
+    assert captured["normalized_reconstruction_results_pkl"] == reconstruction_pkl.resolve()
+    assert captured["retarget_reconstruction_results_pkl"] == reconstruction_pkl.resolve()
     raw_clip = load_motion_json(result.raw_motion_json_path)
     assert raw_clip.frames[1].joints["pelvis"][2] > 0.0
     assert raw_clip.frames[1].joints["neck"][2] > 0.0
@@ -8871,8 +8701,8 @@ def test_generation_pipeline_fuses_spinepose_motion_by_default(
     assert raw_clip.metadata["spineposeMotionFusion"]["maxPropagatedDisplacement"] > 0.0
 
     manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
-    assert manifest["whamResultsPkl"] == str(wham_pkl.resolve())
-    assert manifest["whamCacheStatus"] == "explicit_spinepose_motion_fused"
+    assert manifest["reconstructionResultsPkl"] == str(reconstruction_pkl.resolve())
+    assert manifest["reconstructionCacheStatus"] == "explicit_spinepose_motion_fused"
     assert manifest["timings"]["spineposeMotionFusion"]["mergeMode"] == "motion"
     assert manifest["timings"]["spineposeMotionFusion"]["curveSelectionReason"]
     assert manifest["timings"]["spineposeMotionFusion"]["maxPropagatedDisplacement"] > 0.0
@@ -10416,104 +10246,19 @@ def test_generation_pipeline_accepts_video_already_in_workspace_input(tmp_path: 
     assert result.manifest_path.exists()
 
 
-def test_build_wham_command_uses_local_paths() -> None:
-    command = build_wham_command(
-        wham_repo_path=Path("C:/WHAM"),
-        input_video=Path("C:/videos/burpee.mp4"),
-        output_root=Path("C:/out"),
-        python_command="python",
-        estimate_local_only=True,
-        run_smplify=True,
-    )
-
-    assert command[:2] == ["python", "demo.py"]
-    assert "C:\\videos\\burpee.mp4" in command
-    assert "--output_pth" in command
-    assert "C:\\out" in command
-    assert "--estimate_local_only" in command
-    assert "--run_smplify" in command
-
-
-def test_build_wham_command_uses_docker_mounts() -> None:
-    command = build_wham_command(
-        wham_repo_path=Path("C:/WHAM"),
-        input_video=Path("C:/videos/burpee.mp4"),
-        output_root=Path("C:/out"),
-        python_command="python",
-        estimate_local_only=True,
-        run_smplify=True,
-        use_docker=True,
-        docker_image="wham:test",
-        docker_gpus="all",
-        docker_shm_size="8g",
-    )
-
-    assert command[:2] == ["docker", "run"]
-    assert "--gpus" in command
-    assert "--shm-size" in command
-    assert "WHAM_POSE_BACKEND=vitpose" in command
-    assert "WHAM_POSE_BATCH_SIZE=16" in command
-    assert "WHAM_FEATURE_BATCH_SIZE=32" in command
-    assert "WHAM_MAX_TRACK_GAP_FRAMES=3" in command
-    assert "wham:test" in command
-    assert "/input/burpee.mp4" in command
-    assert "--estimate_local_only" in command
-    assert "--run_smplify" in command
-    assert "-w" in command
-    assert command[command.index("-w") + 1] == "/opt/wham-src"
-    assert not any(item.endswith(":/code") or item.endswith(":/code/") for item in command)
-
-
-def test_run_wham_locally_defaults_to_smplify() -> None:
-    assert run_wham_locally.__kwdefaults__ is not None
-    assert run_wham_locally.__kwdefaults__["run_smplify"] is True
-    assert run_wham_locally.__kwdefaults__["estimate_local_only"] is True
-
-
-def test_wham_run_result_timing_payload_records_runtime_mode(tmp_path: Path) -> None:
-    result = WhamRunResult(
-        output_dir=tmp_path / "out",
-        results_pkl=tmp_path / "out" / "wham_output.pkl",
-        stdout_log=tmp_path / "logs" / "stdout.log",
-        stderr_log=tmp_path / "logs" / "stderr.log",
-        command=["docker", "run", "wham:test"],
-        elapsed_seconds=12.3456,
-        returncode=0,
-        use_docker=True,
-        estimate_local_only=True,
-        run_smplify=False,
-        docker_image="wham:test",
-    )
-
-    payload = result.timing_payload()
-
-    assert payload["elapsedSeconds"] == pytest.approx(12.346)
-    assert payload["useDocker"] is True
-    assert payload["estimateLocalOnly"] is True
-    assert payload["runSmplify"] is False
-    assert payload["dockerImage"] == "wham:test"
-    assert payload["dockerLockWaitSeconds"] == pytest.approx(0.0)
-    assert payload["preprocessing"] == {
-        "poseBackend": "vitpose",
-        "poseBatchSize": 16,
-        "featureBatchSize": 32,
-        "maxTrackGapFrames": 3,
-    }
-
-
-def test_wham_docker_run_lock_serializes_concurrent_runs(
+def test_reconstruction_docker_run_lock_serializes_concurrent_runs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    lock_path = tmp_path / "wham.lock"
-    monkeypatch.setenv(wham_runner_module.WHAM_DOCKER_LOCK_ENV_VAR, str(lock_path))
+    lock_path = tmp_path / "reconstruction.lock"
+    monkeypatch.setenv(reconstruction_runner_module.RECONSTRUCTION_DOCKER_LOCK_ENV_VAR, str(lock_path))
     acquired: list[float] = []
 
     def acquire_second_lock() -> None:
-        with wham_runner_module.wham_docker_run_lock(enabled=True) as wait_seconds:
+        with reconstruction_runner_module.reconstruction_docker_run_lock(enabled=True) as wait_seconds:
             acquired.append(wait_seconds)
 
-    with wham_runner_module.wham_docker_run_lock(enabled=True) as first_wait:
+    with reconstruction_runner_module.reconstruction_docker_run_lock(enabled=True) as first_wait:
         assert first_wait == pytest.approx(0.0, abs=0.1)
         assert lock_path.exists()
         thread = threading.Thread(target=acquire_second_lock)
@@ -10525,144 +10270,6 @@ def test_wham_docker_run_lock_serializes_concurrent_runs(
     assert not thread.is_alive()
     assert acquired and acquired[0] >= 0.1
     assert not lock_path.exists()
-
-
-def test_run_wham_with_warm_worker_submits_job_and_reads_result(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import contextlib
-
-    mount_root = tmp_path / "workspace"
-    input_dir = mount_root / "candidate" / "input"
-    output_root = mount_root / "candidate" / "raw" / "wham"
-    logs_dir = mount_root / "candidate" / "logs"
-    session_dir = tmp_path / "worker"
-    for path in (input_dir, output_root, logs_dir, session_dir / "jobs", session_dir / "results", session_dir / "job_logs"):
-        path.mkdir(parents=True, exist_ok=True)
-    (session_dir / "ready.json").write_text(json.dumps({"status": "ready"}), encoding="utf-8")
-    (session_dir / "heartbeat.json").write_text(
-        json.dumps({"status": "alive", "updatedAtUnixSeconds": time.time()}),
-        encoding="utf-8",
-    )
-    input_video = input_dir / "selected_segment.mp4"
-    input_video.write_bytes(b"video")
-    observed_job: dict[str, object] = {}
-
-    @contextlib.contextmanager
-    def fake_lock(*, enabled: bool):
-        yield 0.25 if enabled else 0.0
-
-    def fake_worker() -> None:
-        deadline = time.perf_counter() + 5.0
-        while time.perf_counter() < deadline:
-            job_paths = list((session_dir / "jobs").glob("*.json"))
-            if not job_paths:
-                time.sleep(0.05)
-                continue
-            job_path = job_paths[0]
-            payload = json.loads(job_path.read_text(encoding="utf-8"))
-            observed_job.update(payload)
-            job_id = str(payload["jobId"])
-            results_pkl = output_root / input_video.stem / "wham_output.pkl"
-            results_pkl.parent.mkdir(parents=True, exist_ok=True)
-            results_pkl.write_bytes(b"pkl")
-            (session_dir / "job_logs" / f"{job_id}.stdout.log").write_text("worker stdout", encoding="utf-8")
-            (session_dir / "job_logs" / f"{job_id}.stderr.log").write_text("worker stderr", encoding="utf-8")
-            (session_dir / "results" / f"{job_id}.json").write_text(
-            json.dumps(
-                {
-                    "jobId": job_id,
-                    "stageIdentity": payload.get("stageIdentity"),
-                    "status": "completed",
-                        "outputDir": "/workspace/candidate/raw/wham/selected_segment",
-                        "resultsPkl": "/workspace/candidate/raw/wham/selected_segment/wham_output.pkl",
-                        "elapsedSeconds": 0.1,
-                    }
-                ),
-                encoding="utf-8",
-            )
-            return
-        raise AssertionError("warm worker test did not receive a job")
-
-    monkeypatch.setattr(wham_runner_module, "wham_docker_run_lock", fake_lock)
-    worker = threading.Thread(target=fake_worker)
-    worker.start()
-
-    result = wham_runner_module.run_wham_with_warm_worker(
-        input_video=input_video,
-        output_root=output_root,
-        logs_dir=logs_dir,
-        stdout_log=logs_dir / "wham.stdout.log",
-        stderr_log=logs_dir / "wham.stderr.log",
-        estimate_local_only=True,
-        run_smplify=False,
-        use_docker=True,
-        docker_image="wham:test",
-        warm_worker_session_dir=session_dir,
-        warm_worker_mount_root=mount_root,
-        timeout_seconds=5.0,
-        tracking_preflight=True,
-        required_start_seconds=1.25,
-        required_end_seconds=4.75,
-        stage_identity={
-            "schemaVersion": 1,
-            "runId": "run-1",
-            "waveId": "run-1-wave-0001",
-            "exerciseId": "ohp",
-            "candidateId": "candidate-a",
-        },
-    )
-    worker.join(timeout=5.0)
-
-    assert not worker.is_alive()
-    assert observed_job["video"] == "/workspace/candidate/input/selected_segment.mp4"
-    assert observed_job["outputRoot"] == "/workspace/candidate/raw/wham"
-    assert observed_job["estimateLocalOnly"] is True
-    assert observed_job["runSmplify"] is False
-    assert observed_job["trackingPreflight"] is True
-    assert observed_job["requiredStartSeconds"] == pytest.approx(1.25)
-    assert observed_job["requiredEndSeconds"] == pytest.approx(4.75)
-    assert observed_job["stageIdentity"] == result.stage_identity
-    assert result.stage_identity["candidateId"] == "candidate-a"
-    assert result.results_pkl == output_root / input_video.stem / "wham_output.pkl"
-    assert result.warm_worker is True
-    assert result.docker_lock_wait_seconds == pytest.approx(0.25)
-    timing = result.timing_payload()
-    assert timing["warmWorker"] is True
-    assert timing["warmWorkerSessionDir"] == str(session_dir.resolve())
-    assert timing["stageIdentity"] == result.stage_identity
-    assert (logs_dir / "wham.stdout.log").read_text(encoding="utf-8") == "worker stdout"
-    assert (logs_dir / "wham.stderr.log").read_text(encoding="utf-8") == "worker stderr"
-
-
-def test_wait_for_warm_worker_result_rejects_stale_heartbeat(tmp_path: Path) -> None:
-    heartbeat_path = tmp_path / "heartbeat.json"
-    heartbeat_path.write_text(
-        json.dumps(
-            {
-                "status": "alive",
-                "updatedAtUnixSeconds": (
-                    time.time()
-                    - wham_runner_module.WHAM_WARM_WORKER_HEARTBEAT_STALE_SECONDS
-                    - 1.0
-                ),
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(RuntimeError, match="heartbeat became stale"):
-        wham_runner_module.wait_for_warm_worker_result(
-            tmp_path / "missing-result.json",
-            timeout_seconds=60.0,
-            heartbeat_path=heartbeat_path,
-        )
-
-
-def test_default_wham_timeout_is_a_finite_operational_safety_bound() -> None:
-    assert wham_runner_module.DEFAULT_WHAM_TIMEOUT_SECONDS == 20 * 60.0
-    assert wham_runner_module.resolve_warm_worker_timeout_seconds(None) == 20 * 60.0
 
 
 def test_iter_detection_windows_uses_overlap() -> None:
@@ -12490,14 +12097,14 @@ def test_llama_cpp_server_model_matching_uses_model_basename() -> None:
     payload = {
         "data": [
             {
-                "id": "C:\\Users\\gabri\\Downloads\\gemma-4-12b-it-UD-Q4_K_XL.gguf",
+                "id": "C:\\Users\\gabri\\Downloads\\Qwen3.5-9B-UD-Q4_K_XL.gguf",
             }
         ]
     }
 
     assert youtube_module.llama_cpp_server_models_match_expected(
         payload,
-        "C:/Users/gabri/Downloads/gemma-4-12b-it-UD-Q4_K_XL.gguf",
+        "C:/Users/gabri/Downloads/Qwen3.5-9B-UD-Q4_K_XL.gguf",
     )
     assert not youtube_module.llama_cpp_server_models_match_expected(
         payload,
@@ -12538,10 +12145,10 @@ def test_llama_cpp_ranker_rejects_existing_server_with_unexpected_model(
 
     monkeypatch.setattr(youtube_module.httpx, "get", fake_get)
 
-    with pytest.raises(RuntimeError, match="serving .*Qwen3VL.*expects gemma-4-12b"):
+    with pytest.raises(RuntimeError, match="serving .*Qwen3VL.*expects Qwen3.5-9B"):
         youtube_module.LlamaCppVisionRanker(
             YouTubeRankingSettings(
-                llama_cpp_model="C:\\Users\\gabri\\Downloads\\gemma-4-12b-it-UD-Q4_K_XL.gguf",
+                llama_cpp_model="C:\\Users\\gabri\\Downloads\\Qwen3.5-9B-UD-Q4_K_XL.gguf",
                 llama_cpp_mtp_model=None,
             )
         )
@@ -12557,7 +12164,7 @@ def test_llama_cpp_ranker_rejects_existing_server_with_wrong_reasoning_mode(
             json={
                 "data": [
                     {
-                        "id": "C:\\Users\\gabri\\Downloads\\gemma-4-12b-it-UD-Q4_K_XL.gguf",
+                        "id": "C:\\Users\\gabri\\Downloads\\Qwen3.5-9B-UD-Q4_K_XL.gguf",
                     }
                 ]
             },
@@ -12573,7 +12180,7 @@ def test_llama_cpp_ranker_rejects_existing_server_with_wrong_reasoning_mode(
     with pytest.raises(RuntimeError, match="reasoning disabled.*expects reasoning enabled"):
         youtube_module.LlamaCppVisionRanker(
             YouTubeRankingSettings(
-                llama_cpp_model="C:\\Users\\gabri\\Downloads\\gemma-4-12b-it-UD-Q4_K_XL.gguf",
+                llama_cpp_model="C:\\Users\\gabri\\Downloads\\Qwen3.5-9B-UD-Q4_K_XL.gguf",
                 llama_cpp_mtp_model=None,
             )
         )
@@ -12589,7 +12196,7 @@ def test_llama_cpp_ranker_rejects_existing_server_with_wrong_reasoning_budget(
             json={
                 "data": [
                     {
-                        "id": "C:\\Users\\gabri\\Downloads\\gemma-4-12b-it-UD-Q4_K_XL.gguf",
+                        "id": "C:\\Users\\gabri\\Downloads\\Qwen3.5-9B-UD-Q4_K_XL.gguf",
                     }
                 ]
             },
@@ -12605,7 +12212,7 @@ def test_llama_cpp_ranker_rejects_existing_server_with_wrong_reasoning_budget(
     with pytest.raises(RuntimeError, match="reasoning budget unrestricted or unspecified.*expects reasoning budget 64"):
         youtube_module.LlamaCppVisionRanker(
             YouTubeRankingSettings(
-                llama_cpp_model="C:\\Users\\gabri\\Downloads\\gemma-4-12b-it-UD-Q4_K_XL.gguf",
+                llama_cpp_model="C:\\Users\\gabri\\Downloads\\Qwen3.5-9B-UD-Q4_K_XL.gguf",
                 llama_cpp_mtp_model=None,
             )
         )
@@ -12623,7 +12230,7 @@ def test_llama_cpp_ranker_allows_existing_server_with_matching_reasoning_mode(
             json={
                 "data": [
                     {
-                        "id": "C:\\Users\\gabri\\Downloads\\gemma-4-12b-it-UD-Q4_K_XL.gguf",
+                        "id": "C:\\Users\\gabri\\Downloads\\Qwen3.5-9B-UD-Q4_K_XL.gguf",
                     }
                 ]
             },
@@ -12647,7 +12254,7 @@ def test_llama_cpp_ranker_allows_existing_server_with_matching_reasoning_mode(
 
     ranker = youtube_module.LlamaCppVisionRanker(
         YouTubeRankingSettings(
-            llama_cpp_model="C:\\Users\\gabri\\Downloads\\gemma-4-12b-it-UD-Q4_K_XL.gguf",
+            llama_cpp_model="C:\\Users\\gabri\\Downloads\\Qwen3.5-9B-UD-Q4_K_XL.gguf",
             llama_cpp_mtp_model=None,
             llama_cpp_disable_reasoning=True,
         )
@@ -12773,10 +12380,10 @@ def test_llama_cpp_ranker_starts_server_with_safe_vision_profile(
 
 
 def test_llama_cpp_server_mtp_conflict_checks_mode_and_model() -> None:
-    expected = "C:\\models\\mtp-gemma-4-12B-it.gguf"
+    expected = "C:\\models\\mtp-Qwen3.5-9B.gguf"
 
     assert youtube_module.llama_cpp_server_mtp_conflict(
-        "llama-server --model-draft C:\\models\\mtp-gemma-4-12B-it.gguf --spec-type draft-mtp",
+        "llama-server --model-draft C:\\models\\mtp-Qwen3.5-9B.gguf --spec-type draft-mtp",
         expected_model=expected,
     ) is None
     assert youtube_module.llama_cpp_server_mtp_conflict(
@@ -13487,7 +13094,7 @@ def test_llama_cpp_vision_client_sends_sampling_parameters(tmp_path: Path) -> No
 
     client = LlamaCppVisionClient(
         base_url="http://127.0.0.1:8090",
-        model="gemma",
+        model="qwen3.5",
         temperature=1.0,
         top_p=0.95,
         top_k=64,
@@ -13531,7 +13138,7 @@ def test_llama_cpp_vision_client_reuses_concurrent_server_recovery(
 
     client = segment_detection_module.LlamaCppVisionClient(
         base_url="http://127.0.0.1:8090",
-        model="gemma",
+        model="qwen3.5",
         recovery_callback=recover_server,
     )
     original_client = client.client
@@ -16723,7 +16330,7 @@ def test_materialized_source_video_rebuilds_missing_legacy_pose_reference(
     }
     monkeypatch.setattr(
         bake_and_rank_module,
-        "pre_wham_exact_source_phase_reference_metrics",
+        "pre_reconstruction_exact_source_phase_reference_metrics",
         lambda _item: legacy_metrics,
     )
     monkeypatch.setattr(
@@ -16779,7 +16386,7 @@ def test_materialized_metrics_reuses_exact_parent_pose_for_cyclic_artifact(
     phase_metrics = {"_sourcePoseReference": parent_pose}
     monkeypatch.setattr(
         bake_and_rank_module,
-        "pre_wham_exact_source_phase_reference_metrics",
+        "pre_reconstruction_exact_source_phase_reference_metrics",
         lambda _item: phase_metrics if reference_origin == "phase_metrics" else {},
     )
     def verified_reference(path, video):
@@ -18439,7 +18046,6 @@ def test_bake_contract_keeps_return_flags_when_topology_is_not_specific(tmp_path
     request = BakeAndRankRequest(
         candidates_json=tmp_path / "candidates.json",
         workspace=tmp_path / "bake",
-        wham_repo_path=None,
         body_model_root=None,
         llama_cpp_base_url=None,
     )
@@ -18493,7 +18099,6 @@ def test_bake_contract_generation_uses_shared_budget_and_direct_fallback(tmp_pat
     request = BakeAndRankRequest(
         candidates_json=tmp_path / "candidates.json",
         workspace=tmp_path / "bake",
-        wham_repo_path=None,
         body_model_root=None,
         llama_cpp_base_url=None,
     )
@@ -18547,7 +18152,6 @@ def test_bake_contract_reuses_compatible_shared_vision_session(
     request = BakeAndRankRequest(
         candidates_json=tmp_path / "candidates.json",
         workspace=tmp_path / "bake",
-        wham_repo_path=None,
         body_model_root=None,
         llama_cpp_base_url="http://127.0.0.1:8090",
         llama_cpp_model="shared-model.gguf",
@@ -20255,7 +19859,7 @@ def test_discovery_runs_pose_before_owned_vision_ranker(
     assert manifest["exercises"][0]["candidates"][0]["status"] == "recommended"
 
 
-def test_staged_wave_hands_off_shared_llama_before_wham_and_reuses_final_vlm(
+def test_staged_wave_hands_off_shared_llama_before_reconstruction_and_reuses_final_vlm(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -20298,9 +19902,8 @@ def test_staged_wave_hands_off_shared_llama_before_wham_and_reuses_final_vlm(
     request = BakeAndRankRequest(
         candidates_json=tmp_path / "candidates.json",
         workspace=tmp_path / "squat" / "bake",
-        wham_repo_path=None,
         body_model_root=None,
-        pre_wham_source_validation=True,
+        pre_reconstruction_source_validation=True,
         final_output_validation=True,
         shared_llama_server=True,
         shared_llama_server_session_dir=tmp_path / "shared-llama",
@@ -20334,12 +19937,11 @@ def test_staged_wave_hands_off_shared_llama_before_wham_and_reuses_final_vlm(
     ) -> object:
         assert generated_candidate is candidate
         assert kwargs["prepared_video_path"] == tmp_path / "source.mp4"
-        assert kwargs["request"].wham_tracking_preflight is True
-        run_exclusive = kwargs["run_wham_exclusive"]
-        run_exclusive(lambda: events.append("wham_generated"))
+        run_exclusive = kwargs["run_reconstruction_exclusive"]
+        run_exclusive(lambda: events.append("reconstruction_generated"))
         return SimpleNamespace(
-            wham_cache_status="generated",
-            wham_results_pkl=tmp_path / "wham.pkl",
+            reconstruction_cache_status="generated",
+            reconstruction_results_pkl=tmp_path / "reconstruction.pkl",
         )
 
     monkeypatch.setattr(
@@ -20355,7 +19957,7 @@ def test_staged_wave_hands_off_shared_llama_before_wham_and_reuses_final_vlm(
         prepared_candidates: list[RankedCandidate],
         prepared_candidate_video_paths: dict[str, Path],
     ) -> dict[str, object]:
-        assert final_request.require_wham_cache is True
+        assert final_request.require_reconstruction_cache is True
         assert final_request.fallback_candidates == 0
         assert shared_vision_session is sessions[2]
         assert prepared_candidates == [candidate]
@@ -20378,7 +19980,7 @@ def test_staged_wave_hands_off_shared_llama_before_wham_and_reuses_final_vlm(
         "source_prepared",
         "session_0_closed_True",
         "exclusive_start_1",
-        "wham_generated",
+        "reconstruction_generated",
         "exclusive_end_1",
         "session_1_closed_True",
         "final_validated",
@@ -20388,8 +19990,8 @@ def test_staged_wave_hands_off_shared_llama_before_wham_and_reuses_final_vlm(
     assert report["completedExerciseCount"] == 1
     assert report["retryExerciseCount"] == 0
     state = report["items"][0]
-    assert state["source"]["selectedCandidateKey"] == state["wham"]["candidateKey"]
-    assert state["wham"]["candidateKey"] == state["finalValidation"]["candidateKey"]
+    assert state["source"]["selectedCandidateKey"] == state["reconstruction"]["candidateKey"]
+    assert state["reconstruction"]["candidateKey"] == state["finalValidation"]["candidateKey"]
     assert any(
         "Extracted motion for Squat" in message
         for message in progress_messages
@@ -20434,7 +20036,6 @@ def test_lazy_vision_session_drains_exclusive_gpu_work_before_restarting_vlm(
     request = BakeAndRankRequest(
         candidates_json=tmp_path / "candidates.json",
         workspace=tmp_path / "workspace",
-        wham_repo_path=None,
         body_model_root=None,
     )
     session = bake_and_rank_module.LazyLlamaCppVisionSession(request)
@@ -20586,7 +20187,6 @@ def test_staged_wave_uses_configured_llama_slots_for_source_preparation(
                 BakeAndRankRequest(
                     candidates_json=tmp_path / f"{exercise_id}.json",
                     workspace=tmp_path / exercise_id / "bake",
-                    wham_repo_path=None,
                     body_model_root=None,
                     llama_cpp_parallel=4,
                 ),
@@ -20635,8 +20235,8 @@ def test_staged_wave_uses_configured_llama_slots_for_source_preparation(
         wave_pipeline,
         "generate_candidate_motion",
         lambda candidate, **_kwargs: SimpleNamespace(
-            wham_cache_status="generated",
-            wham_results_pkl=tmp_path / f"{candidate.exercise_id}.pkl",
+            reconstruction_cache_status="generated",
+            reconstruction_results_pkl=tmp_path / f"{candidate.exercise_id}.pkl",
         ),
     )
     monkeypatch.setattr(
@@ -20676,12 +20276,12 @@ def test_individual_generation_requires_semantic_source_review_before_inference(
     )
     request = BakeAndRankRequest(
         candidates_json=tmp_path / "candidates.json", workspace=tmp_path,
-        wham_repo_path=None, body_model_root=None, two_scale_source_validation=True,
+        body_model_root=None, two_scale_source_validation=True,
     )
     selected = tmp_path / "selected.mp4"
     monkeypatch.setattr(bake_and_rank_module, "prepare_candidate_input_video",
                         lambda *_args, **_kwargs: selected)
-    monkeypatch.setattr(bake_and_rank_module, "prepare_wham_inference_video",
+    monkeypatch.setattr(bake_and_rank_module, "prepare_reconstruction_inference_video",
                         lambda **_kwargs: pytest.fail("inference preparation preceded source verdict"))
     reviewed = []
 
@@ -20724,7 +20324,6 @@ def test_generate_candidate_motion_consumes_prepared_cut_without_revalidating_so
     request = BakeAndRankRequest(
         candidates_json=tmp_path / "candidates.json",
         workspace=tmp_path / "bake",
-        wham_repo_path=None,
         body_model_root=None,
         two_scale_source_validation=True,
     )
@@ -20741,12 +20340,12 @@ def test_generate_candidate_motion_consumes_prepared_cut_without_revalidating_so
     )
     monkeypatch.setattr(
         bake_and_rank_module,
-        "prepare_wham_inference_video",
+        "prepare_reconstruction_inference_video",
         lambda **kwargs: (kwargs["selected_video_path"], 0.0, None),
     )
     monkeypatch.setattr(
         bake_and_rank_module,
-        "normalize_wham_input_orientation",
+        "normalize_reconstruction_input_orientation",
         lambda **kwargs: (kwargs["selected_video_path"], 0.0),
     )
 
@@ -20771,132 +20370,6 @@ def test_generate_candidate_motion_consumes_prepared_cut_without_revalidating_so
     assert len(generation_requests) == 1
     assert generation_requests[0].video_path == prepared_video.resolve()
     assert generation_requests[0].horizontal_torso_required is False
-
-
-@pytest.mark.parametrize('reconstruction_limit', [0, 1])
-def test_staged_wave_uses_second_diverse_source_when_tracking_preflight_rejects_first(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    reconstruction_limit: int,
-) -> None:
-    import exercise_motion_pkg.wave_pipeline as wave_pipeline
-
-    class FakeSession:
-        def __init__(self, _request: BakeAndRankRequest) -> None:
-            pass
-
-        def caption_images(self, *_args: object, **_kwargs: object) -> str:
-            return "{}"
-
-        def run_without_llama_overlap(self, operation: object) -> object:
-            return operation()
-
-        def close(self, *, force_stop_server: bool = False) -> None:
-            pass
-
-    first = RankedCandidate(
-        exercise_index=0,
-        candidate_rank=0,
-        exercise_id="row",
-        exercise_name="Row",
-        exercise_slug="row",
-        candidate={"videoId": "first-video", "title": "First row"},
-    )
-    second = RankedCandidate(
-        exercise_index=0,
-        candidate_rank=1,
-        exercise_id="row",
-        exercise_name="Row",
-        exercise_slug="row",
-        candidate={"videoId": "second-video", "title": "Second row"},
-    )
-    request = BakeAndRankRequest(
-        candidates_json=tmp_path / "candidates.json",
-        workspace=tmp_path / "row" / "bake",
-        wham_repo_path=None,
-        body_model_root=None,
-    )
-    request = replace(request, max_reconstruction_candidate_attempts=reconstruction_limit)
-    item = wave_pipeline.StagedWaveItem("row", "Row", request)
-    source_paths = {
-        first.workspace_slug: tmp_path / "first.mp4",
-        second.workspace_slug: tmp_path / "second.mp4",
-    }
-
-    monkeypatch.setattr(wave_pipeline, "LazyLlamaCppVisionSession", FakeSession)
-    monkeypatch.setattr(wave_pipeline, "_wave_candidates", lambda _request: [first, second])
-    monkeypatch.setattr(
-        wave_pipeline,
-        "build_exercise_motion_contract_resolver",
-        lambda **_kwargs: None,
-    )
-    monkeypatch.setattr(
-        wave_pipeline,
-        "evaluate_source_candidate_gate",
-        lambda *_args, **_kwargs: {"passed": True},
-    )
-    monkeypatch.setattr(
-        wave_pipeline,
-        "first_attempt_readiness_assessment",
-        lambda *_args, **_kwargs: {
-            "eligible": True,
-            "tier": "medium",
-            "portfolioSize": 2,
-            "reasons": [],
-        },
-    )
-    monkeypatch.setattr(
-        wave_pipeline,
-        "prepare_candidate_input_video",
-        lambda candidate, **_kwargs: source_paths[candidate.workspace_slug],
-    )
-
-    def fake_generate(candidate: RankedCandidate, **_kwargs: object) -> object:
-        if candidate is first and reconstruction_limit != 1:
-            raise wham_runner_module.WhamTrackingPreflightRejected(
-                {"passed": False, "endCovered": False}
-            )
-        return SimpleNamespace(
-            wham_cache_status="generated",
-            wham_results_pkl=tmp_path / "second.pkl",
-        )
-
-    monkeypatch.setattr(wave_pipeline, "generate_candidate_motion", fake_generate)
-
-    def fake_finalize(
-        _request: BakeAndRankRequest,
-        **kwargs: object,
-    ) -> dict[str, object]:
-        expected = first if reconstruction_limit == 1 else second
-        assert kwargs["prepared_candidates"] == [expected]
-        assert kwargs["prepared_candidate_video_paths"] == {
-            expected.workspace_slug: source_paths[expected.workspace_slug]
-        }
-        return {"selected": {"selectedWearSkeletonPath": str(tmp_path / "wear.json")}}
-
-    monkeypatch.setattr(wave_pipeline, "run_bake_and_rank_pipeline", fake_finalize)
-
-    report = wave_pipeline.run_staged_bake_wave(
-        [item],
-        workspace=tmp_path / "wave",
-        wave_id="wave-diverse",
-    )
-
-    state = report["items"][0]
-    expected_count = 1 if reconstruction_limit == 1 else 2
-    assert len(state["source"]["selectedCandidateKeys"]) == expected_count
-    assert state["source"]["requestedPortfolioSize"] == expected_count
-    assert state["source"]["actualPortfolioSize"] == expected_count
-    statuses = {
-        attempt["candidateKey"]: attempt["status"]
-        for attempt in state["wham"]["attempts"]
-    }
-    if reconstruction_limit == 1:
-        assert statuses == {wave_pipeline._candidate_key(first): 'prepared'}
-    else:
-        assert statuses[wave_pipeline._candidate_key(first)] == "rejected_tracking_preflight"
-        assert statuses[wave_pipeline._candidate_key(second)] == "prepared"
-    assert report["completedExerciseCount"] == 1
 
 
 def test_staged_wave_retries_remaining_windows_after_window_scoped_failure(
@@ -20955,7 +20428,6 @@ def test_staged_wave_retries_remaining_windows_after_window_scoped_failure(
     request = BakeAndRankRequest(
         candidates_json=tmp_path / "candidates.json",
         workspace=tmp_path / "bench" / "bake",
-        wham_repo_path=None,
         body_model_root=None,
     )
     item = wave_pipeline.StagedWaveItem("bench", "Barbell Bench Press", request)
@@ -20987,8 +20459,8 @@ def test_staged_wave_retries_remaining_windows_after_window_scoped_failure(
         wave_pipeline,
         "generate_candidate_motion",
         lambda candidate, **_kwargs: SimpleNamespace(
-            wham_cache_status="generated",
-            wham_results_pkl=tmp_path / "other.pkl",
+            reconstruction_cache_status="generated",
+            reconstruction_results_pkl=tmp_path / "other.pkl",
         ),
     )
     monkeypatch.setattr(
@@ -21070,7 +20542,6 @@ def test_staged_wave_retries_later_windows_after_vlm_timeout_on_same_video(
     request = BakeAndRankRequest(
         candidates_json=tmp_path / "candidates.json",
         workspace=tmp_path / "high-row" / "bake",
-        wham_repo_path=None,
         body_model_root=None,
     )
     item = wave_pipeline.StagedWaveItem("high-row", "Cable Rope High Row", request)
@@ -21109,8 +20580,8 @@ def test_staged_wave_retries_later_windows_after_vlm_timeout_on_same_video(
         wave_pipeline,
         "generate_candidate_motion",
         lambda candidate, **_kwargs: SimpleNamespace(
-            wham_cache_status="generated",
-            wham_results_pkl=tmp_path / f"{candidate.video_id}.pkl",
+            reconstruction_cache_status="generated",
+            reconstruction_results_pkl=tmp_path / f"{candidate.video_id}.pkl",
         ),
     )
     monkeypatch.setattr(
@@ -21190,7 +20661,6 @@ def test_bake_pipeline_finalizes_only_the_prepared_candidate_override(
         BakeAndRankRequest(
             candidates_json=candidates_json,
             workspace=tmp_path / "bake",
-            wham_repo_path=None,
             body_model_root=None,
             classify_support_dominance=False,
         ),
@@ -21229,7 +20699,6 @@ def test_bake_pipeline_does_not_close_shared_wave_vision_session(tmp_path: Path)
         BakeAndRankRequest(
             candidates_json=candidates_path,
             workspace=tmp_path / "bake",
-            wham_repo_path=None,
             body_model_root=None,
             classify_support_dominance=True,
         ),
@@ -26590,7 +26059,7 @@ def test_ranked_candidate_source_chunk_hint_prefers_valid_vlm_chunk_over_pose_hi
     assert hint.score == pytest.approx(1.0)
 
 
-def test_pre_wham_priority_orders_by_yolo_trackability_not_side_view() -> None:
+def test_pre_reconstruction_priority_orders_by_yolo_trackability_not_side_view() -> None:
     def candidate(video_id: str, metrics: dict[str, float], *, fallback: bool = False) -> RankedCandidate:
         return RankedCandidate(
             exercise_index=0,
@@ -26656,13 +26125,13 @@ def test_pre_wham_priority_orders_by_yolo_trackability_not_side_view() -> None:
         "semantic-first",
         "fallback",
     ]
-    assert prioritized[0].candidate["preWhamOriginalOrder"] == 1
-    assert prioritized[0].candidate["preWhamYoloTrackabilityScore"] > (
-        prioritized[1].candidate["preWhamYoloTrackabilityScore"] or 0.0
+    assert prioritized[0].candidate["preReconstructionOriginalOrder"] == 1
+    assert prioritized[0].candidate["preReconstructionYoloTrackabilityScore"] > (
+        prioritized[1].candidate["preReconstructionYoloTrackabilityScore"] or 0.0
     )
 
 
-def test_pre_wham_priority_does_not_reward_view_angle_as_trackability_tiebreaker() -> None:
+def test_pre_reconstruction_priority_does_not_reward_view_angle_as_trackability_tiebreaker() -> None:
     def candidate(video_id: str, view_quality: float) -> RankedCandidate:
         return RankedCandidate(
             exercise_index=0,
@@ -26695,7 +26164,7 @@ def test_pre_wham_priority_does_not_reward_view_angle_as_trackability_tiebreaker
     assert [item.video_id for item in prioritized] == ["first", "second"]
 
 
-def test_pre_wham_priority_places_orientation_diverse_candidate_second() -> None:
+def test_pre_reconstruction_priority_places_orientation_diverse_candidate_second() -> None:
     def candidate(video_id: str, view_evidence: float, observability: float) -> RankedCandidate:
         return RankedCandidate(
             exercise_index=0,
@@ -26733,11 +26202,11 @@ def test_pre_wham_priority_places_orientation_diverse_candidate_second() -> None
     )
 
     assert [item.video_id for item in prioritized] == ["best", "different", "similar"]
-    assert prioritized[1].candidate["preWhamOrientationDiverseFallback"] is True
-    assert prioritized[1].candidate["preWhamOrientationDiversityFromPrimary"] == pytest.approx(0.45)
+    assert prioritized[1].candidate["preReconstructionOrientationDiverseFallback"] is True
+    assert prioritized[1].candidate["preReconstructionOrientationDiversityFromPrimary"] == pytest.approx(0.45)
 
 
-def test_pre_wham_priority_does_not_let_view_quality_displace_better_tracking() -> None:
+def test_pre_reconstruction_priority_does_not_let_view_quality_displace_better_tracking() -> None:
     def candidate(video_id: str, trackability: float, view_quality: float) -> RankedCandidate:
         return RankedCandidate(
             exercise_index=0,
@@ -26770,7 +26239,7 @@ def test_pre_wham_priority_does_not_let_view_quality_displace_better_tracking() 
     assert [item.video_id for item in prioritized] == ["clean-front", "weak-side"]
 
 
-def test_pre_wham_priority_keeps_original_order_without_pose_metrics() -> None:
+def test_pre_reconstruction_priority_keeps_original_order_without_pose_metrics() -> None:
     candidates = [
         RankedCandidate(0, index, "row", "Row", "row", {"videoId": video_id, "title": video_id})
         for index, video_id in enumerate(("a", "b", "c"))
@@ -26823,19 +26292,19 @@ def test_legacy_materialized_acceptance_counts_as_source_success() -> None:
 def test_source_rejection_taxonomy_ignores_embedded_discovery_advisories() -> None:
     tags = source_outcomes_module.rejection_tags_from_candidate_result(
         {
-            "status": "skipped_pre_wham_source_validation",
+            "status": "skipped_pre_reconstruction_source_validation",
             "candidate": {
                 "scoreReasons": ["wrong_exercise", "setup_or_talking"],
                 "visionPayload": {"blocking_issues": ["wrong_exercise"]},
             },
             "failures": {
-                "reason": "pre_wham_source_validation_rejected",
+                "reason": "pre_reconstruction_source_validation_rejected",
                 "reasonTags": ["source_candidate_scorecard_no_passing_candidate"],
             },
         }
     )
 
-    assert "status:skipped_pre_wham_source_validation" in tags
+    assert "status:skipped_pre_reconstruction_source_validation" in tags
     assert "source_candidate_scorecard_no_passing_candidate" in tags
     assert "wrong_exercise" not in tags
 
@@ -26844,7 +26313,7 @@ def test_source_rejection_taxonomy_ignores_positive_reason_lists() -> None:
     tags = source_outcomes_module.rejection_tags_from_candidate_result(
         {
             "status": "ready_for_selection",
-            "reasons": ["strong_geometry_hints", "exact_pre_wham_return_cycle_validated"],
+            "reasons": ["strong_geometry_hints", "exact_pre_reconstruction_return_cycle_validated"],
             "finalOutputRejectionReasons": ["gross_pose_reconstruction_error"],
         }
     )
@@ -27010,13 +26479,12 @@ def test_parent_source_window_fallback_rejects_reconstruction_failure(
     request = bake_and_rank_module.BakeAndRankRequest(
         candidates_json=Path("candidates.json"),
         workspace=Path("workspace"),
-        wham_repo_path=None,
         body_model_root=None,
     )
 
     should_queue, reason = bake_and_rank_module.should_queue_parent_source_window_fallback(
         candidate,
-        {"preWhamSourceCut": {"status": "selected"}},
+        {"preReconstructionSourceCut": {"status": "selected"}},
         None,
         request=request,
     )
@@ -27395,13 +26863,13 @@ def test_distinct_end_state_queries_require_the_new_end_state_without_a_return()
     assert not any("shorts" in query.casefold() for query in queries)
 
 
-def test_pre_wham_target_blind_equipment_observation_rejects_wrong_implement(
+def test_pre_reconstruction_target_blind_equipment_observation_rejects_wrong_implement(
     tmp_path: Path,
 ) -> None:
     frame_path = tmp_path / "sheet.jpg"
     frame_path.write_bytes(b"image")
 
-    result = bake_and_rank_module.confirm_pre_wham_named_equipment(
+    result = bake_and_rank_module.confirm_pre_reconstruction_named_equipment(
         exercise_name="Barbell Biceps Curl",
         frame_paths=[frame_path],
         caption_images=lambda **_kwargs: json.dumps(
@@ -27416,7 +26884,7 @@ def test_pre_wham_target_blind_equipment_observation_rejects_wrong_implement(
     assert result["visibleEquipment"] == ["dumbbell"]
 
 
-def test_pre_wham_target_blind_equipment_observation_accepts_exact_implement(
+def test_pre_reconstruction_target_blind_equipment_observation_accepts_exact_implement(
     tmp_path: Path,
 ) -> None:
     frame_path = tmp_path / "sheet.jpg"
@@ -27429,7 +26897,7 @@ def test_pre_wham_target_blind_equipment_observation_accepts_exact_implement(
             {"visibleEquipment": ["barbell"], "evidence": "one continuous bar"}
         )
 
-    result = bake_and_rank_module.confirm_pre_wham_named_equipment(
+    result = bake_and_rank_module.confirm_pre_reconstruction_named_equipment(
         exercise_name="Barbell Biceps Curl",
         frame_paths=[frame_path],
         caption_images=caption_images,
@@ -27443,13 +26911,13 @@ def test_pre_wham_target_blind_equipment_observation_accepts_exact_implement(
     assert "actively used as a support surface" in captured_prompt["value"]
 
 
-def test_pre_wham_target_blind_equipment_observation_accepts_equivalent_support_surface(
+def test_pre_reconstruction_target_blind_equipment_observation_accepts_equivalent_support_surface(
     tmp_path: Path,
 ) -> None:
     frame_path = tmp_path / "sheet.jpg"
     frame_path.write_bytes(b"image")
 
-    result = bake_and_rank_module.confirm_pre_wham_named_equipment(
+    result = bake_and_rank_module.confirm_pre_reconstruction_named_equipment(
         exercise_name="Box Jump",
         frame_paths=[frame_path],
         caption_images=lambda **_kwargs: json.dumps(
@@ -27464,10 +26932,10 @@ def test_pre_wham_target_blind_equipment_observation_accepts_equivalent_support_
     assert result["visibleEquipment"] == ["bench"]
 
 
-def test_pre_wham_target_blind_equipment_observation_skips_bodyweight(
+def test_pre_reconstruction_target_blind_equipment_observation_skips_bodyweight(
     tmp_path: Path,
 ) -> None:
-    result = bake_and_rank_module.confirm_pre_wham_named_equipment(
+    result = bake_and_rank_module.confirm_pre_reconstruction_named_equipment(
         exercise_name="Pistol Squat",
         frame_paths=[],
         caption_images=lambda **_kwargs: pytest.fail("bodyweight source invoked equipment VLM"),
@@ -27561,7 +27029,6 @@ def test_source_window_expansion_uses_valid_reviewed_windows_and_interleaves_by_
     request = BakeAndRankRequest(
         candidates_json=tmp_path / "candidates.json",
         workspace=tmp_path / "build",
-        wham_repo_path=None,
         body_model_root=None,
         segment_min_seconds=2.0,
         segment_max_seconds=20.0,
@@ -27658,7 +27125,6 @@ def test_source_window_expansion_skips_too_short_full_cycle_vlm_chunk_for_pose_c
     request = BakeAndRankRequest(
         candidates_json=tmp_path / "candidates.json",
         workspace=tmp_path / "build",
-        wham_repo_path=None,
         body_model_root=None,
         segment_min_seconds=2.0,
         segment_max_seconds=20.0,
@@ -27750,7 +27216,6 @@ def test_source_window_expansion_uses_parent_when_full_cycle_best_chunk_is_too_s
     request = BakeAndRankRequest(
         candidates_json=tmp_path / "candidates.json",
         workspace=tmp_path / "build",
-        wham_repo_path=None,
         body_model_root=None,
         segment_min_seconds=2.0,
         segment_max_seconds=20.0,
@@ -27921,7 +27386,6 @@ def test_bake_and_rank_records_top_candidate_with_no_eligible_loops(
         BakeAndRankRequest(
             candidates_json=candidates_path,
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
             fallback_candidates=1,
             classify_support_dominance=False,
@@ -28006,7 +27470,7 @@ def test_bake_and_rank_queue_continues_after_final_review_rejects_first_candidat
         review_item_entries: list[dict[str, object]],
         support_dominance_classifier,
         source_cut_caption_images=None,
-        run_wham_exclusive=None,
+        run_reconstruction_exclusive=None,
         **_kwargs: object,
     ) -> dict[str, object]:
         processed.append(str(ranked_candidate.candidate["videoId"]))
@@ -28077,7 +27541,6 @@ def test_bake_and_rank_queue_continues_after_final_review_rejects_first_candidat
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
             fallback_candidates=5,
         ),
@@ -28162,7 +27625,7 @@ def test_bake_and_rank_pipeline_keeps_multiple_selected_results_for_manual_revie
         review_item_entries: list[dict[str, object]],
         support_dominance_classifier,
         source_cut_caption_images=None,
-        run_wham_exclusive=None,
+        run_reconstruction_exclusive=None,
         **_kwargs: object,
     ) -> dict[str, object]:
         item = make_review_item(ranked_candidate)
@@ -28196,7 +27659,6 @@ def test_bake_and_rank_pipeline_keeps_multiple_selected_results_for_manual_revie
         BakeAndRankRequest(
             candidates_json=candidates_path,
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
             fallback_candidates=2,
             max_selected_results=2,
@@ -28290,7 +27752,7 @@ def test_bake_and_rank_parallel_pipeline_keeps_fallback_candidates_for_final_rev
         review_item_entries: list[dict[str, object]],
         support_dominance_classifier,
         source_cut_caption_images=None,
-        run_wham_exclusive=None,
+        run_reconstruction_exclusive=None,
         **_kwargs: object,
     ) -> dict[str, object]:
         item = make_review_item(ranked_candidate)
@@ -28335,7 +27797,6 @@ def test_bake_and_rank_parallel_pipeline_keeps_fallback_candidates_for_final_rev
         BakeAndRankRequest(
             candidates_json=candidates_path,
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
             fallback_candidates=3,
             candidate_workers=2,
@@ -28456,7 +27917,7 @@ def test_bake_and_rank_queue_skips_previous_terminal_candidate_result(
         review_item_entries: list[dict[str, object]],
         support_dominance_classifier,
         source_cut_caption_images=None,
-        run_wham_exclusive=None,
+        run_reconstruction_exclusive=None,
         **_kwargs: object,
     ) -> dict[str, object]:
         processed.append(str(ranked_candidate.candidate["videoId"]))
@@ -28502,7 +27963,6 @@ def test_bake_and_rank_queue_skips_previous_terminal_candidate_result(
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=workspace,
-            wham_repo_path=None,
             body_model_root=None,
             fallback_candidates=5,
             reuse_previous_terminal_results=True,
@@ -28538,7 +27998,6 @@ def test_bake_and_rank_source_window_expansion_can_be_limited_to_best_window(tmp
     request = BakeAndRankRequest(
         candidates_json=tmp_path / "candidates.json",
         workspace=tmp_path / "build",
-        wham_repo_path=None,
         body_model_root=None,
         max_source_window_attempts=1,
     )
@@ -28575,14 +28034,13 @@ def test_bake_and_rank_source_window_expansion_can_be_limited_to_best_window(tmp
     assert expanded[0].candidate.get("sourceWindowAttemptIndex") is None
 
 
-def test_incremental_selection_limits_wham_to_primary_and_one_fallback(
+def test_incremental_selection_limits_reconstruction_to_primary_and_one_fallback(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     request = BakeAndRankRequest(
         candidates_json=tmp_path / "candidates.json",
         workspace=tmp_path / "build",
-        wham_repo_path=None,
         body_model_root=None,
         fallback_candidates=2,
         max_reconstruction_candidate_attempts=2,
@@ -28606,7 +28064,7 @@ def test_incremental_selection_limits_wham_to_primary_and_one_fallback(
     ) -> dict[str, object]:
         processed.append(ranked_candidate.video_id)
         return {
-            "status": "rejected_raw_wham_validation",
+            "status": "rejected_raw_reconstruction_validation",
             "reconstructionAttempted": True,
             "candidate": ranked_candidate.candidate,
         }
@@ -28631,14 +28089,13 @@ def test_incremental_selection_limits_wham_to_primary_and_one_fallback(
     assert timings["stopReason"] == "reconstruction_candidate_budget_exhausted"
 
 
-def test_incremental_selection_does_not_charge_pre_wham_source_rejection(
+def test_incremental_selection_does_not_charge_pre_reconstruction_source_rejection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     request = BakeAndRankRequest(
         candidates_json=tmp_path / "candidates.json",
         workspace=tmp_path / "build",
-        wham_repo_path=None,
         body_model_root=None,
         fallback_candidates=2,
         max_reconstruction_candidate_attempts=2,
@@ -28652,7 +28109,7 @@ def test_incremental_selection_does_not_charge_pre_wham_source_rejection(
             exercise_slug="row",
             candidate={"videoId": video_id, "title": video_id},
         )
-        for index, video_id in enumerate(("pre-wham-reject", "primary", "fallback"))
+        for index, video_id in enumerate(("pre-reconstruction-reject", "primary", "fallback"))
     ]
     processed: list[str] = []
 
@@ -28661,12 +28118,12 @@ def test_incremental_selection_does_not_charge_pre_wham_source_rejection(
         **_kwargs: object,
     ) -> dict[str, object]:
         processed.append(ranked_candidate.video_id)
-        attempted = ranked_candidate.video_id != "pre-wham-reject"
+        attempted = ranked_candidate.video_id != "pre-reconstruction-reject"
         return {
             "status": (
-                "rejected_raw_wham_validation"
+                "rejected_raw_reconstruction_validation"
                 if attempted
-                else "skipped_pre_wham_source_validation"
+                else "skipped_pre_reconstruction_source_validation"
             ),
             "reconstructionAttempted": attempted,
             "candidate": ranked_candidate.candidate,
@@ -28687,7 +28144,7 @@ def test_incremental_selection_does_not_charge_pre_wham_source_rejection(
     )
 
     timings = result[-1]
-    assert processed == ["pre-wham-reject", "primary", "fallback"]
+    assert processed == ["pre-reconstruction-reject", "primary", "fallback"]
     assert timings["reconstructionCandidateAttemptCount"] == 2
     # The queue ends exactly on the budget, so there is no next candidate at
     # which to emit a budget stop reason.
@@ -28717,7 +28174,6 @@ def test_source_window_expansion_keeps_complete_reviewed_chunk_below_duration_es
     request = BakeAndRankRequest(
         candidates_json=tmp_path / "candidates.json",
         workspace=tmp_path / "build",
-        wham_repo_path=None,
         body_model_root=None,
         max_source_window_attempts=1,
     )
@@ -28769,7 +28225,6 @@ def test_bake_and_rank_queue_skips_terminal_source_window_but_tries_next_window(
     request = BakeAndRankRequest(
         candidates_json=tmp_path / "candidates.json",
         workspace=tmp_path / "build",
-        wham_repo_path=None,
         body_model_root=None,
         fallback_candidates=1,
         max_source_window_attempts=2,
@@ -28858,7 +28313,7 @@ def test_bake_and_rank_queue_skips_terminal_source_window_but_tries_next_window(
         review_item_entries: list[dict[str, object]],
         support_dominance_classifier,
         source_cut_caption_images=None,
-        run_wham_exclusive=None,
+        run_reconstruction_exclusive=None,
         **_kwargs: object,
     ) -> dict[str, object]:
         item = make_review_item(ranked_candidate)
@@ -28920,7 +28375,6 @@ def test_bake_and_rank_retries_parent_source_window_after_partial_child_rejectio
     request = BakeAndRankRequest(
         candidates_json=tmp_path / "candidates.json",
         workspace=tmp_path / "build",
-        wham_repo_path=None,
         body_model_root=None,
         fallback_candidates=1,
     )
@@ -28959,7 +28413,7 @@ def test_bake_and_rank_retries_parent_source_window_after_partial_child_rejectio
             }
         else:
             segment_payload = {
-                "sourcePrepReason": "pre_wham_source_window_choice",
+                "sourcePrepReason": "pre_reconstruction_source_window_choice",
                 "candidateSourceWindow": {"startSeconds": 0.0, "endSeconds": 8.0},
                 "selectedSpan": {"startSeconds": 5.5, "endSeconds": 7.5},
             }
@@ -28992,7 +28446,7 @@ def test_bake_and_rank_retries_parent_source_window_after_partial_child_rejectio
         review_item_entries: list[dict[str, object]],
         support_dominance_classifier,
         source_cut_caption_images=None,
-        run_wham_exclusive=None,
+        run_reconstruction_exclusive=None,
         **_kwargs: object,
     ) -> dict[str, object]:
         processed_modes.append(active_candidate.candidate.get("sourceWindowAttemptMode"))
@@ -29089,7 +28543,7 @@ def test_deferred_first_pass_processes_only_one_unique_candidate(
     def fake_process(active_candidate: RankedCandidate, **_kwargs: object) -> dict[str, object]:
         processed.append(str(active_candidate.candidate["videoId"]))
         return {
-            "status": "skipped_pre_wham_source_validation",
+            "status": "skipped_pre_reconstruction_source_validation",
             "candidate": active_candidate.candidate,
             **bake_and_rank_module.source_window_attempt_manifest(active_candidate),
         }
@@ -29100,7 +28554,6 @@ def test_deferred_first_pass_processes_only_one_unique_candidate(
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
             fallback_candidates=0,
         ),
@@ -29138,7 +28591,7 @@ def test_explicit_candidate_attempt_cap_reports_budget_exhaustion(
     def fake_process(active_candidate: RankedCandidate, **_kwargs: object) -> dict[str, object]:
         processed.append(str(active_candidate.candidate["videoId"]))
         return {
-            "status": "skipped_pre_wham_source_validation",
+            "status": "skipped_pre_reconstruction_source_validation",
             "candidate": active_candidate.candidate,
             **bake_and_rank_module.source_window_attempt_manifest(active_candidate),
         }
@@ -29149,7 +28602,6 @@ def test_explicit_candidate_attempt_cap_reports_budget_exhaustion(
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
             fallback_candidates=0,
             max_source_window_attempts=1,
@@ -29165,7 +28617,7 @@ def test_explicit_candidate_attempt_cap_reports_budget_exhaustion(
     assert timings["terminalOutcome"] == "budget_exhausted"
 
 
-def test_repeated_window_specific_wham_failures_try_all_sibling_windows(
+def test_repeated_window_specific_reconstruction_failures_try_all_sibling_windows(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -29196,9 +28648,9 @@ def test_repeated_window_specific_wham_failures_try_all_sibling_windows(
     def fake_process(active_candidate: RankedCandidate, **_kwargs: object) -> dict[str, object]:
         processed.append(bake_and_rank_module.ranked_candidate_attempt_key(active_candidate))
         return {
-            "status": "rejected_incomplete_wham_tracking",
+            "status": "rejected_incomplete_reconstruction_tracking",
             "candidate": active_candidate.candidate,
-            "failures": [{"reason": "incomplete_wham_tracking_coverage"}],
+            "failures": [{"reason": "incomplete_reconstruction_tracking_coverage"}],
             **bake_and_rank_module.source_window_attempt_manifest(active_candidate),
         }
 
@@ -29208,7 +28660,6 @@ def test_repeated_window_specific_wham_failures_try_all_sibling_windows(
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
             fallback_candidates=4,
         ),
@@ -29222,9 +28673,9 @@ def test_repeated_window_specific_wham_failures_try_all_sibling_windows(
     assert len(processed) == 3
     assert len(candidate_results) == 3
     assert [item["status"] for item in candidate_results] == [
-        "rejected_incomplete_wham_tracking",
-        "rejected_incomplete_wham_tracking",
-        "rejected_incomplete_wham_tracking",
+        "rejected_incomplete_reconstruction_tracking",
+        "rejected_incomplete_reconstruction_tracking",
+        "rejected_incomplete_reconstruction_tracking",
     ]
     assert timings["blockedSourceFamilyCount"] == 0
     assert timings["skippedBlockedSourceFamilyCount"] == 0
@@ -29424,7 +28875,6 @@ def test_process_ranked_candidate_honors_support_dominance_setting(
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
             detect_source_segment=False,
             classify_support_dominance=classify_support_dominance,
@@ -29494,7 +28944,6 @@ def test_parallel_candidate_processing_uses_fallback_ready_target(
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
             fallback_candidates=4,
             max_selected_results=2,
@@ -29575,12 +29024,11 @@ def test_parallel_candidate_processing_skips_previous_terminal_attempts_before_b
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=workspace,
-            wham_repo_path=None,
             body_model_root=None,
             fallback_candidates=2,
             candidate_workers=2,
             max_selected_results=2,
-            pre_wham_source_validation=True,
+            pre_reconstruction_source_validation=True,
             reuse_previous_terminal_results=True,
         ),
         preview_baker=None,
@@ -29606,17 +29054,17 @@ def test_parallel_candidate_processing_skips_previous_terminal_attempts_before_b
 @pytest.mark.parametrize(
     ("result", "expected"),
     [
-        ({"status": "rejected_incomplete_wham_tracking"}, None),
+        ({"status": "rejected_incomplete_reconstruction_tracking"}, None),
         (
             {
-                "status": "rejected_raw_wham_validation",
-                "failures": [{"rejectionReasons": ["raw_wham_kinematic_artifact"]}],
+                "status": "rejected_raw_reconstruction_validation",
+                "failures": [{"rejectionReasons": ["raw_reconstruction_kinematic_artifact"]}],
             },
             None,
         ),
     ],
 )
-def test_window_specific_wham_failures_do_not_block_source_family(
+def test_window_specific_reconstruction_failures_do_not_block_source_family(
     result: dict[str, object],
     expected: str | None,
 ) -> None:
@@ -29831,7 +29279,6 @@ def test_source_gate_too_short_full_cycle_window_can_queue_parent_fallback(tmp_p
     request = BakeAndRankRequest(
         candidates_json=tmp_path / "candidates.json",
         workspace=tmp_path / "build",
-        wham_repo_path=None,
         body_model_root=None,
         segment_min_seconds=2.0,
         segment_max_seconds=20.0,
@@ -29875,7 +29322,7 @@ def test_source_gate_too_short_full_cycle_window_can_queue_parent_fallback(tmp_p
     assert source_gate["passed"] is False
     assert "source_window_too_short_for_full_cycle" in source_gate["reasons"]
     should_queue, reason = (
-        bake_and_rank_module.should_queue_parent_source_window_fallback_after_pre_wham_rejection(
+        bake_and_rank_module.should_queue_parent_source_window_fallback_after_pre_reconstruction_rejection(
             candidate,
             {
                 "status": "skipped_source_gate",
@@ -29888,13 +29335,12 @@ def test_source_gate_too_short_full_cycle_window_can_queue_parent_fallback(tmp_p
     assert reason == "source_window_too_short_for_full_cycle"
 
 
-def test_source_gate_defers_reviewed_complete_short_window_to_pre_wham_validation(
+def test_source_gate_defers_reviewed_complete_short_window_to_pre_reconstruction_validation(
     tmp_path: Path,
 ) -> None:
     request = BakeAndRankRequest(
         candidates_json=tmp_path / "candidates.json",
         workspace=tmp_path / "build",
-        wham_repo_path=None,
         body_model_root=None,
         segment_min_seconds=2.0,
         segment_max_seconds=30.0,
@@ -29963,7 +29409,6 @@ def test_segment_detection_no_span_failure_can_queue_parent_fallback(tmp_path: P
     request = BakeAndRankRequest(
         candidates_json=tmp_path / "candidates.json",
         workspace=tmp_path / "build",
-        wham_repo_path=None,
         body_model_root=None,
         segment_min_seconds=2.0,
         segment_max_seconds=20.0,
@@ -29991,7 +29436,7 @@ def test_segment_detection_no_span_failure_can_queue_parent_fallback(tmp_path: P
     )
 
     should_queue, reason = (
-        bake_and_rank_module.should_queue_parent_source_window_fallback_after_pre_wham_rejection(
+        bake_and_rank_module.should_queue_parent_source_window_fallback_after_pre_reconstruction_rejection(
             candidate,
             {
                 "status": "failed",
@@ -30013,11 +29458,10 @@ def test_segment_detection_no_span_failure_can_queue_parent_fallback(tmp_path: P
     assert reason == "source_segment_detection_no_usable_span"
 
 
-def test_pre_wham_wrong_variant_does_not_queue_broader_parent_fallback(tmp_path: Path) -> None:
+def test_pre_reconstruction_wrong_variant_does_not_queue_broader_parent_fallback(tmp_path: Path) -> None:
     request = BakeAndRankRequest(
         candidates_json=tmp_path / "candidates.json",
         workspace=tmp_path / "build",
-        wham_repo_path=None,
         body_model_root=None,
         segment_min_seconds=2.0,
         segment_max_seconds=20.0,
@@ -30055,10 +29499,10 @@ def test_pre_wham_wrong_variant_does_not_queue_broader_parent_fallback(tmp_path:
     )
 
     should_queue, reason = (
-        bake_and_rank_module.should_queue_parent_source_window_fallback_after_pre_wham_rejection(
+        bake_and_rank_module.should_queue_parent_source_window_fallback_after_pre_reconstruction_rejection(
             candidate,
             {
-                "status": "skipped_pre_wham_source_validation",
+                "status": "skipped_pre_reconstruction_source_validation",
                 "candidateWorkspace": str(candidate_workspace),
             },
             request=request,
@@ -30069,7 +29513,7 @@ def test_pre_wham_wrong_variant_does_not_queue_broader_parent_fallback(tmp_path:
     assert reason is None
 
 
-def test_pre_wham_validation_limits_processing_to_fallback_attempt_budget(
+def test_pre_reconstruction_validation_limits_processing_to_fallback_attempt_budget(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -30095,14 +29539,14 @@ def test_pre_wham_validation_limits_processing_to_fallback_attempt_budget(
         review_item_entries: list[dict[str, Any]],
         support_dominance_classifier,
         source_cut_caption_images=None,
-        run_wham_exclusive=None,
+        run_reconstruction_exclusive=None,
         **_kwargs: object,
     ) -> dict[str, Any]:
         processed_ranks.append(ranked_candidate.candidate_rank)
         return {
             "status": "ready_for_selection"
             if ranked_candidate.candidate_rank == 1
-            else "skipped_pre_wham_source_validation"
+            else "skipped_pre_reconstruction_source_validation"
         }
 
     monkeypatch.setattr(bake_and_rank_module, "process_ranked_candidate", fake_process_ranked_candidate)
@@ -30112,11 +29556,10 @@ def test_pre_wham_validation_limits_processing_to_fallback_attempt_budget(
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
             fallback_candidates=2,
             candidate_workers=1,
-            pre_wham_source_validation=True,
+            pre_reconstruction_source_validation=True,
         ),
         preview_baker=None,
         support_dominance_classifier=None,
@@ -30124,7 +29567,7 @@ def test_pre_wham_validation_limits_processing_to_fallback_attempt_budget(
     )
 
     assert [result["status"] for result in candidate_results] == [
-        "skipped_pre_wham_source_validation",
+        "skipped_pre_reconstruction_source_validation",
         "ready_for_selection",
     ]
     assert review_items == []
@@ -30155,7 +29598,7 @@ def test_process_ranked_candidate_skips_clear_source_vision_gate_failure(
     )
 
     def fail_generate(*args: object, **kwargs: object) -> GenerateResult:
-        raise AssertionError("Unusable vision-gated sources should not run WHAM.")
+        raise AssertionError("Unusable vision-gated sources should not run RECONSTRUCTION.")
 
     monkeypatch.setattr(bake_and_rank_module, "generate_candidate_motion", fail_generate)
 
@@ -30164,7 +29607,6 @@ def test_process_ranked_candidate_skips_clear_source_vision_gate_failure(
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
             classify_support_dominance=False,
         ),
@@ -30204,7 +29646,7 @@ def test_process_ranked_candidate_skips_low_source_evidence_coverage(
     )
 
     def fail_generate(*args: object, **kwargs: object) -> GenerateResult:
-        raise AssertionError("Low source-evidence coverage should not run WHAM.")
+        raise AssertionError("Low source-evidence coverage should not run RECONSTRUCTION.")
 
     monkeypatch.setattr(bake_and_rank_module, "generate_candidate_motion", fail_generate)
 
@@ -30213,7 +29655,6 @@ def test_process_ranked_candidate_skips_low_source_evidence_coverage(
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
             classify_support_dominance=False,
         ),
@@ -30253,7 +29694,7 @@ def test_process_ranked_candidate_skips_zero_valid_source_chunks(
     )
 
     def fail_generate(*args: object, **kwargs: object) -> GenerateResult:
-        raise AssertionError("A source with no valid reviewed chunks should not run WHAM.")
+        raise AssertionError("A source with no valid reviewed chunks should not run RECONSTRUCTION.")
 
     monkeypatch.setattr(bake_and_rank_module, "generate_candidate_motion", fail_generate)
 
@@ -30262,7 +29703,6 @@ def test_process_ranked_candidate_skips_zero_valid_source_chunks(
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
             classify_support_dominance=False,
         ),
@@ -31001,7 +30441,6 @@ def test_bake_and_rank_pipeline_wires_support_dominance_classifier(
         BakeAndRankRequest(
             candidates_json=candidates_path,
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
             detect_source_segment=False,
             classify_support_dominance=True,
@@ -31130,7 +30569,6 @@ def test_bake_and_rank_can_select_best_preview_settings_variant(
         BakeAndRankRequest(
             candidates_json=candidates_path,
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
             detect_source_segment=False,
             rank_preview_variants=True,
@@ -31212,7 +30650,6 @@ def test_materialize_ignores_llm_recommended_settings_without_time_cut(
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
             review_frames=7,
         ),
@@ -31319,7 +30756,6 @@ def test_materialize_llm_selected_time_range_ignores_recommended_settings(
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
             review_frames=5,
         ),
@@ -31395,7 +30831,6 @@ def test_materialize_selected_time_range_uses_contract_from_ranking_payload(
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path,
-            wham_repo_path=None,
             body_model_root=None,
         ),
         start_seconds=1.0,
@@ -31480,7 +30915,6 @@ def test_materialize_llm_selected_full_span_still_rebakes_final_review_with_curr
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
             review_frames=5,
         ),
@@ -32015,7 +31449,6 @@ def test_materialized_time_range_rebakes_without_support_locks_when_locking_dama
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
             review_frames=5,
         ),
@@ -32114,7 +31547,6 @@ def test_materialized_time_range_rebakes_without_support_locks_when_locking_dama
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
             review_frames=5,
         ),
@@ -32233,7 +31665,6 @@ def test_materialized_llm_section_can_pass_after_full_preview_rejection(
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
             min_selected_score=0.55,
         ),
@@ -32309,7 +31740,6 @@ def test_materialized_selection_does_not_materialize_hard_movement_cut_failure(
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
             min_selected_score=0.55,
         ),
@@ -32379,7 +31809,6 @@ def test_rank_review_items_with_llama_cpp_accepts_bake_request_settings(
         BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
             llama_cpp_n_predict=256,
         ),
@@ -32411,7 +31840,6 @@ def test_lazy_llama_cpp_session_reports_expired_candidate_budget_as_candidate_ti
         BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
         )
     )
@@ -32428,7 +31856,6 @@ def test_total_wall_clock_timeouts_are_disabled_by_default() -> None:
     request = BakeAndRankRequest(
         candidates_json=Path("candidates.json"),
         workspace=Path("build"),
-        wham_repo_path=None,
         body_model_root=None,
     )
 
@@ -32553,8 +31980,8 @@ def test_generate_candidate_motion_trims_llm_selected_source_segment(
     def fake_run_generation_pipeline(request: GenerateRequest) -> GenerateResult:
         assert request.video_path is not None
         captured["video_path"] = request.video_path
-        captured["allow_incomplete_wham_boundary_crop"] = (
-            request.allow_incomplete_wham_boundary_crop
+        captured["allow_incomplete_reconstruction_boundary_crop"] = (
+            request.allow_incomplete_reconstruction_boundary_crop
         )
         root = request.workspace / request.exercise_slug
         for directory in ("cleaned", "preview", "raw", "retarget", "wear", "input", "logs"):
@@ -32590,7 +32017,7 @@ def test_generate_candidate_motion_trims_llm_selected_source_segment(
     monkeypatch.setattr(bake_and_rank_module, "trim_video", fake_trim_video)
     monkeypatch.setattr(
         bake_and_rank_module,
-        "prepare_wham_inference_video",
+        "prepare_reconstruction_inference_video",
         lambda *, candidate_workspace, selected_video_path, padding_seconds=0.0: (
             selected_video_path,
             None,
@@ -32611,7 +32038,6 @@ def test_generate_candidate_motion_trims_llm_selected_source_segment(
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
             segment_padding_seconds=0.5,
             segment_end_padding_seconds=3.0,
@@ -32622,7 +32048,7 @@ def test_generate_candidate_motion_trims_llm_selected_source_segment(
     assert captured["video_path"].name == "selected_segment.mp4"
     assert captured["trim_start"] == pytest.approx(2.5)
     assert captured["trim_end"] == pytest.approx(12.0)
-    assert captured["allow_incomplete_wham_boundary_crop"] is False
+    assert captured["allow_incomplete_reconstruction_boundary_crop"] is False
     assert (tmp_path / "build" / "clean-and-jerk-001-clean-and-jerk" / "segment_detection" / "segment_detection.json").exists()
 
 
@@ -32680,7 +32106,6 @@ def test_generate_candidate_motion_keeps_spinepose_disabled_by_default(
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
             detect_source_segment=False,
         ),
@@ -32802,7 +32227,6 @@ def test_generate_candidate_motion_detects_inside_ranked_source_chunk(
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
             segment_padding_seconds=0.5,
             segment_end_padding_seconds=3.0,
@@ -32923,9 +32347,8 @@ def test_generate_candidate_motion_uses_strong_short_ranked_source_chunk_without
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
-            pre_wham_source_validation=True,
+            pre_reconstruction_source_validation=True,
         ),
     )
 
@@ -33090,7 +32513,7 @@ def test_exact_pose_multi_cycle_source_with_missing_equipment_skips_sibling_cycl
         output_path.write_bytes(b"trimmed-video")
         return output_path
 
-    def fake_validate_exact_pre_wham_source_video(**kwargs: object) -> dict[str, object]:
+    def fake_validate_exact_pre_reconstruction_source_video(**kwargs: object) -> dict[str, object]:
         candidate_id = Path(kwargs["source_video_path"]).parent.name.rsplit("_", 1)[-1]
         validation_calls.append(candidate_id)
         if candidate_id == "A":
@@ -33133,12 +32556,12 @@ def test_exact_pose_multi_cycle_source_with_missing_equipment_skips_sibling_cycl
     )
     monkeypatch.setattr(
         bake_and_rank_module,
-        "validate_exact_pre_wham_source_video",
-        fake_validate_exact_pre_wham_source_video,
+        "validate_exact_pre_reconstruction_source_video",
+        fake_validate_exact_pre_reconstruction_source_video,
     )
     monkeypatch.setattr(
         bake_and_rank_module,
-        "confirm_pre_wham_named_equipment",
+        "confirm_pre_reconstruction_named_equipment",
         fake_confirm_equipment,
     )
 
@@ -33202,7 +32625,7 @@ def test_source_cut_confirmation_parent_window_fallback_rescues_fragmented_windo
         output_path.write_bytes(b"trimmed-video")
         return output_path
 
-    def fake_validate_exact_pre_wham_source_video(**kwargs: object) -> dict[str, object]:
+    def fake_validate_exact_pre_reconstruction_source_video(**kwargs: object) -> dict[str, object]:
         video_path = Path(kwargs["source_video_path"])
         candidate_dir = video_path.parent.name
         candidate_id = candidate_dir.rsplit("_", 1)[-1]
@@ -33232,13 +32655,13 @@ def test_source_cut_confirmation_parent_window_fallback_rescues_fragmented_windo
     )
     monkeypatch.setattr(
         bake_and_rank_module,
-        "confirm_pre_wham_named_equipment",
+        "confirm_pre_reconstruction_named_equipment",
         lambda **_kwargs: {"passed": True, "reason": "test_equipment_observed"},
     )
     monkeypatch.setattr(
         bake_and_rank_module,
-        "validate_exact_pre_wham_source_video",
-        fake_validate_exact_pre_wham_source_video,
+        "validate_exact_pre_reconstruction_source_video",
+        fake_validate_exact_pre_reconstruction_source_video,
     )
 
     confirmed, _ = bake_and_rank_module.select_exact_pose_confirmed_source_cut(
@@ -33296,7 +32719,7 @@ def test_source_cut_confirmation_parent_window_fallback_dedupes_tried_window(
         output_path.write_bytes(b"trimmed-video")
         return output_path
 
-    def fake_validate_exact_pre_wham_source_video(**kwargs: object) -> dict[str, object]:
+    def fake_validate_exact_pre_reconstruction_source_video(**kwargs: object) -> dict[str, object]:
         video_path = Path(kwargs["source_video_path"])
         candidate_id = video_path.parent.name.rsplit("_", 1)[-1]
         validation_calls.append(candidate_id)
@@ -33319,13 +32742,13 @@ def test_source_cut_confirmation_parent_window_fallback_dedupes_tried_window(
     )
     monkeypatch.setattr(
         bake_and_rank_module,
-        "confirm_pre_wham_named_equipment",
+        "confirm_pre_reconstruction_named_equipment",
         lambda **_kwargs: {"passed": True, "reason": "test_equipment_observed"},
     )
     monkeypatch.setattr(
         bake_and_rank_module,
-        "validate_exact_pre_wham_source_video",
-        fake_validate_exact_pre_wham_source_video,
+        "validate_exact_pre_reconstruction_source_video",
+        fake_validate_exact_pre_reconstruction_source_video,
     )
 
     confirmed, _ = bake_and_rank_module.select_exact_pose_confirmed_source_cut(
@@ -33396,7 +32819,7 @@ def test_exact_pose_source_cut_confirmation_keeps_validated_multi_cycle_alternat
         output_path.write_bytes(b"trimmed-video")
         return output_path
 
-    def fake_validate_exact_pre_wham_source_video(**kwargs: object) -> dict[str, object]:
+    def fake_validate_exact_pre_reconstruction_source_video(**kwargs: object) -> dict[str, object]:
         video_path = Path(kwargs["source_video_path"])
         candidate_id = video_path.parent.name.rsplit("_", 1)[-1]
         validation_calls.append(candidate_id)
@@ -33427,13 +32850,13 @@ def test_exact_pose_source_cut_confirmation_keeps_validated_multi_cycle_alternat
     )
     monkeypatch.setattr(
         bake_and_rank_module,
-        "confirm_pre_wham_named_equipment",
+        "confirm_pre_reconstruction_named_equipment",
         lambda **_kwargs: {"passed": True, "reason": "test_equipment_observed"},
     )
     monkeypatch.setattr(
         bake_and_rank_module,
-        "validate_exact_pre_wham_source_video",
-        fake_validate_exact_pre_wham_source_video,
+        "validate_exact_pre_reconstruction_source_video",
+        fake_validate_exact_pre_reconstruction_source_video,
     )
 
     confirmed, _ = bake_and_rank_module.select_exact_pose_confirmed_source_cut(
@@ -33507,7 +32930,7 @@ def test_exact_pose_confirmation_defers_correlated_equipment_conflict(
     monkeypatch.setattr(bake_and_rank_module, "trim_video", fake_trim_video)
     monkeypatch.setattr(
         bake_and_rank_module,
-        "validate_exact_pre_wham_source_video",
+        "validate_exact_pre_reconstruction_source_video",
         lambda **_kwargs: {
             "required": True,
             "passed": True,
@@ -33516,7 +32939,7 @@ def test_exact_pose_confirmation_defers_correlated_equipment_conflict(
     )
     monkeypatch.setattr(
         bake_and_rank_module,
-        "confirm_pre_wham_named_equipment",
+        "confirm_pre_reconstruction_named_equipment",
         lambda **_kwargs: {
             "requiredEquipment": "barbell",
             "visibleEquipment": ["dumbbell"],
@@ -33587,7 +33010,7 @@ def test_complete_cycle_with_pose_equipment_miss_gets_independent_equipment_revi
     monkeypatch.setattr(bake_and_rank_module, "trim_video", fake_trim_video)
     monkeypatch.setattr(
         bake_and_rank_module,
-        "validate_exact_pre_wham_source_video",
+        "validate_exact_pre_reconstruction_source_video",
         lambda **_kwargs: {
             "required": True,
             "passed": False,
@@ -33602,7 +33025,7 @@ def test_complete_cycle_with_pose_equipment_miss_gets_independent_equipment_revi
         lambda _validation: ["source_cut_required_equipment_not_observed"],
     )
     monkeypatch.setattr(
-        bake_and_rank_module, "confirm_pre_wham_named_equipment", fake_equipment_review
+        bake_and_rank_module, "confirm_pre_reconstruction_named_equipment", fake_equipment_review
     )
 
     confirmed, _ = bake_and_rank_module.select_exact_pose_confirmed_source_cut(
@@ -33681,7 +33104,7 @@ def test_contract_boundary_mismatch_trims_setup_then_revalidates_complete_cycle(
         }
 
     monkeypatch.setattr(bake_and_rank_module, "trim_video", fake_trim_video)
-    monkeypatch.setattr(bake_and_rank_module, "validate_exact_pre_wham_source_video", fake_validate)
+    monkeypatch.setattr(bake_and_rank_module, "validate_exact_pre_reconstruction_source_video", fake_validate)
     monkeypatch.setattr(
         bake_and_rank_module,
         "exact_source_phase_validation_rejection_reasons",
@@ -33771,7 +33194,7 @@ def test_resolved_partial_source_cut_reaches_bounded_return_expansion(
         }
 
     monkeypatch.setattr(bake_and_rank_module, "trim_video", fake_trim_video)
-    monkeypatch.setattr(bake_and_rank_module, "validate_exact_pre_wham_source_video", fake_validate)
+    monkeypatch.setattr(bake_and_rank_module, "validate_exact_pre_reconstruction_source_video", fake_validate)
     monkeypatch.setattr(
         bake_and_rank_module,
         "exact_source_phase_validation_rejection_reasons",
@@ -33781,7 +33204,7 @@ def test_resolved_partial_source_cut_reaches_bounded_return_expansion(
     )
     monkeypatch.setattr(
         bake_and_rank_module,
-        "confirm_pre_wham_named_equipment",
+        "confirm_pre_reconstruction_named_equipment",
         lambda **_kwargs: {"passed": True, "reason": "no_required_equipment"},
     )
 
@@ -34095,7 +33518,7 @@ def test_exact_pose_confirmation_refines_multi_cycle_despite_unresolved_support(
     )
     monkeypatch.setattr(
         bake_and_rank_module,
-        "confirm_pre_wham_named_equipment",
+        "confirm_pre_reconstruction_named_equipment",
         lambda **kwargs: {"passed": True},
     )
     (tmp_path / "clip.mp4").write_bytes(b"fake")
@@ -34179,12 +33602,12 @@ def test_exact_pose_confirmation_cannot_promote_candidate_after_vlm_rejection(
     monkeypatch.setattr(bake_and_rank_module, "trim_video", fake_trim_video)
     monkeypatch.setattr(
         bake_and_rank_module,
-        "confirm_pre_wham_named_equipment",
+        "confirm_pre_reconstruction_named_equipment",
         lambda **_kwargs: {"passed": True, "reason": "test_equipment_observed"},
     )
     monkeypatch.setattr(
         bake_and_rank_module,
-        "validate_exact_pre_wham_source_video",
+        "validate_exact_pre_reconstruction_source_video",
         lambda **_kwargs: validation_calls.append("called") or {
             "required": True,
             "passed": True,
@@ -34514,7 +33937,7 @@ def test_exact_pose_source_cut_confirmation_rejects_all_partial_candidates(
     monkeypatch.setattr(bake_and_rank_module, "trim_video", fake_trim_video)
     monkeypatch.setattr(
         bake_and_rank_module,
-        "validate_exact_pre_wham_source_video",
+        "validate_exact_pre_reconstruction_source_video",
         lambda **_kwargs: {
             "required": True,
             "passed": False,
@@ -34582,7 +34005,7 @@ def test_incomplete_source_cut_skips_named_equipment_confirmation(
     monkeypatch.setattr(bake_and_rank_module, "trim_video", fake_trim_video)
     monkeypatch.setattr(
         bake_and_rank_module,
-        "validate_exact_pre_wham_source_video",
+        "validate_exact_pre_reconstruction_source_video",
         lambda **_kwargs: {
             "required": True,
             "passed": False,
@@ -34595,7 +34018,7 @@ def test_incomplete_source_cut_skips_named_equipment_confirmation(
     )
     monkeypatch.setattr(
         bake_and_rank_module,
-        "confirm_pre_wham_named_equipment",
+        "confirm_pre_reconstruction_named_equipment",
         fake_equipment_confirmation,
     )
 
@@ -34657,12 +34080,12 @@ def test_exact_pose_source_cut_confirmation_rejects_unresolved_endpoint_mismatch
     monkeypatch.setattr(bake_and_rank_module, "trim_video", fake_trim_video)
     monkeypatch.setattr(
         bake_and_rank_module,
-        "confirm_pre_wham_named_equipment",
+        "confirm_pre_reconstruction_named_equipment",
         lambda **_kwargs: {"passed": True, "reason": "test_equipment_observed"},
     )
     monkeypatch.setattr(
         bake_and_rank_module,
-        "validate_exact_pre_wham_source_video",
+        "validate_exact_pre_reconstruction_source_video",
         lambda **_kwargs: {
             "required": True,
             "passed": True,
@@ -34810,7 +34233,7 @@ def test_unavailable_pose_samples_cannot_recover_rejected_source_cut(
     monkeypatch.setattr(bake_and_rank_module, "trim_video", fake_trim_video)
     monkeypatch.setattr(
         bake_and_rank_module,
-        "validate_exact_pre_wham_source_video",
+        "validate_exact_pre_reconstruction_source_video",
         lambda **_kwargs: {
             "required": True,
             "passed": False,
@@ -34820,7 +34243,7 @@ def test_unavailable_pose_samples_cannot_recover_rejected_source_cut(
     )
     monkeypatch.setattr(
         bake_and_rank_module,
-        "confirm_pre_wham_named_equipment",
+        "confirm_pre_reconstruction_named_equipment",
         lambda **_kwargs: {"passed": True, "reason": "test_equipment_observed"},
     )
 
@@ -34898,7 +34321,7 @@ def test_exact_confirmation_materialization_copies_full_source_and_trims_partial
 
 @pytest.mark.parametrize('approved_span', [(6.0, 15.0), (8.0, 12.0)])
 @pytest.mark.parametrize('completion_mode', ['return_to_start', 'distinct_end_state'])
-def test_prepare_candidate_input_video_validates_padded_ranked_chunk_before_wham(
+def test_prepare_candidate_input_video_validates_padded_ranked_chunk_before_reconstruction(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     approved_span,
@@ -34986,7 +34409,7 @@ def test_prepare_candidate_input_video_validates_padded_ranked_chunk_before_wham
         "render_video_window_contact_sheet",
         fake_render_video_window_contact_sheet,
     )
-    pre_wham_contract = {
+    pre_reconstruction_contract = {
         "status": "generated",
         "exerciseName": "Bench Press",
         "advisoryText": (
@@ -35033,7 +34456,7 @@ def test_prepare_candidate_input_video_validates_padded_ranked_chunk_before_wham
     }
     monkeypatch.setattr(
         bake_and_rank_module,
-        "validate_exact_pre_wham_source_video",
+        "validate_exact_pre_reconstruction_source_video",
         lambda **_kwargs: {
             "required": True,
             "passed": True,
@@ -35046,9 +34469,9 @@ def test_prepare_candidate_input_video_validates_padded_ranked_chunk_before_wham
     )
 
     original_rank = bake_and_rank_module.rank_source_video_cut_candidates_with_caption_images
-    pre_wham_contract['completionMode'] = completion_mode
-    pre_wham_contract['requiresReturnToStart'] = completion_mode == 'return_to_start'
-    pre_wham_contract['movementTopology']['completionMode'] = completion_mode
+    pre_reconstruction_contract['completionMode'] = completion_mode
+    pre_reconstruction_contract['requiresReturnToStart'] = completion_mode == 'return_to_start'
+    pre_reconstruction_contract['movementTopology']['completionMode'] = completion_mode
 
     def rank_reviewed_child(**kwargs):
         ranking, render_seconds, vlm_seconds = original_rank(**kwargs)
@@ -35077,13 +34500,12 @@ def test_prepare_candidate_input_video_validates_padded_ranked_chunk_before_wham
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
-            pre_wham_source_validation=True,
+            pre_reconstruction_source_validation=True,
             visual_decision_backend="qwen-chat",
         ),
         source_cut_caption_images=fake_caption_images,
-        exercise_motion_contract_resolver=lambda _candidate: pre_wham_contract,
+        exercise_motion_contract_resolver=lambda _candidate: pre_reconstruction_contract,
     )
 
     assert selected.name == "selected_segment.mp4"
@@ -35110,12 +34532,12 @@ def test_prepare_candidate_input_video_validates_padded_ranked_chunk_before_wham
         / "segment_selection.json"
     )
     selection = json.loads(selection_path.read_text(encoding="utf-8"))
-    assert selection["sourcePrepReason"] == "pre_wham_source_window_choice"
-    assert selection["preWhamSourceValidationEnabled"] is True
+    assert selection["sourcePrepReason"] == "pre_reconstruction_source_window_choice"
+    assert selection["preReconstructionSourceValidationEnabled"] is True
     assert selection["exerciseMotionContractEnabled"] is True
     assert selection["exerciseMotionContractStatus"] == "generated"
     # This legacy contract fixture has no current topology; the exact source
-    # validator above remains the authoritative pre-WHAM check.
+    # validator above remains the authoritative pre-RECONSTRUCTION check.
     assert selection["exactSourcePhaseValidationPassed"] is True
     assert "Only setup or unrack" in selection["exerciseMotionContract"]["advisoryText"]
     assert selection["selectedSpan"]["startSeconds"] == pytest.approx(approved_span[0])
@@ -35152,9 +34574,8 @@ def test_prepare_candidate_input_video_reuses_parent_fallback_source_selection(
     request = BakeAndRankRequest(
         candidates_json=tmp_path / "candidates.json",
         workspace=tmp_path / "build",
-        wham_repo_path=None,
         body_model_root=None,
-        pre_wham_source_validation=True,
+        pre_reconstruction_source_validation=True,
     )
     workspace = request.workspace / candidate.workspace_slug
     selected = workspace / "input" / "selected_segment.mp4"
@@ -35166,8 +34587,8 @@ def test_prepare_candidate_input_video_reuses_parent_fallback_source_selection(
         json.dumps(
             {
                 "sourceSelectionPolicyVersion": bake_and_rank_module.SOURCE_SELECTION_POLICY_VERSION,
-                "sourcePrepReason": "pre_wham_source_window_choice",
-                "preWhamSourceValidationEnabled": True,
+                "sourcePrepReason": "pre_reconstruction_source_window_choice",
+                "preReconstructionSourceValidationEnabled": True,
                 "exerciseMotionContractEnabled": True,
                 "exactSourcePhaseValidationPassed": True,
                 "exactSourcePhaseValidation": {
@@ -35207,7 +34628,7 @@ def test_prepare_candidate_input_video_reuses_parent_fallback_source_selection(
 
     monkeypatch.setattr(
         bake_and_rank_module,
-        "validate_exact_pre_wham_source_video",
+        "validate_exact_pre_reconstruction_source_video",
         lambda **_kwargs: (
             gpu_handoff_events.append("exact_pose_validation")
             or {
@@ -35275,9 +34696,8 @@ def test_exercise_motion_contract_resolver_generates_on_demand_and_caches_per_ex
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
                 workspace=tmp_path / "build",
-                wham_repo_path=None,
                 body_model_root=None,
-                pre_wham_source_validation=True,
+                pre_reconstruction_source_validation=True,
                 llama_cpp_base_url=None,
             ),
             caption_images=fake_caption_images,
@@ -35347,9 +34767,8 @@ def test_exercise_motion_contract_resolver_reuses_candidate_contract_without_llm
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
-            pre_wham_source_validation=True,
+            pre_reconstruction_source_validation=True,
         ),
         caption_images=fake_caption_images,
     )
@@ -35427,9 +34846,8 @@ def test_exercise_motion_contract_resolver_prefers_current_authoritative_prefetc
     request = BakeAndRankRequest(
         candidates_json=tmp_path / "candidates.json",
         workspace=tmp_path / "build",
-        wham_repo_path=None,
         body_model_root=None,
-        pre_wham_source_validation=True,
+        pre_reconstruction_source_validation=True,
         exercise_motion_contract_cache_dir=tmp_path / "contract-cache",
         authoritative_exercise_motion_context=motion_context,
     )
@@ -35528,7 +34946,7 @@ def test_exercise_motion_contract_resolver_prefers_current_authoritative_prefetc
     assert caption_calls == 0
 
 
-def test_cached_pre_wham_selection_without_contract_is_not_reused_when_contract_enabled(
+def test_cached_pre_reconstruction_selection_without_contract_is_not_reused_when_contract_enabled(
     tmp_path: Path,
 ) -> None:
     segment_selection_path = tmp_path / "segment_selection.json"
@@ -35536,8 +34954,8 @@ def test_cached_pre_wham_selection_without_contract_is_not_reused_when_contract_
         json.dumps(
             {
                 "sourceSelectionPolicyVersion": bake_and_rank_module.SOURCE_SELECTION_POLICY_VERSION,
-                "sourcePrepReason": "pre_wham_source_window_choice",
-                "preWhamSourceValidationEnabled": True,
+                "sourcePrepReason": "pre_reconstruction_source_window_choice",
+                "preReconstructionSourceValidationEnabled": True,
                 "exactSourcePhaseValidationPassed": True,
                 "exactSourcePhaseValidation": {
                     "required": True,
@@ -35557,12 +34975,12 @@ def test_cached_pre_wham_selection_without_contract_is_not_reused_when_contract_
 
     assert not bake_and_rank_module.cached_source_selection_matches_validation_mode(
         segment_selection_path,
-        pre_wham_source_validation=True,
+        pre_reconstruction_source_validation=True,
         exercise_motion_contract_enabled=True,
     )
     assert bake_and_rank_module.cached_source_selection_matches_validation_mode(
         segment_selection_path,
-        pre_wham_source_validation=True,
+        pre_reconstruction_source_validation=True,
         exercise_motion_contract_enabled=False,
     )
 
@@ -35571,7 +34989,7 @@ def test_cached_pre_wham_selection_without_contract_is_not_reused_when_contract_
     segment_selection_path.write_text(json.dumps(stale_payload), encoding="utf-8")
     assert not bake_and_rank_module.cached_source_selection_matches_validation_mode(
         segment_selection_path,
-        pre_wham_source_validation=True,
+        pre_reconstruction_source_validation=True,
         exercise_motion_contract_enabled=False,
     )
     stale_payload["sourceSelectionPolicyVersion"] = bake_and_rank_module.SOURCE_SELECTION_POLICY_VERSION
@@ -35585,7 +35003,7 @@ def test_cached_pre_wham_selection_without_contract_is_not_reused_when_contract_
 
     assert bake_and_rank_module.cached_source_selection_matches_validation_mode(
         segment_selection_path,
-        pre_wham_source_validation=True,
+        pre_reconstruction_source_validation=True,
         exercise_motion_contract_enabled=True,
     )
 
@@ -35595,7 +35013,7 @@ def test_cached_pre_wham_selection_without_contract_is_not_reused_when_contract_
     segment_selection_path.write_text(json.dumps(payload), encoding="utf-8")
     assert not bake_and_rank_module.cached_source_selection_matches_validation_mode(
         segment_selection_path,
-        pre_wham_source_validation=True,
+        pre_reconstruction_source_validation=True,
         exercise_motion_contract_enabled=True,
     )
 
@@ -35609,12 +35027,12 @@ def test_cached_pre_wham_selection_without_contract_is_not_reused_when_contract_
 
     assert not bake_and_rank_module.cached_source_selection_matches_validation_mode(
         segment_selection_path,
-        pre_wham_source_validation=True,
+        pre_reconstruction_source_validation=True,
         exercise_motion_contract_enabled=True,
     )
 
 
-def test_update_pre_wham_exact_phase_manifest_rejects_failed_endpoint_contract(
+def test_update_pre_reconstruction_exact_phase_manifest_rejects_failed_endpoint_contract(
     tmp_path: Path,
 ) -> None:
     candidate_workspace = tmp_path / "candidate"
@@ -35624,8 +35042,8 @@ def test_update_pre_wham_exact_phase_manifest_rejects_failed_endpoint_contract(
         json.dumps(
             {
                 "sourceSelectionPolicyVersion": bake_and_rank_module.SOURCE_SELECTION_POLICY_VERSION,
-                "sourcePrepReason": "pre_wham_source_window_choice",
-                "preWhamSourceValidationEnabled": True,
+                "sourcePrepReason": "pre_reconstruction_source_window_choice",
+                "preReconstructionSourceValidationEnabled": True,
             }
         ),
         encoding="utf-8",
@@ -35643,7 +35061,7 @@ def test_update_pre_wham_exact_phase_manifest_rejects_failed_endpoint_contract(
         },
     }
 
-    bake_and_rank_module.update_pre_wham_exact_phase_validation_manifest(
+    bake_and_rank_module.update_pre_reconstruction_exact_phase_validation_manifest(
         candidate_workspace=candidate_workspace,
         validation=validation,
     )
@@ -35653,12 +35071,12 @@ def test_update_pre_wham_exact_phase_manifest_rejects_failed_endpoint_contract(
     assert payload["exactSourcePhaseValidationPassed"] is False
     assert not bake_and_rank_module.cached_source_selection_matches_validation_mode(
         manifest_path,
-        pre_wham_source_validation=True,
+        pre_reconstruction_source_validation=True,
         exercise_motion_contract_enabled=False,
     )
 
 
-def test_prepare_candidate_input_video_rejects_partial_ranked_chunk_before_wham(
+def test_prepare_candidate_input_video_rejects_partial_ranked_chunk_before_reconstruction(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -35677,7 +35095,7 @@ def test_prepare_candidate_input_video_rejects_partial_ranked_chunk_before_wham(
         reason = "test estimate"
 
     def fake_trim_video(**kwargs: object) -> Path:
-        raise AssertionError("WHAM input should not be trimmed when source validation rejects every candidate")
+        raise AssertionError("RECONSTRUCTION input should not be trimmed when source validation rejects every candidate")
 
     def fake_caption_images(**kwargs: object) -> str:
         return json.dumps(
@@ -35733,9 +35151,8 @@ def test_prepare_candidate_input_video_rejects_partial_ranked_chunk_before_wham(
             request=BakeAndRankRequest(
                 candidates_json=tmp_path / "candidates.json",
                 workspace=tmp_path / "build",
-                wham_repo_path=None,
                 body_model_root=None,
-                pre_wham_source_validation=True,
+                pre_reconstruction_source_validation=True,
             ),
             source_cut_caption_images=fake_caption_images,
         )
@@ -35748,14 +35165,14 @@ def test_prepare_candidate_input_video_rejects_partial_ranked_chunk_before_wham(
         / "segment_selection.json"
     )
     selection = json.loads(selection_path.read_text(encoding="utf-8"))
-    assert selection["sourcePrepReason"] == "pre_wham_source_window_choice"
+    assert selection["sourcePrepReason"] == "pre_reconstruction_source_window_choice"
     assert selection["selectedSpan"] is None
     assert selection["sourceCutRanking"]["score"] == pytest.approx(0.0)
     rows = selection["sourceCutRanking"]["payload"]["sourceCutScorecardCandidates"]
     assert rows[0]["reject"] == ["partial_movement"]
 
 
-def test_generate_candidate_motion_rejects_qaxj9nbssn4_before_wham(
+def test_generate_candidate_motion_rejects_qaxj9nbssn4_before_reconstruction(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -35811,7 +35228,7 @@ def test_generate_candidate_motion_rejects_qaxj9nbssn4_before_wham(
     monkeypatch.setattr(
         bake_and_rank_module,
         "run_generation_pipeline",
-        lambda _request: pytest.fail("WHAM generation should not run for a rejected source scorecard"),
+        lambda _request: pytest.fail("RECONSTRUCTION generation should not run for a rejected source scorecard"),
     )
 
     with pytest.raises(bake_and_rank_module.SourceCandidateRejected):
@@ -35836,9 +35253,8 @@ def test_generate_candidate_motion_rejects_qaxj9nbssn4_before_wham(
             request=BakeAndRankRequest(
                 candidates_json=tmp_path / "candidates.json",
                 workspace=tmp_path / "build",
-                wham_repo_path=None,
                 body_model_root=None,
-                pre_wham_source_validation=True,
+                pre_reconstruction_source_validation=True,
             ),
             source_cut_caption_images=fake_caption_images,
         )
@@ -35937,7 +35353,6 @@ def test_generate_candidate_motion_treats_detection_timeout_as_critical(
             request=BakeAndRankRequest(
                 candidates_json=tmp_path / "candidates.json",
                 workspace=tmp_path / "build",
-                wham_repo_path=None,
                 body_model_root=None,
             ),
         )
@@ -35986,9 +35401,9 @@ def test_artifact_retention_debug_prunes_heavy_intermediates_and_keeps_debug_out
     preview_html = candidate / "preview" / "motion_preview.html"
     selected_preview_html = workspace / "selected_section_preview.html"
     candidate_manifest = candidate / "manifest.json"
-    raw_pkl = candidate / "raw" / "wham" / "selected_segment" / "wham_output.pkl"
+    raw_pkl = candidate / "raw" / "reconstruction" / "selected_segment" / "reconstruction_output.pkl"
     cleaned_json = candidate / "cleaned" / "motion.cleaned.json"
-    retarget_json = candidate / "retarget" / "wham.retarget_source.json"
+    retarget_json = candidate / "retarget" / "reconstruction.retarget_source.json"
     source_video = candidate / "source" / "source.mp4"
 
     for path, content in (
@@ -36066,7 +35481,7 @@ def test_artifact_retention_debug_prunes_heavy_intermediates_and_keeps_debug_out
 
 def test_artifact_retention_full_keeps_all_artifacts(tmp_path: Path) -> None:
     workspace = tmp_path / "bake"
-    raw_pkl = workspace / "candidate" / "raw" / "wham_output.pkl"
+    raw_pkl = workspace / "candidate" / "raw" / "reconstruction_output.pkl"
     frame_dump = workspace / "candidate" / "review" / "frame_01.jpg"
     raw_pkl.parent.mkdir(parents=True, exist_ok=True)
     frame_dump.parent.mkdir(parents=True, exist_ok=True)
@@ -37312,7 +36727,7 @@ def test_overhead_hand_support_suppresses_mechanically_conflicting_feet_lock_tri
     assert hint["footSupportLockTrialRecommended"] is False
 
 
-def test_raw_wham_gate_defers_unstable_overhead_hands_to_lock_aware_final_gate(tmp_path: Path) -> None:
+def test_raw_reconstruction_gate_defers_unstable_overhead_hands_to_lock_aware_final_gate(tmp_path: Path) -> None:
     frames = []
     for index in range(12):
         half_spacing = 0.12 if index % 2 == 0 else 0.55
@@ -37352,24 +36767,24 @@ def test_raw_wham_gate_defers_unstable_overhead_hands_to_lock_aware_final_gate(t
         encoding="utf-8",
     )
 
-    gate = bake_and_rank_module.evaluate_raw_wham_motion_gate(raw_path)
+    gate = bake_and_rank_module.evaluate_raw_reconstruction_motion_gate(raw_path)
 
     assert gate["passed"] is True
     assert gate["rejectionReasons"] == []
     assert gate["supportRelationshipMetrics"]["overheadHandSupportEvidence"] is False
     assert gate["pairedHandsPreservationMetrics"]["severePairedHandsDistortion"] is True
 
-    rigid_equipment_gate = bake_and_rank_module.evaluate_raw_wham_motion_gate(
+    rigid_equipment_gate = bake_and_rank_module.evaluate_raw_reconstruction_motion_gate(
         raw_path,
         exercise_motion_contract={"requiredEquipment": ["barbell"]},
     )
 
     assert rigid_equipment_gate["passed"] is False
     assert rigid_equipment_gate["rigidPairedHandsRequired"] is True
-    assert "raw_wham_rigid_two_hand_spacing_instability" in rigid_equipment_gate[
+    assert "raw_reconstruction_rigid_two_hand_spacing_instability" in rigid_equipment_gate[
         "rejectionReasons"
     ]
-    assert "raw_wham_rigid_two_hand_equipment_distortion" not in rigid_equipment_gate[
+    assert "raw_reconstruction_rigid_two_hand_equipment_distortion" not in rigid_equipment_gate[
         "rejectionReasons"
     ]
 
@@ -37412,7 +36827,7 @@ def test_transient_bar_to_chest_contact_does_not_disable_rigid_hand_constraint()
     ) is False
 
 
-def source_pose_reference_for_raw_wham_gate() -> dict[str, object]:
+def source_pose_reference_for_raw_reconstruction_gate() -> dict[str, object]:
     frames = []
     for index in range(8):
         frames.append(
@@ -37463,8 +36878,8 @@ def raw_motion_from_source_pose(
     }
 
 
-def test_raw_wham_gate_accepts_pose_that_matches_source_reference(tmp_path: Path) -> None:
-    source_pose = source_pose_reference_for_raw_wham_gate()
+def test_raw_reconstruction_gate_accepts_pose_that_matches_source_reference(tmp_path: Path) -> None:
+    source_pose = source_pose_reference_for_raw_reconstruction_gate()
     reference_path = tmp_path / "exact_source_pose_reference.json"
     reference_path.write_text(json.dumps({"pose": source_pose}), encoding="utf-8")
     raw_path = tmp_path / "motion.raw.json"
@@ -37473,7 +36888,7 @@ def test_raw_wham_gate_accepts_pose_that_matches_source_reference(tmp_path: Path
         encoding="utf-8",
     )
 
-    gate = bake_and_rank_module.evaluate_raw_wham_motion_gate(
+    gate = bake_and_rank_module.evaluate_raw_reconstruction_motion_gate(
         raw_path,
         source_pose_reference_path=reference_path,
     )
@@ -37483,11 +36898,11 @@ def test_raw_wham_gate_accepts_pose_that_matches_source_reference(tmp_path: Path
     assert gate["sourcePoseFidelityMetrics"]["p90JointErrorBodyRatio"] == pytest.approx(0.0)
 
 
-def test_raw_wham_gate_does_not_reject_angle_percentile_from_sparse_pose_samples(
+def test_raw_reconstruction_gate_does_not_reject_angle_percentile_from_sparse_pose_samples(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source_pose = source_pose_reference_for_raw_wham_gate()
+    source_pose = source_pose_reference_for_raw_reconstruction_gate()
     reference_path = tmp_path / "exact_source_pose_reference.json"
     reference_path.write_text(json.dumps({"pose": source_pose}), encoding="utf-8")
     raw_path = tmp_path / "motion.raw.json"
@@ -37505,22 +36920,22 @@ def test_raw_wham_gate_does_not_reject_angle_percentile_from_sparse_pose_samples
         },
     )
 
-    gate = bake_and_rank_module.evaluate_raw_wham_motion_gate(
+    gate = bake_and_rank_module.evaluate_raw_reconstruction_motion_gate(
         raw_path,
         source_pose_reference_path=reference_path,
     )
 
     assert gate["passed"] is True
     assert gate["sourcePoseFidelityGateApplied"] is True
-    assert "raw_wham_source_joint_angle_mismatch" not in gate["rejectionReasons"]
+    assert "raw_reconstruction_source_joint_angle_mismatch" not in gate["rejectionReasons"]
     assert gate["sourcePoseFidelityThresholds"]["minAngleFrameCount"] == 8
 
 
-def test_raw_wham_gate_does_not_reject_one_occluded_angle_chain(
+def test_raw_reconstruction_gate_does_not_reject_one_occluded_angle_chain(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source_pose = source_pose_reference_for_raw_wham_gate()
+    source_pose = source_pose_reference_for_raw_reconstruction_gate()
     reference_path = tmp_path / "exact_source_pose_reference.json"
     reference_path.write_text(json.dumps({"pose": source_pose}), encoding="utf-8")
     raw_path = tmp_path / "motion.raw.json"
@@ -37548,20 +36963,20 @@ def test_raw_wham_gate_does_not_reject_one_occluded_angle_chain(
         },
     )
 
-    gate = bake_and_rank_module.evaluate_raw_wham_motion_gate(
+    gate = bake_and_rank_module.evaluate_raw_reconstruction_motion_gate(
         raw_path,
         source_pose_reference_path=reference_path,
     )
 
     assert gate["passed"] is True, gate
-    assert "raw_wham_source_joint_angle_mismatch" not in gate["rejectionReasons"]
+    assert "raw_reconstruction_source_joint_angle_mismatch" not in gate["rejectionReasons"]
 
 
-def test_raw_wham_gate_rejects_corroborated_angle_chain_mismatch(
+def test_raw_reconstruction_gate_rejects_corroborated_angle_chain_mismatch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source_pose = source_pose_reference_for_raw_wham_gate()
+    source_pose = source_pose_reference_for_raw_reconstruction_gate()
     reference_path = tmp_path / "exact_source_pose_reference.json"
     reference_path.write_text(json.dumps({"pose": source_pose}), encoding="utf-8")
     raw_path = tmp_path / "motion.raw.json"
@@ -37585,17 +37000,17 @@ def test_raw_wham_gate_rejects_corroborated_angle_chain_mismatch(
         },
     )
 
-    gate = bake_and_rank_module.evaluate_raw_wham_motion_gate(
+    gate = bake_and_rank_module.evaluate_raw_reconstruction_motion_gate(
         raw_path,
         source_pose_reference_path=reference_path,
     )
 
     assert gate["passed"] is False
-    assert "raw_wham_source_joint_angle_mismatch" in gate["rejectionReasons"]
+    assert "raw_reconstruction_source_joint_angle_mismatch" in gate["rejectionReasons"]
 
 
 def test_structural_refinement_transaction_rejects_source_fidelity_regression() -> None:
-    source_pose = source_pose_reference_for_raw_wham_gate()
+    source_pose = source_pose_reference_for_raw_reconstruction_gate()
     motion = raw_motion_from_source_pose(source_pose)
     before = MotionClip(
         fps=7.0,
@@ -37870,11 +37285,11 @@ def test_source_guidance_preserves_body_local_bilateral_width() -> None:
     assert corrected["right_ankle"][1] == pytest.approx(0.4)
 
 
-def test_raw_wham_gate_defers_source_matching_temporal_spikes_to_cleanup(
+def test_raw_reconstruction_gate_defers_source_matching_temporal_spikes_to_cleanup(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source_pose = source_pose_reference_for_raw_wham_gate()
+    source_pose = source_pose_reference_for_raw_reconstruction_gate()
     reference_path = tmp_path / "exact_source_pose_reference.json"
     reference_path.write_text(json.dumps({"pose": source_pose}), encoding="utf-8")
     raw_path = tmp_path / "motion.raw.json"
@@ -37891,7 +37306,7 @@ def test_raw_wham_gate_defers_source_matching_temporal_spikes_to_cleanup(
         },
     )
 
-    gate = bake_and_rank_module.evaluate_raw_wham_motion_gate(
+    gate = bake_and_rank_module.evaluate_raw_reconstruction_motion_gate(
         raw_path,
         source_pose_reference_path=reference_path,
     )
@@ -37932,8 +37347,8 @@ def test_temporal_cleanup_repairs_validator_relative_velocity_spike() -> None:
     assert frames[4].joints["left_elbow"][0] == pytest.approx(0.04)
 
 
-def test_raw_wham_gate_rejects_gross_source_pose_reconstruction_error(tmp_path: Path) -> None:
-    source_pose = source_pose_reference_for_raw_wham_gate()
+def test_raw_reconstruction_gate_rejects_gross_source_pose_reconstruction_error(tmp_path: Path) -> None:
+    source_pose = source_pose_reference_for_raw_reconstruction_gate()
     reference_path = tmp_path / "exact_source_pose_reference.json"
     reference_path.write_text(json.dumps({"pose": source_pose}), encoding="utf-8")
     raw_path = tmp_path / "motion.raw.json"
@@ -37942,18 +37357,18 @@ def test_raw_wham_gate_rejects_gross_source_pose_reconstruction_error(tmp_path: 
         encoding="utf-8",
     )
 
-    gate = bake_and_rank_module.evaluate_raw_wham_motion_gate(
+    gate = bake_and_rank_module.evaluate_raw_reconstruction_motion_gate(
         raw_path,
         source_pose_reference_path=reference_path,
     )
 
     assert gate["passed"] is False
     assert gate["sourcePoseFidelityGateApplied"] is True
-    assert "raw_wham_source_pose_joint_mismatch" in gate["rejectionReasons"]
+    assert "raw_reconstruction_source_pose_joint_mismatch" in gate["rejectionReasons"]
 
 
 def test_materialized_source_pose_fidelity_accepts_matching_retained_output() -> None:
-    source_pose = source_pose_reference_for_raw_wham_gate()
+    source_pose = source_pose_reference_for_raw_reconstruction_gate()
 
     metrics = bake_and_rank_module.materialized_source_pose_fidelity_metrics(
         source_pose_payload=source_pose,
@@ -37967,7 +37382,7 @@ def test_materialized_source_pose_fidelity_accepts_matching_retained_output() ->
 
 
 def test_pose_fidelity_estimates_continuous_camera_yaw() -> None:
-    source_pose = source_pose_reference_for_raw_wham_gate()
+    source_pose = source_pose_reference_for_raw_reconstruction_gate()
     motion = raw_motion_from_source_pose(source_pose)
     yaw_degrees = 37.0
     yaw = math.radians(yaw_degrees)
@@ -37993,7 +37408,7 @@ def test_pose_fidelity_estimates_continuous_camera_yaw() -> None:
 
 
 def test_materialized_source_pose_fidelity_accepts_global_bilateral_label_swap() -> None:
-    source_pose = source_pose_reference_for_raw_wham_gate()
+    source_pose = source_pose_reference_for_raw_reconstruction_gate()
     output = raw_motion_from_source_pose(source_pose)
     for frame in output["frames"]:
         joints = frame["joints"]
@@ -38016,7 +37431,7 @@ def test_materialized_source_pose_fidelity_accepts_global_bilateral_label_swap()
 
 
 def test_materialized_source_pose_fidelity_rejects_wrong_retained_orientation() -> None:
-    source_pose = source_pose_reference_for_raw_wham_gate()
+    source_pose = source_pose_reference_for_raw_reconstruction_gate()
 
     metrics = bake_and_rank_module.materialized_source_pose_fidelity_metrics(
         source_pose_payload=source_pose,
@@ -38051,7 +37466,7 @@ def test_materialized_source_pose_fidelity_fails_closed_when_required_evidence_i
 
 @pytest.mark.parametrize("repaired", [False, True])
 def test_materialized_fidelity_judges_delivered_pose_not_source_snapshot(repaired) -> None:
-    source_pose = source_pose_reference_for_raw_wham_gate()
+    source_pose = source_pose_reference_for_raw_reconstruction_gate()
     output = raw_motion_from_source_pose(source_pose, corrupt_upper_limbs=not repaired)
     snapshot = raw_motion_from_source_pose(source_pose, corrupt_upper_limbs=repaired)
     for frame, original in zip(output["frames"], snapshot["frames"]):
@@ -38075,7 +37490,7 @@ def test_materialized_fidelity_requires_sufficient_comparable_evidence(monkeypat
     assert metrics["rejectionReasons"] == ["materialized_source_pose_fidelity_unavailable"]
 
 
-def test_raw_wham_gate_allows_dispersed_but_not_sustained_distal_recovery() -> None:
+def test_raw_reconstruction_gate_allows_dispersed_but_not_sustained_distal_recovery() -> None:
     def gate(*, reasons: list[str], exceedances: int, consecutive: int) -> dict[str, object]:
         return {
             "kinematicPlausibilityMetrics": {
@@ -38087,22 +37502,22 @@ def test_raw_wham_gate_allows_dispersed_but_not_sustained_distal_recovery() -> N
             }
         }
 
-    assert bake_and_rank_module.raw_wham_motion_gate_allows_cleaned_recovery(
+    assert bake_and_rank_module.raw_reconstruction_motion_gate_allows_cleaned_recovery(
         gate(reasons=["limb_velocity_spike_penalty"], exceedances=3, consecutive=2)
     ) is True
-    assert bake_and_rank_module.raw_wham_motion_gate_allows_cleaned_recovery(
+    assert bake_and_rank_module.raw_reconstruction_motion_gate_allows_cleaned_recovery(
         gate(reasons=["limb_velocity_spike_penalty"], exceedances=4, consecutive=2)
     ) is True
-    assert bake_and_rank_module.raw_wham_motion_gate_allows_cleaned_recovery(
+    assert bake_and_rank_module.raw_reconstruction_motion_gate_allows_cleaned_recovery(
         gate(reasons=["limb_velocity_spike_penalty"], exceedances=5, consecutive=2)
     ) is True
-    assert bake_and_rank_module.raw_wham_motion_gate_allows_cleaned_recovery(
+    assert bake_and_rank_module.raw_reconstruction_motion_gate_allows_cleaned_recovery(
         gate(reasons=["limb_velocity_spike_penalty"], exceedances=20, consecutive=2)
     ) is True
-    assert bake_and_rank_module.raw_wham_motion_gate_allows_cleaned_recovery(
+    assert bake_and_rank_module.raw_reconstruction_motion_gate_allows_cleaned_recovery(
         gate(reasons=["limb_velocity_spike_penalty"], exceedances=5, consecutive=3)
     ) is False
-    assert bake_and_rank_module.raw_wham_motion_gate_allows_cleaned_recovery(
+    assert bake_and_rank_module.raw_reconstruction_motion_gate_allows_cleaned_recovery(
         gate(reasons=["bone_length_instability_penalty"], exceedances=1, consecutive=1)
     ) is False
 
@@ -39703,7 +39118,6 @@ def test_process_ranked_candidate_skips_static_baked_motion(
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
             detect_source_segment=False,
             classify_support_dominance=False,
@@ -40587,7 +40001,6 @@ def test_materialized_output_gate_routes_paired_hands_without_source_baseline_to
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path,
-            wham_repo_path=None,
             body_model_root=None,
             min_selected_score=0.55,
             final_output_validation=True,
@@ -41403,7 +40816,6 @@ def test_materialized_selection_rejects_weak_cut_after_materialized_output_gate(
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
             min_selected_score=0.55,
         ),
@@ -41482,7 +40894,6 @@ def test_materialized_selection_blocks_failed_movement_cut_before_materializatio
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
             min_selected_score=0.55,
             final_output_validation=True,
@@ -42751,7 +42162,7 @@ def test_materialized_output_gate_rejects_phase_lost_from_complete_source(tmp_pa
     assert metrics["sourceFullRepetitionPhaseCompletenessMetrics"]["passed"] is True
 
 
-def test_materialized_output_gate_rejects_post_wham_crop_that_loses_validated_parent_phase(
+def test_materialized_output_gate_rejects_post_reconstruction_crop_that_loses_validated_parent_phase(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -42947,7 +42358,6 @@ def test_acceptance_gate_does_not_promote_failed_metrics_after_visual_approval(
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path,
-            wham_repo_path=None,
             body_model_root=None,
             final_output_validation=True,
         ),
@@ -43078,7 +42488,6 @@ def test_acceptance_gate_persists_contract_reconciled_state_before_review_and_pa
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path,
-            wham_repo_path=None,
             body_model_root=None,
             final_output_validation=False,
         ),
@@ -43469,7 +42878,6 @@ def test_acceptance_gate_persists_reconciled_state_without_ranking(
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path,
-            wham_repo_path=None,
             body_model_root=None,
             final_output_validation=True,
         ),
@@ -43807,7 +43215,6 @@ def test_materialized_selection_source_capture_compares_selected_source_window(
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
             min_selected_score=0.55,
         ),
@@ -43966,7 +43373,6 @@ def test_materialized_selection_rejects_kinematic_failure_without_subinterval_re
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
             min_selected_score=0.55,
         ),
@@ -44060,7 +43466,6 @@ def test_materialized_selection_falls_back_after_best_candidate_downgrades(
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
             min_selected_score=0.55,
         ),
@@ -44074,7 +43479,7 @@ def test_materialized_selection_falls_back_after_best_candidate_downgrades(
     assert materialized_order == [0, 1]
 
 
-def test_rank_review_item_does_not_run_post_wham_movement_cut(
+def test_rank_review_item_does_not_run_post_reconstruction_movement_cut(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -44129,14 +43534,13 @@ def test_rank_review_item_does_not_run_post_wham_movement_cut(
 
     def fake_caption_images(**_kwargs: object) -> str:
         called.append("caption_images")
-        raise AssertionError("post-WHAM movement cut should not call the VLM")
+        raise AssertionError("post-RECONSTRUCTION movement cut should not call the VLM")
 
     ranking = bake_and_rank_module.rank_review_item_with_caption_images(
         item,
         BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
             review_frames=4,
             max_review_windows=1,
@@ -44147,12 +43551,12 @@ def test_rank_review_item_does_not_run_post_wham_movement_cut(
     assert called == []
     assert ranking.score == pytest.approx(1.0)
     assert ranking.model_score == pytest.approx(1.0)
-    assert "post_wham_full_artifact_review" in ranking.reasons
-    assert "post_wham_movement_cut_selection_disabled" in ranking.reasons
+    assert "post_reconstruction_full_artifact_review" in ranking.reasons
+    assert "post_reconstruction_movement_cut_selection_disabled" in ranking.reasons
     assert ranking.payload is not None
-    assert ranking.payload["postWhamMovementCutSelectionEnabled"] is False
-    assert ranking.payload["postWhamMovementCutSelectionDisabledReason"] == "no_detected_complete_loop"
-    assert ranking.payload["postWhamSelectionPolicy"] == "full_generated_fallback"
+    assert ranking.payload["postReconstructionMovementCutSelectionEnabled"] is False
+    assert ranking.payload["postReconstructionMovementCutSelectionDisabledReason"] == "no_detected_complete_loop"
+    assert ranking.payload["postReconstructionSelectionPolicy"] == "full_generated_fallback"
     assert ranking.payload["sectionSelectionPolicy"] == "selected_artifact_window"
     assert ranking.payload["finalCutResponsibility"] == "full_generated_fallback"
     assert ranking.payload["reviewFrameSource"] == "full_generated_preview_validation"
@@ -44573,7 +43977,7 @@ def test_build_source_cut_candidate_windows_keeps_full_parent_chunk_as_candidate
     assert any(window.end_seconds - window.start_seconds < 7.0 for window in windows[:-1])
 
 
-def test_source_cut_candidate_windows_can_respect_full_rep_minimum_for_pre_wham() -> None:
+def test_source_cut_candidate_windows_can_respect_full_rep_minimum_for_pre_reconstruction() -> None:
     parent = DetectionWindow(index=0, start_seconds=0.0, end_seconds=8.0)
     chunk_estimate = SimpleNamespace(rep_duration_min_sec=3.0, rep_duration_max_sec=8.0)
 
@@ -45446,7 +44850,6 @@ def test_active_travel_source_windows_prioritize_locomotion_over_pickup(tmp_path
     request = bake_and_rank_module.BakeAndRankRequest(
         candidates_json=tmp_path / "candidates.json",
         workspace=tmp_path / "workspace",
-        wham_repo_path=None,
         body_model_root=None,
     )
 
@@ -45700,7 +45103,7 @@ def test_source_cut_scorecard_semantic_rejection_owns_identity_despite_pose_cycl
     assert "source_cut_setup_or_filler" in row["rejectionReasons"]
 
 
-def test_selection_manifest_reports_post_wham_loop_policy(tmp_path: Path) -> None:
+def test_selection_manifest_reports_post_reconstruction_loop_policy(tmp_path: Path) -> None:
     candidates_json = tmp_path / "candidates.json"
     candidates_json.write_text("{}", encoding="utf-8")
 
@@ -45708,7 +45111,6 @@ def test_selection_manifest_reports_post_wham_loop_policy(tmp_path: Path) -> Non
         request=BakeAndRankRequest(
             candidates_json=candidates_json,
             workspace=tmp_path / "build",
-            wham_repo_path=None,
             body_model_root=None,
         ),
         candidate_results=[],
@@ -45716,8 +45118,8 @@ def test_selection_manifest_reports_post_wham_loop_policy(tmp_path: Path) -> Non
         selected=None,
     )
 
-    assert manifest["sectionSelectionPolicy"] == "deterministic_post_wham_loop_required"
-    assert manifest["postWhamTemporalCutEnabled"] is True
+    assert manifest["sectionSelectionPolicy"] == "deterministic_post_reconstruction_loop_required"
+    assert manifest["postReconstructionTemporalCutEnabled"] is True
 
 
 def test_progressive_source_cut_accepts_isolated_passing_window() -> None:
@@ -46621,7 +46023,7 @@ def test_equipment_observation_crops_small_subject_on_white_canvas(tmp_path: Pat
     source_path = tmp_path / "source.jpg"
     assert cv2.imwrite(str(source_path), image)
 
-    prepared = bake_and_rank_module.prepare_pre_wham_equipment_observation_frames(
+    prepared = bake_and_rank_module.prepare_pre_reconstruction_equipment_observation_frames(
         [source_path],
         output_dir=tmp_path / "prepared",
     )
@@ -47545,7 +46947,7 @@ def test_expand_detection_source_retrims_when_cycle_extends_past_clip(
         detection_source_offset_seconds=4.0,
         pose_payload={"dominantPoseSamples": samples},
         contract={"completionMode": "return_to_start", "movementType": "repetition"},
-        output_dir=tmp_path / "pre_wham",
+        output_dir=tmp_path / "pre_reconstruction",
     )
 
     assert result is not None
@@ -47904,13 +47306,13 @@ def test_source_phase_gate_ignores_isolated_endpoint_pose_jitter() -> None:
     assert metrics["majorPhaseSequence"] == ["low", "high", "low"]
 
 
-def test_pre_wham_rejection_reason_tags_include_structured_failure_evidence() -> None:
-    reasons = bake_and_rank_module.pre_wham_source_rejection_reason_tags(
+def test_pre_reconstruction_rejection_reason_tags_include_structured_failure_evidence() -> None:
+    reasons = bake_and_rank_module.pre_reconstruction_source_rejection_reason_tags(
         {
-            "status": "skipped_pre_wham_source_validation",
+            "status": "skipped_pre_reconstruction_source_validation",
             "failures": [
                 {
-                    "reason": "pre_wham_source_validation_rejected",
+                    "reason": "pre_reconstruction_source_validation_rejected",
                     "reasonTags": [
                         "source_candidate_window_choice_failed",
                         "source_cut_deterministic_pose_found_no_complete_cycle",
@@ -47922,7 +47324,7 @@ def test_pre_wham_rejection_reason_tags_include_structured_failure_evidence() ->
     )
 
     assert reasons == [
-        "pre_wham_source_validation_rejected",
+        "pre_reconstruction_source_validation_rejected",
         "source_candidate_window_choice_failed",
         "source_cut_deterministic_pose_found_no_complete_cycle",
     ]
@@ -49039,7 +48441,6 @@ def test_llm_review_frame_count_scales_for_fast_movement_boundaries(tmp_path: Pa
     request = BakeAndRankRequest(
         candidates_json=tmp_path / "candidates.json",
         workspace=tmp_path / "build",
-        wham_repo_path=None,
         body_model_root=None,
         review_frames=6,
     )
@@ -49766,7 +49167,6 @@ def test_final_output_validator_rejects_materialized_selection(
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path,
-            wham_repo_path=None,
             body_model_root=None,
             final_output_validation=True,
         ),
@@ -49843,7 +49243,6 @@ def test_final_output_validator_keeps_soft_boundary_concerns_as_manual_review_wa
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path,
-            wham_repo_path=None,
             body_model_root=None,
             final_output_validation=True,
         ),
@@ -49930,7 +49329,6 @@ def test_materialized_acceptance_rejects_hard_deterministic_target_motion_failur
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path,
-            wham_repo_path=None,
             body_model_root=None,
             final_output_validation=True,
         ),
@@ -50027,7 +49425,6 @@ def test_materialized_acceptance_rejects_deterministic_phase_failure_despite_fin
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path,
-            wham_repo_path=None,
             body_model_root=None,
             final_output_validation=True,
         ),
@@ -50168,7 +49565,6 @@ def test_final_output_validation_passes_source_context_before_preview(
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path,
-            wham_repo_path=None,
             body_model_root=None,
             final_output_validation=True,
         ),
@@ -50270,7 +49666,6 @@ def test_final_output_validation_does_not_grade_source_without_preview(
             request=BakeAndRankRequest(
                 candidates_json=tmp_path / "candidates.json",
                 workspace=tmp_path,
-                wham_repo_path=None,
                 body_model_root=None,
                 final_output_validation=True,
             ),
@@ -50320,7 +49715,6 @@ def test_final_output_validation_skips_vlm_after_deterministic_hard_rejection(
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path,
-            wham_repo_path=None,
             body_model_root=None,
             final_output_validation=True,
         ),
@@ -50368,7 +49762,6 @@ def test_final_output_validation_warns_on_low_deterministic_readability_without_
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path,
-            wham_repo_path=None,
             body_model_root=None,
             final_output_validation=True,
         ),
@@ -50427,7 +49820,6 @@ def test_final_output_validation_reviews_every_materialized_candidate_when_vlm_i
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path,
-            wham_repo_path=None,
             body_model_root=None,
             final_output_validation=True,
         ),
@@ -50746,7 +50138,6 @@ def test_final_output_risk_screen_requires_review_for_adjacent_variant_and_barbe
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path,
-            wham_repo_path=None,
             body_model_root=None,
             final_output_validation=True,
         ),
@@ -50800,7 +50191,6 @@ def test_final_output_risk_review_promotes_confirmed_adjacent_variant_to_rejecti
         request=BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path,
-            wham_repo_path=None,
             body_model_root=None,
             final_output_validation=True,
         ),
@@ -51250,7 +50640,7 @@ def test_preview_does_not_refine_structurally_refined_motion_twice() -> None:
     assert preview_module._prepare_preview_clip(clip) is clip
 
 
-def test_selected_source_pose_reference_is_promoted_for_wham_gate(tmp_path: Path) -> None:
+def test_selected_source_pose_reference_is_promoted_for_reconstruction_gate(tmp_path: Path) -> None:
     nested_reference = tmp_path / "confirmation" / "exact_source_pose_reference.json"
     nested_reference.parent.mkdir(parents=True)
     nested_reference.write_text('{"pose": {"frames": []}}', encoding="utf-8")
@@ -51267,7 +50657,7 @@ def test_selected_source_pose_reference_is_promoted_for_wham_gate(tmp_path: Path
     assert validation["sourcePoseReferencePromoted"] is True
 
 
-def test_exact_pre_wham_source_phase_validation_is_content_cached(
+def test_exact_pre_reconstruction_source_phase_validation_is_content_cached(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -51300,13 +50690,13 @@ def test_exact_pre_wham_source_phase_validation_is_content_cached(
         "observableMotionSpec": {"requiresReturnToStart": True},
     }
 
-    first = bake_and_rank_module.validate_exact_pre_wham_source_video(
+    first = bake_and_rank_module.validate_exact_pre_reconstruction_source_video(
         source_video_path=source_video,
         exercise_name="Movement",
         exercise_motion_contract=contract,
         cache_path=cache_path,
     )
-    second = bake_and_rank_module.validate_exact_pre_wham_source_video(
+    second = bake_and_rank_module.validate_exact_pre_reconstruction_source_video(
         source_video_path=source_video,
         exercise_name="Movement",
         exercise_motion_contract=contract,
@@ -51361,7 +50751,7 @@ def test_exact_source_phase_validation_cache_reuses_identical_clips_across_works
 
     monkeypatch.setattr(
         bake_and_rank_module,
-        "validate_exact_pre_wham_source_video",
+        "validate_exact_pre_reconstruction_source_video",
         fake_validate,
     )
     def run_with_exclusive_handoff(
@@ -51416,7 +50806,7 @@ def test_exact_source_phase_validation_cache_reuses_identical_clips_across_works
     assert handoff_options == [{}, {}]
 
 
-def test_pre_wham_source_pose_prefilter_uses_exclusive_gpu_handoff(
+def test_pre_reconstruction_source_pose_prefilter_uses_exclusive_gpu_handoff(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -51454,12 +50844,12 @@ def test_pre_wham_source_pose_prefilter_uses_exclusive_gpu_handoff(
     )
     monkeypatch.setattr(
         bake_and_rank_module,
-        "write_pre_wham_source_selection_manifest",
+        "write_pre_reconstruction_source_selection_manifest",
         lambda **_kwargs: None,
     )
 
     with pytest.raises(bake_and_rank_module.SourceCandidateRejected):
-        bake_and_rank_module.choose_pre_wham_source_cut_or_reject(
+        bake_and_rank_module.choose_pre_reconstruction_source_cut_or_reject(
             ranked_candidate=SimpleNamespace(
                 exercise_name="Bench Press",
                 candidate={},
@@ -51841,7 +51231,7 @@ def test_source_confirmed_support_uses_output_foot_instead_of_source_ankle_proxy
     assert interval["evaluatedJointName"] == "left_foot"
 
 
-def test_source_confirmed_support_allows_wham_travel_within_source_observed_partial_interval() -> None:
+def test_source_confirmed_support_allows_reconstruction_travel_within_source_observed_partial_interval() -> None:
     frames = []
     for index in range(48):
         frames.append(
@@ -52584,7 +51974,7 @@ def test_support_lock_baseline_safety_gate_ignores_global_rigid_reorientation() 
     assert metrics["maxPelvisDeviation"] == pytest.approx(0.0, abs=1e-9)
 
 
-def test_pre_wham_source_metrics_fall_back_to_selected_candidate_artifact(
+def test_pre_reconstruction_source_metrics_fall_back_to_selected_candidate_artifact(
     tmp_path: Path,
 ) -> None:
     segment_detection = tmp_path / "segment_detection"
@@ -52604,8 +51994,8 @@ def test_pre_wham_source_metrics_fall_back_to_selected_candidate_artifact(
         encoding="utf-8",
     )
 
-    metrics = bake_and_rank_module.load_pre_wham_exact_source_phase_metrics(tmp_path)
-    evidence = bake_and_rank_module.pre_wham_source_foot_support_evidence(tmp_path)
+    metrics = bake_and_rank_module.load_pre_reconstruction_exact_source_phase_metrics(tmp_path)
+    evidence = bake_and_rank_module.pre_reconstruction_source_foot_support_evidence(tmp_path)
 
     assert metrics is not None
     assert metrics["passed"] is True
@@ -54440,7 +53830,7 @@ def test_preview_settings_variants_exclude_scene_inversion_and_include_global_dr
         "sceneInverted": False,
     }
     assert "no-support-lock-no-auto-alignment-inverted" not in options_by_id
-def test_wham_input_quarter_turn_does_not_treat_horizontal_posture_as_sideways_video() -> None:
+def test_reconstruction_input_quarter_turn_does_not_treat_horizontal_posture_as_sideways_video() -> None:
     samples = [
         {
             "keypoints": {
@@ -54454,10 +53844,10 @@ def test_wham_input_quarter_turn_does_not_treat_horizontal_posture_as_sideways_v
     ]
     candidate = {"visionPayload": {"posePrefilter": {"dominantPoseSamples": samples}}}
 
-    assert bake_and_rank_module.wham_input_quarter_turn_from_candidate(candidate) == 0
+    assert bake_and_rank_module.reconstruction_input_quarter_turn_from_candidate(candidate) == 0
 
 
-def test_normalize_wham_input_orientation_preserves_explicit_camera_space_rotation_sign(
+def test_normalize_reconstruction_input_orientation_preserves_explicit_camera_space_rotation_sign(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -54479,7 +53869,7 @@ def test_normalize_wham_input_orientation_preserves_explicit_camera_space_rotati
         exercise_name="Dumbbell Bench Press",
         exercise_slug="dumbbell-bench-press",
         candidate={
-            "whamInputRotationDegrees": 90,
+            "reconstructionInputRotationDegrees": 90,
             "visionPayload": {"posePrefilter": {"dominantPoseSamples": samples}},
         },
     )
@@ -54498,23 +53888,23 @@ def test_normalize_wham_input_orientation_preserves_explicit_camera_space_rotati
         fake_rotate_video_quarter_turn,
     )
 
-    normalized_path, output_rotation = bake_and_rank_module.normalize_wham_input_orientation(
+    normalized_path, output_rotation = bake_and_rank_module.normalize_reconstruction_input_orientation(
         ranked_candidate=ranked_candidate,
         candidate_workspace=tmp_path,
         selected_video_path=selected_video_path,
     )
 
     metadata = json.loads(
-        (tmp_path / "input" / "wham_orientation_normalization.json").read_text(encoding="utf-8")
+        (tmp_path / "input" / "reconstruction_orientation_normalization.json").read_text(encoding="utf-8")
     )
-    assert normalized_path == tmp_path / "input" / "wham_inference_upright.mp4"
+    assert normalized_path == tmp_path / "input" / "reconstruction_inference_upright.mp4"
     assert output_rotation == pytest.approx(90.0)
     assert metadata["inputRotationDegrees"] == 90
     assert metadata["outputRotationDegrees"] == 90
     assert metadata["rotationSource"] == "explicit_candidate_video_orientation"
 
 
-def test_wham_input_quarter_turn_keeps_upright_subject_unchanged() -> None:
+def test_reconstruction_input_quarter_turn_keeps_upright_subject_unchanged() -> None:
     samples = [
         {
             "keypoints": {
@@ -54528,27 +53918,27 @@ def test_wham_input_quarter_turn_keeps_upright_subject_unchanged() -> None:
     ]
     candidate = {"visionPayload": {"posePrefilter": {"dominantPoseSamples": samples}}}
 
-    assert bake_and_rank_module.wham_input_quarter_turn_from_candidate(candidate) == 0
+    assert bake_and_rank_module.reconstruction_input_quarter_turn_from_candidate(candidate) == 0
 
 
-def test_wham_input_quarter_turn_accepts_only_explicit_quarter_turns() -> None:
-    assert bake_and_rank_module.wham_input_quarter_turn_from_candidate(
-        {"whamInputRotationDegrees": -90}
+def test_reconstruction_input_quarter_turn_accepts_only_explicit_quarter_turns() -> None:
+    assert bake_and_rank_module.reconstruction_input_quarter_turn_from_candidate(
+        {"reconstructionInputRotationDegrees": -90}
     ) == -90
-    assert bake_and_rank_module.wham_input_quarter_turn_from_candidate(
-        {"whamInputRotationDegrees": 180}
+    assert bake_and_rank_module.reconstruction_input_quarter_turn_from_candidate(
+        {"reconstructionInputRotationDegrees": 180}
     ) == 0
 
 
-def test_legacy_pose_inferred_wham_rotation_is_invalidated(tmp_path: Path) -> None:
-    metadata_path = tmp_path / "input" / "wham_orientation_normalization.json"
+def test_legacy_pose_inferred_reconstruction_rotation_is_invalidated(tmp_path: Path) -> None:
+    metadata_path = tmp_path / "input" / "reconstruction_orientation_normalization.json"
     metadata_path.parent.mkdir(parents=True)
     metadata_path.write_text(
         json.dumps({"inputRotationDegrees": 90, "outputRotationDegrees": 90}),
         encoding="utf-8",
     )
 
-    assert bake_and_rank_module.used_legacy_pose_inferred_wham_input_rotation(tmp_path) is True
+    assert bake_and_rank_module.used_legacy_pose_inferred_reconstruction_input_rotation(tmp_path) is True
 
     metadata_path.write_text(
         json.dumps(
@@ -54560,26 +53950,26 @@ def test_legacy_pose_inferred_wham_rotation_is_invalidated(tmp_path: Path) -> No
         ),
         encoding="utf-8",
     )
-    assert bake_and_rank_module.used_legacy_pose_inferred_wham_input_rotation(tmp_path) is False
+    assert bake_and_rank_module.used_legacy_pose_inferred_reconstruction_input_rotation(tmp_path) is False
 
 
-def test_legacy_wham_rotation_metadata_is_repaired_only_by_matching_explicit_evidence(
+def test_legacy_reconstruction_rotation_metadata_is_repaired_only_by_matching_explicit_evidence(
     tmp_path: Path,
 ) -> None:
-    metadata_path = tmp_path / "input" / "wham_orientation_normalization.json"
+    metadata_path = tmp_path / "input" / "reconstruction_orientation_normalization.json"
     metadata_path.parent.mkdir(parents=True)
     metadata_path.write_text(
         json.dumps({"inputRotationDegrees": -90, "outputRotationDegrees": -90}),
         encoding="utf-8",
     )
 
-    repaired = bake_and_rank_module.repair_legacy_wham_input_rotation_metadata(
+    repaired = bake_and_rank_module.repair_legacy_reconstruction_input_rotation_metadata(
         tmp_path,
-        candidate={"whamInputRotationDegrees": -90},
+        candidate={"reconstructionInputRotationDegrees": -90},
     )
 
     assert repaired is True
-    assert bake_and_rank_module.used_legacy_pose_inferred_wham_input_rotation(tmp_path) is False
+    assert bake_and_rank_module.used_legacy_pose_inferred_reconstruction_input_rotation(tmp_path) is False
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     assert metadata["rotationSource"] == "explicit_candidate_video_orientation"
 
@@ -55129,7 +54519,7 @@ def test_kinematic_cut_distinct_end_uses_first_extreme_when_pose_labels_fail() -
 
 def test_cpu_fit_slot_does_not_deadlock_on_priority_from_concurrent_finalize() -> None:
     """The live deadlock: one finalize holds priority open while blocked on the
-    WHAM-exclusive section, another finalize holds that section and waits for a
+    RECONSTRUCTION-exclusive section, another finalize holds that section and waits for a
     fit slot. The second finalization's own fit must never block on the
     priority gate (thread-local exemption), and a fit outside any priority
     context must proceed after the bounded grace instead of wedging forever.
@@ -55145,7 +54535,7 @@ def test_cpu_fit_slot_does_not_deadlock_on_priority_from_concurrent_finalize() -
 
     def holder() -> None:
         # Simulates finalize A: priority open, then blocked on the exclusive
-        # WHAM section while holding priority (it never acquires a slot).
+        # RECONSTRUCTION section while holding priority (it never acquires a slot).
         with fit_runtime.prioritize_fit_workspaces(["/workspace/a/bake/candidate-a"]):
             holder_acquired.set()
             release.wait(10)
@@ -55435,7 +54825,7 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
 ) -> None:
     """Run discovery, source prefetch, fit, render, review, and packaging in one process path.
 
-    Search, download, WHAM inference, and VLM responses use local deterministic
+    Search, download, RECONSTRUCTION inference, and VLM responses use local deterministic
     adapters. Discovery parsing and gates, source-cache identity and validation,
     fitting, rendering, review parsing, artifact lineage, and packaging use
     their production implementations.
@@ -55533,10 +54923,10 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
         frames=frames,
     )
     normalized_motion_path = tmp_path / "normalized_motion.json"
-    # The normalized-motion hook stands in for WHAM output, so its cache must
-    # use WHAM's Y-down/Z-forward basis. Production canonicalization then
+    # The normalized-motion hook stands in for RECONSTRUCTION output, so its cache must
+    # use RECONSTRUCTION's Y-down/Z-forward basis. Production canonicalization then
     # returns the same pose used to make the source video and 2D observations.
-    wham_camera_clip = MotionClip(
+    reconstruction_camera_clip = MotionClip(
         fps=canonical_clip.fps,
         joint_names=canonical_clip.joint_names,
         frames=[
@@ -55550,7 +54940,7 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
             for frame in canonical_clip.frames
         ],
     )
-    save_motion_json(normalized_motion_path, wham_camera_clip)
+    save_motion_json(normalized_motion_path, reconstruction_camera_clip)
 
     source_video = tmp_path / "squat_fixture.mp4"
     width, height = 160, 120
@@ -55751,9 +55141,9 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
             json.dumps(
                 {
                     "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
-                    "role": "pre_wham_validated_source_cut",
-                    "sourcePrepReason": "pre_wham_source_window_choice",
-                    "preWhamSourceValidationEnabled": True,
+                    "role": "pre_reconstruction_validated_source_cut",
+                    "sourcePrepReason": "pre_reconstruction_source_window_choice",
+                    "preReconstructionSourceValidationEnabled": True,
                     "exerciseMotionContractEnabled": True,
                     "exerciseMotionContractStatus": "generated",
                     "exerciseMotionContract": contract,
@@ -55815,8 +55205,7 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
         encoding="utf-8",
     )
 
-    wham_repo_path = tmp_path / "WHAM"
-    body_model_root = wham_repo_path / "dataset" / "body_models"
+    body_model_root = tmp_path / "body_models"
     body_model_root.mkdir(parents=True)
     output_path = tmp_path / "workout_plan_with_movements.json"
     source_outcome_path = tmp_path / "source_outcome_index.json"
@@ -55847,8 +55236,6 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
             str(output_path),
             "-PythonCommand",
             sys.executable,
-            "-WhamRepoPath",
-            str(wham_repo_path),
             "-BodyModelRoot",
             str(body_model_root),
             "-SourceOutcomeIndexJson",
@@ -55879,9 +55266,8 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
                 else ["-SkipSourceSegmentDetection", "-SkipTwoScaleSourceValidation"]
             ),
             "-SkipAdaptivePreviewSettings",
-            "-NoWhamDocker",
             "-MotionReconstructor",
-            "wham",
+            "reconstruction",
             "-MaxCandidates",
             "1",
             "-MaxSourceWindowAttempts",
@@ -56100,7 +55486,7 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
         assert source_selection["selectedSpan"]["endSeconds"] == pytest.approx(
             frames[-1].time_sec
         )
-        assert source_selection["sourcePrepReason"] == "pre_wham_source_window_choice"
+        assert source_selection["sourcePrepReason"] == "pre_reconstruction_source_window_choice"
         assert source_selection["exactSourcePhaseValidation"]["cacheStatus"] in {
             "computed",
             "reused_deterministic_candidate_confirmation",

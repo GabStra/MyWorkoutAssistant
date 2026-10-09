@@ -134,9 +134,14 @@ OFF's RDL CPU task took 5.922s wall / 1.563s thread CPU to slot acquisition, wit
 
 ### 4. Reconstruction startup amortization
 
+The measurements in this section are historical evidence from the former
+WHAM backend. Its local checkout, Python inference path, SLAM/SMPLify
+setup, and warm worker have been removed. Current production reconstruction uses
+GVHMR in Docker; the historical timings below do not describe its runtime.
+
 **Priority:** 53.899-108.102s measured startup versus only 2.441-3.838s reported prediction work across the pair. Prediction is only a subset of reconstruction; this does not mean all remaining reconstruction time is removable.
 
-**Owners:** `wham_runner.py::ensure_warm_worker_ready`, `run_wham_with_warm_worker`; `gvhmr_warm_worker.py`; production PowerShell worker lifecycle. Coverage: `tests/test_wham_warm_worker_recovery.py` and existing worker ownership checks.
+**Historical owners:** `wham_runner.py::ensure_warm_worker_ready`, `run_wham_with_warm_worker`, and the former WHAM warm worker. These implementation paths were removed; the current GVHMR worker has separate lifecycle code.
 
 - [x] Inspect retained lifecycle events: container/process startup, import, checkpoint load, readiness, GPU acquisition, shutdown and existing warm-worker reuse. Determine whether the next request/wave can actually reuse this worker under exclusive GPU transitions.
 - [x] Propose a change only for a demonstrated redundant startup/load or avoidable restart. The retained runs start one worker for two requests; final VLM requires the GPU handoff. The 53.899s/108.102s cold-load spread is unattributed, not proof of removable work. No lifecycle change is justified.

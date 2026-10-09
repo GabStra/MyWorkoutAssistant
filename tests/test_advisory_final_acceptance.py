@@ -125,7 +125,7 @@ def test_truncated_visual_response_keeps_only_complete_advisory_findings(tmp_pat
            '{"kind":"readability","frameIndices":[0],"observation":"Press motion is readable."},'
            '{"kind":"mesh","frameIndices":[0],"observation":"cut off')
     req = bake.BakeAndRankRequest(candidates_json=tmp_path / "unused.json", workspace=tmp_path,
-        wham_repo_path=None, body_model_root=None, final_output_validation=True,
+        body_model_root=None, final_output_validation=True,
         two_scale_source_validation=False)
     visual = bake.validate_final_output_with_caption_images(
         item, bake.LoopRanking(.9, [], {}), request=req, caption_images=lambda **_: raw,
@@ -163,7 +163,7 @@ def test_single_observation_call_has_no_corroboration(tmp_path, monkeypatch, mod
             raise TimeoutError("Optional observer timeout after source validation")
         return json.dumps({"findings": [{"kind": "mesh", "frameIndices": [0], "observation": "Possible artifact"}]})
     req = bake.BakeAndRankRequest(candidates_json=tmp_path / "unused.json", workspace=tmp_path,
-        wham_repo_path=None, body_model_root=None, final_output_validation=True, two_scale_source_validation=True)
+        body_model_root=None, final_output_validation=True, two_scale_source_validation=True)
     result = bake.final_output_validation_metrics(item, bake.LoopRanking(.9, [], {}),
         request=req, caption_images=caption, deterministic_metrics={"passed": True})
     assert result["passed"] and result["sourceEvidence"]["passed"]

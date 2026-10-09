@@ -4,7 +4,7 @@ The shared server (see ``exercise_motion_pkg/SHARED_LLAMA_SERVER.md``) is owned
 by the PowerShell supervisor, not by any Python client. Attached processes
 coordinate through a session directory that mirrors the warm-worker contract
 (``ready.json`` / ``heartbeat.json`` / ``stop`` markers), with one addition the
-warm workers never needed: an exclusive-GPU quiesce protocol. GVHMR/WHAM
+warm workers never needed: an exclusive-GPU quiesce protocol. GVHMR/RECONSTRUCTION
 reconstruction can never co-reside with the ~7.9 GiB vision server, so a
 process that needs the whole GPU must first prove that no attached process has
 an in-flight VLM request before the server is stopped, and must ask the

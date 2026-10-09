@@ -179,14 +179,14 @@ def test_repaired_source_verdict_is_reused_with_provenance(tmp_path, monkeypatch
 def test_cpu_render_prefetch_uses_production_baker_without_caption_model(tmp_path, monkeypatch):
     candidate = bake.RankedCandidate(0, 1, "curl", "Curl", "curl", {"videoId": "id"})
     request = bake.BakeAndRankRequest(candidates_json=tmp_path / "candidates.json", workspace=tmp_path,
-        wham_repo_path=None, body_model_root=None, adaptive_preview_settings=True)
+        body_model_root=None, adaptive_preview_settings=True)
     item = wave.StagedWaveItem("curl", "Curl", request)
     preview = tmp_path / "preview.html"; preview.write_text("html")
     cleaned = tmp_path / "cleaned.json"; cleaned.write_text("{}")
-    monkeypatch.setattr(bake, "pre_wham_source_interval_authority", lambda **kwargs: "authority")
+    monkeypatch.setattr(bake, "pre_reconstruction_source_interval_authority", lambda **kwargs: "authority")
     monkeypatch.setattr(bake, "load_motion_json", lambda path: "clip")
     monkeypatch.setattr(bake, "build_candidate_review_eligible_loops", lambda clip, **kwargs: ["loop"])
-    monkeypatch.setattr(bake, "pre_wham_source_foot_support_evidence", lambda workspace: {"foot": "supported"})
+    monkeypatch.setattr(bake, "pre_reconstruction_source_foot_support_evidence", lambda workspace: {"foot": "supported"})
     calls = []
     def render(*args, **kwargs):
         calls.append((args, kwargs))
@@ -215,7 +215,7 @@ def test_wave_overlaps_cpu_render_with_extraction_but_waits_to_start_final_vlm(t
     monkeypatch.setattr(wave, "first_attempt_readiness_assessment", lambda *args, **kwargs: {"eligible": True})
     items = [wave.StagedWaveItem(name, name, bake.BakeAndRankRequest(
         candidates_json=tmp_path / "candidates.json", workspace=tmp_path / name,
-        wham_repo_path=None, body_model_root=None, fallback_candidates=0, max_final_output_rejections=0))
+        body_model_root=None, fallback_candidates=0, max_final_output_rejections=0))
         for name in ("first", "second")]
     monkeypatch.setattr(wave, "_wave_candidates_for_item", lambda item: [bake.RankedCandidate(
         0, 1, item.exercise_id, item.exercise_name, item.exercise_id, {"videoId": item.exercise_id})])
@@ -224,7 +224,7 @@ def test_wave_overlaps_cpu_render_with_extraction_but_waits_to_start_final_vlm(t
         if candidate.exercise_id == "second":
             assert rendered.wait(5), "Rendering did not start while another extraction was active"
             second_extracted.set()
-        return SimpleNamespace(wham_cache_status="reused", wham_results_pkl=None)
+        return SimpleNamespace(reconstruction_cache_status="reused", reconstruction_results_pkl=None)
     monkeypatch.setattr(wave, "generate_candidate_motion", generate)
     def render(item, candidate, result, contract):
         if candidate.exercise_id == "first":
@@ -233,7 +233,7 @@ def test_wave_overlaps_cpu_render_with_extraction_but_waits_to_start_final_vlm(t
             assert second_extracted.wait(5)
         return {"status": "prepared"}
     monkeypatch.setattr(wave, "prepare_cpu_render_cache", render)
-    monkeypatch.setattr(wave, "_stop_warm_wham_worker_before_vlm",
+    monkeypatch.setattr(wave, "_stop_warm_reconstruction_worker_before_vlm",
         lambda items: gpu_released.set() or {"stopped": True})
     def finalize(request, **kwargs):
         assert gpu_released.is_set()
@@ -276,7 +276,6 @@ def test_finalization_abandons_unfinished_speculative_prefetch(tmp_path, monkeyp
             bake.BakeAndRankRequest(
                 candidates_json=tmp_path / "candidates.json",
                 workspace=tmp_path / exercise_id,
-                wham_repo_path=None,
                 body_model_root=None,
                 fallback_candidates=0,
                 max_final_output_rejections=0,
@@ -292,7 +291,7 @@ def test_finalization_abandons_unfinished_speculative_prefetch(tmp_path, monkeyp
     def generate(candidate, **kwargs):
         if candidate.exercise_id == "other":
             assert render_started.wait(5), "The overlapping render was not started."
-        return SimpleNamespace(wham_cache_status="reused", wham_results_pkl=None)
+        return SimpleNamespace(reconstruction_cache_status="reused", reconstruction_results_pkl=None)
 
     monkeypatch.setattr(
         wave,
@@ -308,7 +307,7 @@ def test_finalization_abandons_unfinished_speculative_prefetch(tmp_path, monkeyp
         return {"status": "prepared", "artifactCount": 0}
 
     monkeypatch.setattr(wave, "prepare_cpu_render_cache", render)
-    monkeypatch.setattr(wave, "_stop_warm_wham_worker_before_vlm", lambda items: {"stopped": True})
+    monkeypatch.setattr(wave, "_stop_warm_reconstruction_worker_before_vlm", lambda items: {"stopped": True})
 
     def finalize(request, **kwargs):
         finalize_started.set()

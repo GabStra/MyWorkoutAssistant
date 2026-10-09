@@ -63,7 +63,7 @@ def test_complete_source_context_can_recover_outside_partial_discovery_hint(tmp_
         assert variants and variants[0].hint.start_seconds < 1.
         assert variants[0].hint.end_seconds > 7.
         request = bake.BakeAndRankRequest(candidates_json=tmp_path/'candidates.json',
-            workspace=tmp_path/'workspace', wham_repo_path=None, body_model_root=None,
+            workspace=tmp_path/'workspace', body_model_root=None,
             segment_max_seconds=0.)
         assert bake.collect_source_window_variants(candidate, request=request)[0].source == 'observed_complete_source_cycle'
 
@@ -93,7 +93,7 @@ def test_cyclic_source_retains_endpoint_samples_for_3d_loop_selection(tmp_path, 
 
 def test_materialized_source_reference_is_not_cut_twice(recorded_sources):
     pose = recorded_sources["barbell-bench-press"]["pose"]
-    ranking = bake.LoopRanking(0, [], payload={"preWhamSourceIntervalAuthority": {
+    ranking = bake.LoopRanking(0, [], payload={"preReconstructionSourceIntervalAuthority": {
         "movementInstance": {"trimmed": True, "endRatio": .52},
     }})
     once = bake.source_pose_reference_for_materialized_review(pose, ranking=ranking)
@@ -108,7 +108,7 @@ def test_selected_video_uses_review_interval_not_cached_ratio(tmp_path):
     (directory / "exact_source_pose_reference.json").write_text(json.dumps({
         "pose": {"authoritativeMovementInstance": {"trimmed": True, "endRatio": .2}},
     }), encoding="utf-8")
-    item = SimpleNamespace(candidate_workspace=tmp_path, loop_index=0,
+    item = SimpleNamespace(candidate={}, candidate_workspace=tmp_path, loop_index=0,
                            loop_start_seconds=0., loop_end_seconds=1.6, duration_sec=1.6,
                            source_review_video_path=None, source_review_start_seconds=None,
                            source_review_end_seconds=None)
@@ -117,7 +117,7 @@ def test_selected_video_uses_review_interval_not_cached_ratio(tmp_path):
     assert window.end_seconds == 1.6
 
 
-def test_validated_pre_wham_interval_exports_full_source_while_unvalidated_item_keeps_crop(
+def test_validated_pre_reconstruction_interval_exports_full_source_while_unvalidated_item_keeps_crop(
     tmp_path, monkeypatch,
 ):
     workspace = tmp_path / "candidate"
@@ -150,7 +150,7 @@ def test_validated_pre_wham_interval_exports_full_source_while_unvalidated_item_
             loop_start_seconds=0.0,
             loop_end_seconds=2.733,
             candidate={
-                "preWhamSourceIntervalAuthority": {"authoritative": authoritative},
+                "preReconstructionSourceIntervalAuthority": {"authoritative": authoritative},
             },
         )
 
@@ -172,8 +172,8 @@ def test_validated_pre_wham_interval_exports_full_source_while_unvalidated_item_
             "score": 1.0,
             "reasons": [],
             "payload": {
-                "sectionSelectionPolicy": "validated_pre_wham_source_interval",
-                "preWhamSourceIntervalAuthority": {"authoritative": True},
+                "sectionSelectionPolicy": "validated_pre_reconstruction_source_interval",
+                "preReconstructionSourceIntervalAuthority": {"authoritative": True},
             },
         },
     }

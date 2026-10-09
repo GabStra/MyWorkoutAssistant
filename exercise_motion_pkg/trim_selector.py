@@ -13,10 +13,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import quote, unquote
 
-from exercise_motion_pkg.wham_runner import (
-    DEFAULT_WHAM_BODY_MODEL_ROOT,
-    DEFAULT_WHAM_ESTIMATE_LOCAL_ONLY,
-    DEFAULT_WHAM_REPO_PATH,
+from exercise_motion_pkg.reconstruction_runner import (
+    DEFAULT_RECONSTRUCTION_BODY_MODEL_ROOT,
 )
 from exercise_motion_pkg.video_utils import read_basic_video_metadata, trim_video
 from exercise_motion_pkg.youtube import download_youtube_preview, sanitize_video_for_processing
@@ -31,13 +29,9 @@ class TrimSelectorRequest:
     youtube_url: str | None = None
     video_path: Path | None = None
     youtube_cookies: Path | None = None
-    run_wham_on_write: bool = False
+    run_reconstruction_on_write: bool = False
     generation_workspace: Path = Path("build/exercise_motion")
-    wham_repo_path: Path = DEFAULT_WHAM_REPO_PATH
-    body_model_root: Path = DEFAULT_WHAM_BODY_MODEL_ROOT
-    wham_python_command: str = "python"
-    wham_estimate_local_only: bool = DEFAULT_WHAM_ESTIMATE_LOCAL_ONLY
-    wham_run_smplify: bool = True
+    body_model_root: Path = DEFAULT_RECONSTRUCTION_BODY_MODEL_ROOT
     motion_tuning_enabled: bool = True
     dominant_chain_ratio: float = 0.65
     non_dominant_damping: float = 1.0
@@ -54,13 +48,9 @@ class TrimSelectorSession:
     selection_json_path: Path
     exercise_slug: str
     youtube_url: str | None
-    run_wham_on_write: bool
+    run_reconstruction_on_write: bool
     generation_workspace: Path
-    wham_repo_path: Path
     body_model_root: Path
-    wham_python_command: str
-    wham_estimate_local_only: bool
-    wham_run_smplify: bool
     motion_tuning_enabled: bool
     dominant_chain_ratio: float
     non_dominant_damping: float
@@ -113,13 +103,9 @@ def prepare_trim_selector_session(request: TrimSelectorRequest) -> TrimSelectorS
         selection_json_path=root_dir / "trim_selection.json",
         exercise_slug=request.exercise_slug,
         youtube_url=request.youtube_url,
-        run_wham_on_write=request.run_wham_on_write,
+        run_reconstruction_on_write=request.run_reconstruction_on_write,
         generation_workspace=request.generation_workspace.expanduser().resolve(),
-        wham_repo_path=request.wham_repo_path.expanduser().resolve(),
         body_model_root=request.body_model_root.expanduser().resolve(),
-        wham_python_command=request.wham_python_command,
-        wham_estimate_local_only=request.wham_estimate_local_only,
-        wham_run_smplify=request.wham_run_smplify,
         motion_tuning_enabled=request.motion_tuning_enabled,
         dominant_chain_ratio=request.dominant_chain_ratio,
         non_dominant_damping=request.non_dominant_damping,
@@ -128,7 +114,7 @@ def prepare_trim_selector_session(request: TrimSelectorRequest) -> TrimSelectorS
 
 
 def build_trim_selector_handler(session: TrimSelectorSession) -> type[BaseHTTPRequestHandler]:
-    wham_state: dict[str, object] = {
+    reconstruction_state: dict[str, object] = {
         "session": session,
         "process": None,
         "pid": None,
@@ -152,8 +138,8 @@ def build_trim_selector_handler(session: TrimSelectorSession) -> type[BaseHTTPRe
                 else:
                     self._send_json({})
                 return
-            if request_path == "/wham-status":
-                self._send_json(read_wham_status(wham_state))
+            if request_path == "/reconstruction-status":
+                self._send_json(read_reconstruction_status(reconstruction_state))
                 return
             if request_path.startswith("/generated/"):
                 generated_path = resolve_generated_artifact_path(session, request_path)
@@ -178,8 +164,7 @@ def build_trim_selector_handler(session: TrimSelectorSession) -> type[BaseHTTPRe
                 raise ValueError("endSeconds must be greater than startSeconds.")
             if end_seconds - start_seconds < MIN_TRIM_DURATION_SECONDS:
                 raise ValueError(f"Selection must be at least {MIN_TRIM_DURATION_SECONDS:.2f} seconds long.")
-            run_wham = bool(payload.get("runWham", False))
-            run_smplify = bool(payload.get("runSmplify", session.wham_run_smplify))
+            run_reconstruction = bool(payload.get("runReconstruction", False))
             motion_tuning_enabled = bool(payload.get("motionTuningEnabled", session.motion_tuning_enabled))
             dominant_chain_ratio = float(payload.get("dominantChainRatio", session.dominant_chain_ratio))
             non_dominant_damping = float(payload.get("nonDominantDamping", session.non_dominant_damping))
@@ -194,32 +179,29 @@ def build_trim_selector_handler(session: TrimSelectorSession) -> type[BaseHTTPRe
             generate_args = build_generate_command(
                 session,
                 output_path,
-                run_smplify=run_smplify,
                 motion_tuning_enabled=motion_tuning_enabled,
                 dominant_chain_ratio=dominant_chain_ratio,
                 non_dominant_damping=non_dominant_damping,
                 non_dominant_radius_scale=non_dominant_radius_scale,
             )
-            wham_process = None
-            if run_wham:
-                wham_process = start_wham_generation(
+            reconstruction_process = None
+            if run_reconstruction:
+                reconstruction_process = start_reconstruction_generation(
                     session,
                     output_path,
-                    run_smplify=run_smplify,
                     motion_tuning_enabled=motion_tuning_enabled,
                     dominant_chain_ratio=dominant_chain_ratio,
                     non_dominant_damping=non_dominant_damping,
                     non_dominant_radius_scale=non_dominant_radius_scale,
                 )
-                wham_state.update(
+                reconstruction_state.update(
                     {
                         "session": session,
-                        "process": wham_process["process"],
-                        "pid": wham_process["pid"],
-                        "logPath": wham_process["logPath"],
+                        "process": reconstruction_process["process"],
+                        "pid": reconstruction_process["pid"],
+                        "logPath": reconstruction_process["logPath"],
                         "started": True,
                         "returnCode": None,
-                        "runSmplify": run_smplify,
                         "motionTuningEnabled": motion_tuning_enabled,
                     }
                 )
@@ -236,11 +218,10 @@ def build_trim_selector_handler(session: TrimSelectorSession) -> type[BaseHTTPRe
                 "nonDominantDamping": non_dominant_damping,
                 "nonDominantRadiusScale": non_dominant_radius_scale,
                 "generateArgs": generate_args,
-                "whamStarted": wham_process is not None,
-                "whamRunSmplify": run_smplify if wham_process is not None else None,
-                "motionTuningEnabled": motion_tuning_enabled if wham_process is not None else None,
-                "whamPid": wham_process["pid"] if wham_process else None,
-                "whamLogPath": wham_process["logPath"] if wham_process else None,
+                "reconstructionStarted": reconstruction_process is not None,
+                "motionTuningEnabled": motion_tuning_enabled if reconstruction_process is not None else None,
+                "reconstructionPid": reconstruction_process["pid"] if reconstruction_process else None,
+                "reconstructionLogPath": reconstruction_process["logPath"] if reconstruction_process else None,
                 "artifactLinks": build_generated_artifact_links(session),
             }
             session.selection_json_path.write_text(json.dumps(selection, indent=2), encoding="utf-8")
@@ -305,7 +286,6 @@ def build_generate_command(
     session: TrimSelectorSession,
     selected_video_path: Path,
     *,
-    run_smplify: bool | None = None,
     motion_tuning_enabled: bool | None = None,
     dominant_chain_ratio: float | None = None,
     non_dominant_damping: float | None = None,
@@ -322,13 +302,11 @@ def build_generate_command(
         str(session.generation_workspace),
         "--video-path",
         str(selected_video_path.resolve()),
-        "--wham-repo-path",
-        str(session.wham_repo_path),
         "--body-model-root",
         str(session.body_model_root),
-        "--wham-python-command",
-        session.wham_python_command,
-        "--use-wham-docker",
+        "--use-reconstruction-docker",
+        "--motion-reconstructor",
+        "gvhmr",
         "--dominant-chain-ratio",
         str(session.dominant_chain_ratio if dominant_chain_ratio is None else dominant_chain_ratio),
         "--non-dominant-damping",
@@ -336,40 +314,31 @@ def build_generate_command(
         "--non-dominant-radius-scale",
         str(session.non_dominant_radius_scale if non_dominant_radius_scale is None else non_dominant_radius_scale),
     ]
-    if session.wham_estimate_local_only:
-        command.append("--wham-estimate-local-only")
-    should_run_smplify = session.wham_run_smplify if run_smplify is None else run_smplify
-    if not should_run_smplify:
-        command.append("--skip-wham-smplify")
     should_tune_motion = session.motion_tuning_enabled if motion_tuning_enabled is None else motion_tuning_enabled
     if not should_tune_motion:
         command.append("--skip-motion-tuning")
     return command
 
 
-def start_wham_generation(
+def start_reconstruction_generation(
     session: TrimSelectorSession,
     selected_video_path: Path,
     *,
-    run_smplify: bool,
     motion_tuning_enabled: bool,
     dominant_chain_ratio: float,
     non_dominant_damping: float,
     non_dominant_radius_scale: float,
 ) -> dict[str, object]:
-    if not session.wham_repo_path.exists():
-        raise FileNotFoundError(f"WHAM repo path not found: {session.wham_repo_path}")
     if not session.body_model_root.exists():
         raise FileNotFoundError(f"Body model root not found: {session.body_model_root}")
 
     logs_dir = session.root_dir / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    log_path = logs_dir / f"wham-generate-{timestamp}.log"
+    log_path = logs_dir / f"reconstruction-generate-{timestamp}.log"
     command = build_generate_command(
         session,
         selected_video_path,
-        run_smplify=run_smplify,
         motion_tuning_enabled=motion_tuning_enabled,
         dominant_chain_ratio=dominant_chain_ratio,
         non_dominant_damping=non_dominant_damping,
@@ -394,21 +363,21 @@ def start_wham_generation(
     }
 
 
-def read_wham_status(wham_state: dict[str, object]) -> dict[str, object]:
-    process = wham_state.get("process")
+def read_reconstruction_status(reconstruction_state: dict[str, object]) -> dict[str, object]:
+    process = reconstruction_state.get("process")
     return_code = None
     if isinstance(process, subprocess.Popen):
         return_code = process.poll()
-        wham_state["returnCode"] = return_code
-    elif wham_state.get("returnCode") is not None:
-        return_code = int(wham_state["returnCode"])
+        reconstruction_state["returnCode"] = return_code
+    elif reconstruction_state.get("returnCode") is not None:
+        return_code = int(reconstruction_state["returnCode"])
 
-    log_path_value = wham_state.get("logPath")
+    log_path_value = reconstruction_state.get("logPath")
     log_tail = ""
     if isinstance(log_path_value, str):
         log_tail = read_text_tail(Path(log_path_value), max_chars=12000)
 
-    if not wham_state.get("started"):
+    if not reconstruction_state.get("started"):
         status = "not_started"
     elif return_code is None:
         status = "running"
@@ -419,13 +388,12 @@ def read_wham_status(wham_state: dict[str, object]) -> dict[str, object]:
 
     return {
         "status": status,
-        "pid": wham_state.get("pid"),
+        "pid": reconstruction_state.get("pid"),
         "returnCode": return_code,
         "logPath": log_path_value,
         "logTail": log_tail,
-        "runSmplify": wham_state.get("runSmplify"),
-        "motionTuningEnabled": wham_state.get("motionTuningEnabled"),
-        "artifactLinks": build_generated_artifact_links_for_state(wham_state),
+        "motionTuningEnabled": reconstruction_state.get("motionTuningEnabled"),
+        "artifactLinks": build_generated_artifact_links_for_state(reconstruction_state),
     }
 
 
@@ -438,8 +406,8 @@ def read_text_tail(path: Path, *, max_chars: int) -> str:
     return text[-max_chars:]
 
 
-def build_generated_artifact_links_for_state(wham_state: dict[str, object]) -> dict[str, str]:
-    session = wham_state.get("session")
+def build_generated_artifact_links_for_state(reconstruction_state: dict[str, object]) -> dict[str, str]:
+    session = reconstruction_state.get("session")
     if isinstance(session, TrimSelectorSession):
         return build_generated_artifact_links(session)
     return {}
@@ -482,7 +450,7 @@ def build_trim_selector_html(session: TrimSelectorSession) -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>WHAM trim selector - {source_name}</title>
+  <title>GVHMR trim selector - {source_name}</title>
   <style>
     :root {{
       --bg: #f6f4ef;
@@ -680,9 +648,9 @@ def build_trim_selector_html(session: TrimSelectorSession) -> str:
         <button class="secondary" id="jumpStart">Jump to start</button>
         <button class="secondary" id="previewLoop">Preview selected loop</button>
         <div class="button-row">
-          <button class="secondary action" data-run-wham="false" data-motion-tuning="false">Write trim only</button>
-          <button class="action" data-run-wham="true" data-motion-tuning="false">Generate raw WHAM</button>
-          <button class="action" data-run-wham="true" data-motion-tuning="true">Generate tuned motion</button>
+          <button class="secondary action" data-run-reconstruction="false" data-motion-tuning="false">Write trim only</button>
+          <button class="action" data-run-reconstruction="true" data-motion-tuning="false">Generate raw GVHMR</button>
+          <button class="action" data-run-reconstruction="true" data-motion-tuning="true">Generate tuned motion</button>
         </div>
         <div class="readout" id="status">No trim written yet.</div>
       </aside>
@@ -699,7 +667,7 @@ def build_trim_selector_html(session: TrimSelectorSession) -> str:
     const sourcePath = {escaped_source_path};
     const fallbackDuration = {duration:.6f};
     let loopPreview = false;
-    let whamPollTimer = null;
+    let reconstructionPollTimer = null;
 
     document.getElementById("source").textContent = `${{sourceName}} | ${{sourcePath}}`;
 
@@ -775,13 +743,13 @@ def build_trim_selector_html(session: TrimSelectorSession) -> str:
       button.addEventListener("click", () => {{
         writeSelection({{
           button,
-          runWham: button.dataset.runWham === "true",
+          runReconstruction: button.dataset.runReconstruction === "true",
           motionTuningEnabled: button.dataset.motionTuning === "true",
         }});
       }});
     }});
 
-    async function writeSelection({{ button, runWham, motionTuningEnabled }}) {{
+    async function writeSelection({{ button, runReconstruction, motionTuningEnabled }}) {{
       try {{
         const selection = validateSelection();
         setActionButtonsDisabled(true);
@@ -790,70 +758,69 @@ def build_trim_selector_html(session: TrimSelectorSession) -> str:
         const response = await fetch("/trim", {{
           method: "POST",
           headers: {{ "Content-Type": "application/json" }},
-          body: JSON.stringify({{ ...selection, runWham, motionTuningEnabled }}),
+          body: JSON.stringify({{ ...selection, runReconstruction, motionTuningEnabled }}),
         }});
         if (!response.ok) {{
           throw new Error(await response.text());
         }}
         const payload = await response.json();
-        const whamText = payload.whamStarted
-          ? `\\n\\nWHAM started.\\nPID: ${{payload.whamPid}}\\nLog: ${{payload.whamLogPath}}`
-          : "\\n\\nWHAM was not started for this selector session.";
-        status.textContent = `Trim written.\\n\\nSelected video:\\n${{payload.selectedVideoPath}}\\n\\nStart: ${{payload.startSeconds.toFixed(3)}}s\\nEnd: ${{payload.endSeconds.toFixed(3)}}s\\nDuration: ${{payload.durationSeconds.toFixed(3)}}s${{whamText}}`;
-        if (payload.whamStarted) {{
+        const reconstructionText = payload.reconstructionStarted
+          ? `\\n\\nGVHMR started.\\nPID: ${{payload.reconstructionPid}}\\nLog: ${{payload.reconstructionLogPath}}`
+          : "\\n\\nGVHMR was not started for this selector session.";
+        status.textContent = `Trim written.\\n\\nSelected video:\\n${{payload.selectedVideoPath}}\\n\\nStart: ${{payload.startSeconds.toFixed(3)}}s\\nEnd: ${{payload.endSeconds.toFixed(3)}}s\\nDuration: ${{payload.durationSeconds.toFixed(3)}}s${{reconstructionText}}`;
+        if (payload.reconstructionStarted) {{
           requestBrowserNotifications();
-          startWhamPolling();
+          startReconstructionPolling();
         }}
       }} catch (error) {{
         status.textContent = `Error: ${{error.message || error}}`;
       }} finally {{
         setActionButtonsDisabled(false);
-        button.textContent = button.dataset.runWham === "true"
+        button.textContent = button.dataset.runReconstruction === "true"
           ? button.dataset.motionTuning === "true"
             ? "Generate tuned motion"
-            : "Generate raw WHAM"
+            : "Generate raw GVHMR"
           : "Write trim only";
       }}
     }}
 
-    async function refreshWhamStatus() {{
-      const response = await fetch("/wham-status");
+    async function refreshReconstructionStatus() {{
+      const response = await fetch("/reconstruction-status");
       const payload = await response.json();
       if (payload.status === "not_started") {{
         return;
       }}
       const header = [
-        `WHAM status: ${{payload.status}}`,
+        `GVHMR status: ${{payload.status}}`,
         `PID: ${{payload.pid ?? ""}}`,
-        `SMPLify: ${{payload.runSmplify ? "yes" : "no"}}`,
         `Motion tuning: ${{payload.motionTuningEnabled ? "on" : "off"}}`,
         `Return code: ${{payload.returnCode ?? ""}}`,
         `Log: ${{payload.logPath ?? ""}}`,
       ].join("\\n");
       status.innerHTML = `<pre>${{escapeHtml(header)}}</pre>${{artifactLinksHtml(payload.artifactLinks, payload.status)}}${{logDetailsHtml(payload.logTail)}}`;
       if (payload.status === "completed" || payload.status === "failed") {{
-        notifyWhamFinished(payload.status);
-        stopWhamPolling();
+        notifyReconstructionFinished(payload.status);
+        stopReconstructionPolling();
       }}
     }}
 
-    function startWhamPolling() {{
-      stopWhamPolling();
-      refreshWhamStatus().catch((error) => {{
-        status.textContent = `Error reading WHAM status: ${{error.message || error}}`;
+    function startReconstructionPolling() {{
+      stopReconstructionPolling();
+      refreshReconstructionStatus().catch((error) => {{
+        status.textContent = `Error reading GVHMR status: ${{error.message || error}}`;
       }});
-      whamPollTimer = window.setInterval(() => {{
-        refreshWhamStatus().catch((error) => {{
-          status.textContent = `Error reading WHAM status: ${{error.message || error}}`;
-          stopWhamPolling();
+      reconstructionPollTimer = window.setInterval(() => {{
+        refreshReconstructionStatus().catch((error) => {{
+          status.textContent = `Error reading GVHMR status: ${{error.message || error}}`;
+          stopReconstructionPolling();
         }});
       }}, 3000);
     }}
 
-    function stopWhamPolling() {{
-      if (whamPollTimer !== null) {{
-        window.clearInterval(whamPollTimer);
-        whamPollTimer = null;
+    function stopReconstructionPolling() {{
+      if (reconstructionPollTimer !== null) {{
+        window.clearInterval(reconstructionPollTimer);
+        reconstructionPollTimer = null;
       }}
     }}
 
@@ -897,16 +864,16 @@ def build_trim_selector_html(session: TrimSelectorSession) -> str:
       Notification.requestPermission().catch(() => {{}});
     }}
 
-    function notifyWhamFinished(statusValue) {{
+    function notifyReconstructionFinished(statusValue) {{
       if (!("Notification" in window) || Notification.permission !== "granted") {{
         return;
       }}
-      new Notification(`WHAM generation ${{statusValue}}`, {{
+      new Notification(`GVHMR generation ${{statusValue}}`, {{
         body: statusValue === "completed" ? "Preview and JSON artifacts are ready." : "Check the log tail on the selector page.",
       }});
     }}
 
-    startWhamPolling();
+    startReconstructionPolling();
     syncRange();
   </script>
 </body>

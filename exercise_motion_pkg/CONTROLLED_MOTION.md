@@ -63,7 +63,7 @@ checks still include the interpolated seam. No fades are generated.
   twist or all directional joint limits. Intentional unilateral movement,
   torso inclination, and world orientation remain independent of body symmetry.
   Failed fits retain their input for diagnosis but cannot pass final acceptance.
-  If the WHAM articulation reference is itself malformed, it is corrected as
+  If the RECONSTRUCTION articulation reference is itself malformed, it is corrected as
   well. `correctedAnatomicalReferenceJoints` and `anatomicalSourceRepair` carry
   the correction and its audit; original source fields remain available.
   Source-fidelity constraints use the corrected reference so they cannot force
@@ -111,7 +111,7 @@ In the default bake path, the source-articulation guard supplies the initializat
 The unified fitter then owns contacts and temporal cleanup; the older positional
 spike, foot-heading, contact and sequence-denoising passes are skipped. Existing
 reports from those passes are archived as input provenance. No local repair runs
-after fitting. Upstream WHAM reconstruction and browser preprocessing remain.
+after fitting. Upstream RECONSTRUCTION reconstruction and browser preprocessing remain.
 
 `controlledArticulationReferenceJoints` retains the original source articulation,
 while `controlledSourceJoints` retains the registered fitter input in baked coordinates for
@@ -179,7 +179,7 @@ run passes. This does not change production timeout or validation requirements.
 
 The current comparison set passes both internal fitting and independent final
 validation: thruster, lateral lunge, walking lunge, woodchopper, Russian twist and
-curtsy lunge. The walking-lunge comparison uses a fresh WHAM + SMPLify
+curtsy lunge. The walking-lunge comparison uses a fresh RECONSTRUCTION + SMPLify
 reconstruction; the previous reconstruction was not repairable under the source
 fidelity constraints. Input rejection must not be treated as successful repair.
 

@@ -1,4 +1,4 @@
-"""Translate-only WHAM input stabilization from persisted YOLO pose tracks."""
+"""Translate-only RECONSTRUCTION input stabilization from persisted YOLO pose tracks."""
 
 from __future__ import annotations
 
@@ -64,7 +64,7 @@ def load_workspace_yolo_pose_track(candidate_workspace: Path) -> dict[str, Any] 
     confirmation_root = (
         candidate_workspace
         / "segment_detection"
-        / "pre_wham_source_candidates"
+        / "pre_reconstruction_source_candidates"
         / "deterministic_confirmation"
     )
     if confirmation_root.exists():

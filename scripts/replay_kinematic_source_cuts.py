@@ -1,8 +1,8 @@
 """Replay kinematic source-cut proposals against persisted bake payloads.
 
 Reads ``dominantPoseSamples`` and contracts from exercise-library selection
-manifests, proposes cuts with no YOLO/VLM/WHAM, and compares them to the
-pre-WHAM VLM window in ``segment_selection.json`` when one exists.
+manifests, proposes cuts with no YOLO/VLM/RECONSTRUCTION, and compares them to the
+pre-RECONSTRUCTION VLM window in ``segment_selection.json`` when one exists.
 """
 
 from __future__ import annotations

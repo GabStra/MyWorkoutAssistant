@@ -3,13 +3,14 @@ from __future__ import annotations
 import json
 import math
 import re
-import shutil
-import subprocess
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+import httpx
 
-DEFAULT_MODEL = "gemma-4-E4B-it"
+from exercise_motion_pkg.llama_defaults import DEFAULT_LLAMA_CPP_MODEL
+from exercise_motion_pkg.shared_llama_server import shared_llama_request_scope
+
 DEFAULT_MIN_REP_SECONDS = 3.0
 DEFAULT_MAX_REP_SECONDS = 10.0
 
@@ -77,10 +78,10 @@ def chunk_hint_from_contract(contract: Mapping[str, Any] | None) -> tuple[float,
 def estimate_chunking(
     *,
     exercise_name: str,
-    litert_command: str = "",
-    model: str = DEFAULT_MODEL,
-    backend: str = "gpu",
     use_llm: bool = False,
+    llama_cpp_base_url: str = "http://127.0.0.1:8090",
+    llama_cpp_model: str = DEFAULT_LLAMA_CPP_MODEL,
+    llama_cpp_request_timeout_seconds: float = 60.0,
     exercise_motion_contract: Mapping[str, Any] | None = None,
 ) -> ChunkEstimate:
     contract_hint = chunk_hint_from_contract(exercise_motion_contract)
@@ -95,12 +96,12 @@ def estimate_chunking(
             reason=reason,
         )
 
-    if use_llm and litert_command:
-        payload = call_litert_for_duration_estimate(
+    if use_llm:
+        payload = call_llama_cpp_for_duration_estimate(
             exercise_name=exercise_name,
-            litert_command=litert_command,
-            model=model,
-            backend=backend,
+            base_url=llama_cpp_base_url,
+            model=llama_cpp_model,
+            request_timeout_seconds=llama_cpp_request_timeout_seconds,
         )
         parsed = parse_duration_payload(payload)
         if parsed is not None:
@@ -110,7 +111,7 @@ def estimate_chunking(
                 min_sec=min_sec,
                 max_sec=max_sec,
                 complexity=complexity,
-                source="litert_lm",
+                source="llama_cpp",
                 reason=reason,
             )
 
@@ -134,12 +135,12 @@ def frames_for_chunk_seconds(chunk_seconds: float) -> int:
     return 40
 
 
-def call_litert_for_duration_estimate(
+def call_llama_cpp_for_duration_estimate(
     *,
     exercise_name: str,
-    litert_command: str,
+    base_url: str,
     model: str,
-    backend: str,
+    request_timeout_seconds: float,
 ) -> str:
     prompt = (
         "We are choosing video-review chunk settings for finding a usable exercise movement clip.\n"
@@ -156,19 +157,26 @@ def call_litert_for_duration_estimate(
         "}\n"
         f"Exercise: {exercise_name}\n"
     )
-    command = [
-        litert_command,
-        "run",
-        model,
-        "--backend",
-        backend,
-        "--prompt",
-        prompt,
-    ]
-    process = subprocess.run(command, capture_output=True, text=True, check=False)
-    if process.returncode != 0:
+    try:
+        with shared_llama_request_scope(timeout_seconds=request_timeout_seconds):
+            response = httpx.post(
+                f"{base_url.rstrip('/')}/v1/chat/completions",
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.0,
+                    "max_tokens": 512,
+                    "response_format": {"type": "json_object"},
+                    "reasoning_format": "none",
+                    "chat_template_kwargs": {"enable_thinking": False},
+                },
+                timeout=request_timeout_seconds,
+            )
+        response.raise_for_status()
+        content = response.json()["choices"][0]["message"]["content"]
+    except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError):
         return ""
-    return process.stdout.strip()
+    return content.strip() if isinstance(content, str) else ""
 
 
 def parse_duration_payload(raw: str) -> tuple[float, float, str, str] | None:
@@ -184,7 +192,7 @@ def parse_duration_payload(raw: str) -> tuple[float, float, str, str] | None:
     complexity = str(payload.get("movement_complexity") or "unknown").strip().lower()
     if complexity not in {"simple", "compound", "multi_phase", "long_duration"}:
         complexity = "unknown"
-    reason = str(payload.get("reason") or "LiteRT-LM duration estimate.").strip()
+    reason = str(payload.get("reason") or "llama.cpp duration estimate.").strip()
     return min_sec, max_sec, complexity, reason
 
 
@@ -246,8 +254,3 @@ def coerce_float(value: object) -> float | None:
 
 def clamp(value: float, minimum: float, maximum: float) -> float:
     return max(minimum, min(maximum, value))
-
-
-def find_default_litert_command() -> str:
-    found = shutil.which("litert-lm")
-    return found or "litert-lm"

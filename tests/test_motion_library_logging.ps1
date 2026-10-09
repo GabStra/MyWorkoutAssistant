@@ -60,10 +60,10 @@ try {
         latestExerciseName = 'Finished Squats'
         metrics = @{ finalValidationWorkers = 2; finalValidationFitSlots = 2; resourceBudget = @{ cpuFitSlots = 2 } }
         items = @(
-            @{ exerciseName = 'Finished Squats'; wham = @{ status = 'prepared' }; finalValidation = @{ status = 'no_selection' } },
+            @{ exerciseName = 'Finished Squats'; reconstruction = @{ status = 'prepared' }; finalValidation = @{ status = 'no_selection' } },
             @{
                 exerciseName = 'Assisted Pistol Squat'
-                wham = @{ status = 'prepared' }
+                reconstruction = @{ status = 'prepared' }
                 finalValidation = @{ status = 'pending' }
                 finalValidationActivity = @{
                     startedAt = [DateTimeOffset]::UtcNow.AddMinutes(-6).ToString('o')
@@ -74,7 +74,7 @@ try {
             },
             @{
                 exerciseName = 'Barbell Back Squat'
-                wham = @{ status = 'prepared' }
+                reconstruction = @{ status = 'prepared' }
                 finalValidation = @{ status = 'pending' }
                 finalValidationActivity = @{
                     startedAt = [DateTimeOffset]::UtcNow.AddMinutes(-2).ToString('o')
@@ -148,7 +148,7 @@ if ((ConvertTo-MotionLibraryProgress 'Already have a movement for Ring Row.') -m
 $selected = ConvertTo-MotionLibraryProgress 'Movement result: Ring Row | selected | 11.2s final processing | stage(s): output_validation'
 if ($selected -match 'SUCCESS|saved' -or $selected -notmatch '^Movement validated:') { throw 'Selection called saved before files were copied' }
 
-$sourceLine = "Source attempt: Ring Fallout | video EHHN-DoK2k4 | rejected_source_validation: SourceCandidateRejected: Pre-WHAM source validation rejected the source window: score 0.000 is below 0.500; reasons=['source_candidate_window_choice_failed', 'source_candidate_scorecard_no_passing_candidate']."
+$sourceLine = "Source attempt: Ring Fallout | video EHHN-DoK2k4 | rejected_source_validation: SourceCandidateRejected: Pre-RECONSTRUCTION source validation rejected the source window: score 0.000 is below 0.500; reasons=['source_candidate_window_choice_failed', 'source_candidate_scorecard_no_passing_candidate']."
 $source = ConvertTo-MotionLibraryProgress $sourceLine
 if ($source -ne 'Source rejected: Ring Fallout | No reviewed video interval passed validation. | EHHN-DoK2k4') { throw "Unreadable source rejection: $source" }
 $deferred = ConvertTo-MotionLibraryProgress 'Source review: Ring Fallout | unresolved: source_turn_deferred'
@@ -156,12 +156,12 @@ if ($deferred -notmatch '^Source deferred:.*ready movements first' -or $deferred
 $unusable = ConvertTo-MotionLibraryProgress 'Source review: Ring Reverse Fly | unresolved: no_source_passed_exact_window_validation'
 if ($unusable -notmatch '^No usable source: Ring Reverse Fly') { throw 'Unusable source explanation missing' }
 
-$movementLine = 'Movement result: Ring Row | no_selection | 11.2s final processing | stage(s): output_validation | timings: rawWhamMotionGateSeconds=0.7s | reasons: pre_wham_validated_source_interval_review, post_wham_movement_cut_blocked_by_source_authority, loop_continuity_not_required, loop_bridge_mismatch_ignored_loop_not_required, postprocess_joint_spike, materialized_output_rejected, materialized_incomplete_repetition_phase, materialized_source_endpoint_pose_mismatch'
+$movementLine = 'Movement result: Ring Row | no_selection | 11.2s final processing | stage(s): output_validation | timings: rawReconstructionMotionGateSeconds=0.7s | reasons: pre_reconstruction_validated_source_interval_review, post_reconstruction_movement_cut_blocked_by_source_authority, loop_continuity_not_required, loop_bridge_mismatch_ignored_loop_not_required, postprocess_joint_spike, materialized_output_rejected, materialized_incomplete_repetition_phase, materialized_source_endpoint_pose_mismatch'
 $movement = ConvertTo-MotionLibraryProgress $movementLine
 $readable = @(Format-MotionLibraryProgress -Message $movement -State $state -Timestamp '10:52:34')
 if ($readable.Count -ne 4 -or $readable[0] -notmatch '^\[10:52:34\] Movement rejected: Ring Row.*11.2s') { throw "Unclear generated rejection: $readable" }
 if ($readable[1] -ne '  - Processing introduced joint jitter.') { throw 'Primary rejection reason hidden' }
-if (($readable -join ' ') -match 'pre_wham|loop_|timings:|materialized_') { throw 'Technical or informational codes clutter rejection' }
+if (($readable -join ' ') -match 'pre_reconstruction|loop_|timings:|materialized_') { throw 'Technical or informational codes clutter rejection' }
 $unknown = ConvertTo-MotionLibraryReasons 'future_validation_rule'
 if ($unknown -ne 'Other detail: future validation rule') { throw 'Unknown diagnostic silently discarded' }
 $failed = ConvertTo-MotionLibraryProgress 'Movement result: Ring Row | failed | 1.0s final processing | stage(s): processing_error | RuntimeError: renderer crashed'

@@ -8,14 +8,13 @@ param(
     [string]$ExerciseLibraryJson = "C:\Users\gabri\Downloads\my_exercise_library.json",
 
     # Separate workspace root so verification never touches the live run's
-    # per-exercise resume state. WHAM/YouTube caches are global and shared,
+    # per-exercise resume state. RECONSTRUCTION/YouTube caches are global and shared,
     # so a fresh verify workspace does not re-download or re-run inference
     # for already-seen segments.
     [string]$WorkspaceRoot = "build/exercise_motion/exercise-library-verify",
 
     [string]$OutputJson = "build/exercise_motion/targeted_movements_output.json",
 
-    [string]$MotionReconstructor = "gvhmr",
 
     # Write only the filtered library JSON and print the command that would
     # run; skips -BuildLibraryOnly when you want to inspect the selection
@@ -123,13 +122,12 @@ if ($seeded -gt 0) {
 if ($BuildLibraryOnly) { return }
 
 
-Write-Host "Invoking: pwsh ./scripts/run_exercise_motion_library.ps1 -ExerciseLibraryJson $filteredPath -WorkspaceRoot $WorkspaceRoot -OutputJson $OutputJson -MotionReconstructor $MotionReconstructor $($RemainingArguments -join ' ')"
+Write-Host "Invoking: pwsh ./scripts/run_exercise_motion_library.ps1 -ExerciseLibraryJson $filteredPath -WorkspaceRoot $WorkspaceRoot -OutputJson $OutputJson $($RemainingArguments -join ' ')"
 # Named parameters must be passed individually: array splatting binds
 # positionally and the library runner disables positional binding.
 & (Join-Path $PSScriptRoot "run_exercise_motion_library.ps1") `
     -ExerciseLibraryJson $filteredPath `
     -WorkspaceRoot $WorkspaceRoot `
     -OutputJson $OutputJson `
-    -MotionReconstructor $MotionReconstructor `
     @RemainingArguments
 exit $LASTEXITCODE

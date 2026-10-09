@@ -12,7 +12,7 @@ def _session(tmp_path: Path) -> LazyLlamaCppVisionSession:
     # real llama-server process during tests.
     return LazyLlamaCppVisionSession(BakeAndRankRequest(
         candidates_json=tmp_path / "candidates.json", workspace=tmp_path,
-        wham_repo_path=None, body_model_root=None,
+        body_model_root=None,
         llama_cpp_auto_start_server=False,
     ))
 

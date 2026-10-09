@@ -24,7 +24,7 @@ $SelectionValidationPolicyVersion = 70
 $SourceSelectionPolicyVersion = Get-MotionPythonValidationPolicyConstant -Name 'SOURCE_SELECTION_POLICY_VERSION'
 $SourceSelectionClearancePolicyVersion = Get-MotionPythonValidationPolicyConstant -Name 'SOURCE_SELECTION_CLEARANCE_POLICY_VERSION'
 $ArtifactRetention = 'debug'
-$SkipPreWhamSourceValidation = $false
+$SkipPreReconstructionSourceValidation = $false
 $RetainedSelectedRevalidationVersion = 3
 $fixture = Join-Path ([IO.Path]::GetTempPath()) ('motion-reuse-' + [guid]::NewGuid().ToString('N'))
 $selected = New-Item -ItemType Directory -Path (Join-Path $fixture 'selected')
@@ -38,14 +38,14 @@ try {
     $sourceManifestPath = Join-Path $selected 'source_segment_selection.json'
     $sourceSegmentPath = Join-Path $selected 'source_selected_segment.mp4'
     $reviewImagePath = Join-Path $selected 'source_review_frame.jpg'
-    '{"sourcePrepReason":"pre_wham_source_window_choice"}' | Set-Content $sourceManifestPath -NoNewline
+    '{"sourcePrepReason":"pre_reconstruction_source_window_choice"}' | Set-Content $sourceManifestPath -NoNewline
     'retained' | Set-Content $sourceSegmentPath
     'reviewed image' | Set-Content $reviewImagePath
     $segmentHash = (Get-FileHash $sourceSegmentPath -Algorithm SHA256).Hash.ToLowerInvariant()
     $imageHash = (Get-FileHash $reviewImagePath -Algorithm SHA256).Hash.ToLowerInvariant()
     $frameEvidence = @{ candidateId='A'; extractionProfileSha256=('1' * 64); images=@(@{ path=$reviewImagePath; sha256=$imageHash }) }
     $sourceClearance = @{ status='cleared'; sourceSelectionPolicyVersion=$SourceSelectionPolicyVersion; sourceSelectionClearancePolicyVersion=$SourceSelectionClearancePolicyVersion; sourceManifestSha256=(Get-FileHash $sourceManifestPath -Algorithm SHA256).Hash.ToLowerInvariant(); sourceManifestPath=$sourceManifestPath; selectedSegmentSha256=$segmentHash; selectedSegmentPath=$sourceSegmentPath; sourceCutReviewVideoPath=$sourceSegmentPath; sourceCutReviewVideoSha256=$segmentHash; sourceCutOriginalVideoPath=$sourceSegmentPath; sourceCutOriginalVideoSha256=$segmentHash; sourceCutReviewFrameEvidence=$frameEvidence; sourceCutReviewFrameEvidenceSha256=('2' * 64); authorizedCandidateId='A'; reviewedExerciseName='Squat'; exerciseMotionContractSha256=('0' * 64) }
-    @{ selectionValidationPolicyVersion=70; sourceSelectionPolicyVersion=$SourceSelectionPolicyVersion; preWhamSourceValidationEnabled=$true; selected=@{ exerciseName='Squat'; selectedWearSkeletonPath=$skeletonPath; sourceSelectionClearance=$sourceClearance } } | ConvertTo-Json -Depth 8 | Set-Content $selectionPath
+    @{ selectionValidationPolicyVersion=70; sourceSelectionPolicyVersion=$SourceSelectionPolicyVersion; preReconstructionSourceValidationEnabled=$true; selected=@{ exerciseName='Squat'; selectedWearSkeletonPath=$skeletonPath; sourceSelectionClearance=$sourceClearance } } | ConvertTo-Json -Depth 8 | Set-Content $selectionPath
     $marker = @{ status='valid'; selectionValidationPolicyVersion=70; sourceSelectionPolicyVersion=$SourceSelectionPolicyVersion; retainedSelectedArtifactFallbackVersion=11 }
     $markerPath = Join-Path $selected 'revalidation.json'
     $marker | ConvertTo-Json | Set-Content $markerPath
@@ -74,7 +74,7 @@ try {
     'retained' | Set-Content $sourceSegmentPath
     'changed manifest' | Set-Content $sourceManifestPath -NoNewline
     if (Get-ExistingSelectedSummary $item) { throw 'Changed source manifest bytes must invalidate reuse even when the selection manifest and marker are unchanged.' }
-    '{"sourcePrepReason":"pre_wham_source_window_choice"}' | Set-Content $sourceManifestPath -NoNewline
+    '{"sourcePrepReason":"pre_reconstruction_source_window_choice"}' | Set-Content $sourceManifestPath -NoNewline
     $marker.status='invalid'
     $marker | ConvertTo-Json | Set-Content $markerPath
     if (Get-ExistingSelectedSummary $item) { throw 'Invalid selection reused.' }
@@ -90,7 +90,7 @@ try {
     # Publishing a new keep must replace a stale invalid marker so resume reuses it.
     $RetainedSelectedRevalidationVersion = 12
     @{ jointNames=@('pelvis'); frames=@(@{}, @{}); frameCount=2; fps=30 } | ConvertTo-Json -Depth 5 | Set-Content $skeletonPath
-    @{ selectionValidationPolicyVersion=70; sourceSelectionPolicyVersion=$SourceSelectionPolicyVersion; preWhamSourceValidationEnabled=$true; selected=@{ exerciseName='Squat'; selectedWearSkeletonPath=$skeletonPath; sourceSelectionClearance=$sourceClearance } } | ConvertTo-Json -Depth 8 | Set-Content $selectionPath
+    @{ selectionValidationPolicyVersion=70; sourceSelectionPolicyVersion=$SourceSelectionPolicyVersion; preReconstructionSourceValidationEnabled=$true; selected=@{ exerciseName='Squat'; selectedWearSkeletonPath=$skeletonPath; sourceSelectionClearance=$sourceClearance } } | ConvertTo-Json -Depth 8 | Set-Content $selectionPath
     @{ status='invalid'; selectionValidationPolicyVersion=70; sourceSelectionPolicyVersion=$SourceSelectionPolicyVersion; reasons=@('stale_library_revalidation') } | ConvertTo-Json | Set-Content $markerPath
     Write-PublishedSelectionAcceptanceMarker -WorkItem $item -SelectedOutputDir $selected.FullName -SelectionManifestPath $selectionPath
     $published = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json
@@ -109,7 +109,7 @@ try {
     $proofPoseReference = Join-Path $proofSegmentDir 'exact_source_pose_reference.json'
     $proofImage = Join-Path $proofRoot 'source_candidate_A' 'contact_sheet.jpg'
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $proofImage) | Out-Null
-    '{"exactSourcePhaseValidation":{"sourcePoseReferencePath":"' + $proofPoseReference.Replace('\', '\\') + '"},"sourcePrepReason":"pre_wham_source_window_choice"}' | Set-Content $proofManifest -NoNewline
+    '{"exactSourcePhaseValidation":{"sourcePoseReferencePath":"' + $proofPoseReference.Replace('\', '\\') + '"},"sourcePrepReason":"pre_reconstruction_source_window_choice"}' | Set-Content $proofManifest -NoNewline
     'proof segment' | Set-Content $proofSegment
     'proof source' | Set-Content $proofReview
     'pose reference' | Set-Content $proofPoseReference

@@ -16,7 +16,7 @@ from exercise_motion_pkg.bake_and_rank import (
     compute_kinematic_plausibility_metrics,
     compute_motion_strength_metrics,
     evaluate_baked_motion_gate,
-    evaluate_raw_wham_motion_gate,
+    evaluate_raw_reconstruction_motion_gate,
     exercise_motion_contract_requires_rigid_paired_hands,
     materialized_output_acceptance_metrics,
     ranking_from_manifest,
@@ -67,7 +67,7 @@ def discover_source_references(candidate_dir: Path) -> list[Path]:
     exact = candidate_dir / "segment_detection" / "exact_source_pose_reference.json"
     candidates = sorted(
         candidate_dir.glob(
-            "segment_detection/pre_wham_source_candidates/deterministic_confirmation/"
+            "segment_detection/pre_reconstruction_source_candidates/deterministic_confirmation/"
             "*/exact_source_pose_reference.json"
         )
     )
@@ -125,7 +125,7 @@ def source_fidelity(path: Path, source_reference: Path | None) -> dict[str, Any]
 
 
 def first_failure_owner(stages: dict[str, Any]) -> dict[str, Any] | None:
-    for stage_name in ("sourceConfirmation", "rawWham", "cleanup", "bake", "finalValidation"):
+    for stage_name in ("sourceConfirmation", "rawReconstruction", "cleanup", "bake", "finalValidation"):
         stage = stages.get(stage_name, {})
         if stage.get("available") is False:
             return {"stage": stage_name, "reason": "required_artifact_unavailable"}
@@ -256,7 +256,7 @@ def audit_candidate(
     source_references = discover_source_references(candidate_dir)
     source_phase_paths = sorted(
         candidate_dir.glob(
-            "segment_detection/pre_wham_source_candidates/deterministic_confirmation/"
+            "segment_detection/pre_reconstruction_source_candidates/deterministic_confirmation/"
             "*/exact_source_phase_validation.json"
         )
     )
@@ -290,14 +290,14 @@ def audit_candidate(
     }
 
     raw_gate = (
-        evaluate_raw_wham_motion_gate(
+        evaluate_raw_reconstruction_motion_gate(
             raw_path,
             source_pose_reference_path=source_references[0] if source_references else None,
         )
         if raw_path.exists()
         else {"passed": False, "rejectionReasons": ["raw_motion_missing"]}
     )
-    report["stages"]["rawWham"] = raw_gate
+    report["stages"]["rawReconstruction"] = raw_gate
 
     cleanup_source_fidelity = source_fidelity(
         cleaned_path,
@@ -453,7 +453,7 @@ def rerun_isolated_bake(
             iter(
                 sorted(
                     candidate_dir.glob(
-                        "segment_detection/pre_wham_source_candidates/"
+                        "segment_detection/pre_reconstruction_source_candidates/"
                         "deterministic_confirmation/*/exact_source_phase_validation.json"
                     )
                 )
@@ -517,7 +517,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--stage",
-        choices=("sourceConfirmation", "rawWham", "cleanup", "bake", "finalValidation"),
+        choices=("sourceConfirmation", "rawReconstruction", "cleanup", "bake", "finalValidation"),
         help="Print and save only one stage after computing the complete owner audit.",
     )
     parser.add_argument(

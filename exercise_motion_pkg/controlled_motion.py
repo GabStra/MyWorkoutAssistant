@@ -1008,7 +1008,7 @@ def controlled_motion_fit_raw_fallback(payload):
     """Allow a failed, no-op fit to reach independent artifact validation.
 
     The fallback is limited to a complete fit rejection on the exact unchanged
-    pose, with a passing raw-WHAM gate recorded for this candidate. All later
+    pose, with a passing raw-RECONSTRUCTION gate recorded for this candidate. All later
     source, physical, support, playback, render, and review gates still apply.
     """
     report = payload.get('controlledMotionFit') or {}
@@ -1035,9 +1035,9 @@ def controlled_motion_fit_raw_fallback(payload):
     if complete_failure is None:
         return None
     checks = complete_failure['checks']
-    if evidence.get('schemaVersion') != 1 or evidence.get('rawWhamMotionGatePassed') is not True:
+    if evidence.get('schemaVersion') != 1 or evidence.get('rawReconstructionMotionGatePassed') is not True:
         return None
-    gate_fingerprint = evidence.get('rawWhamMotionGateFingerprint')
+    gate_fingerprint = evidence.get('rawReconstructionMotionGateFingerprint')
     if (not isinstance(gate_fingerprint, str) or len(gate_fingerprint) != 64
             or any(character not in '0123456789abcdef' for character in gate_fingerprint.lower())):
         return None
@@ -1052,11 +1052,11 @@ def controlled_motion_fit_raw_fallback(payload):
         return None
     return {
         'used': True,
-        'reason': 'unmodified_raw_wham_after_terminal_fit_rejection',
+        'reason': 'unmodified_raw_reconstruction_after_terminal_fit_rejection',
         'fitFailureReason': complete_failure.get('reason'),
         'fitSelectionReason': report.get('reason'),
         'failedChecks': sorted(name for name, passed in checks.items() if passed is False),
-        'rawWhamMotionGateFingerprint': gate_fingerprint,
+        'rawReconstructionMotionGateFingerprint': gate_fingerprint,
         'fitInputPoseDigest': fit_input_digest,
     }
 

@@ -3,6 +3,8 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
+from exercise_motion_pkg.reconstruction_compat import retained_reconstruction_path
+
 
 MAX_TRACK_STITCH_GAP_FRAMES = 2
 MAX_TRACK_STITCH_OVERLAP_FRAMES = 5
@@ -11,42 +13,42 @@ MAX_TRACK_STITCH_POSE_RMS_RADIANS = 0.60
 TRACK_STITCH_POSE_BLEND_FRAMES = 12
 
 
-def validate_wham_frame_rate(fps: float) -> float:
+def validate_reconstruction_frame_rate(fps: float) -> float:
     value = float(fps)
     if not math.isfinite(value) or value <= 0:
-        raise ValueError("WHAM source frame rate must be finite and positive.")
+        raise ValueError("RECONSTRUCTION source frame rate must be finite and positive.")
     return value
 
 
-def load_wham_results(wham_results_pkl: Path) -> dict[object, dict[str, object]]:
+def load_reconstruction_results(reconstruction_results_pkl: Path) -> dict[object, dict[str, object]]:
     try:
         import joblib  # type: ignore
     except ImportError as exc:
         raise RuntimeError(
-            "WHAM result loading requires joblib in the active environment."
+            "RECONSTRUCTION result loading requires joblib in the active environment."
         ) from exc
 
-    raw = joblib.load(wham_results_pkl)
+    raw = joblib.load(retained_reconstruction_path(reconstruction_results_pkl))
     if not isinstance(raw, dict):
-        raise ValueError("WHAM results must load to a dict-like mapping keyed by subject id.")
+        raise ValueError("RECONSTRUCTION results must load to a dict-like mapping keyed by subject id.")
     return dict(raw)
 
 
-def select_wham_subject(
+def select_reconstruction_subject(
     raw_results: dict[object, dict[str, object]],
     *,
     subject_id: int | str | None = None,
 ) -> tuple[object, dict[str, object]]:
     if not raw_results:
-        raise ValueError("WHAM results did not contain any subjects.")
+        raise ValueError("RECONSTRUCTION results did not contain any subjects.")
 
     if subject_id is not None:
         for candidate_key, payload in raw_results.items():
             if str(candidate_key) == str(subject_id):
                 if not isinstance(payload, dict):
-                    raise ValueError(f"WHAM subject payload for '{candidate_key}' must be a dict.")
+                    raise ValueError(f"RECONSTRUCTION subject payload for '{candidate_key}' must be a dict.")
                 return candidate_key, payload
-        raise ValueError(f"WHAM results did not contain subject '{subject_id}'.")
+        raise ValueError(f"RECONSTRUCTION results did not contain subject '{subject_id}'.")
 
     stitchable_tracks = [
         (key, payload)
@@ -60,14 +62,14 @@ def select_wham_subject(
     ranked_items = sorted(raw_results.items(), key=lambda item: _subject_frame_count(item[1]), reverse=True)
     selected_key, payload = ranked_items[0]
     if not isinstance(payload, dict):
-        raise ValueError(f"WHAM subject payload for '{selected_key}' must be a dict.")
+        raise ValueError(f"RECONSTRUCTION subject payload for '{selected_key}' must be a dict.")
     return selected_key, payload
 
 
 def _longest_compatible_track_chain(
     tracks: list[tuple[object, dict[str, object]]],
 ) -> tuple[object, dict[str, object]] | None:
-    """Join WHAM ID fragments only when they form one continuous, spatially compatible track."""
+    """Join RECONSTRUCTION ID fragments only when they form one continuous, spatially compatible track."""
     if not tracks:
         return None
     ordered = sorted(tracks, key=lambda item: (_frame_ids(item[1])[0], -len(_frame_ids(item[1]))))
@@ -217,7 +219,7 @@ def _align_translation_chunks(chunks: list[object], frame_ids: list[list[int]]) 
 
 
 def _blend_pose_chunk_boundaries(chunks: list[object], frame_ids: list[list[int]]) -> None:
-    """Ease small pose-coordinate resets introduced when WHAM assigns a new track ID."""
+    """Ease small pose-coordinate resets introduced when RECONSTRUCTION assigns a new track ID."""
     for index in range(1, len(chunks)):
         previous = chunks[index - 1]
         current = chunks[index]
@@ -246,7 +248,7 @@ def _frame_ids(payload: dict[str, object]) -> list[int]:
         return []
 
 
-def resolve_wham_coordinate_keys(coordinate_space: str) -> tuple[str, str]:
+def resolve_reconstruction_coordinate_keys(coordinate_space: str) -> tuple[str, str]:
     normalized = coordinate_space.strip().lower()
     if normalized == "world":
         return "pose_world", "trans_world"

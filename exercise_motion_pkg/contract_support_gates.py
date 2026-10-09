@@ -36,7 +36,7 @@ REASON_TERMINAL_SUPPORT_NOT_SETTLED = "materialized_terminal_support_not_settled
 REASON_TRAVEL_FACING_MISMATCH = "materialized_travel_facing_mismatch"
 
 # Preferred frontalOrBackViewEvidence bands by contract-derived camera need.
-# WHAM reconstructs what stays in-image: a jump onto elevated support travels
+# RECONSTRUCTION reconstructs what stays in-image: a jump onto elevated support travels
 # toward the equipment, which only a near-profile camera keeps out of depth
 # ambiguity, while in-place strength work has no angle requirement at all.
 # Bands are deliberately few and derived from contract facts, never names.

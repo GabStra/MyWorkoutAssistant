@@ -41,13 +41,13 @@ def source_selection_clearance_is_current(
         return False
     expected_status = (
         "not_required"
-        if manifest.get("preWhamSourceValidationEnabled") is False
+        if manifest.get("preReconstructionSourceValidationEnabled") is False
         else "cleared"
     )
     if clearance.get("status") != expected_status:
         return False
     if expected_status == "not_required" and manifest.get(
-        "preWhamSourceValidationExplicitlyDisabled"
+        "preReconstructionSourceValidationExplicitlyDisabled"
     ) is not True:
         return False
     if clearance.get("sourceSelectionClearancePolicyVersion") != SOURCE_SELECTION_CLEARANCE_POLICY_VERSION:

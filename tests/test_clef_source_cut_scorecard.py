@@ -481,8 +481,8 @@ def _write_source_clearance_fixture(tmp_path, *, derived=False, authorized_paren
     )
     source_manifest = {
         "sourceSelectionPolicyVersion": bake.SOURCE_SELECTION_POLICY_VERSION,
-        "preWhamSourceValidationEnabled": True,
-        "sourcePrepReason": "pre_wham_source_window_choice",
+        "preReconstructionSourceValidationEnabled": True,
+        "sourcePrepReason": "pre_reconstruction_source_window_choice",
         "exerciseName": "Example",
         "sourceVideoPath": str(selected_segment),
         "detectionSourceVideoPath": str(selected_segment),
@@ -540,7 +540,7 @@ def test_retained_clearance_cannot_rehash_a_replaced_selected_segment(tmp_path):
 
 def test_exact_phase_manifest_commits_the_final_materialized_segment_hash(tmp_path):
     workspace, selected_segment, manifest_path = _write_source_clearance_fixture(tmp_path)
-    confirmed_temp = workspace / "pre_wham_source_candidates" / "source_candidate_A" / "selected_segment.mp4"
+    confirmed_temp = workspace / "pre_reconstruction_source_candidates" / "source_candidate_A" / "selected_segment.mp4"
     confirmed_temp.parent.mkdir(parents=True)
     confirmed_temp.write_bytes(selected_segment.read_bytes())
     source_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -554,7 +554,7 @@ def test_exact_phase_manifest_commits_the_final_materialized_segment_hash(tmp_pa
     source_manifest["exactSourcePhaseValidation"] = validation
     manifest_path.write_text(json.dumps(source_manifest), encoding="utf-8")
 
-    bake.update_pre_wham_exact_phase_validation_manifest(
+    bake.update_pre_reconstruction_exact_phase_validation_manifest(
         candidate_workspace=workspace,
         validation=validation,
     )
@@ -731,7 +731,7 @@ def test_qwen_positive_scorecard_still_requires_semantic_identity_and_confidence
 def test_source_validation_disabled_cannot_override_normal_source_lineage(tmp_path):
     workspace, _selected_segment, source_manifest_path = _write_source_clearance_fixture(tmp_path)
     source_manifest = json.loads(source_manifest_path.read_text())
-    source_manifest["preWhamSourceValidationEnabled"] = False
+    source_manifest["preReconstructionSourceValidationEnabled"] = False
     source_manifest_path.write_text(json.dumps(source_manifest), encoding="utf-8")
 
     clearance = bake.source_selection_clearance_for_workspace(workspace, required=False, explicitly_disabled=True)
@@ -749,7 +749,7 @@ def test_explicit_raw_skip_requires_retained_nonvalidated_lineage(tmp_path):
     selected_segment.write_bytes(b"raw segment")
     (segment_dir / "segment_selection.json").write_text(json.dumps({
         "sourcePrepReason": "ranked_best_chunk",
-        "preWhamSourceValidationEnabled": False,
+        "preReconstructionSourceValidationEnabled": False,
         "selectedSegmentPath": str(selected_segment),
     }), encoding="utf-8")
 
@@ -927,7 +927,7 @@ def test_production_cli_rejects_clef_backend_options(tmp_path):
     parser = build_parser()
     base_args = [
         "bake-and-rank", "--candidates-json", str(tmp_path / "candidates.json"),
-        "--workspace", str(tmp_path), "--wham-repo-path", str(tmp_path),
+        "--workspace", str(tmp_path), "--reconstruction-repo-path", str(tmp_path),
         "--body-model-root", str(tmp_path),
     ]
     with pytest.raises(SystemExit):
@@ -958,7 +958,7 @@ def test_production_visual_backend_defaults_to_qwen_and_manifest_defaults_are_in
 
     args = build_parser().parse_args([
         "bake-and-rank", "--candidates-json", str(tmp_path / "candidates.json"),
-        "--workspace", str(tmp_path), "--wham-repo-path", str(tmp_path),
+        "--workspace", str(tmp_path), "--reconstruction-repo-path", str(tmp_path),
         "--body-model-root", str(tmp_path),
     ])
     request = build_bake_and_rank_request(args)
@@ -991,7 +991,6 @@ def test_production_visual_backend_defaults_to_qwen_and_manifest_defaults_are_in
         bake.BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path,
-            wham_repo_path=None,
             body_model_root=None,
             visual_decision_backend="clef-systemone",
         )
@@ -999,7 +998,6 @@ def test_production_visual_backend_defaults_to_qwen_and_manifest_defaults_are_in
         bake.BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path,
-            wham_repo_path=None,
             body_model_root=None,
             final_output_review_backend="clef-systemone",
         )
@@ -1110,7 +1108,6 @@ def test_production_request_rejects_clef_final_review(tmp_path):
         bake.BakeAndRankRequest(
             candidates_json=tmp_path / "candidates.json",
             workspace=tmp_path,
-            wham_repo_path=None,
             body_model_root=None,
             final_output_review_backend="clef-systemone",
         )

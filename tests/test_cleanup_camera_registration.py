@@ -22,8 +22,8 @@ def test_reconstruction_camera_inverts_recorded_transforms_and_keeps_pose_errors
     transform = np.diag([1., -1., -1.]) @ alignment @ Rotation.from_euler('z', 30., degrees=True).as_matrix()
     clip = MotionClip(10., list(joints), [MotionFrame(i / 10., {
         n: tuple(transform @ p + [2., 3., 4.]) for n, p in joints.items()
-    }) for i in range(6)], source={'extractor': 'WHAM', 'outputRotationDegrees': 30.},
-        metadata={'wham': {'coordinateSpace': 'camera'},
+    }) for i in range(6)], source={'extractor': 'RECONSTRUCTION', 'outputRotationDegrees': 30.},
+        metadata={'reconstruction': {'coordinateSpace': 'camera'},
                   'videoWorldAlignment': {'applied': True, 'rotationMatrix': alignment.tolist()},
                   'coordinateNormalization': {'transform': 'rotate_x_180_degrees'}})
     source = {'frames': [{'sourceTimeSec': f.time_sec,

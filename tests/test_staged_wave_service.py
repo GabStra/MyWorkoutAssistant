@@ -382,7 +382,7 @@ def test_service_dispatches_manifest_arguments_through_the_cli_wave_entrypoint(
             "arguments": [
                 "bake-and-rank",
                 "--candidates-json", str(tmp_path / "candidates.json"),
-                "--wham-repo-path", str(tmp_path / "wham"),
+                "--reconstruction-repo-path", str(tmp_path / "reconstruction"),
                 "--body-model-root", str(tmp_path / "body-models"),
                 "--workspace", str(tmp_path / "workspace"),
                 "--staged-wave-manifest", str(manifest_path),
@@ -503,7 +503,6 @@ def test_cli_uses_staged_one_exercise_plan_as_authoritative_motion_context(
     request = BakeAndRankRequest(
         candidates_json=tmp_path / "shared-candidates.json",
         workspace=tmp_path / "shared-workspace",
-        wham_repo_path=None,
         body_model_root=None,
     )
 

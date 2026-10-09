@@ -276,9 +276,9 @@ def validate_selected_movement(
             source_workspace = manifest_path.parent / source_workspace
     else:
         source_workspace = Path(str(selected.get("candidateWorkspace") or ""))
-    source_required = selection_manifest.get("preWhamSourceValidationEnabled") is not False
+    source_required = selection_manifest.get("preReconstructionSourceValidationEnabled") is not False
     source_explicitly_disabled = selection_manifest.get(
-        "preWhamSourceValidationExplicitlyDisabled"
+        "preReconstructionSourceValidationExplicitlyDisabled"
     ) is True
     selected_exercise_name = str(selected.get("exerciseName") or "").strip()
     if not selected_exercise_name:

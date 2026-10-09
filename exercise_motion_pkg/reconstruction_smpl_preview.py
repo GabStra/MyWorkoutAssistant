@@ -19,14 +19,14 @@ from exercise_motion_pkg.preview import (
     _prepare_preview_clip,
     _serialize_bounds,
 )
-from exercise_motion_pkg.wham_results import load_wham_results, resolve_wham_coordinate_keys, select_wham_subject, validate_wham_frame_rate
+from exercise_motion_pkg.reconstruction_results import load_reconstruction_results, resolve_reconstruction_coordinate_keys, select_reconstruction_subject, validate_reconstruction_frame_rate
 
 
 SPINE_MESH_WARP_CHAIN = ("pelvis", "spine1", "spine2", "spine3", "neck")
 
 
 @dataclass(frozen=True)
-class WhamSmplMeshSequence:
+class ReconstructionSmplMeshSequence:
     fps: float
     subject_id: str
     coordinate_space: str
@@ -39,43 +39,43 @@ class WhamSmplMeshSequence:
         return len(self.vertices)
 
 
-def load_wham_smpl_mesh_sequence(
+def load_reconstruction_smpl_mesh_sequence(
     *,
-    wham_results_pkl: Path,
+    reconstruction_results_pkl: Path,
     body_model_root: Path,
     coordinate_space: str = "world",
     subject_id: int | str | None = None,
     fps: float = 30.0,
-) -> WhamSmplMeshSequence:
-    fps = validate_wham_frame_rate(fps)
+) -> ReconstructionSmplMeshSequence:
+    fps = validate_reconstruction_frame_rate(fps)
     ensure_legacy_smpl_runtime_compat()
     try:
         import torch  # type: ignore
         import smplx  # type: ignore
     except ImportError as exc:
         raise RuntimeError(
-            "WHAM SMPL mesh preview requires torch and smplx in the active environment. "
-            "Run this stage with the WHAM Python environment or install those packages there."
+            "RECONSTRUCTION SMPL mesh preview requires torch and smplx in the active environment. "
+            "Run this stage with the RECONSTRUCTION Python environment or install those packages there."
         ) from exc
 
-    raw_results = load_wham_results(wham_results_pkl)
-    resolved_subject_id, payload = select_wham_subject(raw_results, subject_id=subject_id)
-    pose_key, translation_key = resolve_wham_coordinate_keys(coordinate_space)
+    raw_results = load_reconstruction_results(reconstruction_results_pkl)
+    resolved_subject_id, payload = select_reconstruction_subject(raw_results, subject_id=subject_id)
+    pose_key, translation_key = resolve_reconstruction_coordinate_keys(coordinate_space)
 
     pose = torch.as_tensor(payload.get(pose_key), dtype=torch.float32)
     translation = torch.as_tensor(payload.get(translation_key), dtype=torch.float32)
     betas = torch.as_tensor(payload.get("betas"), dtype=torch.float32)
     frame_ids = payload.get("frame_ids")
     if pose.ndim != 2 or pose.shape[1] != 72:
-        raise ValueError(f"WHAM '{pose_key}' must be shaped like [frames, 72].")
+        raise ValueError(f"RECONSTRUCTION '{pose_key}' must be shaped like [frames, 72].")
     if translation.ndim != 2 or translation.shape[1] != 3:
-        raise ValueError(f"WHAM '{translation_key}' must be shaped like [frames, 3].")
+        raise ValueError(f"RECONSTRUCTION '{translation_key}' must be shaped like [frames, 3].")
     frame_count = int(pose.shape[0])
     if frame_count <= 0:
-        raise ValueError(f"WHAM '{pose_key}' must contain at least one frame.")
+        raise ValueError(f"RECONSTRUCTION '{pose_key}' must contain at least one frame.")
     if int(translation.shape[0]) != frame_count:
         raise ValueError(
-            f"WHAM '{translation_key}' frame count {translation.shape[0]} does not match pose frame count {frame_count}."
+            f"RECONSTRUCTION '{translation_key}' frame count {translation.shape[0]} does not match pose frame count {frame_count}."
         )
     betas = _prepare_betas(torch, betas, frame_count=frame_count)
 
@@ -93,7 +93,7 @@ def load_wham_smpl_mesh_sequence(
             transl=translation,
         )
 
-    return WhamSmplMeshSequence(
+    return ReconstructionSmplMeshSequence(
         fps=fps,
         subject_id=str(resolved_subject_id),
         coordinate_space=coordinate_space,
@@ -109,10 +109,10 @@ def load_wham_smpl_mesh_sequence(
     )
 
 
-def write_baked_wham_smpl_preview_json(
+def write_baked_reconstruction_smpl_preview_json(
     path: Path,
     *,
-    sequence: WhamSmplMeshSequence,
+    sequence: ReconstructionSmplMeshSequence,
     raw_clip: MotionClip,
     cleaned_clip: MotionClip,
     mesh_reference_clip: MotionClip | None = None,
@@ -120,7 +120,7 @@ def write_baked_wham_smpl_preview_json(
     selected_loop_index: int | None = None,
     lock_y_drift: bool = False,
 ) -> dict[str, object]:
-    payload = build_baked_wham_smpl_preview_payload(
+    payload = build_baked_reconstruction_smpl_preview_payload(
         sequence=sequence,
         raw_clip=raw_clip,
         cleaned_clip=cleaned_clip,
@@ -134,9 +134,9 @@ def write_baked_wham_smpl_preview_json(
     return payload
 
 
-def build_baked_wham_smpl_preview_payload(
+def build_baked_reconstruction_smpl_preview_payload(
     *,
-    sequence: WhamSmplMeshSequence,
+    sequence: ReconstructionSmplMeshSequence,
     raw_clip: MotionClip,
     cleaned_clip: MotionClip,
     mesh_reference_clip: MotionClip | None = None,
@@ -248,7 +248,7 @@ def build_baked_wham_smpl_preview_payload(
         post_processing.insert(-1, "spine_mesh_warp_from_fused_motion")
     return {
         "schemaVersion": 1,
-        "kind": "whamBakedSmplMeshPreview",
+        "kind": "reconstructionBakedSmplMeshPreview",
         "title": title,
         "source": {
             "fps": sequence.fps,
@@ -258,7 +258,7 @@ def build_baked_wham_smpl_preview_payload(
             "subjectId": sequence.subject_id,
             "coordinateSpace": sequence.coordinate_space,
             "postProcessedFromCleanedMotion": not raw_motion_review,
-            "meshReference": "pre_fusion_wham_motion" if mesh_reference_clip is not None else "raw_motion",
+            "meshReference": "pre_fusion_reconstruction_motion" if mesh_reference_clip is not None else "raw_motion",
         },
         "fps": sequence.fps,
         "frameCount": len(centered_frames),
@@ -273,7 +273,7 @@ def build_baked_wham_smpl_preview_payload(
             "postProcessingApplied": post_processing,
             "spineMeshWarp": {
                 "applied": spine_warp_applied,
-                "reference": "pre_fusion_wham_motion" if mesh_reference_clip is not None else "raw_motion",
+                "reference": "pre_fusion_reconstruction_motion" if mesh_reference_clip is not None else "raw_motion",
                 "chain": list(SPINE_MESH_WARP_CHAIN),
                 "maxDelta": max((float(stats["maxDelta"]) for stats in mesh_warp_stats), default=0.0),
                 "warpedFrameCount": sum(1 for stats in mesh_warp_stats if bool(stats["applied"])),
@@ -430,13 +430,13 @@ def _prepare_betas(torch_module: object, betas, *, frame_count: int):
     if betas.ndim == 1:
         return betas.unsqueeze(0).repeat(frame_count, 1)
     if betas.ndim != 2:
-        raise ValueError("WHAM betas must be shaped like [10] or [frames, 10].")
+        raise ValueError("RECONSTRUCTION betas must be shaped like [10] or [frames, 10].")
     if betas.shape[0] == frame_count:
         return betas
     if betas.shape[0] == 1:
         return betas.repeat(frame_count, 1)
     raise ValueError(
-        f"WHAM betas shape {tuple(betas.shape)} is incompatible with frame count {frame_count}."
+        f"RECONSTRUCTION betas shape {tuple(betas.shape)} is incompatible with frame count {frame_count}."
     )
 
 
@@ -446,7 +446,7 @@ def _normalize_frame_ids(frame_ids: object, *, frame_count: int) -> list[int]:
     normalized = [int(value) for value in frame_ids]  # type: ignore[arg-type]
     if len(normalized) != frame_count:
         raise ValueError(
-            f"WHAM frame_ids length {len(normalized)} does not match frame count {frame_count}."
+            f"RECONSTRUCTION frame_ids length {len(normalized)} does not match frame count {frame_count}."
         )
     return normalized
 

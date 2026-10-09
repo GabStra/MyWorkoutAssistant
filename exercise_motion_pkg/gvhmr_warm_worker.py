@@ -1,6 +1,6 @@
 """Warm GVHMR worker for repeated motion extraction jobs.
 
-Runs inside the GVHMR Docker image and mirrors the WHAM warm-worker file
+Runs inside the GVHMR Docker image and uses the supervised warm-worker file
 protocol (jobs/running/results/job_logs + ready/heartbeat/stop markers). The
 one-shot runner pays the full container lifecycle per job: Python imports,
 ViTPose/HMR2 checkpoint loads, and CUDA context setup dominate the attempt
@@ -166,9 +166,7 @@ def load_gvhmr_once() -> dict[str, Any]:
 
     from hmr4d.configs import register_store_gvhmr
 
-    # Deliberately no TF32/cudnn-benchmark toggles here (unlike the WHAM
-    # worker): the one-shot gvhmr_inference.py path sets none of them, and any
-    # deviation could change numerics between warm and one-shot outputs.
+    # The one-shot path sets no TF32/cuDNN toggles; keep warm-worker numerics equal.
 
     # Eagerly construct every preprocessing model plus the prediction model so
     # ready.json reflects true readiness and the first job pays only execution.
@@ -349,7 +347,7 @@ def process_job(job_path: Path, result_dir: Path, job_logs_dir: Path, state: dic
                     timings["savePredictionSeconds"] = time.perf_counter() - phase_started
 
                 phase_started = time.perf_counter()
-                output_pkl = output_root.resolve() / video_path.stem / "wham_output.pkl"
+                output_pkl = output_root.resolve() / video_path.stem / "reconstruction_output.pkl"
                 export_summary = export_gvhmr_results_pkl(
                     results_path, output_pkl, keep_source_betas=keep_source_betas
                 )

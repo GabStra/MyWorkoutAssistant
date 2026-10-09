@@ -98,21 +98,21 @@ throw 'Storage failure did not stop the launcher'
 def test_failed_candidate_pruning_preserves_resume_and_diagnostics(tmp_path):
     candidate = tmp_path/'candidate'
     files = ['raw/motion.raw.json', 'cleaned/motion.cleaned.json', 'input/selected_segment.mp4',
-             'raw/wham/unused.npy', 'raw/wham/resume.pkl', 'review/frame_001.png',
+             'raw/reconstruction/unused.npy', 'raw/reconstruction/resume.pkl', 'review/frame_001.png',
              'review/contact_sheet.jpg', 'review/rejection.json']
     for relative in files:
         p = candidate/relative
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(b'evidence')
     (candidate/'generation_checkpoint.json').write_text(json.dumps({
-        'outputs': [{'path': str(candidate/'raw/wham/resume.pkl')}]}))
+        'outputs': [{'path': str(candidate/'raw/reconstruction/resume.pkl')}]}))
     report = apply_artifact_retention_policy(tmp_path, {'candidateResults': [{
         'candidateWorkspace': str(candidate), 'status': 'needs_motion_processing',
         'inputVideoPath': str(candidate/'input/selected_segment.mp4')}]})
     assert not report['errors']
-    assert not (candidate/'raw/wham/unused.npy').exists()
+    assert not (candidate/'raw/reconstruction/unused.npy').exists()
     assert not (candidate/'review/frame_001.png').exists()
-    for relative in set(files)-{'raw/wham/unused.npy', 'review/frame_001.png'}:
+    for relative in set(files)-{'raw/reconstruction/unused.npy', 'review/frame_001.png'}:
         assert (candidate/relative).exists(), relative
 
 

@@ -418,16 +418,15 @@ def run_discovery_vlm_stage(args: argparse.Namespace, run_dir: Path) -> dict[str
     return summary
 
 
-def build_bake_request_for_pre_wham(args: argparse.Namespace, run_dir: Path) -> BakeAndRankRequest:
+def build_bake_request_for_pre_reconstruction(args: argparse.Namespace, run_dir: Path) -> BakeAndRankRequest:
     return BakeAndRankRequest(
         candidates_json=args.candidates_json or (run_dir / "manual-candidate.json"),
-        workspace=run_dir / "pre_wham_workspace",
-        wham_repo_path=None,
+        workspace=run_dir / "pre_reconstruction_workspace",
         body_model_root=None,
         youtube_cookies=args.youtube_cookies,
         youtube_source_cache_dir=args.youtube_source_cache_dir,
         max_source_window_attempts=args.source_window_attempts,
-        pre_wham_source_validation=True,
+        pre_reconstruction_source_validation=True,
         exercise_motion_contract_enabled=args.contract_mode != "none",
         review_llm_workers=args.review_llm_workers,
         llama_cpp_base_url=args.llama_cpp_base_url,
@@ -472,9 +471,9 @@ def build_bake_request_for_pre_wham(args: argparse.Namespace, run_dir: Path) -> 
 
 def manual_ranked_candidate(args: argparse.Namespace) -> RankedCandidate:
     if args.video_path is None:
-        raise ValueError("--video-path is required for manual pre-wham runs.")
+        raise ValueError("--video-path is required for manual pre-reconstruction runs.")
     if not args.exercise_name:
-        raise ValueError("--exercise-name is required for manual pre-wham runs.")
+        raise ValueError("--exercise-name is required for manual pre-reconstruction runs.")
     if args.start_seconds is None or args.end_seconds is None or args.end_seconds <= args.start_seconds:
         raise ValueError("--start-seconds and --end-seconds must define a valid manual source window.")
     exercise_slug = slugify(args.exercise_name)
@@ -497,11 +496,11 @@ def manual_ranked_candidate(args: argparse.Namespace) -> RankedCandidate:
     )
 
 
-def load_ranked_candidates_for_pre_wham(args: argparse.Namespace, request: BakeAndRankRequest) -> list[RankedCandidate]:
+def load_ranked_candidates_for_pre_reconstruction(args: argparse.Namespace, request: BakeAndRankRequest) -> list[RankedCandidate]:
     if args.video_path is not None:
         return [manual_ranked_candidate(args)]
     if args.candidates_json is None:
-        raise ValueError("--candidates-json or --video-path is required for pre-wham-source.")
+        raise ValueError("--candidates-json or --video-path is required for pre-reconstruction-source.")
     if args.include_fallback_candidates:
         payload = read_json(args.candidates_json)
         all_candidates = [
@@ -542,7 +541,7 @@ def load_ranked_candidates_for_pre_wham(args: argparse.Namespace, request: BakeA
     return expanded
 
 
-def contract_for_pre_wham_candidate(
+def contract_for_pre_reconstruction_candidate(
     ranked_candidate: RankedCandidate,
     *,
     request: BakeAndRankRequest,
@@ -575,10 +574,10 @@ def window_for_ranked_candidate(ranked_candidate: RankedCandidate, source_video_
     return DetectionWindow(index=0, start_seconds=hint.start_seconds, end_seconds=hint.end_seconds)
 
 
-def run_pre_wham_source_stage(args: argparse.Namespace, run_dir: Path) -> dict[str, Any]:
-    request = build_bake_request_for_pre_wham(args, run_dir)
-    candidates = load_ranked_candidates_for_pre_wham(args, request)
-    results_path = run_dir / "pre_wham_source_results.jsonl"
+def run_pre_reconstruction_source_stage(args: argparse.Namespace, run_dir: Path) -> dict[str, Any]:
+    request = build_bake_request_for_pre_reconstruction(args, run_dir)
+    candidates = load_ranked_candidates_for_pre_reconstruction(args, request)
+    results_path = run_dir / "pre_reconstruction_source_results.jsonl"
     started = time.perf_counter()
     vision_settings = replace(
         build_settings(args, vision=True),
@@ -591,7 +590,7 @@ def run_pre_wham_source_stage(args: argparse.Namespace, run_dir: Path) -> dict[s
         preview_cache_dir = args.youtube_preview_cache_dir or bake_module.default_youtube_preview_cache_read_through_dir(request)
         for index, ranked_candidate in enumerate(candidates):
             row_started = time.perf_counter()
-            candidate_dir = run_dir / "pre_wham_candidates" / f"{index + 1:03d}-{ranked_candidate.workspace_slug}"
+            candidate_dir = run_dir / "pre_reconstruction_candidates" / f"{index + 1:03d}-{ranked_candidate.workspace_slug}"
             source_dir = candidate_dir / "source"
             try:
                 source_video_path = copy_or_download_candidate_source(
@@ -607,8 +606,8 @@ def run_pre_wham_source_stage(args: argparse.Namespace, run_dir: Path) -> dict[s
                     use_llm=False,
                 )
                 duration = max(0.5, source_window.end_seconds - source_window.start_seconds)
-                frame_count = args.pre_wham_frame_count or max(12, min(args.review_frames, frames_for_chunk_seconds(duration)))
-                contract = contract_for_pre_wham_candidate(
+                frame_count = args.pre_reconstruction_frame_count or max(12, min(args.review_frames, frames_for_chunk_seconds(duration)))
+                contract = contract_for_pre_reconstruction_candidate(
                     ranked_candidate,
                     request=request,
                     ranker=ranker,
@@ -694,7 +693,7 @@ def run_pre_wham_source_stage(args: argparse.Namespace, run_dir: Path) -> dict[s
         ranker.close()
     pass_count = sum(1 for row in rows if row.get("passed") is True)
     summary = {
-        "stage": "pre-wham-source",
+        "stage": "pre-reconstruction-source",
         "candidateWindowCount": len(candidates),
         "passCount": pass_count,
         "contractMode": args.contract_mode,
@@ -911,8 +910,8 @@ def run_source_cut_strategy(
 
 def run_source_cut_strategies_stage(args: argparse.Namespace, run_dir: Path) -> dict[str, Any]:
     strategies = source_cut_strategy_names(args.source_cut_strategies)
-    request = build_bake_request_for_pre_wham(args, run_dir)
-    candidates = load_ranked_candidates_for_pre_wham(args, request)
+    request = build_bake_request_for_pre_reconstruction(args, run_dir)
+    candidates = load_ranked_candidates_for_pre_reconstruction(args, request)
     results_path = run_dir / "source_cut_strategy_results.jsonl"
     started = time.perf_counter()
     original_source_cut_disable_reasoning = bake_module.SOURCE_CUT_CANDIDATE_VLM_DISABLE_REASONING
@@ -944,8 +943,8 @@ def run_source_cut_strategies_stage(args: argparse.Namespace, run_dir: Path) -> 
                 use_llm=False,
             )
             duration = max(0.5, source_window.end_seconds - source_window.start_seconds)
-            frame_count = args.pre_wham_frame_count or max(12, min(args.review_frames, frames_for_chunk_seconds(duration)))
-            contract = contract_for_pre_wham_candidate(
+            frame_count = args.pre_reconstruction_frame_count or max(12, min(args.review_frames, frames_for_chunk_seconds(duration)))
+            contract = contract_for_pre_reconstruction_candidate(
                 ranked_candidate,
                 request=request,
                 ranker=ranker,
@@ -1039,7 +1038,7 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--vision-motion-scan-max-seconds", type=float, default=90.0)
     parser.add_argument("--review-frames", type=int, default=32)
     parser.add_argument("--review-llm-workers", type=int, default=4)
-    parser.add_argument("--pre-wham-frame-count", type=int)
+    parser.add_argument("--pre-reconstruction-frame-count", type=int)
     parser.add_argument(
         "--source-cut-strategies",
         default="current,vlm-only,parent-only,direct-parent",
@@ -1141,7 +1140,7 @@ def main() -> int:
     parser.add_argument(
         "--stage",
         required=True,
-        choices=("semantic", "discovery-vlm", "pre-wham-source", "source-cut-strategies"),
+        choices=("semantic", "discovery-vlm", "pre-reconstruction-source", "source-cut-strategies"),
     )
     add_common_args(parser)
     args = parser.parse_args()
@@ -1166,7 +1165,7 @@ def main() -> int:
     elif args.stage == "source-cut-strategies":
         summary = run_source_cut_strategies_stage(args, run_dir)
     else:
-        summary = run_pre_wham_source_stage(args, run_dir)
+        summary = run_pre_reconstruction_source_stage(args, run_dir)
     print(json.dumps({"runDir": str(run_dir), **summary}, indent=2, ensure_ascii=False, sort_keys=True))
     return 0
 

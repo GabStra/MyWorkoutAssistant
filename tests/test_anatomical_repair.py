@@ -1,4 +1,4 @@
-"""Malformed WHAM geometry is corrected, not merely diagnosed and discarded."""
+"""Malformed RECONSTRUCTION geometry is corrected, not merely diagnosed and discarded."""
 from copy import deepcopy
 import json
 from pathlib import Path

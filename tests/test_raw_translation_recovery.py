@@ -15,14 +15,14 @@ from exercise_motion_pkg import bake_and_rank as bake
     (["root_translation_discontinuity", "joint_angle_spike_penalty"], 0, False),
 ])
 def test_only_cleanup_owned_raw_defects_reach_repair(artifacts, consecutive, allowed):
-    gate = {"rejectionReasons": ["raw_wham_kinematic_artifact"],
+    gate = {"rejectionReasons": ["raw_reconstruction_kinematic_artifact"],
             "kinematicPlausibilityMetrics": {
                 "artifactReasons": artifacts,
                 "distalStep": {"thresholdExceedanceCount": 4,
                                "maxConsecutiveThresholdExceedanceCount": consecutive}}}
-    assert bake.raw_wham_motion_gate_allows_cleaned_recovery(gate) is allowed
-    gate["rejectionReasons"].append("raw_wham_motion_unreadable")
-    assert not bake.raw_wham_motion_gate_allows_cleaned_recovery(gate)
+    assert bake.raw_reconstruction_motion_gate_allows_cleaned_recovery(gate) is allowed
+    gate["rejectionReasons"].append("raw_reconstruction_motion_unreadable")
+    assert not bake.raw_reconstruction_motion_gate_allows_cleaned_recovery(gate)
 
 
 @pytest.mark.parametrize("repaired", [False, True])

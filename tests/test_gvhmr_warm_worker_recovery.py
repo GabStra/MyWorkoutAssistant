@@ -129,7 +129,7 @@ def test_runner_surfaces_interrupted_claim_as_typed_candidate_failure(
         return real_assert_available(*args, **kwargs)
 
     monkeypatch.setattr(gvhmr_runner, "gpu_stage_lock", fake_gpu_lock)
-    monkeypatch.setattr(gvhmr_runner, "wham_docker_run_lock", fake_docker_lock)
+    monkeypatch.setattr(gvhmr_runner, "reconstruction_docker_run_lock", fake_docker_lock)
     monkeypatch.setattr(gvhmr_runner, "ensure_warm_worker_ready", ensure_ready_under_leases)
     monkeypatch.setattr(gvhmr_runner, "assert_warm_worker_available", assert_available_under_leases)
     monkeypatch.setattr(gvhmr_runner, "path_inside_worker_mount", lambda path, **_kwargs: str(path))

@@ -410,7 +410,7 @@ def source_to_motion_pose_fidelity_metrics(
     source_payload: dict[str, Any],
     motion_payload: dict[str, Any],
 ) -> dict[str, Any]:
-    """Compare source 2D pose with raw WHAM without assuming camera scale or yaw.
+    """Compare source 2D pose with raw RECONSTRUCTION without assuming camera scale or yaw.
 
     A similarity fit uses only the torso and proximal lower body. All limbs are
     then evaluated outside that fit, so a wrong support posture or asymmetric

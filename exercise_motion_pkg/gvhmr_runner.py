@@ -1,8 +1,7 @@
 """GVHMR reconstruction runner (Docker).
 
-Mirrors wham_runner.run_wham_locally's contract but executes the GVHMR demo
-pipeline inside the myworkoutassistant/gvhmr image and exports a WHAM-schema
-pkl so the generation pipeline can consume either backend unchanged.
+Runs the GVHMR demo inside Docker and exports SMPL reconstruction results for
+the shared normalization and retargeting pipeline.
 """
 from __future__ import annotations
 
@@ -16,14 +15,14 @@ from typing import Any
 
 from exercise_motion_pkg.gpu_lock import gpu_stage_lock
 from exercise_motion_pkg.motion_scheduler import gpu_stage_task, timeout_with_candidate_deadline
-from exercise_motion_pkg.wham_runner import (
+from exercise_motion_pkg.reconstruction_runner import (
     assert_warm_worker_available,
     copy_worker_log,
     ensure_warm_worker_ready,
     path_inside_worker_mount,
-    run_wham_process,
+    run_reconstruction_process,
     wait_for_warm_worker_result,
-    wham_docker_run_lock,
+    reconstruction_docker_run_lock,
 )
 
 
@@ -247,7 +246,7 @@ def run_gvhmr_with_warm_worker(
     lock_wait_seconds = 0.0
     gpu_lock_wait_seconds = 0.0
     with gpu_stage_lock(stage="gvhmr_warm_worker_job") as gpu_lock_wait_seconds:
-        with wham_docker_run_lock(enabled=True) as lock_wait_seconds:
+        with reconstruction_docker_run_lock(enabled=True) as lock_wait_seconds:
             # Model loading during lazy startup uses CUDA too. Keep GPU and
             # Docker admission through startup, then verify readiness again
             # immediately before publishing a request.
@@ -311,10 +310,10 @@ def run_gvhmr_with_warm_worker(
             f"Error: {error}"
         )
     sequence_dir = output_root / input_video.stem
-    results_pkl = sequence_dir / "wham_output.pkl"
+    results_pkl = sequence_dir / "reconstruction_output.pkl"
     if not results_pkl.exists():
         raise RuntimeError(
-            "Warm GVHMR worker completed but no wham_output.pkl was found.\n"
+            "Warm GVHMR worker completed but no reconstruction_output.pkl was found.\n"
             f"Expected: {results_pkl}\n"
             f"Worker result: {result_path}\n"
             f"Logs:\n- {stdout_log}\n- {stderr_log}"
@@ -361,11 +360,11 @@ def build_gvhmr_command(
     static_camera: bool,
 ) -> list[str]:
     # demo.py writes to <output_root>/<video-stem>/hmr4d_results.pt; the export
-    # step converts it to the WHAM-schema pkl the pipeline expects at
-    # <output_root>/<video-stem>/wham_output.pkl.
+    # step converts it to the RECONSTRUCTION-schema pkl the pipeline expects at
+    # <output_root>/<video-stem>/reconstruction_output.pkl.
     container_stem = input_video.stem
     demo_results = f"/output/demo/{container_stem}/hmr4d_results.pt"
-    output_pkl = f"/output/{container_stem}/wham_output.pkl"
+    output_pkl = f"/output/{container_stem}/reconstruction_output.pkl"
     bridge_script = export_script.with_name("gvhmr_inference.py")
     demo_command = [
         "python",
@@ -425,7 +424,7 @@ def run_gvhmr_locally(
     stage_identity: dict[str, Any] | None = None,
     candidate_deadline: float | None = None,
 ) -> GvhmrRunResult:
-    """Run GVHMR in Docker and return a WHAM-schema results pkl path."""
+    """Run GVHMR in Docker and return a RECONSTRUCTION-schema results pkl path."""
     timeout = (
         DEFAULT_GVHMR_TIMEOUT_SECONDS
         if timeout_seconds is None or float(timeout_seconds) <= 0.0
@@ -477,8 +476,8 @@ def run_gvhmr_locally(
         "w", encoding="utf-8"
     ) as stderr_handle:
         with gpu_stage_lock(stage="gvhmr") as gpu_lock_wait_seconds:
-            with wham_docker_run_lock(enabled=True) as lock_wait_seconds:
-                returncode = run_wham_process(
+            with reconstruction_docker_run_lock(enabled=True) as lock_wait_seconds:
+                returncode = run_reconstruction_process(
                     command,
                     cwd=str(Path(__file__).resolve().parent),
                     stdout=stdout_handle,
@@ -497,10 +496,10 @@ def run_gvhmr_locally(
             f"- {stdout_log}\n- {stderr_log}"
         )
     sequence_dir = output_root / input_video.stem
-    results_pkl = sequence_dir / "wham_output.pkl"
+    results_pkl = sequence_dir / "reconstruction_output.pkl"
     if not results_pkl.exists():
         raise RuntimeError(
-            "GVHMR run completed but no wham_output.pkl was found.\n"
+            "GVHMR run completed but no reconstruction_output.pkl was found.\n"
             f"Expected: {results_pkl}\nLogs:\n- {stdout_log}\n- {stderr_log}"
         )
     phase_timings = _read_phase_timing_markers(stdout_log)

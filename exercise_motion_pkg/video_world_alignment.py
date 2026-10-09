@@ -1,4 +1,4 @@
-"""Align WHAM camera-space motion to a video-derived floor plane and body pose."""
+"""Align RECONSTRUCTION camera-space motion to a video-derived floor plane and body pose."""
 
 from __future__ import annotations
 
@@ -201,7 +201,7 @@ def discover_source_pose_reference_path(pipeline_root: Path) -> Path | None:
     confirmation_root = (
         pipeline_root
         / "segment_detection"
-        / "pre_wham_source_candidates"
+        / "pre_reconstruction_source_candidates"
         / "deterministic_confirmation"
     )
     if confirmation_root.is_dir():
@@ -250,7 +250,7 @@ def align_motion_clip_to_video(
     support_mode_hint: str | None = None,
     max_depth_samples: int = 5,
 ) -> VideoWorldAlignmentResult:
-    """Rotate and translate WHAM motion into a video-grounded camera frame."""
+    """Rotate and translate RECONSTRUCTION motion into a video-grounded camera frame."""
     if not video_world_alignment_enabled():
         return _empty_alignment_result(clip, reason="video_world_alignment_disabled")
     if not is_unidepth_runtime_available():

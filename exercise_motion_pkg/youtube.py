@@ -1125,7 +1125,7 @@ class YouTubeRankingSettings:
     vision_contact_sheet_jpeg_quality: int = 82
     vision_download_workers: int = 8
     vision_llm_workers: int = 4
-    vision_model: str = "gemma-4-E4B-it"
+    vision_model: str = DEFAULT_LLAMA_CPP_MODEL
     llama_cpp_base_url: str | None = "http://127.0.0.1:8090"
     llama_cpp_model: str = DEFAULT_LLAMA_CPP_MODEL
     llama_cpp_server_command: str | None = None
@@ -2636,7 +2636,7 @@ def build_youtube_query_planner_prompt(
         f"Baseline queries already used: {json.dumps(base_queries)}\n"
         f"Return up to {max(1, max_queries)} additional YouTube searches total, split between concise title aliases "
         "and broader queries.\n"
-        "Queries should favor videos that are good WHAM inputs: a single person, the whole relevant body "
+        "Queries should favor videos that are good RECONSTRUCTION inputs: a single person, the whole relevant body "
         "or implement visible, static camera, continuous normal-speed repetitions, no camera cuts, and no "
         "nearby people or obstructions.\n"
         "Do not use '-' exclusion operators or any other negative YouTube search terms.\n"
@@ -11399,7 +11399,7 @@ def single_strong_chunk_is_enough(
     # Source selection needs one complete extraction interval. Other sampled
     # windows being setup, instruction, or partial movement do not contradict
     # that interval; the downstream source-cut gate independently validates
-    # its boundaries before WHAM.
+    # its boundaries before RECONSTRUCTION.
     return True
 
 

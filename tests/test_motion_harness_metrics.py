@@ -67,8 +67,8 @@ def test_metric_input_snapshot_excludes_later_waves_and_mutated_manifests(tmp_pa
     manifest_path = candidate_workspace / "manifest.json"
     manifest_path.write_text(json.dumps({
         "timings": {
-            "whamRunSeconds": 31.0,
-            "wham": {
+            "reconstructionRunSeconds": 31.0,
+            "reconstruction": {
                 "backend": "gvhmr",
                 "returncode": 0,
                 "elapsedSeconds": 29.0,
@@ -89,7 +89,7 @@ def test_metric_input_snapshot_excludes_later_waves_and_mutated_manifests(tmp_pa
     (first_wave / "staged_wave_checkpoint.json").write_text(json.dumps({
         "waveId": "run-one-wave-1",
         "items": [{
-            "wham": {"attempts": [{
+            "reconstruction": {"attempts": [{
                 "elapsedSeconds": 50.0,
                 "selectedVideoPath": str(selected_video),
             }]},
@@ -128,14 +128,14 @@ def test_metric_input_snapshot_excludes_later_waves_and_mutated_manifests(tmp_pa
     (later_wave / "staged_wave_checkpoint.json").write_text(json.dumps({
         "waveId": "run-two-wave-1",
         "items": [{
-            "wham": {"attempts": [{
+            "reconstruction": {"attempts": [{
                 "elapsedSeconds": 60.0,
                 "selectedVideoPath": str(selected_video),
             }]},
         }],
     }), encoding="utf-8")
     manifest_path.write_text(json.dumps({
-        "timings": {"whamRunSeconds": 99.0},
+        "timings": {"reconstructionRunSeconds": 99.0},
     }), encoding="utf-8")
     (workspace / "scheduler_timeline.json").write_text(json.dumps({
         "runStartedAtUtc": "2026-10-04T20:00:00Z",
@@ -178,11 +178,11 @@ def test_cached_reconstruction_timings_do_not_count_as_runner_calls(tmp_path):
     (wave_dir / "staged_wave_checkpoint.json").write_text(json.dumps({
         "waveId": "run-one-wave-1",
         "items": [{
-            "wham": {"attempts": [{
+            "reconstruction": {"attempts": [{
                 "status": "prepared",
                 "elapsedSeconds": 10.0,
                 "reconstructionTimings": {
-                    "wham": {"elapsedSeconds": 0.0, "cacheStatus": "reused"},
+                    "reconstruction": {"elapsedSeconds": 0.0, "cacheStatus": "reused"},
                 },
             }]},
         }],
@@ -206,13 +206,13 @@ def test_generation_checkpoint_timings_survive_candidate_pruning(tmp_path):
     (wave_dir / "staged_wave_checkpoint.json").write_text(json.dumps({
         "waveId": "run-one-wave-1",
         "items": [{
-            "wham": {"attempts": [{
+            "reconstruction": {"attempts": [{
                 "status": "prepared",
                 "elapsedSeconds": 50.0,
                 "selectedVideoPath": str(missing_video),
                 "reconstructionTimings": {
-                    "whamRunSeconds": 31.0,
-                    "wham": {
+                    "reconstructionRunSeconds": 31.0,
+                    "reconstruction": {
                         "backend": "gvhmr",
                         "elapsedSeconds": 29.0,
                         "phaseTimings": {

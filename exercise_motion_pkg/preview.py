@@ -548,7 +548,7 @@ def write_preview_html(
         "horizontalTorsoProfile": has_horizontal_torso_profile,
         "previewMaxRenderFps": 60.0,
         "motionTuningEnabled": not raw_motion_review,
-        "rawWhamPassthrough": raw_motion_review,
+        "rawReconstructionPassthrough": raw_motion_review,
         "loopable": bool(detected_loops),
         "detectedLoops": detected_loops,
         "capsules": _build_capsules(preview_clip),
@@ -1016,7 +1016,7 @@ def build_wear_skeleton_payload(
             "canonicalWorldUp": True,
             "wearCoordinateNormalization": wear_coordinate_normalization,
             "selectedLoopIndex": resolved_loop_index,
-            "rawWhamPassthrough": raw_motion_review,
+            "rawReconstructionPassthrough": raw_motion_review,
         },
         "loop": {
             "enabled": selected_loop is not None,
@@ -1081,7 +1081,7 @@ def _build_wear_transformed_frames(
                 # Pre-IK reference in the SAME export world frame as "joints":
                 # the controlled fit and the pre-fit fidelity probe compare the
                 # two fields directly, and the placement registration restores
-                # this shared frame. Paired-hand metrics used by the raw-WHAM
+                # this shared frame. Paired-hand metrics used by the raw-RECONSTRUCTION
                 # validator are invariant to these rigid transforms.
                 "sourceJoints": dict(transformed_joints),
                 "joints": transformed_joints,
@@ -1567,7 +1567,7 @@ def _build_horizontal_normal_alignment_payload(
 
     normal_x /= normal_length
     normal_z /= normal_length
-    # WHAM/SMPL bilateral joints use the directed anatomical basis
+    # RECONSTRUCTION/SMPL bilateral joints use the directed anatomical basis
     # forward = world-up x (right - left). Reversing this cross product
     # preserves the sagittal plane but makes the character face backward.
     forward_x = normal_z
@@ -4480,7 +4480,7 @@ def _build_html(
           <input id="showComparisonOverlay" type="checkbox" />
         </label>
         <label class="control-row" for="showRawComparisonOverlay">
-          <span>Show raw WHAM overlay</span>
+          <span>Show raw RECONSTRUCTION overlay</span>
           <input id="showRawComparisonOverlay" type="checkbox" />
         </label>
         <div class="control-group">
@@ -8186,7 +8186,7 @@ def _build_html(
       }}
       const resolvedNormalX = normalX / normalLength;
       const resolvedNormalZ = normalZ / normalLength;
-      // WHAM/SMPL facing is world-up x (right - left), not the inverse.
+      // RECONSTRUCTION/SMPL facing is world-up x (right - left), not the inverse.
       const forwardX = resolvedNormalZ;
       const forwardZ = -resolvedNormalX;
       const currentAngle = Math.atan2(forwardZ, forwardX);
@@ -9276,7 +9276,7 @@ def _build_html(
           cameraPitchDegrees: selectedPreviewSettings.cameraPitchDegrees,
           playbackSpeed: selectedPreviewSettings.playbackSpeed,
           selectedLoopIndex,
-          rawWhamPassthrough: Boolean(payload.rawWhamPassthrough),
+          rawReconstructionPassthrough: Boolean(payload.rawReconstructionPassthrough),
         }},
         wearDisplay: {{
           viewYawDegrees: wearViewYawDegrees,
@@ -9543,7 +9543,7 @@ def _build_html(
         defaultValue: false,
         description: "Blends detected support-foot joints toward stable anchors during planted phases.",
         useWhen: "Use when the support foot visibly slides during a static or mostly static lower-body exercise.",
-        risk: "Can distort the leg chain if WHAM contact timing is wrong.",
+        risk: "Can distort the leg chain if RECONSTRUCTION contact timing is wrong.",
       }},
       {{
         id: "lockPlantedHands",
@@ -9644,7 +9644,7 @@ def _build_html(
           fps: payload.fps,
           frameCount: payload.frameCount,
           motionTuningEnabled: payload.motionTuningEnabled,
-          rawWhamPassthrough: payload.rawWhamPassthrough,
+          rawReconstructionPassthrough: payload.rawReconstructionPassthrough,
           previewMode: "full_clip_source_with_optional_time_range_cut",
           sourceRange: sourceTimeBounds(),
           activeRange: currentLoop ? {{

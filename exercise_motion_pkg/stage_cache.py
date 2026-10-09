@@ -1,3 +1,5 @@
+
+from exercise_motion_pkg.reconstruction_compat import loads_reconstruction_metadata
 """Content-checked checkpoints for expensive deterministic motion stages."""
 from contextlib import contextmanager
 import hashlib
@@ -46,7 +48,7 @@ def stage_lock(path: Path) -> Iterator[None]:
 
 def load_stage(path: Path, key: str) -> dict[str, Any] | None:
     try:
-        record = json.loads(path.read_text(encoding="utf-8"))
+        record = loads_reconstruction_metadata(path.read_text(encoding="utf-8"))
         if not isinstance(record, dict) or record.get("key") != key or not record.get("outputs") or not isinstance(record.get("payload"), dict):
             return None
         verified_output_paths = set()

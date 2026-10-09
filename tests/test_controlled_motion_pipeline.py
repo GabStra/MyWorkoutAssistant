@@ -468,7 +468,7 @@ def test_final_acceptance_requires_the_complete_current_fit_contract():
     assert 'controlled_motion_fit_rejected' in metrics['artifactReasons']
 
 
-def test_terminal_fit_rejection_falls_back_only_for_unchanged_raw_wham_pose():
+def test_terminal_fit_rejection_falls_back_only_for_unchanged_raw_reconstruction_pose():
     from exercise_motion_pkg.controlled_motion import REQUIRED_FIT_CHECKS, controlled_motion_fit_raw_fallback
     from exercise_motion_pkg.sequence_stabilization import pose_digest
 
@@ -504,8 +504,8 @@ def test_terminal_fit_rejection_falls_back_only_for_unchanged_raw_wham_pose():
 
     payload['rawMotionFallbackEvidence'] = {
         'schemaVersion': 1,
-        'rawWhamMotionGatePassed': True,
-        'rawWhamMotionGateFingerprint': 'a' * 64,
+        'rawReconstructionMotionGatePassed': True,
+        'rawReconstructionMotionGateFingerprint': 'a' * 64,
     }
     metrics = bake_and_rank.compute_kinematic_plausibility_metrics_from_payload(payload)
     assert 'controlled_motion_fit_rejected' not in metrics['artifactReasons']

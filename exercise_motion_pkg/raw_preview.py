@@ -43,7 +43,7 @@ def _build_raw_preview_html(payload_json: str) -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Raw WHAM Preview</title>
+  <title>Raw RECONSTRUCTION Preview</title>
   <style>
     :root {{
       color-scheme: dark;
@@ -140,7 +140,7 @@ def _build_raw_preview_html(payload_json: str) -> str:
 <body>
   <main>
     <header>
-      <h1 id="title">Raw WHAM Preview</h1>
+      <h1 id="title">Raw RECONSTRUCTION Preview</h1>
       <div class="controls">
         <button id="toggle">Pause</button>
         <label>Projection <select id="projection">
@@ -170,7 +170,7 @@ def _build_raw_preview_html(payload_json: str) -> str:
     let cursor = 0;
     let lastTimestamp = null;
 
-    title.textContent = payload.title || "Raw WHAM Preview";
+    title.textContent = payload.title || "Raw RECONSTRUCTION Preview";
 
     function resize() {{
       const rect = canvas.getBoundingClientRect();
@@ -277,7 +277,7 @@ def _build_raw_preview_html(payload_json: str) -> str:
         `frame ${{frame.frameIndex + 1}} / ${{frames.length}}`,
         `time ${{Number(frame.timeSec || 0).toFixed(3)}}s`,
         `fps ${{Number(payload.fps || 0).toFixed(3)}}`,
-        `space ${{payload.source?.coordinateSpace || payload.metadata?.wham?.coordinateSpace || "unknown"}}`,
+        `space ${{payload.source?.coordinateSpace || payload.metadata?.reconstruction?.coordinateSpace || "unknown"}}`,
       ].join("\\n");
     }}
 

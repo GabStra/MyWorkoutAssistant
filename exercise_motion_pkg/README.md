@@ -5,14 +5,14 @@ Pipeline for turning an exercise video into a cleaned, reviewable motion clip th
 Current scope:
 
 - accepts a YouTube URL or local video file
-- runs WHAM from a prepared local checkout, or consumes an existing `wham_output.pkl`
-- reconstructs joints from WHAM `pose_world` or `pose`
+- runs GVHMR in Docker, or consumes an existing `reconstruction_output.pkl`
+- reconstructs joints from the GVHMR result's normalized reconstruction fields
 - performs automated post-processing: ground-plane fitting, soft root-height clamping, foot contact detection, foot locking, and support-segment root stabilization
 - writes `ground.metadata.json` plus embedded `metadata.ground`
 - writes a standalone HTML/WebGL preview
 - writes an offline retarget handoff:
   - fixed target rig contract
-  - WHAM SMPL retarget source JSON when `wham_output.pkl` is available
+  - SMPL retarget source JSON when `reconstruction_output.pkl` is available
 
 Not in scope:
 
@@ -27,39 +27,26 @@ Not in scope:
 pip install -e .[motion,test]
 ```
 
-## WHAM Setup
+## Reconstruction and model setup
 
-The generator uses the WHAM git submodule at `third_party/WHAM`. After clone:
+GVHMR is the movement reconstruction backend and runs in Docker. The default image
+is `myworkoutassistant/gvhmr:torch2.3-cu121`; Docker Desktop and a working GPU
+container runtime are required. No local reconstruction checkout, SLAM setup,
+SMPLify environment, or host checkpoint installation is used by this pipeline.
 
-```powershell
-git submodule update --init third_party/WHAM
-pwsh ./scripts/apply_wham_mmpose1_patch.ps1
-pwsh ./scripts/prepare_wham_mmpose1_checkpoints.ps1
-```
+Qwen3.5-9B UD-Q4_K_XL is used for all exercise movement model work, including
+exercise contracts, source review, and visual output review. Text requests use
+the GGUF without an image projector; vision requests use its matching
+`mmproj-BF16(6).gguf`. See
+[LLAMACPP_SEGMENT_DETECTION.md](LLAMACPP_SEGMENT_DETECTION.md) for the local
+model paths and segment-detection command.
 
-SMPL body models and large checkpoints stay local (gitignored) under that checkout and are **baked into the WHAM Docker image** at build time. Rebuild after changing weights:
-
-```powershell
-pwsh ./scripts/build_wham_ada_docker.ps1
-```
-
-Docker inference uses `/opt/wham-src` inside the image (code, checkpoints, SMPL). It does not mount the host WHAM tree. Host `dataset/body_models` is still used by the Python pipeline to convert WHAM output to joints.
-
-Required host files for a local (non-Docker) WHAM run, and for building the image:
-
-- `demo.py`
-- `checkpoints/wham_vit_bedlam_w_3dpw.pth.tar`
-- `checkpoints/wham_vit_w_3dpw.pth.tar`
-- `checkpoints/hmr2a.ckpt`
-- `checkpoints/vitpose-h-multi-coco.pth`
-- `checkpoints/yolo26x.pt`
-- `dataset/body_models/smpl/SMPL_NEUTRAL.pkl`
-
-Repo defaults:
-
-- WHAM repo: `third_party/WHAM`
-- body model root: `third_party/WHAM/dataset/body_models`
-- workspace: `build/exercise_motion`
+The default workspace is `build/exercise_motion`. The pipeline can reuse an
+existing reconstruction result when its cache identity matches. Legacy cache
+files and metadata carrying historical WHAM labels remain readable through
+explicit result paths; existing artifacts are left untouched. Automatic stage
+reuse requires the current cache layout and identity, so older stages may be
+recomputed after this migration.
 
 ## Repo Runner
 
@@ -69,7 +56,7 @@ For the current app-ready movement-generation commands, including single-exercis
 docs/exercise_motion_youtube_e2e.md
 ```
 
-Use `run_exercise_motion_generation.ps1` only when you already have a specific local video or exact YouTube URL and want to run the lower-level WHAM/cleanup/preview pipeline without YouTube candidate search and ranking:
+Use `run_exercise_motion_generation.ps1` when you already have a specific local video or exact YouTube URL and want to run the lower-level GVHMR/cleanup/preview pipeline without YouTube candidate search and ranking:
 
 ```powershell
 pwsh ./scripts/run_exercise_motion_generation.ps1 `
@@ -90,17 +77,15 @@ Key overrides:
 pwsh ./scripts/run_exercise_motion_generation.ps1 `
   -ExerciseSlug burpee `
   -VideoPath "C:\path\to\video.mp4" `
-  -WhamRepoPath "third_party\WHAM" `
-  -BodyModelRoot "third_party\WHAM\dataset\body_models" `
-  -WhamPython "python" `
-  -EstimateLocalOnly
+  -UseReconstructionDocker `
+  -ReconstructionDockerImage "myworkoutassistant/gvhmr:torch2.3-cu121"
 ```
 
 Runtime behavior:
 
 1. copies or downloads the source video into `build/exercise_motion/<slug>/input`
 2. optionally detects the exercise span and trims the clip first
-3. runs WHAM and writes `wham_output.pkl` under `build/exercise_motion/<slug>/raw/wham/<video-stem>/`
+3. runs GVHMR in Docker and writes `reconstruction_output.pkl` under `build/exercise_motion/<slug>/raw/reconstruction/<video-stem>/`
 4. converts the result into repo motion JSON
 5. applies the automated post-processing pass and regenerates motion-derived ground metadata
 6. writes raw, cleaned, preview, and manifest artifacts
@@ -109,11 +94,11 @@ Main artifacts:
 
 - `manifest.json`
 - `raw/motion.raw.json`
-- `raw/wham/<video-stem>/wham_output.pkl`
+- `raw/reconstruction/<video-stem>/reconstruction_output.pkl`
 - `cleaned/motion.cleaned.json`
 - `cleaned/ground.metadata.json`
 - `retarget/target_rig.contract.json`
-- `retarget/wham.retarget_source.json` when the pipeline ran from WHAM output
+- `retarget/reconstruction.retarget_source.json` when the pipeline has a reconstruction result
 - `preview/motion_preview.html`
 
 ## Local LLM Segment Detection
@@ -130,7 +115,7 @@ pwsh ./scripts/run_exercise_segment_detection.ps1 `
 
 What it does:
 
-1. starts the local LiteRT-LM/Gemma vision flow
+1. uses the configured local Qwen3.5-9B vision model
 2. splits the video into overlapping windows
 3. samples keyframes from each window
 4. asks the local model which windows contain the actual exercise cycle
@@ -141,7 +126,7 @@ build/exercise_motion/<video-stem-or-slug>/segment_detection/segment_detection.j
 build/exercise_motion/<video-stem-or-slug>/segment_detection/frames/...
 ```
 
-The resulting JSON contains the selected span that the main generator can trim before WHAM runs.
+The resulting JSON contains the selected span that the main generator can trim before GVHMR runs.
 
 ## Normalized Motion Contract
 
@@ -170,19 +155,25 @@ If you already have a normalized motion JSON, pass `--normalized-motion-json` an
 python -m exercise_motion_pkg.cli generate `
   --exercise-slug squat `
   --youtube-url "https://www.youtube.com/watch?v=eFYv8Skf66g" `
-  --wham-repo-path "third_party\\WHAM" `
-  --body-model-root "third_party\\WHAM\\dataset\\body_models"
+  --use-reconstruction-docker `
+  --reconstruction-docker-image "myworkoutassistant/gvhmr:torch2.3-cu121"
 ```
 
-If you already ran WHAM yourself:
+If you already have a GVHMR result:
 
 ```powershell
 python -m exercise_motion_pkg.cli generate `
   --exercise-slug squat `
   --video-path "C:\\path\\to\\video.mp4" `
-  --wham-results-pkl "C:\\path\\to\\wham_output.pkl" `
-  --body-model-root "third_party\\WHAM\\dataset\\body_models"
+  --reconstruction-results-pkl "C:\\path\\to\\reconstruction_output.pkl"
 ```
+
+The shared reconstruction options use backend-neutral names, including
+`--no-reuse-reconstruction-cache`, `--use-reconstruction-docker`,
+`--reconstruction-docker-image`, `--reconstruction-docker-shm-size`,
+`--reconstruction-docker-gpus`, `--reconstruction-timeout-seconds`, and
+`--export-reconstruction-smpl-preview`. The selected reconstruction worker is
+GVHMR.
 
 ## Kinematic Refinement
 

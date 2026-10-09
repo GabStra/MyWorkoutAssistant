@@ -117,7 +117,7 @@ def test_context_cache_tracks_content_and_interval_not_filename(tmp_path, monkey
         output.write_bytes(source.read_bytes() + str(kwargs['start_seconds']).encode())
     monkeypatch.setattr(bake, "trim_video", trim)
     def prepare(start=0):
-        bake.prepare_cached_wham_video(source_path=source, output_path=output, start_seconds=start, end_seconds=4)
+        bake.prepare_cached_reconstruction_video(source_path=source, output_path=output, start_seconds=start, end_seconds=4)
     prepare()
     prepare()
     assert len(calls) == 1
@@ -136,10 +136,10 @@ def test_context_cache_tracks_content_and_interval_not_filename(tmp_path, monkey
 def test_stabilization_does_not_reuse_another_interval(tmp_path, monkeypatch):
     source = tmp_path / "input.mp4"
     source.write_bytes(b"135 frames")
-    output = tmp_path / "input" / "wham_inference_yolo_stabilized.mp4"
+    output = tmp_path / "input" / "reconstruction_inference_yolo_stabilized.mp4"
     output.parent.mkdir()
     output.write_bytes(b"169 legacy frames")
-    metadata = output.parent / "wham_yolo_track_stabilization.json"
+    metadata = output.parent / "reconstruction_yolo_track_stabilization.json"
     metadata.write_text(json.dumps({"policyVersion": bake.YOLO_TRACK_STABILIZATION_POLICY_VERSION, "applied": True}))
     calls = []
     monkeypatch.setattr(bake, "load_workspace_yolo_pose_track", lambda _: {"frames": []})
@@ -148,9 +148,9 @@ def test_stabilization_does_not_reuse_another_interval(tmp_path, monkeypatch):
         output.write_bytes(source.read_bytes())
         metadata.write_text(json.dumps({"applied": True, "reason": "tracked"}))
         return output
-    monkeypatch.setattr(bake, "_stabilize_wham_inference_video_to_yolo_track_uncached", stabilize)
+    monkeypatch.setattr(bake, "_stabilize_reconstruction_inference_video_to_yolo_track_uncached", stabilize)
     def prepare(start=0):
-        return bake.stabilize_wham_inference_video_to_yolo_track(candidate_workspace=tmp_path,
+        return bake.stabilize_reconstruction_inference_video_to_yolo_track(candidate_workspace=tmp_path,
                     inference_video_path=source, selected_start_seconds=start)
     prepare()
     assert output.read_bytes() == b"135 frames"
@@ -188,7 +188,7 @@ def test_stabilization_track_must_belong_to_selected_video(tmp_path):
     video.write_bytes(b"current interval")
     root = tmp_path / "segment_detection"
     root.mkdir()
-    stale = root / "pre_wham_source_candidates" / "deterministic_confirmation" / "source_candidate_A" / "exact_source_pose_reference.json"
+    stale = root / "pre_reconstruction_source_candidates" / "deterministic_confirmation" / "source_candidate_A" / "exact_source_pose_reference.json"
     stale.parent.mkdir(parents=True)
     stale.write_text(json.dumps({"sourceVideoSha256": "old", "pose": {"frames": ["wrong"]}}))
     assert load_workspace_yolo_pose_track(tmp_path) is None

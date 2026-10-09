@@ -113,13 +113,13 @@ def test_failed_metadata_write_releases_lease(tmp_path, monkeypatch):
 def test_docker_lease_reader_does_not_mask_operation_failure(tmp_path, monkeypatch):
     import msvcrt
     from exercise_motion_pkg.gpu_lock import _windows_file_handle
-    from exercise_motion_pkg import wham_runner
+    from exercise_motion_pkg import reconstruction_runner
     path = tmp_path / "docker.lock"
-    monkeypatch.setenv(wham_runner.WHAM_DOCKER_LOCK_ENV_VAR, str(path))
+    monkeypatch.setenv(reconstruction_runner.RECONSTRUCTION_DOCKER_LOCK_ENV_VAR, str(path))
     reader = None
     try:
         with pytest.raises(ValueError, match="tracking rejected"):
-            with wham_runner.wham_docker_run_lock(enabled=True):
+            with reconstruction_runner.reconstruction_docker_run_lock(enabled=True):
                 reader = msvcrt.open_osfhandle(_windows_file_handle(path, create=False), os.O_RDONLY)
                 raise ValueError("tracking rejected")
     finally:
@@ -232,30 +232,30 @@ def test_python_model_child_dies_if_its_owner_process_crashes():
     assert not process_is_running(child_pid)
 
 
-def test_old_gpu_and_wham_lock_metadata_does_not_evict_live_owner(tmp_path: Path):
+def test_old_gpu_and_reconstruction_lock_metadata_does_not_evict_live_owner(tmp_path: Path):
     import json
 
-    from exercise_motion_pkg import gpu_lock, wham_runner
+    from exercise_motion_pkg import gpu_lock, reconstruction_runner
 
     identity = gpu_lock.process_identity(os.getpid())
     gpu_path = tmp_path / "gpu-old-live.lock"
     gpu_path.write_text(json.dumps({"pid": os.getpid(), "processIdentity": identity}))
-    wham_path = tmp_path / "wham-old-live.lock"
-    wham_path.write_text(json.dumps({"pid": os.getpid(), "processIdentity": identity}))
+    reconstruction_path = tmp_path / "reconstruction-old-live.lock"
+    reconstruction_path.write_text(json.dumps({"pid": os.getpid(), "processIdentity": identity}))
     old_timestamp = time.time() - 24 * 60 * 60
     os.utime(gpu_path, (old_timestamp, old_timestamp))
-    os.utime(wham_path, (old_timestamp, old_timestamp))
+    os.utime(reconstruction_path, (old_timestamp, old_timestamp))
 
     assert not gpu_lock.gpu_lock_is_stale(gpu_path, timeout_seconds=1.0)
-    assert not wham_runner.wham_docker_lock_is_stale(wham_path, timeout_seconds=1.0)
+    assert not reconstruction_runner.reconstruction_docker_lock_is_stale(reconstruction_path, timeout_seconds=1.0)
 
 
 def test_corrupt_or_ownerless_old_gpu_locks_are_not_age_evicted(tmp_path: Path):
-    from exercise_motion_pkg import gpu_lock, wham_runner
+    from exercise_motion_pkg import gpu_lock, reconstruction_runner
 
     for lock_path, is_stale in (
         (tmp_path / "gpu-corrupt.lock", gpu_lock.gpu_lock_is_stale),
-        (tmp_path / "wham-corrupt.lock", wham_runner.wham_docker_lock_is_stale),
+        (tmp_path / "reconstruction-corrupt.lock", reconstruction_runner.reconstruction_docker_lock_is_stale),
     ):
         lock_path.write_text("{truncated", encoding="utf-8")
         os.utime(lock_path, (time.time() - 120, time.time() - 120))
@@ -336,23 +336,23 @@ def test_gpu_stale_lock_recovery_is_serialized_between_waiters(
     assert max_concurrent_sections == 1
 
 
-def test_wham_stale_lock_recovery_is_serialized_between_waiters(
+def test_reconstruction_stale_lock_recovery_is_serialized_between_waiters(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import json
 
-    from exercise_motion_pkg import wham_runner
+    from exercise_motion_pkg import reconstruction_runner
 
-    lock_path = tmp_path / "wham-stale.lock"
+    lock_path = tmp_path / "reconstruction-stale.lock"
     lock_path.write_text(
         json.dumps({"pid": 987654, "processIdentity": 42}),
         encoding="utf-8",
     )
-    monkeypatch.setenv(wham_runner.WHAM_DOCKER_LOCK_ENV_VAR, str(lock_path))
-    monkeypatch.setenv(wham_runner.WHAM_DOCKER_LOCK_TIMEOUT_SECONDS_ENV_VAR, "5")
-    monkeypatch.setattr(wham_runner, "process_is_running", lambda _pid: False)
-    original_is_stale = wham_runner.wham_docker_lock_is_stale
+    monkeypatch.setenv(reconstruction_runner.RECONSTRUCTION_DOCKER_LOCK_ENV_VAR, str(lock_path))
+    monkeypatch.setenv(reconstruction_runner.RECONSTRUCTION_DOCKER_LOCK_TIMEOUT_SECONDS_ENV_VAR, "5")
+    monkeypatch.setattr(reconstruction_runner, "process_is_running", lambda _pid: False)
+    original_is_stale = reconstruction_runner.reconstruction_docker_lock_is_stale
     check_lock = threading.Lock()
     active_stale_checks = 0
     max_concurrent_stale_checks = 0
@@ -374,13 +374,13 @@ def test_wham_stale_lock_recovery_is_serialized_between_waiters(
             with check_lock:
                 active_stale_checks -= 1
 
-    monkeypatch.setattr(wham_runner, "wham_docker_lock_is_stale", observe_stale_check)
+    monkeypatch.setattr(reconstruction_runner, "reconstruction_docker_lock_is_stale", observe_stale_check)
 
     def acquire() -> None:
         nonlocal active_sections, max_concurrent_sections
         try:
             start_together.wait()
-            with wham_runner.wham_docker_run_lock(enabled=True):
+            with reconstruction_runner.reconstruction_docker_run_lock(enabled=True):
                 with counts_lock:
                     active_sections += 1
                     max_concurrent_sections = max(max_concurrent_sections, active_sections)

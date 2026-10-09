@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from exercise_motion_pkg.reconstruction_compat import loads_reconstruction_metadata
+
 import json
 import threading
 import time
@@ -14,7 +16,7 @@ from exercise_motion_pkg.bake_and_rank import (
     LazyLlamaCppVisionSession,
     RankedCandidate,
     RawMotionRejected,
-    IncompleteWhamTrackingError,
+    IncompleteReconstructionTrackingError,
     require_current_source_contract,
     SourceCandidateRejected,
     ExerciseMotionContractRejected,
@@ -35,10 +37,6 @@ from exercise_motion_pkg.bake_and_rank import (
     callable_accepts_keyword,
 )
 from exercise_motion_pkg.vlm_errors import critical_vlm_interaction_error
-from exercise_motion_pkg.wham_runner import (
-    WarmWorkerInterruptedAmbiguous,
-    WhamTrackingPreflightRejected,
-)
 from exercise_motion_pkg.gvhmr_runner import GvhmrWarmWorkerInterruptedAmbiguous
 from exercise_motion_pkg.shared_llama_server import (
     clear_generation_holder_marker,
@@ -112,22 +110,16 @@ class StagedWaveItem:
 
 
 def generation_failure_status(error: Exception) -> str:
-    if isinstance(error, IncompleteWhamTrackingError):
-        return "rejected_incomplete_wham_tracking"
+    if isinstance(error, IncompleteReconstructionTrackingError):
+        return "rejected_incomplete_reconstruction_tracking"
     if isinstance(error, RawMotionRejected):
-        return "rejected_raw_wham_validation"
-    if isinstance(error, WhamTrackingPreflightRejected):
-        return "rejected_tracking_preflight"
-    if isinstance(error, WarmWorkerInterruptedAmbiguous):
-        return WarmWorkerInterruptedAmbiguous.status
+        return "rejected_raw_reconstruction_validation"
     if isinstance(error, GvhmrWarmWorkerInterruptedAmbiguous):
         return GvhmrWarmWorkerInterruptedAmbiguous.status
     return "failed"
 
 
 def candidate_generation_failure_details(error: Exception) -> dict[str, Any] | None:
-    if isinstance(error, WarmWorkerInterruptedAmbiguous):
-        return error.diagnostic_payload()
     if isinstance(error, GvhmrWarmWorkerInterruptedAmbiguous):
         return error.diagnostic_payload()
     return None
@@ -226,8 +218,8 @@ def wave_retry_disposition(state: dict[str, Any]) -> str:
         ):
             return "retry_review"
         return "next_source"
-    attempts = state.get("wham", {}).get("attempts", [])
-    if attempts and all(item.get("status") in {"rejected_raw_wham_validation", "rejected_tracking_preflight", "rejected_incomplete_wham_tracking"}
+    attempts = state.get("reconstruction", {}).get("attempts", [])
+    if attempts and all(item.get("status") in {"rejected_raw_reconstruction_validation", "rejected_tracking_preflight", "rejected_incomplete_reconstruction_tracking"}
                         for item in attempts):
         return "next_source"
     if state.get("source", {}).get("failureReason") in {
@@ -403,7 +395,7 @@ def _processing_attempt_diagnostics(manifest: dict[str, Any], *, attempt_number:
 
 
 def finalize_with_bounded_processing_retry(operation: Callable[[], dict[str, Any]]) -> dict[str, Any]:
-    """Refit incomplete controlled-motion once on retained source/WHAM inputs.
+    """Refit incomplete controlled-motion once on retained source/RECONSTRUCTION inputs.
 
     Prefetch may hand final processing a one-shot incomplete bake. Invalidate that
     attempt and retry once so deferred library work is not required for a finished
@@ -473,8 +465,8 @@ def final_processing_diagnostics(manifest: dict[str, Any]) -> dict[str, Any]:
     for result in manifest.get("candidateResults", []):
         status = result.get("status", "unknown")
         stage = result.get("failureStage") or {
-            "rejected_raw_wham_validation": "raw_reconstruction_validation",
-            "rejected_incomplete_wham_tracking": "raw_reconstruction_validation",
+            "rejected_raw_reconstruction_validation": "raw_reconstruction_validation",
+            "rejected_incomplete_reconstruction_tracking": "raw_reconstruction_validation",
             "rejected_baked_motion_validation": "baked_motion_validation",
             "skipped_no_baked_clip": "baked_motion_validation",
             "skipped_no_usable_baked_motion": "baked_motion_validation",
@@ -560,13 +552,13 @@ def _reconstruction_timing_snapshot(result: Any) -> dict[str, Any] | None:
     timings = getattr(result, "timings", None)
     if not isinstance(timings, dict):
         return None
-    runner = timings.get("wham")
+    runner = timings.get("reconstruction")
     if not isinstance(runner, dict):
         return None
     snapshot: dict[str, Any] = {}
-    stage_seconds = timings.get("whamRunSeconds")
+    stage_seconds = timings.get("reconstructionRunSeconds")
     if isinstance(stage_seconds, (int, float)):
-        snapshot["whamRunSeconds"] = stage_seconds
+        snapshot["reconstructionRunSeconds"] = stage_seconds
     runner_snapshot: dict[str, Any] = {}
     for key in ("backend", "elapsedSeconds"):
         value = runner.get(key)
@@ -582,7 +574,7 @@ def _reconstruction_timing_snapshot(result: Any) -> dict[str, Any] | None:
             "inference": {"predictionSeconds": prediction_seconds}
         }
     if runner_snapshot:
-        snapshot["wham"] = runner_snapshot
+        snapshot["reconstruction"] = runner_snapshot
     return snapshot or None
 
 
@@ -649,7 +641,7 @@ def _previous_selected_candidate_keys(
     """Recover the last prepared source order without trusting its validation."""
     for artifact_name in ("staged_wave_checkpoint.json", "staged_wave_report.json"):
         try:
-            payload = json.loads((workspace / artifact_name).read_text(encoding="utf-8"))
+            payload = loads_reconstruction_metadata((workspace / artifact_name).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
         for item in payload.get("items") or []:
@@ -715,13 +707,11 @@ def effective_wave_final_output_rejection_limit(
     return max(configured_limit, ready_source_count)
 
 
-def _stop_warm_wham_worker_before_vlm(items: list[StagedWaveItem]) -> dict[str, Any]:
+def _stop_warm_reconstruction_worker_before_vlm(items: list[StagedWaveItem]) -> dict[str, Any]:
     session_dirs = set()
     shared_session_dir: Path | None = None
     for item in items:
         request = item.request
-        if request.use_warm_wham_worker and request.wham_worker_session_dir is not None:
-            session_dirs.add(request.wham_worker_session_dir.expanduser().resolve())
         # getattr: request fakes in tests (SimpleNamespace) may predate this field.
         if getattr(request, "use_warm_gvhmr_worker", False) and request.gvhmr_worker_session_dir is not None:
             session_dirs.add(request.gvhmr_worker_session_dir.expanduser().resolve())
@@ -831,10 +821,10 @@ def prepare_cpu_render_cache(item: StagedWaveItem, candidate: RankedCandidate, r
             exercise_motion_contract=contract, exercise_name=item.exercise_name)
         if not raw_gate.get("passed"):
             return {"status": "skipped", "reason": "generated_motion_recovery_gate_failed", "recoveryGate": raw_gate}
-    authority = bake.pre_wham_source_interval_authority(
+    authority = bake.pre_reconstruction_source_interval_authority(
         candidate_workspace=workspace, exercise_motion_contract=contract)
     loops = bake.build_candidate_review_eligible_loops(bake.load_motion_json(cleaned), source_interval_authority=authority)
-    support = bake.pre_wham_source_foot_support_evidence(workspace)
+    support = bake.pre_reconstruction_source_foot_support_evidence(workspace)
     from .body_support_observation import requires_body_support, observed_stationary_sole_contacts, observe_body_support
     if requires_body_support(contract) or observed_stationary_sole_contacts(support):
         observation = observe_body_support(workspace/'input/selected_segment.mp4', None,
@@ -874,7 +864,7 @@ def run_staged_bake_wave(
     render_executor: ThreadPoolExecutor | None = None,
 ) -> dict[str, Any]:
     wave_started = time.perf_counter()
-    # Speculative post-WHAM bake/fit must not oversubscribe the shared CPU fit.
+    # Speculative post-RECONSTRUCTION bake/fit must not oversubscribe the shared CPU fit.
     from .resource_budget import render_prefetch_enabled as is_render_prefetch_enabled
     from .resource_budget import render_prefetch_worker_limit
     render_prefetch_enabled = is_render_prefetch_enabled()
@@ -1035,18 +1025,18 @@ def _run_staged_bake_wave(
     render_prefetch_workers: int | None = None,
     render_prefetch_enabled: bool = True,
 ) -> dict[str, Any]:
-    """Run one cache-first VLM -> WHAM -> VLM wave.
+    """Run one cache-first VLM -> RECONSTRUCTION -> VLM wave.
 
     Up to two candidates from different source videos are prepared per
     exercise. Unsuccessful items are reported for the normal deeper retry lane
     instead of stalling the wave.
-    Re-running the same wave is resumable because source cuts, WHAM output, and
+    Re-running the same wave is resumable because source cuts, RECONSTRUCTION output, and
     selection manifests are all content-addressed or workspace-cached.
     """
 
     if not items:
         raise ValueError("A staged wave must contain at least one exercise.")
-    # A staged wave deliberately releases the pose/VLM runtime before WHAM and
+    # A staged wave deliberately releases the pose/VLM runtime before RECONSTRUCTION and
     # may start a different runtime for final review.  Capture the exact source
     # pose while the source-validation runtime is authoritative; otherwise the
     # final materialized-output gate has no source reference and can only fail
@@ -1055,7 +1045,7 @@ def _run_staged_bake_wave(
     items = [
         replace(
             item,
-            request=replace(item.request, pre_wham_source_validation=True),
+            request=replace(item.request, pre_reconstruction_source_validation=True),
         )
         for item in items
     ]
@@ -1091,7 +1081,7 @@ def _run_staged_bake_wave(
             "status": "pending",
             "artifactLifecycle": initial_artifact_lifecycle(),
             "source": {"status": "pending", "attempts": []},
-            "wham": {"status": "pending"},
+            "reconstruction": {"status": "pending"},
             "finalValidation": {"status": "pending"},
         }
         for item in items
@@ -1191,7 +1181,7 @@ def _run_staged_bake_wave(
             resume_path = item.request.workspace / "source_turn_resume.json"
             prior_attempt_keys: list[str] = []
             try:
-                resume = json.loads(resume_path.read_text(encoding="utf-8"))
+                resume = loads_reconstruction_metadata(resume_path.read_text(encoding="utf-8"))
                 if resume.get("sourceSelectionPolicyVersion") == SOURCE_SELECTION_POLICY_VERSION:
                     prior_attempt_keys = [str(key) for key in resume.get("attemptedCandidateKeys", [])]
                     prior_attempt_keys = retained_source_attempt_keys(prior_attempt_keys, {
@@ -1274,9 +1264,9 @@ def _run_staged_bake_wave(
                     # prefetch, otherwise it fits once without them and again
                     # after the final stage acquires its visual model.
                     from .body_support_observation import requires_body_support, observed_stationary_sole_contacts, observe_body_support
-                    from .bake_and_rank import load_pre_wham_exact_source_phase_metrics
+                    from .bake_and_rank import load_pre_reconstruction_exact_source_phase_metrics
                     candidate_workspace = item.request.workspace / candidate.workspace_slug
-                    phase_metrics = load_pre_wham_exact_source_phase_metrics(candidate_workspace) or {}
+                    phase_metrics = load_pre_reconstruction_exact_source_phase_metrics(candidate_workspace) or {}
                     if requires_body_support(contract) or observed_stationary_sole_contacts(phase_metrics.get('sourceFootSupportEvidence')):
                         observe_body_support(selected_video, source_session.caption_images,
                                              candidate_workspace/'segment_detection/body_support')
@@ -1443,7 +1433,7 @@ def _run_staged_bake_wave(
                 state["source"]["status"] = "failed"
                 state["status"] = "retry_required"
     finally:
-        # WHAM owns the GPU in the next stage, so this must release the model
+        # RECONSTRUCTION owns the GPU in the next stage, so this must release the model
         # even when the configured llama.cpp server is normally kept alive.
         source_session.close(force_stop_server=True)
         metrics["sourceVisionSession"] = _session_timing_manifest(source_session)
@@ -1452,10 +1442,10 @@ def _run_staged_bake_wave(
             3,
         )
 
-    metrics["acceleratorTransitions"].append({"stage": "wham", "at": _utc_now()})
-    wham_phase_started = time.perf_counter()
+    metrics["acceleratorTransitions"].append({"stage": "reconstruction", "at": _utc_now()})
+    reconstruction_phase_started = time.perf_counter()
     announce(f"Extracting motion for {len(prepared)} exercise(s).")
-    checkpoint("wham_generation")
+    checkpoint("reconstruction_generation")
     # Announce the exclusive generation phase so an overlapping wave's final
     # VLM neither stops this wave's warm worker nor expects the shared server
     # back before this phase ends. Crashes leave a stale marker that readers
@@ -1477,9 +1467,9 @@ def _run_staged_bake_wave(
         write_generation_holder_marker(shared_llama_session_dir, holder=wave_id)
 
     def cached_source_only(*_args: Any, **_kwargs: Any) -> str:
-        raise RuntimeError("A staged WHAM pass attempted an uncached source VLM request.")
+        raise RuntimeError("A staged RECONSTRUCTION pass attempted an uncached source VLM request.")
 
-    wham_ready: dict[str, tuple[StagedWaveItem, list[tuple[RankedCandidate, Path]]]] = {}
+    reconstruction_ready: dict[str, tuple[StagedWaveItem, list[tuple[RankedCandidate, Path]]]] = {}
 
     generation_start_times: dict[str, float] = {}
 
@@ -1489,10 +1479,10 @@ def _run_staged_bake_wave(
         candidate: RankedCandidate,
         selected_video_path: Path,
     ) -> tuple[str, StagedWaveItem, Any, float]:
-        wham_started = time.perf_counter()
-        generation_start_times[_candidate_key(candidate)] = wham_started
+        reconstruction_started = time.perf_counter()
+        generation_start_times[_candidate_key(candidate)] = reconstruction_started
         generate_kwargs: dict[str, Any] = {
-            "request": replace(item.request, wham_tracking_preflight=True),
+            "request": item.request,
             "source_cut_caption_images": cached_source_only,
             "prepared_video_path": selected_video_path,
         }
@@ -1507,31 +1497,31 @@ def _run_staged_bake_wave(
             generate_kwargs["stage_identity"] = stage_identity
         if (
             generation_session is not None
-            and callable_accepts_keyword(generate_candidate_motion, "run_wham_exclusive")
+            and callable_accepts_keyword(generate_candidate_motion, "run_reconstruction_exclusive")
         ):
-            generate_kwargs["run_wham_exclusive"] = (
+            generate_kwargs["run_reconstruction_exclusive"] = (
                 generation_session.run_without_llama_overlap
             )
         result = generate_candidate_motion(candidate, **generate_kwargs)
-        return exercise_id, item, result, time.perf_counter() - wham_started
+        return exercise_id, item, result, time.perf_counter() - reconstruction_started
 
     prepared_candidates = [
         (exercise_id, item, candidate, selected_video_path)
         for exercise_id, (item, sources) in prepared.items()
         for candidate, selected_video_path in sources
     ]
-    # GPU jobs remain serialized by the WHAM/global GPU locks. Extra callers
+    # GPU jobs remain serialized by the RECONSTRUCTION/global GPU locks. Extra callers
     # overlap video preparation and CPU postprocessing in different workspaces.
     from .resource_budget import staged_generation_cpu_workers
-    wham_worker_count = min(staged_generation_cpu_workers(), max(1, len(prepared_candidates)))
-    metrics["generationCpuWorkers"] = wham_worker_count
-    wham_completed_count = 0
-    wham_attempts: dict[str, list[dict[str, Any]]] = {
+    reconstruction_worker_count = min(staged_generation_cpu_workers(), max(1, len(prepared_candidates)))
+    metrics["generationCpuWorkers"] = reconstruction_worker_count
+    reconstruction_completed_count = 0
+    reconstruction_attempts: dict[str, list[dict[str, Any]]] = {
         exercise_id: [] for exercise_id in prepared
     }
     def run_generation_jobs() -> None:
-        nonlocal wham_completed_count
-        with ThreadPoolExecutor(max_workers=wham_worker_count) as executor:
+        nonlocal reconstruction_completed_count
+        with ThreadPoolExecutor(max_workers=reconstruction_worker_count) as executor:
             future_items = {
                 executor.submit(
                     generate_item_motion,
@@ -1545,7 +1535,7 @@ def _run_staged_bake_wave(
             for future in as_completed(future_items):
                 exercise_id, item, candidate, selected_video_path = future_items[future]
                 state = item_states[exercise_id]
-                wham_started = generation_start_times.get(_candidate_key(candidate), time.perf_counter())
+                reconstruction_started = generation_start_times.get(_candidate_key(candidate), time.perf_counter())
                 try:
                     _result_exercise_id, _result_item, result, generation_seconds = future.result()
                     attempt = {
@@ -1553,14 +1543,14 @@ def _run_staged_bake_wave(
                         "candidateKey": _candidate_key(candidate),
                         "selectedVideoPath": str(selected_video_path),
                         "elapsedSeconds": round(generation_seconds, 3),
-                        "cacheStatus": result.wham_cache_status,
-                        "resultsPath": str(result.wham_results_pkl) if result.wham_results_pkl else None,
+                        "cacheStatus": result.reconstruction_cache_status,
+                        "resultsPath": str(result.reconstruction_results_pkl) if result.reconstruction_results_pkl else None,
                     }
                     reconstruction_timings = _reconstruction_timing_snapshot(result)
                     if reconstruction_timings is not None:
                         attempt["reconstructionTimings"] = reconstruction_timings
-                    wham_attempts[exercise_id].append(attempt)
-                    _ready_item, ready_sources = wham_ready.setdefault(exercise_id, (item, []))
+                    reconstruction_attempts[exercise_id].append(attempt)
+                    _ready_item, ready_sources = reconstruction_ready.setdefault(exercise_id, (item, []))
                     ready_sources.append((candidate, selected_video_path))
                     # Speculative CPU bake/fit only for the first ready source. Later
                     # sources bake during final processing if the primary fails, so
@@ -1586,16 +1576,14 @@ def _run_staged_bake_wave(
                         "status": failure_status,
                         "candidateKey": _candidate_key(candidate),
                         "selectedVideoPath": str(selected_video_path),
-                        "elapsedSeconds": round(time.perf_counter() - wham_started, 3),
+                        "elapsedSeconds": round(time.perf_counter() - reconstruction_started, 3),
                         "error": f"{type(exc).__name__}: {exc}",
                     }
                     failure_details = candidate_generation_failure_details(exc)
                     if failure_details is not None:
                         attempt["reconstructionFailure"] = failure_details
-                    if isinstance(exc, WhamTrackingPreflightRejected):
-                        attempt["trackingPreflight"] = exc.report
                     if isinstance(exc, RawMotionRejected):
-                        attempt["rawWhamMotionGate"] = exc.gate
+                        attempt["rawReconstructionMotionGate"] = exc.gate
                         candidate_workspace = item.request.workspace / candidate.workspace_slug
                         attempt["artifactRetention"] = apply_artifact_retention_policy(
                             candidate_workspace,
@@ -1603,16 +1591,16 @@ def _run_staged_bake_wave(
                                                     "inputVideoPath": str(selected_video_path)}]},
                             mode=item.request.artifact_retention,
                         )
-                    wham_attempts[exercise_id].append(attempt)
-                wham_completed_count += 1
-                state["wham"] = {
-                    "status": generation_status(wham_attempts[exercise_id], len(prepared[exercise_id][1])),
-                    "attempts": wham_attempts[exercise_id],
+                    reconstruction_attempts[exercise_id].append(attempt)
+                reconstruction_completed_count += 1
+                state["reconstruction"] = {
+                    "status": generation_status(reconstruction_attempts[exercise_id], len(prepared[exercise_id][1])),
+                    "attempts": reconstruction_attempts[exercise_id],
                 }
-                checkpoint("wham_generation", item.exercise_name)
+                checkpoint("reconstruction_generation", item.exercise_name)
                 announce(
                     f"{'Extracted motion' if attempt['status'] == 'prepared' else 'Extraction failed'} for {item.exercise_name} "
-                    f"({wham_completed_count}/{len(prepared_candidates)}, {attempt['elapsedSeconds']:.1f}s)."
+                    f"({reconstruction_completed_count}/{len(prepared_candidates)}, {attempt['elapsedSeconds']:.1f}s)."
                 )
 
 
@@ -1628,8 +1616,8 @@ def _run_staged_bake_wave(
 
     for exercise_id in prepared:
         state = item_states[exercise_id]
-        if exercise_id in wham_ready:
-            item, ready_sources = wham_ready[exercise_id]
+        if exercise_id in reconstruction_ready:
+            item, ready_sources = reconstruction_ready[exercise_id]
             source_priority = {
                 candidate.workspace_slug: index
                 for index, (candidate, _path) in enumerate(prepared[exercise_id][1])
@@ -1637,27 +1625,27 @@ def _run_staged_bake_wave(
             ready_sources.sort(
                 key=lambda source: source_priority[source[0].workspace_slug]
             )
-            state["wham"]["status"] = "prepared"
-            state["wham"]["candidateKey"] = _candidate_key(ready_sources[0][0])
+            state["reconstruction"]["status"] = "prepared"
+            state["reconstruction"]["candidateKey"] = _candidate_key(ready_sources[0][0])
         else:
-            state["wham"]["status"] = "failed"
+            state["reconstruction"]["status"] = "failed"
             state["status"] = "retry_required"
 
-    metrics["phaseTimings"]["whamGenerationSeconds"] = round(
-        time.perf_counter() - wham_phase_started,
+    metrics["phaseTimings"]["reconstructionGenerationSeconds"] = round(
+        time.perf_counter() - reconstruction_phase_started,
         3,
     )
 
-    wham_release = _stop_warm_wham_worker_before_vlm(
+    reconstruction_release = _stop_warm_reconstruction_worker_before_vlm(
         [item for item, _sources in prepared.values()]
     )
     for state in item_states.values():
-        state["whamWorkerRelease"] = wham_release
+        state["reconstructionWorkerRelease"] = reconstruction_release
     if shared_llama_session_dir is not None:
         clear_generation_holder_marker(shared_llama_session_dir)
-    checkpoint("wham_released")
+    checkpoint("reconstruction_released")
 
-    announce(f"Reviewing {len(wham_ready)} generated movement(s).")
+    announce(f"Reviewing {len(reconstruction_ready)} generated movement(s).")
     checkpoint("final_validation")
     metrics["acceleratorTransitions"].append({"stage": "final_vlm", "at": _utc_now()})
     final_phase_started = time.perf_counter()
@@ -1665,7 +1653,7 @@ def _run_staged_bake_wave(
     # Do not oversubscribe the shared CPU fit: each final needs a real shot at
     # the candidate budget. Extra ready exercises wait in the executor queue.
     from .resource_budget import cpu_fit_slot_limit, final_validation_worker_limit
-    final_worker_count = final_validation_worker_limit(configured_parallelism, len(wham_ready))
+    final_worker_count = final_validation_worker_limit(configured_parallelism, len(reconstruction_ready))
     metrics["finalValidationWorkers"] = final_worker_count
     metrics["finalValidationFitSlots"] = max(1, int(cpu_fit_slot_limit()))
     validation_start_times: dict[str, float] = {}
@@ -1786,7 +1774,7 @@ def _run_staged_bake_wave(
                 return finalize_with_bounded_processing_retry(lambda: run_bake_and_rank_pipeline(
                     replace(
                         item.request,
-                        require_wham_cache=True,
+                        require_reconstruction_cache=True,
                         reuse_previous_terminal_results=False,
                         fallback_candidates=0,
                         max_final_output_rejections=effective_wave_final_output_rejection_limit(
@@ -1820,7 +1808,7 @@ def _run_staged_bake_wave(
     final_executor = ThreadPoolExecutor(max_workers=final_worker_count)
     try:
         final_futures = {}
-        for exercise_id, (item, ready_sources) in wham_ready.items():
+        for exercise_id, (item, ready_sources) in reconstruction_ready.items():
             validation_queued_times[exercise_id] = time.perf_counter()
             validation_scheduling_times[exercise_id] = {}
             with checkpoint_lock:
@@ -1928,10 +1916,10 @@ def _run_staged_bake_wave(
             )
             phase_totals = {
                 "extractionSeconds": round(sum(attempt.get("elapsedSeconds", 0.0)
-                    for attempt in state.get("wham", {}).get("attempts", [])), 3),
+                    for attempt in state.get("reconstruction", {}).get("attempts", [])), 3),
             }
             for entry in final_state.get("candidateDiagnostics", []):
-                for key in ("generationSeconds", "rawWhamMotionGateSeconds", "previewBakeSeconds", "browser_bakeFailedSeconds"):
+                for key in ("generationSeconds", "rawReconstructionMotionGateSeconds", "previewBakeSeconds", "browser_bakeFailedSeconds"):
                     if key in entry["timings"]:
                         display_key = "finalGenerationReuseSeconds" if key == "generationSeconds" else key
                         phase_totals[display_key] = phase_totals.get(display_key, 0.0) + entry["timings"][key]
@@ -1947,7 +1935,7 @@ def _run_staged_bake_wave(
             if phase_totals:
                 message += " | timings: " + ", ".join(
                     f"{key}={value:.1f}s" for key, value in phase_totals.items()
-                    if key in {"generationSeconds", "rawWhamMotionGateSeconds", "previewBakeSeconds", "browser_bakeFailedSeconds",
+                    if key in {"generationSeconds", "rawReconstructionMotionGateSeconds", "previewBakeSeconds", "browser_bakeFailedSeconds",
                                "reviewRankingSeconds", "selectionMaterializationSeconds"}
                 )
             if reasons:
@@ -1961,7 +1949,7 @@ def _run_staged_bake_wave(
     finally:
         final_executor.shutdown(wait=True)
         # Keep the VLM server hot only when the next useful stage is another
-        # source wave. A retry needs WHAM again, so release VLM first.
+        # source wave. A retry needs RECONSTRUCTION again, so release VLM first.
         retry_pending = any(state["status"] != "completed" for state in item_states.values())
         final_session.close(force_stop_server=retry_pending)
         metrics["finalVisionSession"] = _session_timing_manifest(final_session)
@@ -2027,7 +2015,7 @@ def _run_staged_bake_wave(
         }
     )
     attempts = [attempt for state in item_states.values()
-                for attempt in state.get("wham", {}).get("attempts", [])]
+                for attempt in state.get("reconstruction", {}).get("attempts", [])]
     elapsed_minutes = float(report.get("elapsedSeconds") or 0.) / 60.
     report["generationEfficiency"] = {
         "acceptedMovementCount": len(accepted),

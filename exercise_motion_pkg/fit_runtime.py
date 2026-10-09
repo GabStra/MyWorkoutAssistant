@@ -22,7 +22,7 @@ _ACTIVE_SPECULATIVE_WORKSPACES: set[str] = set()
 _ABANDONED_SPECULATIVE_WORKSPACES: set[str] = set()
 
 # Threads inside prioritize_fit_workspaces must never block on the priority
-# gate: two finalizations can otherwise deadlock (one holds the WHAM-exclusive
+# gate: two finalizations can otherwise deadlock (one holds the RECONSTRUCTION-exclusive
 # section and waits for a fit slot, the other holds its priority context open
 # and waits for the exclusive section). Priority reorders work; it must not
 # gate correctness.
@@ -348,6 +348,7 @@ FIT_CACHE_SOURCE_MODULES = (
     'loop_seam.py',
     'models.py',
     'motion_io.py',
+    'reconstruction_compat.py',
     'motion_placement.py',
     'motion_scheduler.py',
     'physical_validation.py',

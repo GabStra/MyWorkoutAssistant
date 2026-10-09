@@ -1010,7 +1010,7 @@ def _strong_torso_to_floor_reorientation_for_kneeling(
     """
     Rigidly orient a kneeling reconstruction so its torso is floor-parallel.
 
-    The same transform is applied to every joint, preserving WHAM's articulated
+    The same transform is applied to every joint, preserving RECONSTRUCTION's articulated
     pose and all inter-joint distances.
     """
     median_vert = _median_spine_verticality(clip)

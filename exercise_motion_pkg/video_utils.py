@@ -129,7 +129,7 @@ def rotate_video_quarter_turn(*, source_path: Path, output_path: Path, counter_c
     )
     if process.returncode != 0 or not output_path.exists():
         raise RuntimeError(
-            "Could not rotate WHAM input video.\n"
+            "Could not rotate RECONSTRUCTION input video.\n"
             f"stdout:\n{process.stdout}\n"
             f"stderr:\n{process.stderr}"
         )
@@ -145,7 +145,7 @@ def _rotate_video_quarter_turn_with_opencv(
         import cv2
     except ImportError as exc:
         raise RuntimeError(
-            "WHAM input orientation normalization requires either ffmpeg or opencv-python."
+            "RECONSTRUCTION input orientation normalization requires either ffmpeg or opencv-python."
         ) from exc
     capture = cv2.VideoCapture(str(source_path))
     if not capture.isOpened():

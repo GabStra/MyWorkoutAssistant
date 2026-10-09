@@ -189,7 +189,7 @@ def test_visual_observer_ignores_verdict_fields_and_reuses_exact_artifact_cache(
                        reject=["gross_pose_reconstruction_error"] if reject else [], note="Observed result.")
         return json.dumps(payload)
     request = bake.BakeAndRankRequest(candidates_json=tmp_path / "candidates.json", workspace=tmp_path,
-        wham_repo_path=None, body_model_root=None, final_output_validation=True, two_scale_source_validation=False)
+        body_model_root=None, final_output_validation=True, two_scale_source_validation=False)
     result = bake.validate_final_output_with_caption_images(item, bake.LoopRanking(.9, [], {}),
         request=request, caption_images=caption, deterministic_metrics={"passed": True})
     assert len(calls) == 1

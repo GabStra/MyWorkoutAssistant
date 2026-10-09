@@ -11,7 +11,7 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from exercise_motion_pkg import gvhmr_warm_worker, wham_warm_worker
+from exercise_motion_pkg import gvhmr_warm_worker, reconstruction_warm_worker
 from exercise_motion_pkg import warm_worker_retention
 
 
@@ -35,7 +35,7 @@ def _write_job_artifacts(state_dir: Path, job_id: str, status: str, modified_at:
 @pytest.mark.parametrize(
     ("worker", "load_function", "release_function"),
     [
-        (wham_warm_worker, "load_wham_once", "release_wham_state"),
+        (reconstruction_warm_worker, "load_reconstruction_once", "release_reconstruction_state"),
         (gvhmr_warm_worker, "load_gvhmr_once", "release_gvhmr_state"),
     ],
 )
@@ -136,7 +136,7 @@ def test_every_warm_worker_docker_launch_mounts_retention_helper() -> None:
         )
 
 
-@pytest.mark.parametrize("worker_filename", ("wham_warm_worker.py", "gvhmr_warm_worker.py"))
+@pytest.mark.parametrize("worker_filename", ("reconstruction_warm_worker.py", "gvhmr_warm_worker.py"))
 def test_mounted_worker_script_imports_retention_helper_without_package(
     tmp_path: Path,
     worker_filename: str,

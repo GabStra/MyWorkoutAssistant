@@ -60,6 +60,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "reconstruction_compat.ps1")
 . (Join-Path $PSScriptRoot "motion_run_interrupt.ps1")
 . (Join-Path $PSScriptRoot "motion_library_logging.ps1")
 Register-MotionInterruptHandler -Silent
@@ -184,7 +185,7 @@ function Write-RunState {
 
     $counts = [ordered]@{}
     if (-not [string]::IsNullOrWhiteSpace($SummaryJson) -and (Test-Path -LiteralPath $SummaryJson)) {
-        $summary = Get-Content -LiteralPath $SummaryJson -Raw | ConvertFrom-Json
+        $summary = Get-Content -LiteralPath $SummaryJson -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
         foreach ($group in @($summary.exercises | Group-Object status)) {
             $counts[$group.Name] = $group.Count
         }
@@ -247,7 +248,7 @@ function Invoke-MovementPass {
         $runnerArguments += @(
             "-StagedWaveSize", "$StagedWaveSize",
             "-GpuDiscoveryBakeOverlap", $GpuDiscoveryBakeOverlap,
-            "-WarmWhamWorker:`$true",
+            "-WarmGvhmrWorker:`$true",
             "-KeepLlamaCppServer:`$true"
         )
     }
@@ -293,10 +294,10 @@ function Test-ExistingSelectionRevalidationNeeded {
     )
     foreach ($selectionFile in $exerciseSelectionFiles) {
         try {
-            $selection = Get-Content -LiteralPath $selectionFile.FullName -Raw | ConvertFrom-Json
+            $selection = Get-Content -LiteralPath $selectionFile.FullName -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
             $markerPath = Join-Path $selectionFile.Directory.FullName "revalidation.json"
             if (Test-Path -LiteralPath $markerPath) {
-                $marker = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json
+                $marker = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
                 if (@($marker.reasons) -contains 'final_output_validation_no_frames') {
                     return $true
                 }
@@ -411,7 +412,7 @@ Invoke-AutoResetDiscoveryRejections
 Invoke-PassBoundaryRevalidation
 if (-not $Fresh -and (Test-Path -LiteralPath $statePath)) {
     try {
-        $existingState = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+        $existingState = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
         $skipFirstPass = (
             $existingState.signature -eq $runSignature -and
             $existingState.phase -in @("first_pass_completed", "deferred_pass_started", "deferred_pass_completed")
@@ -426,7 +427,7 @@ if (-not $skipFirstPass) {
     Write-RunState -Phase "first_pass_started"
     Invoke-MovementPass -FirstPass -ReuseSelected:(-not $Fresh)
     Copy-Item -Force -LiteralPath $summaryPath -Destination $firstPassSummaryPath
-    $firstPassSummary = Get-Content -LiteralPath $firstPassSummaryPath -Raw | ConvertFrom-Json
+    $firstPassSummary = Get-Content -LiteralPath $firstPassSummaryPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
     foreach ($exercise in @($firstPassSummary.exercises)) {
         if ($exercise.status -ne "completed") {
             $exercise | Add-Member -NotePropertyName firstPassStatus -NotePropertyValue $exercise.status -Force
@@ -445,7 +446,7 @@ function Get-DiscoveryReviewCount {
     foreach ($directory in Get-ChildItem -LiteralPath $resolvedWorkspaceRoot -Directory) {
         foreach ($file in Get-ChildItem -LiteralPath $directory.FullName -Filter 'discovery_review_*.json' -File) {
             try {
-                $checkpoint = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json
+                $checkpoint = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
                 $count += @($checkpoint.reviewed.PSObject.Properties).Count
             } catch { Write-Verbose "Cannot read discovery checkpoint $($file.FullName)." }
         }
@@ -474,7 +475,7 @@ while ($true) {
     Copy-Item -Force -LiteralPath $summaryPath -Destination $deferredPassSummaryPath
     Write-MovementPackage -MotionSummaryJson $deferredPassSummaryPath
     Write-RunState -Phase "deferred_pass_completed" -SummaryJson $deferredPassSummaryPath
-    $roundSummary = Get-Content -LiteralPath $deferredPassSummaryPath -Raw | ConvertFrom-Json
+    $roundSummary = Get-Content -LiteralPath $deferredPassSummaryPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
     $unresolved = @($roundSummary.exercises | Where-Object status -ne 'completed').Count
     $newReviews = (Get-DiscoveryReviewCount) - $beforeReviewCount
     $pendingSourceTurns = @(Get-ChildItem -LiteralPath $resolvedWorkspaceRoot -Directory | Where-Object {

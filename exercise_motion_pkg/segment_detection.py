@@ -52,8 +52,6 @@ class DetectionSettings:
         repr=False,
         compare=False,
     )
-    litert_command: str | None = None
-    litert_backend: str = "gpu"
     llama_cpp_backend: str = "gpu"
     llama_cpp_n_predict: int = 512
     llama_cpp_temperature: float = DEFAULT_LLAMA_CPP_TEMPERATURE
@@ -236,12 +234,6 @@ def detect_exercise_segment(
     metadata = read_video_metadata(sanitized_video_path)
     if client is not None:
         active_client = client
-    elif settings.litert_command:
-        active_client = LiteRtCliVisionClient(
-            command=settings.litert_command,
-            model=settings.model,
-            backend=settings.litert_backend,
-        )
     else:
         active_client = LlamaCppVisionClient(
             settings.base_url,
@@ -2041,69 +2033,6 @@ class VisionClient:
         require_complete_execution: bool = True,
     ) -> WindowDetection:
         raise NotImplementedError
-
-
-class LiteRtCliVisionClient(VisionClient):
-    def __init__(self, *, command: str, model: str, backend: str) -> None:
-        self.command = command
-        self.model = model
-        self.backend = backend
-
-    def detect_window(
-        self,
-        *,
-        frame_paths: list[Path],
-        window: DetectionWindow,
-        exercise_name: str | None,
-        require_complete_execution: bool = True,
-    ) -> WindowDetection:
-        prompt = build_window_prompt(
-            exercise_name=exercise_name,
-            start_seconds=window.start_seconds,
-            end_seconds=window.end_seconds,
-            require_complete_execution=require_complete_execution,
-        )
-        raw = self.caption_images(frame_paths=frame_paths, prompt=prompt)
-        try:
-            payload = parse_detection_payload(raw, window=window)
-        except RuntimeError:
-            return build_unusable_window_detection(window=window, frame_paths=frame_paths, reason=raw)
-        return WindowDetection(
-            window=window,
-            movement_present=payload["movement_present"],
-            contains_movement_start=payload["contains_movement_start"],
-            contains_movement_end=payload["contains_movement_end"],
-            movement_start_seconds=payload["movement_start_seconds"],
-            movement_end_seconds=payload["movement_end_seconds"],
-            confidence=payload["confidence"],
-            summary=payload["summary"],
-            reason=payload["reason"],
-            camera_variation=compute_camera_variation(frame_paths),
-            executions=payload["executions"],
-            frame_paths=[str(path) for path in frame_paths],
-        )
-
-    def caption_images(self, *, frame_paths: list[Path], prompt: str) -> str:
-        command = [
-            self.command,
-            "run",
-            self.model,
-            "--backend",
-            self.backend,
-            "--vision-backend",
-            self.backend,
-            "--prompt",
-            prompt,
-        ]
-        for frame_path in frame_paths:
-            command.extend(["--attachment", str(frame_path)])
-        result = subprocess.run(
-            command,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        return result.stdout.strip()
 
 
 def build_window_prompt(

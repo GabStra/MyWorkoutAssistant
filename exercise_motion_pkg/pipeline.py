@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from exercise_motion_pkg.reconstruction_compat import loads_reconstruction_metadata, retained_reconstruction_path
+
 import importlib.util
 import hashlib
 import json
@@ -32,22 +34,17 @@ from exercise_motion_pkg.preview import (
     write_wear_skeleton_json,
 )
 from exercise_motion_pkg.retarget_contract import build_target_rig_contract
-from exercise_motion_pkg.spinepose_wham_correction import apply_spinepose_to_motion_clip, apply_spinepose_to_wham_pkl
+from exercise_motion_pkg.spinepose_reconstruction_correction import apply_spinepose_to_motion_clip
 from exercise_motion_pkg.structural_refinement import refine_motion_clip_structurally
-from exercise_motion_pkg.wham_convert import normalize_wham_output
-from exercise_motion_pkg.wham_retarget_source import export_wham_retarget_source
-from exercise_motion_pkg.wham_runner import (
-    DEFAULT_WHAM_DOCKER_IMAGE,
-    DEFAULT_WHAM_DOCKER_SHM_SIZE,
-    DEFAULT_WHAM_ESTIMATE_LOCAL_ONLY,
-    WHAM_DEMO_CHECKPOINT_NAME,
-    WHAM_EVAL_CHECKPOINT_NAME,
-    run_wham_locally,
-    wham_preprocessing_environment,
+from exercise_motion_pkg.reconstruction_convert import normalize_reconstruction_output
+from exercise_motion_pkg.reconstruction_retarget_source import export_reconstruction_retarget_source
+from exercise_motion_pkg.reconstruction_runner import (
+    DEFAULT_RECONSTRUCTION_DOCKER_IMAGE,
+    DEFAULT_RECONSTRUCTION_DOCKER_SHM_SIZE,
 )
-from exercise_motion_pkg.wham_smpl_preview import (
-    load_wham_smpl_mesh_sequence,
-    write_baked_wham_smpl_preview_json,
+from exercise_motion_pkg.reconstruction_smpl_preview import (
+    load_reconstruction_smpl_mesh_sequence,
+    write_baked_reconstruction_smpl_preview_json,
 )
 from exercise_motion_pkg.video_world_alignment import (
     align_motion_clip_to_video,
@@ -58,14 +55,14 @@ from exercise_motion_pkg.youtube import download_youtube, sanitize_video_for_pro
 from exercise_motion_pkg.video_utils import read_basic_video_metadata, trim_video
 
 
-WHAM_COORDINATE_SPACE = "camera"
+RECONSTRUCTION_COORDINATE_SPACE = "camera"
 SPINEPOSE_COMMAND_ENV_VAR = "EXERCISE_MOTION_SPINEPOSE_COMMAND"
 SPINEPOSE_CONDA_ENV_ENV_VAR = "EXERCISE_MOTION_SPINEPOSE_CONDA_ENV"
 DEFAULT_SPINEPOSE_OUTPUT_DIR_NAME = "spinepose_json"
 SPINEPOSE_CLI_NAME = "spinepose"
 DEFAULT_SPINEPOSE_CONDA_ENV_NAME = "spinepose"
-WHAM_GLOBAL_CACHE_VERSION = 5
-WHAM_LOCAL_CACHE_MANIFEST_NAME = "cache_manifest.json"
+RECONSTRUCTION_GLOBAL_CACHE_VERSION = 5
+RECONSTRUCTION_LOCAL_CACHE_MANIFEST_NAME = "cache_manifest.json"
 RUNTIME_SOURCE_SUFFIXES = frozenset({
     ".py", ".pyi", ".yaml", ".yml", ".json", ".toml", ".cfg", ".ini",
     ".sh", ".bat", ".ps1", ".c", ".cc", ".cpp", ".h", ".hpp", ".txt",
@@ -132,8 +129,8 @@ def assert_equipment_supported_orientation(
         )
 
 
-class IncompleteWhamTrackingError(ValueError):
-    """WHAM returned motion, but its selected subject track misses part of the requested cut."""
+class IncompleteReconstructionTrackingError(ValueError):
+    """RECONSTRUCTION returned motion, but its selected subject track misses part of the requested cut."""
 
     def __init__(
         self,
@@ -157,30 +154,21 @@ class GenerateRequest:
     workspace: Path
     youtube_url: str | None = None
     video_path: Path | None = None
-    wham_repo_path: Path | None = None
-    wham_results_pkl: Path | None = None
-    reuse_wham_cache: bool = True
-    wham_global_cache_dir: Path | None = None
+    reconstruction_results_pkl: Path | None = None
+    reuse_reconstruction_cache: bool = True
+    reconstruction_global_cache_dir: Path | None = None
     body_model_root: Path | None = None
-    wham_python_command: str = "python"
-    use_wham_docker: bool = False
-    wham_docker_image: str = DEFAULT_WHAM_DOCKER_IMAGE
-    wham_docker_gpus: str = "all"
-    wham_docker_shm_size: str = DEFAULT_WHAM_DOCKER_SHM_SIZE
-    use_warm_wham_worker: bool = False
-    wham_worker_session_dir: Path | None = None
-    wham_worker_mount_root: Path | None = None
-    wham_worker_timeout_seconds: float | None = None
+    use_reconstruction_docker: bool = True
+    reconstruction_docker_image: str = DEFAULT_RECONSTRUCTION_DOCKER_IMAGE
+    reconstruction_docker_gpus: str = "all"
+    reconstruction_docker_shm_size: str = DEFAULT_RECONSTRUCTION_DOCKER_SHM_SIZE
     use_warm_gvhmr_worker: bool = False
     gvhmr_worker_session_dir: Path | None = None
     gvhmr_worker_mount_root: Path | None = None
     gvhmr_worker_timeout_seconds: float | None = None
-    wham_timeout_seconds: float | None = None
-    wham_tracking_preflight: bool = False
-    require_wham_cache: bool = False
-    wham_estimate_local_only: bool = DEFAULT_WHAM_ESTIMATE_LOCAL_ONLY
-    wham_run_smplify: bool = True
-    motion_reconstruction_backend: str = "wham"
+    reconstruction_timeout_seconds: float | None = None
+    require_reconstruction_cache: bool = False
+    motion_reconstruction_backend: str = "gvhmr"
     structural_refinement_enabled: bool = True
     structural_refinement_vertical_only: bool = False
     spinepose_enabled: bool = False
@@ -193,10 +181,8 @@ class GenerateRequest:
     spinepose_reuse_cache: bool = True
     spinepose_gain: float = 1.0
     spinepose_max_degrees: float = 35.0
-    spinepose_axis: int = 0
     spinepose_invert: bool = False
     spinepose_smoothing_window: int = 9
-    spinepose_arm_counter_rotation: float = 1.0
     spinepose_merge_mode: str = "motion"
     normalized_motion_json: Path | None = None
     one_euro_min_cutoff: float = 0.6
@@ -212,14 +198,14 @@ class GenerateRequest:
     support_mode_hint: str | None = None
     rigid_paired_hands_required: bool = False
     horizontal_torso_required: bool = False
-    export_wham_smpl_preview: bool = False
+    export_reconstruction_smpl_preview: bool = False
     source_start_seconds: float | None = None
     source_end_seconds: float | None = None
     output_crop_start_seconds: float | None = None
     output_crop_end_seconds: float | None = None
-    allow_incomplete_wham_boundary_crop: bool = False
+    allow_incomplete_reconstruction_boundary_crop: bool = False
     stage_identity: dict[str, Any] | None = None
-    wham_output_rotation_degrees: float = 0.0
+    reconstruction_output_rotation_degrees: float = 0.0
     youtube_cookies: Path | None = None
     source_pose_reference_path: Path | None = None
     video_world_alignment_enabled: bool = True
@@ -227,6 +213,12 @@ class GenerateRequest:
     # Attach to the supervisor-owned shared llama.cpp server for any vision
     # inference (SHARED_LLAMA_SERVER.md); default off keeps per-session servers.
     shared_llama_server: bool = False
+
+    def __post_init__(self) -> None:
+        if self.motion_reconstruction_backend != "gvhmr":
+            raise ValueError("Only the GVHMR reconstruction backend is supported.")
+        if self.spinepose_merge_mode != "motion":
+            raise ValueError("GVHMR SpinePose correction requires motion merge mode.")
 
 
 @dataclass(frozen=True)
@@ -244,16 +236,16 @@ class GenerateResult:
     cleanup_stats: CleanupStats
     ground_metadata_path: Path | None
     motion_tuning_enabled: bool
-    wham_results_pkl: Path | None = None
-    wham_cache_status: str = "not_used"
+    reconstruction_results_pkl: Path | None = None
+    reconstruction_cache_status: str = "not_used"
     timings: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
-class WhamResultsSource:
+class ReconstructionResultsSource:
     path: Path
     cache_status: str
-    should_run_wham: bool
+    should_run_reconstruction: bool
 
 
 @dataclass(frozen=True)
@@ -262,11 +254,13 @@ class SpinePoseJsonSource:
     payload: dict[str, Any]
 
 
-def default_wham_results_pkl(wham_output_dir: Path, input_video_path: Path) -> Path:
-    return wham_output_dir / input_video_path.stem / "wham_output.pkl"
+def default_reconstruction_results_pkl(reconstruction_output_dir: Path, input_video_path: Path) -> Path:
+    return retained_reconstruction_path(
+        reconstruction_output_dir / input_video_path.stem / "reconstruction_output.pkl"
+    )
 
 
-def wham_output_dir_for_uncached_generation(
+def reconstruction_output_dir_for_uncached_generation(
     output_root: Path,
     *,
     cache_key_value: str,
@@ -275,16 +269,16 @@ def wham_output_dir_for_uncached_generation(
 ) -> Path:
     """Choose a content-keyed root, isolating unvalidated final outputs."""
     output_dir = output_root / cache_key_value
-    has_stale_wham_result = default_wham_results_pkl(output_dir, input_video_path).exists()
+    has_stale_reconstruction_result = default_reconstruction_results_pkl(output_dir, input_video_path).exists()
     has_stale_gvhmr_prediction = (
         request.motion_reconstruction_backend == "gvhmr"
         and (
             output_dir / "demo" / input_video_path.stem / "hmr4d_results.pt"
         ).exists()
     )
-    if not request.reuse_wham_cache or has_stale_wham_result or has_stale_gvhmr_prediction:
+    if not request.reuse_reconstruction_cache or has_stale_reconstruction_result or has_stale_gvhmr_prediction:
         # GVHMR trusts hmr4d_results.pt existence as proof that inference has
-        # completed. A WHAM pkl without a valid cache manifest is similarly
+        # completed. A RECONSTRUCTION pkl without a valid cache manifest is similarly
         # untrusted, so neither may be reused as an intermediate on a cache miss.
         # Keep content-keyed preprocessed features reusable when no final output
         # exists and the request permits cache reuse.
@@ -292,12 +286,12 @@ def wham_output_dir_for_uncached_generation(
     return output_dir
 
 
-def default_wham_global_cache_dir(workspace: Path) -> Path:
+def default_reconstruction_global_cache_dir(workspace: Path) -> Path:
     resolved = workspace.expanduser().resolve()
     for candidate in (resolved, *resolved.parents):
         if candidate.name.lower() == "exercise_motion":
-            return candidate / "wham-cache"
-    return resolved / "wham-cache"
+            return candidate / "reconstruction-cache"
+    return resolved / "reconstruction-cache"
 
 
 def _sha256_file(path: Path) -> str:
@@ -438,9 +432,11 @@ def docker_image_identity(image: str) -> str | None:
 
 def reconstruction_runtime_identity(request: GenerateRequest) -> dict[str, Any]:
     """Return content identity for the reconstruction runtime and cache safety."""
+    if request.motion_reconstruction_backend != "gvhmr":
+        raise ValueError("Only the GVHMR reconstruction backend is supported.")
     identity: dict[str, Any] = {
         "backend": request.motion_reconstruction_backend,
-        "dockerImageTag": request.wham_docker_image if request.use_wham_docker else None,
+        "dockerImageTag": request.reconstruction_docker_image if request.use_reconstruction_docker else None,
         "dockerImageId": None,
         "repositoryIdentity": None,
         "cacheable": True,
@@ -448,41 +444,13 @@ def reconstruction_runtime_identity(request: GenerateRequest) -> dict[str, Any]:
     if request.normalized_motion_json is not None:
         identity["backend"] = "normalized_motion"
         return identity
-    if request.wham_results_pkl is not None:
-        identity["backend"] = "explicit_wham_results"
+    if request.reconstruction_results_pkl is not None:
+        identity["backend"] = "explicit_reconstruction_results"
         return identity
-    if request.use_wham_docker:
-        image_id = docker_image_identity(request.wham_docker_image)
+    if request.use_reconstruction_docker:
+        image_id = docker_image_identity(request.reconstruction_docker_image)
         identity["dockerImageId"] = image_id
         if image_id is None:
-            identity["cacheable"] = False
-            identity["unresolvedIdentityNonce"] = uuid.uuid4().hex
-    if request.motion_reconstruction_backend == "wham" and request.wham_repo_path is not None:
-        repository_root = request.wham_repo_path.expanduser().resolve()
-        runtime_files = tuple(
-            repository_root / "checkpoints" / name
-            for name in (
-                WHAM_DEMO_CHECKPOINT_NAME,
-                WHAM_EVAL_CHECKPOINT_NAME,
-                "hmr2a.ckpt",
-                "vitpose-h-multi-coco.pth",
-                "yolo26x.pt",
-            )
-        ) + (() if request.wham_estimate_local_only else (
-            repository_root / "checkpoints" / "dpvo.pth",
-        ))
-        identity["repositoryIdentity"] = _repository_runtime_identity(
-            repository_root,
-            runtime_files=runtime_files,
-        )
-        if identity["repositoryIdentity"] is None:
-            identity["cacheable"] = False
-            identity["unresolvedIdentityNonce"] = uuid.uuid4().hex
-    if request.motion_reconstruction_backend == "wham" and request.use_warm_wham_worker:
-        worker_entrypoint = Path(__file__).resolve().with_name("wham_warm_worker.py")
-        try:
-            identity["warmWorkerEntryPointSha256"] = _sha256_file(worker_entrypoint)
-        except OSError:
             identity["cacheable"] = False
             identity["unresolvedIdentityNonce"] = uuid.uuid4().hex
     if request.motion_reconstruction_backend == "gvhmr":
@@ -493,7 +461,7 @@ def reconstruction_runtime_identity(request: GenerateRequest) -> dict[str, Any]:
     return identity
 
 
-def wham_content_cache_key(
+def reconstruction_content_cache_key(
     request: GenerateRequest,
     input_video_path: Path,
     *,
@@ -501,12 +469,10 @@ def wham_content_cache_key(
 ) -> str:
     runtime_identity = runtime_identity or reconstruction_runtime_identity(request)
     digest = hashlib.sha256()
-    digest.update(f"wham-global-cache-v{WHAM_GLOBAL_CACHE_VERSION}\n".encode("utf-8"))
+    digest.update(f"reconstruction-global-cache-v{RECONSTRUCTION_GLOBAL_CACHE_VERSION}\n".encode("utf-8"))
     digest.update(
         json.dumps(
             {
-                "estimateLocalOnly": request.wham_estimate_local_only,
-                "runSmplify": request.wham_run_smplify,
                 "motionReconstructionBackend": request.motion_reconstruction_backend,
                 "runtimeIdentity": runtime_identity,
                 "gvhmrBetasExport": (
@@ -514,8 +480,7 @@ def wham_content_cache_key(
                     if request.motion_reconstruction_backend == "gvhmr"
                     else None
                 ),
-                "outputRotationDegrees": request.wham_output_rotation_degrees,
-                "preprocessingEnvironment": wham_preprocessing_environment(),
+                "outputRotationDegrees": request.reconstruction_output_rotation_degrees,
             },
             sort_keys=True,
         ).encode("utf-8")
@@ -550,19 +515,19 @@ def gvhmr_source_tree_identity() -> str:
     return _repository_runtime_identity(source_root) or "unavailable"
 
 
-def global_wham_results_pkl(
+def global_reconstruction_results_pkl(
     request: GenerateRequest,
     input_video_path: Path,
     *,
     runtime_identity: dict[str, Any] | None = None,
 ) -> Path:
-    cache_dir = request.wham_global_cache_dir or default_wham_global_cache_dir(request.workspace)
-    return cache_dir.expanduser().resolve() / wham_content_cache_key(
+    cache_dir = request.reconstruction_global_cache_dir or default_reconstruction_global_cache_dir(request.workspace)
+    return cache_dir.expanduser().resolve() / reconstruction_content_cache_key(
         request, input_video_path, runtime_identity=runtime_identity
-    ) / "wham_output.pkl"
+    ) / "reconstruction_output.pkl"
 
 
-def local_wham_cache_matches_input(
+def local_reconstruction_cache_matches_input(
     request: GenerateRequest,
     *,
     input_video_path: Path,
@@ -572,17 +537,17 @@ def local_wham_cache_matches_input(
     runtime_identity = runtime_identity or reconstruction_runtime_identity(request)
     if not runtime_identity.get("cacheable", False):
         return False
-    manifest_path = results_pkl.with_name(WHAM_LOCAL_CACHE_MANIFEST_NAME)
+    manifest_path = results_pkl.with_name(RECONSTRUCTION_LOCAL_CACHE_MANIFEST_NAME)
     try:
-        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        payload = loads_reconstruction_metadata(manifest_path.read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError):
         return False
-    return payload.get("cacheKey") == wham_content_cache_key(
+    return payload.get("cacheKey") == reconstruction_content_cache_key(
         request, input_video_path, runtime_identity=runtime_identity
     )
 
 
-def write_local_wham_cache_manifest(
+def write_local_reconstruction_cache_manifest(
     request: GenerateRequest,
     *,
     input_video_path: Path,
@@ -590,10 +555,10 @@ def write_local_wham_cache_manifest(
     runtime_identity: dict[str, Any] | None = None,
 ) -> Path:
     runtime_identity = runtime_identity or reconstruction_runtime_identity(request)
-    manifest_path = results_pkl.with_name(WHAM_LOCAL_CACHE_MANIFEST_NAME)
+    manifest_path = results_pkl.with_name(RECONSTRUCTION_LOCAL_CACHE_MANIFEST_NAME)
     payload = {
         "schemaVersion": 1,
-        "cacheKey": wham_content_cache_key(
+        "cacheKey": reconstruction_content_cache_key(
             request, input_video_path, runtime_identity=runtime_identity
         ),
         "sourceInputVideo": str(input_video_path),
@@ -603,34 +568,34 @@ def write_local_wham_cache_manifest(
     return manifest_path
 
 
-def reusable_wham_results_pkl(
+def reusable_reconstruction_results_pkl(
     request: GenerateRequest,
     input_video_path: Path,
     *,
     runtime_identity: dict[str, Any] | None = None,
 ) -> Path | None:
-    if not request.reuse_wham_cache:
+    if not request.reuse_reconstruction_cache:
         return None
     runtime_identity = runtime_identity or reconstruction_runtime_identity(request)
     if not runtime_identity.get("cacheable", False):
         return None
-    cache_key = wham_content_cache_key(request, input_video_path, runtime_identity=runtime_identity)
-    output_root = PipelinePaths.create(request.workspace, request.exercise_slug).raw_dir / "wham"
+    cache_key = reconstruction_content_cache_key(request, input_video_path, runtime_identity=runtime_identity)
+    output_root = PipelinePaths.create(request.workspace, request.exercise_slug).raw_dir / "reconstruction"
     for root in (output_root / cache_key, output_root):
-        local = default_wham_results_pkl(root, input_video_path)
+        local = default_reconstruction_results_pkl(root, input_video_path)
         if (local.is_file() and local.stat().st_size > 0
-                and local_wham_cache_matches_input(
+                and local_reconstruction_cache_matches_input(
                     request, input_video_path=input_video_path, results_pkl=local,
                     runtime_identity=runtime_identity,
                 )):
             return local
-    shared = global_wham_results_pkl(request, input_video_path, runtime_identity=runtime_identity)
+    shared = global_reconstruction_results_pkl(request, input_video_path, runtime_identity=runtime_identity)
     if shared.is_file() and shared.stat().st_size > 0:
         return shared
     return None
 
 
-def publish_global_wham_results(
+def publish_global_reconstruction_results(
     request: GenerateRequest,
     *,
     input_video_path: Path,
@@ -640,7 +605,7 @@ def publish_global_wham_results(
     runtime_identity = runtime_identity or reconstruction_runtime_identity(request)
     if not runtime_identity.get("cacheable", False):
         return results_pkl
-    destination = global_wham_results_pkl(
+    destination = global_reconstruction_results_pkl(
         request, input_video_path, runtime_identity=runtime_identity
     )
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -652,10 +617,7 @@ def publish_global_wham_results(
         "cacheKey": destination.parent.name,
         "sourceInputVideo": str(input_video_path),
         "sourceResultsPkl": str(results_pkl),
-        "estimateLocalOnly": request.wham_estimate_local_only,
-        "runSmplify": request.wham_run_smplify,
-        "dockerImage": request.wham_docker_image if request.use_wham_docker else None,
-        "preprocessingEnvironment": wham_preprocessing_environment(),
+        "dockerImage": request.reconstruction_docker_image if request.use_reconstruction_docker else None,
     }
     destination.with_name("cache_manifest.json").write_text(
         json.dumps(metadata, indent=2) + "\n",
@@ -664,39 +626,39 @@ def publish_global_wham_results(
     return destination
 
 
-def resolve_wham_results_source(
+def resolve_reconstruction_results_source(
     *,
     explicit_results_pkl: Path | None,
-    wham_output_dir: Path,
+    reconstruction_output_dir: Path,
     input_video_path: Path,
-    reuse_wham_cache: bool,
-) -> WhamResultsSource:
+    reuse_reconstruction_cache: bool,
+) -> ReconstructionResultsSource:
     if explicit_results_pkl is not None:
-        return WhamResultsSource(
+        return ReconstructionResultsSource(
             path=explicit_results_pkl.expanduser().resolve(),
             cache_status="explicit",
-            should_run_wham=False,
+            should_run_reconstruction=False,
         )
 
-    cached_results_pkl = default_wham_results_pkl(wham_output_dir, input_video_path)
-    if reuse_wham_cache and cached_results_pkl.exists():
-        return WhamResultsSource(
+    cached_results_pkl = default_reconstruction_results_pkl(reconstruction_output_dir, input_video_path)
+    if reuse_reconstruction_cache and cached_results_pkl.exists():
+        return ReconstructionResultsSource(
             path=cached_results_pkl,
             cache_status="reused",
-            should_run_wham=False,
+            should_run_reconstruction=False,
         )
 
-    return WhamResultsSource(
+    return ReconstructionResultsSource(
         path=cached_results_pkl,
         cache_status="generated",
-        should_run_wham=True,
+        should_run_reconstruction=True,
     )
 
 
 def run_generation_pipeline(
     request: GenerateRequest,
     *,
-    run_wham_exclusive: Callable[[Callable[[], Any]], Any] | None = None,
+    run_reconstruction_exclusive: Callable[[Callable[[], Any]], Any] | None = None,
     run_processing_exclusive: Callable[[Callable[[], Any]], Any] | None = None,
     raw_motion_validator: Callable[[Path], None] | None = None,
 ) -> GenerateResult:
@@ -705,33 +667,35 @@ def run_generation_pipeline(
     settings = asdict(request)
     runtime_identity = reconstruction_runtime_identity(request)
     settings["reconstructionRuntimeIdentity"] = runtime_identity
-    for name in ("require_wham_cache", "reuse_wham_cache", "wham_tracking_preflight", "stage_identity",
-                 "wham_timeout_seconds", "wham_worker_timeout_seconds", "candidate_deadline"):
+    for name in ("require_reconstruction_cache", "reuse_reconstruction_cache", "stage_identity",
+                 "reconstruction_timeout_seconds", "candidate_deadline"):
         settings.pop(name, None)
     inputs = [value for value in settings.values() if isinstance(value, Path) and value.is_file()]
     inputs.extend(Path(__file__).with_name(name) for name in (
         "pipeline.py", "cleanup.py", "temporal_contact_solver.py", "structural_refinement.py", "video_world_alignment.py",
         "unidepth_runner.py",
-        "preview.py", "wham_convert.py", "wham_retarget_source.py", "ground.py", "models.py",
-        "spinepose_wham_correction.py", "foot_kinematics.py", "contact_constraints.py", "contact_trajectory.py", "articulation_trajectory.py",
-        "motion_io.py", "retarget_contract.py", "wham_runner.py", "pose_fidelity.py",
+        "preview.py", "reconstruction_convert.py", "reconstruction_retarget_source.py", "ground.py", "models.py",
+        "spinepose_reconstruction_correction.py", "foot_kinematics.py", "contact_constraints.py", "contact_trajectory.py", "articulation_trajectory.py",
+        "motion_io.py", "reconstruction_compat.py", "retarget_contract.py", "reconstruction_runner.py", "pose_fidelity.py",
         "anatomical_repair.py", "chain_depth_correction.py",
     ))
     if request.motion_reconstruction_backend == "gvhmr":
         inputs.extend(gvhmr_runtime_dependency_paths())
-    if request.motion_reconstruction_backend == "wham" and request.use_warm_wham_worker:
-        inputs.append(Path(__file__).with_name("wham_warm_worker.py"))
     if request.body_model_root is not None:
         # smplx.create(..., gender="neutral") reads this asset from the
         # configured model directory. Hash the file itself because the request
         # setting contains a directory path, which cache_key intentionally does
         # not treat as a file input.
-        inputs.append(request.body_model_root.expanduser().resolve() / "SMPL_NEUTRAL.pkl")
+        model_root = request.body_model_root.expanduser().resolve()
+        inputs.extend((
+            model_root / "SMPL_NEUTRAL.pkl",
+            model_root / "smpl" / "SMPL_NEUTRAL.pkl",
+        ))
     key = cache_key(settings, inputs)
     with stage_lock(checkpoint):
         cached = (
             load_stage(checkpoint, key)
-            if request.reuse_wham_cache and runtime_identity.get("cacheable", False)
+            if request.reuse_reconstruction_cache and runtime_identity.get("cacheable", False)
             else None
         )
         if cached is not None:
@@ -744,12 +708,12 @@ def run_generation_pipeline(
             if raw_motion_validator is not None:
                 raw_motion_validator(result.raw_motion_json_path)
             return replace(result, timings={"generationCheckpoint": "reused", "totalSeconds": 0.0},
-                           wham_cache_status="reused_processed")
+                           reconstruction_cache_status="reused_processed")
         def generate() -> GenerateResult:
             from .storage import require_storage_reserve
             require_storage_reserve(request.workspace)
             return _run_generation_pipeline_uncached(
-                request, run_wham_exclusive=run_wham_exclusive,
+                request, run_reconstruction_exclusive=run_reconstruction_exclusive,
                 raw_motion_validator=raw_motion_validator,
                 runtime_identity=runtime_identity,
             )
@@ -764,17 +728,15 @@ def run_generation_pipeline(
 def _run_generation_pipeline_uncached(
     request: GenerateRequest,
     *,
-    run_wham_exclusive: Callable[[Callable[[], Any]], Any] | None = None,
+    run_reconstruction_exclusive: Callable[[Callable[[], Any]], Any] | None = None,
     raw_motion_validator: Callable[[Path], None] | None = None,
     runtime_identity: dict[str, Any] | None = None,
 ) -> GenerateResult:
     runtime_identity = runtime_identity or reconstruction_runtime_identity(request)
     pipeline_started = time.perf_counter()
     timings: dict[str, Any] = {}
-    if request.spinepose_merge_mode not in {"motion", "legacy_pkl"}:
-        raise ValueError("spinepose_merge_mode must be 'motion' or 'legacy_pkl'.")
-    if request.normalized_motion_json is not None and request.spinepose_merge_mode == "legacy_pkl":
-        raise ValueError("legacy_pkl SpinePose merge mode requires WHAM output, not normalized_motion_json.")
+    if request.spinepose_merge_mode != "motion":
+        raise ValueError("GVHMR SpinePose correction requires motion merge mode.")
 
     def record_timing(name: str, started: float) -> None:
         timings[name] = round(time.perf_counter() - started, 3)
@@ -808,81 +770,69 @@ def _run_generation_pipeline_uncached(
     smpl_preview_sequence = None
     smpl_preview_reference_clip = None
     smpl_preview_json_path: Path | None = None
-    wham_results_pkl: Path | None = None
-    wham_cache_status = "not_used_normalized_motion"
+    reconstruction_results_pkl: Path | None = None
+    reconstruction_cache_status = "not_used_normalized_motion"
     if request.normalized_motion_json is not None:
         stage_started = time.perf_counter()
         shutil.copy2(request.normalized_motion_json, raw_motion_json_path)
         record_timing("copyNormalizedMotionSeconds", stage_started)
     else:
         if request.body_model_root is None:
-            raise ValueError("body_model_root is required when using WHAM output.")
-        wham_output_dir = paths.raw_dir / "wham"
-        wham_output_dir.mkdir(parents=True, exist_ok=True)
-        reusable_results_pkl = reusable_wham_results_pkl(
+            raise ValueError("body_model_root is required when using RECONSTRUCTION output.")
+        reconstruction_output_dir = paths.raw_dir / "reconstruction"
+        reconstruction_output_dir.mkdir(parents=True, exist_ok=True)
+        reusable_results_pkl = reusable_reconstruction_results_pkl(
             request, input_video_path, runtime_identity=runtime_identity
         )
-        # WHAM caches detections/features below this directory, so key it by
+        # RECONSTRUCTION caches detections/features below this directory, so key it by
         # source and runtime identity. If an unvalidated final output remains,
         # the helper gives the model runner a clean attempt directory.
-        if reusable_results_pkl is None and request.wham_results_pkl is None:
-            wham_output_dir = wham_output_dir_for_uncached_generation(
-                wham_output_dir,
-                cache_key_value=wham_content_cache_key(
+        if reusable_results_pkl is None and request.reconstruction_results_pkl is None:
+            reconstruction_output_dir = reconstruction_output_dir_for_uncached_generation(
+                reconstruction_output_dir,
+                cache_key_value=reconstruction_content_cache_key(
                     request, input_video_path, runtime_identity=runtime_identity
                 ),
                 input_video_path=input_video_path,
                 request=request,
             )
-        wham_source = resolve_wham_results_source(
-            explicit_results_pkl=request.wham_results_pkl or reusable_results_pkl,
-            wham_output_dir=wham_output_dir,
+        reconstruction_source = resolve_reconstruction_results_source(
+            explicit_results_pkl=request.reconstruction_results_pkl or reusable_results_pkl,
+            reconstruction_output_dir=reconstruction_output_dir,
             input_video_path=input_video_path,
-            reuse_wham_cache=False,
+            reuse_reconstruction_cache=False,
         )
-        wham_results_pkl = wham_source.path
-        if reusable_results_pkl is not None and request.wham_results_pkl is None:
-            wham_cache_status = (
-                "reused_local" if reusable_results_pkl.resolve().is_relative_to((paths.raw_dir / "wham").resolve())
+        reconstruction_results_pkl = reconstruction_source.path
+        if reusable_results_pkl is not None and request.reconstruction_results_pkl is None:
+            reconstruction_cache_status = (
+                "reused_local" if reusable_results_pkl.resolve().is_relative_to((paths.raw_dir / "reconstruction").resolve())
                 else "reused_global"
             )
         else:
-            wham_cache_status = wham_source.cache_status
-        if wham_source.should_run_wham and request.require_wham_cache:
+            reconstruction_cache_status = reconstruction_source.cache_status
+        if reconstruction_source.should_run_reconstruction and request.require_reconstruction_cache:
             raise FileNotFoundError(
-                "Staged finalization requires a precomputed WHAM cache, but none was found "
+                "Staged finalization requires a precomputed RECONSTRUCTION cache, but none was found "
                 f"for {input_video_path}."
             )
-        if wham_source.should_run_wham:
-            if (
-                request.motion_reconstruction_backend == "wham"
-                and request.wham_repo_path is None
-            ):
-                raise ValueError(
-                    "Provide normalized_motion_json, or provide body_model_root with either wham_repo_path or wham_results_pkl."
-                )
+        if reconstruction_source.should_run_reconstruction:
             stage_started = time.perf_counter()
             if request.motion_reconstruction_backend == "gvhmr":
-                if not request.use_wham_docker:
+                if not request.use_reconstruction_docker:
                     raise ValueError(
                         "The GVHMR reconstruction backend currently requires Docker execution."
                     )
-                if request.spinepose_enabled:
-                    raise ValueError(
-                        "SpinePose correction is WHAM-specific and cannot run with the GVHMR backend."
-                    )
-
-                def invoke_wham() -> Any:
+                def invoke_reconstruction() -> Any:
                     from exercise_motion_pkg.gvhmr_runner import run_gvhmr_locally
 
                     return run_gvhmr_locally(
                         input_video=input_video_path,
-                        output_root=wham_output_dir,
+                        output_root=reconstruction_output_dir,
                         logs_dir=paths.logs_dir,
-                        docker_image=request.wham_docker_image,
-                        docker_gpus=request.wham_docker_gpus,
-                        docker_shm_size=request.wham_docker_shm_size,
-                        timeout_seconds=request.wham_timeout_seconds,
+                        docker_image=request.reconstruction_docker_image,
+                        docker_gpus=request.reconstruction_docker_gpus,
+                        docker_shm_size=request.reconstruction_docker_shm_size,
+                        timeout_seconds=request.reconstruction_timeout_seconds,
                         use_warm_worker=request.use_warm_gvhmr_worker,
                         warm_worker_session_dir=request.gvhmr_worker_session_dir,
                         warm_worker_mount_root=request.gvhmr_worker_mount_root,
@@ -890,148 +840,85 @@ def _run_generation_pipeline_uncached(
                         candidate_deadline=request.candidate_deadline,
                         **({"stage_identity": request.stage_identity} if request.stage_identity else {}),
                     )
-            elif request.wham_repo_path is None:
-                raise ValueError(
-                    "Provide normalized_motion_json, or provide body_model_root with either wham_repo_path or wham_results_pkl."
-                )
-            else:
 
-                def invoke_wham() -> Any:
-                    return run_wham_locally(
-                        wham_repo_path=request.wham_repo_path.expanduser().resolve(),
-                        input_video=input_video_path,
-                        output_root=wham_output_dir,
-                        logs_dir=paths.logs_dir,
-                        python_command=request.wham_python_command,
-                        estimate_local_only=request.wham_estimate_local_only,
-                        run_smplify=request.wham_run_smplify,
-                        use_docker=request.use_wham_docker,
-                        docker_image=request.wham_docker_image,
-                        docker_gpus=request.wham_docker_gpus,
-                        docker_shm_size=request.wham_docker_shm_size,
-                        use_warm_worker=request.use_warm_wham_worker,
-                        warm_worker_session_dir=request.wham_worker_session_dir,
-                        warm_worker_mount_root=request.wham_worker_mount_root,
-                        warm_worker_timeout_seconds=request.wham_worker_timeout_seconds,
-                        timeout_seconds=request.wham_timeout_seconds,
-                        candidate_deadline=request.candidate_deadline,
-                        tracking_preflight=request.wham_tracking_preflight,
-                        required_start_seconds=request.output_crop_start_seconds,
-                        required_end_seconds=request.output_crop_end_seconds,
-                        **({"stage_identity": request.stage_identity} if request.stage_identity else {}),
-                    )
-
-            wham_result = (
-                run_wham_exclusive(invoke_wham)
-                if run_wham_exclusive is not None
-                else invoke_wham()
+            reconstruction_result = (
+                run_reconstruction_exclusive(invoke_reconstruction)
+                if run_reconstruction_exclusive is not None
+                else invoke_reconstruction()
             )
-            record_timing("whamRunSeconds", stage_started)
-            timings["wham"] = wham_result.timing_payload()
-            wham_results_pkl = wham_result.results_pkl
-            local_cache_manifest_path = write_local_wham_cache_manifest(
+            record_timing("reconstructionRunSeconds", stage_started)
+            timings["reconstruction"] = reconstruction_result.timing_payload()
+            reconstruction_results_pkl = reconstruction_result.results_pkl
+            local_cache_manifest_path = write_local_reconstruction_cache_manifest(
                 request,
                 input_video_path=input_video_path,
-                results_pkl=wham_results_pkl,
+                results_pkl=reconstruction_results_pkl,
                 runtime_identity=runtime_identity,
             )
-            timings["wham"]["localCacheManifestPath"] = str(local_cache_manifest_path)
-            global_cache_path = publish_global_wham_results(
+            timings["reconstruction"]["localCacheManifestPath"] = str(local_cache_manifest_path)
+            global_cache_path = publish_global_reconstruction_results(
                 request,
                 input_video_path=input_video_path,
-                results_pkl=wham_results_pkl,
+                results_pkl=reconstruction_results_pkl,
                 runtime_identity=runtime_identity,
             )
-            timings["wham"]["globalCachePath"] = str(global_cache_path)
+            timings["reconstruction"]["globalCachePath"] = str(global_cache_path)
         else:
-            timings["wham"] = {
+            timings["reconstruction"] = {
                 "elapsedSeconds": 0.0,
-                "cacheStatus": wham_cache_status,
-                "resultsPkl": str(wham_results_pkl),
-            }
-        if active_spinepose_json_dir is not None and request.spinepose_merge_mode == "legacy_pkl":
-            stage_started = time.perf_counter()
-            corrected_wham_results_pkl = paths.raw_dir / "wham_spinepose" / "wham_output.pkl"
-            stats = apply_spinepose_to_wham_pkl(
-                wham_results_pkl=wham_results_pkl,
-                spinepose_json_dir=active_spinepose_json_dir,
-                output_pkl=corrected_wham_results_pkl,
-                gain=request.spinepose_gain,
-                max_degrees=request.spinepose_max_degrees,
-                axis=request.spinepose_axis,
-                invert=request.spinepose_invert,
-                smoothing_window=request.spinepose_smoothing_window,
-                arm_counter_rotation=request.spinepose_arm_counter_rotation,
-            )
-            wham_results_pkl = corrected_wham_results_pkl
-            wham_cache_status = f"{wham_cache_status}_spinepose_corrected"
-            timings["spineposeWhamCorrection"] = {
-                "elapsedSeconds": round(time.perf_counter() - stage_started, 3),
-                "sourceJsonDir": str(active_spinepose_json_dir),
-                "correctedResultsPkl": str(corrected_wham_results_pkl),
-                "frames": stats.frame_count,
-                "sourceFrames": stats.source_frame_count,
-                "appliedFrames": stats.applied_frame_count,
-                "poseKeys": list(stats.pose_keys),
-                "maxDeltaDegrees": stats.max_delta_degrees,
-                "meanAbsDeltaDegrees": stats.mean_abs_delta_degrees,
-                "axis": request.spinepose_axis,
-                "gain": request.spinepose_gain,
-                "maxDegrees": request.spinepose_max_degrees,
-                "invert": request.spinepose_invert,
-                "smoothingWindow": request.spinepose_smoothing_window,
-                "armCounterRotation": stats.arm_counter_rotation,
+                "cacheStatus": reconstruction_cache_status,
+                "resultsPkl": str(reconstruction_results_pkl),
             }
         stage_started = time.perf_counter()
-        # WHAM frame_ids refer to decoded input frames. Their timestamps must
+        # RECONSTRUCTION frame_ids refer to decoded input frames. Their timestamps must
         # use that video's rate before trimming inference-only context.
-        wham_source_fps = read_basic_video_metadata(input_video_path).fps
+        reconstruction_source_fps = read_basic_video_metadata(input_video_path).fps
         # GVHMR exports gravity-aligned world coordinates from its own
         # gravity-view representation, so no post-hoc rotation applies.
         motion_coordinate_space = (
             "world"
             if request.motion_reconstruction_backend == "gvhmr"
-            else WHAM_COORDINATE_SPACE
+            else RECONSTRUCTION_COORDINATE_SPACE
         )
         motion_output_rotation_degrees = (
             0.0
             if request.motion_reconstruction_backend == "gvhmr"
-            else request.wham_output_rotation_degrees
+            else request.reconstruction_output_rotation_degrees
         )
-        normalize_wham_output(
-            wham_results_pkl=wham_results_pkl,
+        normalize_reconstruction_output(
+            reconstruction_results_pkl=reconstruction_results_pkl,
             body_model_root=request.body_model_root.expanduser().resolve(),
             output_json=raw_motion_json_path,
             coordinate_space=motion_coordinate_space,
             output_rotation_degrees=motion_output_rotation_degrees,
-            fps=wham_source_fps,
+            fps=reconstruction_source_fps,
             extractor=(
                 "GVHMR"
                 if request.motion_reconstruction_backend == "gvhmr"
-                else "WHAM"
+                else "RECONSTRUCTION"
             ),
         )
-        record_timing("normalizeWhamOutputSeconds", stage_started)
+        record_timing("normalizeReconstructionOutputSeconds", stage_started)
         stage_started = time.perf_counter()
-        retarget_source_path = export_wham_retarget_source(
-            wham_results_pkl=wham_results_pkl,
-            output_json=paths.retarget_dir / "wham.retarget_source.json",
+        retarget_source_path = export_reconstruction_retarget_source(
+            reconstruction_results_pkl=reconstruction_results_pkl,
+            output_json=paths.retarget_dir / "reconstruction.retarget_source.json",
             coordinate_space=motion_coordinate_space,
-            fps=wham_source_fps,
+            fps=reconstruction_source_fps,
         )
-        record_timing("exportWhamRetargetSourceSeconds", stage_started)
-        if request.export_wham_smpl_preview:
+        record_timing("exportReconstructionRetargetSourceSeconds", stage_started)
+        if request.export_reconstruction_smpl_preview:
             stage_started = time.perf_counter()
-            smpl_preview_sequence = load_wham_smpl_mesh_sequence(
-                wham_results_pkl=wham_results_pkl,
+            smpl_preview_sequence = load_reconstruction_smpl_mesh_sequence(
+                reconstruction_results_pkl=reconstruction_results_pkl,
                 body_model_root=request.body_model_root.expanduser().resolve(),
                 coordinate_space=motion_coordinate_space,
-                fps=wham_source_fps,
+                fps=reconstruction_source_fps,
             )
-            record_timing("loadWhamSmplMeshSeconds", stage_started)
+            record_timing("loadReconstructionSmplMeshSeconds", stage_started)
         else:
-            timings["loadWhamSmplMeshSeconds"] = 0.0
-            timings["whamSmplPreview"] = {"enabled": False, "status": "disabled"}
+            timings["loadReconstructionSmplMeshSeconds"] = 0.0
+            timings["reconstructionSmplPreview"] = {"enabled": False, "status": "disabled"}
 
     if active_spinepose_json_dir is not None and request.spinepose_merge_mode == "motion":
         stage_started = time.perf_counter()
@@ -1049,7 +936,7 @@ def _run_generation_pipeline_uncached(
             source_fps=source_video_fps,
         )
         save_motion_json(raw_motion_json_path, fused_clip)
-        wham_cache_status = f"{wham_cache_status}_spinepose_motion_fused"
+        reconstruction_cache_status = f"{reconstruction_cache_status}_spinepose_motion_fused"
         timings["spineposeMotionFusion"] = {
             "elapsedSeconds": round(time.perf_counter() - stage_started, 3),
             "sourceJsonDir": str(source_spinepose_json_dir),
@@ -1087,7 +974,7 @@ def _run_generation_pipeline_uncached(
             raw_clip,
             start_seconds=request.output_crop_start_seconds,
             end_seconds=request.output_crop_end_seconds,
-            allow_boundary_truncation=request.allow_incomplete_wham_boundary_crop,
+            allow_boundary_truncation=request.allow_incomplete_reconstruction_boundary_crop,
         )
         save_motion_json(raw_motion_json_path, raw_clip)
         record_timing("cropInferenceContextSeconds", stage_started)
@@ -1107,7 +994,7 @@ def _run_generation_pipeline_uncached(
     raw_smpl_pose_source = None
     if retarget_source_path is not None and retarget_source_path.is_file():
         try:
-            loaded_retarget_source = json.loads(
+            loaded_retarget_source = loads_reconstruction_metadata(
                 retarget_source_path.read_text(encoding="utf-8")
             )
             if isinstance(loaded_retarget_source, dict):
@@ -1184,7 +1071,7 @@ def _run_generation_pipeline_uncached(
             source_basis=(
                 "gvhmr_gravity_world"
                 if request.motion_reconstruction_backend == "gvhmr"
-                else "wham_opencv_camera"
+                else "reconstruction_opencv_camera"
             ),
         )
         record_timing("canonicalizeMotionCoordinatesSeconds", stage_started)
@@ -1241,7 +1128,7 @@ def _run_generation_pipeline_uncached(
             # source-guided steps re-introduce both, so this consistency pass
             # must run AFTER refinement. Shoulders/hips are anatomically rigid
             # and socket centers belong on their pair's bisector plane.
-            # Promote to all backends once WHAM identity is re-baselined.
+            # Promote to all backends once RECONSTRUCTION identity is re-baselined.
             import numpy as np
 
             from .anatomical_repair import (
@@ -1360,9 +1247,9 @@ def _run_generation_pipeline_uncached(
 
     preview_html_path = paths.preview_dir / "motion_preview.html"
     if smpl_preview_sequence is not None:
-        smpl_preview_json_path = paths.retarget_dir / "wham.smpl_preview.baked.json"
+        smpl_preview_json_path = paths.retarget_dir / "reconstruction.smpl_preview.baked.json"
         stage_started = time.perf_counter()
-        write_baked_wham_smpl_preview_json(
+        write_baked_reconstruction_smpl_preview_json(
             smpl_preview_json_path,
             sequence=smpl_preview_sequence,
             raw_clip=raw_clip,
@@ -1406,10 +1293,10 @@ def _run_generation_pipeline_uncached(
         "groundMetadataPath": str(ground_metadata_path) if ground_metadata_path is not None else None,
         "targetRigContractPath": str(target_rig_contract_path),
         "retargetSourcePath": str(retarget_source_path) if retarget_source_path is not None else None,
-        "whamRetargetSourcePath": str(retarget_source_path) if retarget_source_path is not None else None,
-        "whamSmplPreviewJsonPath": str(smpl_preview_json_path) if smpl_preview_json_path is not None else None,
-        "whamResultsPkl": str(wham_results_pkl) if wham_results_pkl is not None else None,
-        "whamCacheStatus": wham_cache_status,
+        "reconstructionRetargetSourcePath": str(retarget_source_path) if retarget_source_path is not None else None,
+        "reconstructionSmplPreviewJsonPath": str(smpl_preview_json_path) if smpl_preview_json_path is not None else None,
+        "reconstructionResultsPkl": str(reconstruction_results_pkl) if reconstruction_results_pkl is not None else None,
+        "reconstructionCacheStatus": reconstruction_cache_status,
         "spineposeSource": spinepose_source.payload,
         "motionTuningEnabled": request.motion_tuning_enabled,
         "cleanupStats": {
@@ -1431,16 +1318,16 @@ def _run_generation_pipeline_uncached(
             "description": (
                 "Render the baked preview skeleton directly on Wear. It already includes preview alignment, root-drift lock, active loop selection, and centering."
                 if request.motion_tuning_enabled
-                else "Raw camera-space WHAM motion was passed through without cleanup, ground fitting, or structural tuning."
+                else "Raw camera-space RECONSTRUCTION motion was passed through without cleanup, ground fitting, or structural tuning."
             ),
             "cleanedMotionJsonPath": str(cleaned_motion_json_path),
             "wearSkeletonJsonPath": str(wear_skeleton_json_path),
             "retargetSourcePath": str(retarget_source_path) if retarget_source_path is not None else None,
-            "whamRetargetSourcePath": str(retarget_source_path) if retarget_source_path is not None else None,
+            "reconstructionRetargetSourcePath": str(retarget_source_path) if retarget_source_path is not None else None,
             "targetRigContractPath": str(target_rig_contract_path),
-            "whamSmplPreviewJsonPath": str(smpl_preview_json_path) if smpl_preview_json_path is not None else None,
-            "whamResultsPkl": str(wham_results_pkl) if wham_results_pkl is not None else None,
-            "whamCacheStatus": wham_cache_status,
+            "reconstructionSmplPreviewJsonPath": str(smpl_preview_json_path) if smpl_preview_json_path is not None else None,
+            "reconstructionResultsPkl": str(reconstruction_results_pkl) if reconstruction_results_pkl is not None else None,
+            "reconstructionCacheStatus": reconstruction_cache_status,
         },
     }
     manifest_path.write_text(json.dumps(manifest_payload, indent=2), encoding="utf-8")
@@ -1458,8 +1345,8 @@ def _run_generation_pipeline_uncached(
         cleanup_stats=cleanup_stats,
         ground_metadata_path=ground_metadata_path,
         motion_tuning_enabled=request.motion_tuning_enabled,
-            wham_results_pkl=wham_results_pkl,
-            wham_cache_status=wham_cache_status,
+            reconstruction_results_pkl=reconstruction_results_pkl,
+            reconstruction_cache_status=reconstruction_cache_status,
             timings=timings,
     )
 
@@ -1483,7 +1370,7 @@ def crop_motion_clip_to_input_window(
     ]
     if not retained:
         raise ValueError(
-            f"WHAM produced no motion frames inside the requested output window {start:.3f}-{end:.3f}s."
+            f"RECONSTRUCTION produced no motion frames inside the requested output window {start:.3f}-{end:.3f}s."
         )
     frame_duration_seconds = 1.0 / max(float(clip.fps), 1.0)
     requested_duration_seconds = None if end == float("inf") else end - start
@@ -1513,8 +1400,8 @@ def crop_motion_clip_to_input_window(
     if internal_gap_failure:
         coverage_failures.append(f"contains an internal {largest_internal_gap_seconds:.3f}s tracking gap")
     if internal_gap_failure or (boundary_coverage_failures and not allow_boundary_truncation):
-        raise IncompleteWhamTrackingError(
-            "WHAM tracking does not cover the complete requested output window: "
+        raise IncompleteReconstructionTrackingError(
+            "RECONSTRUCTION tracking does not cover the complete requested output window: "
             + "; ".join(coverage_failures)
             + ". The subject track was likely fragmented or lost.",
             requested_start_seconds=start,
@@ -1556,11 +1443,11 @@ def crop_motion_clip_to_input_window(
 
 
 def canonicalize_camera_motion_clip(
-    clip: MotionClip, *, source_basis: str = "wham_opencv_camera"
+    clip: MotionClip, *, source_basis: str = "reconstruction_opencv_camera"
 ) -> MotionClip:
     """Convert reconstruction coordinates into the preview's Y-up world basis.
 
-    WHAM camera coordinates use positive Y down and positive Z forward.  The
+    RECONSTRUCTION camera coordinates use positive Y down and positive Z forward.  The
     renderer uses positive Y up and the opposite Z direction.  Converting the
     motion once during post-processing keeps world orientation out of preview
     settings and avoids camera-dependent scene inversion heuristics.
@@ -1605,7 +1492,7 @@ def _motion_tuning_metadata(*, enabled: bool) -> dict[str, object]:
         }
     return {
         "enabled": False,
-        "mode": "raw_wham_camera_space_passthrough",
+        "mode": "raw_reconstruction_camera_space_passthrough",
         "skippedSteps": [
             "cleanup_static_trim",
             "ground_plane_fitting",
@@ -1613,7 +1500,7 @@ def _motion_tuning_metadata(*, enabled: bool) -> dict[str, object]:
             "support_contact_detection",
             "structural_ik_refinement",
         ],
-        "reviewIntent": "Compare the generated preview directly against raw WHAM camera-space motion.",
+        "reviewIntent": "Compare the generated preview directly against raw RECONSTRUCTION camera-space motion.",
     }
 
 
@@ -1641,7 +1528,7 @@ def _average_root_height(clip) -> float:
 
 def _source_video_fps_for_spinepose_alignment(input_video_path: Path, clip: object) -> float | None:
     metadata = getattr(clip, "metadata", None)
-    if not isinstance(metadata, dict) or not isinstance(metadata.get("wham"), dict):
+    if not isinstance(metadata, dict) or not isinstance(metadata.get("reconstruction"), dict):
         return None
     try:
         video_metadata = read_basic_video_metadata(input_video_path)

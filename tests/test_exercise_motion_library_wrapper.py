@@ -10,8 +10,20 @@ REPO_ROOT = Path(__file__).parents[1]
 
 def _copy_library_wrapper_scripts(scripts_dir: Path) -> None:
     scripts_dir.mkdir(parents=True, exist_ok=True)
-    for name in ("run_exercise_motion_library.ps1", "motion_run_interrupt.ps1"):
+    for name in (
+        "run_exercise_motion_library.ps1",
+        "motion_library_logging.ps1",
+        "motion_run_interrupt.ps1",
+        "motion_validation_policy.ps1",
+        "reconstruction_compat.ps1",
+    ):
         shutil.copy2(REPO_ROOT / "scripts" / name, scripts_dir / name)
+    package_dir = scripts_dir.parent / "exercise_motion_pkg"
+    package_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(
+        REPO_ROOT / "exercise_motion_pkg" / "bake_and_rank.py",
+        package_dir / "bake_and_rank.py",
+    )
 
 
 def test_library_wrapper_acknowledges_ctrl_c_immediately() -> None:
@@ -45,7 +57,7 @@ def test_library_wrapper_runs_bounded_then_deferred_and_resumes_phase(tmp_path):
     [int]$PrefetchQueueDepth,
     [int]$StagedWaveSize,
     [string]$GpuDiscoveryBakeOverlap,
-    [bool]$WarmWhamWorker,
+    [bool]$WarmGvhmrWorker,
     [bool]$KeepLlamaCppServer,
     [Parameter(ValueFromRemainingArguments = $true)]
     [object[]]$RemainingArguments = @()
@@ -59,7 +71,7 @@ $call = [ordered]@{
     prefetchQueueDepth = $PrefetchQueueDepth
     stagedWaveSize = $StagedWaveSize
     gpuDiscoveryBakeOverlap = $GpuDiscoveryBakeOverlap
-    warmWhamWorker = $WarmWhamWorker
+    warmGvhmrWorker = $WarmGvhmrWorker
     keepLlamaCppServer = $KeepLlamaCppServer
     incrementalMobilePackageOutputJson = $IncrementalMobilePackageOutputJson
 }
@@ -114,8 +126,8 @@ Copy-Item -Force -LiteralPath $MotionSummaryJson -Destination $OutputJson
 
     calls = [json.loads(line) for line in (workspace / "calls.jsonl").read_text().splitlines()]
     assert calls == [
-        {"defer": True, "reuse": True, "cpuPrefetch": True, "prefetchWorkers": 2, "prefetchQueueDepth": 6, "stagedWaveSize": 8, "gpuDiscoveryBakeOverlap": "avoid", "warmWhamWorker": True, "keepLlamaCppServer": True, "incrementalMobilePackageOutputJson": str(output_path)},
-        {"defer": False, "reuse": True, "cpuPrefetch": True, "prefetchWorkers": 2, "prefetchQueueDepth": 6, "stagedWaveSize": 8, "gpuDiscoveryBakeOverlap": "avoid", "warmWhamWorker": True, "keepLlamaCppServer": True, "incrementalMobilePackageOutputJson": str(output_path)},
+        {"defer": True, "reuse": True, "cpuPrefetch": True, "prefetchWorkers": 8, "prefetchQueueDepth": 40, "stagedWaveSize": 8, "gpuDiscoveryBakeOverlap": "auto", "warmGvhmrWorker": True, "keepLlamaCppServer": True, "incrementalMobilePackageOutputJson": str(output_path)},
+        {"defer": False, "reuse": True, "cpuPrefetch": True, "prefetchWorkers": 8, "prefetchQueueDepth": 40, "stagedWaveSize": 8, "gpuDiscoveryBakeOverlap": "auto", "warmGvhmrWorker": True, "keepLlamaCppServer": True, "incrementalMobilePackageOutputJson": str(output_path)},
     ]
     first_pass = json.loads((workspace / "exercise_library_first_pass_summary.json").read_text())
     assert first_pass["exercises"][0]["status"] == "postponed"
@@ -133,11 +145,11 @@ Copy-Item -Force -LiteralPath $MotionSummaryJson -Destination $OutputJson
         "defer": False,
         "reuse": True,
         "cpuPrefetch": True,
-        "prefetchWorkers": 2,
-        "prefetchQueueDepth": 6,
+        "prefetchWorkers": 8,
+        "prefetchQueueDepth": 40,
         "stagedWaveSize": 8,
-        "gpuDiscoveryBakeOverlap": "avoid",
-        "warmWhamWorker": True,
+        "gpuDiscoveryBakeOverlap": "auto",
+        "warmGvhmrWorker": True,
         "keepLlamaCppServer": True,
         "incrementalMobilePackageOutputJson": str(output_path),
     }

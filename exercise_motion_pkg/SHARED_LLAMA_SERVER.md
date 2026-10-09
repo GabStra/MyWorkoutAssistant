@@ -34,7 +34,7 @@ coordinate *stopping* the server around them (the quiesce protocol below).
 | Server stop before exclusive GPU phases | The quiescing *client* process itself (netstat/taskkill via `stop_llama_cpp_servers_for_base_url`), after drain |
 | In-flight request accounting | One coordinator per attached process (counter file in the session dir); see "In-flight counter ownership" below |
 
-The supervisor owns the process the same way it owns warm WHAM/GVHMR worker
+The supervisor owns the process the same way it coordinates the GVHMR worker
 containers: a session directory with marker files, lazy start on
 `start_requested.json`, `ready.json`/`heartbeat.json` for liveness. Python
 clients never spawn, adopt, or own the server when `--shared-llama-server` is
@@ -127,7 +127,7 @@ survives a detachment while counted requests are still in flight.
 `LazyLlamaCppVisionSession.run_without_llama_overlap` with the flag on:
 
 1. **In-process drain** (unchanged): `_exclusive_waiters += 1`, wait for
-   `_wham_active`, then wait for local `_active_calls == 0`.
+   `_reconstruction_active`, then wait for local `_active_calls == 0`.
 2. **Publish** our counter file at 0.
 3. **Transition reservation + stop-intent**: acquire
    `shared-llama-transition.lock`, wait out any *live* foreign intent, then
@@ -145,7 +145,7 @@ survives a detachment while counted requests are still in flight.
 5. **Stop the server** via `stop_llama_cpp_servers_for_base_url` (same
    netstat/taskkill mechanism today's force-stop uses, valid regardless of
    which process owns the server). Write `stopped.json`.
-6. **Run the exclusive operation** (GVHMR/WHAM/...). Our stop-intent stays
+6. **Run the exclusive operation** (GVHMR reconstruction). Our stop-intent stays
    live, keeping every attached client's admissions closed.
 7. **Release**: under `shared-llama-transition.lock`, clear
    `stop_intent.json`, write `start_requested.json` (lazy restart), and
@@ -209,7 +209,7 @@ survives a detachment while counted requests are still in flight.
 
 ## Supervisor (PowerShell)
 
-`Start-SharedLlamaServer -SessionDir <dir>` (mirrors `Start-WhamWarmWorker`):
+`Start-SharedLlamaServer -SessionDir <dir>` (coordinates with the GVHMR worker):
 takes `shared-llama-transition.lock`, defers when a live exclusive handoff is
 present, clears stale markers, and removes only in-flight counters whose PID
 and process-start identity prove the owner has stopped. Malformed or
@@ -223,7 +223,7 @@ writes `ready.json` +
 `heartbeat.json`, redirects output to `server.log`, writes
 `startup_error.json` and throws on failure. Returns the instance object.
 
-`Stop-SharedLlamaServer -Server <instance>` (mirrors `Stop-WhamWarmWorker`):
+`Stop-SharedLlamaServer -Server <instance>` (coordinates with the GVHMR worker):
 writes `stop_intent.json` (closing admissions), waits (bounded) for live
 `in-flight/*.json` counters to drain, stops only the process whose recorded
 start identity still matches, then writes `stopped.json` and clears

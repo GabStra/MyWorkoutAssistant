@@ -38,13 +38,6 @@ param(
     [int]$LlamaCppMtmdBatchMaxTokens = 768,
     [bool]$LlamaCppMmprojOffload = $true,
     [bool]$LlamaCppContBatching = $true,
-    [string]$LiteRtModelRepo = "litert-community/gemma-4-E4B-it-litert-lm",
-    [string]$LiteRtModelFile = "gemma-4-E4B-it.litertlm",
-    [string]$VisionModel = "gemma-4-E4B-it",
-    [int]$VisionPort = 8090,
-    [ValidateSet("cpu", "gpu", "npu")]
-    [string]$LiteRtBackend = "gpu",
-    [switch]$UseLiteRt,
     [double]$WindowSeconds = 5.0,
     [double]$OverlapSeconds = 2.5,
     [int]$FramesPerWindow = 20,
@@ -78,15 +71,6 @@ function Get-PythonCommand {
         }
     }
     return "python"
-}
-
-function Get-LiteRtCommand {
-    $repoRoot = Get-RepoRoot
-    $venvLiteRt = Join-Path $repoRoot ".venv\Scripts\litert-lm.exe"
-    if (Test-Path -LiteralPath $venvLiteRt) {
-        return $venvLiteRt
-    }
-    return "litert-lm"
 }
 
 function Get-LlamaCppServerCommand {
@@ -237,37 +221,6 @@ function Wait-LlamaCppServer {
     return $false
 }
 
-function Test-LiteRtModelImported {
-    param(
-        [string]$CommandPath,
-        [string]$ModelRef
-    )
-
-    $output = & $CommandPath list 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to list LiteRT-LM models.`n$output"
-    }
-    return ($output | Select-String -SimpleMatch $ModelRef) -ne $null
-}
-
-function Ensure-LiteRtModelImported {
-    param(
-        [string]$CommandPath,
-        [string]$RepoId,
-        [string]$ModelFile,
-        [string]$ModelRef
-    )
-
-    if (Test-LiteRtModelImported -CommandPath $CommandPath -ModelRef $ModelRef) {
-        return
-    }
-
-    & $CommandPath import --from-huggingface-repo $RepoId $ModelFile $ModelRef
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to import LiteRT-LM model '$ModelRef' from '$RepoId/$ModelFile'."
-    }
-}
-
 function Test-PortInUse {
     param([int]$Port)
     try {
@@ -380,20 +333,7 @@ $llamaCppServerProcess = $null
 $cleanupLlamaCppServer = $false
 $resolvedLlamaCppBaseUrl = $LlamaCppBaseUrl
 
-if ($UseLiteRt) {
-    $liteRtCommand = Get-LiteRtCommand
-    Ensure-LiteRtModelImported `
-        -CommandPath $liteRtCommand `
-        -RepoId $LiteRtModelRepo `
-        -ModelFile $LiteRtModelFile `
-        -ModelRef $VisionModel
-    $pythonArgs += @(
-        "--litert-command", $liteRtCommand,
-        "--litert-backend", $LiteRtBackend,
-        "--model", $VisionModel
-    )
-} else {
-    if ([string]::IsNullOrWhiteSpace($LlamaCppModel)) {
+if ([string]::IsNullOrWhiteSpace($LlamaCppModel)) {
         throw "Llama.cpp mode requires -LlamaCppModel."
     }
     if (-not (Test-Path -LiteralPath $LlamaCppModel)) {
@@ -475,7 +415,6 @@ if ($UseLiteRt) {
         "--model", $LlamaCppModel,
         "--llama-cpp-backend", $LlamaCppBackend
     )
-}
 
 if (-not [string]::IsNullOrWhiteSpace($ExerciseName)) {
     $pythonArgs += @("--exercise-name", $ExerciseName)

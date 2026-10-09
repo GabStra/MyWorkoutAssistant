@@ -1,4 +1,4 @@
-"""Observe heel/forefoot contact from the exact source, independently of WHAM."""
+"""Observe heel/forefoot contact from the exact source, independently of RECONSTRUCTION."""
 
 from __future__ import annotations
 

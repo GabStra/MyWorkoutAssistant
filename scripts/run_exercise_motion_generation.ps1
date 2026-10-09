@@ -6,21 +6,13 @@ param(
     [string]$YouTubeUrl,
 
     [string]$Workspace = "build/exercise_motion",
-    [string]$WhamRepoPath,
     [string]$BodyModelRoot,
-    [string]$WhamPython = "python",
     [switch]$FastProfile,
-    [ValidateSet("wham", "gvhmr")]
-    [string]$MotionReconstructor = "gvhmr",
-    [string]$GvhmrDockerImage = "myworkoutassistant/gvhmr:torch2.3-cu121",
-    [switch]$UseWhamDocker,
-    [string]$WhamDockerImage = "myworkoutassistant/wham-ada:torch2.9-cu128-mmpose1",
-    [string]$WhamDockerGpus = "all",
-    [string]$WhamDockerShmSize = "16g",
-    [double]$WhamTimeoutSeconds = 0.0,
-    [switch]$EstimateLocalOnly,
-    [switch]$FullWhamCameraSlam,
-    [switch]$SkipSmplify,
+    [bool]$UseReconstructionDocker = $true,
+    [string]$ReconstructionDockerImage = "myworkoutassistant/gvhmr:torch2.3-cu121",
+    [string]$ReconstructionDockerGpus = "all",
+    [string]$ReconstructionDockerShmSize = "16g",
+    [double]$ReconstructionTimeoutSeconds = 0.0,
     [switch]$SkipSpinePose,
     [string]$SpinePoseJsonDir,
     [string]$SpinePoseCommand,
@@ -31,15 +23,12 @@ param(
     [switch]$NoReuseSpinePoseCache,
     [double]$SpinePoseGain = 1.0,
     [double]$SpinePoseMaxDegrees = 35.0,
-    [ValidateSet(0, 1, 2)]
-    [int]$SpinePoseAxis = 0,
     [switch]$SpinePoseInvert,
     [int]$SpinePoseSmoothingWindow = 9,
-    [double]$SpinePoseArmCounterRotation = 1.0,
-    [ValidateSet("motion", "legacy-pkl")]
+    [ValidateSet("motion")]
     [string]$SpinePoseMergeMode = "motion",
     [switch]$EnableSpinePose,
-    [switch]$NoReuseWhamCache,
+    [switch]$NoReuseReconstructionCache,
     [switch]$SkipMotionTuning,
     [switch]$SkipSegmentDetection,
     [switch]$UseSourceAsIs,
@@ -73,14 +62,7 @@ param(
     [double]$SegmentMergeGapSeconds = 2.0,
     [double]$SegmentConfidenceThreshold = 0.45,
     [double]$SegmentMinSegmentSeconds = 2.0,
-    [double]$SegmentMaxSegmentSeconds = 20.0,
-    [string]$LiteRtModelRepo = "litert-community/gemma-4-E4B-it-litert-lm",
-    [string]$LiteRtModelFile = "gemma-4-E4B-it.litertlm",
-    [string]$VisionModel = "gemma-4-E4B-it",
-    [int]$VisionPort = 8090,
-    [ValidateSet("cpu", "gpu", "npu")]
-    [string]$LiteRtBackend = "gpu",
-    [switch]$UseLiteRt
+    [double]$SegmentMaxSegmentSeconds = 20.0
 )
 
 $ErrorActionPreference = "Stop"
@@ -182,14 +164,12 @@ if ($manualSegmentRequested) {
 }
 
 $repoRoot = Get-RepoRoot
-$defaultWhamRepoPath = Join-Path $repoRoot "third_party\WHAM"
-if ([string]::IsNullOrWhiteSpace($WhamRepoPath)) {
-    $WhamRepoPath = $defaultWhamRepoPath
+if (-not $UseReconstructionDocker) {
+    throw "GVHMR generation requires Docker; UseReconstructionDocker is enabled by default."
 }
 if ([string]::IsNullOrWhiteSpace($BodyModelRoot)) {
-    $BodyModelRoot = Join-Path $WhamRepoPath "dataset\body_models"
+    $BodyModelRoot = Join-Path $repoRoot "third_party\GVHMR\inputs\checkpoints\body_models"
 }
-$resolvedWhamRepoPath = Resolve-StrictPath $WhamRepoPath
 $resolvedBodyModelRoot = Resolve-StrictPath $BodyModelRoot
 $workspaceRoot = [System.IO.Path]::GetFullPath((Join-Path $repoRoot $Workspace))
 $pythonCommand = Get-PythonCommand
@@ -232,9 +212,9 @@ if ([string]::IsNullOrWhiteSpace($ExerciseName)) {
 
 $exerciseWorkspace = Join-Path $workspaceRoot $ExerciseSlug
 $inputDir = Join-Path $exerciseWorkspace "input"
-$rawWhamDir = Join-Path $exerciseWorkspace "raw\wham"
+$rawReconstructionDir = Join-Path $exerciseWorkspace "raw\reconstruction"
 New-Item -ItemType Directory -Force -Path $inputDir | Out-Null
-New-Item -ItemType Directory -Force -Path $rawWhamDir | Out-Null
+New-Item -ItemType Directory -Force -Path $rawReconstructionDir | Out-Null
 
 if (-not [string]::IsNullOrWhiteSpace($VideoPath)) {
     $sourceVideo = Resolve-StrictPath $VideoPath
@@ -308,7 +288,6 @@ elseif (-not $SkipSegmentDetection) {
         -ExerciseName $ExerciseName `
         -OutputSlug $ExerciseSlug `
         -Workspace $Workspace `
-        -UseLiteRt:$UseLiteRt.IsPresent `
         -LlamaCppModel $LlamaCppModel `
         -LlamaCppMmproj $LlamaCppMmproj `
         -LlamaCppMtpModel $LlamaCppMtpModel `
@@ -333,12 +312,7 @@ elseif (-not $SkipSegmentDetection) {
         -MergeGapSeconds $SegmentMergeGapSeconds `
         -ConfidenceThreshold $SegmentConfidenceThreshold `
         -MinSegmentSeconds $SegmentMinSegmentSeconds `
-        -MaxSegmentSeconds $SegmentMaxSegmentSeconds `
-        -LiteRtModelRepo $LiteRtModelRepo `
-        -LiteRtModelFile $LiteRtModelFile `
-        -VisionModel $VisionModel `
-        -VisionPort $VisionPort `
-        -LiteRtBackend $LiteRtBackend
+        -MaxSegmentSeconds $SegmentMaxSegmentSeconds
     if ($LASTEXITCODE -ne 0) {
         throw "Exercise segment detection failed with exit code $LASTEXITCODE."
     }
@@ -369,82 +343,36 @@ elseif (-not $SkipSegmentDetection) {
     $resolvedInputVideoPath = [System.IO.Path]::GetFullPath($trimmedInputVideoPath)
 }
 
-if ($FastProfile) {
-    # Fast profile: gravity-aligned GVHMR reconstruction, no refinement pass.
-    $MotionReconstructor = "gvhmr"
-}
-
-$whamRunnerArgs = @(
-    "-WhamRepoPath", $resolvedWhamRepoPath,
-    "-InputVideo", $resolvedInputVideoPath,
-    "-OutputRoot", $rawWhamDir,
-    "-PythonCommand", $WhamPython,
-    "-TimeoutSeconds", $WhamTimeoutSeconds
-)
-if ($EstimateLocalOnly -or -not $FullWhamCameraSlam) {
-    $whamRunnerArgs += "-EstimateLocalOnly"
-}
-if (-not $SkipSmplify) {
-    $whamRunnerArgs += "-RunSmplify"
-}
-if ($UseWhamDocker) {
-    $whamRunnerArgs += @(
-        "-UseDocker",
-        "-DockerImage", $WhamDockerImage,
-        "-DockerGpus", $WhamDockerGpus,
-        "-DockerShmSize", $WhamDockerShmSize
-    )
-}
-
-$whamResultsPkl = Join-Path $rawWhamDir ([System.IO.Path]::GetFileNameWithoutExtension($resolvedInputVideoPath))
-$whamResultsPkl = Join-Path $whamResultsPkl "wham_output.pkl"
-$whamCachedOutputDir = Split-Path -Parent $whamResultsPkl
-if ($MotionReconstructor -eq "gvhmr") {
-    if ((Test-Path -LiteralPath $whamResultsPkl) -and -not $NoReuseWhamCache) {
-        Write-Host "Reusing cached GVHMR output: $whamResultsPkl"
-    }
-    else {
-        Write-Host "Running GVHMR reconstruction via Docker."
-        $gvhmrArgs = @(
-            "-m", "exercise_motion_pkg.cli",
-            "gvhmr-run",
-            "--input-video", $resolvedInputVideoPath,
-            "--output-root", $rawWhamDir,
-            "--logs-dir", (Join-Path $Workspace "logs"),
-            "--docker-image", $GvhmrDockerImage,
-            "--timeout-seconds", "$WhamTimeoutSeconds"
-        )
-        & $pythonCommand @gvhmrArgs
-        if ($LASTEXITCODE -ne 0) {
-            throw "GVHMR stage failed with exit code $LASTEXITCODE."
-        }
-    }
-    if (-not (Test-Path -LiteralPath $whamResultsPkl)) {
-        throw "GVHMR stage finished but did not produce wham_output.pkl at '$whamResultsPkl'."
-    }
-}
-elseif ((Test-Path -LiteralPath $whamResultsPkl) -and -not $NoReuseWhamCache) {
-    Write-Host "Reusing cached WHAM output: $whamResultsPkl"
+$reconstructionResultsPkl = Join-Path $rawReconstructionDir ([System.IO.Path]::GetFileNameWithoutExtension($resolvedInputVideoPath))
+$reconstructionResultsPkl = Join-Path $reconstructionResultsPkl "reconstruction_output.pkl"
+$reconstructionCachedOutputDir = Split-Path -Parent $reconstructionResultsPkl
+if ((Test-Path -LiteralPath $reconstructionResultsPkl) -and -not $NoReuseReconstructionCache) {
+    Write-Host "Reusing cached GVHMR output: $reconstructionResultsPkl"
 }
 else {
-    if ($NoReuseWhamCache -and (Test-Path -LiteralPath $whamCachedOutputDir)) {
-        Remove-Item -LiteralPath $whamCachedOutputDir -Recurse -Force
+    if ($NoReuseReconstructionCache -and (Test-Path -LiteralPath $reconstructionCachedOutputDir)) {
+        Remove-Item -LiteralPath $reconstructionCachedOutputDir -Recurse -Force
     }
-    if ($UseWhamDocker) {
-        Write-Host "Running WHAM via Docker."
-    }
-    else {
-        Write-Host "Running WHAM with local Python: $WhamPython"
-    }
-    $whamRunnerScript = Join-Path $PSScriptRoot "run_wham_local.ps1"
-    & pwsh $whamRunnerScript @whamRunnerArgs
+    Write-Host "Running GVHMR reconstruction via Docker."
+    $gvhmrArgs = @(
+        "-m", "exercise_motion_pkg.cli",
+        "gvhmr-run",
+        "--input-video", $resolvedInputVideoPath,
+        "--output-root", $rawReconstructionDir,
+        "--logs-dir", (Join-Path $Workspace "logs"),
+        "--reconstruction-docker-image", $ReconstructionDockerImage,
+        "--reconstruction-docker-gpus", $ReconstructionDockerGpus,
+        "--reconstruction-docker-shm-size", $ReconstructionDockerShmSize,
+        "--timeout-seconds", "$ReconstructionTimeoutSeconds"
+    )
+    & $pythonCommand @gvhmrArgs
     if ($LASTEXITCODE -ne 0) {
-        throw "WHAM stage failed with exit code $LASTEXITCODE."
+        throw "GVHMR stage failed with exit code $LASTEXITCODE."
     }
 }
 
-if (-not (Test-Path -LiteralPath $whamResultsPkl)) {
-    throw "Motion reconstruction finished but did not produce the expected output at '$whamResultsPkl'."
+if (-not (Test-Path -LiteralPath $reconstructionResultsPkl)) {
+    throw "Motion reconstruction finished but did not produce the expected output at '$reconstructionResultsPkl'."
 }
 
 $generateArgs = @(
@@ -453,22 +381,14 @@ $generateArgs = @(
     "--exercise-slug", $ExerciseSlug,
     "--workspace", $Workspace,
     "--video-path", $resolvedInputVideoPath,
-    "--wham-results-pkl", $whamResultsPkl,
-    "--body-model-root", $resolvedBodyModelRoot
+    "--reconstruction-results-pkl", $reconstructionResultsPkl,
+    "--body-model-root", $resolvedBodyModelRoot,
+    "--motion-reconstructor", "gvhmr"
 )
-if (-not [string]::IsNullOrWhiteSpace($resolvedWhamRepoPath)) {
-    $generateArgs += @("--wham-repo-path", $resolvedWhamRepoPath)
-}
-if ($MotionReconstructor -eq "gvhmr") {
-    $generateArgs += @("--motion-reconstructor", "gvhmr")
-}
 if ($FastProfile) {
     # GVHMR + refinement reduced to the source-guided vertical trajectory
     # repair (moon-gravity fix); the deterministic gates still run.
     $generateArgs += "--structural-refinement-vertical-only"
-}
-if ($EstimateLocalOnly -or -not $FullWhamCameraSlam) {
-    $generateArgs += "--wham-estimate-local-only"
 }
 if ($SkipMotionTuning) {
     $generateArgs += "--skip-motion-tuning"
@@ -484,9 +404,7 @@ else {
         "--spinepose-device", $SpinePoseDevice,
         "--spinepose-gain", ([string]::Format([System.Globalization.CultureInfo]::InvariantCulture, "{0}", $SpinePoseGain)),
         "--spinepose-max-degrees", ([string]::Format([System.Globalization.CultureInfo]::InvariantCulture, "{0}", $SpinePoseMaxDegrees)),
-        "--spinepose-axis", $SpinePoseAxis,
-        "--spinepose-smoothing-window", $SpinePoseSmoothingWindow,
-        "--spinepose-arm-counter-rotation", ([string]::Format([System.Globalization.CultureInfo]::InvariantCulture, "{0}", $SpinePoseArmCounterRotation))
+        "--spinepose-smoothing-window", $SpinePoseSmoothingWindow
     )
     $generateArgs += "--enable-spinepose"
     if (-not [string]::IsNullOrWhiteSpace($SpinePoseJsonDir)) {
@@ -506,8 +424,7 @@ else {
         $generateArgs += "--no-spinepose-cache"
     }
 }
-$generateInterpreter = $WhamPython
-& $generateInterpreter @generateArgs
+& $pythonCommand @generateArgs
 if ($LASTEXITCODE -ne 0) {
     throw "exercise motion conversion stage failed with exit code $LASTEXITCODE."
 }

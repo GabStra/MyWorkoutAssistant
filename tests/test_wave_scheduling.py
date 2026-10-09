@@ -10,7 +10,6 @@ from test_motion_review_improvements import contract_for, exercise
 
 @pytest.mark.parametrize('statuses,expected_count,result', [
     (['failed'], 1, 'failed'),
-    (['rejected_tracking_preflight'], 1, 'failed'),
     (['failed'], 2, 'pending'),
     (['prepared'], 2, 'pending'),
     (['failed', 'prepared'], 2, 'prepared'),
@@ -62,7 +61,7 @@ def test_render_prefetch_setting_controls_overlap_with_unfinished_generation(
     monkeypatch.setattr(resource_budget, 'render_prefetch_worker_limit', lambda ready_count: 1)
     items = [wave.StagedWaveItem(name, name, bake.BakeAndRankRequest(
         candidates_json=tmp_path / 'candidates.json', workspace=tmp_path / name,
-        wham_repo_path=None, body_model_root=None, fallback_candidates=0,
+        body_model_root=None, fallback_candidates=0,
         max_final_output_rejections=0)) for name in ['first', 'last'][:candidate_count]]
     candidates = {item.exercise_id: bake.RankedCandidate(
         exercise_index=index, candidate_rank=0, exercise_id=item.exercise_id,
@@ -80,7 +79,7 @@ def test_render_prefetch_setting_controls_overlap_with_unfinished_generation(
                 assert prefetch_started.wait(3), 'earlier render did not overlap generation'
             else:
                 assert not prefetch_started.wait(0.2), 'disabled render prefetch still started'
-        return SimpleNamespace(wham_cache_status='generated', wham_results_pkl=None)
+        return SimpleNamespace(reconstruction_cache_status='generated', reconstruction_results_pkl=None)
 
     def prefetch(item, candidate, result, contract):
         prefetched.append(candidate.exercise_id)
@@ -124,7 +123,7 @@ def test_persistent_render_prefetch_is_drained_before_wave_returns(tmp_path, mon
     monkeypatch.setattr(resource_budget, 'staged_generation_cpu_workers', lambda: 2)
     items = [wave.StagedWaveItem(name, name, bake.BakeAndRankRequest(
         candidates_json=tmp_path / 'candidates.json', workspace=tmp_path / name,
-        wham_repo_path=None, body_model_root=None, fallback_candidates=0,
+        body_model_root=None, fallback_candidates=0,
         max_final_output_rejections=0)) for name in ['first', 'last']]
     candidates = {item.exercise_id: bake.RankedCandidate(
         exercise_index=index, candidate_rank=0, exercise_id=item.exercise_id,
@@ -142,7 +141,7 @@ def test_persistent_render_prefetch_is_drained_before_wave_returns(tmp_path, mon
     def generate(candidate, **kwargs):
         if candidate.exercise_id == 'last':
             assert prefetch_started.wait(3), 'earlier render did not overlap generation'
-        return SimpleNamespace(wham_cache_status='generated', wham_results_pkl=None)
+        return SimpleNamespace(reconstruction_cache_status='generated', reconstruction_results_pkl=None)
 
     def prefetch(item, candidate, result, contract):
         prefetch_started.set()
@@ -259,7 +258,7 @@ def test_ready_sources_defer_later_attempts_and_resume_next_candidate(tmp_path, 
         lambda *a, **k: {'eligible': True, 'portfolioSize': 1})
     items = [wave.StagedWaveItem(name, name, bake.BakeAndRankRequest(
         candidates_json=tmp_path / 'candidates.json', workspace=tmp_path / name,
-        wham_repo_path=None, body_model_root=None, fallback_candidates=0,
+        body_model_root=None, fallback_candidates=0,
         max_final_output_rejections=0)) for name in ['a', 'b', 'slow'] + [f'unavailable_{i}' for i in range(unavailable_count)]]
     candidates = {item.exercise_id: [bake.RankedCandidate(
         exercise_index=0, candidate_rank=index, exercise_id=item.exercise_id,
@@ -295,7 +294,7 @@ def test_ready_sources_defer_later_attempts_and_resume_next_candidate(tmp_path, 
     barrier = threading.Barrier(2)
     def generate(candidate, **kwargs):
         if candidate.exercise_id != 'slow': barrier.wait(3)
-        return SimpleNamespace(wham_cache_status='generated', wham_results_pkl=None)
+        return SimpleNamespace(reconstruction_cache_status='generated', reconstruction_results_pkl=None)
     monkeypatch.setattr(wave, 'generate_candidate_motion', generate)
     monkeypatch.setattr(wave, 'run_bake_and_rank_pipeline',
         lambda *a, **k: {'selected': {'selectedWearSkeletonPath': str(tmp_path / 'wear.json')}})
@@ -329,7 +328,6 @@ def test_staged_wave_rejects_source_before_motion_generation(tmp_path, monkeypat
     request = bake.BakeAndRankRequest(
         candidates_json=tmp_path / 'candidates.json',
         workspace=tmp_path / 'press',
-        wham_repo_path=None,
         body_model_root=None,
         two_scale_source_validation=True,
         fallback_candidates=0,
@@ -370,7 +368,7 @@ def test_staged_wave_rejects_source_before_motion_generation(tmp_path, monkeypat
     attempt = report['items'][0]['source']['attempts'][0]
     assert attempt['status'] == 'rejected_source_validation'
     assert attempt['reasonTags'] == ['two_scale_source_pose_contract_mismatch']
-    assert report['items'][0]['wham']['status'] != 'prepared'
+    assert report['items'][0]['reconstruction']['status'] != 'prepared'
 
 
 def test_cached_source_rejects_invalid_variant_contract(tmp_path):
@@ -379,13 +377,13 @@ def test_cached_source_rejects_invalid_variant_contract(tmp_path):
     path = tmp_path / 'segment_selection.json'
     path.write_text(json.dumps({
         'sourceSelectionPolicyVersion': bake.SOURCE_SELECTION_POLICY_VERSION,
-        'preWhamSourceValidationEnabled': True, 'exerciseMotionContractEnabled': True,
+        'preReconstructionSourceValidationEnabled': True, 'exerciseMotionContractEnabled': True,
         'exerciseMotionContract': contract,
         'exactSourcePhaseValidation': {'passed': True,
             'validationPolicyVersion': bake.EXACT_SOURCE_PHASE_VALIDATION_POLICY_VERSION},
     }))
     assert not bake.cached_source_selection_matches_validation_mode(path,
-        pre_wham_source_validation=True, exercise_motion_contract_enabled=True)
+        pre_reconstruction_source_validation=True, exercise_motion_contract_enabled=True)
 
 
 @pytest.mark.parametrize('contract', [None, {'status': 'failed'}, {'status': 'generated', 'exerciseName': 'Wrong exercise'}])
@@ -396,8 +394,8 @@ def test_source_preparation_blocks_unusable_contract_before_review(tmp_path, mon
     candidate = bake.RankedCandidate(exercise_index=0, candidate_rank=0,
         exercise_id='press', exercise_name='Press', exercise_slug='press', candidate={'videoId': 'video'})
     request = bake.BakeAndRankRequest(candidates_json=tmp_path / 'candidates.json',
-        workspace=tmp_path, wham_repo_path=None, body_model_root=None,
-        pre_wham_source_validation=True, exercise_motion_contract_enabled=True)
+        workspace=tmp_path, body_model_root=None,
+        pre_reconstruction_source_validation=True, exercise_motion_contract_enabled=True)
     with pytest.raises(bake.ExerciseMotionContractRejected):
         bake.prepare_candidate_input_video(candidate, request=request,
             source_cut_caption_images=lambda **k: pytest.fail('invalid contract reached VLM'),
@@ -406,8 +404,8 @@ def test_source_preparation_blocks_unusable_contract_before_review(tmp_path, mon
 
 
 def test_incomplete_tracking_and_invalid_contract_do_not_retry_infrastructure():
-    assert wave.wave_retry_disposition({"wham": {"attempts": [
-        {"status": "rejected_incomplete_wham_tracking"}]}}) == "next_source"
+    assert wave.wave_retry_disposition({"reconstruction": {"attempts": [
+        {"status": "rejected_incomplete_reconstruction_tracking"}]}}) == "next_source"
     assert wave.wave_retry_disposition({"source": {"failureReason": "exercise_contract_invalid"}}) == "repair_contract"
 
 
@@ -432,9 +430,9 @@ def test_contract_generation_repairs_invalid_variant_before_accepting(monkeypatc
 
 
 def test_incomplete_tracking_is_classified_before_retry_selection():
-    error = wave.IncompleteWhamTrackingError("lost endpoint", requested_start_seconds=0,
+    error = wave.IncompleteReconstructionTrackingError("lost endpoint", requested_start_seconds=0,
         requested_end_seconds=6.85, retained_start_seconds=0, retained_end_seconds=4)
     status = wave.generation_failure_status(error)
-    assert status == "rejected_incomplete_wham_tracking"
-    assert wave.wave_retry_disposition({"wham": {"attempts": [{"status": status}]}}) == "next_source"
+    assert status == "rejected_incomplete_reconstruction_tracking"
+    assert wave.wave_retry_disposition({"reconstruction": {"attempts": [{"status": status}]}}) == "next_source"
     assert wave.generation_failure_status(RuntimeError("browser crashed")) == "failed"

@@ -17,7 +17,7 @@ from exercise_motion_pkg.gvhmr_runner import (
 torch = pytest.importorskip("torch")
 
 
-def test_export_gvhmr_results_pkl_matches_wham_world_schema(tmp_path: Path) -> None:
+def test_export_gvhmr_results_pkl_matches_reconstruction_world_schema(tmp_path: Path) -> None:
     frames = 7
     pred = {
         "smpl_params_global": {
@@ -29,7 +29,7 @@ def test_export_gvhmr_results_pkl_matches_wham_world_schema(tmp_path: Path) -> N
     }
     results_pt = tmp_path / "hmr4d_results.pt"
     torch.save(pred, results_pt)
-    output_pkl = tmp_path / "wham_output.pkl"
+    output_pkl = tmp_path / "reconstruction_output.pkl"
 
     export_gvhmr_results_pkl(results_pt, output_pkl)
 
@@ -60,7 +60,7 @@ def test_export_gvhmr_results_pkl_keep_source_betas(tmp_path: Path) -> None:
     }
     results_pt = tmp_path / "hmr4d_results.pt"
     torch.save(pred, results_pt)
-    output_pkl = tmp_path / "wham_output.pkl"
+    output_pkl = tmp_path / "reconstruction_output.pkl"
     export_gvhmr_results_pkl(results_pt, output_pkl, keep_source_betas=True)
     payload = joblib.load(output_pkl)[0]
     assert torch.all(torch.as_tensor(payload["betas"]) == 1)
@@ -86,7 +86,7 @@ def test_build_gvhmr_command_static_camera(tmp_path: Path) -> None:
     assert "tools/demo/demo.py" not in joined
     assert " -s" in joined
     assert "gvhmr_pkl_export.py --results /output/demo/clip/hmr4d_results.pt" in joined
-    assert "--output-pkl /output/clip/wham_output.pkl" in joined
+    assert "--output-pkl /output/clip/reconstruction_output.pkl" in joined
     assert "mwa-gvhmr-job-test" in joined
 
 
@@ -148,7 +148,7 @@ def test_run_gvhmr_locally_dispatches_to_warm_worker(monkeypatch, tmp_path: Path
         captured.update(kwargs)
         return gvhmr_runner.GvhmrRunResult(
             output_dir=kwargs["output_root"] / "clip",
-            results_pkl=kwargs["output_root"] / "clip" / "wham_output.pkl",
+            results_pkl=kwargs["output_root"] / "clip" / "reconstruction_output.pkl",
             demo_output_dir=kwargs["output_root"] / "demo" / "clip",
             stdout_log=kwargs["stdout_log"],
             stderr_log=kwargs["stderr_log"],

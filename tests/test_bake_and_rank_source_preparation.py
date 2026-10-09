@@ -83,11 +83,10 @@ def test_skipped_segment_detection_still_validates_exact_source_without_transcod
     request = BakeAndRankRequest(
         candidates_json=tmp_path / "candidates.json",
         workspace=tmp_path / "workspace",
-        wham_repo_path=None,
         body_model_root=None,
         detect_source_segment=False,
-        pre_wham_source_validation=True,
-        reuse_wham_cache=False,
+        pre_reconstruction_source_validation=True,
+        reuse_reconstruction_cache=False,
     )
     monkeypatch.setattr(
         bake_module,

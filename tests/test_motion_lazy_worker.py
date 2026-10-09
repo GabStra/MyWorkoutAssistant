@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from exercise_motion_pkg import wham_runner
+from exercise_motion_pkg import reconstruction_runner
 
 
 def write_ready(path):
@@ -17,7 +17,6 @@ def write_ready(path):
 @pytest.mark.parametrize(
     ("lazy_start_env_var", "label"),
     [
-        ("EXERCISE_MOTION_WHAM_LAZY_START", "WHAM"),
         ("EXERCISE_MOTION_GVHMR_LAZY_START", "GVHMR"),
     ],
 )
@@ -30,7 +29,7 @@ def test_lazy_worker_waits_for_supervisor_acknowledgment(
     (tmp_path / "stopped.json").write_text("{}")
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(
-            wham_runner.ensure_warm_worker_ready,
+            reconstruction_runner.ensure_warm_worker_ready,
             tmp_path,
             timeout_seconds=3,
             lazy_start_env_var=lazy_start_env_var,
@@ -54,7 +53,7 @@ def test_stopped_gvhmr_worker_without_lazy_start_reports_not_ready(tmp_path, mon
     (tmp_path / "stopped.json").write_text("{}")
 
     with pytest.raises(RuntimeError, match="Warm GVHMR worker is not ready"):
-        wham_runner.ensure_warm_worker_ready(
+        reconstruction_runner.ensure_warm_worker_ready(
             tmp_path,
             timeout_seconds=0,
             lazy_start_env_var="EXERCISE_MOTION_GVHMR_LAZY_START",
@@ -65,16 +64,22 @@ def test_stopped_gvhmr_worker_without_lazy_start_reports_not_ready(tmp_path, mon
 
 
 def test_lazy_worker_timeout_cleans_request(tmp_path, monkeypatch):
-    monkeypatch.setenv("EXERCISE_MOTION_WHAM_LAZY_START", "1")
+    monkeypatch.setenv("EXERCISE_MOTION_GVHMR_LAZY_START", "1")
     with pytest.raises(TimeoutError):
-        wham_runner.ensure_warm_worker_ready(tmp_path, timeout_seconds=0)
+        reconstruction_runner.ensure_warm_worker_ready(
+            tmp_path, timeout_seconds=0,
+            lazy_start_env_var="EXERCISE_MOTION_GVHMR_LAZY_START", label="GVHMR",
+        )
     assert not (tmp_path / "start_requested.json").exists()
 
 
 def test_existing_worker_needs_no_startup_request(tmp_path, monkeypatch):
-    monkeypatch.delenv("EXERCISE_MOTION_WHAM_LAZY_START", raising=False)
+    monkeypatch.delenv("EXERCISE_MOTION_GVHMR_LAZY_START", raising=False)
     write_ready(tmp_path)
-    wham_runner.ensure_warm_worker_ready(tmp_path, timeout_seconds=0)
+    reconstruction_runner.ensure_warm_worker_ready(
+        tmp_path, timeout_seconds=0,
+        lazy_start_env_var="EXERCISE_MOTION_GVHMR_LAZY_START", label="GVHMR",
+    )
     assert not (tmp_path / "start_requested.json").exists()
 
 
@@ -83,7 +88,7 @@ def test_shared_vision_deadlines_are_independent(tmp_path):
 
     session = LazyLlamaCppVisionSession(BakeAndRankRequest(
         candidates_json=tmp_path / "candidates.json", workspace=tmp_path,
-        wham_repo_path=None, body_model_root=None,
+        body_model_root=None,
     ))
     barrier = threading.Barrier(2)
 
@@ -98,12 +103,12 @@ def test_shared_vision_deadlines_are_independent(tmp_path):
 
 def test_cache_only_wave_does_not_wait_for_unstarted_worker(tmp_path):
     from types import SimpleNamespace
-    from exercise_motion_pkg.wave_pipeline import _stop_warm_wham_worker_before_vlm
+    from exercise_motion_pkg.wave_pipeline import _stop_warm_reconstruction_worker_before_vlm
 
     item = SimpleNamespace(request=SimpleNamespace(
-        use_warm_wham_worker=True, wham_worker_session_dir=tmp_path,
+        use_warm_gvhmr_worker=True, gvhmr_worker_session_dir=tmp_path,
     ))
-    assert _stop_warm_wham_worker_before_vlm([item])["stopped"] is True
+    assert _stop_warm_reconstruction_worker_before_vlm([item])["stopped"] is True
     assert not (tmp_path / "stop").exists()
 
 
@@ -129,7 +134,7 @@ def test_wave_finalization_overlaps_and_preserves_other_results_on_failure(tmp_p
         exercise_id=str(index), exercise_name=f"Exercise {index}",
         request=BakeAndRankRequest(candidates_json=tmp_path / str(index) / "candidates.json",
                                   workspace=tmp_path / str(index) / "bake",
-                                  wham_repo_path=None, body_model_root=None),
+                                  body_model_root=None),
     ) for index in range(3)]
     candidates = {item.exercise_id: RankedCandidate(
         exercise_index=int(item.exercise_id), candidate_rank=0,
@@ -142,7 +147,7 @@ def test_wave_finalization_overlaps_and_preserves_other_results_on_failure(tmp_p
     monkeypatch.setattr(wave, "evaluate_source_candidate_gate", lambda *args, **kwargs: {"passed": True})
     monkeypatch.setattr(wave, "prepare_candidate_input_video", lambda *args, **kwargs: tmp_path / "source.mp4")
     monkeypatch.setattr(wave, "generate_candidate_motion", lambda *args, **kwargs: SimpleNamespace(
-        wham_cache_status="reused_local", wham_results_pkl=tmp_path / "wham.pkl"))
+        reconstruction_cache_status="reused_local", reconstruction_results_pkl=tmp_path / "reconstruction.pkl"))
     barrier = threading.Barrier(2)
     active = 0
     peak = 0
@@ -154,7 +159,7 @@ def test_wave_finalization_overlaps_and_preserves_other_results_on_failure(tmp_p
             active += 1
             peak = max(peak, active)
         try:
-            assert request.require_wham_cache
+            assert request.require_reconstruction_cache
             assert not shared_vision_session.closed
             if request.workspace.parent.name in {"0", "1"}:
                 barrier.wait(timeout=3)

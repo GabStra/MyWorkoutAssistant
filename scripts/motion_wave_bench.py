@@ -133,8 +133,7 @@ def _request(session_dir: Path, shared: bool) -> BakeAndRankRequest:
     return BakeAndRankRequest(
         candidates_json=session_dir / "dummy.json",
         workspace=session_dir,
-        wham_repo_path=REPO_ROOT / "third_party/WHAM",
-        body_model_root=REPO_ROOT / "third_party/WHAM/dataset/body_models",
+        body_model_root=REPO_ROOT / "third_party/GVHMR/inputs/checkpoints/body_models",
         llama_cpp_base_url=BASE_URL,
         llama_cpp_model=MODEL,
         llama_cpp_mmproj=MMPROJ,
@@ -287,7 +286,7 @@ def main() -> None:
     root = BENCH_ROOT / stamp
     root.mkdir(parents=True, exist_ok=True)
     frame = root / "frame.jpg"
-    clip = REPO_ROOT / "build/exercise_motion/gvhmr-warm-smoke-20261001/mount/input-a/wham_inference_segment_sanitized.mp4"
+    clip = REPO_ROOT / "build/exercise_motion/gvhmr-warm-smoke-20261001/mount/input-a/reconstruction_inference_segment_sanitized.mp4"
     capture = cv2.VideoCapture(str(clip))
     ok, image = capture.read()
     capture.release()

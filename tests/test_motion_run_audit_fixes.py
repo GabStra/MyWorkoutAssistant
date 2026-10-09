@@ -1717,7 +1717,7 @@ def test_export_camera_compensation(rotation, camera, passed):
                                             ({"frames": []}, ["compute"])])
 def test_materialized_metrics_only_handoff_for_missing_pose(monkeypatch, reference, events):
     calls = []
-    monkeypatch.setattr(bake, "pre_wham_exact_source_phase_reference_metrics", lambda item: {})
+    monkeypatch.setattr(bake, "pre_reconstruction_exact_source_phase_reference_metrics", lambda item: {})
     monkeypatch.setattr(bake, "materialized_output_acceptance_metrics",
         lambda *args, **kwargs: calls.append("compute") or {"passed": True})
     monkeypatch.setattr(bake, "run_with_caption_gpu_exclusive",
@@ -1839,7 +1839,7 @@ def test_preflight_review_defers_uncertain_evidence_before_reconstruction(tmp_pa
     request = SimpleNamespace(two_scale_source_validation=True, workspace=tmp_path)
     monkeypatch.setattr(bake, "read_basic_video_metadata", lambda path: SimpleNamespace(duration_seconds=5))
     monkeypatch.setattr(bake, "final_output_source_contact_sheets", lambda *a, **k: [])
-    monkeypatch.setattr(bake, "pre_wham_exact_source_phase_reference_metrics", lambda item: {})
+    monkeypatch.setattr(bake, "pre_reconstruction_exact_source_phase_reference_metrics", lambda item: {})
     monkeypatch.setattr(bake, "validate_source_pose_endpoints_against_contract", lambda *a, **k: {})
     for name in ("small_motion", "completeness", "identity", "topology"):
         monkeypatch.setattr(bake, f"two_scale_{name}_failure_is_independent_outlier", lambda **k: False)
@@ -1866,7 +1866,7 @@ def test_preflight_rejects_window_after_repair_refutes_required_claim(tmp_path, 
     request = SimpleNamespace(two_scale_source_validation=True, workspace=tmp_path)
     monkeypatch.setattr(bake, "read_basic_video_metadata", lambda path: SimpleNamespace(duration_seconds=5))
     monkeypatch.setattr(bake, "final_output_source_contact_sheets", lambda *a, **k: [])
-    monkeypatch.setattr(bake, "pre_wham_exact_source_phase_reference_metrics", lambda item: {})
+    monkeypatch.setattr(bake, "pre_reconstruction_exact_source_phase_reference_metrics", lambda item: {})
     monkeypatch.setattr(bake, "validate_source_pose_endpoints_against_contract", lambda *a, **k: {})
     for name in ("small_motion", "completeness", "identity", "topology"):
         monkeypatch.setattr(bake, f"two_scale_{name}_failure_is_independent_outlier", lambda **k: False)
@@ -1899,7 +1899,7 @@ def test_preflight_keeps_bounded_retry_when_repair_remains_uncertain(tmp_path, m
     request = SimpleNamespace(two_scale_source_validation=True, workspace=tmp_path)
     monkeypatch.setattr(bake, "read_basic_video_metadata", lambda path: SimpleNamespace(duration_seconds=5))
     monkeypatch.setattr(bake, "final_output_source_contact_sheets", lambda *a, **k: [])
-    monkeypatch.setattr(bake, "pre_wham_exact_source_phase_reference_metrics", lambda item: {})
+    monkeypatch.setattr(bake, "pre_reconstruction_exact_source_phase_reference_metrics", lambda item: {})
     monkeypatch.setattr(bake, "validate_source_pose_endpoints_against_contract", lambda *a, **k: {})
     for name in ("small_motion", "completeness", "identity", "topology"):
         monkeypatch.setattr(bake, f"two_scale_{name}_failure_is_independent_outlier", lambda **k: False)
@@ -1941,7 +1941,7 @@ def test_preflight_does_not_accept_generic_repair_without_dumbbell_pair_count(tm
     request = SimpleNamespace(two_scale_source_validation=True, workspace=tmp_path)
     monkeypatch.setattr(bake, "read_basic_video_metadata", lambda path: SimpleNamespace(duration_seconds=5))
     monkeypatch.setattr(bake, "final_output_source_contact_sheets", lambda *a, **k: [])
-    monkeypatch.setattr(bake, "pre_wham_exact_source_phase_reference_metrics", lambda item: {})
+    monkeypatch.setattr(bake, "pre_reconstruction_exact_source_phase_reference_metrics", lambda item: {})
     monkeypatch.setattr(bake, "validate_source_pose_endpoints_against_contract", lambda *a, **k: {})
     for name in ("small_motion", "completeness", "identity", "topology"):
         monkeypatch.setattr(bake, f"two_scale_{name}_failure_is_independent_outlier", lambda **k: False)
@@ -1991,10 +1991,10 @@ def test_cli_cache_only_request_reaches_bake_and_staged_generation(tmp_path, cac
 
     args = build_parser().parse_args([
         "bake-and-rank", "--candidates-json", str(tmp_path / "candidates.json"),
-        "--workspace", str(tmp_path), "--wham-repo-path", str(tmp_path / "wham"),
+        "--workspace", str(tmp_path), "--reconstruction-repo-path", str(tmp_path / "reconstruction"),
         "--body-model-root", str(tmp_path / "models"),
-        *(["--require-wham-cache"] if cache_only else []),
+        *(["--require-reconstruction-cache"] if cache_only else []),
     ])
     request = build_bake_and_rank_request(args)
-    assert request.require_wham_cache is cache_only
-    assert request.reuse_wham_cache is True
+    assert request.require_reconstruction_cache is cache_only
+    assert request.reuse_reconstruction_cache is True

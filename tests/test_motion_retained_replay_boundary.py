@@ -125,7 +125,7 @@ def test_retained_replay_uses_pinned_clip_when_final_validation_has_no_staged_vi
         exercise_id="press", workspace_slug="press", candidate={}, exercise_name="Overhead Press",
     )
     request = SimpleNamespace(
-        workspace=workspace, motion_reconstruction_backend="wham",
+        workspace=workspace, motion_reconstruction_backend="reconstruction",
         structural_refinement_enabled=True, motion_tuning_enabled=True,
     )
 

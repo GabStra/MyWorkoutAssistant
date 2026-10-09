@@ -13,10 +13,10 @@ DEFAULT_CPU_FIT_SLOTS = 4
 MACHINE_FIT_LANES_ENV_VAR = "EXERCISE_MOTION_MACHINE_FIT_LANES"
 RENDER_PREFETCH_ENV_VAR = "EXERCISE_MOTION_RENDER_PREFETCH"
 DEFAULT_BROWSER_WORKER_CAP = 4
-# Overlap WHAM CPU prep while the GPU lock still serializes extraction. Four
+# Overlap RECONSTRUCTION CPU prep while the GPU lock still serializes extraction. Four
 # workers match the measured 4-lane fit pool: with three, one fit slot idles
-# whenever a worker is inside the GPU-serialized WHAM stage, and the fit is
-# the long pole (113-360s vs ~30-60s of WHAM per candidate).
+# whenever a worker is inside the GPU-serialized RECONSTRUCTION stage, and the fit is
+# the long pole (113-360s vs ~30-60s of RECONSTRUCTION per candidate).
 DEFAULT_STAGED_GENERATION_CPU_WORKERS = 4
 
 
@@ -74,7 +74,7 @@ def final_validation_worker_limit(configured_parallelism: int, ready_count: int)
 
 
 def render_prefetch_worker_limit(ready_count: int) -> int:
-    """Speculative post-WHAM bake/fit prep shares the same CPU fit slots."""
+    """Speculative post-RECONSTRUCTION bake/fit prep shares the same CPU fit slots."""
     return min(max(1, int(cpu_fit_slot_limit())), max(1, int(ready_count)))
 
 

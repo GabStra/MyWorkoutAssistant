@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from exercise_motion_pkg.reconstruction_compat import loads_reconstruction_metadata
+
 from exercise_motion_pkg.acceptance import AcceptanceDecision, decide_acceptance, selected_artifact_identity
 from exercise_motion_pkg.artifact_state import (
     BOUNDED_MOVEMENT_REBAKE,
@@ -137,7 +139,7 @@ from exercise_motion_pkg.llama_defaults import (
 from exercise_motion_pkg.pipeline import (
     GenerateRequest,
     GenerateResult,
-    IncompleteWhamTrackingError,
+    IncompleteReconstructionTrackingError,
     run_generation_pipeline,
 )
 from exercise_motion_pkg.pose_fidelity import source_to_motion_pose_fidelity_metrics, source_pose_reference_for_motion
@@ -157,10 +159,9 @@ from exercise_motion_pkg.pose_prefilter import (
     run_yolo_pose_prefilter,
     signature_mean_absolute_difference,
 )
-from exercise_motion_pkg.wham_runner import (
-    DEFAULT_WHAM_DOCKER_IMAGE,
-    DEFAULT_WHAM_DOCKER_SHM_SIZE,
-    DEFAULT_WHAM_ESTIMATE_LOCAL_ONLY,
+from exercise_motion_pkg.reconstruction_runner import (
+    DEFAULT_RECONSTRUCTION_DOCKER_IMAGE,
+    DEFAULT_RECONSTRUCTION_DOCKER_SHM_SIZE,
 )
 from exercise_motion_pkg.segment_detection import (
     CaptionImagesDetectionClient,
@@ -284,7 +285,7 @@ ADAPTIVE_PREVIEW_SETTINGS_MAX_CONTACT_SHEET_FRAMES = 20
 # Review videos are diagnostic artifacts. The complete, full-rate motion remains
 # in the baked skeleton JSON, while VLM review consumes sparsely sampled contact
 # sheets. Rendering every 30 FPS source frame through Playwright made this
-# diagnostic export as expensive as WHAM itself, so keep a smooth 12 FPS review
+# diagnostic export as expensive as RECONSTRUCTION itself, so keep a smooth 12 FPS review
 # stream and retain both endpoints instead.
 DEFAULT_DENSE_REVIEW_VIDEO_FPS = 30.0
 MAX_DENSE_REVIEW_VIDEO_FRAMES = 180
@@ -547,7 +548,7 @@ SOURCE_CUT_SCENE_BOUNDARY_EDGE_TOLERANCE_SECONDS = 0.12
 SOURCE_CUT_SCENE_MIN_LENGTH_SECONDS = 0.50
 SOURCE_CUT_SCENE_ANALYSIS_POLICY_VERSION = 1
 SOURCE_CUT_END_BOUNDARY_SWEEP_MAX_WINDOWS = 9
-WHAM_INFERENCE_CONTEXT_PADDING_SECONDS = 1.25
+RECONSTRUCTION_INFERENCE_CONTEXT_PADDING_SECONDS = 1.25
 SOURCE_CUT_MIN_ESTIMATED_DURATION_RATIO = 1.0
 SOURCE_CUT_ROBUST_MIN_SECONDS = 1.5
 SOURCE_CUT_ROBUST_MIN_ESTIMATED_DURATION_RATIO = 1.0
@@ -570,7 +571,7 @@ KINEMATIC_CUT_MAX_PROPOSALS = 2
 SOURCE_CUT_DETERMINISTIC_CONFIRMATION_POLICY_VERSION = 24
 SOURCE_CUT_MAX_CONFIRMATION_ATTEMPTS = 8
 SOURCE_CUT_MAX_CONFIRMATION_REPAIR_EXPANSIONS = 3
-PRE_WHAM_EQUIPMENT_OBSERVATION_POLICY_VERSION = 5
+PRE_RECONSTRUCTION_EQUIPMENT_OBSERVATION_POLICY_VERSION = 5
 SOURCE_CUT_KINEMATIC_SUBJECT_MOTION_REJECTION_REASONS = frozenset(
     {
         "source_cut_visual_jump",
@@ -690,7 +691,7 @@ FINAL_OUTPUT_HARD_DETERMINISTIC_REJECTION_REASONS = frozenset(
         "materialized_source_incomplete_repetition_phase",
         "materialized_source_video_incomplete_repetition_phase",
         "materialized_source_pose_contract_mismatch",
-        "materialized_legacy_pose_inferred_wham_input_rotation",
+        "materialized_legacy_pose_inferred_reconstruction_input_rotation",
         *MATERIALIZED_SOURCE_FIDELITY_REJECTION_REASONS,
         SOURCE_OUTPUT_TARGET_MOTION_REJECTION_REASON,
         TARGET_MOTION_MATERIALIZED_REJECTION_REASON,
@@ -794,7 +795,7 @@ PARENT_SOURCE_WINDOW_FALLBACK_REJECTION_REASONS = frozenset(
         "final_output_low_confidence",
         "final_output_needs_retry",
         "final_output_model_rejected",
-        "pre_wham_source_validation_rejected",
+        "pre_reconstruction_source_validation_rejected",
         "source_segment_detection_no_usable_span",
         "source_window_too_short_for_full_cycle",
         "source_candidate_window_choice_failed",
@@ -848,7 +849,7 @@ PARENT_SOURCE_WINDOW_FALLBACK_NON_RECOVERABLE_REASONS = frozenset(
         "support_mode_mismatch",
     )
 )
-PRE_WHAM_PARENT_SOURCE_WINDOW_FALLBACK_BLOCK_REASONS = frozenset(
+PRE_RECONSTRUCTION_PARENT_SOURCE_WINDOW_FALLBACK_BLOCK_REASONS = frozenset(
     (
         "source_candidate_choice_invalid_response",
         "source_candidate_scorecard_no_passing_candidate",
@@ -906,11 +907,11 @@ FULL_REPETITION_PHASE_COMPLETENESS_MIN_FRAMES = 5
 EXACT_SOURCE_PHASE_VALIDATION_POLICY_VERSION = 47
 SOURCE_ENDPOINT_RETURN_HAND_HEIGHT_DELTA_RATIO_MAX = 0.20
 SOURCE_ENDPOINT_RETURN_ROOT_HORIZONTAL_DISPLACEMENT_RATIO_MAX = 0.065
-RAW_WHAM_SOURCE_FIDELITY_MIN_COMPARABLE_FRAME_RATIO = 0.60
-RAW_WHAM_SOURCE_FIDELITY_MIN_ANGLE_FRAME_COUNT = 8
-RAW_WHAM_SOURCE_FIDELITY_MAX_P90_JOINT_ERROR_BODY_RATIO = 0.75
-RAW_WHAM_SOURCE_FIDELITY_MAX_MEDIAN_LOWER_JOINT_ERROR_BODY_RATIO = 0.285
-RAW_WHAM_SOURCE_FIDELITY_MAX_P90_JOINT_ANGLE_ERROR_DEGREES = 75.0
+RAW_RECONSTRUCTION_SOURCE_FIDELITY_MIN_COMPARABLE_FRAME_RATIO = 0.60
+RAW_RECONSTRUCTION_SOURCE_FIDELITY_MIN_ANGLE_FRAME_COUNT = 8
+RAW_RECONSTRUCTION_SOURCE_FIDELITY_MAX_P90_JOINT_ERROR_BODY_RATIO = 0.75
+RAW_RECONSTRUCTION_SOURCE_FIDELITY_MAX_MEDIAN_LOWER_JOINT_ERROR_BODY_RATIO = 0.285
+RAW_RECONSTRUCTION_SOURCE_FIDELITY_MAX_P90_JOINT_ANGLE_ERROR_DEGREES = 75.0
 MATERIALIZED_SOURCE_FIDELITY_MIN_COMPARABLE_FRAME_RATIO = 0.60
 MATERIALIZED_SOURCE_FIDELITY_MAX_P90_JOINT_ERROR_BODY_RATIO = 0.45
 MATERIALIZED_SOURCE_FIDELITY_MAX_MEDIAN_LOWER_JOINT_ERROR_BODY_RATIO = 0.20
@@ -1030,7 +1031,7 @@ def launch_chromium_browser(
         "headless": True,
         # Generated previews import the adjacent Three.js module from a file:// URL.
         # Chromium otherwise blocks that module for an opaque local-file origin.
-        # Keep the small review renderer off CUDA as well.  WHAM and the VLM can
+        # Keep the small review renderer off CUDA as well.  RECONSTRUCTION and the VLM can
         # occupy most of the GPU while review capture starts; sharing that device
         # made Chromium occasionally return an entirely blank WebGL canvas even
         # though the same cached preview rendered correctly after CUDA was freed.
@@ -1231,7 +1232,7 @@ TERMINAL_FINAL_SELECTION_STATUSES = {
 
 TERMINAL_CANDIDATE_STATUSES = {
     "skipped_source_gate",
-    "skipped_pre_wham_source_validation",
+    "skipped_pre_reconstruction_source_validation",
 }
 
 
@@ -1309,7 +1310,7 @@ def candidate_result_has_terminal_quality_decision(result: dict[str, Any]) -> bo
                 continue
             reason = str(failure.get("reason") or "").strip()
             message = str(failure.get("message") or "").strip()
-            if reason == "pre_wham_source_validation_rejected":
+            if reason == "pre_reconstruction_source_validation_rejected":
                 return True
             if message.startswith("Source segment detection did not find a usable "):
                 return True
@@ -1400,7 +1401,7 @@ def load_previous_terminal_candidate_results(workspace: Path) -> dict[str, dict[
     selection_path = workspace / "selection_manifest.json"
     if selection_path.exists() and manifest_uses_current_policy(selection_path):
         try:
-            manifest = json.loads(selection_path.read_text(encoding="utf-8"))
+            manifest = loads_reconstruction_metadata(selection_path.read_text(encoding="utf-8"))
         except Exception:
             manifest = {}
         results = manifest.get("candidateResults") if isinstance(manifest, dict) else None
@@ -1417,7 +1418,7 @@ def load_previous_terminal_candidate_results(workspace: Path) -> dict[str, dict[
         if not manifest_uses_current_policy(manifest_path):
             continue
         try:
-            result = json.loads(manifest_path.read_text(encoding="utf-8"))
+            result = loads_reconstruction_metadata(manifest_path.read_text(encoding="utf-8"))
         except Exception:
             continue
         if isinstance(result, dict):
@@ -1513,7 +1514,7 @@ def ranked_candidates_to_process_with_previous_terminal_skips(
                 previous_terminal_result,
             )
             continue
-        if request.pre_wham_source_validation and new_candidate_count >= fallback_ready_target:
+        if request.pre_reconstruction_source_validation and new_candidate_count >= fallback_ready_target:
             break
         candidates_to_process.append((original_index, ranked_candidate))
         new_candidate_count += 1
@@ -1943,7 +1944,7 @@ def collect_source_window_variants(
                 ):
                     # A reviewed chunk marked valid is direct evidence of a
                     # complete extraction interval. Duration estimates guide
-                    # discovery, but must not erase that evidence; pre-WHAM
+                    # discovery, but must not erase that evidence; pre-RECONSTRUCTION
                     # source validation still confirms the actual boundaries.
                     if add_variant(variant, allow_short_fallback=True):
                         reviewed_variant_count += 1
@@ -2204,7 +2205,7 @@ def candidate_requires_depth_observable_lying_support(
 def yolo_trackability_score(ranked_candidate: RankedCandidate) -> float | None:
     """How cleanly YOLO can track the person, independent of side-vs-front view.
 
-    Cut proposal, confirmation, and WHAM all read this 2-D track. Semantic
+    Cut proposal, confirmation, and RECONSTRUCTION all read this 2-D track. Semantic
     discovery may still prefer a worse track; bake order should not.
     """
     return _weighted_pose_prefilter_score(
@@ -2263,9 +2264,9 @@ def prioritize_ranked_candidates_for_reconstruction(
         trackability_score = yolo_trackability_score(ranked_candidate)
         readiness = first_attempt_readiness_assessment(ranked_candidate)
         candidate = copy.deepcopy(ranked_candidate.candidate)
-        candidate["preWhamOriginalOrder"] = original_index
-        candidate["preWhamReconstructionPriorityScore"] = reconstruction_score
-        candidate["preWhamYoloTrackabilityScore"] = trackability_score
+        candidate["preReconstructionOriginalOrder"] = original_index
+        candidate["preReconstructionReconstructionPriorityScore"] = reconstruction_score
+        candidate["preReconstructionYoloTrackabilityScore"] = trackability_score
         candidate["firstAttemptReadiness"] = readiness
         prioritized_candidate = replace(ranked_candidate, candidate=candidate)
         is_fallback = parse_optional_bool(candidate.get("bakeFallbackCandidate")) is True
@@ -2345,8 +2346,8 @@ def prioritize_orientation_diverse_fallback(
         key=lambda item: (item[0], -item[1]),
     )
     diverse_payload = copy.deepcopy(diverse.candidate)
-    diverse_payload["preWhamOrientationDiversityFromPrimary"] = distance
-    diverse_payload["preWhamOrientationDiverseFallback"] = True
+    diverse_payload["preReconstructionOrientationDiversityFromPrimary"] = distance
+    diverse_payload["preReconstructionOrientationDiverseFallback"] = True
     diverse = replace(diverse, candidate=diverse_payload)
     return [
         leader,
@@ -2744,7 +2745,7 @@ def persisted_review_item_artifact_state(
         if "artifactState" in payload:
             return True, payload["artifactState"], payload
     try:
-        payload = json.loads(item.skeleton_path.read_text(encoding="utf-8"))
+        payload = loads_reconstruction_metadata(item.skeleton_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False, None, {}
     if not isinstance(payload, dict):
@@ -2909,7 +2910,7 @@ class ExerciseMotionContractRejected(RuntimeError):
 
 
 class SourceCandidateRejected(RuntimeError):
-    """Raised when the source video is visually rejected before WHAM."""
+    """Raised when the source video is visually rejected before RECONSTRUCTION."""
 
     def __init__(
         self,
@@ -2927,7 +2928,6 @@ class SourceCandidateRejected(RuntimeError):
 class BakeAndRankRequest:
     candidates_json: Path
     workspace: Path
-    wham_repo_path: Path | None
     body_model_root: Path | None
     youtube_cookies: Path | None = None
     youtube_source_cache_dir: Path | None = None
@@ -2939,27 +2939,19 @@ class BakeAndRankRequest:
     source_outcome_index: Path | None = None
     max_selected_results: int = 1
     candidate_workers: int = 1
-    wham_python_command: str = "python"
-    reuse_wham_cache: bool = True
+    reuse_reconstruction_cache: bool = True
     reuse_previous_terminal_results: bool = False
-    use_wham_docker: bool = False
-    wham_docker_image: str = DEFAULT_WHAM_DOCKER_IMAGE
-    wham_docker_gpus: str = "all"
-    wham_docker_shm_size: str = DEFAULT_WHAM_DOCKER_SHM_SIZE
-    use_warm_wham_worker: bool = False
-    wham_worker_session_dir: Path | None = None
-    wham_worker_mount_root: Path | None = None
-    wham_worker_timeout_seconds: float | None = None
+    use_reconstruction_docker: bool = True
+    reconstruction_docker_image: str = DEFAULT_RECONSTRUCTION_DOCKER_IMAGE
+    reconstruction_docker_gpus: str = "all"
+    reconstruction_docker_shm_size: str = DEFAULT_RECONSTRUCTION_DOCKER_SHM_SIZE
     use_warm_gvhmr_worker: bool = False
     gvhmr_worker_session_dir: Path | None = None
     gvhmr_worker_mount_root: Path | None = None
     gvhmr_worker_timeout_seconds: float | None = None
-    wham_timeout_seconds: float | None = None
-    wham_tracking_preflight: bool = False
-    require_wham_cache: bool = False
-    wham_estimate_local_only: bool = DEFAULT_WHAM_ESTIMATE_LOCAL_ONLY
-    wham_run_smplify: bool = True
-    motion_reconstruction_backend: str = "wham"
+    reconstruction_timeout_seconds: float | None = None
+    require_reconstruction_cache: bool = False
+    motion_reconstruction_backend: str = "gvhmr"
     structural_refinement_enabled: bool = True
     structural_refinement_vertical_only: bool = False
     spinepose_enabled: bool = False
@@ -2972,10 +2964,8 @@ class BakeAndRankRequest:
     spinepose_reuse_cache: bool = True
     spinepose_gain: float = 1.0
     spinepose_max_degrees: float = 35.0
-    spinepose_axis: int = 0
     spinepose_invert: bool = False
     spinepose_smoothing_window: int = 9
-    spinepose_arm_counter_rotation: float = 1.0
     spinepose_merge_mode: str = "motion"
     detect_source_segment: bool = True
     segment_base_url: str | None = None
@@ -2993,8 +2983,8 @@ class BakeAndRankRequest:
     segment_refinement_frames_per_window: int = 0
     segment_refinement_padding_seconds: float = 1.0
     segment_classification_workers: int = 3
-    pre_wham_source_validation: bool = False
-    pre_wham_source_validation_explicitly_disabled: bool = False
+    pre_reconstruction_source_validation: bool = False
+    pre_reconstruction_source_validation_explicitly_disabled: bool = False
     exercise_motion_contract_enabled: bool = True
     review_frames: int = DEFAULT_REVIEW_FRAMES
     review_llm_workers: int = 3
@@ -3003,7 +2993,7 @@ class BakeAndRankRequest:
     max_loop_seconds: float = DEFAULT_MAX_LOOP_SECONDS
     min_selected_score: float = DEFAULT_MIN_SELECTED_SCORE
     motion_tuning_enabled: bool = True
-    export_wham_smpl_preview: bool = False
+    export_reconstruction_smpl_preview: bool = False
     select_preview_section: bool = False
     rank_preview_variants: bool = False
     adaptive_preview_settings: bool = False
@@ -3084,7 +3074,7 @@ PreviewBaker = Callable[..., list[BakedLoopArtifact]]
 LoopRanker = Callable[[list[ReviewItem], BakeAndRankRequest], list[LoopRanking]]
 ExerciseMotionContractResolver = Callable[[RankedCandidate], dict[str, Any] | None]
 SelectedArtifact = tuple[ReviewItem, LoopRanking | None]
-WhamExclusiveRunner = Callable[[Callable[[], GenerateResult]], GenerateResult]
+ReconstructionExclusiveRunner = Callable[[Callable[[], GenerateResult]], GenerateResult]
 
 
 def interruptible_completed(futures: Iterable[Any]) -> Iterable[Any]:
@@ -3209,7 +3199,7 @@ class LazyLlamaCppVisionSession:
             int(self.settings.llama_cpp_parallel or self.settings.vision_llm_workers or 1),
         )
         self._peak_active_calls = 0
-        self._wham_active = False
+        self._reconstruction_active = False
         self._exclusive_waiters = 0
         self._closed = False
         # Attach mode (see SHARED_LLAMA_SERVER.md): the server is owned by the
@@ -3342,7 +3332,7 @@ class LazyLlamaCppVisionSession:
             # one swap around a group of deterministic validations. In shared
             # mode a foreign exclusive phase gates admissions the same way.
             while (
-                self._wham_active
+                self._reconstruction_active
                 or self._exclusive_waiters > 0
                 or self._active_calls >= self._max_active_calls
                 or self._shared_blocks_admission_locked()
@@ -3504,9 +3494,9 @@ class LazyLlamaCppVisionSession:
             self._exclusive_waiters += 1
             quiesce_summary: QuiesceSummary | None = None
             try:
-                while self._wham_active:
+                while self._reconstruction_active:
                     self._condition.wait()
-                self._wham_active = True
+                self._reconstruction_active = True
                 if not self._exclusive_batch_open:
                     self._exclusive_batch_open = True
                     self.exclusive_batch_count += 1
@@ -3538,7 +3528,7 @@ class LazyLlamaCppVisionSession:
             except Exception:
                 if quiesce_summary is not None:
                     self._release_shared_exclusive_locked()
-                self._wham_active = False
+                self._reconstruction_active = False
                 self._exclusive_batch_open = False
                 self._condition.notify_all()
                 raise
@@ -3566,7 +3556,7 @@ class LazyLlamaCppVisionSession:
                         exclusiveBatchId=self.exclusive_batch_count,
                         operationId=operation_id,
                     )
-                    self._wham_active = False
+                    self._reconstruction_active = False
                     if self._exclusive_waiters == 0:
                         self._exclusive_batch_open = False
                         if self._shared is not None:
@@ -3620,8 +3610,8 @@ class LazyLlamaCppVisionSession:
             "visionRankerStartupSeconds": round(self.startup_seconds, 3),
             "visionRankerStartupCount": self.startup_count,
             "visionRankerGpuLockWaitSeconds": round(self.gpu_lock_wait_seconds, 3),
-            "visionRankerForceCloseBeforeWhamSeconds": round(self.force_close_seconds, 3),
-            "visionRankerForceCloseBeforeWhamCount": self.force_close_count,
+            "visionRankerForceCloseBeforeReconstructionSeconds": round(self.force_close_seconds, 3),
+            "visionRankerForceCloseBeforeReconstructionCount": self.force_close_count,
             "visionRankerCloseSeconds": round(self.final_close_seconds, 3),
             "visionRankerCloseCount": self.final_close_count,
             "exclusiveGpuOperationCount": self.exclusive_operation_count,
@@ -3770,7 +3760,7 @@ def materialized_metrics_with_gpu_handoff(
 ) -> dict[str, Any]:
     if source_pose_reference is None:
         source_pose_reference = source_pose_reference_from_phase_metrics(
-            pre_wham_exact_source_phase_reference_metrics(item))
+            pre_reconstruction_exact_source_phase_reference_metrics(item))
     if source_pose_reference is None:
         source_pose_reference = load_verified_source_pose_reference(
             item.candidate_workspace / "segment_detection" / "exact_source_pose_reference.json",
@@ -3778,7 +3768,7 @@ def materialized_metrics_with_gpu_handoff(
         )
     # Cyclic artifacts retain sourceTimeSec on every frame, so pose fidelity
     # can select their exact parent-video interval from this verified reference.
-    # Reusing the pre-WHAM evidence avoids rerunning CUDA YOLO during final fit
+    # Reusing the pre-RECONSTRUCTION evidence avoids rerunning CUDA YOLO during final fit
     # validation, which may execute in a Python worker without CUDA available.
 
     def operation() -> dict[str, Any]:
@@ -3798,7 +3788,7 @@ def load_ranked_candidates_manifest(
     include_fallback_candidates: bool = False,
     source_outcome_index: Path | None = None,
 ) -> list[RankedCandidate]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload = loads_reconstruction_metadata(path.read_text(encoding="utf-8"))
     all_candidates = parse_ranked_candidates_manifest(payload)
     parsed_candidates = [
         candidate
@@ -4035,7 +4025,7 @@ def evaluate_source_candidate_gate(
                     and legacy_crop_safety < 0.999
                 ):
                     # Old manifests do not contain temporal body-box contact.
-                    # Keep their known edge-risk sources out of WHAM, while all
+                    # Keep their known edge-risk sources out of RECONSTRUCTION, while all
                     # new scans use body-box evidence instead of joint perfection.
                     reasons.append("pose_incomplete_full_body_framing")
             elif (
@@ -4189,7 +4179,7 @@ def first_attempt_readiness_assessment(
     *,
     request: BakeAndRankRequest | None = None,
 ) -> dict[str, Any]:
-    """Assess whether a discovered source is worth first-wave WHAM work.
+    """Assess whether a discovered source is worth first-wave RECONSTRUCTION work.
 
     This intentionally avoids a universal loop rule. Temporal evidence is
     interpreted using the normalized completion mode, while reconstruction
@@ -4210,7 +4200,7 @@ def first_attempt_readiness_assessment(
     if not bool(gate.get("passed")):
         tier = "ineligible"
     elif completion_state == "partial":
-        # A reviewed chunk known to be partial should not consume WHAM. Other
+        # A reviewed chunk known to be partial should not consume RECONSTRUCTION. Other
         # windows from the same video remain independently eligible.
         tier = "ineligible"
         reasons.append("known_incomplete_completion_mode_evidence")
@@ -4452,7 +4442,7 @@ def candidate_attempt_budget_for_request(request: BakeAndRankRequest) -> int:
     base_target = ready_candidate_target_for_request(request)
     if int(request.fallback_candidates) <= 0:
         return max_selected_results_for_request(request)
-    if not request.pre_wham_source_validation:
+    if not request.pre_reconstruction_source_validation:
         return base_target
     source_window_attempts = max(1, int(request.max_source_window_attempts or 1))
     return base_target + source_window_attempts - 1
@@ -5206,8 +5196,8 @@ def movement_instance_selection_payload(item: ReviewItem, ranking: LoopRanking) 
         item.loop_end_seconds,
     )
     if selection_policy in {
-        "full_pre_wham_source_segment",
-        "validated_pre_wham_source_interval",
+        "full_pre_reconstruction_source_segment",
+        "validated_pre_reconstruction_source_interval",
     }:
         source_video_path = selected_input_video_path_for_review_item(item)
         source_duration = (
@@ -5363,7 +5353,7 @@ def source_selection_clearance_for_workspace(
     source_manifest_path = source_workspace / "segment_detection" / "segment_selection.json"
     try:
         manifest_bytes = source_manifest_path.read_bytes()
-        source_manifest = json.loads(manifest_bytes)
+        source_manifest = loads_reconstruction_metadata(manifest_bytes)
     except (OSError, ValueError, json.JSONDecodeError):
         source_manifest = None
         manifest_bytes = b""
@@ -5385,8 +5375,8 @@ def source_selection_clearance_for_workspace(
     )).expanduser()
 
     source_stage_ran = (
-        parse_optional_bool(source_manifest.get("preWhamSourceValidationEnabled")) is True
-        or str(source_manifest.get("sourcePrepReason") or "") == "pre_wham_source_window_choice"
+        parse_optional_bool(source_manifest.get("preReconstructionSourceValidationEnabled")) is True
+        or str(source_manifest.get("sourcePrepReason") or "") == "pre_reconstruction_source_window_choice"
         or isinstance(source_manifest.get("sourceCutRanking"), dict)
         or isinstance(source_manifest.get("exactSourcePhaseValidation"), dict)
     )
@@ -5416,7 +5406,7 @@ def source_selection_clearance_for_workspace(
         explicit_raw_lineage = (
             explicitly_disabled
             and bool(prep_reason)
-            and parse_optional_bool(source_manifest.get("preWhamSourceValidationEnabled")) is not True
+            and parse_optional_bool(source_manifest.get("preReconstructionSourceValidationEnabled")) is not True
             and source_manifest.get("sourceCutRanking") is None
             and source_manifest.get("exactSourcePhaseValidation") is None
         )
@@ -5491,8 +5481,8 @@ def source_selection_clearance_for_workspace(
     if (
         parse_optional_int(source_manifest.get("sourceSelectionPolicyVersion"))
         != SOURCE_SELECTION_POLICY_VERSION
-        or parse_optional_bool(source_manifest.get("preWhamSourceValidationEnabled")) is not True
-        or str(source_manifest.get("sourcePrepReason") or "") != "pre_wham_source_window_choice"
+        or parse_optional_bool(source_manifest.get("preReconstructionSourceValidationEnabled")) is not True
+        or str(source_manifest.get("sourcePrepReason") or "") != "pre_reconstruction_source_window_choice"
     ):
         return {
             "status": "needs_source_review",
@@ -5504,7 +5494,7 @@ def source_selection_clearance_for_workspace(
         }
     if not cached_source_selection_matches_validation_mode(
         source_manifest_path,
-        pre_wham_source_validation=True,
+        pre_reconstruction_source_validation=True,
         exercise_motion_contract_enabled=bool(
             source_manifest.get("exerciseMotionContractEnabled")
         ),
@@ -5748,8 +5738,8 @@ def apply_materialized_output_acceptance_gate(
     item, ranking = selected
     source_clearance = source_selection_clearance_for_review_item(
         item,
-        required=request.pre_wham_source_validation,
-        explicitly_disabled=request.pre_wham_source_validation_explicitly_disabled,
+        required=request.pre_reconstruction_source_validation,
+        explicitly_disabled=request.pre_reconstruction_source_validation_explicitly_disabled,
         ranking=ranking,
     )
     candidate_payload = dict(item.candidate or {})
@@ -6013,7 +6003,7 @@ def materialized_weighted_selection_score(
 
 def selected_skeleton_file_identity(path: Path) -> dict[str, Any]:
     raw = path.read_bytes()
-    payload = json.loads(raw.decode("utf-8"))
+    payload = loads_reconstruction_metadata(raw.decode("utf-8"))
     frames = payload.get("frames") if isinstance(payload, dict) else None
     return {
         "sha256": hashlib.sha256(raw).hexdigest(),
@@ -6092,7 +6082,7 @@ def final_output_validation_metrics(
             result.update(reviewStatus="needs_manual_review", failureOwner="evidence")
         return result
     try:
-        movement_payload = json.loads(item.skeleton_path.read_text(encoding="utf-8"))
+        movement_payload = loads_reconstruction_metadata(item.skeleton_path.read_text(encoding="utf-8"))
         review_window, reviewed_state = build_final_output_review_window_evidence(
             movement_payload,
             requested_frame_count=FINAL_OUTPUT_VALIDATION_FRAME_COUNT,
@@ -6105,7 +6095,7 @@ def final_output_validation_metrics(
             raise ReviewFrameCaptureError("Required final render evidence is missing")
         if selected_skeleton_file_identity(item.skeleton_path) != reviewed_skeleton:
             raise ReviewFrameCaptureError("Selected skeleton changed while final render evidence was being captured")
-        current_payload = json.loads(item.skeleton_path.read_text(encoding="utf-8"))
+        current_payload = loads_reconstruction_metadata(item.skeleton_path.read_text(encoding="utf-8"))
         current_window, current_state = build_final_output_review_window_evidence(
             current_payload,
             requested_frame_count=FINAL_OUTPUT_VALIDATION_FRAME_COUNT,
@@ -7152,7 +7142,7 @@ def validate_final_output_with_caption_images(
         min_score=request.final_output_validation_min_score,
     )
     from .visual_evidence import parse_visual_observations
-    export = json.loads(item.skeleton_path.read_text(encoding="utf-8"))
+    export = loads_reconstruction_metadata(item.skeleton_path.read_text(encoding="utf-8"))
     sampled_indices = final_output_review_frame_indices(
         export,
         requested_frame_count=FINAL_OUTPUT_VALIDATION_FRAME_COUNT,
@@ -7360,8 +7350,8 @@ def load_cached_final_output_validation(
     if not parsed_response_path.exists() or not cache_metadata_path.exists():
         return None
     try:
-        metadata = json.loads(cache_metadata_path.read_text(encoding="utf-8"))
-        parsed = json.loads(parsed_response_path.read_text(encoding="utf-8"))
+        metadata = loads_reconstruction_metadata(cache_metadata_path.read_text(encoding="utf-8"))
+        parsed = loads_reconstruction_metadata(parsed_response_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
     if metadata.get("cacheKey") != cache_key or not isinstance(parsed, dict):
@@ -7958,7 +7948,7 @@ def source_equipment_detail_frames(uniform_sheet_paths: list[Path]) -> list[Path
     frames: list[Path] = []
     for directory in dict.fromkeys(path.parent for path in uniform_sheet_paths):
         try:
-            metadata = json.loads((directory / "contact_sheet_crop.json").read_text(encoding="utf-8"))
+            metadata = loads_reconstruction_metadata((directory / "contact_sheet_crop.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
         paths = metadata.get("framePaths") if isinstance(metadata, dict) else None
@@ -9036,7 +9026,7 @@ def final_output_vlm_preview_contact_sheets(item: ReviewItem, *, output_dir: Pat
     if item.skeleton_path.is_file():
         from .preview import write_baked_preview_html, preview_runtime_signature
         from .stage_cache import cache_key
-        export = json.loads(item.skeleton_path.read_text(encoding="utf-8"))
+        export = loads_reconstruction_metadata(item.skeleton_path.read_text(encoding="utf-8"))
         if export.get("frames") and export.get("jointNames"):
             output_dir.mkdir(parents=True, exist_ok=True)
             module = next((directory / "three.module.0.169.0.js" for directory in (
@@ -9114,7 +9104,7 @@ def selected_source_section_window_for_review_item(
     duration = source_duration_seconds
     if duration is None and source_video_path is not None:
         duration = source_video_duration_seconds(source_video_path)
-    source_interval_authority = (item.candidate or {}).get("preWhamSourceIntervalAuthority")
+    source_interval_authority = (item.candidate or {}).get("preReconstructionSourceIntervalAuthority")
     if (
         duration is not None
         and duration > 0.0
@@ -9338,7 +9328,7 @@ def build_final_output_validation_prompt(
 def suspended_support_motion_evidence(item: ReviewItem) -> dict[str, Any]:
     """Measure world-space support motion without requiring a drawn apparatus."""
     try:
-        motion = json.loads(item.skeleton_path.read_text(encoding="utf-8"))
+        motion = loads_reconstruction_metadata(item.skeleton_path.read_text(encoding="utf-8"))
         if motion.get("groundContactMode") != "none":
             return {}
         frames = motion["frames"]
@@ -9587,7 +9577,7 @@ def reconcile_omitted_support_render_contradiction(
     if not any(word in note for word in ("bar", "support", "hang")):
         return parsed
     try:
-        skeleton_payload = json.loads(item.skeleton_path.read_text(encoding="utf-8"))
+        skeleton_payload = loads_reconstruction_metadata(item.skeleton_path.read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError):
         return parsed
     if str(skeleton_payload.get("groundContactMode") or "").casefold() != "none":
@@ -9811,7 +9801,7 @@ def materialized_cleanup_support_metrics(
     # not-yet-materialized output as unreadable support evidence.
     if skeleton_path is not None and skeleton_path.is_file():
         try:
-            payload = json.loads(skeleton_path.read_text(encoding="utf-8"))
+            payload = loads_reconstruction_metadata(skeleton_path.read_text(encoding="utf-8"))
             if payload.get("fixedRig"):
                 from .rig_playback import validate_rig_playback
                 playback = validate_rig_playback(payload)
@@ -9941,7 +9931,7 @@ def source_pose_reference_for_materialized_review(
     if not isinstance(source_pose_reference, dict):
         return source_pose_reference
     payload = ranking.payload if isinstance(ranking.payload, dict) else {}
-    authority = payload.get("preWhamSourceIntervalAuthority")
+    authority = payload.get("preReconstructionSourceIntervalAuthority")
     movement_instance = authority.get("movementInstance") if isinstance(authority, dict) else None
     end_ratio = (
         parse_optional_float(movement_instance.get("endRatio"))
@@ -9998,12 +9988,12 @@ def materialized_output_acceptance_metrics(
         rejection_reasons.append("materialized_support_contact_contradiction")
     if bool(cleanup_support_metrics.get("unsupportedElevatedSupportGeometry")):
         rejection_reasons.append("materialized_unrendered_elevated_support_surface")
-    repair_legacy_wham_input_rotation_metadata(
+    repair_legacy_reconstruction_input_rotation_metadata(
         item.candidate_workspace,
         candidate=item.candidate,
     )
-    if used_legacy_pose_inferred_wham_input_rotation(item.candidate_workspace):
-        rejection_reasons.append("materialized_legacy_pose_inferred_wham_input_rotation")
+    if used_legacy_pose_inferred_reconstruction_input_rotation(item.candidate_workspace):
+        rejection_reasons.append("materialized_legacy_pose_inferred_reconstruction_input_rotation")
     try:
         motion_metrics = compute_motion_strength_metrics(item.skeleton_path)
     except Exception:
@@ -10048,7 +10038,7 @@ def materialized_output_acceptance_metrics(
     }
     leg_articulation: dict[str, Any] = {"available": False}
     try:
-        export_payload = json.loads(item.skeleton_path.read_text(encoding="utf-8"))
+        export_payload = loads_reconstruction_metadata(item.skeleton_path.read_text(encoding="utf-8"))
         if not materialized_camera_is_canonical(export_payload):
             rejection_reasons.append("materialized_noncanonical_camera")
         leg_articulation = baked_leg_articulation_preservation_metrics(export_payload)
@@ -10149,7 +10139,7 @@ def materialized_output_acceptance_metrics(
     source_reconstruction_view_quality = source_reconstruction_view_quality_for_review_item(
         item
     )
-    parent_source_phase_metrics = pre_wham_exact_source_phase_reference_metrics(item)
+    parent_source_phase_metrics = pre_reconstruction_exact_source_phase_reference_metrics(item)
     source_endpoint_phase_metrics = source_video_phase_metrics
     source_endpoint_phase_evidence_source = "exact_selected_source_video_phase_metrics"
     if not source_phase_corroborates_single_return_cycle(
@@ -10406,7 +10396,7 @@ def materialized_output_acceptance_metrics(
     if bool(orientation_metrics.get("forceSceneInverted")):
         # Camera-screen head/foot ordering is ambiguous for horizontal,
         # suspended, and intentionally inverted exercises.  World orientation
-        # is normalized once in the post-WHAM pipeline; keep this screen-space
+        # is normalized once in the post-RECONSTRUCTION pipeline; keep this screen-space
         # signal diagnostic-only rather than rejecting an otherwise valid clip.
         skipped_reasons.append("materialized_screen_orientation_hint_ignored_canonical_world")
     source_reference_has_complete_phase = any(
@@ -10556,7 +10546,7 @@ def materialized_output_acceptance_metrics(
         rejection_reasons.append(SOURCE_OUTPUT_TARGET_MOTION_REJECTION_REASON)
     from .contract_support_gates import contract_support_gates
     try:
-        contract_support_export = json.loads(item.skeleton_path.read_text(encoding="utf-8"))
+        contract_support_export = loads_reconstruction_metadata(item.skeleton_path.read_text(encoding="utf-8"))
         contract_support_contract = (
             target_motion_contract_from_ranking_payload(ranking.payload)
             if isinstance(ranking.payload, dict) else None
@@ -10771,16 +10761,16 @@ def materialized_source_video_phase_completeness_metrics(
     item: ReviewItem,
     ranking: LoopRanking,
 ) -> dict[str, Any] | None:
-    """Measure repetition completeness from pixels, independently of WHAM output."""
+    """Measure repetition completeness from pixels, independently of RECONSTRUCTION output."""
     if item.loop_index < 0:
-        exact_metrics = pre_wham_exact_source_phase_reference_metrics(item)
+        exact_metrics = pre_reconstruction_exact_source_phase_reference_metrics(item)
         if (
             isinstance(exact_metrics, dict)
             and source_pose_reference_from_phase_metrics(exact_metrics) is not None
         ):
             return {
                 **exact_metrics,
-                "cacheStatus": "reused_pre_wham_exact_validation",
+                "cacheStatus": "reused_pre_reconstruction_exact_validation",
             }
     source_video_path = selected_source_section_video_path_for_review_item(item, create=True)
     if source_video_path is None or not source_video_path.exists():
@@ -10794,7 +10784,7 @@ def materialized_source_video_phase_completeness_metrics(
     )
 
 
-def load_pre_wham_exact_source_phase_metrics(
+def load_pre_reconstruction_exact_source_phase_metrics(
     candidate_workspace: Path,
 ) -> dict[str, Any] | None:
     """Load the newest exact source metrics from either supported artifact."""
@@ -10802,7 +10792,7 @@ def load_pre_wham_exact_source_phase_metrics(
     candidates: list[dict[str, Any]] = []
     exact_validation_path = segment_detection_dir / "exact_source_phase_validation.json"
     try:
-        payload = json.loads(exact_validation_path.read_text(encoding="utf-8"))
+        payload = loads_reconstruction_metadata(exact_validation_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         payload = None
     metrics = payload.get("metrics") if isinstance(payload, dict) else None
@@ -10811,7 +10801,7 @@ def load_pre_wham_exact_source_phase_metrics(
 
     selection_path = segment_detection_dir / "segment_selection.json"
     try:
-        selection_payload = json.loads(selection_path.read_text(encoding="utf-8"))
+        selection_payload = loads_reconstruction_metadata(selection_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         selection_payload = None
     selected_metrics = (
@@ -10829,30 +10819,30 @@ def load_pre_wham_exact_source_phase_metrics(
     )
 
 
-def pre_wham_exact_source_phase_reference_metrics(
+def pre_reconstruction_exact_source_phase_reference_metrics(
     item: ReviewItem,
 ) -> dict[str, Any] | None:
-    """Load the validated parent source phase independently of a post-WHAM crop.
+    """Load the validated parent source phase independently of a post-RECONSTRUCTION crop.
 
-    A detected post-WHAM loop is a child of the exact source interval that was
-    approved before WHAM. Keeping this parent evidence separate prevents a
+    A detected post-RECONSTRUCTION loop is a child of the exact source interval that was
+    approved before RECONSTRUCTION. Keeping this parent evidence separate prevents a
     partial child crop from redefining an incomplete movement as its own valid
     reference.
     """
-    return load_pre_wham_exact_source_phase_metrics(item.candidate_workspace)
+    return load_pre_reconstruction_exact_source_phase_metrics(item.candidate_workspace)
 
 
-def pre_wham_source_foot_support_evidence(
+def pre_reconstruction_source_foot_support_evidence(
     candidate_workspace: Path,
 ) -> dict[str, Any] | None:
-    metrics = load_pre_wham_exact_source_phase_metrics(candidate_workspace)
+    metrics = load_pre_reconstruction_exact_source_phase_metrics(candidate_workspace)
     evidence = metrics.get("sourceFootSupportEvidence") if isinstance(metrics, dict) else None
     source_reference = candidate_workspace / "segment_detection" / "exact_source_pose_reference.json"
     source_video = candidate_workspace / "input" / "selected_segment.mp4"
     raw_path = candidate_workspace / "raw" / "motion.raw.json"
     if isinstance(evidence, dict) and source_reference.is_file() and source_video.is_file() and raw_path.is_file():
-        reference = json.loads(source_reference.read_text(encoding="utf-8"))
-        raw = json.loads(raw_path.read_text(encoding="utf-8"))
+        reference = loads_reconstruction_metadata(source_reference.read_text(encoding="utf-8"))
+        raw = loads_reconstruction_metadata(raw_path.read_text(encoding="utf-8"))
         alignment = raw.get("metadata", {}).get("videoWorldAlignment", {})
         if isinstance(reference.get("pose"), dict):
             evidence = add_observed_foot_contacts(
@@ -10870,7 +10860,7 @@ def authoritative_source_foot_support_evidence(
 
     Retained artifacts may carry legacy preview settings which predate temporal
     contact intervals. Exact source-video analysis must therefore win over both
-    the pre-WHAM cache and the settings snapshot used to bake the old preview.
+    the pre-RECONSTRUCTION cache and the settings snapshot used to bake the old preview.
     """
     if isinstance(source_video_phase_metrics, dict):
         fresh_evidence = source_video_phase_metrics.get("sourceFootSupportEvidence")
@@ -10883,7 +10873,7 @@ def authoritative_source_foot_support_evidence(
             pose = source_pose_reference_from_phase_metrics(source_video_phase_metrics)
             if raw_path.is_file() and video_value and isinstance(pose, dict):
                 video_path = Path(str(video_value))
-                raw = json.loads(raw_path.read_text(encoding="utf-8"))
+                raw = loads_reconstruction_metadata(raw_path.read_text(encoding="utf-8"))
                 alignment = raw.get("metadata", {}).get("videoWorldAlignment", {})
                 normal = alignment.get("cameraGroundPlane", {}).get("normal")
                 if normal is not None and video_path.is_file():
@@ -10894,9 +10884,9 @@ def authoritative_source_foot_support_evidence(
                     # exact video may be a cropped child with different timing.
             return dict(fresh_evidence), "exact_selected_source_video"
 
-    cached_evidence = pre_wham_source_foot_support_evidence(item.candidate_workspace)
+    cached_evidence = pre_reconstruction_source_foot_support_evidence(item.candidate_workspace)
     if isinstance(cached_evidence, dict):
-        return cached_evidence, "pre_wham_exact_source_cache"
+        return cached_evidence, "pre_reconstruction_exact_source_cache"
 
     settings_evidence = (
         item.settings_options.get("sourceFootSupportEvidence")
@@ -11965,7 +11955,7 @@ def load_verified_source_pose_reference(reference_path: Path, source_video_path:
     if source_video_path is None or not source_video_path.is_file():
         return None
     try:
-        reference = json.loads(reference_path.read_text(encoding="utf-8"))
+        reference = loads_reconstruction_metadata(reference_path.read_text(encoding="utf-8"))
         expected_hash = reference.get("sourceVideoSha256")
         if not expected_hash or expected_hash != hashlib.sha256(source_video_path.read_bytes()).hexdigest():
             return None
@@ -12008,7 +11998,7 @@ def materialized_source_pose_fidelity_metrics(
     """Verify that the final retained skeleton still represents the source pose.
 
     This gate runs on the durable selected input and final skeleton, so retained
-    artifacts remain revalidatable after inference-only WHAM intermediates are
+    artifacts remain revalidatable after inference-only RECONSTRUCTION intermediates are
     cleaned. Normalized time and similarity fitting make it independent of
     frame rate, camera scale, translation, horizontal world axis, and mirroring.
     """
@@ -12248,21 +12238,21 @@ def source_pose_angle_mismatch_is_corroborated(
     return len(regions) >= 2
 
 
-def evaluate_raw_wham_motion_gate(
+def evaluate_raw_reconstruction_motion_gate(
     raw_motion_path: Path,
     *,
     source_pose_reference_path: Path | None = None,
     exercise_motion_contract: dict[str, Any] | None = None,
     exercise_name: str | None = None,
 ) -> dict[str, Any]:
-    """Reject structurally broken WHAM output before cleanup variants can mask it."""
+    """Reject structurally broken RECONSTRUCTION output before cleanup variants can mask it."""
     try:
-        payload = json.loads(raw_motion_path.read_text(encoding="utf-8"))
+        payload = loads_reconstruction_metadata(raw_motion_path.read_text(encoding="utf-8"))
         support_metrics = deterministic_preview_settings_hint_from_payload(payload, options={})
     except (OSError, json.JSONDecodeError, ValueError, TypeError) as exc:
         return {
             "passed": False,
-            "rejectionReasons": ["raw_wham_motion_unreadable"],
+            "rejectionReasons": ["raw_reconstruction_motion_unreadable"],
             "error": f"{type(exc).__name__}: {exc}",
         }
     try:
@@ -12279,7 +12269,7 @@ def evaluate_raw_wham_motion_gate(
     }
     if source_pose_reference_path is not None:
         try:
-            reference_payload = json.loads(source_pose_reference_path.read_text(encoding="utf-8"))
+            reference_payload = loads_reconstruction_metadata(source_pose_reference_path.read_text(encoding="utf-8"))
             source_pose = reference_payload.get("pose")
             if not isinstance(source_pose, dict):
                 raise ValueError("source pose reference has no pose payload")
@@ -12310,20 +12300,20 @@ def evaluate_raw_wham_motion_gate(
     ):
         # A monocular source cannot independently verify hidden depth, but a
         # rigid two-hand implement supplies an absolute 3-D invariant.
-        rejection_reasons.append("raw_wham_rigid_two_hand_spacing_instability")
+        rejection_reasons.append("raw_reconstruction_rigid_two_hand_spacing_instability")
     if paired_hands_distortion_is_blocking(
         paired_hands_metrics,
         lock_planted_hands=False,
         rigid_paired_hands_required=rigid_paired_hands_required,
     ):
-        rejection_reasons.append("raw_wham_rigid_two_hand_equipment_distortion")
+        rejection_reasons.append("raw_reconstruction_rigid_two_hand_equipment_distortion")
     source_fidelity_has_coverage = bool(
         source_fidelity_metrics.get("available")
         and optional_float_or_default(
             source_fidelity_metrics.get("comparableFrameRatio"),
             0.0,
         )
-        >= RAW_WHAM_SOURCE_FIDELITY_MIN_COMPARABLE_FRAME_RATIO
+        >= RAW_RECONSTRUCTION_SOURCE_FIDELITY_MIN_COMPARABLE_FRAME_RATIO
     )
     if source_fidelity_has_coverage:
         comparable_frame_count = parse_optional_int(
@@ -12340,24 +12330,24 @@ def evaluate_raw_wham_motion_gate(
         )
         if (
             p90_joint_error is not None
-            and p90_joint_error > RAW_WHAM_SOURCE_FIDELITY_MAX_P90_JOINT_ERROR_BODY_RATIO
+            and p90_joint_error > RAW_RECONSTRUCTION_SOURCE_FIDELITY_MAX_P90_JOINT_ERROR_BODY_RATIO
         ):
-            rejection_reasons.append("raw_wham_source_pose_joint_mismatch")
+            rejection_reasons.append("raw_reconstruction_source_pose_joint_mismatch")
         if (
             median_lower_error is not None
             and median_lower_error
-            > RAW_WHAM_SOURCE_FIDELITY_MAX_MEDIAN_LOWER_JOINT_ERROR_BODY_RATIO
+            > RAW_RECONSTRUCTION_SOURCE_FIDELITY_MAX_MEDIAN_LOWER_JOINT_ERROR_BODY_RATIO
         ):
-            rejection_reasons.append("raw_wham_source_support_posture_mismatch")
+            rejection_reasons.append("raw_reconstruction_source_support_posture_mismatch")
         if (
             comparable_frame_count is not None
-            and comparable_frame_count >= RAW_WHAM_SOURCE_FIDELITY_MIN_ANGLE_FRAME_COUNT
+            and comparable_frame_count >= RAW_RECONSTRUCTION_SOURCE_FIDELITY_MIN_ANGLE_FRAME_COUNT
             and source_pose_angle_mismatch_is_corroborated(
                 source_fidelity_metrics,
-                threshold_degrees=RAW_WHAM_SOURCE_FIDELITY_MAX_P90_JOINT_ANGLE_ERROR_DEGREES,
+                threshold_degrees=RAW_RECONSTRUCTION_SOURCE_FIDELITY_MAX_P90_JOINT_ANGLE_ERROR_DEGREES,
             )
         ):
-            rejection_reasons.append("raw_wham_source_joint_angle_mismatch")
+            rejection_reasons.append("raw_reconstruction_source_joint_angle_mismatch")
     kinematic_artifact_reasons = {
         str(reason) for reason in kinematic_metrics.get("artifactReasons", [])
     }
@@ -12368,12 +12358,12 @@ def evaluate_raw_wham_motion_gate(
             {"limb_velocity_spike_penalty", "joint_angle_spike_penalty"}
         )
         and source_fidelity_has_coverage
-        and not any(reason.startswith("raw_wham_source_") for reason in rejection_reasons)
+        and not any(reason.startswith("raw_reconstruction_source_") for reason in rejection_reasons)
     )
     if bool(kinematic_metrics.get("severeArtifact")) and not repairable_temporal_artifact:
-        rejection_reasons.append("raw_wham_kinematic_artifact")
+        rejection_reasons.append("raw_reconstruction_kinematic_artifact")
     # Endpoint spacing can be repaired by the later support-lock variants, and
-    # raw WHAM orientation can make a horizontal pose look overhead.  Preserve
+    # raw RECONSTRUCTION orientation can make a horizontal pose look overhead.  Preserve
     # the metric for diagnostics but let the lock-aware materialized gate decide
     # whether the final result is still distorted.
     return {
@@ -12390,14 +12380,14 @@ def evaluate_raw_wham_motion_gate(
         "sourcePoseFidelityMetrics": source_fidelity_metrics,
         "sourcePoseFidelityGateApplied": source_fidelity_has_coverage,
         "sourcePoseFidelityThresholds": {
-            "minComparableFrameRatio": RAW_WHAM_SOURCE_FIDELITY_MIN_COMPARABLE_FRAME_RATIO,
-            "minAngleFrameCount": RAW_WHAM_SOURCE_FIDELITY_MIN_ANGLE_FRAME_COUNT,
-            "maxP90JointErrorBodyRatio": RAW_WHAM_SOURCE_FIDELITY_MAX_P90_JOINT_ERROR_BODY_RATIO,
+            "minComparableFrameRatio": RAW_RECONSTRUCTION_SOURCE_FIDELITY_MIN_COMPARABLE_FRAME_RATIO,
+            "minAngleFrameCount": RAW_RECONSTRUCTION_SOURCE_FIDELITY_MIN_ANGLE_FRAME_COUNT,
+            "maxP90JointErrorBodyRatio": RAW_RECONSTRUCTION_SOURCE_FIDELITY_MAX_P90_JOINT_ERROR_BODY_RATIO,
             "maxMedianLowerJointErrorBodyRatio": (
-                RAW_WHAM_SOURCE_FIDELITY_MAX_MEDIAN_LOWER_JOINT_ERROR_BODY_RATIO
+                RAW_RECONSTRUCTION_SOURCE_FIDELITY_MAX_MEDIAN_LOWER_JOINT_ERROR_BODY_RATIO
             ),
             "maxP90JointAngleErrorDegrees": (
-                RAW_WHAM_SOURCE_FIDELITY_MAX_P90_JOINT_ANGLE_ERROR_DEGREES
+                RAW_RECONSTRUCTION_SOURCE_FIDELITY_MAX_P90_JOINT_ANGLE_ERROR_DEGREES
             ),
         },
     }
@@ -12512,7 +12502,7 @@ def motion_gate_allows_pending_anatomical_repair(gate: dict[str, Any]) -> bool:
     metrics = gate.get("kinematicPlausibilityMetrics")
     return bool(
         isinstance(metrics, dict)
-        and set(gate.get("rejectionReasons", [])) == {"raw_wham_kinematic_artifact"}
+        and set(gate.get("rejectionReasons", [])) == {"raw_reconstruction_kinematic_artifact"}
         and set(metrics.get("artifactReasons", [])) == {"physical_pose_constraint_violation"}
         and anatomical_repair_input_reasons(metrics)
     )
@@ -12535,8 +12525,8 @@ def controlled_repair_input_reasons(metrics: dict[str, Any]) -> list[str]:
 def motion_gate_allows_pending_controlled_repair(gate: dict[str, Any]) -> bool:
     """Defer only fitter-owned defects, preserving independent fidelity gates."""
     reasons = set(gate.get("rejectionReasons") or [])
-    owned = {"raw_wham_rigid_two_hand_spacing_instability",
-             "raw_wham_rigid_two_hand_equipment_distortion", "raw_wham_kinematic_artifact"}
+    owned = {"raw_reconstruction_rigid_two_hand_spacing_instability",
+             "raw_reconstruction_rigid_two_hand_equipment_distortion", "raw_reconstruction_kinematic_artifact"}
     if not reasons or reasons - owned:
         return False
     metrics = gate.get("kinematicPlausibilityMetrics") or {}
@@ -12565,12 +12555,12 @@ def motion_gate_allows_pending_controlled_repair(gate: dict[str, Any]) -> bool:
         artifacts.remove("bone_orientation_discontinuity")
     if artifacts - {"root_translation_discontinuity", "limb_velocity_spike_penalty", "joint_angle_spike_penalty"}:
         return False
-    if "raw_wham_kinematic_artifact" in reasons and not metrics.get("artifactReasons"):
+    if "raw_reconstruction_kinematic_artifact" in reasons and not metrics.get("artifactReasons"):
         return False
     return True
 
 
-def raw_wham_motion_gate_allows_cleaned_recovery(gate: dict[str, Any]) -> bool:
+def raw_reconstruction_motion_gate_allows_cleaned_recovery(gate: dict[str, Any]) -> bool:
     """Allow cleanup to prove recovery from defects that cleanup owns.
 
     The number of isolated spikes naturally grows with clip duration, so an
@@ -12590,11 +12580,11 @@ def raw_wham_motion_gate_allows_cleaned_recovery(gate: dict[str, Any]) -> bool:
         str(reason) for reason in gate.get("rejectionReasons", []) if str(reason)
     }
     cleanup_owned_reasons = {
-        "raw_wham_rigid_two_hand_spacing_instability",
-        "raw_wham_rigid_two_hand_equipment_distortion",
-        "raw_wham_source_pose_joint_mismatch",
-        "raw_wham_source_support_posture_mismatch",
-        "raw_wham_source_joint_angle_mismatch",
+        "raw_reconstruction_rigid_two_hand_spacing_instability",
+        "raw_reconstruction_rigid_two_hand_equipment_distortion",
+        "raw_reconstruction_source_pose_joint_mismatch",
+        "raw_reconstruction_source_support_posture_mismatch",
+        "raw_reconstruction_source_joint_angle_mismatch",
     }
     if (
         rejection_reasons
@@ -12610,7 +12600,7 @@ def raw_wham_motion_gate_allows_cleaned_recovery(gate: dict[str, Any]) -> bool:
     # Camera-space depth estimates can move the entire body between frames.
     # Support placement and root smoothing own this correction; the repaired
     # clip must still pass the same gate in evaluate_generated_motion_recovery_gate.
-    if rejection_reasons - (cleanup_owned_reasons | {"raw_wham_kinematic_artifact"}):
+    if rejection_reasons - (cleanup_owned_reasons | {"raw_reconstruction_kinematic_artifact"}):
         return False
     if not artifact_reasons:
         return bool(controlled_repair_input_reasons(metrics))
@@ -12638,7 +12628,7 @@ def prefer_kinematically_safe_baked_artifacts(
     safe_artifacts: list[BakedLoopArtifact] = []
     for artifact in artifacts:
         try:
-            gate = evaluate_raw_wham_motion_gate(artifact.skeleton_path)
+            gate = evaluate_raw_reconstruction_motion_gate(artifact.skeleton_path)
         except Exception:
             continue
         artifact.export_payload["preSelectionKinematicGate"] = gate.get("kinematicPlausibilityMetrics")
@@ -13208,7 +13198,7 @@ def source_confirmed_support_stationarity_metrics(
     motion_payload: dict[str, Any],
     source_foot_support_evidence: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Check that WHAM preserves support which is stationary in source pixels.
+    """Check that RECONSTRUCTION preserves support which is stationary in source pixels.
 
     Unsupported, moving, or unavailable feet do not fail it. Full-clip
     continuous support is judged against the same planted-foot limits used on
@@ -13386,7 +13376,7 @@ def source_confirmed_support_stationarity_metrics(
                 else SOURCE_POSE_CONTACT_LOCAL_RANGE_RATIO_THRESHOLD
             )
             # Keep the same planted-foot limits used on source pixels.
-            # Do not tighten them from 2D source stillness: WHAM 3D ankle
+            # Do not tighten them from 2D source stillness: RECONSTRUCTION 3D ankle
             # travel is a different quantity and routinely exceeds a still
             # 2D support foot during kneeling rollouts, split squats, and
             # similar work without visible skating in the Wear preview.
@@ -14528,7 +14518,7 @@ def full_repetition_phase_completeness_metrics_from_skeleton_path(
     end_seconds: float | None = None,
     fallback_to_full: bool = False,
 ) -> dict[str, Any]:
-    payload = json.loads(skeleton_path.read_text(encoding="utf-8"))
+    payload = loads_reconstruction_metadata(skeleton_path.read_text(encoding="utf-8"))
     frames_value = payload.get("frames")
     frames = [
         frame
@@ -15425,7 +15415,7 @@ def source_capture_time_range_for_item(item: ReviewItem) -> tuple[float, float] 
 
 
 def compute_motion_strength_metrics(skeleton_path: Path) -> dict[str, Any]:
-    payload = json.loads(skeleton_path.read_text(encoding="utf-8"))
+    payload = loads_reconstruction_metadata(skeleton_path.read_text(encoding="utf-8"))
     return compute_motion_strength_metrics_from_payload(payload)
 
 
@@ -15589,7 +15579,7 @@ def compute_source_capture_motion_strength_metrics(
     start_seconds: float | None = None,
     end_seconds: float | None = None,
 ) -> dict[str, Any]:
-    payload = json.loads(skeleton_path.read_text(encoding="utf-8"))
+    payload = loads_reconstruction_metadata(skeleton_path.read_text(encoding="utf-8"))
     reference_frames = source_capture_reference_frames(
         payload,
         start_seconds=start_seconds,
@@ -15782,13 +15772,13 @@ def phase_joint_preference(
 
 
 def compute_kinematic_plausibility_metrics(skeleton_path: Path) -> dict[str, Any]:
-    payload = json.loads(skeleton_path.read_text(encoding="utf-8"))
+    payload = loads_reconstruction_metadata(skeleton_path.read_text(encoding="utf-8"))
     return compute_kinematic_plausibility_metrics_from_payload(payload)
 
 
 def compute_hand_lock_arm_distortion_metrics(skeleton_path: Path) -> dict[str, Any]:
     try:
-        payload = json.loads(skeleton_path.read_text(encoding="utf-8"))
+        payload = loads_reconstruction_metadata(skeleton_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return empty_hand_lock_arm_distortion_metrics()
     return compute_hand_lock_arm_distortion_metrics_from_payload(payload)
@@ -15857,7 +15847,7 @@ def empty_hand_lock_arm_distortion_metrics(*, frame_count: int = 0) -> dict[str,
 
 def compute_paired_hands_preservation_metrics(skeleton_path: Path) -> dict[str, Any]:
     try:
-        payload = json.loads(skeleton_path.read_text(encoding="utf-8"))
+        payload = loads_reconstruction_metadata(skeleton_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return empty_paired_hands_preservation_metrics()
     return compute_paired_hands_preservation_metrics_from_payload(payload)
@@ -16921,7 +16911,7 @@ def evaluate_baked_motion_gate(skeleton_path: Path) -> dict[str, Any]:
 
 
 def compute_loop_continuity_metrics(skeleton_path: Path) -> dict[str, Any]:
-    payload = json.loads(skeleton_path.read_text(encoding="utf-8"))
+    payload = loads_reconstruction_metadata(skeleton_path.read_text(encoding="utf-8"))
     return compute_loop_continuity_metrics_from_payload(payload)
 
 
@@ -16975,7 +16965,7 @@ def compute_loop_continuity_metrics_from_payload(
 
 
 def compute_loop_bridge_quality_metrics(skeleton_path: Path) -> dict[str, Any]:
-    payload = json.loads(skeleton_path.read_text(encoding="utf-8"))
+    payload = loads_reconstruction_metadata(skeleton_path.read_text(encoding="utf-8"))
     return compute_loop_bridge_quality_metrics_from_payload(payload)
 
 
@@ -17119,7 +17109,7 @@ def compute_preview_readability_metrics(
     *,
     camera_yaw_degrees: float = FIXED_PREVIEW_CAMERA_YAW_DEGREES,
 ) -> dict[str, Any]:
-    payload = json.loads(skeleton_path.read_text(encoding="utf-8"))
+    payload = loads_reconstruction_metadata(skeleton_path.read_text(encoding="utf-8"))
     return compute_preview_readability_metrics_from_payload(
         payload,
         camera_yaw_degrees=camera_yaw_degrees,
@@ -17344,7 +17334,7 @@ def score_review_windows_by_skeleton_motion(
     windows: list[DetectionWindow],
 ) -> list[ReviewWindowCandidate]:
     try:
-        payload = json.loads(item.skeleton_path.read_text(encoding="utf-8"))
+        payload = loads_reconstruction_metadata(item.skeleton_path.read_text(encoding="utf-8"))
     except Exception:
         return [
             ReviewWindowCandidate(
@@ -17455,7 +17445,7 @@ def propose_tight_skeleton_motion_window(
     padding_seconds: float,
 ) -> ActiveMotionWindowProposal | None:
     try:
-        payload = json.loads(item.skeleton_path.read_text(encoding="utf-8"))
+        payload = loads_reconstruction_metadata(item.skeleton_path.read_text(encoding="utf-8"))
     except Exception:
         return None
     video_window = DetectionWindow(
@@ -17947,7 +17937,7 @@ def build_exercise_motion_contract_resolver(
     caption_images: Callable[..., str] | None,
     run_llama_exclusive: Callable[[Callable[[], Any]], Any] | None = None,
 ) -> ExerciseMotionContractResolver | None:
-    if not request.pre_wham_source_validation or not request.exercise_motion_contract_enabled:
+    if not request.pre_reconstruction_source_validation or not request.exercise_motion_contract_enabled:
         return None
     cache: dict[str, dict[str, Any] | None] = {}
     cache_lock = threading.Lock()
@@ -18209,16 +18199,11 @@ def run_bake_and_rank_pipeline(
         "rankPreviewVariants": request.rank_preview_variants,
         "adaptivePreviewSettings": request.adaptive_preview_settings,
         "classifySupportDominance": request.classify_support_dominance,
-        "whamRunSmplify": request.wham_run_smplify,
-        "whamEstimateLocalOnly": request.wham_estimate_local_only,
-        "useWhamDocker": request.use_wham_docker,
-        "useWarmWhamWorker": request.use_warm_wham_worker,
-        "whamWorkerSessionDir": str(request.wham_worker_session_dir) if request.wham_worker_session_dir is not None else None,
-        "whamWorkerMountRoot": str(request.wham_worker_mount_root) if request.wham_worker_mount_root is not None else None,
+        "useReconstructionDocker": request.use_reconstruction_docker,
         "useWarmGvhmrWorker": request.use_warm_gvhmr_worker,
         "gvhmrWorkerSessionDir": str(request.gvhmr_worker_session_dir) if request.gvhmr_worker_session_dir is not None else None,
         "gvhmrWorkerMountRoot": str(request.gvhmr_worker_mount_root) if request.gvhmr_worker_mount_root is not None else None,
-        "whamTimeoutSeconds": request.wham_timeout_seconds,
+        "reconstructionTimeoutSeconds": request.reconstruction_timeout_seconds,
         "sourceReviewTimeoutSeconds": request.source_review_timeout_seconds,
         "finalReviewTimeoutSeconds": request.final_review_timeout_seconds,
         "candidateTimeoutSeconds": request.candidate_timeout_seconds,
@@ -18257,14 +18242,14 @@ def run_bake_and_rank_pipeline(
         candidates = prioritize_ranked_candidates_for_reconstruction(candidates)
     else:
         pipeline_timings["preparedCandidateOverrideCount"] = len(candidates)
-    pipeline_timings["preWhamCandidatePriority"] = [
+    pipeline_timings["preReconstructionCandidatePriority"] = [
         {
             "videoId": candidate.video_id,
-            "originalOrder": candidate.candidate.get("preWhamOriginalOrder"),
+            "originalOrder": candidate.candidate.get("preReconstructionOriginalOrder"),
             "reconstructionPriorityScore": candidate.candidate.get(
-                "preWhamReconstructionPriorityScore"
+                "preReconstructionReconstructionPriorityScore"
             ),
-            "yoloTrackabilityScore": candidate.candidate.get("preWhamYoloTrackabilityScore"),
+            "yoloTrackabilityScore": candidate.candidate.get("preReconstructionYoloTrackabilityScore"),
         }
         for candidate in candidates
     ]
@@ -18287,7 +18272,7 @@ def run_bake_and_rank_pipeline(
             request.classify_support_dominance
             or section_selection_enabled(request)
             or request.adaptive_preview_settings
-            or request.pre_wham_source_validation
+            or request.pre_reconstruction_source_validation
             or request.two_scale_source_validation
             or (
                 request.comparative_segment_selection_enabled
@@ -18304,7 +18289,7 @@ def run_bake_and_rank_pipeline(
             if vision_session is not None:
                 caption_images = vision_session.caption_images
                 pipeline_timings["visionRankerMode"] = (
-                    "lazy_wham_exclusive" if owns_vision_session else "shared_staged_wave"
+                    "lazy_reconstruction_exclusive" if owns_vision_session else "shared_staged_wave"
                 )
         if request.classify_support_dominance:
             support_dominance_classifier = caption_images
@@ -18336,7 +18321,7 @@ def run_bake_and_rank_pipeline(
         rejected_best: SelectedArtifact | None = None
         source_cut_caption_images = (
             caption_images
-            if request.pre_wham_source_validation and caption_images is not None
+            if request.pre_reconstruction_source_validation and caption_images is not None
             else None
         )
         final_output_caption_images = (
@@ -18349,7 +18334,7 @@ def run_bake_and_rank_pipeline(
             caption_images=source_cut_caption_images,
             run_llama_exclusive=vision_session.run_without_llama_overlap if vision_session is not None else None,
         )
-        run_wham_exclusive = (
+        run_reconstruction_exclusive = (
             vision_session.run_without_llama_overlap if vision_session is not None else None
         )
         candidate_processing_started = time.perf_counter()
@@ -18373,7 +18358,7 @@ def run_bake_and_rank_pipeline(
                 source_cut_caption_images=source_cut_caption_images,
                 exercise_motion_contract_resolver=exercise_motion_contract_resolver,
                 final_output_caption_images=final_output_caption_images,
-                run_wham_exclusive=run_wham_exclusive,
+                run_reconstruction_exclusive=run_reconstruction_exclusive,
                 prepared_candidate_video_paths=prepared_candidate_video_paths,
             )
             pipeline_timings["candidateSelectionMode"] = "incremental_queue_until_final_selection"
@@ -18387,7 +18372,7 @@ def run_bake_and_rank_pipeline(
                 support_dominance_classifier=support_dominance_classifier,
                 source_cut_caption_images=source_cut_caption_images,
                 exercise_motion_contract_resolver=exercise_motion_contract_resolver,
-                run_wham_exclusive=run_wham_exclusive,
+                run_reconstruction_exclusive=run_reconstruction_exclusive,
                 prepared_candidate_video_paths=prepared_candidate_video_paths,
             )
             pipeline_timings["candidateSelectionMode"] = "parallel_ready_candidate_requests_then_selection"
@@ -18596,17 +18581,17 @@ def candidate_result_segment_selection_manifest(result: dict[str, Any]) -> dict[
     if not path.exists():
         return None
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = loads_reconstruction_metadata(path.read_text(encoding="utf-8"))
     except Exception:
         return None
     return payload if isinstance(payload, dict) else None
 
 
-def candidate_result_used_pre_wham_child_source_cut(result: dict[str, Any]) -> bool:
+def candidate_result_used_pre_reconstruction_child_source_cut(result: dict[str, Any]) -> bool:
     payload = candidate_result_segment_selection_manifest(result)
     if not isinstance(payload, dict):
         return False
-    if str(payload.get("sourcePrepReason") or "") != "pre_wham_source_window_choice":
+    if str(payload.get("sourcePrepReason") or "") != "pre_reconstruction_source_window_choice":
         return False
     parent_payload = payload.get("candidateSourceWindow")
     selected_payload = payload.get("selectedSpan")
@@ -18740,16 +18725,16 @@ def source_family_failure_stage(
         return None
     status = str(result.get("status") or "").strip()
     if status in {
-        "rejected_raw_wham_validation",
-        "rejected_incomplete_wham_tracking",
-        "rejected_wham_validation",
+        "rejected_raw_reconstruction_validation",
+        "rejected_incomplete_reconstruction_tracking",
+        "rejected_reconstruction_validation",
     }:
         # Reconstruction failures are pipeline/configuration dependent and
         # recoverable through another window or track.
         return None
     if status in {
         "skipped_source_gate",
-        "skipped_pre_wham_source_validation",
+        "skipped_pre_reconstruction_source_validation",
     } or candidate_result_source_segment_detection_no_span(result):
         return "source_validation"
     if status == "failed":
@@ -18757,7 +18742,7 @@ def source_family_failure_stage(
     return None
 
 
-def pre_wham_source_rejection_reason_tags(result: dict[str, Any]) -> list[str]:
+def pre_reconstruction_source_rejection_reason_tags(result: dict[str, Any]) -> list[str]:
     reasons: list[str] = []
     for failure in result.get("failures") or []:
         if not isinstance(failure, dict):
@@ -18789,12 +18774,12 @@ def pre_wham_source_rejection_reason_tags(result: dict[str, Any]) -> list[str]:
                         reject = row.get("reject")
                         if isinstance(reject, list):
                             reasons.extend(f"source_cut_{tag}" for tag in reject if str(tag))
-        if parse_optional_bool(segment_payload.get("preWhamParentSourceWindowFallback")) is True:
-            fallback_reason = str(segment_payload.get("preWhamParentSourceWindowFallbackReason") or "").strip()
+        if parse_optional_bool(segment_payload.get("preReconstructionParentSourceWindowFallback")) is True:
+            fallback_reason = str(segment_payload.get("preReconstructionParentSourceWindowFallbackReason") or "").strip()
             if fallback_reason:
                 reasons.append(fallback_reason)
-    if not reasons and str(result.get("status") or "") == "skipped_pre_wham_source_validation":
-        reasons.append("pre_wham_source_validation_rejected")
+    if not reasons and str(result.get("status") or "") == "skipped_pre_reconstruction_source_validation":
+        reasons.append("pre_reconstruction_source_validation_rejected")
     return dedupe_text(reasons)
 
 
@@ -18829,7 +18814,7 @@ def candidate_result_source_segment_detection_no_span(result: dict[str, Any]) ->
     return False
 
 
-def should_queue_parent_source_window_fallback_after_pre_wham_rejection(
+def should_queue_parent_source_window_fallback_after_pre_reconstruction_rejection(
     ranked_candidate: RankedCandidate,
     result: dict[str, Any],
     *,
@@ -18849,25 +18834,25 @@ def should_queue_parent_source_window_fallback_after_pre_wham_rejection(
     segment_detection_no_span = candidate_result_source_segment_detection_no_span(result)
     source_window_too_short = "source_window_too_short_for_full_cycle" in source_gate_reasons
     if (
-        status not in {"skipped_pre_wham_source_validation", "needs_source_review"}
+        status not in {"skipped_pre_reconstruction_source_validation", "needs_source_review"}
         and not segment_detection_no_span
         and not source_window_too_short
     ):
         return False, None
     if broader_parent_source_window_hint(ranked_candidate, request=request) is None:
         return False, None
-    reason_tags = pre_wham_source_rejection_reason_tags(result)
+    reason_tags = pre_reconstruction_source_rejection_reason_tags(result)
     if segment_detection_no_span:
         reason_tags.append("source_segment_detection_no_usable_span")
     if source_window_too_short:
         reason_tags.append("source_window_too_short_for_full_cycle")
     reason_tags = dedupe_text(reason_tags)
-    if any(reason in PRE_WHAM_PARENT_SOURCE_WINDOW_FALLBACK_BLOCK_REASONS for reason in reason_tags):
+    if any(reason in PRE_RECONSTRUCTION_PARENT_SOURCE_WINDOW_FALLBACK_BLOCK_REASONS for reason in reason_tags):
         return False, None
     for reason in reason_tags:
         if reason in PARENT_SOURCE_WINDOW_FALLBACK_REJECTION_REASONS:
             return True, reason
-    return True, "pre_wham_source_validation_rejected"
+    return True, "pre_reconstruction_source_validation_rejected"
 
 
 def should_queue_parent_source_window_fallback(
@@ -18891,11 +18876,11 @@ def should_queue_parent_source_window_fallback(
         for reason in rejection_reasons
     ):
         return False, None
-    used_pre_wham_child = candidate_result_used_pre_wham_child_source_cut(result)
+    used_pre_reconstruction_child = candidate_result_used_pre_reconstruction_child_source_cut(result)
     for reason in rejection_reasons:
         if reason not in PARENT_SOURCE_WINDOW_FALLBACK_REJECTION_REASONS:
             continue
-        if used_pre_wham_child:
+        if used_pre_reconstruction_child:
             return True, reason
         if (
             rejected is not None
@@ -18924,7 +18909,7 @@ def run_bake_and_rank_reselection(
     selection_path = workspace / "selection_manifest.json"
     if not selection_path.exists():
         raise FileNotFoundError(f"Selection manifest not found: {selection_path}")
-    existing_manifest = json.loads(selection_path.read_text(encoding="utf-8"))
+    existing_manifest = loads_reconstruction_metadata(selection_path.read_text(encoding="utf-8"))
     request = bake_and_rank_request_from_selection_manifest(
         existing_manifest,
         workspace=workspace,
@@ -19275,7 +19260,7 @@ def revalidate_library_workspace(
 
         directory = exercise_workspace / "selected"
         try:
-            manifest = json.loads((directory / "selection_manifest.json").read_text(encoding="utf-8"))
+            manifest = loads_reconstruction_metadata((directory / "selection_manifest.json").read_text(encoding="utf-8"))
             exercise_id, exercise_name = exercise_identity(manifest, exercise_workspace)
             context = motion_context_by_exercise_id.get(exercise_id, {})
             return selected_artifact_identity(
@@ -19295,7 +19280,7 @@ def revalidate_library_workspace(
         if not marker_path.exists():
             return None
         try:
-            marker = json.loads(marker_path.read_text(encoding="utf-8"))
+            marker = loads_reconstruction_metadata(marker_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return None
         identity = current_artifact_identity(exercise_workspace)
@@ -19329,10 +19314,10 @@ def revalidate_library_workspace(
             < RETAINED_SELECTED_REVALIDATION_VERSION
         ):
             return None
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest = loads_reconstruction_metadata(manifest_path.read_text(encoding="utf-8"))
         if selected_manifest_path.exists():
             try:
-                selected_manifest = json.loads(
+                selected_manifest = loads_reconstruction_metadata(
                     selected_manifest_path.read_text(encoding="utf-8")
                 )
                 if isinstance(selected_manifest, dict):
@@ -19369,10 +19354,10 @@ def revalidate_library_workspace(
             progress(f"Revalidation: 0/{total} completed.")
 
     def precompute_previous_selection(exercise_workspace: Path) -> tuple[Path, tuple[Any, ...], dict[str, Any]] | None:
-        existing = json.loads(workspace_manifest_path(exercise_workspace).read_text(encoding="utf-8"))
+        existing = loads_reconstruction_metadata(workspace_manifest_path(exercise_workspace).read_text(encoding="utf-8"))
         selected_manifest_path = exercise_workspace / "selected" / "selection_manifest.json"
         selected_manifest = (
-            json.loads(selected_manifest_path.read_text(encoding="utf-8"))
+            loads_reconstruction_metadata(selected_manifest_path.read_text(encoding="utf-8"))
             if selected_manifest_path.exists()
             else existing
         )
@@ -19439,7 +19424,7 @@ def revalidate_library_workspace(
     validation_workers = deterministic_workers
     if caption_images is None and pending_workspaces:
         first_manifest_path = workspace_manifest_path(pending_workspaces[0])
-        first_manifest = json.loads(first_manifest_path.read_text(encoding="utf-8"))
+        first_manifest = loads_reconstruction_metadata(first_manifest_path.read_text(encoding="utf-8"))
         first_request = current_revalidation_request(
             first_manifest,
             workspace=first_manifest_path.parent,
@@ -19463,13 +19448,13 @@ def revalidate_library_workspace(
         starting_identity = current_artifact_identity(exercise_workspace)
         bake_workspace = exercise_workspace / "bake"
         selection_path = workspace_manifest_path(exercise_workspace)
-        existing = json.loads(selection_path.read_text(encoding="utf-8"))
+        existing = loads_reconstruction_metadata(selection_path.read_text(encoding="utf-8"))
         selected_manifest_path = exercise_workspace / "selected" / "selection_manifest.json"
         previous_selected_entry: dict[str, Any] | None = None
         selected_manifest: dict[str, Any] | None = None
         if selected_manifest_path.exists():
             try:
-                selected_manifest = json.loads(selected_manifest_path.read_text(encoding="utf-8"))
+                selected_manifest = loads_reconstruction_metadata(selected_manifest_path.read_text(encoding="utf-8"))
                 selected_payload = retained_selected_payload(selected_manifest, exercise_workspace)
                 if isinstance(selected_payload, dict):
                     previous_selected_entry = selected_payload
@@ -19633,8 +19618,8 @@ def revalidate_library_workspace(
                     previous_selected_entry["candidate"] = candidate_payload
                     selected_manifest["sourceSelectionPolicyVersion"] = SOURCE_SELECTION_POLICY_VERSION
                     selected_manifest.setdefault(
-                        "preWhamSourceValidationEnabled",
-                        bool(request.pre_wham_source_validation),
+                        "preReconstructionSourceValidationEnabled",
+                        bool(request.pre_reconstruction_source_validation),
                     )
                     selected_manifest["selected"] = previous_selected_entry
                     write_json_atomic(selected_manifest_path, selected_manifest)
@@ -19991,7 +19976,7 @@ def selection_manifest_exercise_name(manifest: dict[str, Any]) -> str | None:
 def terminal_source_family_block_reason(result: dict[str, Any]) -> str | None:
     """Return a video-global failure, never a failure of one sampled window.
 
-    WHAM tracking coverage and kinematic artifacts depend on the selected time
+    RECONSTRUCTION tracking coverage and kinematic artifacts depend on the selected time
     window and therefore must not suppress sibling windows from the same video.
     Video identity failures are applied later from materialized review.
     """
@@ -20031,7 +20016,6 @@ def bake_and_rank_request_from_selection_manifest(
     return BakeAndRankRequest(
         candidates_json=candidates_json,
         workspace=workspace,
-        wham_repo_path=None,
         body_model_root=None,
         youtube_preview_cache_dir=(
             Path(str(manifest["youtubePreviewCacheReadThroughDir"]))
@@ -20086,11 +20070,11 @@ def bake_and_rank_request_from_selection_manifest(
         comparative_segment_selection_enabled=bool(
             manifest.get("comparativeSegmentSelectionEnabled", False)
         ),
-        pre_wham_source_validation=bool(
-            manifest.get("preWhamSourceValidationEnabled", True)
+        pre_reconstruction_source_validation=bool(
+            manifest.get("preReconstructionSourceValidationEnabled", True)
         ),
-        pre_wham_source_validation_explicitly_disabled=bool(
-            manifest.get("preWhamSourceValidationExplicitlyDisabled", False)
+        pre_reconstruction_source_validation_explicitly_disabled=bool(
+            manifest.get("preReconstructionSourceValidationExplicitlyDisabled", False)
         ),
         two_scale_source_validation=bool(manifest.get("twoScaleSourceValidationEnabled", False)),
         final_output_validation_min_score=float(
@@ -20126,7 +20110,7 @@ def write_selected_result_preview_htmls(
         item, ranking = selected
         if item.skeleton_path.is_file():
             from .preview import write_baked_preview_html
-            export = json.loads(item.skeleton_path.read_text(encoding="utf-8"))
+            export = loads_reconstruction_metadata(item.skeleton_path.read_text(encoding="utf-8"))
             if export.get("frames") and export.get("jointNames"):
                 interactive = workspace / (Path(filename).stem + "_interactive.html")
                 module = next((directory / "three.module.0.169.0.js" for directory in (
@@ -20428,7 +20412,7 @@ def apply_artifact_retention_policy(
     if not manifest.get("selected"):
         for checkpoint in workspace.rglob("*checkpoint.json"):
             try:
-                record = json.loads(checkpoint.read_text(encoding="utf-8"))
+                record = loads_reconstruction_metadata(checkpoint.read_text(encoding="utf-8"))
                 for identity in record.get("outputs", []):
                     output = Path(identity["path"]).resolve()
                     if path_is_relative_to(output, workspace_resolved) and output.is_file():
@@ -20557,7 +20541,7 @@ def selected_output_manifest_paths(workspace: Path, *, exercise_slug: str | None
 
 def audit_selected_output_manifest(selection_manifest_path: Path) -> dict[str, Any]:
     try:
-        manifest = json.loads(selection_manifest_path.read_text(encoding="utf-8"))
+        manifest = loads_reconstruction_metadata(selection_manifest_path.read_text(encoding="utf-8"))
     except Exception as exc:
         return {
             "selectionManifestPath": str(selection_manifest_path),
@@ -20680,7 +20664,7 @@ def audit_artifact_package_state(
     try:
         persisted_payload = None
         if skeleton_path is not None and skeleton_path.is_file():
-            persisted_payload = json.loads(skeleton_path.read_text(encoding="utf-8"))
+            persisted_payload = loads_reconstruction_metadata(skeleton_path.read_text(encoding="utf-8"))
         artifact_state = validate_artifact_state(
             entry.get("artifactState"),
             movement_payload=persisted_payload,
@@ -21089,13 +21073,13 @@ def collect_artifact_retention_protected_paths(workspace: Path, manifest: dict[s
             artifact = candidate_workspace / relative
             if artifact.is_file() and path_is_relative_to(artifact.resolve(), workspace.resolve()):
                 protected.add(artifact.resolve())
-        # A retry needs the same padded WHAM input, not just the selected clip.
+        # A retry needs the same padded RECONSTRUCTION input, not just the selected clip.
         # Removing its context source silently changes inference preparation.
         selection_path = candidate_workspace / "segment_detection" / "segment_selection.json"
         if not path_is_relative_to(selection_path.resolve(), workspace.resolve()):
             continue
         try:
-            selection = json.loads(selection_path.read_text(encoding="utf-8"))
+            selection = loads_reconstruction_metadata(selection_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
         if not isinstance(selection, dict):
@@ -21105,7 +21089,7 @@ def collect_artifact_retention_protected_paths(workspace: Path, manifest: dict[s
             value = selection.get(key)
             if not isinstance(value, str) or not value:
                 continue
-            # Match prepare_wham_inference_video's path interpretation.
+            # Match prepare_reconstruction_inference_video's path interpretation.
             source = Path(value).expanduser().resolve()
             if path_is_relative_to(source, workspace.resolve()) and source.is_file():
                 protected.add(source)
@@ -21202,7 +21186,7 @@ def process_ranked_candidates_until_final_selection(
     source_cut_caption_images: Callable[..., str] | None = None,
     exercise_motion_contract_resolver: ExerciseMotionContractResolver | None = None,
     final_output_caption_images: Callable[..., str] | None = None,
-    run_wham_exclusive: WhamExclusiveRunner | None = None,
+    run_reconstruction_exclusive: ReconstructionExclusiveRunner | None = None,
     prepared_candidate_video_paths: Mapping[str, Path] | None = None,
 ) -> tuple[
     list[dict[str, Any]],
@@ -21435,7 +21419,7 @@ def process_ranked_candidates_until_final_selection(
             "review_item_entries": local_review_item_entries,
             "support_dominance_classifier": support_dominance_classifier,
             "source_cut_caption_images": source_cut_caption_images,
-            "run_wham_exclusive": run_wham_exclusive,
+            "run_reconstruction_exclusive": run_reconstruction_exclusive,
         }
         if exercise_motion_contract_resolver is not None:
             process_kwargs["exercise_motion_contract_resolver"] = exercise_motion_contract_resolver
@@ -21533,7 +21517,7 @@ def process_ranked_candidates_until_final_selection(
                 (
                     should_queue_parent,
                     parent_fallback_reason,
-                ) = should_queue_parent_source_window_fallback_after_pre_wham_rejection(
+                ) = should_queue_parent_source_window_fallback_after_pre_reconstruction_rejection(
                     ranked_candidate,
                     result,
                     request=request,
@@ -21795,7 +21779,7 @@ def process_ranked_candidates_until_final_selection(
                 ranked_candidate,
                 reason=parent_fallback_reason,
                 request=request,
-                prefer_broader_parent=not candidate_result_used_pre_wham_child_source_cut(result),
+                prefer_broader_parent=not candidate_result_used_pre_reconstruction_child_source_cut(result),
             )
             if parent_fallback_candidate is not None:
                 parent_fallback_key = ranked_candidate_attempt_key(parent_fallback_candidate)
@@ -21868,15 +21852,15 @@ def process_ranked_candidates_until_final_selection(
             timings["terminalOutcome"] = "final_output_rejected"
         elif statuses.intersection(
             {
-                "rejected_raw_wham_validation",
-                "rejected_incomplete_wham_tracking",
-                "rejected_wham_validation",
+                "rejected_raw_reconstruction_validation",
+                "rejected_incomplete_reconstruction_tracking",
+                "rejected_reconstruction_validation",
             }
         ):
             timings["terminalOutcome"] = "reconstruction_tracking_failed"
         elif "needs_source_review" in statuses:
             timings["terminalOutcome"] = "source_review_required"
-        elif statuses.intersection({"skipped_source_gate", "skipped_pre_wham_source_validation"}):
+        elif statuses.intersection({"skipped_source_gate", "skipped_pre_reconstruction_source_validation"}):
             timings["terminalOutcome"] = "source_validation_exhausted"
         else:
             timings["terminalOutcome"] = "candidate_evidence_exhausted"
@@ -21958,7 +21942,7 @@ def process_ranked_candidates_for_selection(
     support_dominance_classifier: Callable[[list[Path], str], str] | None,
     source_cut_caption_images: Callable[..., str] | None = None,
     exercise_motion_contract_resolver: ExerciseMotionContractResolver | None = None,
-    run_wham_exclusive: WhamExclusiveRunner | None = None,
+    run_reconstruction_exclusive: ReconstructionExclusiveRunner | None = None,
     prepared_candidate_video_paths: Mapping[str, Path] | None = None,
 ) -> tuple[list[dict[str, Any]], list[ReviewItem], list[dict[str, Any]]]:
     fallback_ready_target = ready_candidate_target_for_request(request)
@@ -21980,7 +21964,7 @@ def process_ranked_candidates_for_selection(
     candidates_to_process, skipped_by_original_index = ranked_candidates_to_process_with_previous_terminal_skips(
         candidates,
         request=request,
-        # When pre-WHAM validation is enabled, we still want to limit *which
+        # When pre-RECONSTRUCTION validation is enabled, we still want to limit *which
         # candidates* get processed to the configured fallback budget. The
         # additional `candidate_attempt_limit` headroom is reserved for
         # retrying within an already-launched candidate, not for launching
@@ -22010,7 +21994,7 @@ def process_ranked_candidates_for_selection(
                 "review_item_entries": local_review_item_entries,
                 "support_dominance_classifier": support_dominance_classifier,
                 "source_cut_caption_images": source_cut_caption_images,
-                "run_wham_exclusive": run_wham_exclusive,
+                "run_reconstruction_exclusive": run_reconstruction_exclusive,
                 "deadline": next_candidate_deadline(),
             }
             if exercise_motion_contract_resolver is not None:
@@ -22025,7 +22009,7 @@ def process_ranked_candidates_for_selection(
             processed_by_original_index[original_index] = (result, local_review_items, local_review_item_entries)
             if result.get("status") == "ready_for_selection":
                 ready_candidate_count += 1
-            if not request.pre_wham_source_validation and ready_candidate_count >= fallback_ready_target:
+            if not request.pre_reconstruction_source_validation and ready_candidate_count >= fallback_ready_target:
                 break
         return collect_candidate_processing_results_in_source_order(
             processed_by_original_index,
@@ -22051,7 +22035,7 @@ def process_ranked_candidates_for_selection(
                 support_dominance_classifier,
                 source_cut_caption_images,
                 exercise_motion_contract_resolver,
-                run_wham_exclusive,
+                run_reconstruction_exclusive,
                 (
                     prepared_candidate_video_paths.get(ranked_candidate.workspace_slug)
                     if prepared_candidate_video_paths is not None
@@ -22071,7 +22055,7 @@ def process_ranked_candidates_for_selection(
                 index = futures.pop(future)
                 results_by_index[index] = future.result()
                 if (
-                    not request.pre_wham_source_validation
+                    not request.pre_reconstruction_source_validation
                     and ready_candidate_count_in_prefix(results_by_index) >= fallback_ready_target
                 ):
                     for pending in futures:
@@ -22082,7 +22066,7 @@ def process_ranked_candidates_for_selection(
                     next_index < len(candidates_to_process)
                     and len(futures) < workers
                     and (
-                        request.pre_wham_source_validation
+                        request.pre_reconstruction_source_validation
                         or ready_candidate_capacity_in_launched_prefix(results_by_index, next_index)
                         < fallback_ready_target
                     )
@@ -22095,7 +22079,7 @@ def process_ranked_candidates_for_selection(
                         support_dominance_classifier,
                         source_cut_caption_images,
                         exercise_motion_contract_resolver,
-                        run_wham_exclusive,
+                        run_reconstruction_exclusive,
                         (
                             prepared_candidate_video_paths.get(ranked_candidate.workspace_slug)
                             if prepared_candidate_video_paths is not None
@@ -22148,7 +22132,7 @@ def collect_candidate_processing_results_in_source_order(
         review_item_entries.extend(local_review_item_entries)
         if result.get("status") == "ready_for_selection":
             ready_count += 1
-        if not request.pre_wham_source_validation and ready_count >= fallback_ready_target:
+        if not request.pre_reconstruction_source_validation and ready_count >= fallback_ready_target:
             break
     return candidate_results, review_items, review_item_entries
 
@@ -22189,7 +22173,7 @@ def process_ranked_candidate_isolated(
     support_dominance_classifier: Callable[[list[Path], str], str] | None,
     source_cut_caption_images: Callable[..., str] | None,
     exercise_motion_contract_resolver: ExerciseMotionContractResolver | None = None,
-    run_wham_exclusive: WhamExclusiveRunner | None = None,
+    run_reconstruction_exclusive: ReconstructionExclusiveRunner | None = None,
     prepared_video_path: Path | None = None,
     deadline: float | None = None,
 ) -> tuple[dict[str, Any], list[ReviewItem], list[dict[str, Any]]]:
@@ -22202,7 +22186,7 @@ def process_ranked_candidate_isolated(
         "review_item_entries": review_item_entries,
         "support_dominance_classifier": support_dominance_classifier,
         "source_cut_caption_images": source_cut_caption_images,
-        "run_wham_exclusive": run_wham_exclusive,
+        "run_reconstruction_exclusive": run_reconstruction_exclusive,
         "deadline": deadline,
     }
     if exercise_motion_contract_resolver is not None:
@@ -22260,7 +22244,7 @@ def process_ranked_candidate(
     support_dominance_classifier: Callable[[list[Path], str], str] | None,
     source_cut_caption_images: Callable[..., str] | None = None,
     exercise_motion_contract_resolver: ExerciseMotionContractResolver | None = None,
-    run_wham_exclusive: WhamExclusiveRunner | None = None,
+    run_reconstruction_exclusive: ReconstructionExclusiveRunner | None = None,
     prepared_video_path: Path | None = None,
     deadline: float | None = None,
 ) -> dict[str, Any]:
@@ -22332,19 +22316,19 @@ def process_ranked_candidate(
         }
         if callable_accepts_keyword(generate_candidate_motion, "candidate_deadline"):
             generate_kwargs["candidate_deadline"] = deadline
-        if run_wham_exclusive is not None:
+        if run_reconstruction_exclusive is not None:
             # Some unit tests monkeypatch `generate_candidate_motion` with a
-            # simplified signature. Only pass `run_wham_exclusive` when the
+            # simplified signature. Only pass `run_reconstruction_exclusive` when the
             # callable supports it.
-            if callable_accepts_keyword(generate_candidate_motion, "run_wham_exclusive"):
-                generate_kwargs["run_wham_exclusive"] = run_wham_exclusive
+            if callable_accepts_keyword(generate_candidate_motion, "run_reconstruction_exclusive"):
+                generate_kwargs["run_reconstruction_exclusive"] = run_reconstruction_exclusive
         if exercise_motion_contract_resolver is not None:
             generate_kwargs["exercise_motion_contract_resolver"] = exercise_motion_contract_resolver
         if prepared_video_path is not None:
             generate_kwargs["prepared_video_path"] = prepared_video_path
         generate_result = generate_candidate_motion(ranked_candidate, **generate_kwargs)
         # `generate_candidate_motion` owns the final exact-source validation and
-        # raises SourceCandidateRejected before WHAM starts. Count the attempt
+        # raises SourceCandidateRejected before RECONSTRUCTION starts. Count the attempt
         # only after that boundary returns successfully.
         result_payload["reconstructionAttempted"] = True
         record_timing_seconds(result_payload, "generationSeconds", stage_started)
@@ -22365,21 +22349,21 @@ def process_ranked_candidate(
             / "exact_source_pose_reference.json"
         )
         checkpoint_candidate_stage("raw_reconstruction_validation")
-        raw_wham_gate = evaluate_generated_motion_recovery_gate(
+        raw_reconstruction_gate = evaluate_generated_motion_recovery_gate(
             raw_motion_path=generate_result.raw_motion_json_path,
             cleaned_motion_path=generate_result.cleaned_motion_json_path,
             source_pose_reference_path=source_pose_reference_path,
             exercise_motion_contract=preview_exercise_motion_contract,
             exercise_name=ranked_candidate.exercise_name,
         )
-        record_timing_seconds(result_payload, "rawWhamMotionGateSeconds", stage_started)
-        result_payload["rawWhamMotionGate"] = raw_wham_gate
-        if not bool(raw_wham_gate.get("passed")):
-            result_payload["status"] = "rejected_raw_wham_validation"
+        record_timing_seconds(result_payload, "rawReconstructionMotionGateSeconds", stage_started)
+        result_payload["rawReconstructionMotionGate"] = raw_reconstruction_gate
+        if not bool(raw_reconstruction_gate.get("passed")):
+            result_payload["status"] = "rejected_raw_reconstruction_validation"
             result_payload["failures"].append(
                 {
-                    "reason": "raw_wham_motion_validation_failed",
-                    "rejectionReasons": raw_wham_gate.get("rejectionReasons", []),
+                    "reason": "raw_reconstruction_motion_validation_failed",
+                    "rejectionReasons": raw_reconstruction_gate.get("rejectionReasons", []),
                 }
             )
             record_timing_seconds(result_payload, "totalSeconds", candidate_started)
@@ -22387,10 +22371,10 @@ def process_ranked_candidate(
             return result_payload
         raw_motion_fallback_evidence = {
             "schemaVersion": 1,
-            "rawWhamMotionGatePassed": True,
-            "rawWhamMotionGateFingerprint": hashlib.sha256(
+            "rawReconstructionMotionGatePassed": True,
+            "rawReconstructionMotionGateFingerprint": hashlib.sha256(
                 json.dumps(
-                    raw_wham_gate,
+                    raw_reconstruction_gate,
                     sort_keys=True,
                     separators=(",", ":"),
                     default=str,
@@ -22400,12 +22384,12 @@ def process_ranked_candidate(
         stage_started = time.perf_counter()
         cleaned_clip = load_motion_json(generate_result.cleaned_motion_json_path)
         record_timing_seconds(result_payload, "loadCleanedMotionSeconds", stage_started)
-        source_interval_authority = pre_wham_source_interval_authority(
+        source_interval_authority = pre_reconstruction_source_interval_authority(
             candidate_workspace=candidate_workspace,
             exercise_motion_contract=preview_exercise_motion_contract,
         )
-        result_payload["preWhamSourceIntervalAuthority"] = source_interval_authority
-        source_foot_support_evidence = pre_wham_source_foot_support_evidence(
+        result_payload["preReconstructionSourceIntervalAuthority"] = source_interval_authority
+        source_foot_support_evidence = pre_reconstruction_source_foot_support_evidence(
             candidate_workspace
         )
         result_payload["sourceFootSupportEvidence"] = source_foot_support_evidence
@@ -22612,7 +22596,7 @@ def process_ranked_candidate(
                 if source_interval_authority.get("authoritative") is True:
                     review_item_candidate = {
                         **ranked_candidate.candidate,
-                        "preWhamSourceIntervalAuthority": source_interval_authority,
+                        "preReconstructionSourceIntervalAuthority": source_interval_authority,
                     }
                 review_item = ReviewItem(
                     exercise_index=ranked_candidate.exercise_index,
@@ -22732,10 +22716,10 @@ def process_ranked_candidate(
         return result_payload
     except SourceCandidateRejected as exc:
         needs_review = bool({"source_cut_boundary_review_required", "source_cut_review_required"}.intersection(exc.reason_tags))
-        result_payload["status"] = "needs_source_review" if needs_review else "skipped_pre_wham_source_validation"
+        result_payload["status"] = "needs_source_review" if needs_review else "skipped_pre_reconstruction_source_validation"
         result_payload["reviewRequired"] = needs_review
         failure: dict[str, Any] = {
-            "reason": "source_review_required" if needs_review else "pre_wham_source_validation_rejected",
+            "reason": "source_review_required" if needs_review else "pre_reconstruction_source_validation_rejected",
             "message": str(exc),
         }
         if exc.reason_tags:
@@ -22747,19 +22731,19 @@ def process_ranked_candidate(
         write_candidate_bake_manifest(candidate_workspace, result_payload)
         return result_payload
     except RawMotionRejected as exc:
-        result_payload["status"] = "rejected_raw_wham_validation"
+        result_payload["status"] = "rejected_raw_reconstruction_validation"
         result_payload["failureStage"] = "raw_reconstruction_validation"
-        result_payload["rawWhamMotionGate"] = exc.gate
-        result_payload["failures"].append({"reason": "raw_wham_motion_validation_failed",
+        result_payload["rawReconstructionMotionGate"] = exc.gate
+        result_payload["failures"].append({"reason": "raw_reconstruction_motion_validation_failed",
                                            "rejectionReasons": exc.gate.get("rejectionReasons", [])})
         record_timing_seconds(result_payload, "totalSeconds", candidate_started)
         write_candidate_bake_manifest(candidate_workspace, result_payload)
         return result_payload
-    except IncompleteWhamTrackingError as exc:
-        result_payload["status"] = "rejected_incomplete_wham_tracking"
+    except IncompleteReconstructionTrackingError as exc:
+        result_payload["status"] = "rejected_incomplete_reconstruction_tracking"
         result_payload["failures"].append(
             {
-                "reason": "incomplete_wham_tracking_coverage",
+                "reason": "incomplete_reconstruction_tracking_coverage",
                 "message": str(exc),
                 "requestedStartSeconds": exc.requested_start_seconds,
                 "requestedEndSeconds": exc.requested_end_seconds,
@@ -22882,7 +22866,7 @@ def evaluate_generated_motion_recovery_gate(
         if raw_motion_path.exists()
         else cleaned_motion_path
     )
-    raw_wham_gate = evaluate_raw_wham_motion_gate(
+    raw_reconstruction_gate = evaluate_raw_reconstruction_motion_gate(
         raw_gate_source_path,
         source_pose_reference_path=(
             source_pose_reference_path if source_pose_reference_path.exists() else None
@@ -22893,11 +22877,11 @@ def evaluate_generated_motion_recovery_gate(
     if raw_gate_source_path == cleaned_motion_path:
         # Some unit tests stub `generate_candidate_motion` without writing
         # a raw motion JSON. Use the cleaned motion gate result instead.
-        raw_wham_gate["cleanedGateFallback"] = True
-    if not bool(raw_wham_gate.get("passed")) and raw_wham_motion_gate_allows_cleaned_recovery(
-        raw_wham_gate
+        raw_reconstruction_gate["cleanedGateFallback"] = True
+    if not bool(raw_reconstruction_gate.get("passed")) and raw_reconstruction_motion_gate_allows_cleaned_recovery(
+        raw_reconstruction_gate
     ):
-        cleaned_wham_gate = evaluate_raw_wham_motion_gate(
+        cleaned_reconstruction_gate = evaluate_raw_reconstruction_motion_gate(
             cleaned_motion_path,
             source_pose_reference_path=(
                 source_pose_reference_path if source_pose_reference_path.exists() else None
@@ -22905,34 +22889,34 @@ def evaluate_generated_motion_recovery_gate(
             exercise_motion_contract=exercise_motion_contract,
             exercise_name=exercise_name,
         )
-        raw_wham_gate["cleanedRecovery"] = {
+        raw_reconstruction_gate["cleanedRecovery"] = {
             "attempted": True,
             "policy": "cleanup_owned_raw_defects_must_pass_cleaned_gate",
-            "passed": bool(cleaned_wham_gate.get("passed")),
-            "cleanedMotionGate": cleaned_wham_gate,
+            "passed": bool(cleaned_reconstruction_gate.get("passed")),
+            "cleanedMotionGate": cleaned_reconstruction_gate,
         }
-        pending_anatomical_repair = motion_gate_allows_pending_anatomical_repair(cleaned_wham_gate)
-        pending_controlled_repair = motion_gate_allows_pending_controlled_repair(cleaned_wham_gate)
+        pending_anatomical_repair = motion_gate_allows_pending_anatomical_repair(cleaned_reconstruction_gate)
+        pending_controlled_repair = motion_gate_allows_pending_controlled_repair(cleaned_reconstruction_gate)
         if pending_controlled_repair:
-            raw_wham_gate["pendingControlledRepair"] = {
+            raw_reconstruction_gate["pendingControlledRepair"] = {
                 "required": True, "owner": "controlled_motion",
-                "reasons": list(cleaned_wham_gate.get("rejectionReasons") or []),
+                "reasons": list(cleaned_reconstruction_gate.get("rejectionReasons") or []),
                 "finalValidationRequired": True,
             }
         if pending_anatomical_repair:
-            raw_wham_gate["pendingAnatomicalRepair"] = {
+            raw_reconstruction_gate["pendingAnatomicalRepair"] = {
                 "required": True,
                 "owner": "controlled_motion.anatomical_projection",
-                "reasons": anatomical_repair_input_reasons(cleaned_wham_gate["kinematicPlausibilityMetrics"]),
+                "reasons": anatomical_repair_input_reasons(cleaned_reconstruction_gate["kinematicPlausibilityMetrics"]),
                 "finalValidationRequired": True,
             }
-        if bool(cleaned_wham_gate.get("passed")) or pending_anatomical_repair or pending_controlled_repair:
-            raw_wham_gate["passed"] = True
-            raw_wham_gate["rejectionReasonsBeforeRecovery"] = raw_wham_gate.get(
+        if bool(cleaned_reconstruction_gate.get("passed")) or pending_anatomical_repair or pending_controlled_repair:
+            raw_reconstruction_gate["passed"] = True
+            raw_reconstruction_gate["rejectionReasonsBeforeRecovery"] = raw_reconstruction_gate.get(
                 "rejectionReasons", []
             )
-            raw_wham_gate["rejectionReasons"] = []
-    return raw_wham_gate
+            raw_reconstruction_gate["rejectionReasons"] = []
+    return raw_reconstruction_gate
 
 
 def generate_candidate_motion(
@@ -22942,7 +22926,7 @@ def generate_candidate_motion(
     stage_identity: dict[str, Any] | None = None,
     source_cut_caption_images: Callable[..., str] | None = None,
     exercise_motion_contract_resolver: ExerciseMotionContractResolver | None = None,
-    run_wham_exclusive: WhamExclusiveRunner | None = None,
+    run_reconstruction_exclusive: ReconstructionExclusiveRunner | None = None,
     prepared_video_path: Path | None = None,
     candidate_deadline: float | None = None,
 ) -> GenerateResult:
@@ -22958,7 +22942,7 @@ def generate_candidate_motion(
             request=request,
             source_cut_caption_images=source_cut_caption_images,
             exercise_motion_contract_resolver=exercise_motion_contract_resolver,
-            clef_exclusive_runner=run_wham_exclusive,
+            clef_exclusive_runner=run_reconstruction_exclusive,
         )
         if request.two_scale_source_validation:
             if source_cut_caption_images is None:
@@ -22990,20 +22974,20 @@ def generate_candidate_motion(
             )
         if not video_path.is_file():
             raise FileNotFoundError(f"Prepared candidate video does not exist: {video_path}")
-    wham_video_path, output_crop_start_seconds, output_crop_end_seconds = prepare_wham_inference_video(
+    reconstruction_video_path, output_crop_start_seconds, output_crop_end_seconds = prepare_reconstruction_inference_video(
         candidate_workspace=request.workspace / ranked_candidate.workspace_slug,
         selected_video_path=video_path,
     )
-    unstabilized_wham_video_path = wham_video_path
-    wham_video_path = stabilize_wham_inference_video_to_yolo_track(
+    unstabilized_reconstruction_video_path = reconstruction_video_path
+    reconstruction_video_path = stabilize_reconstruction_inference_video_to_yolo_track(
         candidate_workspace=request.workspace / ranked_candidate.workspace_slug,
-        inference_video_path=wham_video_path,
+        inference_video_path=reconstruction_video_path,
         selected_start_seconds=float(output_crop_start_seconds or 0.0),
     )
-    wham_video_path, wham_output_rotation_degrees = normalize_wham_input_orientation(
+    reconstruction_video_path, reconstruction_output_rotation_degrees = normalize_reconstruction_input_orientation(
         ranked_candidate=ranked_candidate,
         candidate_workspace=request.workspace / ranked_candidate.workspace_slug,
-        selected_video_path=wham_video_path,
+        selected_video_path=reconstruction_video_path,
     )
     source_preparation_seconds = elapsed_seconds(source_started)
     exercise_motion_contract = exercise_motion_contract_from_candidate(ranked_candidate.candidate)
@@ -23018,28 +23002,19 @@ def generate_candidate_motion(
     generation_request = GenerateRequest(
         exercise_slug=ranked_candidate.workspace_slug,
         workspace=request.workspace,
-        video_path=wham_video_path,
-        wham_repo_path=request.wham_repo_path,
+        video_path=reconstruction_video_path,
         body_model_root=request.body_model_root,
-        wham_python_command=request.wham_python_command,
-        reuse_wham_cache=request.reuse_wham_cache,
-        use_wham_docker=request.use_wham_docker,
-        wham_docker_image=request.wham_docker_image,
-        wham_docker_gpus=request.wham_docker_gpus,
-        wham_docker_shm_size=request.wham_docker_shm_size,
-        use_warm_wham_worker=request.use_warm_wham_worker,
-        wham_worker_session_dir=request.wham_worker_session_dir,
-        wham_worker_mount_root=request.wham_worker_mount_root,
-        wham_worker_timeout_seconds=request.wham_worker_timeout_seconds,
+        reuse_reconstruction_cache=request.reuse_reconstruction_cache,
+        use_reconstruction_docker=request.use_reconstruction_docker,
+        reconstruction_docker_image=request.reconstruction_docker_image,
+        reconstruction_docker_gpus=request.reconstruction_docker_gpus,
+        reconstruction_docker_shm_size=request.reconstruction_docker_shm_size,
         use_warm_gvhmr_worker=request.use_warm_gvhmr_worker,
         gvhmr_worker_session_dir=request.gvhmr_worker_session_dir,
         gvhmr_worker_mount_root=request.gvhmr_worker_mount_root,
         gvhmr_worker_timeout_seconds=request.gvhmr_worker_timeout_seconds,
-        wham_timeout_seconds=request.wham_timeout_seconds,
-        wham_tracking_preflight=request.wham_tracking_preflight,
-        require_wham_cache=request.require_wham_cache,
-        wham_estimate_local_only=request.wham_estimate_local_only,
-        wham_run_smplify=request.wham_run_smplify,
+        reconstruction_timeout_seconds=request.reconstruction_timeout_seconds,
+        require_reconstruction_cache=request.require_reconstruction_cache,
         motion_reconstruction_backend=request.motion_reconstruction_backend,
         structural_refinement_enabled=request.structural_refinement_enabled,
         structural_refinement_vertical_only=request.structural_refinement_vertical_only,
@@ -23053,10 +23028,8 @@ def generate_candidate_motion(
         spinepose_reuse_cache=request.spinepose_reuse_cache,
         spinepose_gain=request.spinepose_gain,
         spinepose_max_degrees=request.spinepose_max_degrees,
-        spinepose_axis=request.spinepose_axis,
         spinepose_invert=request.spinepose_invert,
         spinepose_smoothing_window=request.spinepose_smoothing_window,
-        spinepose_arm_counter_rotation=request.spinepose_arm_counter_rotation,
         spinepose_merge_mode=request.spinepose_merge_mode,
         motion_tuning_enabled=request.motion_tuning_enabled,
         ground_contact_mode=ground_contact_mode,
@@ -23067,28 +23040,28 @@ def generate_candidate_motion(
         ),
         # Coarse contract pose labels do not authorize an exact torso angle.
         # Source articulation and measured support geometry own that constraint.
-        export_wham_smpl_preview=request.export_wham_smpl_preview,
+        export_reconstruction_smpl_preview=request.export_reconstruction_smpl_preview,
         output_crop_start_seconds=output_crop_start_seconds,
         output_crop_end_seconds=output_crop_end_seconds,
         stage_identity=stage_identity,
-        # A materially boundary-truncated WHAM track no longer represents the
+        # A materially boundary-truncated RECONSTRUCTION track no longer represents the
         # source interval which passed segment validation.  Reject it here so
         # bake-and-rank can try another source/window instead of asking later
         # validators to judge a rebased, incomplete movement.
-        allow_incomplete_wham_boundary_crop=False,
-        wham_output_rotation_degrees=wham_output_rotation_degrees,
+        allow_incomplete_reconstruction_boundary_crop=False,
+        reconstruction_output_rotation_degrees=reconstruction_output_rotation_degrees,
         source_pose_reference_path=(
             candidate_workspace / "segment_detection" / "exact_source_pose_reference.json"
         ),
         candidate_deadline=candidate_deadline,
     )
     def validate_raw_motion(path: Path) -> None:
-        gate = evaluate_raw_wham_motion_gate(
+        gate = evaluate_raw_reconstruction_motion_gate(
             path, source_pose_reference_path=generation_request.source_pose_reference_path,
             exercise_motion_contract=exercise_motion_contract,
             exercise_name=ranked_candidate.exercise_name,
         )
-        if not gate.get("passed") and not raw_wham_motion_gate_allows_cleaned_recovery(gate):
+        if not gate.get("passed") and not raw_reconstruction_motion_gate_allows_cleaned_recovery(gate):
             raise RawMotionRejected(gate)
 
     def run_generation(active_request: GenerateRequest) -> GenerateResult:
@@ -23096,25 +23069,25 @@ def generate_candidate_motion(
         if callable_accepts_keyword(run_generation_pipeline, "raw_motion_validator"):
             kwargs["raw_motion_validator"] = validate_raw_motion
         if callable_accepts_keyword(run_generation_pipeline, "run_processing_exclusive"):
-            kwargs["run_processing_exclusive"] = run_wham_exclusive
+            kwargs["run_processing_exclusive"] = run_reconstruction_exclusive
             return run_generation_pipeline(active_request, **kwargs)
-        if run_wham_exclusive is not None:
-            return run_wham_exclusive(lambda: run_generation_pipeline(active_request, **kwargs))
+        if run_reconstruction_exclusive is not None:
+            return run_reconstruction_exclusive(lambda: run_generation_pipeline(active_request, **kwargs))
         return run_generation_pipeline(active_request, **kwargs)
     try:
         result = run_generation(generation_request)
-    except IncompleteWhamTrackingError:
-        stabilization_applied = wham_video_path != unstabilized_wham_video_path
-        if not stabilization_applied or abs(wham_output_rotation_degrees) > 1e-6:
+    except IncompleteReconstructionTrackingError:
+        stabilization_applied = reconstruction_video_path != unstabilized_reconstruction_video_path
+        if not stabilization_applied or abs(reconstruction_output_rotation_degrees) > 1e-6:
             raise
         fallback_request = replace(
             generation_request,
-            video_path=unstabilized_wham_video_path,
+            video_path=unstabilized_reconstruction_video_path,
         )
         result = run_generation(fallback_request)
-        record_wham_stabilization_fallback(
+        record_reconstruction_stabilization_fallback(
             candidate_workspace,
-            fallback_video_path=unstabilized_wham_video_path,
+            fallback_video_path=unstabilized_reconstruction_video_path,
         )
     if result.timings is not None:
         result.timings["sourcePreparationSeconds"] = source_preparation_seconds
@@ -23122,14 +23095,14 @@ def generate_candidate_motion(
     return result
 
 
-def record_wham_stabilization_fallback(
+def record_reconstruction_stabilization_fallback(
     candidate_workspace: Path,
     *,
     fallback_video_path: Path,
 ) -> None:
-    metadata_path = candidate_workspace / "input" / "wham_yolo_track_stabilization.json"
+    metadata_path = candidate_workspace / "input" / "reconstruction_yolo_track_stabilization.json"
     try:
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        metadata = loads_reconstruction_metadata(metadata_path.read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         metadata = {}
     metadata.update(
@@ -23144,24 +23117,24 @@ def record_wham_stabilization_fallback(
     metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
 
 
-def normalize_wham_input_orientation(
+def normalize_reconstruction_input_orientation(
     *,
     ranked_candidate: RankedCandidate,
     candidate_workspace: Path,
     selected_video_path: Path,
 ) -> tuple[Path, float]:
-    """Present strongly sideways subjects upright to WHAM and return its camera-space rotation."""
-    rotation = wham_input_quarter_turn_from_candidate(ranked_candidate.candidate)
+    """Present strongly sideways subjects upright to RECONSTRUCTION and return its camera-space rotation."""
+    rotation = reconstruction_input_quarter_turn_from_candidate(ranked_candidate.candidate)
     if rotation == 0:
         return selected_video_path, 0.0
-    output_path = candidate_workspace / "input" / "wham_inference_upright.mp4"
+    output_path = candidate_workspace / "input" / "reconstruction_inference_upright.mp4"
     if not output_path.exists():
         rotate_video_quarter_turn(
             source_path=selected_video_path,
             output_path=output_path,
             counter_clockwise=rotation > 0,
         )
-    metadata_path = candidate_workspace / "input" / "wham_orientation_normalization.json"
+    metadata_path = candidate_workspace / "input" / "reconstruction_orientation_normalization.json"
     metadata_path.write_text(
         json.dumps(
             {
@@ -23176,19 +23149,19 @@ def normalize_wham_input_orientation(
         ) + "\n",
         encoding="utf-8",
     )
-    # WHAM emits camera-space coordinates for the already-rotated inference
+    # RECONSTRUCTION emits camera-space coordinates for the already-rotated inference
     # frames. Preserve that quarter-turn when mapping those coordinates into
     # the preview basis; negating it mirrors the image-space convention and
     # turns horizontal exercises upside down.
     return output_path, float(rotation)
 
 
-def used_legacy_pose_inferred_wham_input_rotation(candidate_workspace: Path) -> bool:
-    metadata_path = candidate_workspace / "input" / "wham_orientation_normalization.json"
+def used_legacy_pose_inferred_reconstruction_input_rotation(candidate_workspace: Path) -> bool:
+    metadata_path = candidate_workspace / "input" / "reconstruction_orientation_normalization.json"
     if not metadata_path.exists():
         return False
     try:
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        metadata = loads_reconstruction_metadata(metadata_path.read_text(encoding="utf-8"))
     except Exception:
         return True
     rotation = parse_optional_float(metadata.get("inputRotationDegrees"))
@@ -23197,23 +23170,23 @@ def used_legacy_pose_inferred_wham_input_rotation(candidate_workspace: Path) -> 
     return metadata.get("rotationSource") != "explicit_candidate_video_orientation"
 
 
-def repair_legacy_wham_input_rotation_metadata(
+def repair_legacy_reconstruction_input_rotation_metadata(
     candidate_workspace: Path,
     *,
     candidate: dict[str, Any],
 ) -> bool:
     """Migrate a persisted rotation only when current explicit video evidence proves it identical."""
-    metadata_path = candidate_workspace / "input" / "wham_orientation_normalization.json"
+    metadata_path = candidate_workspace / "input" / "reconstruction_orientation_normalization.json"
     if not metadata_path.exists():
         return False
     try:
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        metadata = loads_reconstruction_metadata(metadata_path.read_text(encoding="utf-8"))
     except Exception:
         return False
     if metadata.get("rotationSource") == "explicit_candidate_video_orientation":
         return False
     stored_rotation = parse_optional_float(metadata.get("inputRotationDegrees"))
-    expected_rotation = wham_input_quarter_turn_from_candidate(candidate)
+    expected_rotation = reconstruction_input_quarter_turn_from_candidate(candidate)
     if (
         stored_rotation is None
         or abs(stored_rotation) <= 1e-6
@@ -23226,19 +23199,19 @@ def repair_legacy_wham_input_rotation_metadata(
     return True
 
 
-def wham_input_quarter_turn_from_candidate(candidate: dict[str, Any]) -> int:
+def reconstruction_input_quarter_turn_from_candidate(candidate: dict[str, Any]) -> int:
     """Use explicit frame-orientation evidence; body posture is not video rotation.
 
     A horizontal shoulder-to-hip vector can mean a correctly oriented supine,
     prone, plank, or bench-supported exercise. Rotating those frames upright
-    changes the physical gravity context presented to WHAM and cannot be
+    changes the physical gravity context presented to RECONSTRUCTION and cannot be
     inferred safely from pose geometry alone.
     """
-    explicit_rotation = parse_optional_int(candidate.get("whamInputRotationDegrees"))
+    explicit_rotation = parse_optional_int(candidate.get("reconstructionInputRotationDegrees"))
     return explicit_rotation if explicit_rotation in {-90, 90} else 0
 
 
-def stabilize_wham_inference_video_to_yolo_track(
+def stabilize_reconstruction_inference_video_to_yolo_track(
     *,
     candidate_workspace: Path,
     inference_video_path: Path,
@@ -23247,7 +23220,7 @@ def stabilize_wham_inference_video_to_yolo_track(
     """Reuse stabilization only for the exact input video, timeline and track."""
     from .stage_cache import cache_key, load_stage, save_stage, stage_lock
 
-    checkpoint = candidate_workspace / "input" / "wham_stabilization_checkpoint.json"
+    checkpoint = candidate_workspace / "input" / "reconstruction_stabilization_checkpoint.json"
     key = cache_key({"policyVersion": YOLO_TRACK_STABILIZATION_POLICY_VERSION,
                      "selectedStartSeconds": selected_start_seconds,
                      "track": load_workspace_yolo_pose_track(candidate_workspace)},
@@ -23256,14 +23229,14 @@ def stabilize_wham_inference_video_to_yolo_track(
         cached = load_stage(checkpoint, key)
         if cached is not None:
             return Path(cached["videoPath"])
-        result = _stabilize_wham_inference_video_to_yolo_track_uncached(
+        result = _stabilize_reconstruction_inference_video_to_yolo_track_uncached(
             candidate_workspace=candidate_workspace, inference_video_path=inference_video_path,
             selected_start_seconds=selected_start_seconds)
-        metadata_path = candidate_workspace / "input" / "wham_yolo_track_stabilization.json"
+        metadata_path = candidate_workspace / "input" / "reconstruction_yolo_track_stabilization.json"
         # Failed attempts remain retryable; an unchanged video is a valid result
         # only when the track planner deliberately chose not to stabilize it.
         try:
-            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            metadata = loads_reconstruction_metadata(metadata_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             metadata = {}
         if metadata and metadata.get("reason") != "yolo_track_stabilization_failed":
@@ -23271,15 +23244,15 @@ def stabilize_wham_inference_video_to_yolo_track(
         return result
 
 
-def _stabilize_wham_inference_video_to_yolo_track_uncached(
+def _stabilize_reconstruction_inference_video_to_yolo_track_uncached(
     *,
     candidate_workspace: Path,
     inference_video_path: Path,
     selected_start_seconds: float = 0.0,
 ) -> Path:
-    """Keep the YOLO-tracked subject in a fixed crop so WHAM sees less camera walk."""
-    output_path = candidate_workspace / "input" / "wham_inference_yolo_stabilized.mp4"
-    metadata_path = candidate_workspace / "input" / "wham_yolo_track_stabilization.json"
+    """Keep the YOLO-tracked subject in a fixed crop so RECONSTRUCTION sees less camera walk."""
+    output_path = candidate_workspace / "input" / "reconstruction_inference_yolo_stabilized.mp4"
+    metadata_path = candidate_workspace / "input" / "reconstruction_yolo_track_stabilization.json"
     try:
         video_metadata = read_basic_video_metadata(inference_video_path)
         plan = plan_yolo_track_stabilization(
@@ -23345,23 +23318,23 @@ def _stabilize_wham_inference_video_to_yolo_track_uncached(
         return inference_video_path
 
 
-def prepare_wham_inference_video(
+def prepare_reconstruction_inference_video(
     *,
     candidate_workspace: Path,
     selected_video_path: Path,
-    padding_seconds: float = WHAM_INFERENCE_CONTEXT_PADDING_SECONDS,
+    padding_seconds: float = RECONSTRUCTION_INFERENCE_CONTEXT_PADDING_SECONDS,
 ) -> tuple[Path, float | None, float | None]:
-    """Add source context and normalize to WHAM's 30 FPS timeline contract."""
+    """Add source context and normalize to RECONSTRUCTION's 30 FPS timeline contract."""
     if padding_seconds <= 0.0:
-        return normalize_wham_input_frame_rate(
+        return normalize_reconstruction_input_frame_rate(
             candidate_workspace=candidate_workspace,
             selected_video_path=selected_video_path,
         ), None, None
     selection_path = candidate_workspace / "segment_detection" / "segment_selection.json"
     try:
-        selection = json.loads(selection_path.read_text(encoding="utf-8"))
+        selection = loads_reconstruction_metadata(selection_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return normalize_wham_input_frame_rate(
+        return normalize_reconstruction_input_frame_rate(
             candidate_workspace=candidate_workspace,
             selected_video_path=selected_video_path,
         ), None, None
@@ -23372,7 +23345,7 @@ def prepare_wham_inference_video(
         selected_span = selection.get("selectedSpanInOriginalSource")
         source_path_value = selection.get("sourceVideoPath")
     if not isinstance(selected_span, dict) or not source_path_value:
-        return normalize_wham_input_frame_rate(
+        return normalize_reconstruction_input_frame_rate(
             candidate_workspace=candidate_workspace,
             selected_video_path=selected_video_path,
         ), None, None
@@ -23385,7 +23358,7 @@ def prepare_wham_inference_video(
         or selected_end <= selected_start
         or not source_path.exists()
     ):
-        return normalize_wham_input_frame_rate(
+        return normalize_reconstruction_input_frame_rate(
             candidate_workspace=candidate_workspace,
             selected_video_path=selected_video_path,
         ), None, None
@@ -23393,25 +23366,25 @@ def prepare_wham_inference_video(
     try:
         source_duration = read_basic_video_metadata(source_path).duration_seconds
     except Exception:
-        return normalize_wham_input_frame_rate(
+        return normalize_reconstruction_input_frame_rate(
             candidate_workspace=candidate_workspace,
             selected_video_path=selected_video_path,
         ), None, None
     inference_start = max(0.0, selected_start - padding_seconds)
     inference_end = min(source_duration, selected_end + padding_seconds)
     if inference_end <= inference_start:
-        return normalize_wham_input_frame_rate(
+        return normalize_reconstruction_input_frame_rate(
             candidate_workspace=candidate_workspace,
             selected_video_path=selected_video_path,
         ), None, None
-    output_path = candidate_workspace / "input" / "wham_inference_segment.mp4"
-    prepare_cached_wham_video(source_path=source_path, output_path=output_path,
+    output_path = candidate_workspace / "input" / "reconstruction_inference_segment.mp4"
+    prepare_cached_reconstruction_video(source_path=source_path, output_path=output_path,
                               start_seconds=inference_start, end_seconds=inference_end)
     # Detection timestamps can extend slightly beyond the downloaded file's
     # decodable duration (for example when YouTube metadata rounds a 19.0s
     # source up to 20s).  The inference interval is already clamped above, so
     # keep the requested output window on that same local timeline.  Otherwise
-    # WHAM can cover every input frame and still be rejected for not reaching a
+    # RECONSTRUCTION can cover every input frame and still be rejected for not reaching a
     # crop end that does not exist in the inference video.
     effective_selected_start = min(max(selected_start, inference_start), inference_end)
     effective_selected_end = min(max(selected_end, effective_selected_start), inference_end)
@@ -23420,7 +23393,7 @@ def prepare_wham_inference_video(
     return output_path, crop_start, crop_end
 
 
-def normalize_wham_input_frame_rate(
+def normalize_reconstruction_input_frame_rate(
     *,
     candidate_workspace: Path,
     selected_video_path: Path,
@@ -23431,13 +23404,13 @@ def normalize_wham_input_frame_rate(
         return selected_video_path
     if abs(metadata.fps - 30.0) <= 0.01:
         return selected_video_path
-    output_path = candidate_workspace / "input" / "wham_inference_segment.mp4"
-    prepare_cached_wham_video(source_path=selected_video_path, output_path=output_path,
+    output_path = candidate_workspace / "input" / "reconstruction_inference_segment.mp4"
+    prepare_cached_reconstruction_video(source_path=selected_video_path, output_path=output_path,
                               start_seconds=0.0, end_seconds=metadata.duration_seconds)
     return output_path
 
 
-def prepare_cached_wham_video(*, source_path: Path, output_path: Path,
+def prepare_cached_reconstruction_video(*, source_path: Path, output_path: Path,
                               start_seconds: float, end_seconds: float) -> None:
     from .stage_cache import cache_key, load_stage, save_stage, stage_lock
 
@@ -23478,8 +23451,8 @@ def build_preview_detected_eligible_loops(cleaned_clip: Any) -> list[EligibleLoo
     A detected loop is only a proposed temporal crop.  It must not become the
     sole review candidate when it drops a meaningful prefix or suffix: endpoint
     similarity can make a partial lowering/raising phase look loopable.  The
-    full reconstructed clip is cheap to bake (WHAM has already run) and keeps
-    the pre-WHAM validated repetition available to final validation.
+    full reconstructed clip is cheap to bake (RECONSTRUCTION has already run) and keeps
+    the pre-RECONSTRUCTION validated repetition available to final validation.
     """
     from exercise_motion_pkg.preview import detect_preview_loops_for_clip
 
@@ -23533,16 +23506,16 @@ def build_preview_detected_eligible_loops(cleaned_clip: Any) -> list[EligibleLoo
     return eligible
 
 
-def pre_wham_source_interval_authority(
+def pre_reconstruction_source_interval_authority(
     *,
     candidate_workspace: Path,
     exercise_motion_contract: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Validate whether a pre-WHAM source cut may bound final temporal selection.
+    """Validate whether a pre-RECONSTRUCTION source cut may bound final temporal selection.
 
     Return-cycle detection may select a repetition inside the validated cut;
     distinct-end-state actions preserve the complete bounded interval. Missing
-    or stale source evidence leaves the prior post-WHAM behavior available.
+    or stale source evidence leaves the prior post-RECONSTRUCTION behavior available.
     """
     requires_return = observable_motion_spec_requires_return(exercise_motion_contract)
     distinct_end_state = contract_completion_mode(exercise_motion_contract) == "distinct_end_state"
@@ -23556,23 +23529,23 @@ def pre_wham_source_interval_authority(
         candidate_workspace / "segment_detection" / "exact_source_phase_validation.json"
     )
     try:
-        selection = json.loads(selection_path.read_text(encoding="utf-8"))
+        selection = loads_reconstruction_metadata(selection_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {
             "authoritative": False,
-            "reason": "missing_pre_wham_segment_selection",
+            "reason": "missing_pre_reconstruction_segment_selection",
         }
-    if selection.get("role") != "pre_wham_validated_source_cut":
+    if selection.get("role") != "pre_reconstruction_validated_source_cut":
         return {
             "authoritative": False,
-            "reason": "source_interval_not_pre_wham_validated_cut",
+            "reason": "source_interval_not_pre_reconstruction_validated_cut",
         }
     selected_span = selection.get("selectedSpan")
     selected_segment_value = selection.get("selectedSegmentPath")
     if not isinstance(selected_span, dict) or not selected_segment_value:
         return {
             "authoritative": False,
-            "reason": "pre_wham_selected_interval_missing",
+            "reason": "pre_reconstruction_selected_interval_missing",
         }
     start_seconds = parse_optional_float(selected_span.get("startSeconds"))
     end_seconds = parse_optional_float(selected_span.get("endSeconds"))
@@ -23585,11 +23558,11 @@ def pre_wham_source_interval_authority(
     ):
         return {
             "authoritative": False,
-            "reason": "pre_wham_selected_interval_unusable",
+            "reason": "pre_reconstruction_selected_interval_unusable",
         }
     exact_validation_source = "standalone_file"
     try:
-        exact_validation = json.loads(exact_validation_path.read_text(encoding="utf-8"))
+        exact_validation = loads_reconstruction_metadata(exact_validation_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         # Candidate confirmation embeds the exact validation in the selection
         # manifest that promotes the winning materialized segment. Some paths
@@ -23647,9 +23620,9 @@ def pre_wham_source_interval_authority(
     return {
         "authoritative": True,
         "reason": (
-            "exact_pre_wham_return_cycle_validated"
+            "exact_pre_reconstruction_return_cycle_validated"
             if requires_return
-            else "exact_pre_wham_distinct_end_state_validated"
+            else "exact_pre_reconstruction_distinct_end_state_validated"
         ),
         "selectionPath": str(selection_path),
         "exactValidationPath": (
@@ -23681,7 +23654,7 @@ def exact_source_pose_first_movement_instance(
     """
     path = candidate_workspace / "segment_detection" / "exact_source_pose_reference.json"
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = loads_reconstruction_metadata(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {"available": False, "reason": "source_pose_reference_missing"}
     pose = payload.get("pose") if isinstance(payload, dict) else None
@@ -23794,7 +23767,7 @@ def annotate_exact_source_pose_movement_instance(
 ) -> None:
     path = candidate_workspace / "segment_detection" / "exact_source_pose_reference.json"
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = loads_reconstruction_metadata(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return
     pose = payload.get("pose") if isinstance(payload, dict) else None
@@ -23849,8 +23822,8 @@ def build_candidate_review_eligible_loops(
                 end_seconds=end_seconds,
                 artifact_class=BOUNDED_MOVEMENT_SELECTION,
             )]
-        if source_interval_authority.get("reason") == "exact_pre_wham_return_cycle_validated":
-            # WHAM reconstructed the already validated pre-WHAM source cut, so
+        if source_interval_authority.get("reason") == "exact_pre_reconstruction_return_cycle_validated":
+            # RECONSTRUCTION reconstructed the already validated pre-RECONSTRUCTION source cut, so
             # detect cycles only inside that bounded clip. Keep the complete
             # clip candidate when a detected cycle would drop meaningful
             # setup or teardown; cycle rebakes still carry the exact source
@@ -23974,15 +23947,15 @@ def prepare_candidate_input_video(
     )
     cached_selected_segment = candidate_workspace / "input" / "selected_segment.mp4"
     cached_segment_selection = candidate_workspace / "segment_detection" / "segment_selection.json"
-    pre_wham_validation_enabled = request.pre_wham_source_validation and source_cut_caption_images is not None
-    pre_wham_caption_images = source_cut_caption_images if request.pre_wham_source_validation else None
+    pre_reconstruction_validation_enabled = request.pre_reconstruction_source_validation and source_cut_caption_images is not None
+    pre_reconstruction_caption_images = source_cut_caption_images if request.pre_reconstruction_source_validation else None
     if (
-        request.reuse_wham_cache
+        request.reuse_reconstruction_cache
         and cached_selected_segment.exists()
         and cached_segment_selection.exists()
         and cached_source_selection_matches_validation_mode(
             cached_segment_selection,
-            pre_wham_source_validation=pre_wham_validation_enabled,
+            pre_reconstruction_source_validation=pre_reconstruction_validation_enabled,
             exercise_motion_contract_enabled=request.exercise_motion_contract_enabled,
             exercise=ExerciseEntry(exercise_id=ranked_candidate.exercise_id,
                 name=ranked_candidate.exercise_name, slug=ranked_candidate.exercise_slug),
@@ -23993,7 +23966,7 @@ def prepare_candidate_input_video(
         )
         if cached_exercise_motion_contract is not None:
             exact_phase_validation = validate_exact_source_with_cached_gpu_handoff(
-                caption_images=pre_wham_caption_images,
+                caption_images=pre_reconstruction_caption_images,
                 source_video_path=cached_selected_segment,
                 exercise_name=ranked_candidate.exercise_name,
                 exercise_motion_contract=cached_exercise_motion_contract,
@@ -24012,14 +23985,14 @@ def prepare_candidate_input_video(
                 candidate_workspace=candidate_workspace,
                 validation=exact_phase_validation,
                 exercise_motion_contract=cached_exercise_motion_contract,
-                rejection_context="Cached pre-WHAM exact-source validation rejected the movement cut",
+                rejection_context="Cached pre-RECONSTRUCTION exact-source validation rejected the movement cut",
             )
         return cached_selected_segment
-    if request.reuse_wham_cache and cached_segment_selection.exists():
+    if request.reuse_reconstruction_cache and cached_segment_selection.exists():
         for stale_input_path in (
             cached_selected_segment,
-            candidate_workspace / "input" / "wham_inference_segment.mp4",
-            candidate_workspace / "input" / "wham_inference_upright.mp4",
+            candidate_workspace / "input" / "reconstruction_inference_segment.mp4",
+            candidate_workspace / "input" / "reconstruction_inference_upright.mp4",
         ):
             try:
                 stale_input_path.unlink(missing_ok=True)
@@ -24027,18 +24000,18 @@ def prepare_candidate_input_video(
                 pass
     exercise_motion_contract = (
         exercise_motion_contract_resolver(ranked_candidate)
-        if pre_wham_caption_images is not None and exercise_motion_contract_resolver is not None
+        if pre_reconstruction_caption_images is not None and exercise_motion_contract_resolver is not None
         else None
     )
-    if pre_wham_validation_enabled and request.exercise_motion_contract_enabled:
+    if pre_reconstruction_validation_enabled and request.exercise_motion_contract_enabled:
         require_current_source_contract(exercise_motion_contract, ranked_candidate)
     source_chunk_hint = ranked_candidate.source_chunk_hint
     use_parent_source_window_fallback = (
         parse_optional_bool(ranked_candidate.candidate.get("sourceWindowParentFallback")) is True
     )
     if use_parent_source_window_fallback and source_chunk_hint is not None:
-        if pre_wham_caption_images is not None:
-            return choose_pre_wham_source_cut_or_reject(
+        if pre_reconstruction_caption_images is not None:
+            return choose_pre_reconstruction_source_cut_or_reject(
                 ranked_candidate=ranked_candidate,
                 candidate_workspace=candidate_workspace,
                 source_video_path=source_video_path,
@@ -24050,7 +24023,7 @@ def prepare_candidate_input_video(
                 ),
                 detection_source_offset_seconds=0.0,
                 source_chunk_hint=source_chunk_hint,
-                caption_images=pre_wham_caption_images,
+                caption_images=pre_reconstruction_caption_images,
                 exercise_motion_contract=exercise_motion_contract,
                 max_vlm_workers=request.review_llm_workers,
                 request_timeout_seconds=request.source_review_timeout_seconds,
@@ -24075,9 +24048,9 @@ def prepare_candidate_input_video(
                 source_video_path=source_video_path,
                 source_chunk_hint=source_chunk_hint,
             )
-        if pre_wham_validation_enabled and request.exercise_motion_contract_enabled:
+        if pre_reconstruction_validation_enabled and request.exercise_motion_contract_enabled:
             validation = validate_exact_source_with_cached_gpu_handoff(
-                caption_images=pre_wham_caption_images,
+                caption_images=pre_reconstruction_caption_images,
                 source_video_path=selected_video_path,
                 exercise_name=ranked_candidate.exercise_name,
                 exercise_motion_contract=exercise_motion_contract,
@@ -24100,8 +24073,8 @@ def prepare_candidate_input_video(
             )
         return selected_video_path
     if should_use_ranked_source_chunk_directly(source_chunk_hint, request=request):
-        if pre_wham_caption_images is not None:
-            return choose_pre_wham_source_cut_or_reject(
+        if pre_reconstruction_caption_images is not None:
+            return choose_pre_reconstruction_source_cut_or_reject(
                 ranked_candidate=ranked_candidate,
                 candidate_workspace=candidate_workspace,
                 source_video_path=source_video_path,
@@ -24113,7 +24086,7 @@ def prepare_candidate_input_video(
                 ),
                 detection_source_offset_seconds=0.0,
                 source_chunk_hint=source_chunk_hint,
-                caption_images=pre_wham_caption_images,
+                caption_images=pre_reconstruction_caption_images,
                 exercise_motion_contract=exercise_motion_contract,
                 max_vlm_workers=request.review_llm_workers,
                 request_timeout_seconds=request.source_review_timeout_seconds,
@@ -24161,7 +24134,7 @@ def prepare_candidate_input_video(
     segment_base_url = request.segment_base_url or "http://127.0.0.1:8090"
     segment_model = request.segment_model or request.llama_cpp_model
     segment_server: LlamaCppVisionRanker | None = None
-    segment_caption_images = pre_wham_caption_images
+    segment_caption_images = pre_reconstruction_caption_images
     if (
         segment_caption_images is None
         and request.visual_decision_backend == "clef-systemone"
@@ -24302,8 +24275,8 @@ def prepare_candidate_input_video(
     if detection_result.detected_span is None:
         reject_missing_source_span(detection_result, confidence_threshold=request.segment_confidence_threshold)
     selected_span = detection_result.detected_span
-    if pre_wham_caption_images is not None:
-        return choose_pre_wham_source_cut_or_reject(
+    if pre_reconstruction_caption_images is not None:
+        return choose_pre_reconstruction_source_cut_or_reject(
             ranked_candidate=ranked_candidate,
             candidate_workspace=candidate_workspace,
             source_video_path=source_video_path,
@@ -24315,7 +24288,7 @@ def prepare_candidate_input_video(
             ),
             detection_source_offset_seconds=detection_source_offset_seconds,
             source_chunk_hint=source_chunk_hint,
-            caption_images=pre_wham_caption_images,
+            caption_images=pre_reconstruction_caption_images,
             exercise_motion_contract=exercise_motion_contract,
             source_detection_result=detection_result,
             source_chunk_estimate=chunk_estimate,
@@ -24402,19 +24375,19 @@ def prepare_candidate_input_video(
 def cached_source_selection_matches_validation_mode(
     segment_selection_path: Path,
     *,
-    pre_wham_source_validation: bool,
+    pre_reconstruction_source_validation: bool,
     exercise_motion_contract_enabled: bool,
     exercise: ExerciseEntry | None = None,
 ) -> bool:
-    if not pre_wham_source_validation:
+    if not pre_reconstruction_source_validation:
         return True
     try:
-        payload = json.loads(segment_selection_path.read_text(encoding="utf-8"))
+        payload = loads_reconstruction_metadata(segment_selection_path.read_text(encoding="utf-8"))
     except Exception:
         return False
     if not (
-        bool(payload.get("preWhamSourceValidationEnabled"))
-        or str(payload.get("sourcePrepReason")) == "pre_wham_source_window_choice"
+        bool(payload.get("preReconstructionSourceValidationEnabled"))
+        or str(payload.get("sourcePrepReason")) == "pre_reconstruction_source_window_choice"
     ):
         return False
     if parse_optional_int(payload.get("sourceSelectionPolicyVersion")) != SOURCE_SELECTION_POLICY_VERSION:
@@ -24449,7 +24422,7 @@ def exercise_motion_contract_from_segment_selection(
     segment_selection_path: Path,
 ) -> dict[str, Any] | None:
     try:
-        payload = json.loads(segment_selection_path.read_text(encoding="utf-8"))
+        payload = loads_reconstruction_metadata(segment_selection_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
     contract = payload.get("exerciseMotionContract") if isinstance(payload, dict) else None
@@ -24951,7 +24924,7 @@ def source_cut_candidate_materialization_matches(
     if not metadata_path.is_file() or not output_path.is_file() or output_path.stat().st_size <= 0:
         return False
     try:
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        metadata = loads_reconstruction_metadata(metadata_path.read_text(encoding="utf-8"))
         source_stat = source_video_path.stat()
     except (OSError, json.JSONDecodeError, TypeError):
         return False
@@ -25176,7 +25149,7 @@ def exact_pose_single_cycle_refinement_candidates(
     if not reference_path_text:
         return []
     try:
-        reference = json.loads(Path(reference_path_text).read_text(encoding="utf-8"))
+        reference = loads_reconstruction_metadata(Path(reference_path_text).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, TypeError):
         return []
     frames = ((reference.get("pose") or {}).get("frames")) if isinstance(reference, dict) else None
@@ -25639,7 +25612,7 @@ def select_exact_pose_confirmed_source_cut(
                     for reason in rejection_reasons
                 )
             ):
-                cycle_equipment_prefilter = confirm_pre_wham_named_equipment(
+                cycle_equipment_prefilter = confirm_pre_reconstruction_named_equipment(
                     exercise_name=exercise_name,
                     frame_paths=[
                         Path(path)
@@ -25708,7 +25681,7 @@ def select_exact_pose_confirmed_source_cut(
                     "reason": "equipment_confirmation_skipped_after_source_validation_rejection",
                 }
                 if rejection_reasons and not equipment_only_rejection
-                else confirm_pre_wham_named_equipment(
+                else confirm_pre_reconstruction_named_equipment(
                     exercise_name=exercise_name,
                     frame_paths=[
                         Path(path)
@@ -25774,7 +25747,7 @@ def select_exact_pose_confirmed_source_cut(
                 "materializedVideoPath": str(candidate_video_path),
                 "materializationStatus": materialization_status,
                 "materialization": (
-                    json.loads((candidate_dir / "materialization.json").read_text(encoding="utf-8"))
+                    loads_reconstruction_metadata((candidate_dir / "materialization.json").read_text(encoding="utf-8"))
                     .get("materialization")
                     if (candidate_dir / "materialization.json").is_file()
                     else None
@@ -26006,7 +25979,7 @@ def repair_source_cut_equipment_disagreement(
     return repair
 
 
-def confirm_pre_wham_named_equipment(
+def confirm_pre_reconstruction_named_equipment(
     *,
     exercise_name: str,
     frame_paths: list[Path],
@@ -26021,30 +25994,30 @@ def confirm_pre_wham_named_equipment(
     if required_equipment == "none":
         return {
             "schemaVersion": 1,
-            "policyVersion": PRE_WHAM_EQUIPMENT_OBSERVATION_POLICY_VERSION,
+            "policyVersion": PRE_RECONSTRUCTION_EQUIPMENT_OBSERVATION_POLICY_VERSION,
             "requiredEquipment": "none",
             "passed": True,
             "reason": "named_equipment_not_required",
         }
     if cache_path.is_file():
         try:
-            cached = json.loads(cache_path.read_text(encoding="utf-8"))
+            cached = loads_reconstruction_metadata(cache_path.read_text(encoding="utf-8"))
             if (
                 isinstance(cached, dict)
-                and cached.get("policyVersion") == PRE_WHAM_EQUIPMENT_OBSERVATION_POLICY_VERSION
+                and cached.get("policyVersion") == PRE_RECONSTRUCTION_EQUIPMENT_OBSERVATION_POLICY_VERSION
                 and cached.get("requiredEquipment") == required_equipment
             ):
                 return cached
         except Exception:
             pass
-    usable_paths = prepare_pre_wham_equipment_observation_frames(
+    usable_paths = prepare_pre_reconstruction_equipment_observation_frames(
         [path for path in frame_paths if path.is_file()],
         output_dir=cache_path.parent / "equipment_observation_frames",
     )
     if not usable_paths:
         return {
             "schemaVersion": 1,
-            "policyVersion": PRE_WHAM_EQUIPMENT_OBSERVATION_POLICY_VERSION,
+            "policyVersion": PRE_RECONSTRUCTION_EQUIPMENT_OBSERVATION_POLICY_VERSION,
             "requiredEquipment": required_equipment,
             "passed": False,
             "reason": "equipment_observation_frames_missing",
@@ -26083,7 +26056,7 @@ def confirm_pre_wham_named_equipment(
     )
     result = {
         "schemaVersion": 1,
-        "policyVersion": PRE_WHAM_EQUIPMENT_OBSERVATION_POLICY_VERSION,
+        "policyVersion": PRE_RECONSTRUCTION_EQUIPMENT_OBSERVATION_POLICY_VERSION,
         "requiredEquipment": required_equipment,
         "visibleEquipment": sorted(observed),
         "passed": passed,
@@ -26100,7 +26073,7 @@ def confirm_pre_wham_named_equipment(
     return result
 
 
-def prepare_pre_wham_equipment_observation_frames(
+def prepare_pre_reconstruction_equipment_observation_frames(
     frame_paths: list[Path],
     *,
     output_dir: Path,
@@ -26162,7 +26135,7 @@ def prepare_pre_wham_equipment_observation_frames(
     return prepared or selected_paths
 
 
-def choose_pre_wham_source_cut_or_reject(
+def choose_pre_reconstruction_source_cut_or_reject(
     *,
     ranked_candidate: RankedCandidate,
     candidate_workspace: Path,
@@ -26188,7 +26161,7 @@ def choose_pre_wham_source_cut_or_reject(
         exercise_motion_contract=exercise_motion_contract,
     )
     segment_dir = candidate_workspace / "segment_detection"
-    selection_dir = segment_dir / "pre_wham_source_candidates"
+    selection_dir = segment_dir / "pre_reconstruction_source_candidates"
     vision_payload = ranked_candidate.candidate.get("visionPayload")
     source_pose_prefilter_payload = (
         vision_payload.get("posePrefilter")
@@ -26242,7 +26215,7 @@ def choose_pre_wham_source_cut_or_reject(
         prefer_largest_padded_candidate=validating_padded_chunk,
     )
     if source_choice is None:
-        write_pre_wham_source_selection_manifest(
+        write_pre_reconstruction_source_selection_manifest(
             ranked_candidate=ranked_candidate,
             candidate_workspace=candidate_workspace,
             source_video_path=source_video_path,
@@ -26259,7 +26232,7 @@ def choose_pre_wham_source_cut_or_reject(
             segment_settings=segment_settings,
         )
         raise SourceCandidateRejected(
-            "Pre-WHAM source validation found no source-window candidates.",
+            "Pre-RECONSTRUCTION source validation found no source-window candidates.",
             reason_tags=("source_candidate_window_choice_no_candidates",),
         )
     ranking, render_seconds, vlm_seconds = source_choice
@@ -26311,7 +26284,7 @@ def choose_pre_wham_source_cut_or_reject(
             }
         )
         ranking = replace(ranking, payload=ranking_payload)
-    write_pre_wham_source_selection_manifest(
+    write_pre_reconstruction_source_selection_manifest(
         ranked_candidate=ranked_candidate,
         candidate_workspace=candidate_workspace,
         source_video_path=source_video_path,
@@ -26340,7 +26313,7 @@ def choose_pre_wham_source_cut_or_reject(
     end_seconds = parse_optional_float(payload.get("selected_section_end_seconds"))
     if start_seconds is None or end_seconds is None or end_seconds <= start_seconds:
         raise SourceCandidateRejected(
-            "Pre-WHAM source validation returned no valid source cut.",
+            "Pre-RECONSTRUCTION source validation returned no valid source cut.",
             reason_tags=("source_candidate_window_choice_invalid_range",),
             evidence=source_cut_ranking_rejection_evidence(ranking),
         )
@@ -26403,7 +26376,7 @@ def choose_pre_wham_source_cut_or_reject(
         else:
             recovery["strategy"] = "same_source_recovery_failed"
             raise SourceCandidateRejected(
-                "Pre-WHAM exact-source phase validation rejected both the selected cut and its parent window.",
+                "Pre-RECONSTRUCTION exact-source phase validation rejected both the selected cut and its parent window.",
                 reason_tags=("source_cut_incomplete_repetition_phase",),
                 evidence={
                     "selectedCoverage": selected_coverage,
@@ -26421,7 +26394,7 @@ def choose_pre_wham_source_cut_or_reject(
         }
     )
     ranking = replace(ranking, payload=ranking_payload)
-    write_pre_wham_source_selection_manifest(
+    write_pre_reconstruction_source_selection_manifest(
         ranked_candidate=ranked_candidate,
         candidate_workspace=candidate_workspace,
         source_video_path=source_video_path,
@@ -26487,19 +26460,19 @@ def choose_pre_wham_source_cut_or_reject(
             ),
         )
     selection_manifest_path = segment_dir / "segment_selection.json"
-    selection_manifest = json.loads(selection_manifest_path.read_text(encoding="utf-8"))
+    selection_manifest = loads_reconstruction_metadata(selection_manifest_path.read_text(encoding="utf-8"))
     selection_manifest["selectedSegmentMaterialization"] = selected_segment_materialization
     selection_manifest_path.write_text(json.dumps(selection_manifest, indent=2), encoding="utf-8")
     exact_phase_validation = promote_and_require_exact_source_phase_validation(
         candidate_workspace=candidate_workspace,
         validation=exact_phase_validation,
         exercise_motion_contract=exercise_motion_contract,
-        rejection_context="Pre-WHAM exact trimmed-source validation rejected the movement cut",
+        rejection_context="Pre-RECONSTRUCTION exact trimmed-source validation rejected the movement cut",
     )
     return selected_segment_path
 
 
-def validate_exact_pre_wham_source_video(
+def validate_exact_pre_reconstruction_source_video(
     *,
     source_video_path: Path,
     exercise_name: str,
@@ -26617,7 +26590,7 @@ def load_cached_exact_source_phase_validation(
 ) -> dict[str, Any] | None:
     if cache_path.exists():
         try:
-            cached = json.loads(cache_path.read_text(encoding="utf-8"))
+            cached = loads_reconstruction_metadata(cache_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             cached = None
         if isinstance(cached, dict) and cached.get("cacheKey") == cache_key:
@@ -26628,7 +26601,7 @@ def load_cached_exact_source_phase_validation(
                     # A cache hit must not run detectors or trust a reference
                     # replaced in place after validation. Bind it to this source.
                     try:
-                        reference = json.loads(
+                        reference = loads_reconstruction_metadata(
                             Path(str(reference_path_value)).expanduser().read_text(encoding="utf-8")
                         )
                     except (OSError, ValueError):
@@ -26699,7 +26672,7 @@ def validate_exact_source_with_cached_gpu_handoff(
                 )
                 if current is not None:
                     return current
-                return validate_exact_pre_wham_source_video(
+                return validate_exact_pre_reconstruction_source_video(
                     source_video_path=source_video_path,
                     exercise_name=exercise_name,
                     exercise_motion_contract=exercise_motion_contract,
@@ -26784,7 +26757,7 @@ def promote_exact_source_pose_reference(
 
     Deterministic source confirmation stores each attempted reference inside
     its candidate directory. Once one attempt is selected, generation and the
-    raw WHAM gate consume the candidate-workspace reference. Promote the exact
+    raw RECONSTRUCTION gate consume the candidate-workspace reference. Promote the exact
     selected file so those stages cannot silently run without source fidelity.
     """
     reference_value = validation.get("sourcePoseReferencePath")
@@ -26829,7 +26802,7 @@ def promote_and_require_exact_source_phase_validation(
     ) or endpoint_contract_rejected or not validation.get("requiredRegionObservations", {}).get(
         "passed", True
     )
-    update_pre_wham_exact_phase_validation_manifest(
+    update_pre_reconstruction_exact_phase_validation_manifest(
         candidate_workspace=candidate_workspace,
         validation=validation,
     )
@@ -26849,14 +26822,14 @@ def promote_and_require_exact_source_phase_validation(
     return validation
 
 
-def update_pre_wham_exact_phase_validation_manifest(
+def update_pre_reconstruction_exact_phase_validation_manifest(
     *,
     candidate_workspace: Path,
     validation: dict[str, Any],
 ) -> None:
     manifest_path = candidate_workspace / "segment_detection" / "segment_selection.json"
     try:
-        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        payload = loads_reconstruction_metadata(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         payload = {}
     selected_segment_path = candidate_workspace / "input" / "selected_segment.mp4"
@@ -26910,7 +26883,7 @@ def exact_source_validation_effectively_passed(validation: dict[str, Any]) -> bo
     return phase_passed and not endpoint_rejected
 
 
-def write_pre_wham_source_selection_manifest(
+def write_pre_reconstruction_source_selection_manifest(
     *,
     ranked_candidate: RankedCandidate,
     candidate_workspace: Path,
@@ -26975,10 +26948,10 @@ def write_pre_wham_source_selection_manifest(
         selected_segment_sha256 = None
     manifest = {
         "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
-        "role": "pre_wham_validated_source_cut",
-        "source": "pre_wham_source_window_choice",
-        "sourcePrepReason": "pre_wham_source_window_choice",
-        "preWhamSourceValidationEnabled": True,
+        "role": "pre_reconstruction_validated_source_cut",
+        "source": "pre_reconstruction_source_window_choice",
+        "sourcePrepReason": "pre_reconstruction_source_window_choice",
+        "preReconstructionSourceValidationEnabled": True,
         "sourceVideoPath": str(source_video_path),
         "detectionSourceVideoPath": str(detection_source_video_path),
         "selectedSegmentPath": str(selected_segment_path),
@@ -27003,8 +26976,8 @@ def write_pre_wham_source_selection_manifest(
         "segmentSettings": segment_settings,
         "selectedSpan": selected_span,
         "selectedSpanInOriginalSource": selected_span_in_original_source,
-        "preWhamParentSourceWindowFallback": False,
-        "preWhamParentSourceWindowFallbackReason": None,
+        "preReconstructionParentSourceWindowFallback": False,
+        "preReconstructionParentSourceWindowFallbackReason": None,
         "sourceCutRanking": None if ranking is None else ranking_to_manifest(ranking),
         "sourceCutRenderSeconds": render_seconds,
         "sourceCutVlmSeconds": vlm_seconds,
@@ -28135,7 +28108,7 @@ def bake_preview_loops_with_playwright(
             # Prefetch and final processing share one unresolved result. Mark it
             # consumed so a later process/deferred pass actually refits.
             try:
-                record = json.loads(checkpoint.read_text(encoding="utf-8"))
+                record = loads_reconstruction_metadata(checkpoint.read_text(encoding="utf-8"))
                 outputs = [Path(identity["path"]) for identity in record.get("outputs") or []]
             except (OSError, ValueError, TypeError, KeyError):
                 outputs = []
@@ -29236,7 +29209,7 @@ def _bake_preview_loops_with_playwright_uncached(
                                     settings_options=corrected_options,
                                     cleanup_interpretation="contact_sequence_correction",
                                     adaptive_preview_settings={
-                                        "source": "python_post_wham_contact_sequence_correction",
+                                        "source": "python_post_reconstruction_contact_sequence_correction",
                                         "metrics": correction_metrics,
                                     },
                                     preview_bake_diagnostics={
@@ -29526,7 +29499,7 @@ def load_baked_source_camera_reference(workspace: Path, source_pose: dict[str, A
     """Use one retained correction camera for pre-fit and rendered validation."""
     cleaned_path = workspace / 'cleaned' / 'motion.cleaned.json'
     if source_pose is not None and cleaned_path.is_file():
-        cleaned = json.loads(cleaned_path.read_text(encoding='utf-8'))
+        cleaned = loads_reconstruction_metadata(cleaned_path.read_text(encoding='utf-8'))
         camera = cleaned.get('metadata', {}).get('structuralRefinement', {}).get(
             'sourceGuidedArticulation', {}).get('cameraRegistration', {})
         if camera.get('available') and camera.get('cameraImageTransform'):
@@ -32921,7 +32894,7 @@ def bake_preview_time_range_with_playwright(
     review_video_metadata_path = review_dir / f"{artifact_slug}.review_video.json"
     preview_source = preview_html_source_signature(preview_html_path)
     if skeleton_path.exists() and review_video_path.exists():
-        export_payload = json.loads(skeleton_path.read_text(encoding="utf-8"))
+        export_payload = loads_reconstruction_metadata(skeleton_path.read_text(encoding="utf-8"))
         if selected_section_wear_skeleton_cache_is_current(
             export_payload,
             options=effective_options,
@@ -33572,7 +33545,7 @@ def selected_section_review_video_cache_is_current(
     if not metadata_path.exists():
         return False
     try:
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        metadata = loads_reconstruction_metadata(metadata_path.read_text(encoding="utf-8"))
     except Exception:
         return False
     frame_indices = dense_loop_review_video_frame_indices(export_payload)
@@ -33783,7 +33756,7 @@ def preview_tuning_option_catalog(*, motion_tuning_enabled: bool) -> list[dict[s
             "default": False,
             "description": "Blends detected support-foot joints toward stable anchors during planted phases.",
             "useWhen": "Use when the support foot visibly slides during a static or mostly static lower-body exercise.",
-            "risk": "Can distort the leg chain if WHAM contact timing is wrong.",
+            "risk": "Can distort the leg chain if RECONSTRUCTION contact timing is wrong.",
         },
         {
             "id": "lockPlantedHands",
@@ -33861,8 +33834,8 @@ def preview_settings_variants(*, motion_tuning_enabled: bool = True) -> list[dic
     if not motion_tuning_enabled:
         return [
             {
-                "id": "raw-wham",
-                "label": "Raw WHAM camera-space",
+                "id": "raw-reconstruction",
+                "label": "Raw RECONSTRUCTION camera-space",
                 "options": {
                     "fixedRoot": False,
                     "lockPlantedFeet": False,
@@ -34712,7 +34685,7 @@ def _render_review_window_contact_sheet_uncached(
         page = browser.new_page(viewport={"width": 960, "height": 720}, device_scale_factor=1)
         page.goto(item.preview_html_path.resolve().as_uri(), wait_until="networkidle")
         page.wait_for_function("() => window.exerciseMotionAutomation != null")
-        export_payload = json.loads(item.skeleton_path.read_text(encoding="utf-8")) if materialized_skeleton else page.evaluate(
+        export_payload = loads_reconstruction_metadata(item.skeleton_path.read_text(encoding="utf-8")) if materialized_skeleton else page.evaluate(
             """({ startSeconds, endSeconds, options }) => window.exerciseMotionAutomation.bakeTimeRange(startSeconds, endSeconds, options)""",
             {
                 "startSeconds": window.start_seconds,
@@ -36246,7 +36219,7 @@ def exercise_motion_contract_for_review_item(item: ReviewItem, ranking: LoopRank
     if not segment_selection_path.exists():
         return None
     try:
-        segment_payload = json.loads(segment_selection_path.read_text(encoding="utf-8"))
+        segment_payload = loads_reconstruction_metadata(segment_selection_path.read_text(encoding="utf-8"))
     except Exception:
         return None
     if not isinstance(segment_payload, dict):
@@ -36255,7 +36228,7 @@ def exercise_motion_contract_for_review_item(item: ReviewItem, ranking: LoopRank
     prompt_contract = exercise_motion_contract_for_prompt(contract if isinstance(contract, dict) else None)
     if prompt_contract is not None:
         return prompt_contract
-    for stage in segment_payload.get("preWhamSourceValidationStages") or []:
+    for stage in segment_payload.get("preReconstructionSourceValidationStages") or []:
         if not isinstance(stage, dict):
             continue
         contract = stage.get("exerciseMotionContract")
@@ -36572,7 +36545,7 @@ def load_source_scene_analysis_cache(
     if cache_path is None or not cache_path.exists():
         return None
     try:
-        payload = json.loads(cache_path.read_text(encoding="utf-8"))
+        payload = loads_reconstruction_metadata(cache_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, TypeError):
         return None
     if not isinstance(payload, dict):
@@ -38038,7 +38011,7 @@ def source_pose_temporal_foot_contacts(
     range therefore separates detector jitter from a planted ankle, while the
     ankle's lower-envelope check avoids locking a briefly stationary lifted foot.
     Ratios, rather than source frame numbers, make the evidence portable to the
-    independently sampled WHAM/Wear timeline.
+    independently sampled RECONSTRUCTION/Wear timeline.
     """
     if len(frames) < SOURCE_POSE_CONTACT_MIN_SAMPLE_COUNT or body_span <= 1e-6:
         return []
@@ -38202,7 +38175,7 @@ def source_pose_stationary_support_evidence(
 ) -> dict[str, Any]:
     """Identify continuously stationary feet from the exact source pixels.
 
-    WHAM drift must not decide whether a support was stationary.  We use robust
+    RECONSTRUCTION drift must not decide whether a support was stationary.  We use robust
     chunk centers from the source 2D pose so detector jitter is tolerated while
     genuine travelling or distal-leg motion remains observable.
     """
@@ -38914,7 +38887,7 @@ def full_repetition_phase_completeness_metrics_from_source_pose_payload(
     has_complete_cycle, major_phase_sequence = has_one_or_more_major_repetition_cycles(values)
     has_single_cycle, _ = has_exactly_one_major_repetition_cycle(values)
     # A source window only needs to contain a complete usable repetition. The
-    # post-WHAM temporal cutter owns isolation of exactly one cycle, while the
+    # post-RECONSTRUCTION temporal cutter owns isolation of exactly one cycle, while the
     # final-output gate still enforces that the exported motion has one cycle.
     # Rejecting multi-rep source demos here duplicates that later responsibility
     # and prevents otherwise valid, common exercise footage from reaching it.
@@ -39160,7 +39133,7 @@ def source_cut_exact_confirmation_proves_complete_phase(
 
 
 def incomplete_source_cut_requires_same_source_recovery(completeness_state: str) -> bool:
-    """Partial/invalid cuts must expand or reject before WHAM — confirmation is not enough."""
+    """Partial/invalid cuts must expand or reject before RECONSTRUCTION — confirmation is not enough."""
     return completeness_state in {"partial", "invalid"}
 
 
@@ -41625,7 +41598,7 @@ def write_cut_candidate_vlm_review_debug(
     crop_metadata_path = debug_path.parent / "contact_sheet_crop.json"
     if crop_metadata_path.exists():
         try:
-            payload["contactSheetCrop"] = json.loads(crop_metadata_path.read_text(encoding="utf-8"))
+            payload["contactSheetCrop"] = loads_reconstruction_metadata(crop_metadata_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             pass
     if error is not None:
@@ -41714,7 +41687,7 @@ def review_source_cut_boundaries(
     for line in original_prompt.splitlines():
         if line.startswith("Structured movement contract: "):
             try:
-                contract = json.loads(line.partition(": ")[2])
+                contract = loads_reconstruction_metadata(line.partition(": ")[2])
             except ValueError:
                 pass
             break
@@ -44705,23 +44678,23 @@ def rank_review_item_with_caption_images(
     del request, caption_images
     item_started = time.perf_counter()
     exercise_motion_contract = exercise_motion_contract_for_review_item(item, None)
-    source_interval_authority = pre_wham_source_interval_authority(
+    source_interval_authority = pre_reconstruction_source_interval_authority(
         candidate_workspace=item.candidate_workspace,
         exercise_motion_contract=exercise_motion_contract,
     )
-    pre_wham_interval_authoritative = bool(source_interval_authority.get("authoritative"))
-    detected_complete_loop = item.loop_index >= 0 and not pre_wham_interval_authoritative
-    if pre_wham_interval_authoritative:
-        selection_disabled_reason = "pre_wham_source_interval_authoritative"
-        selection_policy = "validated_pre_wham_source_interval"
-        section_selection_policy = "validated_pre_wham_source_interval"
-        final_cut_responsibility = "validated_pre_wham_source_interval"
+    pre_reconstruction_interval_authoritative = bool(source_interval_authority.get("authoritative"))
+    detected_complete_loop = item.loop_index >= 0 and not pre_reconstruction_interval_authoritative
+    if pre_reconstruction_interval_authoritative:
+        selection_disabled_reason = "pre_reconstruction_source_interval_authoritative"
+        selection_policy = "validated_pre_reconstruction_source_interval"
+        section_selection_policy = "validated_pre_reconstruction_source_interval"
+        final_cut_responsibility = "validated_pre_reconstruction_source_interval"
         review_frame_source = "full_validated_source_interval_reconstruction"
     elif detected_complete_loop:
         selection_disabled_reason = None
         selection_policy = "deterministic_detected_loop"
         section_selection_policy = "deterministic_detected_loop"
-        final_cut_responsibility = "deterministic_post_wham_loop"
+        final_cut_responsibility = "deterministic_post_reconstruction_loop"
         review_frame_source = "selected_generated_loop_validation"
     else:
         selection_disabled_reason = "no_detected_complete_loop"
@@ -44732,13 +44705,13 @@ def rank_review_item_with_caption_images(
     payload: dict[str, Any] = {
         "score": 1.0,
         "modelScore": 1.0,
-        "postWhamMovementCutSelectionEnabled": detected_complete_loop,
-        "postWhamMovementCutSelectionDisabledReason": selection_disabled_reason,
-        "postWhamSelectionPolicy": selection_policy,
+        "postReconstructionMovementCutSelectionEnabled": detected_complete_loop,
+        "postReconstructionMovementCutSelectionDisabledReason": selection_disabled_reason,
+        "postReconstructionSelectionPolicy": selection_policy,
         "sectionSelectionPolicy": section_selection_policy,
         "finalCutResponsibility": final_cut_responsibility,
         "reviewFrameSource": review_frame_source,
-        "preWhamSourceIntervalAuthority": source_interval_authority,
+        "preReconstructionSourceIntervalAuthority": source_interval_authority,
         "fullArtifactStartSeconds": item.loop_start_seconds,
         "fullArtifactEndSeconds": item.loop_end_seconds,
         "fullArtifactDurationSeconds": item.duration_sec,
@@ -44756,18 +44729,18 @@ def rank_review_item_with_caption_images(
         score=1.0,
         reasons=[
             (
-                "pre_wham_validated_source_interval_review"
-                if pre_wham_interval_authoritative
-                else "post_wham_detected_loop_review"
+                "pre_reconstruction_validated_source_interval_review"
+                if pre_reconstruction_interval_authoritative
+                else "post_reconstruction_detected_loop_review"
                 if detected_complete_loop
-                else "post_wham_full_artifact_review"
+                else "post_reconstruction_full_artifact_review"
             ),
             (
-                "post_wham_movement_cut_blocked_by_source_authority"
-                if pre_wham_interval_authoritative
-                else "post_wham_deterministic_loop_selected"
+                "post_reconstruction_movement_cut_blocked_by_source_authority"
+                if pre_reconstruction_interval_authoritative
+                else "post_reconstruction_deterministic_loop_selected"
                 if detected_complete_loop
-                else "post_wham_movement_cut_selection_disabled"
+                else "post_reconstruction_movement_cut_selection_disabled"
             ),
         ],
         payload=payload,
@@ -44944,7 +44917,7 @@ def build_loop_ranking_prompt(
         vlm_visible_preview_options(item.settings_options),
         sort_keys=True,
     )
-    motion_tuning_enabled = item.settings_variant_id != "raw-wham"
+    motion_tuning_enabled = item.settings_variant_id != "raw-reconstruction"
     loop_continuity_required = False
     review_goal = "score this deterministically bounded exercise movement candidate for a Wear OS exercise animation"
     boundary_instruction = (
@@ -45093,17 +45066,17 @@ def build_selection_manifest(
         "schemaVersion": 1,
         "selectionValidationPolicyVersion": SELECTION_VALIDATION_POLICY_VERSION,
         "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
-        "preWhamSourceValidationEnabled": bool(request.pre_wham_source_validation),
-        "preWhamSourceValidationExplicitlyDisabled": bool(
-            request.pre_wham_source_validation_explicitly_disabled
+        "preReconstructionSourceValidationEnabled": bool(request.pre_reconstruction_source_validation),
+        "preReconstructionSourceValidationExplicitlyDisabled": bool(
+            request.pre_reconstruction_source_validation_explicitly_disabled
         ),
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "sourceCandidatesJson": str(request.candidates_json),
         "youtubeSourceCacheDir": str(resolved_youtube_source_cache_dir(request)),
         "youtubePreviewCacheReadThroughDir": str(default_youtube_preview_cache_read_through_dir(request)),
         "candidateSelectionPolicy": "ranked_source_video_budget_best_final_selection",
-        "sectionSelectionPolicy": "deterministic_post_wham_loop_required",
-        "postWhamTemporalCutEnabled": True,
+        "sectionSelectionPolicy": "deterministic_post_reconstruction_loop_required",
+        "postReconstructionTemporalCutEnabled": True,
         "previewSettingsVariantRankingEnabled": request.rank_preview_variants,
         "adaptivePreviewSettingsEnabled": request.adaptive_preview_settings,
         "maxAdaptivePreviewSettings": request.max_adaptive_preview_settings,
@@ -45200,7 +45173,7 @@ def repair_rigid_correction_settings(item: ReviewItem) -> ReviewItem:
     payload = item.export_payload
     if not isinstance(payload, dict):
         try:
-            payload = json.loads(item.skeleton_path.read_text(encoding="utf-8"))
+            payload = loads_reconstruction_metadata(item.skeleton_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return item
     correction = payload.get("sourceContactSequenceCorrection")
@@ -45286,7 +45259,7 @@ def selected_to_manifest(item: ReviewItem, ranking: LoopRanking | None) -> dict[
         and render_evidence.get("available") is True
         and item.skeleton_path.is_file()
     ):
-        movement_payload = json.loads(item.skeleton_path.read_text(encoding="utf-8"))
+        movement_payload = loads_reconstruction_metadata(item.skeleton_path.read_text(encoding="utf-8"))
         movement_state = validate_artifact_state(
             movement_payload.get("artifactState"),
             movement_payload=movement_payload,
@@ -45331,7 +45304,7 @@ def wear_skeleton_preview_settings_contract_for_review_item(item: ReviewItem) ->
                 "wearDisplay": None,
             }
         try:
-            export_payload = json.loads(item.skeleton_path.read_text(encoding="utf-8"))
+            export_payload = loads_reconstruction_metadata(item.skeleton_path.read_text(encoding="utf-8"))
         except Exception as exc:
             return {
                 "passed": False,
@@ -45359,9 +45332,9 @@ def generation_to_manifest(result: GenerateResult) -> dict[str, Any]:
         "rawMotionJsonPath": str(result.raw_motion_json_path),
         "targetRigContractPath": str(result.target_rig_contract_path),
         "retargetSourcePath": str(result.retarget_source_path) if result.retarget_source_path is not None else None,
-        "whamSmplPreviewJsonPath": str(result.smpl_preview_json_path) if result.smpl_preview_json_path is not None else None,
-        "whamResultsPkl": str(result.wham_results_pkl) if result.wham_results_pkl is not None else None,
-        "whamCacheStatus": result.wham_cache_status,
+        "reconstructionSmplPreviewJsonPath": str(result.smpl_preview_json_path) if result.smpl_preview_json_path is not None else None,
+        "reconstructionResultsPkl": str(result.reconstruction_results_pkl) if result.reconstruction_results_pkl is not None else None,
+        "reconstructionCacheStatus": result.reconstruction_cache_status,
         "inputVideoPath": str(result.copied_input_video_path),
         "groundMetadataPath": str(result.ground_metadata_path) if result.ground_metadata_path is not None else None,
         "motionTuningEnabled": result.motion_tuning_enabled,
@@ -45473,15 +45446,15 @@ def review_item_from_manifest(payload: dict[str, Any]) -> ReviewItem:
     candidate = payload.get("candidate") if isinstance(payload.get("candidate"), dict) else {}
     ranking = payload.get("ranking") if isinstance(payload.get("ranking"), dict) else {}
     ranking_payload = ranking.get("payload") if isinstance(ranking.get("payload"), dict) else {}
-    source_interval_authority = ranking_payload.get("preWhamSourceIntervalAuthority")
+    source_interval_authority = ranking_payload.get("preReconstructionSourceIntervalAuthority")
     if (
         isinstance(source_interval_authority, dict)
         and source_interval_authority.get("authoritative") is True
-        and not isinstance(candidate.get("preWhamSourceIntervalAuthority"), dict)
+        and not isinstance(candidate.get("preReconstructionSourceIntervalAuthority"), dict)
     ):
         candidate = {
             **candidate,
-            "preWhamSourceIntervalAuthority": source_interval_authority,
+            "preReconstructionSourceIntervalAuthority": source_interval_authority,
         }
     return repair_rigid_correction_settings(ReviewItem(
         exercise_index=int(payload.get("exerciseIndex") or 0),
@@ -45657,7 +45630,7 @@ def find_cached_youtube_source(cache_dir: Path, cache_stem: str) -> Path | None:
 def cached_youtube_source_identity_is_valid(video_path: Path, cache_stem: str) -> bool:
     manifest_path = video_path.with_name(f"{video_path.name}.source.json")
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest = loads_reconstruction_metadata(manifest_path.read_text(encoding="utf-8"))
         stat = video_path.stat()
         return (
             isinstance(manifest, dict)
@@ -45841,7 +45814,7 @@ def prefetch_ranked_youtube_sources(
 ) -> dict[str, Any]:
     """Download discovery-selected full sources without occupying a bake worker."""
     candidates_path = candidates_json.expanduser().resolve()
-    payload = json.loads(candidates_path.read_text(encoding="utf-8-sig"))
+    payload = loads_reconstruction_metadata(candidates_path.read_text(encoding="utf-8-sig"))
     parsed = parse_ranked_candidates_manifest(payload)
     recommended = [
         candidate

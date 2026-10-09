@@ -29,16 +29,16 @@ def test_failed_candidate_retains_source_context_for_identical_resume(
     monkeypatch.setattr(bake, "read_basic_video_metadata", lambda path: SimpleNamespace(
         duration_seconds=12.0, fps=30.0
     ))
-    monkeypatch.setattr(bake, "prepare_cached_wham_video", lambda **kwargs: preparations.append(kwargs))
+    monkeypatch.setattr(bake, "prepare_cached_reconstruction_video", lambda **kwargs: preparations.append(kwargs))
 
     def prepare():
-        return bake.prepare_wham_inference_video(
+        return bake.prepare_reconstruction_inference_video(
             candidate_workspace=candidate, selected_video_path=selected, padding_seconds=2.0
         )
 
     before = prepare()
     report = bake.apply_artifact_retention_policy(tmp_path, {"candidateResults": [{
-        "candidateWorkspace": str(candidate), "status": "rejected_raw_wham_validation",
+        "candidateWorkspace": str(candidate), "status": "rejected_raw_reconstruction_validation",
         "inputVideoPath": str(selected),
     }]})
     assert not report["errors"]

@@ -373,15 +373,15 @@ def _patch_module(fullname: str, module: Any) -> None:
                 workspace=request.workspace,
                 video_path=Path(prepared_video_path),
                 normalized_motion_json=Path(config["normalizedMotionPath"]),
-                motion_reconstruction_backend="wham",
+                motion_reconstruction_backend="reconstruction",
                 ground_contact_mode="intermittent",
                 support_mode_hint="standing",
                 source_pose_reference_path=source_pose_reference_path,
-                reuse_wham_cache=True,
+                reuse_reconstruction_cache=True,
                 structural_refinement_enabled=True,
             )
         )
-        result_cache_status = str(result.wham_cache_status)
+        result_cache_status = str(result.reconstruction_cache_status)
         _record(
             config,
             "generation_complete",

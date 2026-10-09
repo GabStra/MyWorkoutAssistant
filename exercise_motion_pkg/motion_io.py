@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from exercise_motion_pkg.reconstruction_compat import loads_reconstruction_metadata, retained_reconstruction_path
+
 import json
 from pathlib import Path
 
@@ -7,7 +9,8 @@ from exercise_motion_pkg.models import MotionClip, MotionFrame
 
 
 def load_motion_json(path: Path) -> MotionClip:
-    data = json.loads(path.read_text(encoding="utf-8"))
+    path = retained_reconstruction_path(path)
+    data = loads_reconstruction_metadata(path.read_text(encoding="utf-8"))
     if "frames" in data:
         metadata = dict(data.get("metadata") or {})
         if data.get("kind") == "wearPreviewSkeleton":

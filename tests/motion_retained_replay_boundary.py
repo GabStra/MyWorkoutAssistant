@@ -128,8 +128,8 @@ def patch_module(fullname: str, module: Any, config: dict[str, Any], record: Any
 
             fresh_request = replace(
                 request,
-                reuse_wham_cache=False,
-                require_wham_cache=False,
+                reuse_reconstruction_cache=False,
+                require_reconstruction_cache=False,
             )
             return production_generate_candidate_motion(
                 candidate,
@@ -150,8 +150,8 @@ def patch_module(fullname: str, module: Any, config: dict[str, Any], record: Any
             source_pose_reference_path=pose, stage_identity=stage_identity,
             structural_refinement_enabled=request.structural_refinement_enabled,
             motion_tuning_enabled=request.motion_tuning_enabled,
-            reuse_wham_cache=retained_reconstruction,
-            require_wham_cache=retained_reconstruction,
+            reuse_reconstruction_cache=retained_reconstruction,
+            require_reconstruction_cache=retained_reconstruction,
         ))
 
     module.generate_candidate_motion = generate

@@ -49,7 +49,7 @@ $plainJob = [pscustomobject]@{ Id = 1 }
 Assert-True ((Get-StagedWaveCheckpointStage -Job $plainJob) -eq $null) 'Non-wave job must return null stage'
 $missingCheckpointJob = New-FakeStagedWaveJob -WaveWorkspace (New-WaveWorkspace -Stage $null) -Id 2
 Assert-True ((Get-StagedWaveCheckpointStage -Job $missingCheckpointJob) -eq '') 'Missing checkpoint must read as an early (empty) stage'
-foreach ($stage in @('source_validation', 'wham_generation', 'wham_released', 'final_validation', 'completed')) {
+foreach ($stage in @('source_validation', 'reconstruction_generation', 'reconstruction_released', 'final_validation', 'completed')) {
     $stageJob = New-FakeStagedWaveJob -WaveWorkspace (New-WaveWorkspace -Stage $stage) -Id 3
     Assert-True ((Get-StagedWaveCheckpointStage -Job $stageJob) -eq $stage) "Stage $stage must round-trip"
 }
@@ -95,8 +95,8 @@ $overlap = Test-Admission -Jobs @(New-WaveJobAtStage -Stage 'final_validation' -
 Assert-True ($overlap.admitted) 'final_validation wave must admit the next wave at cap 2'
 
 # Early and GPU phases block: no checkpoint yet, source_validation,
-# wham_generation, and the wham_released transition all hold the gate.
-foreach ($blockingStage in @($null, 'source_validation', 'wham_generation', 'wham_released')) {
+# reconstruction_generation, and the reconstruction_released transition all hold the gate.
+foreach ($blockingStage in @($null, 'source_validation', 'reconstruction_generation', 'reconstruction_released')) {
     $blocked = Test-Admission -Jobs @(New-WaveJobAtStage -Stage $blockingStage -Id 12) -Max 2
     Assert-True (-not $blocked.admitted) "Stage $blockingStage must block the next wave"
 }
@@ -105,7 +105,7 @@ foreach ($blockingStage in @($null, 'source_validation', 'wham_generation', 'wha
 $twoFinal = @(New-WaveJobAtStage -Stage 'final_validation' -Id 13; New-WaveJobAtStage -Stage 'final_validation' -Id 14)
 Assert-True (-not (Test-Admission -Jobs $twoFinal -Max 2).admitted) 'Wave count at the cap must block'
 Assert-True ((Test-Admission -Jobs $twoFinal -Max 3).admitted) 'Two final_validation waves must admit a third at cap 3'
-$oneEarly = @(New-WaveJobAtStage -Stage 'final_validation' -Id 15; New-WaveJobAtStage -Stage 'wham_generation' -Id 16)
+$oneEarly = @(New-WaveJobAtStage -Stage 'final_validation' -Id 15; New-WaveJobAtStage -Stage 'reconstruction_generation' -Id 16)
 Assert-True (-not (Test-Admission -Jobs $oneEarly -Max 3).admitted) 'Any non-final-validation wave must block even below the cap'
 
 # Legacy fallbacks are full GPU-capable pipelines: pending or running, they

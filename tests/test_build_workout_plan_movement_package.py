@@ -74,8 +74,8 @@ def write_reviewed_movement(movement_path: Path, manifest_path: Path) -> dict:
     ))
     source_manifest = {
         "sourceSelectionPolicyVersion": BUILDER.SOURCE_SELECTION_POLICY_VERSION,
-        "preWhamSourceValidationEnabled": True,
-        "sourcePrepReason": "pre_wham_source_window_choice",
+        "preReconstructionSourceValidationEnabled": True,
+        "sourcePrepReason": "pre_reconstruction_source_window_choice",
         "exerciseName": "Reviewed exercise",
         "sourceVideoPath": str(source_segment_path),
         "detectionSourceVideoPath": str(source_segment_path),
@@ -136,7 +136,7 @@ def write_reviewed_movement(movement_path: Path, manifest_path: Path) -> dict:
             {
                 "selectionStatus": "selected",
                 "sourceSelectionPolicyVersion": BUILDER.SOURCE_SELECTION_POLICY_VERSION,
-                "preWhamSourceValidationEnabled": True,
+                "preReconstructionSourceValidationEnabled": True,
                 "selected": {
                     "exerciseName": "Reviewed exercise",
                     "sourceCandidateWorkspace": str(source_workspace),
@@ -451,8 +451,8 @@ def test_packager_never_promotes_raw_not_required_source_clearance(tmp_path):
     manifest_path = tmp_path / "selection_manifest.json"
     write_reviewed_movement(movement_path, manifest_path)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["preWhamSourceValidationEnabled"] = False
-    manifest["preWhamSourceValidationExplicitlyDisabled"] = True
+    manifest["preReconstructionSourceValidationEnabled"] = False
+    manifest["preReconstructionSourceValidationExplicitlyDisabled"] = True
     manifest["selected"]["sourceSelectionClearance"]["status"] = "not_required"
     manifest["selected"]["sourceSelectionClearance"]["sourcePrepReason"] = "ranked_best_chunk"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")

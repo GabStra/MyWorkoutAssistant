@@ -1,8 +1,8 @@
-"""Convert GVHMR hmr4d_results.pt into the WHAM output-pkl schema.
+"""Convert GVHMR hmr4d_results.pt into the RECONSTRUCTION output-pkl schema.
 
-Runs inside the GVHMR container so the pipeline's WHAM cache, normalization,
+Runs inside the GVHMR container so the pipeline's RECONSTRUCTION cache, normalization,
 and retarget stages can consume a GVHMR reconstruction unchanged. The global
-(gravity-aligned, Y-up, world) SMPL parameters are exposed through the WHAM
+(gravity-aligned, Y-up, world) SMPL parameters are exposed through the RECONSTRUCTION
 "world" coordinate keys.
 
 GVHMR betas are trained for the SMPL-X topology; feeding them into the SMPL
@@ -62,7 +62,7 @@ def export_gvhmr_results_pkl(results_pt: Path, output_pkl: Path, *, keep_source_
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--results", type=Path, required=True, help="hmr4d_results.pt path")
-    parser.add_argument("--output-pkl", type=Path, required=True, help="wham_output.pkl destination")
+    parser.add_argument("--output-pkl", type=Path, required=True, help="reconstruction_output.pkl destination")
     parser.add_argument(
         "--keep-source-betas",
         action="store_true",

@@ -65,7 +65,7 @@ def test_source_confirmed_asymmetry_cannot_be_overruled_by_vision_approval(tmp_p
     _, ranking = b.apply_materialized_output_acceptance_gate(
         (item, b.LoopRanking(score=.95, reasons=[], payload={}, model_score=.95)),
         request=b.BakeAndRankRequest(candidates_json=tmp_path / "candidates.json", workspace=tmp_path,
-                                    wham_repo_path=None, body_model_root=None, final_output_validation=True),
+                                    body_model_root=None, final_output_validation=True),
         final_output_caption_images=lambda **kwargs: "{}",
     )
     assert ranking.payload["materializedOutputRejected"]

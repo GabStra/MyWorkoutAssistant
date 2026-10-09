@@ -171,7 +171,7 @@ def _motion_clip_pose_payload(clip: MotionClip) -> dict[str, object]:
 
 
 def reconstruction_camera_orientation(clip: MotionClip):
-    """Invert recorded WHAM coordinate changes before any pose processing.
+    """Invert recorded RECONSTRUCTION coordinate changes before any pose processing.
 
     Only use on reconstruction input: processing metadata alone cannot prove
     that later cleanup or articulation left the coordinate basis unchanged.
@@ -179,8 +179,8 @@ def reconstruction_camera_orientation(clip: MotionClip):
     """
     import numpy as np
 
-    if (clip.source.get('extractor') != 'WHAM'
-            or clip.metadata.get('wham', {}).get('coordinateSpace') != 'camera'):
+    if (clip.source.get('extractor') != 'RECONSTRUCTION'
+            or clip.metadata.get('reconstruction', {}).get('coordinateSpace') != 'camera'):
         return None
     try:
         angle = math.radians(float(clip.source.get('outputRotationDegrees', 0.0)))
@@ -1332,7 +1332,7 @@ def _align_torso_axis_to_source_pose(
     *,
     source_pose_payload: dict[str, Any] | None,
 ) -> tuple[MotionClip, dict[str, object]]:
-    """Resolve WHAM's forward/backward torso branch from the fixed source view."""
+    """Resolve RECONSTRUCTION's forward/backward torso branch from the fixed source view."""
 
     source_frames = _source_pose_frames(source_pose_payload)
     if len(source_frames) < 2:
@@ -3519,10 +3519,10 @@ def _align_hinge_articulation_to_source_pose(
 ) -> tuple[MotionClip, dict[str, object]]:
     """Fit distal hinge endpoints to the source projection without stretching.
 
-    A 2D camera angle is not a true 3D joint angle.  Instead, align WHAM's torso
+    A 2D camera angle is not a true 3D joint angle.  Instead, align RECONSTRUCTION's torso
     projection to the observed pose per frame, inverse-project the observed
     wrist/ankle endpoint, and solve the missing depth from the existing bone
-    length.  WHAM therefore remains authoritative for depth branch and global
+    length.  RECONSTRUCTION therefore remains authoritative for depth branch and global
     motion while the source corrects only what the camera actually observed.
     """
     source_frames = _source_pose_frames(source_pose_payload)
@@ -3763,7 +3763,7 @@ def _point_for_projected_endpoint_with_fixed_length(
     )
     # The camera does not observe this axis. Re-solving its magnitude from a
     # 2D target independently for every limb can produce corkscrew poses that
-    # project correctly but are anatomically wrong. Preserve WHAM's exact
+    # project correctly but are anatomically wrong. Preserve RECONSTRUCTION's exact
     # hidden-depth offset and fit only the observable direction.
     hidden_delta = current_hidden_delta
     visible_radius = math.sqrt(

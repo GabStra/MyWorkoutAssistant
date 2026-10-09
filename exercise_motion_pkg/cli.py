@@ -66,15 +66,14 @@ from exercise_motion_pkg.physics_bundle import PhysicsBundleConfig, write_physic
 from exercise_motion_pkg.physics_sim import PhysicsSimulationConfig, run_physics_simulation
 from exercise_motion_pkg.preview import write_preview_html, write_wear_skeleton_json
 from exercise_motion_pkg.raw_preview import write_raw_motion_preview_html
-from exercise_motion_pkg.spinepose_wham_correction import apply_spinepose_to_wham_pkl
+from exercise_motion_pkg.spinepose_reconstruction_correction import apply_spinepose_to_reconstruction_pkl
 from exercise_motion_pkg.trim_selector import TrimSelectorRequest, run_trim_selector
 from exercise_motion_pkg.video_utils import trim_video
-from exercise_motion_pkg.wham_runner import (
-    DEFAULT_WHAM_BODY_MODEL_ROOT,
-    DEFAULT_WHAM_DOCKER_IMAGE,
-    DEFAULT_WHAM_DOCKER_SHM_SIZE,
-    DEFAULT_WHAM_REPO_PATH,
-    DEFAULT_WHAM_TIMEOUT_SECONDS,
+from exercise_motion_pkg.reconstruction_runner import (
+    DEFAULT_RECONSTRUCTION_BODY_MODEL_ROOT,
+    DEFAULT_RECONSTRUCTION_DOCKER_IMAGE,
+    DEFAULT_RECONSTRUCTION_DOCKER_SHM_SIZE,
+    DEFAULT_RECONSTRUCTION_TIMEOUT_SECONDS,
 )
 from exercise_motion_pkg.youtube import (
     DEFAULT_YOUTUBE_SEARCH_TIMEOUT_SECONDS,
@@ -106,70 +105,48 @@ def build_parser() -> argparse.ArgumentParser:
     source_group.add_argument("--youtube-url", help="YouTube URL to download and process.")
     source_group.add_argument("--video-path", help="Existing local video path to process.")
     generate.add_argument(
-        "--wham-repo-path",
-        help="Local WHAM checkout prepared for inference. Required unless --normalized-motion-json is supplied.",
+        "--reconstruction-results-pkl",
+        help="Existing GVHMR reconstruction_output.pkl path. If supplied, inference is skipped.",
     )
     generate.add_argument(
-        "--wham-results-pkl",
-        help="Existing WHAM wham_output.pkl path inside or outside the WHAM repo. If supplied, local inference is skipped.",
-    )
-    generate.add_argument(
-        "--require-wham-cache",
+        "--require-reconstruction-cache",
         action="store_true",
-        help="Require retained WHAM/GVHMR reconstruction; fail before inference on a cache miss.",
+        help="Require a retained GVHMR reconstruction; fail before inference on a cache miss.",
     )
     generate.add_argument(
-        "--no-reuse-wham-cache",
+        "--no-reuse-reconstruction-cache",
         action="store_true",
-        help="Run WHAM even when raw/wham/<input-video-stem>/wham_output.pkl already exists.",
+        help="Run GVHMR even when raw/reconstruction/<input-video-stem>/reconstruction_output.pkl already exists.",
     )
     generate.add_argument(
         "--body-model-root",
-        help="Directory containing the SMPL body model folders used to reconstruct joints from WHAM output.",
+        default=str(DEFAULT_RECONSTRUCTION_BODY_MODEL_ROOT),
+        help="Directory containing the SMPL body model used to convert GVHMR output.",
     )
     generate.add_argument(
-        "--wham-python-command",
-        default="python",
-        help="Python interpreter or command to run WHAM and the WHAM-backed conversion stage.",
-    )
-    generate.add_argument(
-        "--use-wham-docker",
+        "--use-reconstruction-docker",
         action="store_true",
-        help="Run WHAM through Docker instead of the local Python environment.",
+        default=True,
+        help="Run GVHMR through Docker (enabled by default).",
     )
     generate.add_argument(
         "--motion-reconstructor",
-        choices=["wham", "gvhmr"],
+        choices=["gvhmr"],
         default="gvhmr",
-        help="Reconstruction backend. 'gvhmr' runs the GVHMR Docker image and requires --use-wham-docker.",
+        help="GVHMR is the only supported reconstruction backend.",
     )
     generate.add_argument(
-        "--wham-docker-image",
-        default=DEFAULT_WHAM_DOCKER_IMAGE,
-        help="Docker image to use when --use-wham-docker is set.",
+        "--reconstruction-docker-image",
+        default=DEFAULT_RECONSTRUCTION_DOCKER_IMAGE,
+        help="Docker image to use when --use-reconstruction-docker is set.",
     )
-    generate.add_argument("--wham-docker-gpus", default="all")
-    generate.add_argument("--wham-docker-shm-size", default=DEFAULT_WHAM_DOCKER_SHM_SIZE)
+    generate.add_argument("--reconstruction-docker-gpus", default="all")
+    generate.add_argument("--reconstruction-docker-shm-size", default=DEFAULT_RECONSTRUCTION_DOCKER_SHM_SIZE)
     generate.add_argument(
-        "--wham-timeout-seconds",
+        "--reconstruction-timeout-seconds",
         type=float,
-        default=DEFAULT_WHAM_TIMEOUT_SECONDS,
-        help="Maximum seconds for one WHAM run. Values above 200 are capped to 200.",
-    )
-    generate.add_argument(
-        "--wham-estimate-local-only",
-        action="store_true",
-        help="Skip SLAM and only produce camera-space motion from WHAM. This is the default.",
-    )
-    generate.add_argument(
-        "--full-wham-camera-slam",
-        action="store_true",
-        help="Enable WHAM's DPVO/global camera path for moving-camera clips. Static camera is the default.",
-    )
-    generate.add_argument(
-        "--skip-wham-smplify",
-        action="store_true",
-        help="Skip WHAM's Temporal SMPLify refinement. SMPLify runs by default.",
+        default=DEFAULT_RECONSTRUCTION_TIMEOUT_SECONDS,
+        help="Maximum seconds for one GVHMR run.",
     )
     generate.add_argument(
         "--spinepose-json-dir",
@@ -195,15 +172,13 @@ def build_parser() -> argparse.ArgumentParser:
     generate.add_argument(
         "--spinepose-merge-mode",
         default="motion",
-        choices=("motion", "legacy-pkl"),
-        help="Use safe normalized-motion spine fusion by default; legacy-pkl keeps the old SMPL pose mutation for experiments.",
+        choices=("motion",),
+        help="Fuse SpinePose in normalized motion space, the supported mode for GVHMR.",
     )
     generate.add_argument("--spinepose-gain", type=float, default=1.0)
     generate.add_argument("--spinepose-max-degrees", type=float, default=35.0)
-    generate.add_argument("--spinepose-axis", type=int, default=0, choices=(0, 1, 2))
     generate.add_argument("--spinepose-invert", action="store_true")
     generate.add_argument("--spinepose-smoothing-window", type=int, default=9)
-    generate.add_argument("--spinepose-arm-counter-rotation", type=float, default=1.0)
     generate.add_argument(
         "--enable-spinepose",
         action="store_true",
@@ -212,7 +187,7 @@ def build_parser() -> argparse.ArgumentParser:
     generate.add_argument(
         "--skip-motion-tuning",
         action="store_true",
-        help="Pass raw camera-space WHAM motion through as the final artifact without cleanup, grounding, or structural tuning.",
+        help="Pass raw GVHMR motion through as the final artifact without cleanup, grounding, or structural tuning.",
     )
     generate.add_argument(
         "--skip-structural-refinement",
@@ -225,13 +200,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip the full refinement pass but keep the source-guided vertical trajectory repair (fixes reconstructed moon gravity on jump/step movements).",
     )
     generate.add_argument(
-        "--export-wham-smpl-preview",
+        "--export-reconstruction-smpl-preview",
         action="store_true",
-        help="Also export the legacy baked WHAM SMPL mesh preview JSON. Disabled by default because the main preview and Wear output use the custom skeleton.",
+        help="Also export the legacy baked RECONSTRUCTION SMPL mesh preview JSON. Disabled by default because the main preview and Wear output use the custom skeleton.",
     )
     generate.add_argument(
         "--normalized-motion-json",
-        help="Existing normalized motion JSON. If supplied, WHAM execution and conversion are skipped.",
+        help="Existing normalized motion JSON. If supplied, RECONSTRUCTION execution and conversion are skipped.",
     )
     generate.add_argument("--one-euro-min-cutoff", type=float, default=0.6)
     generate.add_argument("--one-euro-beta", type=float, default=0.05)
@@ -297,7 +272,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     raw_preview.add_argument("--motion-json", required=True)
     raw_preview.add_argument("--out-html", required=True)
-    raw_preview.add_argument("--title", default="raw-wham-preview")
+    raw_preview.add_argument("--title", default="raw-reconstruction-preview")
 
     wear_skeleton = subparsers.add_parser(
         "wear-skeleton",
@@ -330,8 +305,6 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Use the selected visual-decision backend to break close candidate-window ties.",
     )
-    detect.add_argument("--litert-command")
-    detect.add_argument("--litert-backend", default="gpu")
     detect.add_argument("--window-seconds", type=float, default=5.0)
     detect.add_argument("--overlap-seconds", type=float, default=2.5)
     detect.add_argument("--frames-per-window", type=int, default=20)
@@ -498,7 +471,7 @@ def build_parser() -> argparse.ArgumentParser:
     youtube_search.add_argument("--vision-motion-scan-max-seconds", type=float, default=90.0)
     youtube_search.add_argument("--vision-download-workers", type=int, default=8)
     youtube_search.add_argument("--vision-llm-workers", type=int, default=4)
-    youtube_search.add_argument("--vision-model", default="gemma-4-E4B-it")
+    youtube_search.add_argument("--vision-model", default=DEFAULT_LLAMA_CPP_MODEL)
     youtube_search.add_argument(
         "--no-exercise-motion-contract",
         action="store_true",
@@ -650,7 +623,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     bake_and_rank = subparsers.add_parser(
         "bake-and-rank",
-        help="Run WHAM, bake detected preview loops, rank review videos, and select the best Wear skeleton.",
+        help="Run RECONSTRUCTION, bake detected preview loops, rank review videos, and select the best Wear skeleton.",
     )
     bake_and_rank.add_argument("--candidates-json", required=True)
     bake_and_rank.add_argument(
@@ -665,7 +638,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--staged-wave-manifest",
         type=Path,
         help=(
-            "Run a cache-first source/WHAM/final-validation wave described by this JSON file. "
+            "Run a cache-first source/RECONSTRUCTION/final-validation wave described by this JSON file. "
             "The normal bake options become the shared settings for every item."
         ),
     )
@@ -684,7 +657,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_MAX_FINAL_OUTPUT_REJECTIONS,
         help=(
-            "Stop after this many WHAM-backed candidates fail final materialized validation. "
+            "Stop after this many RECONSTRUCTION-backed candidates fail final materialized validation. "
             "Use 0 to disable this fail-fast cap."
         ),
     )
@@ -699,9 +672,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="build/exercise_motion",
         help="Workspace root for generated artifacts. Default: build/exercise_motion",
     )
-    bake_and_rank.add_argument("--wham-repo-path", required=True)
-    bake_and_rank.add_argument("--body-model-root", required=True)
-    bake_and_rank.add_argument("--wham-python", default="python")
+    bake_and_rank.add_argument("--body-model-root", default=str(DEFAULT_RECONSTRUCTION_BODY_MODEL_ROOT))
     bake_and_rank.add_argument(
         "--youtube-cookies",
         "--youtube-cookies-path",
@@ -722,58 +693,38 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory for cached low-resolution YouTube previews populated by discovery.",
     )
     bake_and_rank.add_argument(
-        "--require-wham-cache",
+        "--require-reconstruction-cache",
         action="store_true",
-        help="Require retained WHAM/GVHMR reconstruction; fail before inference on a cache miss.",
+        help="Require a retained GVHMR reconstruction; fail before inference on a cache miss.",
     )
     bake_and_rank.add_argument(
-        "--no-reuse-wham-cache",
+        "--no-reuse-reconstruction-cache",
         action="store_true",
-        help="Run WHAM even when raw/wham/<input-video-stem>/wham_output.pkl already exists.",
+        help="Run GVHMR even when raw/reconstruction/<input-video-stem>/reconstruction_output.pkl already exists.",
     )
-    bake_and_rank.add_argument("--use-wham-docker", action="store_true")
+    bake_and_rank.add_argument("--use-reconstruction-docker", action="store_true", default=True)
     bake_and_rank.add_argument(
         "--motion-reconstructor",
-        choices=["wham", "gvhmr"],
+        choices=["gvhmr"],
         default="gvhmr",
-        help="Reconstruction backend. 'gvhmr' runs the GVHMR Docker image and requires --use-wham-docker.",
+        help="GVHMR is the only supported reconstruction backend.",
     )
     bake_and_rank.add_argument(
-        "--wham-docker-image",
-        default=DEFAULT_WHAM_DOCKER_IMAGE,
+        "--reconstruction-docker-image",
+        default=DEFAULT_RECONSTRUCTION_DOCKER_IMAGE,
     )
-    bake_and_rank.add_argument("--wham-docker-gpus", default="all")
-    bake_and_rank.add_argument("--wham-docker-shm-size", default=DEFAULT_WHAM_DOCKER_SHM_SIZE)
+    bake_and_rank.add_argument("--reconstruction-docker-gpus", default="all")
+    bake_and_rank.add_argument("--reconstruction-docker-shm-size", default=DEFAULT_RECONSTRUCTION_DOCKER_SHM_SIZE)
     bake_and_rank.add_argument(
-        "--wham-timeout-seconds",
+        "--reconstruction-timeout-seconds",
         type=float,
-        default=DEFAULT_WHAM_TIMEOUT_SECONDS,
-        help="Maximum seconds for one WHAM run. Values above 200 are capped to 200.",
-    )
-    bake_and_rank.add_argument(
-        "--warm-wham-worker",
-        action="store_true",
-        help="Submit WHAM jobs to a pre-started warm WHAM worker instead of launching demo.py per candidate.",
-    )
-    bake_and_rank.add_argument(
-        "--wham-worker-session-dir",
-        type=Path,
-        help="Host session directory mounted into the warm WHAM worker.",
-    )
-    bake_and_rank.add_argument(
-        "--wham-worker-mount-root",
-        type=Path,
-        help="Host workspace root mounted as /workspace inside the warm WHAM worker.",
-    )
-    bake_and_rank.add_argument(
-        "--wham-worker-timeout-seconds",
-        type=float,
-        help="Maximum seconds to wait for one warm WHAM worker job.",
+        default=DEFAULT_RECONSTRUCTION_TIMEOUT_SECONDS,
+        help="Maximum seconds for one GVHMR run.",
     )
     bake_and_rank.add_argument(
         "--warm-gvhmr-worker",
         action="store_true",
-        help="Submit GVHMR jobs to a pre-started warm GVHMR worker instead of one docker run per candidate.",
+        help="Submit GVHMR jobs to a pre-started warm GVHMR worker instead of one Docker run per candidate.",
     )
     bake_and_rank.add_argument(
         "--gvhmr-worker-session-dir",
@@ -791,24 +742,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum seconds to wait for one warm GVHMR worker job.",
     )
     bake_and_rank.add_argument(
-        "--estimate-local-only",
-        action="store_true",
-        help="Skip SLAM and only produce camera-space motion from WHAM. This is the default.",
-    )
-    bake_and_rank.add_argument(
-        "--full-wham-camera-slam",
-        action="store_true",
-        help="Enable WHAM's DPVO/global camera path for moving-camera clips. Static camera is the default.",
-    )
-    bake_and_rank.add_argument(
-        "--skip-smplify",
-        action="store_true",
-        help="Skip WHAM's Temporal SMPLify refinement. SMPLify runs by default.",
-    )
-    bake_and_rank.add_argument(
         "--skip-motion-tuning",
         action="store_true",
-        help="Pass raw camera-space WHAM motion through before preview baking and review ranking.",
+        help="Pass raw camera-space RECONSTRUCTION motion through before preview baking and review ranking.",
     )
     bake_and_rank.add_argument(
         "--skip-structural-refinement",
@@ -821,9 +757,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip the full refinement pass but keep the source-guided vertical trajectory repair (fixes reconstructed moon gravity on jump/step movements).",
     )
     bake_and_rank.add_argument(
-        "--export-wham-smpl-preview",
+        "--export-reconstruction-smpl-preview",
         action="store_true",
-        help="Also export the legacy baked WHAM SMPL mesh preview JSON for debug comparisons. Disabled by default.",
+        help="Also export the legacy baked RECONSTRUCTION SMPL mesh preview JSON for debug comparisons. Disabled by default.",
     )
     bake_and_rank.add_argument("--skip-source-segment-detection", action="store_true")
     bake_and_rank.add_argument("--segment-base-url")
@@ -852,14 +788,14 @@ def build_parser() -> argparse.ArgumentParser:
     bake_and_rank.add_argument("--segment-refinement-padding-seconds", type=float, default=1.0)
     bake_and_rank.add_argument("--segment-classification-workers", type=int, default=3)
     bake_and_rank.add_argument(
-        "--pre-wham-source-validation",
+        "--pre-reconstruction-source-validation",
         action="store_true",
-        help="Validate and tighten source-video movement windows before running WHAM.",
+        help="Validate and tighten source-video movement windows before running RECONSTRUCTION.",
     )
     bake_and_rank.add_argument(
-        "--skip-pre-wham-source-validation",
+        "--skip-pre-reconstruction-source-validation",
         action="store_true",
-        help="Skip the source contact-sheet complete-movement gate before running WHAM.",
+        help="Skip the source contact-sheet complete-movement gate before running RECONSTRUCTION.",
     )
     bake_and_rank.add_argument(
         "--no-exercise-motion-contract",
@@ -887,13 +823,16 @@ def build_parser() -> argparse.ArgumentParser:
     bake_and_rank.add_argument("--spinepose-model-version", default="v2")
     bake_and_rank.add_argument("--spinepose-device", default="cuda")
     bake_and_rank.add_argument("--no-spinepose-cache", action="store_true")
-    bake_and_rank.add_argument("--spinepose-merge-mode", default="motion", choices=("motion", "legacy-pkl"))
+    bake_and_rank.add_argument(
+        "--spinepose-merge-mode",
+        default="motion",
+        choices=("motion",),
+        help="Fuse SpinePose in normalized motion space, the supported mode for GVHMR.",
+    )
     bake_and_rank.add_argument("--spinepose-gain", type=float, default=1.0)
     bake_and_rank.add_argument("--spinepose-max-degrees", type=float, default=35.0)
-    bake_and_rank.add_argument("--spinepose-axis", type=int, default=0, choices=(0, 1, 2))
     bake_and_rank.add_argument("--spinepose-invert", action="store_true")
     bake_and_rank.add_argument("--spinepose-smoothing-window", type=int, default=9)
-    bake_and_rank.add_argument("--spinepose-arm-counter-rotation", type=float, default=1.0)
     bake_and_rank.add_argument(
         "--enable-spinepose",
         action="store_true",
@@ -1072,7 +1011,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_MAX_RECONSTRUCTION_CANDIDATE_ATTEMPTS,
         help=(
-            "Maximum candidates allowed to cross into WHAM reconstruction. "
+            "Maximum candidates allowed to cross into RECONSTRUCTION reconstruction. "
             "The default 2 means one primary plus one orientation-diverse fallback; "
             "use 0 to disable the cap."
         ),
@@ -1086,7 +1025,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("debug", "full"),
         default="debug",
         help=(
-            "debug keeps final preview/Wear/debug evidence and prunes raw WHAM/frame/source intermediates; "
+            "debug keeps final preview/Wear/debug evidence and prunes raw RECONSTRUCTION/frame/source intermediates; "
             "full keeps all generated files."
         ),
     )
@@ -1148,7 +1087,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     select_trim = subparsers.add_parser(
         "select-trim",
-        help="Open a local browser video player to pick a source-video segment for WHAM.",
+        help="Open a local browser video player to pick a source-video segment for GVHMR.",
     )
     select_trim_source = select_trim.add_mutually_exclusive_group(required=True)
     select_trim_source.add_argument("--youtube-url", help="YouTube URL to download and trim.")
@@ -1166,37 +1105,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to a YouTube cookies.txt file.",
     )
     select_trim.add_argument(
-        "--run-wham-on-write",
+        "--run-reconstruction-on-write",
         action="store_true",
         help="Start the existing generate pipeline after the browser writes selected_segment.mp4.",
     )
     select_trim.add_argument(
         "--generation-workspace",
         default="build/exercise_motion",
-        help="Workspace root for WHAM generation artifacts. Default: build/exercise_motion",
-    )
-    select_trim.add_argument(
-        "--wham-repo-path",
-        default=str(DEFAULT_WHAM_REPO_PATH),
-        help="Local WHAM checkout used when --run-wham-on-write is set.",
+        help="Workspace root for motion generation artifacts. Default: build/exercise_motion",
     )
     select_trim.add_argument(
         "--body-model-root",
-        default=str(DEFAULT_WHAM_BODY_MODEL_ROOT),
-        help="SMPL body model root used when --run-wham-on-write is set.",
+        default=str(DEFAULT_RECONSTRUCTION_BODY_MODEL_ROOT),
+        help="SMPL body model root used when --run-reconstruction-on-write is set.",
     )
-    select_trim.add_argument("--wham-python-command", default="python")
-    select_trim.add_argument(
-        "--wham-estimate-local-only",
-        action="store_true",
-        help="Skip SLAM and only produce camera-space motion from WHAM. This is the default.",
-    )
-    select_trim.add_argument(
-        "--full-wham-camera-slam",
-        action="store_true",
-        help="Enable WHAM's DPVO/global camera path for moving-camera clips. Static camera is the default.",
-    )
-    select_trim.add_argument("--skip-wham-smplify", action="store_true")
     select_trim.add_argument("--skip-motion-tuning", action="store_true")
     select_trim.add_argument("--dominant-chain-ratio", type=float, default=0.65)
     select_trim.add_argument("--non-dominant-damping", type=float, default=1.0)
@@ -1204,36 +1126,49 @@ def build_parser() -> argparse.ArgumentParser:
     select_trim.add_argument("--host", default="127.0.0.1")
     select_trim.add_argument("--port", type=int, default=8765)
 
-    spinepose_wham = subparsers.add_parser(
-        "apply-spinepose-wham",
-        help="Copy a WHAM result PKL and blend SpinePose-derived spine flexion into SMPL spine joints.",
+    spinepose_reconstruction = subparsers.add_parser(
+        "apply-spinepose-reconstruction",
+        help="Copy a RECONSTRUCTION result PKL and blend SpinePose-derived spine flexion into SMPL spine joints.",
     )
-    spinepose_wham.add_argument("--wham-results-pkl", required=True)
-    spinepose_wham.add_argument("--spinepose-json-dir", required=True)
-    spinepose_wham.add_argument("--out-pkl", required=True)
-    spinepose_wham.add_argument("--subject-id")
-    spinepose_wham.add_argument("--gain", type=float, default=1.0)
-    spinepose_wham.add_argument("--max-degrees", type=float, default=35.0)
-    spinepose_wham.add_argument("--axis", type=int, default=0, choices=(0, 1, 2))
-    spinepose_wham.add_argument("--invert", action="store_true")
-    spinepose_wham.add_argument("--smoothing-window", type=int, default=9)
-    spinepose_wham.add_argument("--arm-counter-rotation", type=float, default=1.0)
-    spinepose_wham.add_argument("--experimental-enable", action="store_true")
+    spinepose_reconstruction.add_argument("--reconstruction-results-pkl", required=True)
+    spinepose_reconstruction.add_argument("--spinepose-json-dir", required=True)
+    spinepose_reconstruction.add_argument("--out-pkl", required=True)
+    spinepose_reconstruction.add_argument("--subject-id")
+    spinepose_reconstruction.add_argument("--gain", type=float, default=1.0)
+    spinepose_reconstruction.add_argument("--max-degrees", type=float, default=35.0)
+    spinepose_reconstruction.add_argument("--axis", type=int, default=0, choices=(0, 1, 2))
+    spinepose_reconstruction.add_argument("--invert", action="store_true")
+    spinepose_reconstruction.add_argument("--smoothing-window", type=int, default=9)
+    spinepose_reconstruction.add_argument("--arm-counter-rotation", type=float, default=1.0)
+    spinepose_reconstruction.add_argument("--experimental-enable", action="store_true")
 
     gvhmr_run = subparsers.add_parser(
         "gvhmr-run",
-        help="Run GVHMR reconstruction in Docker and export a WHAM-schema wham_output.pkl.",
+        help="Run GVHMR reconstruction in Docker and export a RECONSTRUCTION-schema reconstruction_output.pkl.",
     )
     gvhmr_run.add_argument("--input-video", required=True)
     gvhmr_run.add_argument("--output-root", required=True)
     gvhmr_run.add_argument("--logs-dir", required=True)
     gvhmr_run.add_argument(
         "--docker-image",
-        default="myworkoutassistant/gvhmr:torch2.3-cu121",
+        "--reconstruction-docker-image",
+        dest="docker_image",
+        default=DEFAULT_RECONSTRUCTION_DOCKER_IMAGE,
     )
-    gvhmr_run.add_argument("--gpus", default="all")
-    gvhmr_run.add_argument("--shm-size", default="8g")
-    gvhmr_run.add_argument("--timeout-seconds", type=float, default=0.0)
+    gvhmr_run.add_argument("--gpus", "--reconstruction-docker-gpus", dest="gpus", default="all")
+    gvhmr_run.add_argument(
+        "--shm-size",
+        "--reconstruction-docker-shm-size",
+        dest="shm_size",
+        default=DEFAULT_RECONSTRUCTION_DOCKER_SHM_SIZE,
+    )
+    gvhmr_run.add_argument(
+        "--timeout-seconds",
+        "--reconstruction-timeout-seconds",
+        dest="timeout_seconds",
+        type=float,
+        default=DEFAULT_RECONSTRUCTION_TIMEOUT_SECONDS,
+    )
     gvhmr_run.add_argument(
         "--no-static-camera",
         action="store_true",
@@ -1315,24 +1250,14 @@ def build_youtube_ranking_settings(
 def build_bake_and_rank_request(args: argparse.Namespace) -> BakeAndRankRequest:
     spinepose_merge_mode = args.spinepose_merge_mode.replace("-", "_")
     spinepose_enabled = args.enable_spinepose and not args.skip_spinepose
-    if not args.skip_spinepose and spinepose_merge_mode == "legacy_pkl" and not args.enable_spinepose:
-        raise ValueError(
-            "--spinepose-merge-mode legacy-pkl is experimental because it can distort the SMPL body. "
-            "Pass --enable-spinepose to use it."
-        )
     overrides: dict[str, object] = {
         "candidates_json": Path(args.candidates_json),
         "workspace": Path(args.workspace),
-        "wham_repo_path": Path(args.wham_repo_path),
         "body_model_root": Path(args.body_model_root),
         "youtube_cookies": Path(args.youtube_cookies) if args.youtube_cookies else None,
-        "reuse_wham_cache": not args.no_reuse_wham_cache,
+        "reuse_reconstruction_cache": not args.no_reuse_reconstruction_cache,
         "reuse_previous_terminal_results": args.reuse_previous_terminal_results,
-        "wham_python_command": args.wham_python,
-        "use_warm_wham_worker": args.warm_wham_worker,
         "use_warm_gvhmr_worker": args.warm_gvhmr_worker,
-        "wham_estimate_local_only": args.estimate_local_only or not args.full_wham_camera_slam,
-        "wham_run_smplify": not args.skip_smplify,
         "motion_reconstruction_backend": args.motion_reconstructor,
         "spinepose_enabled": spinepose_enabled,
         "spinepose_json_dir": Path(args.spinepose_json_dir) if args.spinepose_json_dir else None,
@@ -1340,11 +1265,11 @@ def build_bake_and_rank_request(args: argparse.Namespace) -> BakeAndRankRequest:
         "spinepose_reuse_cache": not args.no_spinepose_cache,
         "spinepose_merge_mode": spinepose_merge_mode,
         "detect_source_segment": not args.skip_source_segment_detection,
-        "pre_wham_source_validation": (
-            args.pre_wham_source_validation and not args.skip_pre_wham_source_validation
+        "pre_reconstruction_source_validation": (
+            args.pre_reconstruction_source_validation and not args.skip_pre_reconstruction_source_validation
         ),
-        "pre_wham_source_validation_explicitly_disabled": bool(
-            args.skip_pre_wham_source_validation
+        "pre_reconstruction_source_validation_explicitly_disabled": bool(
+            args.skip_pre_reconstruction_source_validation
         ),
         "exercise_motion_contract_enabled": not args.no_exercise_motion_contract,
         "final_output_validation": (
@@ -1455,31 +1380,22 @@ def main() -> None:
                 raise ValueError("--source-end-seconds must be greater than --source-start-seconds.")
         spinepose_merge_mode = args.spinepose_merge_mode.replace("-", "_")
         spinepose_enabled = args.enable_spinepose and not args.skip_spinepose
-        if not args.skip_spinepose and spinepose_merge_mode == "legacy_pkl" and not args.enable_spinepose:
-            raise ValueError(
-                "--spinepose-merge-mode legacy-pkl is experimental because it can distort the SMPL body. "
-                "Pass --enable-spinepose to use it."
-            )
         result = run_generation_pipeline(
             GenerateRequest(
                 exercise_slug=args.exercise_slug,
                 workspace=Path(args.workspace),
                 youtube_url=args.youtube_url,
                 video_path=Path(args.video_path) if args.video_path else None,
-                wham_repo_path=Path(args.wham_repo_path) if args.wham_repo_path else None,
-                wham_results_pkl=Path(args.wham_results_pkl) if args.wham_results_pkl else None,
-                reuse_wham_cache=not args.no_reuse_wham_cache,
-                require_wham_cache=args.require_wham_cache,
+                reconstruction_results_pkl=Path(args.reconstruction_results_pkl) if args.reconstruction_results_pkl else None,
+                reuse_reconstruction_cache=not args.no_reuse_reconstruction_cache,
+                require_reconstruction_cache=args.require_reconstruction_cache,
                 body_model_root=Path(args.body_model_root) if args.body_model_root else None,
-                wham_python_command=args.wham_python_command,
-                use_wham_docker=args.use_wham_docker,
+                use_reconstruction_docker=args.use_reconstruction_docker,
                 motion_reconstruction_backend=args.motion_reconstructor,
-                wham_docker_image=args.wham_docker_image,
-                wham_docker_gpus=args.wham_docker_gpus,
-                wham_docker_shm_size=args.wham_docker_shm_size,
-                wham_timeout_seconds=args.wham_timeout_seconds,
-                wham_estimate_local_only=args.wham_estimate_local_only or not args.full_wham_camera_slam,
-                wham_run_smplify=not args.skip_wham_smplify,
+                reconstruction_docker_image=args.reconstruction_docker_image,
+                reconstruction_docker_gpus=args.reconstruction_docker_gpus,
+                reconstruction_docker_shm_size=args.reconstruction_docker_shm_size,
+                reconstruction_timeout_seconds=args.reconstruction_timeout_seconds,
                 spinepose_enabled=spinepose_enabled,
                 spinepose_json_dir=Path(args.spinepose_json_dir) if args.spinepose_json_dir else None,
                 spinepose_command=args.spinepose_command,
@@ -1490,10 +1406,8 @@ def main() -> None:
                 spinepose_reuse_cache=not args.no_spinepose_cache,
                 spinepose_gain=args.spinepose_gain,
                 spinepose_max_degrees=args.spinepose_max_degrees,
-                spinepose_axis=args.spinepose_axis,
                 spinepose_invert=args.spinepose_invert,
                 spinepose_smoothing_window=args.spinepose_smoothing_window,
-                spinepose_arm_counter_rotation=args.spinepose_arm_counter_rotation,
                 spinepose_merge_mode=spinepose_merge_mode,
                 normalized_motion_json=Path(args.normalized_motion_json) if args.normalized_motion_json else None,
                 one_euro_min_cutoff=args.one_euro_min_cutoff,
@@ -1507,7 +1421,7 @@ def main() -> None:
                 motion_tuning_enabled=not args.skip_motion_tuning,
                 structural_refinement_enabled=not args.skip_structural_refinement,
                 structural_refinement_vertical_only=args.structural_refinement_vertical_only,
-                export_wham_smpl_preview=args.export_wham_smpl_preview,
+                export_reconstruction_smpl_preview=args.export_reconstruction_smpl_preview,
                 source_start_seconds=args.source_start_seconds,
                 source_end_seconds=args.source_end_seconds,
                 youtube_cookies=Path(args.youtube_cookies) if args.youtube_cookies else None,
@@ -1521,9 +1435,9 @@ def main() -> None:
         print(f"Cleaned motion JSON: {result.cleaned_motion_json_path}")
         print(f"Target rig contract JSON: {result.target_rig_contract_path}")
         if result.retarget_source_path is not None:
-            print(f"WHAM retarget source JSON: {result.retarget_source_path}")
+            print(f"RECONSTRUCTION retarget source JSON: {result.retarget_source_path}")
         if result.smpl_preview_json_path is not None:
-            print(f"WHAM baked SMPL preview JSON: {result.smpl_preview_json_path}")
+            print(f"RECONSTRUCTION baked SMPL preview JSON: {result.smpl_preview_json_path}")
         if result.ground_metadata_path is not None:
             print(f"Ground metadata JSON: {result.ground_metadata_path}")
         return
@@ -1555,7 +1469,7 @@ def main() -> None:
             clip,
             title=args.title,
         )
-        print(f"Raw WHAM preview HTML: {Path(args.out_html).resolve()}")
+        print(f"Raw RECONSTRUCTION preview HTML: {Path(args.out_html).resolve()}")
         return
     if args.command == "wear-skeleton":
         clip = load_motion_json(Path(args.motion_json))
@@ -1589,8 +1503,6 @@ def main() -> None:
                 llama_cpp_image_max_tokens=args.llama_cpp_image_max_tokens,
                 base_url=args.base_url,
                 model=args.model,
-                litert_command=args.litert_command,
-                litert_backend=args.litert_backend,
                 window_seconds=4.5,
                 overlap_seconds=2.0,
                 frames_per_window=6,
@@ -1627,8 +1539,6 @@ def main() -> None:
                 llama_cpp_image_max_tokens=args.llama_cpp_image_max_tokens,
                 base_url=args.base_url,
                 model=args.model,
-                litert_command=args.litert_command,
-                litert_backend=args.litert_backend,
                 window_seconds=args.window_seconds,
                 overlap_seconds=args.overlap_seconds,
                 frames_per_window=args.frames_per_window,
@@ -1914,13 +1824,9 @@ def main() -> None:
                 youtube_url=args.youtube_url,
                 video_path=Path(args.video_path) if args.video_path else None,
                 youtube_cookies=Path(args.youtube_cookies) if args.youtube_cookies else None,
-                run_wham_on_write=args.run_wham_on_write,
+                run_reconstruction_on_write=args.run_reconstruction_on_write,
                 generation_workspace=Path(args.generation_workspace),
-                wham_repo_path=Path(args.wham_repo_path),
                 body_model_root=Path(args.body_model_root),
-                wham_python_command=args.wham_python_command,
-                wham_estimate_local_only=args.wham_estimate_local_only or not args.full_wham_camera_slam,
-                wham_run_smplify=not args.skip_wham_smplify,
                 motion_tuning_enabled=not args.skip_motion_tuning,
                 dominant_chain_ratio=args.dominant_chain_ratio,
                 non_dominant_damping=args.non_dominant_damping,
@@ -1950,14 +1856,14 @@ def main() -> None:
         print(f"GVHMR results pkl: {result.results_pkl}")
         print(f"Elapsed seconds: {result.elapsed_seconds:.1f}")
         return
-    if args.command == "apply-spinepose-wham":
+    if args.command == "apply-spinepose-reconstruction":
         if not args.experimental_enable:
             raise SystemExit(
-                "SpinePose-to-WHAM correction is disabled because it distorts the SMPL body. "
+                "SpinePose-to-RECONSTRUCTION correction is disabled because it distorts the SMPL body. "
                 "Pass --experimental-enable only for manual experiments."
             )
-        stats = apply_spinepose_to_wham_pkl(
-            wham_results_pkl=Path(args.wham_results_pkl),
+        stats = apply_spinepose_to_reconstruction_pkl(
+            reconstruction_results_pkl=Path(args.reconstruction_results_pkl),
             spinepose_json_dir=Path(args.spinepose_json_dir),
             output_pkl=Path(args.out_pkl),
             subject_id=args.subject_id,
@@ -1968,7 +1874,7 @@ def main() -> None:
             smoothing_window=args.smoothing_window,
             arm_counter_rotation=args.arm_counter_rotation,
         )
-        print(f"Corrected WHAM PKL: {Path(args.out_pkl).resolve()}")
+        print(f"Corrected RECONSTRUCTION PKL: {Path(args.out_pkl).resolve()}")
         print(f"Frames: {stats.applied_frame_count}/{stats.frame_count}")
         print(f"Source SpinePose frames: {stats.source_frame_count}")
         print(f"Pose keys: {', '.join(stats.pose_keys)}")

@@ -80,7 +80,7 @@ def test_session_cache_survives_gpu_swaps_and_honors_deadline(tmp_path, monkeypa
     monkeypatch.setattr(bake, "LlamaCppVisionRanker", Ranker)
     monkeypatch.setattr(bake.LazyLlamaCppVisionSession, "_release_cached_exclusive_models", staticmethod(lambda: None))
     session = bake.LazyLlamaCppVisionSession(bake.BakeAndRankRequest(
-        candidates_json=tmp_path / "candidates.json", workspace=tmp_path, wham_repo_path=None, body_model_root=None))
+        candidates_json=tmp_path / "candidates.json", workspace=tmp_path, body_model_root=None))
     path = tmp_path / "image.jpg"
     path.write_bytes(b"pixels")
     kwargs = dict(frame_paths=[path], prompt="observe", max_tokens=200)

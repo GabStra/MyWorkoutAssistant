@@ -429,7 +429,7 @@ def test_source_contact_correction_preserves_artifact_interval_and_baseline(
 
 
 @pytest.mark.parametrize("status,failure_stage,expected", [
-    ("rejected_raw_wham_validation", None, "raw_reconstruction_validation"),
+    ("rejected_raw_reconstruction_validation", None, "raw_reconstruction_validation"),
     ("rejected_baked_motion_validation", None, "baked_motion_validation"),
     ("skipped_no_baked_clip", None, "baked_motion_validation"),
     ("failed", "browser_bake", "browser_bake"),

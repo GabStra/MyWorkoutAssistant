@@ -136,7 +136,7 @@ def write_fake_motion_cli(tmp_path: Path) -> tuple[Path, Path]:
                         "exerciseName": item["exerciseName"],
                         "status": "pending",
                         "source": {"status": "prepared", "attempts": []},
-                        "wham": {"status": "pending"},
+                        "reconstruction": {"status": "pending"},
                         "finalValidation": {"status": "pending"},
                     }
                     for item in wave["items"]
@@ -144,7 +144,7 @@ def write_fake_motion_cli(tmp_path: Path) -> tuple[Path, Path]:
                 checkpoint = {
                     "schemaVersion": 1,
                     "waveId": wave["waveId"],
-                    "stage": "wham_generation",
+                    "stage": "reconstruction_generation",
                     "elapsedSeconds": 0.1,
                     "items": item_states,
                 }
@@ -154,7 +154,7 @@ def write_fake_motion_cli(tmp_path: Path) -> tuple[Path, Path]:
                 time.sleep(2.5)
                 for state in item_states:
                     state["status"] = "retry_required"
-                    state["wham"] = {"status": "failed", "error": "fake staged retry"}
+                    state["reconstruction"] = {"status": "failed", "error": "fake staged retry"}
                 report = {
                     **checkpoint,
                     "stage": "completed",
@@ -388,7 +388,7 @@ def write_fake_motion_cli(tmp_path: Path) -> tuple[Path, Path]:
                             "exerciseName": item["exerciseName"],
                             "status": "pending",
                             "source": {"status": "prepared", "attempts": []},
-                            "wham": {"status": "pending"},
+                            "reconstruction": {"status": "pending"},
                             "finalValidation": {"status": "pending"},
                         }
                         for item in wave["items"]
@@ -396,7 +396,7 @@ def write_fake_motion_cli(tmp_path: Path) -> tuple[Path, Path]:
                     checkpoint = {
                         "schemaVersion": 1,
                         "waveId": wave["waveId"],
-                        "stage": "wham_generation",
+                        "stage": "reconstruction_generation",
                         "elapsedSeconds": 0.1,
                         "items": item_states,
                     }
@@ -406,7 +406,7 @@ def write_fake_motion_cli(tmp_path: Path) -> tuple[Path, Path]:
                     time.sleep(2.5)
                     for state in item_states:
                         state["status"] = "retry_required"
-                        state["wham"] = {"status": "failed", "error": "fake staged retry"}
+                        state["reconstruction"] = {"status": "failed", "error": "fake staged retry"}
                     report = {
                         **checkpoint,
                         "stage": "completed",
@@ -581,10 +581,10 @@ def write_fake_motion_cli(tmp_path: Path) -> tuple[Path, Path]:
                     "candidateResults": [
                         {
                             "status": "ready_for_selection",
-                            "whamCacheStatus": "generated",
+                            "reconstructionCacheStatus": "generated",
                             "generationTimings": {
                                 "sourcePreparationSeconds": 0.01,
-                                "wham": {"elapsedSeconds": 0.02, "dockerLockWaitSeconds": 0.0},
+                                "reconstruction": {"elapsedSeconds": 0.02, "dockerLockWaitSeconds": 0.0},
                             },
                             "timings": {"previewBakeSeconds": 0.03},
                         }
@@ -804,6 +804,7 @@ def test_scheduler_failure_preserves_model_services_when_staged_worker_state_is_
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
                 $node.Name -in @(
                     'Get-StagedBakeQueueServiceState',
+                    'Get-StagedWaveAdmissionMutexNames',
                     'Invoke-WithStagedWaveAdmissionLock',
                     'Start-StagedBakeQueueServiceGeneration',
                     'Stop-StagedBakeQueueServiceProcessTree',
@@ -811,9 +812,10 @@ def test_scheduler_failure_preserves_model_services_when_staged_worker_state_is_
                     'Stop-MotionModelServicesAfterStagedWorker'
                 )
         }, $true)
-        if ($functionAsts.Count -ne 6) { throw 'A staged-wave service function was not found.' }
+        if ($functionAsts.Count -ne 7) { throw 'A staged-wave service function was not found.' }
         foreach ($functionAst in $functionAsts) { Invoke-Expression $functionAst.Extent.Text }
 
+        function Convert-ReconstructionMetadata { param($Value) return $Value }
         function Test-MotionRunCancelRequested { return $false }
         function ConvertTo-StagedServiceArgument {
             param([string]$Value)
@@ -884,9 +886,9 @@ def test_scheduler_failure_preserves_model_services_when_staged_worker_state_is_
             $script:stoppedProcessIds += $Id
             throw 'Parent-only Stop-Process must not terminate the staged-wave service.'
         }
-        function Stop-WhamWarmWorker {
+        function Stop-GvhmrWarmWorker {
             param([object]$Worker)
-            $script:stoppedModelServices += 'wham'
+            $script:stoppedModelServices += 'gvhmr'
         }
         function Stop-SharedLlamaServer {
             param([object]$Server)
@@ -941,7 +943,7 @@ def test_scheduler_failure_preserves_model_services_when_staged_worker_state_is_
         if ($stopped) { throw 'Missing worker state incorrectly confirmed shutdown.' }
         [void](Stop-MotionModelServicesAfterStagedWorker `
             -StagedWaveShutdownConfirmed $stopped `
-            -WarmWhamWorker ([pscustomobject]@{}) `
+            -WarmGvhmrWorker ([pscustomobject]@{}) `
             -SharedLlamaServer ([pscustomobject]@{}))
         if ($script:stoppedModelServices.Count -ne 0) {
             throw 'Model dependencies were stopped while staged worker state was unknown.'
@@ -957,7 +959,7 @@ def test_scheduler_failure_preserves_model_services_when_staged_worker_state_is_
         }
         [void](Stop-MotionModelServicesAfterStagedWorker `
             -StagedWaveShutdownConfirmed $stopped `
-            -WarmWhamWorker ([pscustomobject]@{}) `
+            -WarmGvhmrWorker ([pscustomobject]@{}) `
             -SharedLlamaServer ([pscustomobject]@{}))
         if ($script:stoppedModelServices.Count -ne 2) {
             throw 'Confirmed cleanup did not stop both model dependencies.'
@@ -978,7 +980,7 @@ def test_scheduler_failure_preserves_model_services_when_staged_worker_state_is_
         if ($marker.reason -ne 'workout-plan scheduler failed') { throw 'The run failure reason was not persisted.' }
         [void](Stop-MotionModelServicesAfterStagedWorker `
             -StagedWaveShutdownConfirmed $stopped `
-            -WarmWhamWorker ([pscustomobject]@{}) `
+            -WarmGvhmrWorker ([pscustomobject]@{}) `
             -SharedLlamaServer ([pscustomobject]@{}))
         if ($script:stoppedModelServices.Count -ne 2) {
             throw 'Graceful staged-worker exit did not release both model dependencies.'
@@ -1016,7 +1018,7 @@ def test_scheduler_failure_preserves_model_services_when_staged_worker_state_is_
         }
         [void](Stop-MotionModelServicesAfterStagedWorker `
             -StagedWaveShutdownConfirmed $stopped `
-            -WarmWhamWorker ([pscustomobject]@{}) `
+            -WarmGvhmrWorker ([pscustomobject]@{}) `
             -SharedLlamaServer ([pscustomobject]@{}))
         if ($script:stoppedModelServices.Count -ne 2) {
             throw 'Confirmed process-tree shutdown did not release both model dependencies.'
@@ -1033,7 +1035,7 @@ def test_scheduler_failure_preserves_model_services_when_staged_worker_state_is_
         }
         [void](Stop-MotionModelServicesAfterStagedWorker `
             -StagedWaveShutdownConfirmed $stopped `
-            -WarmWhamWorker ([pscustomobject]@{}) `
+            -WarmGvhmrWorker ([pscustomobject]@{}) `
             -SharedLlamaServer ([pscustomobject]@{}))
         if ($script:stoppedModelServices.Count -ne 0) {
             throw 'Model dependencies were stopped before staged worker exit was confirmed.'
@@ -1049,7 +1051,7 @@ def test_scheduler_failure_preserves_model_services_when_staged_worker_state_is_
         if (-not $stopped) { throw 'A confirmed dead staged worker did not confirm shutdown.' }
         [void](Stop-MotionModelServicesAfterStagedWorker `
             -StagedWaveShutdownConfirmed $stopped `
-            -WarmWhamWorker ([pscustomobject]@{}) `
+            -WarmGvhmrWorker ([pscustomobject]@{}) `
             -SharedLlamaServer ([pscustomobject]@{}))
         if ($script:stoppedModelServices.Count -ne 2) { throw 'Confirmed dead-worker cleanup did not stop model dependencies.' }
         $script:stoppedModelServices = @()
@@ -1067,7 +1069,7 @@ def test_scheduler_failure_preserves_model_services_when_staged_worker_state_is_
         if (-not $stopped) { throw 'A mismatched staged worker identity did not confirm shutdown.' }
         [void](Stop-MotionModelServicesAfterStagedWorker `
             -StagedWaveShutdownConfirmed $stopped `
-            -WarmWhamWorker ([pscustomobject]@{}) `
+            -WarmGvhmrWorker ([pscustomobject]@{}) `
             -SharedLlamaServer ([pscustomobject]@{}))
         if ($script:stoppedModelServices.Count -ne 2) { throw 'Confirmed identity-mismatch cleanup did not stop model dependencies.' }
 
@@ -1253,12 +1255,28 @@ def test_workout_plan_wrapper_defaults_youtube_search_timeout_to_sixty_seconds()
     assert '"--youtube-search-timeout-seconds", "$YouTubeSearchTimeoutSeconds"' in script
 
 
-def test_workout_plan_wrapper_defaults_wham_repo_to_third_party() -> None:
+def test_workout_plan_wrapper_defaults_gvhmr_body_models_to_third_party() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     script = (repo_root / "scripts/run_exercise_motion_workout_plan.ps1").read_text(encoding="utf-8")
 
-    assert 'Join-Path $repoRoot "third_party\\WHAM"' in script
-    assert r"C:\Users\gabri\Downloads\WHAM" not in script
+    assert 'Join-Path $repoRoot "third_party\\GVHMR\\inputs\\checkpoints\\body_models"' in script
+    assert r"C:\Users\gabri\Downloads\GVHMR" not in script
+
+
+def test_motion_wrappers_always_enable_gvhmr_docker() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    for name in (
+        "run_exercise_motion_workout_plan.ps1",
+        "run_exercise_motion_bake_and_rank.ps1",
+        "run_exercise_motion_youtube_bake_and_rank.ps1",
+    ):
+        script = (repo_root / "scripts" / name).read_text(encoding="utf-8")
+        assert '"--use-reconstruction-docker"' in script
+        assert '"--reconstruction-docker-image"' in script
+        assert '"--reconstruction-docker-gpus"' in script
+        assert '"--reconstruction-docker-shm-size"' in script
+        assert '[string]$ReconstructionDockerImage = "myworkoutassistant/gvhmr:torch2.3-cu121"' in script
+        assert "NoReconstructionDocker" not in script
 
 
 def test_legacy_warm_worker_retry_requests_supervised_restart() -> None:
@@ -1284,8 +1302,7 @@ def test_workout_plan_wrapper_builds_mobile_package_directly(tmp_path: Path) -> 
     workspace = tmp_path / "workspace"
     mobile_package = tmp_path / "workout_plan_with_movements.json"
     incremental_mobile_package = tmp_path / "workout_plan_with_incremental_movements.json"
-    wham_repo = tmp_path / "WHAM"
-    body_models = wham_repo / "dataset" / "body_models"
+    body_models = tmp_path / "GVHMR" / "inputs" / "checkpoints" / "body_models"
     body_models.mkdir(parents=True)
     workout_plan = write_workout_plan(tmp_path, exercise_count=1)
     plan_payload = json.loads(workout_plan.read_text(encoding="utf-8"))
@@ -1332,18 +1349,15 @@ def test_workout_plan_wrapper_builds_mobile_package_directly(tmp_path: Path) -> 
             str(mobile_package),
             "-IncrementalMobilePackageOutputJson",
             str(incremental_mobile_package),
-            "-WhamRepoPath",
-            str(wham_repo),
             "-BodyModelRoot",
             str(body_models),
             "-PythonCommand",
             str(fake_cmd),
-            "-NoWhamDocker",
             "-SkipVisionRanking",
             "-SkipSemanticGate",
             "-SkipLlamaCppQueryPlanner",
             "-SkipPosePrefilter",
-            "-SkipPreWhamSourceValidation",
+            "-SkipPreReconstructionSourceValidation",
         ],
         cwd=repo_root,
         env=env,
@@ -1376,8 +1390,7 @@ def test_workout_plan_wrapper_builds_mobile_package_directly(tmp_path: Path) -> 
 def test_workout_plan_wrapper_pipelines_discovery_and_bake(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     workspace = tmp_path / "workspace"
-    wham_repo = tmp_path / "WHAM"
-    body_models = wham_repo / "dataset" / "body_models"
+    body_models = tmp_path / "GVHMR" / "inputs" / "checkpoints" / "body_models"
     body_models.mkdir(parents=True)
     workout_plan = write_workout_plan(tmp_path)
     _fake_cli, fake_cmd = write_fake_motion_cli(tmp_path)
@@ -1398,8 +1411,6 @@ def test_workout_plan_wrapper_pipelines_discovery_and_bake(tmp_path: Path) -> No
             str(workout_plan),
             "-WorkspaceRoot",
             str(workspace),
-            "-WhamRepoPath",
-            str(wham_repo),
             "-BodyModelRoot",
             str(body_models),
             "-PythonCommand",
@@ -1410,12 +1421,11 @@ def test_workout_plan_wrapper_pipelines_discovery_and_bake(tmp_path: Path) -> No
             "1",
             "-ProgressIntervalSeconds",
             "1",
-            "-NoWhamDocker",
             "-SkipVisionRanking",
             "-SkipSemanticGate",
             "-SkipLlamaCppQueryPlanner",
             "-SkipPosePrefilter",
-            "-SkipPreWhamSourceValidation",
+            "-SkipPreReconstructionSourceValidation",
             "-SkipFinalOutputValidation",
         ],
         cwd=repo_root,
@@ -1474,8 +1484,8 @@ def test_workout_plan_wrapper_pipelines_discovery_and_bake(tmp_path: Path) -> No
         ]
         assert exercise["timings"]["discoveryAttempts"] == 1
         assert exercise["timings"]["bakeAttempts"] == 1
-        assert exercise["timings"]["selection"]["whamGeneratedCount"] == 1
-        assert exercise["timings"]["selection"]["whamRunSeconds"] == pytest.approx(0.02)
+        assert exercise["timings"]["selection"]["reconstructionGeneratedCount"] == 1
+        assert exercise["timings"]["selection"]["reconstructionRunSeconds"] == pytest.approx(0.02)
         selected = exercise["selectedResults"][0]
         selected_preview_html = Path(selected["selectedPreviewHtmlPath"])
         selected_preview_video = Path(selected["selectedPreviewVideoPath"])
@@ -1515,11 +1525,10 @@ def test_workout_plan_wrapper_pipelines_discovery_and_bake(tmp_path: Path) -> No
 
 
 @pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None, reason="PowerShell wrapper test requires Windows pwsh")
-def test_workout_plan_wrapper_reports_staged_wham_progress(tmp_path: Path, request) -> None:
+def test_workout_plan_wrapper_reports_staged_reconstruction_progress(tmp_path: Path, request) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     workspace = tmp_path / "workspace"
-    wham_repo = tmp_path / "WHAM"
-    body_models = wham_repo / "dataset" / "body_models"
+    body_models = tmp_path / "GVHMR" / "inputs" / "checkpoints" / "body_models"
     body_models.mkdir(parents=True)
     workout_plan = write_workout_plan(tmp_path, exercise_count=1)
     _fake_cli, fake_cmd = write_fake_motion_cli(tmp_path)
@@ -1537,8 +1546,6 @@ def test_workout_plan_wrapper_reports_staged_wham_progress(tmp_path: Path, reque
             str(workout_plan),
             "-WorkspaceRoot",
             str(workspace),
-            "-WhamRepoPath",
-            str(wham_repo),
             "-BodyModelRoot",
             str(body_models),
             "-PythonCommand",
@@ -1547,12 +1554,11 @@ def test_workout_plan_wrapper_reports_staged_wham_progress(tmp_path: Path, reque
             "1",
             "-ProgressIntervalSeconds",
             "1",
-            "-NoWhamDocker",
             "-SkipVisionRanking",
             "-SkipSemanticGate",
             "-SkipLlamaCppQueryPlanner",
             "-SkipPosePrefilter",
-            "-SkipPreWhamSourceValidation",
+            "-SkipPreReconstructionSourceValidation",
             "-SkipFinalOutputValidation",
     ]
 
@@ -1620,8 +1626,7 @@ def test_workout_plan_wrapper_reports_staged_wham_progress(tmp_path: Path, reque
 def test_workout_plan_wrapper_routes_ambiguous_recovery_to_inspection_without_retry(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     workspace = tmp_path / "workspace"
-    wham_repo = tmp_path / "WHAM"
-    body_models = wham_repo / "dataset" / "body_models"
+    body_models = tmp_path / "GVHMR" / "inputs" / "checkpoints" / "body_models"
     body_models.mkdir(parents=True)
     workout_plan = write_workout_plan(tmp_path, exercise_count=1)
     _fake_cli, fake_cmd = write_fake_motion_cli(tmp_path)
@@ -1642,8 +1647,6 @@ def test_workout_plan_wrapper_routes_ambiguous_recovery_to_inspection_without_re
         str(workout_plan),
         "-WorkspaceRoot",
         str(workspace),
-        "-WhamRepoPath",
-        str(wham_repo),
         "-BodyModelRoot",
         str(body_models),
         "-PythonCommand",
@@ -1652,12 +1655,11 @@ def test_workout_plan_wrapper_routes_ambiguous_recovery_to_inspection_without_re
         "1",
         "-ProgressIntervalSeconds",
         "1",
-        "-NoWhamDocker",
         "-SkipVisionRanking",
         "-SkipSemanticGate",
         "-SkipLlamaCppQueryPlanner",
         "-SkipPosePrefilter",
-        "-SkipPreWhamSourceValidation",
+        "-SkipPreReconstructionSourceValidation",
         "-SkipFinalOutputValidation",
     ]
 
@@ -1718,8 +1720,7 @@ def test_workout_plan_wrapper_routes_ambiguous_recovery_to_inspection_without_re
 def test_workout_plan_wrapper_reuses_exact_unchanged_candidate_prefetch(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     workspace = tmp_path / "workspace"
-    wham_repo = tmp_path / "WHAM"
-    body_models = wham_repo / "dataset" / "body_models"
+    body_models = tmp_path / "GVHMR" / "inputs" / "checkpoints" / "body_models"
     body_models.mkdir(parents=True)
     workout_plan = write_workout_plan(tmp_path, exercise_count=1)
     _fake_cli, fake_cmd = write_fake_motion_cli(tmp_path)
@@ -1738,19 +1739,16 @@ def test_workout_plan_wrapper_reuses_exact_unchanged_candidate_prefetch(tmp_path
         str(workout_plan),
         "-WorkspaceRoot",
         str(workspace),
-        "-WhamRepoPath",
-        str(wham_repo),
         "-BodyModelRoot",
         str(body_models),
         "-PythonCommand",
         str(fake_cmd),
         "-CpuPrefetchDuringBake",
-        "-NoWhamDocker",
         "-SkipVisionRanking",
         "-SkipSemanticGate",
         "-SkipLlamaCppQueryPlanner",
         "-SkipPosePrefilter",
-        "-SkipPreWhamSourceValidation",
+        "-SkipPreReconstructionSourceValidation",
         "-SkipFinalOutputValidation",
     ]
 
@@ -1808,8 +1806,7 @@ def test_workout_plan_wrapper_reuses_exact_unchanged_candidate_prefetch(tmp_path
 def test_workout_plan_wrapper_resumes_from_durable_discovery_source_downloads_and_bake(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     workspace = tmp_path / "workspace"
-    wham_repo = tmp_path / "WHAM"
-    body_models = wham_repo / "dataset" / "body_models"
+    body_models = tmp_path / "GVHMR" / "inputs" / "checkpoints" / "body_models"
     body_models.mkdir(parents=True)
     workout_plan = write_workout_plan(tmp_path, exercise_count=1)
     _fake_cli, fake_cmd = write_fake_motion_cli(tmp_path)
@@ -1828,20 +1825,17 @@ def test_workout_plan_wrapper_resumes_from_durable_discovery_source_downloads_an
         str(workout_plan),
         "-WorkspaceRoot",
         str(workspace),
-        "-WhamRepoPath",
-        str(wham_repo),
         "-BodyModelRoot",
         str(body_models),
         "-PythonCommand",
         str(fake_cmd),
         "-ArtifactRetention",
         "full",
-        "-NoWhamDocker",
         "-SkipVisionRanking",
         "-SkipSemanticGate",
         "-SkipLlamaCppQueryPlanner",
         "-SkipPosePrefilter",
-        "-SkipPreWhamSourceValidation",
+        "-SkipPreReconstructionSourceValidation",
         "-SkipFinalOutputValidation",
     ]
 
@@ -2085,8 +2079,7 @@ def test_staged_wave_producer_retries_if_idle_worker_closed_admission(tmp_path: 
 def test_workout_plan_wrapper_publishes_manual_review_fallback(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     workspace = tmp_path / "workspace"
-    wham_repo = tmp_path / "WHAM"
-    body_models = wham_repo / "dataset" / "body_models"
+    body_models = tmp_path / "GVHMR" / "inputs" / "checkpoints" / "body_models"
     body_models.mkdir(parents=True)
     workout_plan = write_workout_plan(tmp_path, exercise_count=1)
     _fake_cli, fake_cmd = write_fake_motion_cli(tmp_path)
@@ -2106,8 +2099,6 @@ def test_workout_plan_wrapper_publishes_manual_review_fallback(tmp_path: Path) -
             str(workout_plan),
             "-WorkspaceRoot",
             str(workspace),
-            "-WhamRepoPath",
-            str(wham_repo),
             "-BodyModelRoot",
             str(body_models),
             "-PythonCommand",
@@ -2118,12 +2109,11 @@ def test_workout_plan_wrapper_publishes_manual_review_fallback(tmp_path: Path) -
             "1",
             "-ProgressIntervalSeconds",
             "1",
-            "-NoWhamDocker",
             "-SkipVisionRanking",
             "-SkipSemanticGate",
             "-SkipLlamaCppQueryPlanner",
             "-SkipPosePrefilter",
-            "-SkipPreWhamSourceValidation",
+            "-SkipPreReconstructionSourceValidation",
             "-SkipFinalOutputValidation",
         ],
         cwd=repo_root,
@@ -2175,8 +2165,7 @@ def test_workout_plan_wrapper_rejects_invalid_packaged_artifact_state(
 ) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     workspace = tmp_path / "workspace"
-    wham_repo = tmp_path / "WHAM"
-    body_models = wham_repo / "dataset" / "body_models"
+    body_models = tmp_path / "GVHMR" / "inputs" / "checkpoints" / "body_models"
     body_models.mkdir(parents=True)
     workout_plan = write_workout_plan(tmp_path, exercise_count=1)
     fake_cli, fake_cmd = write_fake_motion_cli(tmp_path)
@@ -2203,8 +2192,6 @@ def test_workout_plan_wrapper_rejects_invalid_packaged_artifact_state(
             str(workout_plan),
             "-WorkspaceRoot",
             str(workspace),
-            "-WhamRepoPath",
-            str(wham_repo),
             "-BodyModelRoot",
             str(body_models),
             "-PythonCommand",
@@ -2217,12 +2204,11 @@ def test_workout_plan_wrapper_rejects_invalid_packaged_artifact_state(
             "1",
             "-ProgressIntervalSeconds",
             "1",
-            "-NoWhamDocker",
             "-SkipVisionRanking",
             "-SkipSemanticGate",
             "-SkipLlamaCppQueryPlanner",
             "-SkipPosePrefilter",
-            "-SkipPreWhamSourceValidation",
+            "-SkipPreReconstructionSourceValidation",
             "-SkipFinalOutputValidation",
         ],
         cwd=repo_root,
@@ -2250,8 +2236,7 @@ def test_workout_plan_wrapper_rejects_invalid_packaged_artifact_state(
 def test_workout_plan_wrapper_avoids_cuda_discovery_overlap_with_bake_by_default(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     workspace = tmp_path / "workspace"
-    wham_repo = tmp_path / "WHAM"
-    body_models = wham_repo / "dataset" / "body_models"
+    body_models = tmp_path / "GVHMR" / "inputs" / "checkpoints" / "body_models"
     body_models.mkdir(parents=True)
     workout_plan = write_workout_plan(tmp_path, exercise_count=2)
     fake_cli, fake_cmd = write_fake_motion_cli(tmp_path)
@@ -2277,8 +2262,6 @@ def test_workout_plan_wrapper_avoids_cuda_discovery_overlap_with_bake_by_default
             str(workout_plan),
             "-WorkspaceRoot",
             str(workspace),
-            "-WhamRepoPath",
-            str(wham_repo),
             "-BodyModelRoot",
             str(body_models),
             "-PythonCommand",
@@ -2287,11 +2270,10 @@ def test_workout_plan_wrapper_avoids_cuda_discovery_overlap_with_bake_by_default
             str(prepared_candidates_manifest),
             "-ProgressIntervalSeconds",
             "1",
-            "-NoWhamDocker",
             "-SkipVisionRanking",
             "-SkipSemanticGate",
             "-SkipLlamaCppQueryPlanner",
-            "-SkipPreWhamSourceValidation",
+            "-SkipPreReconstructionSourceValidation",
             "-SkipFinalOutputValidation",
         ],
         cwd=repo_root,
@@ -2323,8 +2305,7 @@ def test_workout_plan_wrapper_avoids_cuda_discovery_overlap_with_bake_by_default
 def test_prepared_candidates_do_not_fall_back_to_live_discovery_after_rejection(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     workspace = tmp_path / "workspace"
-    wham_repo = tmp_path / "WHAM"
-    body_models = wham_repo / "dataset" / "body_models"
+    body_models = tmp_path / "GVHMR" / "inputs" / "checkpoints" / "body_models"
     body_models.mkdir(parents=True)
     workout_plan = write_workout_plan(tmp_path, exercise_count=1)
     plan_payload = json.loads(workout_plan.read_text(encoding="utf-8"))
@@ -2363,8 +2344,6 @@ def test_prepared_candidates_do_not_fall_back_to_live_discovery_after_rejection(
             str(workout_plan),
             "-WorkspaceRoot",
             str(workspace),
-            "-WhamRepoPath",
-            str(wham_repo),
             "-BodyModelRoot",
             str(body_models),
             "-PythonCommand",
@@ -2375,11 +2354,10 @@ def test_prepared_candidates_do_not_fall_back_to_live_discovery_after_rejection(
             "1",
             "-ProgressIntervalSeconds",
             "1",
-            "-NoWhamDocker",
             "-SkipVisionRanking",
             "-SkipSemanticGate",
             "-SkipLlamaCppQueryPlanner",
-            "-SkipPreWhamSourceValidation",
+            "-SkipPreReconstructionSourceValidation",
             "-SkipFinalOutputValidation",
         ],
         cwd=repo_root,
@@ -2408,8 +2386,7 @@ def test_prepared_candidates_do_not_fall_back_to_live_discovery_after_rejection(
 def test_workout_plan_wrapper_rejects_non_cuda_pose_prefilter_device(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     workspace = tmp_path / "workspace"
-    wham_repo = tmp_path / "WHAM"
-    body_models = wham_repo / "dataset" / "body_models"
+    body_models = tmp_path / "GVHMR" / "inputs" / "checkpoints" / "body_models"
     body_models.mkdir(parents=True)
     workout_plan = write_workout_plan(tmp_path, exercise_count=1)
     _fake_cli, fake_cmd = write_fake_motion_cli(tmp_path)
@@ -2427,19 +2404,16 @@ def test_workout_plan_wrapper_rejects_non_cuda_pose_prefilter_device(tmp_path: P
             str(workout_plan),
             "-WorkspaceRoot",
             str(workspace),
-            "-WhamRepoPath",
-            str(wham_repo),
             "-BodyModelRoot",
             str(body_models),
             "-PythonCommand",
             str(fake_cmd),
             "-PosePrefilterDevice",
             "cpu",
-            "-NoWhamDocker",
             "-SkipVisionRanking",
             "-SkipSemanticGate",
             "-SkipLlamaCppQueryPlanner",
-            "-SkipPreWhamSourceValidation",
+            "-SkipPreReconstructionSourceValidation",
             "-SkipFinalOutputValidation",
         ],
         cwd=repo_root,
