@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
@@ -35,7 +36,10 @@ sealed class WorkoutInsightsUiState {
         val statusText: String = "",
     ) : WorkoutInsightsUiState()
     data class Success(val title: String, val text: String) : WorkoutInsightsUiState()
-    data class Error(val message: String) : WorkoutInsightsUiState()
+    data class Error(
+        val message: String,
+        val canRetryLowMemory: Boolean = false,
+    ) : WorkoutInsightsUiState()
 }
 
 @Composable
@@ -47,6 +51,7 @@ fun WorkoutInsightsDialog(
     onDismiss: () -> Unit,
     onConfigure: (() -> Unit)?,
     onGenerate: () -> Unit,
+    onRetryLowMemory: (() -> Unit)? = null,
 ) {
     if (!show) return
 
@@ -121,6 +126,11 @@ fun WorkoutInsightsDialog(
                                 style = MaterialTheme.typography.bodyMedium,
                                 modifier = Modifier.padding(Spacing.md)
                             )
+                        }
+                        if (state.canRetryLowMemory && onRetryLowMemory != null) {
+                            TextButton(onClick = onRetryLowMemory) {
+                                Text("Try anyway")
+                            }
                         }
                     }
 

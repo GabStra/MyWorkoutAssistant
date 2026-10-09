@@ -15,8 +15,14 @@ import java.io.File
  */
 internal object LiteRtLmModelHealth {
     /** The model cannot be safely loaded on this device as configured. */
-    class UnsafeModelException(message: String, cause: Throwable? = null) :
+    open class UnsafeModelException(message: String, cause: Throwable? = null) :
         IllegalStateException(message, cause)
+
+    /**
+     * The free-memory pre-flight refused this load. Thrown before any session
+     * is created so the UI can offer an explicit "try anyway" override.
+     */
+    class LowMemoryException(message: String) : UnsafeModelException(message)
 
     data class Report(
         val speculativeDecodingSupported: Boolean,
@@ -72,7 +78,7 @@ internal object LiteRtLmModelHealth {
         val memoryInfo = ActivityManager.MemoryInfo().also { activityManager.getMemoryInfo(it) }
         val requiredBytes = modelBytes + LOW_MEMORY_MARGIN_BYTES
         if (memoryInfo.availMem < requiredBytes) {
-            throw UnsafeModelException(
+            throw LowMemoryException(
                 "Not enough free memory to load this model (${modelBytes / 1_000_000} MB file, " +
                     "${memoryInfo.availMem / 1_000_000} MB free). ${adviceFor(modelFile.name)}",
             )

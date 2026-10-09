@@ -100,6 +100,7 @@ import com.gabstra.myworkoutassistant.exportWorkoutSessionToMarkdown
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.getEnabledStatusOfWorkoutComponent
 import com.gabstra.myworkoutassistant.insights.ConfigurableWorkoutInsightsEngine
+import com.gabstra.myworkoutassistant.insights.LiteRtLmModelHealth
 import com.gabstra.myworkoutassistant.insights.LiteRtLmModelStore
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsDialog
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsPromptResult
@@ -477,7 +478,7 @@ fun WorkoutDetailScreen(
         }
     }
 
-    fun generateWorkoutInsights() {
+    fun generateWorkoutInsights(allowLowMemory: Boolean = false) {
         if (!MobileLlmFeatureFlags.isEnabled(context)) return
         val historyId = displayedWorkoutHistoryId
         if (historyId == null) {
@@ -514,6 +515,7 @@ fun WorkoutDetailScreen(
                                 prompt = promptResult.prompt,
                                 systemPrompt = promptResult.systemPrompt,
                                 toolContext = promptResult.toolContext,
+                                allowLowMemoryLoad = allowLowMemory,
                             )
                         ).collectLatest { chunk ->
                             insightsState = WorkoutInsightsUiState.Generating(
@@ -530,9 +532,16 @@ fun WorkoutDetailScreen(
                             text = finalText.ifBlank { "No insights were generated." }
                         )
                     }.onFailure { error ->
-                        insightsState = WorkoutInsightsUiState.Error(
-                            error.message ?: "Unable to generate local insights."
-                        )
+                        insightsState = if (error is LiteRtLmModelHealth.LowMemoryException) {
+                            WorkoutInsightsUiState.Error(
+                                message = error.message ?: "Not enough free memory to load the model.",
+                                canRetryLowMemory = true,
+                            )
+                        } else {
+                            WorkoutInsightsUiState.Error(
+                                error.message ?: "Unable to generate local insights."
+                            )
+                        }
                     }
                 }
             }
@@ -1710,6 +1719,7 @@ fun WorkoutDetailScreen(
                         null
                     },
                     onGenerate = { generateWorkoutInsights() },
+                    onRetryLowMemory = { generateWorkoutInsights(allowLowMemory = true) },
                 )
             }
         }

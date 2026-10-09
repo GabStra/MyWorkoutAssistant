@@ -54,11 +54,6 @@ class LlmEngineService : Service() {
         var sendJob: Job? = null
     }
 
-    override fun onCreate() {
-        super.onCreate()
-        LiteRtLmEnginePool.appContext = applicationContext
-    }
-
     override fun onBind(intent: Intent?): IBinder = gateway
 
     override fun onDestroy() {
@@ -253,8 +248,6 @@ internal object LiteRtLmEnginePool {
     private val mutex = Mutex()
     private var cachedHandle: EngineHandle? = null
 
-    lateinit var appContext: android.content.Context
-
     data class EngineHandle(
         val engine: Engine,
         val modelPath: String,
@@ -280,9 +273,6 @@ internal object LiteRtLmEnginePool {
             cached.backendPreference == backendPreference
         if (!reusable) {
             Engine.setNativeMinLogSeverity(LogSeverity.ERROR)
-            // Refuse oversized loads before native code maps the file; a
-            // mid-load low-memory kill cannot be caught or reported.
-            LiteRtLmModelHealth.requireEnoughFreeMemory(appContext, modelPath)
             cachedHandle?.engine?.close()
             val created = createEngine(
                 modelPath = modelPath,
