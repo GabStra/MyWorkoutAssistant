@@ -1,6 +1,6 @@
 # Exercise-motion throughput handoff
 
-Updated 2026-10-08. The active goal is still open; the full evidence and qualification matrix are in `docs/exercise_motion_throughput_plan.md`.
+Updated 2026-10-09. The active goal is still open; the full evidence and qualification matrix are in `docs/exercise_motion_throughput_plan.md`.
 
 ## Current result
 
@@ -12,6 +12,8 @@ Updated 2026-10-08. The active goal is still open; the full evidence and qualifi
 
 ## Next work
 
-The current margin audit found no new performance experiment with both proven removable shared work and a faithful, quality-discriminating replay. Do not benchmark highest-cost stages alone. An older two-wave run spent 115.283s in two GVHMR startups, but it has no accepted/package lineage and each worker stops for Qwen's exclusive GPU handoff; no safe saving is established. The policy-62 Floor Press source-only review is complete, but this source does not visibly establish required rack support and cannot qualify the selected output. Its harness `cleared` status is source-selection provenance, not semantic qualification: the resolved disagreement repair returned despite contradictory identity/equipment evidence. This is a quality-risk lead, not a quantified throughput opportunity; no reconstruction was run. Keep the goal active and hold experiments until retained evidence identifies removable shared work with a reliable accepted-output replay. Preserve all gates and motion quality; commit only qualified production changes.
+A bounded CPU replay identified discarded Linear initialization in the two strictly checkpoint-loaded preprocessors. After applying identical checkpoint-cache preconditioning, both order pairs saved 8.112s/8.343s in complete constructors, beyond observed spread (3.360s baseline, 3.129s candidate); all 906 parameter/buffer states and checkpoint hashes matched. Evidence: `build/exercise_motion/diagnostics/pretrained_startup_20261008/cache_conditioned/summary.json`. The unconditioned comparison was inconclusive and must not be repeated. Production remains unchanged. Both exact retained-input worker replays now match all consumed reconstruction fields and metadata; DemoPL checkpoint keys are complete. One OHP readiness timeout was diagnosed from retained state (ready at 126.369s, clean stop, no job); a single 180s-cap retry passed. These are correctness runs, not comparable startup timing arms. Next: define one matched production comparison with valid retained source stages and preserved real acceptance/review/render/package. Confirm exact input identity and isolate both arms before running; the older WHAM retained-pair config is not interchangeable. Do not repeat CPU or output-parity runs. CPU stage savings do not establish time to package. Keep Qwen and exclusive GPU handoffs fixed.
+
+The policy-62 Floor Press source-only review is complete, but the source lacks visible required rack support and cannot qualify the selected output. Its `cleared` status records selection provenance; the resolved repair bypassing contradictory equipment evidence remains a separate quality concern with unmeasured runtime impact. Keep the goal active and commit only qualified production changes.
 
 Cache A/B roots: `build/exercise_motion/speed-harness/20261008-210549-f07e8576/`, `.../20261008-211843-39688924/`, `.../20261008-213659-88077694/`, `.../20261008-214936-c97ed79e/`.
