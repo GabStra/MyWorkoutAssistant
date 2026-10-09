@@ -1111,6 +1111,12 @@ def format_planner_equipment_context(equipment_list, accessory_list=None):
                 lines.append(
                     "  - Selectable app loads for exact targets: none/no external load calculation."
                 )
+            if eq_type == "DUMBBELLS":
+                lines.append(
+                    "  - These loads are PER-PAIR TOTALS (2 x the weight of ONE dumbbell). A coach load"
+                    " written for one dumbbell ('@ 22.5') is per hand: prescribe the pair total"
+                    " (22.5 per hand = targetWeight 45; the app displays it as '22.5 x 2')."
+                )
     else:
         lines.append("(none)")
 

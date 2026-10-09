@@ -560,6 +560,24 @@ def _collect_contract_issues_plan_index(
                             target_load = float(item[expected_load_field])
                             if target_load in selectable_weights:
                                 continue
+                            if (
+                                str(equipment_type).upper() == "DUMBBELLS"
+                                and target_load * 2 in selectable_weights
+                            ):
+                                # Coach dumbbell loads are per hand; pair selectable
+                                # loads are totals. Point the repair at the doubled
+                                # value instead of the nearest unrelated total.
+                                issues.append(
+                                    ContractIssue(
+                                        "unselectable_target_set_prescription_load",
+                                        f"Exercise '{ex_name}' targetSetPrescriptions[{idx}] {expected_load_field}="
+                                        f"{_format_contract_weight(target_load)} is a per-hand dumbbell weight. Dumbbell pair "
+                                        f"loads are PER-PAIR TOTALS: prescribe {expected_load_field}="
+                                        f"{_format_contract_weight(target_load * 2)} (= 2 x {_format_contract_weight(target_load)}; "
+                                        f"the app displays it as '{_format_contract_weight(target_load)} x 2').",
+                                    )
+                                )
+                                continue
                             nearest = min(selectable_weights, key=lambda val: abs(val - target_load))
                             issues.append(
                                 ContractIssue(

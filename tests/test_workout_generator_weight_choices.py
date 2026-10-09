@@ -250,6 +250,52 @@ def test_bodyweight_selectable_weights_include_zero_additional_load():
     assert selectable == {0.0, 5.0, 10.0}
 
 
+def test_planner_context_explains_dumbbell_pair_total_semantics():
+    formatted = format_planner_equipment_context([
+        {
+            "id": "EQUIPMENT_0",
+            "type": "DUMBBELLS",
+            "name": "Dumbbell Pair",
+            "dumbbells": [{"weight": 11.5}, {"weight": 22.5}],
+        },
+    ])
+
+    assert "PER-PAIR TOTALS" in formatted
+    assert "22.5 per hand = targetWeight 45" in formatted
+
+
+def test_plan_contract_repair_points_per_hand_dumbbell_load_at_pair_total():
+    plan = {
+        "planName": "Dumbbell Plan",
+        "equipments": [{
+            "id": "EQUIPMENT_0",
+            "type": "DUMBBELLS",
+            "name": "Dumbbell Pair",
+            "dumbbells": [{"weight": 11.5}, {"weight": 22.5}],
+        }],
+        "accessoryEquipments": [],
+        "exercises": [{
+            "id": "EXERCISE_0",
+            "name": "Dumbbell Bench Press",
+            "exerciseType": "WEIGHT",
+            "equipmentId": "EQUIPMENT_0",
+            "requiredAccessoryEquipmentIds": [],
+            "minReps": 8,
+            "maxReps": 10,
+            "numWorkSets": 1,
+            "targetSetPrescriptions": [
+                {"workSetIndex": 0, "reps": 10, "weight": 22.5},
+            ],
+        }],
+        "workouts": [],
+    }
+
+    # 22.5 is a selectable SINGLE but not a pair total; the repair must point at
+    # the doubled pair total (45.0), not the nearest unrelated total (23.0).
+    with pytest.raises(ContractValidationError, match=r"weight=45\.0 \(= 2 x 22\.5"):
+        validate_plan_index_contract(plan)
+
+
 def test_planner_equipment_context_separates_primary_and_accessory_roles_and_lists_selectable_loads():
     equipment = [
         {
