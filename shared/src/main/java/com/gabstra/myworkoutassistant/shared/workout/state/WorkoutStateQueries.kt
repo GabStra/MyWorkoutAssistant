@@ -62,9 +62,13 @@ internal object WorkoutStateQueries {
         setHistory: SetHistory,
         setId: UUID,
         order: UInt,
-        exerciseId: UUID?
+        exerciseId: UUID?,
+        supersetRound: UInt? = null
     ): Boolean {
         if (setHistory.setId != setId || setHistory.order != order) {
+            return false
+        }
+        if (supersetRound != null && setHistory.supersetRound != supersetRound) {
             return false
         }
         return setHistory.exerciseId == null ||

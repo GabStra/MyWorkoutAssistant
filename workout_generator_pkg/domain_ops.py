@@ -1904,6 +1904,8 @@ def assemble_placeholder_workout_store(equipment_items, accessory_items, exercis
                             superset_component["timeCapSeconds"] = plan_group["timeCapSeconds"]
                         if plan_group.get("roundDurationSeconds") is not None:
                             superset_component["roundDurationSeconds"] = plan_group["roundDurationSeconds"]
+                        if plan_group.get("amrap"):
+                            superset_component["amrap"] = True
                     workout_components.append(superset_component)
                 else:
                     print(f"  Warning: Superset component has no valid exercises, skipping")
@@ -2062,6 +2064,13 @@ def fix_set_errors(sets):
                 s_copy["autoStart"] = False  # Default to manual start
             if "autoStop" not in s_copy:
                 s_copy["autoStop"] = False  # Default to manual stop
+
+            # autoStop=true means the runtime ends the set at timeInMillis; with no
+            # duration that would auto-complete instantly. Goal-based sets (a
+            # targetDistanceMeters/targetCalories the athlete works toward) stay
+            # open and are finished manually.
+            if s_copy.get("autoStop") and s_copy.get("timeInMillis", 0) <= 0:
+                s_copy["autoStop"] = False
             
             # Remove subCategory if present (not allowed for these set types)
             if "subCategory" in s_copy:

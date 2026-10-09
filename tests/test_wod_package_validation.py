@@ -108,9 +108,12 @@ def _validate_package(package: dict) -> None:
             for set_data in sets:
                 set_type = set_data.get("type")
                 if set_type in ("TimedDurationSet", "EnduranceSet"):
-                    assert set_data.get("timeInMillis", 0) > 0, (
-                        f"{label}: timed set with no duration"
-                    )
+                    # autoStop=true means the runtime ends the set at timeInMillis;
+                    # with a 0/missing duration it would auto-complete instantly.
+                    if set_data.get("autoStop"):
+                        assert set_data.get("timeInMillis", 0) > 0, (
+                            f"{label}: autoStop set with no duration"
+                        )
                     for target_field in ("targetDistanceMeters", "targetCalories"):
                         target = set_data.get(target_field)
                         if target is not None:

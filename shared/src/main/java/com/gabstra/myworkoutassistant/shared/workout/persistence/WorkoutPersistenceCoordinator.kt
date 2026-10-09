@@ -73,7 +73,10 @@ internal class WorkoutPersistenceCoordinator(
         val setHistory: SetHistory,
         val setId: UUID,
         val order: UInt,
-        val exerciseId: UUID?
+        val exerciseId: UUID?,
+        // Round-aware upsert identity: AMRAP loops repeat (setId, order), so the
+        // round disambiguates one round's row from the next.
+        val supersetRound: UInt? = null
     )
 
     data class RestHistorySnapshot(
@@ -123,6 +126,7 @@ internal class WorkoutPersistenceCoordinator(
         val supersetMetadata = resolveSupersetMetadata(
             exerciseId = historyIdentity.exerciseId,
             order = historyIdentity.order,
+            supersetRoundOverride = currentState.supersetRound,
             supersetIdByExerciseId = supersetIdByExerciseId,
             exercisesBySupersetId = exercisesBySupersetId
         )
@@ -166,7 +170,8 @@ internal class WorkoutPersistenceCoordinator(
             setHistory = newSetHistory,
             setId = historyIdentity.setId,
             order = historyIdentity.order,
-            exerciseId = historyIdentity.exerciseId
+            exerciseId = historyIdentity.exerciseId,
+            supersetRound = supersetMetadata?.supersetRound
         )
     }
 
@@ -227,7 +232,8 @@ internal class WorkoutPersistenceCoordinator(
                 history,
                 snapshot.setId,
                 snapshot.order,
-                snapshot.exerciseId
+                snapshot.exerciseId,
+                snapshot.supersetRound
             )
         }
         val existing = executedSetStore.executedSets.value.firstOrNull(key)
@@ -835,6 +841,7 @@ internal class WorkoutPersistenceCoordinator(
     private fun resolveSupersetMetadata(
         exerciseId: UUID?,
         order: UInt,
+        supersetRoundOverride: UInt?,
         supersetIdByExerciseId: Map<UUID, UUID>,
         exercisesBySupersetId: Map<UUID, List<Exercise>>
     ): SupersetMetadata? {
@@ -847,7 +854,9 @@ internal class WorkoutPersistenceCoordinator(
 
         return SupersetMetadata(
             supersetId = resolvedSupersetId,
-            supersetRound = order,
+            // AMRAP re-presents the same states each round; the state's live
+            // supersetRound is the only round identity that advances there.
+            supersetRound = supersetRoundOverride ?: order,
             supersetExerciseIndex = exerciseIndex.toUInt()
         )
     }

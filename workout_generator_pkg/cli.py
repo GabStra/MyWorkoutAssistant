@@ -1314,6 +1314,8 @@ def emit_workout_structure(
                 container_fields.append(f"timeCapSeconds={group['timeCapSeconds']}")
             if group.get("roundDurationSeconds") is not None:
                 container_fields.append(f"roundDurationSeconds={group['roundDurationSeconds']}")
+            if group.get("amrap"):
+                container_fields.append("amrap=true")
             container_summary = (
                 f" The Superset component MUST set exactly: {', '.join(container_fields)} (copy verbatim)."
                 if container_fields else ""
@@ -1329,7 +1331,7 @@ def emit_workout_structure(
                 "- For each listed group, emit exactly one componentType='Superset' containing those exerciseIds in the same order.\n"
                 "- Do NOT emit grouped exercises as standalone Exercise components.\n"
                 "- Do NOT insert Rest components between exercises that belong to the same superset group.\n"
-                "- When a group lists timeCapSeconds or roundDurationSeconds, the emitted Superset component MUST carry those exact values at the top level.\n"
+                "- When a group lists timeCapSeconds, roundDurationSeconds, or amrap, the emitted Superset component MUST carry those exact values at the top level.\n"
                 "- Populate restSecondsByExercise with exactly one entry for every grouped exercise, using its exact restToNextSeconds value.\n"
                 "- Each map value is rest immediately AFTER its keyed exercise during every round. For [A, B, C], A is rest before B, B is rest before C, and C is rest before A in the next round.\n"
                 "- The last grouped exercise's value is the between-round rest even if it is the final exercise in the workout. The runtime omits it after the final round.\n"

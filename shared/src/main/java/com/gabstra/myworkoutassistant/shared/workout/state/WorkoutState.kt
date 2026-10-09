@@ -174,7 +174,9 @@ sealed class WorkoutState {
 
     data class Rest(
         var set: com.gabstra.myworkoutassistant.shared.sets.Set,
-        val order: UInt,
+        // Inside superset containers this is the 1-based round (and the live ROUND
+        // label source); AMRAP loops re-tag it when a round repeats.
+        var order: UInt,
         val currentSetDataState: androidx.compose.runtime.MutableState<SetData>,
         val exerciseId: UUID? = null,
         var nextState: WorkoutState? = null,

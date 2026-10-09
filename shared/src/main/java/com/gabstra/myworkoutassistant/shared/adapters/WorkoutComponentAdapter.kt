@@ -133,6 +133,9 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                 jsonObject.add("restSecondsByExercise", context.serialize(src.restSecondsByExercise))
                 src.timeCapSeconds?.let { jsonObject.addProperty("timeCapSeconds", it) }
                 src.roundDurationSeconds?.let { jsonObject.addProperty("roundDurationSeconds", it) }
+                if (src.amrap) {
+                    jsonObject.addProperty("amrap", true)
+                }
             }
         }
         return jsonObject
@@ -435,8 +438,9 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
 
                 val timeCapSeconds = jsonObject.get("timeCapSeconds")?.takeUnless { it.isJsonNull }?.asInt
                 val roundDurationSeconds = jsonObject.get("roundDurationSeconds")?.takeUnless { it.isJsonNull }?.asInt
+                val amrap = jsonObject.get("amrap")?.takeUnless { it.isJsonNull }?.asBoolean ?: false
 
-                Superset(id, enabled, exercises, restSecondsByExercise, timeCapSeconds, roundDurationSeconds)
+                Superset(id, enabled, exercises, restSecondsByExercise, timeCapSeconds, roundDurationSeconds, amrap)
             }
 
             else -> throw RuntimeException("Unsupported workout component type")

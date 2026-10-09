@@ -40,35 +40,37 @@ This is a coach-authored workout. Hard constraints:
 - Timed blocks and per-minute EMOM slots (when present): use exactly one
   TimedDurationSet with autoStart=true and autoStop=true so the watch advances by
   itself.
-- AMRAPs and rounds-for-time (when present): express as supersetGroups; no rest
-  between members (restToNextSeconds=0) unless the workout specifies rest.
-- MANDATORY time caps: every AMRAP, rounds-for-time, or block the text bounds with
-  a window ("time cap 25'", "In 12' time cap", "From 8'-12'") MUST set the
-  superset's timeCapSeconds to the window in seconds. Example: an 8-12 minute
-  block starting at minute 8 gets timeCapSeconds=240. Without it the watch never
-  leaves the block.
 - Superset members repeat in lock-step: every member MUST carry the same number of
   work sets (the watch repeats the round at the smallest member's count and
   silently truncates the rest). Encode ladders like 20-15-10-5 as one set per
   movement per step (4 sets each, reps 20/15/10/5). A one-off movement (buy-in /
   buy-out run) that does NOT repeat goes OUTSIDE the superset as its own
   component; the cap then belongs to the repeating block.
+- MANDATORY time caps: every AMRAP, rounds-for-time, or block the text bounds with
+  a window ("time cap 25'", "In 12' time cap", "From 8'-12'") MUST set the
+  superset's timeCapSeconds to the window in seconds. Example: an 8-12 minute
+  block starting at minute 8 gets timeCapSeconds=240. Without it the watch never
+  leaves the block.
+- MANDATORY AMRAP mode: an AMRAP ("20 minute AMRAP of: ...", "Amrap 12' of: ...")
+  MUST be one superset with amrap=true and timeCapSeconds=the window in seconds.
+  Its members carry EXACTLY ONE work set each — they define the round, which the
+  watch repeats until the cap expires. Do not estimate rounds by duplicating sets.
 - MANDATORY EMOM cadence: "Every N minutes x T minutes" MUST become one superset
   with roundDurationSeconds=N and T/N work sets per member (e.g. "Every 2' x 10'"
   -> roundDurationSeconds=120 and 5 work sets per member). Never combine
   roundDurationSeconds with timeCapSeconds on the same superset.
 - MANDATORY cardio quantities: when the text states a distance or calories for a
   row/bike/ski/run movement ("max mt row (target 1100/1000)", "24/20 cal", "800 mt
-  run"), that movement MUST be a timed/running exercise whose sets carry
-  targetDistanceMeters (in meters) or targetCalories, first value of male/female
-  pairs. NEVER encode a stated distance as a rep count.
+  run", "500m row"), that movement's sets MUST carry targetDistanceMeters (in
+  meters) or targetCalories, first value of male/female pairs. NEVER encode a
+  stated distance or calorie quantity as a rep count.
+- Goal-based sets: a set whose quantity is a distance or calorie goal WITHOUT a
+  stated duration MUST be an EnduranceSet with timeInMillis=0, autoStart=true and
+  autoStop=FALSE (the watch counts up and shows the goal; the athlete finishes
+  it). autoStop=true is only valid together with a positive timeInMillis.
 - MANDATORY runs: a stated run ("800 mt run") MUST use the 'Run' library entry
   (exerciseType RUNNING) with targetDistanceMeters; the watch tracks it with GPS
   and shows the distance goal. Never encode a run as reps or as another movement.
-- MANDATORY cardio quantities: when the text states a distance or calories for a
-  row/bike/ski/run movement ("max mt row (target 1100/1000)", "24/20 cal", "800 mt
-  run"), the timed set for that movement MUST carry targetDistanceMeters (meters)
-  or targetCalories, first value of male/female pairs.
 - Rep schemes written as male/female pairs ("@ 22.5/15", "24/20") use the first value.
 - BODY_WEIGHT exercises: bodyWeightPercentage must be in percentage form (e.g. 100.0),
   never a fraction like 1.0.
@@ -344,10 +346,16 @@ The plan was built under these mandatory encoding rules:
 5. All members of one superset must carry the SAME number of work sets (the
    runtime repeats them in lock-step at the smallest member's count and silently
    truncates longer members). Unequal work-set counts across members are always
-   an issue.
+   an issue. An AMRAP block must be a superset with amrap=true, timeCapSeconds
+   set, and exactly one work set per member - an AMRAP whose members carry
+   multiple work sets each, or one without amrap=true, is an issue.
 6. A movement whose stated quantity is a distance ("800 mt run") must NOT be
    encoded as rep-based sets; runs must be RUNNING exercises carrying a distance
    prescription. Rep counts on a run-shaped movement are always an issue.
+7. A distance or calorie goal set without a stated duration must use
+   autoStop=false (the athlete finishes it against the shown goal); autoStop=true
+   together with timeInMillis=0 would auto-complete instantly and is always an
+   issue.
 Return strict JSON: {"issues": ["..."]}
 Each issue is one concrete, fixable violation. If the plan complies, return an
 empty list. Do not invent requirements that are not in the rules above.
@@ -380,6 +388,7 @@ def review_crossfit_mode_compliance(client, workout_text: str, package: dict, ca
                     "type": "Superset",
                     "timeCapSeconds": component.get("timeCapSeconds"),
                     "roundDurationSeconds": component.get("roundDurationSeconds"),
+                    "amrap": component.get("amrap"),
                     "exercises": [
                         {
                             "name": e.get("name"),

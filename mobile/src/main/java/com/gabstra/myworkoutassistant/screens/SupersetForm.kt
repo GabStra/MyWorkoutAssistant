@@ -448,7 +448,8 @@ fun SupersetForm(
                             restSecondsByExercise = restSecondsByExercise,
                             enabled = superset?.enabled ?: true,
                             timeCapSeconds = superset?.timeCapSeconds,
-                            roundDurationSeconds = superset?.roundDurationSeconds
+                            roundDurationSeconds = superset?.roundDurationSeconds,
+                            amrap = superset?.amrap ?: false
                         )
                         onSupersetUpsert(newOrUpdatedSuperset)
                     },

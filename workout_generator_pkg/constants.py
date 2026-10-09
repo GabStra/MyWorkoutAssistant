@@ -299,7 +299,8 @@ JSON_SCHEMA = {
                     "additionalProperties": {"type": "integer"}
                 },
                 "timeCapSeconds": {"type": ["integer", "null"], "minimum": 1},
-                "roundDurationSeconds": {"type": ["integer", "null"], "minimum": 1}
+                "roundDurationSeconds": {"type": ["integer", "null"], "minimum": 1},
+                "amrap": {"type": "boolean"}
             }
         },                                                                                                                                                                                                                                       
         "WorkoutComponent": {                                                                                                                                                                                                                    

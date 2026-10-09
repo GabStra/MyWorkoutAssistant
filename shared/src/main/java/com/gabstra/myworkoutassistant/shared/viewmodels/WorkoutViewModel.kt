@@ -435,6 +435,10 @@ open class WorkoutViewModel(
     // Superset container timer (time cap or round cadence) currently registered, if any.
     private var activeSupersetTimerId: UUID? = null
 
+    // True while advancePastSuperset force-advances out of a container (cap expiry);
+    // the AMRAP round loop must not intercept those transitions.
+    private var isAdvancingPastSuperset = false
+
     data class SupersetTimerInfo(
         val supersetId: UUID,
         val isCadence: Boolean,
@@ -568,13 +572,20 @@ open class WorkoutViewModel(
 
     private fun advancePastSuperset(supersetId: UUID) {
         workoutTimerService.unregisterAllExcept(setOf(supersetId))
-        var guard = 0
-        while (guard++ < 1000) {
-            val machine = stateMachine ?: return
-            val range = machine.getSupersetFlatRange(supersetId) ?: return
-            if (machine.currentIndex < range.first || machine.currentIndex >= range.second) return
-            if (_workoutState.value is WorkoutState.Completed) return
-            goToNextState()
+        // The stale cap-timer info is still published while we walk out of the
+        // container; suppress the AMRAP loop so the forced advance cuts through.
+        isAdvancingPastSuperset = true
+        try {
+            var guard = 0
+            while (guard++ < 1000) {
+                val machine = stateMachine ?: return
+                val range = machine.getSupersetFlatRange(supersetId) ?: return
+                if (machine.currentIndex < range.first || machine.currentIndex >= range.second) return
+                if (_workoutState.value is WorkoutState.Completed) return
+                goToNextState()
+            }
+        } finally {
+            isAdvancingPastSuperset = false
         }
     }
 
@@ -3206,9 +3217,12 @@ open class WorkoutViewModel(
 
     /**
      * Checks if advancing would exit the machine sequence and transition to Completed UI state.
+     * A live AMRAP loop keeps presenting rounds, so advancing never completes while its
+     * cap timer is running.
      */
     fun isNextStateCompleted(): Boolean {
         val machine = stateMachine ?: return false
+        if (findAmrapLoopTarget(machine) != null) return false
         return machine.currentIndex >= machine.allStates.lastIndex
     }
 
@@ -3219,6 +3233,15 @@ open class WorkoutViewModel(
             return
         }
         if (_workoutState.value is WorkoutState.Completed) return
+
+        // AMRAP mode: completing the last state of a capped amrap container while
+        // its cap is still running re-presents the same round instead of advancing.
+        val amrapLoop = findAmrapLoopTarget(machine)
+        if (amrapLoop != null) {
+            restartAmrapRound(machine, amrapLoop.first, amrapLoop.second)
+            return
+        }
+
         if (machine.currentIndex >= machine.allStates.lastIndex) {
             val workoutStart = startWorkoutTime ?: LocalDateTime.now().also { startWorkoutTime = it }
             val completedState = WorkoutState.Completed(workoutStart).apply {
@@ -3234,6 +3257,58 @@ open class WorkoutViewModel(
         }
 
         stateMachine = machine.next()
+        updateStateFlowsFromMachine()
+    }
+
+    /**
+     * When the current state is the last state of a capped AMRAP container whose
+     * cap timer is still running, returns (supersetId, nextRound) so [goToNextState]
+     * can loop the round instead of leaving the block. Null otherwise. Suppressed
+     * while [advancePastSuperset] force-advances (cap expiry must cut, not loop).
+     */
+    private fun findAmrapLoopTarget(machine: WorkoutStateMachine): Pair<UUID, UInt>? {
+        if (isAdvancingPastSuperset) return null
+        val container = machine.getCurrentSupersetContainer() ?: return null
+        val supersetId = container.supersetId
+        val timerInfo = _activeSupersetTimer.value ?: return null
+        if (timerInfo.supersetId != supersetId || timerInfo.isCadence) return null
+
+        val superset = selectedWorkout.value.workoutComponents
+            .filterIsInstance<Superset>()
+            .firstOrNull { it.id == supersetId } ?: return null
+        if (!superset.amrap) return null
+
+        val range = machine.getSupersetFlatRange(supersetId) ?: return null
+        if (machine.currentIndex != range.second - 1) return null
+        val nextRound = (roundOfSupersetState(machine.currentState) ?: 0u) + 1u
+        return supersetId to nextRound
+    }
+
+    /**
+     * Re-presents the AMRAP round: resets every container state to unexecuted with
+     * fresh set data, tags it with [nextRound], and jumps back to the container's
+     * first state. Completed rounds remain in history via supersetRound.
+     */
+    private fun restartAmrapRound(machine: WorkoutStateMachine, supersetId: UUID, nextRound: UInt) {
+        val range = machine.getSupersetFlatRange(supersetId) ?: return
+        for (index in range.first until range.second) {
+            when (val state = machine.allStates[index]) {
+                is WorkoutState.Set -> {
+                    state.hasBeenExecuted = false
+                    state.skipped = false
+                    state.startTime = null
+                    state.supersetRound = nextRound
+                    state.currentSetData = initializeSetData(state.set)
+                }
+                is WorkoutState.Rest -> {
+                    state.startTime = null
+                    state.order = nextRound
+                    state.currentSetData = initializeSetData(state.set)
+                }
+                else -> {}
+            }
+        }
+        stateMachine = machine.withCurrentIndex(range.first)
         updateStateFlowsFromMachine()
     }
 
