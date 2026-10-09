@@ -1,6 +1,6 @@
 # Exercise-motion improvement plan
 
-Updated 2026-10-08. This replaces the earlier throughput experiment sequence.
+Updated 2026-10-09. This replaces the earlier throughput experiment sequence.
 
 > For agentic workers: execute one evidence-backed task at a time using the existing production paths. Independent source/timing audits may use subagents; timing experiments run sequentially. Read this plan before launching work.
 
@@ -177,6 +177,14 @@ OFF's RDL CPU task took 5.922s wall / 1.563s thread CPU to slot acquisition, wit
 No new browser worker-count or frame-batch sweep is scheduled. Revisit after larger costs are addressed or evidence shows a different workload dominated by rendering.
 
 ## Qualification and promotion
+
+### Current completion audit — 2026-10-09
+
+- Shared production source-frame caching has repeated end-to-end savings, accepted package lineage and inspected playback on the base pair. The remaining decoder-specific evidence gap is real variable-frame-rate/timestamp behavior: the seven focused tests mock FFmpeg, while the 2,928 real JPEG comparisons use 30fps CFR clips. The cache does not change support fitting or kinematics; another floor-support/full cache comparison cannot answer this gap.
+- Two retained completed cross-family selections have actual selected videos, skeletons and previews: Single-Arm Dumbbell Walking Lunge (`GmUMh7nNyfQ`) and Barbell Clean and Jerk (`BhjzllV_fZI`) under `build/exercise_motion/exercise-library/`. A bounded real FFmpeg PTS inspection found respectively 93 frames with constant 400/11988-second spacing and 98 frames with constant 512/12800-second spacing, both starting at zero. Neither supplies real VFR evidence. Their original sanitized reconstruction inputs are pruned; do not substitute selected clips for those cache-keyed inputs.
+- The new startup production pair has equal work counts: 14 source Qwen calls, 10 final Qwen calls, one reconstruction, three browser jobs and zero retries/failures in each arm. Source request workload time was 143.501s/179.961s; final request workload time was 151.254s/277.450s. These cumulative durations do not establish critical-path savings. Materialization was 110.713s/185.700s, but no repeated operation or safely removable work was identified. Do not infer an optimization from elapsed variance or rerun the pair.
+- Floor Press remains unqualified because required setup support is unverified. The repair prompt already requires direct role evidence. Its false supported model judgment does not establish a parser bug: preserving categorical verdicts after scrubbing invented frame references is intentional and covered by `test_two_scale_disagreement_repair_quarantines_unsupported_frame_references` (`906b3c8f`). A prose-presence check or veto of every scrubbed repair would not prove visual correctness.
+- Broad representative fresh quality/timing qualification remains incomplete. The promoted base-pair improvement is not proof of reliability for every exercise family. No new performance experiment currently satisfies all four prerequisites (measured cost, removable mechanism, faithful replay, quality-preserving rule). Reopen a deferred hypothesis only when specific new evidence supplies its missing prerequisite; do not repeat the completed audits or generate new inputs merely to manufacture a timing baseline.
 
 1. **Stage qualification:** A winning isolated change passes its owning gates and focused regressions. Retained-stage timing remains a stage result.
 2. **Matched integration:** Only then run a matched production RDL/OHP pair with one changed variable, equivalent initial caches and pinned sources/contracts. Verify selection, actual package bytes, lineage and production playback against source. Record first usable output and total time. If promising, repeat in reverse order; stop and inspect any failure before rerunning.
