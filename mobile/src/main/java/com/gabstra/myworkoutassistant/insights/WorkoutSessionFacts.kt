@@ -3,6 +3,8 @@ package com.gabstra.myworkoutassistant.insights
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.getMaxHearthRatePercentage
 import com.gabstra.myworkoutassistant.shared.workout.display.formatWorkoutDurationSecondsForDisplay
+import kotlin.math.abs
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
@@ -23,6 +25,7 @@ internal fun WorkoutSessionFacts.asPromptBlock(): String =
 internal object WorkoutSessionFactsBuilder {
     internal const val MAX_PREVIOUS_SESSIONS = 3
     private const val MIN_SAMPLES_FOR_DRIFT = 8
+    private const val TARGET_MINUTE_STEP = 5
 
     /**
      * @param previousSessionsNewestFirst completed sessions of the same workout,
@@ -39,12 +42,14 @@ internal object WorkoutSessionFactsBuilder {
         restingHeartRate: Int?,
     ): WorkoutSessionFacts {
         val lines = mutableListOf<String>()
+        val previous = previousSessionsNewestFirst.take(MAX_PREVIOUS_SESSIONS)
         val durationSeconds = workoutHistory.duration
         val durationMinutes = durationSeconds / 60.0
         lines += "FACT Session duration: ${formatWorkoutDurationSecondsForDisplay(durationSeconds)} (${durationMinutes.roundToInt()} minutes)"
 
         val heartRates = workoutHistory.heartBeatRecords.filter { it > 0 }
         var currentAverageBpm: Double? = null
+        var currentDriftBpm: Int? = null
         if (heartRates.isNotEmpty()) {
             val average = heartRates.average()
             currentAverageBpm = average
@@ -55,6 +60,7 @@ internal object WorkoutSessionFactsBuilder {
                 val firstHalf = heartRates.subList(0, half).average()
                 val secondHalf = heartRates.subList(heartRates.size - half, heartRates.size).average()
                 val deltaBpm = (secondHalf - firstHalf).roundToInt()
+                currentDriftBpm = deltaBpm
                 val sign = if (deltaBpm >= 0) "+" else ""
                 lines += "FACT Heart-rate drift: the second half averaged $sign$deltaBpm bpm versus the first half"
             }
@@ -77,7 +83,6 @@ internal object WorkoutSessionFactsBuilder {
             }
         }
 
-        val previous = previousSessionsNewestFirst.take(MAX_PREVIOUS_SESSIONS)
         if (previous.isNotEmpty()) {
             val recentDurationMinutes = previous.map { it.duration / 60.0 }.average()
             lines += "FACT Session duration versus recent sessions of this workout: ${durationMinutes.roundToInt()} minutes versus ${recentDurationMinutes.roundToInt()} minutes typical"
@@ -90,11 +95,54 @@ internal object WorkoutSessionFactsBuilder {
             if (previousAverages.isNotEmpty()) {
                 val recentAverage = previousAverages.average()
                 val deltaBpm = (currentAverageBpm - recentAverage).roundToInt()
-                val sign = if (deltaBpm >= 0) "+" else ""
-                lines += "FACT Average heart rate versus recent sessions of this workout: $sign$deltaBpm bpm versus ${recentAverage.roundToInt()} bpm (at a similar duration, a lower average HR means better aerobic efficiency)"
+                val direction = when {
+                    deltaBpm <= -2 ->
+                        "improving — average HR is ${abs(deltaBpm)} bpm below the recent ${recentAverage.roundToInt()} bpm average"
+                    deltaBpm >= 2 ->
+                        "regressing — average HR is $deltaBpm bpm above the recent ${recentAverage.roundToInt()} bpm average"
+                    else ->
+                        "steady — average HR within 1 bpm of the recent ${recentAverage.roundToInt()} bpm average"
+                }
+                lines += "FACT Trend over the last ${previousAverages.size} sessions of this workout: $direction; at a similar duration, a lower average HR means better aerobic efficiency"
             }
+        }
+        if (currentDriftBpm != null) {
+            val previousDrifts = previous
+                .map { history -> history.heartBeatRecords.filter { it > 0 } }
+                .filter { it.size >= MIN_SAMPLES_FOR_DRIFT }
+                .map { samples ->
+                    val half = samples.size / 2
+                    (samples.subList(samples.size - half, samples.size).average() -
+                        samples.subList(0, half).average()).roundToInt()
+                }
+            if (previousDrifts.isNotEmpty()) {
+                val typicalDrift = previousDrifts.average().roundToInt()
+                val currentSign = if (currentDriftBpm >= 0) "+" else ""
+                val typicalSign = if (typicalDrift >= 0) "+" else ""
+                lines += "FACT HR drift this session: $currentSign$currentDriftBpm bpm versus your typical $typicalSign$typicalDrift bpm on this workout"
+            }
+        }
+
+        val immediatePrevious = previous.firstOrNull()
+        if (currentAverageBpm != null && immediatePrevious != null) {
+            val previousHeartRates = immediatePrevious.heartBeatRecords.filter { it > 0 }
+            if (previousHeartRates.isNotEmpty()) {
+                val targetBpm = previousHeartRates.average().roundToInt()
+                val targetMinutes = targetMinutesBucket(immediatePrevious.duration)
+                val met = currentAverageBpm <= targetBpm + 2 &&
+                    durationSeconds >= immediatePrevious.duration - 300
+                val verdict = if (met) "target met" else "target not met"
+                lines += "FACT Previous-session target check: the target was average HR at or under $targetBpm bpm for about $targetMinutes minutes; this session averaged ${currentAverageBpm.roundToInt()} bpm across ${durationMinutes.roundToInt()} minutes — $verdict"
+            }
+        }
+        if (currentAverageBpm != null) {
+            val targetMinutes = targetMinutesBucket(durationSeconds)
+            lines += "FACT Next-session target: average heart rate at or under ${currentAverageBpm.roundToInt()} bpm for about $targetMinutes minutes"
         }
 
         return WorkoutSessionFacts(lines)
     }
+
+    private fun targetMinutesBucket(durationSeconds: Int): Int =
+        maxOf(TARGET_MINUTE_STEP, durationSeconds / 60 / TARGET_MINUTE_STEP * TARGET_MINUTE_STEP)
 }

@@ -42,7 +42,7 @@ class WorkoutInsightsPromptBuilderTest {
         assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("Exact numbers are allowed only when copied verbatim from the evidence or the Precomputed session facts"))
         assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("copied verbatim from the evidence or the Precomputed session facts"))
         assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("Before finalizing, silently verify:"))
-        assertFalse(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("## Next session"))
+        assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("## Next session target"))
         assertFalse(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("at most 2 bullets per section"))
 
         val prompt = buildWorkoutSessionPrompt(

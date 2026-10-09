@@ -92,6 +92,7 @@ Progression knowledge:
 Respond in markdown using these sections:
 ## What stood out
 ## Exercise highlights
+## Next session target
 
 Requirements:
 - Use as many bullets as needed for grounded, decision-useful details.
@@ -99,6 +100,8 @@ Requirements:
 - Keep each bullet short, focused, and non-redundant.
 - Do not repeat the same fact in multiple sections; if a section would only repeat an earlier point, skip that bullet.
 - If session status is not completed normally, mention that status early in `## What stood out`.
+- When a previous-session target check fact is supplied, state its verdict in `## What stood out`.
+- `## Next session target` is exactly one bullet: quote the next-session target fact numbers and say why that target is the right next step; if no next-session target fact exists, state that plainly.
 - start every bullet with "- "
 - no introduction or conclusion outside the required sections
 - include HR when it changes or supports the interpretation, but do not let HR override clearer lifting evidence
@@ -110,6 +113,7 @@ Before finalizing, silently verify:
 - no bullet says something improved if the number is lower
 - mixed outcomes across exercises are stated explicitly when present
 - double progression and auto-regulation are interpreted as progression systems, not as generic static targets
+- the next-session target quotes the fact numbers exactly
 - the wording is natural and user-friendly
 """
 
