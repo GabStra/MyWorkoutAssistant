@@ -2078,17 +2078,18 @@ def fix_set_errors(sets):
         
         # Fix invalid set types
         if set_type == "DistanceSet":
-            # Convert DistanceSet to EnduranceSet or TimedDurationSet
-            # For now, convert to EnduranceSet with estimated time
+            # Convert DistanceSet to the goal-based encoding: the watch counts
+            # up while showing the distance target and the athlete finishes it.
+            # A fabricated time estimate with autoStop would end the set at an
+            # arbitrary moment and drop the stated distance entirely.
             distance = s_copy.get("distance", 50.0)
-            # Rough estimate: 1 meter per second walking pace
-            estimated_time_ms = int(distance * 1000)  # Convert to milliseconds
             s_copy = {
                 "id": s_copy.get("id"),
                 "type": "EnduranceSet",
-                "timeInMillis": estimated_time_ms,
+                "timeInMillis": 0,
                 "autoStart": True,
-                "autoStop": True
+                "autoStop": False,
+                "targetDistanceMeters": float(distance),
             }
         
         fixed.append(s_copy)

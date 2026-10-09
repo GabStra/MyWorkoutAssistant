@@ -41,6 +41,23 @@ def test_exercise_emitter_honors_single_attempt_repair_budget(monkeypatch) -> No
     assert len(calls) == 1
 
 
+def test_fix_set_errors_converts_distance_set_to_goal_encoding() -> None:
+    from workout_generator_pkg.domain_ops import fix_set_errors
+
+    fixed = fix_set_errors([{"id": "s1", "type": "DistanceSet", "distance": 500}])
+
+    assert fixed == [
+        {
+            "id": "s1",
+            "type": "EnduranceSet",
+            "timeInMillis": 0,
+            "autoStart": True,
+            "autoStop": False,
+            "targetDistanceMeters": 500.0,
+        }
+    ]
+
+
 def test_pipeline_recovers_failed_exercises_and_batches_contract_repairs(
     monkeypatch, tmp_path
 ) -> None:
