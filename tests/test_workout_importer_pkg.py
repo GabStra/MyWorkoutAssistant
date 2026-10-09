@@ -1,12 +1,12 @@
-"""Tests for the no-parser WOD importer: equipment planning, catalog extension,
-the generator-native coverage pass, and the definition merge. All LLM calls are
-injected fakes — no network.
+"""Tests for the no-parser workout importer: equipment planning, catalog
+extension, the generator-native coverage pass, and the definition merge. All
+LLM calls are injected fakes — no network.
 """
 
 import json
 
-from wod_importer_pkg.generators import ensure_wod_coverage
-from wod_importer_pkg.setup import extend_equipment_catalog, plan_missing_equipment
+from workout_importer_pkg.generators import ensure_workout_coverage
+from workout_importer_pkg.setup import extend_equipment_catalog, plan_missing_equipment
 
 
 class _FakeMessage:
@@ -101,7 +101,7 @@ def test_coverage_pass_generates_only_missing_and_persists(tmp_path):
             "equipments": [_eq("e2", "Medicine Ball")],
         }
 
-    library, created = ensure_wod_coverage(
+    library, created = ensure_workout_coverage(
         client=FakeClient(),
         workout_text="WOD with wall balls",
         working_library=working,
@@ -121,7 +121,7 @@ def test_coverage_pass_generates_only_missing_and_persists(tmp_path):
 
 
 def test_compliance_review_parses_issues_and_survives_bad_json():
-    from wod_importer_pkg.generators import review_crossfit_mode_compliance
+    from workout_importer_pkg.generators import review_crossfit_mode_compliance
 
     package = {"workouts": [{"workoutComponents": [
         {"type": "Exercise", "name": "Row",
@@ -154,7 +154,7 @@ def test_coverage_pass_skips_generation_when_all_covered(tmp_path):
         generations.append(request)
         return {"exerciseDefinitions": [], "equipments": []}
 
-    library, created = ensure_wod_coverage(
+    library, created = ensure_workout_coverage(
         client=FakeClient(),
         workout_text="4 min row",
         working_library=working,

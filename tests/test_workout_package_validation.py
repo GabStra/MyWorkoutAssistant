@@ -1,6 +1,7 @@
-"""Regression gate for generated WOD packages.
+"""Regression gate for generated workout packages.
 
-Validates every workouts/wod_<date>.json against the app model:
+Validates every generated package in workouts/ (wod_<date>.json for daily-WOD
+fetches and workout_<slug>.json for arbitrary text) against the app model:
 - referential integrity (definitions, equipment, accessories)
 - set-level structure per exercise type
 - BODY_WEIGHT percentage semantics (percent form, positive)
@@ -16,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from wod_importer_pkg.generators import _normalize  # reuse the project's normalizer
+from workout_importer_pkg.generators import _normalize  # reuse the project's normalizer
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -185,7 +186,7 @@ def test_crossfit_mode_fields_pass_generator_schema():
 def test_all_generated_packages_are_valid():
     packages = _packages()
     if not packages:
-        pytest.skip("no generated WOD packages present in workouts/")
+        pytest.skip("no generated workout packages present in workouts/")
     for path in packages:
         with open(path, encoding="utf-8") as handle:
             package = json.load(handle)

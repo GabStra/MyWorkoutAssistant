@@ -13,9 +13,9 @@ simulation. The flow:
        standard - a regular plan; you enter weights/reps as usual
   4. write the plan package JSON for the phone import flow
 
-  python -m wod_importer_pkg.cli 2026-10-06                     # gym WOD of the day
-  python -m wod_importer_pkg.cli --text-file session.txt --name "Push Day"
-  python -m wod_importer_pkg.cli --text "5x5 bench press @ 80kg" --style standard
+  python -m workout_importer_pkg.cli 2026-10-06                     # gym WOD of the day
+  python -m workout_importer_pkg.cli --text-file session.txt --name "Push Day"
+  python -m workout_importer_pkg.cli --text "5x5 bench press @ 80kg" --style standard
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from wod_importer_pkg.fetch import fetch_wod
+from workout_importer_pkg.fetch import fetch_wod
 
 DEFAULT_BASE_LIBRARY = Path("exercise_libraries/exercise_library_2026-08-17_164507_with_movements.json")
 DEFAULT_ACCUMULATED_LIBRARY = Path("exercise_libraries/wod_accumulated_library.json")
@@ -36,9 +36,9 @@ DEFAULT_EQUIPMENT_FILE = Path(__file__).resolve().parent / "assets" / "gym_equip
 def run(date_iso: str, workout_text: str, output: Path, base_library: Path, accumulated_library: Path,
         equipment_file: Path, skip_library_generation: bool, dry_run: bool,
         style: str, explicit_name: str | None) -> None:
-    from wod_importer_pkg.generators import (
+    from workout_importer_pkg.generators import (
         backfill_equipment_from_catalog,
-        ensure_wod_coverage,
+        ensure_workout_coverage,
         generate_workout_package,
         guidance_for_style,
         load_working_library,
@@ -46,7 +46,7 @@ def run(date_iso: str, workout_text: str, output: Path, base_library: Path, accu
         review_crossfit_mode_compliance,
         sanitize_package_name,
     )
-    from wod_importer_pkg.setup import _default_llm_call, extend_equipment_catalog, plan_missing_equipment
+    from workout_importer_pkg.setup import _default_llm_call, extend_equipment_catalog, plan_missing_equipment
 
     library, library_path = load_working_library(base_library, accumulated_library)
     with open(equipment_file, encoding="utf-8") as handle:
@@ -56,7 +56,7 @@ def run(date_iso: str, workout_text: str, output: Path, base_library: Path, accu
     # 0) running support: the library has no RUNNING definitions and the exercise
     #    generator cannot create them; guarantee the canonical 'Run' entry so
     #    stated runs become real GPS-tracked running exercises.
-    from wod_importer_pkg.generators import ensure_running_definition
+    from workout_importer_pkg.generators import ensure_running_definition
     if ensure_running_definition(library, library_path):
         print("  added RUNNING 'Run' definition to the working library")
 
@@ -67,7 +67,7 @@ def run(date_iso: str, workout_text: str, output: Path, base_library: Path, accu
         print("skipping exercise coverage (--skip-library-generation)")
     else:
         print("coverage pass: exercise generator audit creates missing/improved definitions...")
-        library, created = ensure_wod_coverage(
+        library, created = ensure_workout_coverage(
             client=client,
             workout_text=workout_text,
             working_library=library,
@@ -195,7 +195,7 @@ def main(argv: list[str] | None = None) -> int:
             # Daily-WOD runs keep the canonical gate-tracked name.
             output = Path("workouts") / f"wod_{args.date}.json"
         else:
-            from wod_importer_pkg.generators import _normalize
+            from workout_importer_pkg.generators import _normalize
             slug_source = args.name or workout_text
             output = Path("workouts") / f"workout_{_normalize(slug_source)[:60] or 'import'}.json"
     run(

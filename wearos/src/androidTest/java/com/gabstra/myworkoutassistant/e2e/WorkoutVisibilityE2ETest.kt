@@ -11,16 +11,16 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * Wear phase of the WOD importer e2e: after the phone phase imported the
- * generated WOD package and synced, the workout must have arrived on the watch
- * and be selectable from the workout selection screen.
+ * Wear phase of the workout importer e2e: after the phone phase imported a
+ * generated plan package and synced, the workout must have arrived on the
+ * watch and be selectable from the workout selection screen.
  *
  * Deliberately does NOT seed a local Wear fixture — seeding would stop this
  * test from proving phone -> Wear delivery (same contract as the other
  * PhoneToWear verification tests).
  */
 @RunWith(AndroidJUnit4::class)
-class WodWorkoutVisibilityE2ETest : WearBaseE2ETest() {
+class WorkoutVisibilityE2ETest : WearBaseE2ETest() {
     private lateinit var workoutDriver: WearWorkoutDriver
 
     // Overridable via instrumentation (-e expected_workout_name ...) so the same
@@ -41,13 +41,13 @@ class WodWorkoutVisibilityE2ETest : WearBaseE2ETest() {
     }
 
     @Test
-    fun syncedWodWorkout_isSelectableOnWear() = runBlocking {
-        waitForSyncedWodOnWear()
+    fun syncedWorkout_isSelectableOnWear() = runBlocking {
+        waitForSyncedWorkoutOnWear()
         val visible = ensureWorkoutSelectionVisible(workoutName)
-        require(visible) { "Synced WOD workout '$workoutName' is not visible/selectable on the watch" }
+        require(visible) { "Synced workout '$workoutName' is not visible/selectable on the watch" }
     }
 
-    private suspend fun waitForSyncedWodOnWear() {
+    private suspend fun waitForSyncedWorkoutOnWear() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val deadline = System.currentTimeMillis() + E2ETestTimings.CROSS_DEVICE_SYNC_TIMEOUT_MS
         var lastCount = 0
@@ -59,6 +59,6 @@ class WodWorkoutVisibilityE2ETest : WearBaseE2ETest() {
             }
             delay(2_000)
         }
-        error("WOD workout never arrived on the watch within the sync window (last workout count: $lastCount)")
+        error("Workout never arrived on the watch within the sync window (last workout count: $lastCount)")
     }
 }

@@ -29,12 +29,12 @@ import java.util.UUID
 
 /**
  * Phone phase of the WOD importer e2e: takes the generated WOD plan package
- * (produced by wod_importer_pkg from the gym's published WOD text) through the
+ * (produced by workout_importer_pkg from the gym's published WOD text) through the
  * app's real import path — parse, definition merge with conflict detection,
  * movement payload checks, store save — then drives the real phone -> Wear
  * sync worker and waits for it to succeed.
  *
- * The wear phase (WodWorkoutVisibilityE2ETest) verifies the workout arrives on
+ * The wear phase (WorkoutVisibilityE2ETest) verifies the workout arrives on
  * the watch and is selectable.
  */
 @RunWith(AndroidJUnit4::class)

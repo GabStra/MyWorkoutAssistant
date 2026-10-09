@@ -786,7 +786,7 @@ try {
     }
     if ($WearTestMethod) { $wearArgs += @("-TestMethod", $WearTestMethod) }
     # The visibility/verification wear classes read the expected workout name
-    # from instrumentation args (WodWorkoutVisibilityE2ETest); the value can
+    # from instrumentation args (WorkoutVisibilityE2ETest); the value can
     # contain spaces and '&', so it travels as one quoted key=value extra.
     $wearArgs += @("-InstrumentationExtras", "expected_workout_name=$ExpectedWorkoutName")
     if ($skipAssemble) { $wearArgs += "-SkipAssemble" }

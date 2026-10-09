@@ -205,7 +205,7 @@ def audit_missing_candidates(client, equipment, workout_text: str, working_libra
     return [candidate["name"] for candidate in candidates]
 
 
-def ensure_wod_coverage(
+def ensure_workout_coverage(
     client,
     workout_text: str,
     working_library: dict,
@@ -370,7 +370,7 @@ def review_crossfit_mode_compliance(client, workout_text: str, package: dict, ca
     passing an incomplete plan. Judgment stays with the LLM - no text parsing.
     """
     if call is None:
-        from wod_importer_pkg.setup import _default_llm_call
+        from workout_importer_pkg.setup import _default_llm_call
         call = _default_llm_call
 
     def walk(components):

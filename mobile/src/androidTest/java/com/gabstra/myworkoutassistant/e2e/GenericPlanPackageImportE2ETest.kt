@@ -35,7 +35,7 @@ import java.util.UUID
 /**
  * Proves the phone import path is workout-type agnostic: a generated NON-WOD
  * plan package (a standard-style strength & engine session produced through the
- * same wod_importer_pkg pipeline) flows through the app's real import path —
+ * same workout_importer_pkg pipeline) flows through the app's real import path —
  * parse, definition merge, movement payload checks, store save — then drives
  * the real phone -> Wear sync worker and waits for it to succeed.
  *

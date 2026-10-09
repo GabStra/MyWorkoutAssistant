@@ -3,7 +3,7 @@
 Input: the whole workout text (WOD, strength session, any workout) and the gym
 equipment catalog. Output: equipment the workout requires that the catalog lacks
 (the exercise generator handles exercise coverage itself via its audit mode —
-see generators.ensure_wod_coverage).
+see generators.ensure_workout_coverage).
 """
 
 from __future__ import annotations
