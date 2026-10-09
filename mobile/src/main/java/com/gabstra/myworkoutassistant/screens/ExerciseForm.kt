@@ -278,21 +278,26 @@ fun ExerciseForm(
         mutableStateOf(exercise?.deloadCutSetsTo?.toString() ?: "")
     }
 
-    // Map HR custom/zone selection to indices used by the menu
-    val selectedTargetZone = rememberSaveable(selectedLowerBoundMaxHRPercent.value, selectedUpperBoundMaxHRPercent.value) {
+    // Map HR custom/zone selection to menu indices. Derived once from the
+    // stored exercise; afterwards the picker owns this state. Do NOT key this
+    // on the bounds: re-deriving on every bounds change discards the menu
+    // selection and snaps Custom (seeded at 50–60, identical to Zone 1's
+    // range, which the picker does not offer) straight back to None.
+    val savedLowerBoundMaxHRPercent = exercise?.lowerBoundMaxHRPercent
+    val savedUpperBoundMaxHRPercent = exercise?.upperBoundMaxHRPercent
+    val selectedTargetZone = rememberSaveable {
         mutableStateOf(
-            if (selectedLowerBoundMaxHRPercent.value == null || selectedUpperBoundMaxHRPercent.value == null) {
-                null
-            } else {
-                val index = zoneRanges.indexOfFirst {
-                    it.first == selectedLowerBoundMaxHRPercent.value && it.second == selectedUpperBoundMaxHRPercent.value
-                }
-                if (index == -1) {
-                    -1 // custom
-                } else if (index <= 1) {
-                    null // out-of-range/none in your table
-                } else {
-                    index - 1 // menu indices 1..4 (Zone 2..5)
+            when {
+                savedLowerBoundMaxHRPercent == null || savedUpperBoundMaxHRPercent == null -> null
+                else -> {
+                    val index = zoneRanges.indexOfFirst {
+                        it.first == savedLowerBoundMaxHRPercent && it.second == savedUpperBoundMaxHRPercent
+                    }
+                    when {
+                        index == -1 -> -1 // custom
+                        index <= 1 -> null // 0–50% / Zone 1: not offered by the picker
+                        else -> index - 1 // menu indices 1..4 (Zone 2..5)
+                    }
                 }
             }
         )
