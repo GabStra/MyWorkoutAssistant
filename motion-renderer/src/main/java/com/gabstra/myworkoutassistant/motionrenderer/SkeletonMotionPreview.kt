@@ -1303,21 +1303,27 @@ private object SharedSkeletonThumbnailRuntime : Choreographer.FrameCallback {
         primaryFill: Color,
         onFrame: (ImageBitmap) -> Unit,
     ) {
-        val skeleton = parseWearSkeleton(skeletonJson)
-        val yaw = skeleton.display.viewYawDegrees ?: -28f
-        slots[slotId] = ThumbnailSlot(
-            skeleton = skeleton,
-            palette = createSkeletonPalette(primaryFill),
-            backgroundColor = backgroundColor,
-            keyLightDirection = skeletonKeyLightDirection(yaw),
-            onFrame = onFrame,
-        )
-        if (renderer == null) {
-            renderer = WearSkeletonFilamentRenderer(context.applicationContext, thumbnailMode = true)
-            pixelBuffer = ByteBuffer.allocateDirect(ListThumbnailPixelSize * ListThumbnailPixelSize * 4)
-                .order(ByteOrder.nativeOrder())
-        }
-        start()
+        ensureRenderer(context.applicationContext)
+        val appContext = context.applicationContext
+        // JSON parsing per card is too slow for composition; parse off-main and
+        // hop back to insert the slot (slots are main-confined).
+        Thread {
+            val parsed = runCatching { parseWearSkeleton(skeletonJson) }.getOrNull()
+            mainHandler.post {
+                if (parsed == null) {
+                    return@post
+                }
+                val yaw = parsed.display.viewYawDegrees ?: -28f
+                slots[slotId] = ThumbnailSlot(
+                    skeleton = parsed,
+                    palette = createSkeletonPalette(primaryFill),
+                    backgroundColor = backgroundColor,
+                    keyLightDirection = skeletonKeyLightDirection(yaw),
+                    onFrame = onFrame,
+                )
+                start()
+            }
+        }.start()
     }
 
     fun unregister(slotId: Any) {
@@ -1332,6 +1338,41 @@ private object SharedSkeletonThumbnailRuntime : Choreographer.FrameCallback {
             scheduled = true
             choreographer.postFrameCallback(this)
         }
+    }
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var prewarmStarted = false
+
+    /**
+     * Creating the engine, compiling the material and allocating the offscreen
+     * swapchain takes hundreds of milliseconds; doing that inline with the first
+     * registration froze the tab that opens the library. The shared renderer is
+     * therefore built on a background thread and handed back to the main thread.
+     */
+    private fun ensureRenderer(appContext: Context) {
+        if (renderer != null || prewarmStarted) {
+            return
+        }
+        prewarmStarted = true
+        Thread {
+            val startedAt = android.os.SystemClock.uptimeMillis()
+            val created = WearSkeletonFilamentRenderer(appContext, thumbnailMode = true)
+            val buffer = ByteBuffer.allocateDirect(ListThumbnailPixelSize * ListThumbnailPixelSize * 4)
+                .order(ByteOrder.nativeOrder())
+            Log.d(
+                THUMB_LOG_TAG,
+                "thumbnail renderer prewarm took ${android.os.SystemClock.uptimeMillis() - startedAt}ms",
+            )
+            mainHandler.post {
+                if (renderer == null) {
+                    renderer = created
+                    pixelBuffer = buffer
+                    start()
+                } else {
+                    created.destroy()
+                }
+            }
+        }.start()
     }
 
     private fun stop() {
