@@ -73,6 +73,7 @@ internal class LlmEngineGatewayClient private constructor(private val appContext
     private val mutex = Mutex()
     private var gateway: ILlmEngineGateway? = null
     private var connecting: CompletableDeferred<ILlmEngineGateway>? = null
+    private var connection: ServiceConnection? = null
     private val activeCallbacks = ConcurrentHashMap.newKeySet<ILlmStreamCallback>()
 
     suspend fun gateway(): ILlmEngineGateway {
@@ -109,7 +110,10 @@ internal class LlmEngineGatewayClient private constructor(private val appContext
             }
         }
         val intent = Intent(appContext, LlmEngineService::class.java)
-        if (!appContext.bindService(intent, connection, Context.BIND_AUTO_CREATE)) {
+        if (appContext.bindService(intent, connection, Context.BIND_AUTO_CREATE)) {
+            this.connection = connection
+        } else {
+            this.connection = null
             connecting = null
             deferred.completeExceptionally(
                 IllegalStateException("Could not start the isolated local AI engine service.")
@@ -119,7 +123,14 @@ internal class LlmEngineGatewayClient private constructor(private val appContext
 
     private fun handleBinderDeath() {
         gateway = null
+        connecting?.completeExceptionally(
+            IllegalStateException("The on-device AI engine crashed before it was ready.")
+        )
         connecting = null
+        // Drop the dead binding so it cannot accumulate across crashes; the
+        // next request rebinds to the restarted process.
+        connection?.let { bound -> runCatching { appContext.unbindService(bound) } }
+        connection = null
         // Fail every in-flight send so its flow surfaces a readable error
         // instead of hanging; the next request reconnects to a fresh process.
         activeCallbacks.forEach { callback ->
@@ -211,16 +222,23 @@ internal class LlmEngineGatewayClient private constructor(private val appContext
                 }
             }
 
-            var terminal: LlmSessionResponse? = null
-            while (terminal == null) {
-                val event = streamEvents(messageBundle).first()
+            // Collect until the terminal event, forwarding chunks as they
+            // arrive; the flow closes itself on terminal callbacks.
+            val terminal = streamEvents(messageBundle).first { event ->
                 when (event) {
-                    is LlmStreamEvent.Chunk -> onChunk(event.text)
-                    is LlmStreamEvent.ToolCalls -> terminal = LlmSessionResponse.ToolCalls(event.calls)
-                    is LlmStreamEvent.Completed -> terminal = LlmSessionResponse.Text(event.text)
+                    is LlmStreamEvent.Chunk -> {
+                        onChunk(event.text)
+                        false
+                    }
+                    is LlmStreamEvent.ToolCalls -> true
+                    is LlmStreamEvent.Completed -> true
                 }
             }
-            return terminal
+            return when (terminal) {
+                is LlmStreamEvent.ToolCalls -> LlmSessionResponse.ToolCalls(terminal.calls)
+                is LlmStreamEvent.Completed -> LlmSessionResponse.Text(terminal.text)
+                is LlmStreamEvent.Chunk -> error("Unreachable: chunk events are not terminal.")
+            }
         }
 
         private fun streamEvents(messageBundle: Bundle): Flow<LlmStreamEvent> = callbackFlow {

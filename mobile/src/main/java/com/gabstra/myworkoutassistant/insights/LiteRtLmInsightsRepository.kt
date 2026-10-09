@@ -175,16 +175,19 @@ private suspend fun LiteRtLmInsightsRepository.generateResponseStream(
             transportRequest.debugRecorder,
         )
         val message = buildLlmSessionMessage(transportRequest)
-        val response = it.sendMessage(message, onChunk = onChunk)
-        if (message is LlmSessionMessage.ImageText) {
-            File(message.imagePath).delete()
+        try {
+            val response = it.sendMessage(message, onChunk = onChunk)
+            logAssistantTurn(
+                requestLogLabel = transportRequest.requestLogLabel,
+                turnNumber = 1,
+                response = response,
+                debugRecorder = transportRequest.debugRecorder,
+            )
+        } finally {
+            if (message is LlmSessionMessage.ImageText) {
+                File(message.imagePath).delete()
+            }
         }
-        logAssistantTurn(
-            requestLogLabel = transportRequest.requestLogLabel,
-            turnNumber = 1,
-            response = response,
-            debugRecorder = transportRequest.debugRecorder,
-        )
     }
 }
 
@@ -512,17 +515,6 @@ private fun JSONObject.toNamedMap(): Map<String, Any?> {
         map[key] = get(key)
     }
     return map
-}
-
-/**
- * Images cross the process boundary by path: the file is staged in this
- * process's cache directory, which the :llm process shares.
- */
-private fun LiteRtLmInsightsRepository.stageImageForLlmProcess(context: Context, bytes: ByteArray): String {
-    val directory = File(context.cacheDir, "llm_images").apply { mkdirs() }
-    return File.createTempFile("insight_", ".png", directory).apply {
-        writeBytes(bytes)
-    }.absolutePath
 }
 
 private suspend fun releaseChartAnalysisResources() {

@@ -25,6 +25,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -34,6 +35,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.time.Duration.Companion.minutes
 
 /**
  * Runs the LiteRT-LM engine inside the isolated `:llm` process so a native
@@ -44,11 +46,17 @@ import java.util.concurrent.ConcurrentHashMap
 class LlmEngineService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val sessions = ConcurrentHashMap<String, LlmSessionState>()
+    private var idleCloseJob: Job? = null
 
     private inner class LlmSessionState(
         val conversation: Conversation,
     ) {
         var sendJob: Job? = null
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        LiteRtLmEnginePool.appContext = applicationContext
     }
 
     override fun onBind(intent: Intent?): IBinder = gateway
@@ -59,6 +67,24 @@ class LlmEngineService : Service() {
         sessions.clear()
         runCatching { kotlinx.coroutines.runBlocking { LiteRtLmEnginePool.closeIfIdleLocked() } }
         super.onDestroy()
+    }
+
+    /**
+     * Closes the cached engine once no sessions remain for [IDLE_ENGINE_CLOSE_DELAY],
+     * freeing the model weights while keeping the process warm; every engine use
+     * reschedules this, and an in-flight session defers the close.
+     */
+    private fun scheduleIdleEngineClose() {
+        idleCloseJob?.cancel()
+        idleCloseJob = serviceScope.launch {
+            while (true) {
+                delay(IDLE_ENGINE_CLOSE_DELAY)
+                if (sessions.isEmpty()) {
+                    LiteRtLmEnginePool.closeIfIdleLocked()
+                    return@launch
+                }
+            }
+        }
     }
 
     private val gateway = object : ILlmEngineGateway.Stub() {
@@ -84,6 +110,7 @@ class LlmEngineService : Service() {
                 )
             }
             sessions[sessionId] = LlmSessionState(conversation)
+            scheduleIdleEngineClose()
             return sessionId
         }
 
@@ -102,6 +129,8 @@ class LlmEngineService : Service() {
                 } catch (t: Throwable) {
                     Log.w(LOG_TAG, "Send failed in :llm session", t)
                     callback.onError(t.message ?: t.javaClass.simpleName)
+                } finally {
+                    scheduleIdleEngineClose()
                 }
             }
         }
@@ -209,6 +238,9 @@ class LlmEngineService : Service() {
 
     companion object {
         private const val LOG_TAG = "LlmEngineService"
+
+        /** How long the loaded model stays resident after the last use. */
+        private val IDLE_ENGINE_CLOSE_DELAY = 5.minutes
     }
 }
 
@@ -348,7 +380,7 @@ internal object LiteRtLmEnginePool {
         return WorkoutInsightsToolSpec(
             name = json.getString("name"),
             description = json.optString("description"),
-            parametersSchema = json.optJSONObject("parametersSchema").toNullableMap(),
+            parametersSchema = json.optJSONObject("parametersSchema")?.toNullableMap() ?: emptyMap(),
             handler = { error("Tools execute in the main process, not in the :llm inference process.") },
         )
     }
