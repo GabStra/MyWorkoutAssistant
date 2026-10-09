@@ -12,6 +12,7 @@ import com.google.ai.edge.litertlm.ExperimentalApi
 import com.google.ai.edge.litertlm.ExperimentalFlags
 import com.google.ai.edge.litertlm.LogSeverity
 import com.google.ai.edge.litertlm.Message
+import com.google.ai.edge.litertlm.ModelInfo
 import com.google.ai.edge.litertlm.SamplerConfig
 import com.google.ai.edge.litertlm.ToolProvider
 import kotlinx.coroutines.Dispatchers
@@ -142,7 +143,6 @@ private object LiteRtLmEnginePool {
             return cached
         }
         Engine.setNativeMinLogSeverity(LogSeverity.ERROR)
-        ExperimentalFlags.enableSpeculativeDecoding = true
 
         cachedHandle?.engine?.close()
         val created = createEngine(
@@ -185,6 +185,14 @@ private object LiteRtLmEnginePool {
             LiteRtLmBackendPreference.GPU -> Backend.GPU()
             LiteRtLmBackendPreference.CPU -> Backend.CPU()
         }
+        // Speculative decoding needs a model bundle that carries a draft model;
+        // gate it per import by reading the bundle metadata (ModelInfo parses
+        // the header without loading the weights).
+        ExperimentalFlags.enableSpeculativeDecoding = runCatching {
+            ModelInfo.from(modelPath).use { info ->
+                (info as? ModelInfo.Llm)?.hasSpeculativeDecodingSupport() ?: false
+            }
+        }.getOrDefault(false)
         val engine = Engine(
             EngineConfig(
                 modelPath = modelPath,
@@ -325,6 +333,7 @@ private suspend fun LiteRtLmInsightsRepository.generateResponseStream(
             initialMessages = initialMessages,
             tools = null,
             automaticToolCalling = false,
+            maxOutputToken = transportRequest.maxOutputTokens,
         )
         engineHandle.engine.createConversation(conversationConfig).use { conversation ->
             val responseFlow = if (transportRequest.conversationMessages.isNotEmpty()) {
@@ -385,6 +394,7 @@ private suspend fun LiteRtLmInsightsRepository.generateChartAnalysisWithTimeline
             systemPrompt = transportRequest.systemPrompt,
             tools = toolExecutor.liteRtTools(),
             automaticToolCalling = false,
+            maxOutputToken = transportRequest.maxOutputTokens,
         )
         val conversation = engineHandle.engine.createConversation(conversationConfig)
         try {
@@ -427,10 +437,7 @@ private suspend fun LiteRtLmInsightsRepository.generateChartAnalysisWithTimeline
                         LiteRtLmInsightsRepository.LOG_TAG,
                         "${transportRequest.requestLogLabel}_tool_loop_exit reason=no_tool_calls turn=${round + 1}"
                     )
-                    return capLiteRtAssistantText(
-                        transportRequest = transportRequest,
-                        text = extractLiteRtText(responseMessage),
-                    )
+                    return extractLiteRtText(responseMessage)
                 }
 
                 Log.d(
@@ -486,10 +493,7 @@ private suspend fun LiteRtLmInsightsRepository.generateChartAnalysisWithTimeline
                 LiteRtLmInsightsRepository.LOG_TAG,
                 "${transportRequest.requestLogLabel}_tool_loop_exit reason=tool_budget_exhausted rounds=$MAX_INSIGHTS_TOOL_ROUNDS"
             )
-            return capLiteRtAssistantText(
-                transportRequest = transportRequest,
-                text = extractLiteRtText(responseMessage),
-            )
+            return extractLiteRtText(responseMessage)
         } finally {
             conversation.close()
         }
@@ -526,6 +530,7 @@ private suspend fun LiteRtLmInsightsRepository.generateToolCallingResponse(
             systemPrompt = transportRequest.systemPrompt,
             tools = toolExecutor.liteRtTools(),
             automaticToolCalling = false,
+            maxOutputToken = transportRequest.maxOutputTokens,
         )
         val conversation = engineHandle.engine.createConversation(conversationConfig)
         try {
@@ -563,10 +568,7 @@ private suspend fun LiteRtLmInsightsRepository.generateToolCallingResponse(
                         LiteRtLmInsightsRepository.LOG_TAG,
                         "${transportRequest.requestLogLabel}_tool_loop_exit reason=no_tool_calls turn=${round + 1}"
                     )
-                    return capLiteRtAssistantText(
-                        transportRequest = transportRequest,
-                        text = extractLiteRtText(responseMessage),
-                    )
+                    return extractLiteRtText(responseMessage)
                 }
 
                 Log.d(
@@ -622,10 +624,7 @@ private suspend fun LiteRtLmInsightsRepository.generateToolCallingResponse(
                 LiteRtLmInsightsRepository.LOG_TAG,
                 "${transportRequest.requestLogLabel}_tool_loop_exit reason=tool_budget_exhausted rounds=$MAX_INSIGHTS_TOOL_ROUNDS"
             )
-            return capLiteRtAssistantText(
-                transportRequest = transportRequest,
-                text = extractLiteRtText(responseMessage),
-            )
+            return extractLiteRtText(responseMessage)
         } finally {
             conversation.close()
         }
@@ -634,27 +633,12 @@ private suspend fun LiteRtLmInsightsRepository.generateToolCallingResponse(
     }
 }
 
-/**
- * litertlm-android 0.10.0 does not expose decode `maxOutputTokens` on [ConversationConfig].
- * When [WorkoutInsightsTransportRequest.maxOutputTokens] is set (history chat), approximate a
- * shorter reply by trimming decoded text (OpenAI path uses real `max_completion_tokens`).
- */
-private fun capLiteRtAssistantText(
-    transportRequest: WorkoutInsightsTransportRequest,
-    text: String,
-): String {
-    val cap = transportRequest.maxOutputTokens ?: return text
-    val maxChars = (cap * 4).coerceIn(200, 24_000)
-    if (text.length <= maxChars) return text
-    return text.take(maxChars).trimEnd() +
-        "\n\n_(Reply trimmed to stay within the chat length limit.)_"
-}
-
 private fun liteRtConversationConfig(
     systemPrompt: String,
     initialMessages: List<Message> = emptyList(),
     tools: List<ToolProvider>?,
     automaticToolCalling: Boolean,
+    maxOutputToken: Int? = null,
 ): ConversationConfig {
     val systemInstruction = Contents.of(systemPrompt)
     val samplerConfig = SamplerConfig(
@@ -669,12 +653,14 @@ private fun liteRtConversationConfig(
             samplerConfig = samplerConfig,
             tools = tools,
             automaticToolCalling = automaticToolCalling,
+            maxOutputToken = maxOutputToken,
         )
     } else {
         ConversationConfig(
             systemInstruction = systemInstruction,
             initialMessages = initialMessages,
             samplerConfig = samplerConfig,
+            maxOutputToken = maxOutputToken,
         )
     }
 }

@@ -27,13 +27,18 @@ internal fun buildWorkoutSessionHistoryChatSystemPrompt(): String =
 /**
  * Appends the compacted export once after [instructionsPrompt] (chat instructions only, no history yet).
  */
+
+// The exported history shares the 8K-token context with chat instructions, an
+// 8-turn window (12K chars) and the 384-token reply cap; ~12K chars ≈ 4K tokens.
+internal const val HISTORY_CHAT_EXPORT_CHAR_BUDGET = 12_000
+
 internal fun buildHistoryChatSystemPromptWithExportedData(
     instructionsPrompt: String,
     toolContext: WorkoutInsightsToolContext,
 ): String {
     val historyBody = when (toolContext) {
         is WorkoutInsightsToolContext.Exercise ->
-            toolContext.markdown
+            compactExerciseHistoryMarkdown(toolContext.markdown, HISTORY_CHAT_EXPORT_CHAR_BUDGET)
         is WorkoutInsightsToolContext.WorkoutSession ->
             compactWorkoutSessionMarkdown(toolContext.markdown)
     }

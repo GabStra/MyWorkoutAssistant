@@ -27,7 +27,9 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private const val MIN_EXERCISE_SESSIONS = 2
-private const val MODEL_CONTEXT_WINDOW_TOKENS = 4_096
+// Gemma 4 E4B/E2B bundles support up to 32K context; 8K keeps KV memory sane on
+// 8GB devices while doubling the evidence budget the compactor works with.
+private const val MODEL_CONTEXT_WINDOW_TOKENS = 8_192
 private const val RESERVED_OUTPUT_TOKENS = 512
 private const val RESERVED_SAFETY_TOKENS = 128
 private const val MAX_INPUT_TOKEN_BUDGET =

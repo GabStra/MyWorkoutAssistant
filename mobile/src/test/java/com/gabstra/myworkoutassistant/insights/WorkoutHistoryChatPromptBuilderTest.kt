@@ -131,7 +131,7 @@ class WorkoutHistoryChatPromptBuilderTest {
     }
 
     @Test
-    fun buildHistoryChatSystemPromptWithExportedData_keepsFullExerciseMarkdownExport() {
+    fun buildHistoryChatSystemPromptWithExportedData_compactsExerciseMarkdownExport() {
         val exportedMarkdown = """
             # Bench Press
             Sessions: 2 | Range: 2026-01-01 to 2026-01-10
@@ -151,7 +151,41 @@ class WorkoutHistoryChatPromptBuilderTest {
             ),
         )
 
-        assertTrue(system.contains("Session: start at 2026-01-01T09:00 | sessionId: abc123"))
-        assertTrue(system.contains("#### Progression Context"))
+        // The exercise export goes through the standard compactor (session
+        // metadata lines are pruned; compact session headers and progression
+        // sections survive in the normalized compact format).
+        assertTrue(
+            "ACTUAL SYSTEM PROMPT:\n$system",
+            system.contains("S1 2026-01-01 09:00 | Push A"),
+        )
+        assertTrue(system.contains("PROG State: PROGRESS"))
+    }
+
+    @Test
+    fun buildHistoryChatSystemPromptWithExportedData_boundsOversizedExerciseExport() {
+        val sessions = (1..40).joinToString("\n\n") { index ->
+            """
+            ## S$index: 2026-01-01 09:00 | Push A
+            ${"Detail line for session $index. "}
+            ${"- Set line with load and reps ".repeat(20)}
+            """.trimIndent()
+        }
+        val exportedMarkdown = "# Bench Press\nSessions: 40\n\n$sessions"
+        val instructions = buildExerciseHistoryChatSystemPrompt()
+
+        val system = buildHistoryChatSystemPromptWithExportedData(
+            instructionsPrompt = instructions,
+            toolContext = WorkoutInsightsToolContext.Exercise(
+                title = "Bench chat",
+                exerciseName = "Bench Press",
+                markdown = exportedMarkdown,
+            ),
+        )
+
+        // The export must stay bounded inside the shared 8K-token context even
+        // for very long histories, while remaining session-shaped.
+        assertTrue(system.length < instructions.length + HISTORY_CHAT_EXPORT_CHAR_BUDGET + 500)
+        assertFalse(system.contains("Detail line for session 40."))
+        assertTrue(system.contains("## S7: 2026-01-01 09:00 | Push A"))
     }
 }
