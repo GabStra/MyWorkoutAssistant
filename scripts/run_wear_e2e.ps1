@@ -11,6 +11,7 @@ Param(
     [switch]$NoLogcat = $false,
     [switch]$VerboseLogcat = $false,
     [string]$TimingOutputPath,
+    [string]$InstrumentationExtras = "",
     [switch]$FastTimeoutProfile = $false,
     [switch]$WaitForCheckpointAcknowledgments = $false,
     [ValidateSet("debug", "release")]
@@ -292,6 +293,23 @@ function Invoke-Instrumentation {
     }
     if ($WaitForCheckpointAcknowledgments) {
         $instrumentArgs += @("-e", "wait_for_checkpoint_acknowledgments", "true")
+    }
+    # Forward -InstrumentationExtras "key=value;key=value" as -e pairs. Values are
+    # single-quoted for the device shell so spaces and '&' survive adb's re-parse.
+    if (-not [string]::IsNullOrWhiteSpace($InstrumentationExtras)) {
+        foreach ($pair in $InstrumentationExtras -split ';') {
+            if ([string]::IsNullOrWhiteSpace($pair)) { continue }
+            $separatorIndex = $pair.IndexOf('=')
+            if ($separatorIndex -lt 1) {
+                throw "Invalid -InstrumentationExtras entry '$pair' (expected key=value)."
+            }
+            $extraKey = $pair.Substring(0, $separatorIndex)
+            $extraValue = $pair.Substring($separatorIndex + 1)
+            if ($extraValue -match '[\s&()<>|;"]') {
+                $extraValue = "'" + $extraValue + "'"
+            }
+            $instrumentArgs += @("-e", $extraKey, $extraValue)
+        }
     }
     $instrumentArgs += $runner
 

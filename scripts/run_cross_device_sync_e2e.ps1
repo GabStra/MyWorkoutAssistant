@@ -490,6 +490,8 @@ function Wait-ForWatchWorkoutStoreSync([string]$watchSerial, [string]$appPackage
     $deadline = (Get-Date).AddSeconds($timeoutSeconds)
     while ((Get-Date) -lt $deadline) {
         $json = (& adb -s $watchSerial shell run-as $appPackage cat files/workout_store.json 2>$null) -join "`n"
+        # Gson HTML-escapes & in JSON strings; unescape before matching.
+        $json = $json.Replace('\u0026', '&')
         if ($json -and $json.Contains($expectedWorkoutName)) {
             Write-Host "Watch workout store contains expected workout." -ForegroundColor Green
             return
@@ -505,6 +507,8 @@ function Wait-ForPhoneWorkoutStoreSync([string]$phoneSerial, [string]$appPackage
     $deadline = (Get-Date).AddSeconds($timeoutSeconds)
     while ((Get-Date) -lt $deadline) {
         $json = (& adb -s $phoneSerial shell run-as $appPackage cat files/workout_store.json 2>$null) -join "`n"
+        # Gson HTML-escapes & in JSON strings; unescape before matching.
+        $json = $json.Replace('\u0026', '&')
         if ($json -and $json.Contains($expectedWorkoutName)) {
             Write-Host "Phone workout store contains expected workout." -ForegroundColor Green
             return
@@ -781,6 +785,10 @@ try {
         $wearArgs += "-WaitForCheckpointAcknowledgments"
     }
     if ($WearTestMethod) { $wearArgs += @("-TestMethod", $WearTestMethod) }
+    # The visibility/verification wear classes read the expected workout name
+    # from instrumentation args (WodWorkoutVisibilityE2ETest); the value can
+    # contain spaces and '&', so it travels as one quoted key=value extra.
+    $wearArgs += @("-InstrumentationExtras", "expected_workout_name=$ExpectedWorkoutName")
     if ($skipAssemble) { $wearArgs += "-SkipAssemble" }
     if ($skipInstall) { $wearArgs += "-SkipInstall" }
     if ($FastTimeoutProfile) { $wearArgs += "-FastTimeoutProfile" }
@@ -807,7 +815,14 @@ try {
             }
         }
     }
-    $wearProcess = Start-Process -FilePath "pwsh" -ArgumentList $wearArgs -NoNewWindow -PassThru -WorkingDirectory $repoRoot
+    # Start-Process joins raw array elements without quoting on this host, so any
+    # value containing spaces or '&' (the expected workout name) must be quoted
+    # manually before the child pwsh re-parses the command line.
+    $wearCommandLine = ($wearArgs | ForEach-Object {
+        $arg = [string]$_
+        if ($arg -match '[\s"]') { '"' + ($arg -replace '"', '\"') + '"' } else { $arg }
+    }) -join ' '
+    $wearProcess = Start-Process -FilePath "pwsh" -ArgumentList $wearCommandLine -NoNewWindow -PassThru -WorkingDirectory $repoRoot
     $lastParityCheck = Get-Date
     $lastGpsFix = [DateTime]::MinValue
     $gpsFixIndex = 0

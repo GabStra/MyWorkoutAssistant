@@ -22,7 +22,13 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class WodWorkoutVisibilityE2ETest : WearBaseE2ETest() {
     private lateinit var workoutDriver: WearWorkoutDriver
-    private val workoutName = "WOD 2026-10-06 HYROX-PREP"
+
+    // Overridable via instrumentation (-e expected_workout_name ...) so the same
+    // test verifies visibility for any synced plan package.
+    private val workoutName =
+        androidx.test.platform.app.InstrumentationRegistry.getArguments()
+            .getString("expected_workout_name")
+            ?: "WOD 2026-10-06 HYROX-PREP"
 
     override fun prepareAppStateBeforeLaunch() {
         // The phone phase seeds and syncs; nothing to seed locally.
