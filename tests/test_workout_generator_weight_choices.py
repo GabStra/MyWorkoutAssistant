@@ -359,6 +359,37 @@ def test_validate_equipment_weights_reports_nearest_selectable_total_without_mut
     assert "nearest selectable weight: 60.0kg" in error_message
 
 
+def test_validate_equipment_weights_points_per_hand_dumbbell_load_at_pair_total():
+    equipment = {
+        "id": "EQUIPMENT_0",
+        "type": "DUMBBELLS",
+        "name": "Dumbbell Pair",
+        "dumbbells": [{"weight": 11.5}, {"weight": 22.5}],
+    }
+    exercise = {
+        "id": "EXERCISE_0",
+        "type": "Exercise",
+        "name": "Dumbbell Bench Press",
+        "exerciseType": "WEIGHT",
+        "equipmentId": "EQUIPMENT_0",
+        "sets": [
+            {"id": "SET_0", "type": "WeightSet", "reps": 8, "weight": 22.5, "subCategory": "WorkSet"},
+        ],
+    }
+
+    # 22.5 is a selectable SINGLE but not a pair total; the repair feedback must
+    # point at the doubled total (45.0), not the nearest unrelated total (23.0).
+    is_valid, error_message, invalid_weights = validate_equipment_weight_combinations(
+        exercise,
+        {"EQUIPMENT_0": equipment},
+    )
+
+    assert is_valid is False
+    assert invalid_weights == [(0, 22.5, "WeightSet")]
+    assert "per-hand dumbbell weight" in error_message
+    assert "use 45.0kg" in error_message
+
+
 def test_validate_equipment_weights_allows_zero_load_when_calibration_is_required():
     equipment = {
         "id": "EQUIPMENT_0",

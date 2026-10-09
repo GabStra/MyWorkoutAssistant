@@ -330,11 +330,13 @@ def validate_equipment_weight_combinations(exercise, equipment_dict):
     
     # Calculate valid selectable weights for this exact exercise/equipment pairing.
     valid_combinations = get_selectable_weights_for_exercise(exercise_type, equipment)
-    
+
     if not valid_combinations:
         # No valid combinations (handle gracefully)
         return True, None, []
-    
+
+    eq_type = str(equipment.get("type", "")).upper()
+
     # Epsilon for floating point comparison
     EPSILON = 0.01
     
@@ -379,6 +381,19 @@ def validate_equipment_weight_combinations(exercise, equipment_dict):
             return min(sorted_valid, key=lambda valid_weight: abs(valid_weight - value))
 
         for set_idx, weight_val, set_type_name in invalid_weights:
+            # Coach dumbbell loads are per hand; pair selectable loads are totals.
+            # Point the repair at the doubled value instead of the nearest total.
+            doubled = next(
+                (v for v in sorted_valid if abs(v - weight_val * 2) < EPSILON),
+                None,
+            ) if eq_type == "DUMBBELLS" else None
+            if doubled is not None:
+                invalid_details.append(
+                    f"Set {set_idx} ({set_type_name}): {weight_val}kg is a per-hand dumbbell weight; "
+                    f"pair loads are PER-PAIR TOTALS - use {doubled}kg "
+                    f"(the app displays it as '{_format_weight_value_for_prompt(weight_val)} x 2')"
+                )
+                continue
             nearest = nearest_valid_weight(weight_val)
             invalid_details.append(
                 f"Set {set_idx} ({set_type_name}): {weight_val}kg; nearest selectable weight: {nearest}kg"
@@ -432,11 +447,12 @@ def fix_equipment_weights(exercise, equipment_dict):
     valid_combinations = get_selectable_weights_for_exercise(exercise_type, equipment)
     if not valid_combinations:
         return []
-    
+
+    eq_type = str(equipment.get("type", "")).upper()
     EPSILON = 0.01
     fixes_applied = []
     sets = exercise.get("sets", [])
-    
+
     def find_closest_valid_weight(invalid_weight):
         """Find the closest valid weight combination."""
         closest = None
@@ -447,7 +463,19 @@ def fix_equipment_weights(exercise, equipment_dict):
                 min_diff = diff
                 closest = valid_weight
         return closest
-    
+
+    def repair_weight(weight_val):
+        # A per-hand dumbbell weight on pair equipment repairs to the doubled
+        # pair total, never to the nearest unrelated total.
+        if eq_type == "DUMBBELLS":
+            doubled = next(
+                (v for v in valid_combinations if abs(v - weight_val * 2) < EPSILON),
+                None,
+            )
+            if doubled is not None:
+                return doubled
+        return find_closest_valid_weight(weight_val)
+
     for set_index, set_item in enumerate(sets):
         set_type = set_item.get("type")
         if _is_calibration_placeholder_load(exercise, set_item):
@@ -458,20 +486,20 @@ def fix_equipment_weights(exercise, equipment_dict):
             # Check if weight is valid
             is_valid = any(abs(weight - valid_weight) < EPSILON for valid_weight in valid_combinations)
             if not is_valid:
-                closest_valid = find_closest_valid_weight(weight)
+                closest_valid = repair_weight(weight)
                 if closest_valid is not None:
                     set_item["weight"] = closest_valid
                     exercise_name = exercise.get("name", "Unknown")
                     fixes_applied.append(
                         f"Exercise '{exercise_name}' Set {set_index}: Fixed weight from {weight}kg to {closest_valid}kg"
                     )
-        
+
         elif exercise_type == "BODY_WEIGHT" and set_type == "BodyWeightSet":
             additional_weight = set_item.get("additionalWeight", 0.0)
             # Check if additionalWeight is valid
             is_valid = any(abs(additional_weight - valid_weight) < EPSILON for valid_weight in valid_combinations)
             if not is_valid:
-                closest_valid = find_closest_valid_weight(additional_weight)
+                closest_valid = repair_weight(additional_weight)
                 if closest_valid is not None:
                     set_item["additionalWeight"] = closest_valid
                     exercise_name = exercise.get("name", "Unknown")
@@ -485,7 +513,7 @@ def fix_equipment_weights(exercise, equipment_dict):
                 continue
             is_valid = any(abs(target_weight - valid_weight) < EPSILON for valid_weight in valid_combinations)
             if not is_valid:
-                closest_valid = find_closest_valid_weight(target_weight)
+                closest_valid = repair_weight(target_weight)
                 if closest_valid is not None:
                     set_item["targetWeight"] = closest_valid
                     exercise_name = exercise.get("name", "Unknown")
