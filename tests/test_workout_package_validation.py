@@ -71,6 +71,11 @@ def _validate_package(package: dict) -> None:
             assert not (cap is not None and cadence is not None), (
                 f"{name}: superset cannot carry both timeCapSeconds and roundDurationSeconds"
             )
+            # Without a live cap the AMRAP loop never engages: the workout would
+            # silently run exactly one round.
+            assert not component.get("amrap") or cap is not None, (
+                f"{name}: amrap superset requires timeCapSeconds"
+            )
         for component in _walk_exercises(components):
             label = f"{name}: exercise '{component.get('name')}'"
             definition = definitions.get(component.get("exerciseDefinitionId"))
