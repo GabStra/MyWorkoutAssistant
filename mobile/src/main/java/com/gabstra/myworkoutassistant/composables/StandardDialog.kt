@@ -38,8 +38,8 @@ fun StandardDialog(
     isConfirmDestructive: Boolean = false,
     maxWidth: Dp = 560.dp,
     usePlatformDefaultWidth: Boolean = true,
-    contentHorizontalPadding: Dp = 15.dp,
-    contentVerticalPadding: Dp = 10.dp,
+    contentHorizontalPadding: Dp = 20.dp,
+    contentVerticalPadding: Dp = 14.dp,
 ) {
     val hasConfirmButton = showConfirm && confirmText != null && onConfirm != null
     val hasDismissButton = showDismiss && dismissText != null
@@ -53,7 +53,7 @@ fun StandardDialog(
                 .fillMaxWidth()
                 .widthIn(max = maxWidth),
             shape = MaterialTheme.shapes.small,
-            color = MaterialTheme.colorScheme.surface,
+            color = MaterialTheme.colorScheme.background,
             tonalElevation = 0.dp
         ) {
             Column(
@@ -63,13 +63,13 @@ fun StandardDialog(
                         horizontal = contentHorizontalPadding,
                         vertical = contentVerticalPadding
                     ),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 when {
                     titleContent != null -> titleContent()
                     title != null -> Text(
                         text = title,
-                        style = MaterialTheme.typography.titleLarge,
+                        style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                 }
