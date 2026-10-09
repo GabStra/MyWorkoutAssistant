@@ -220,6 +220,9 @@ fun ExerciseMovementPreviewPage(
             animated = true,
             orbitView = false,
             dragRotationEnabled = dragRotationEnabled,
+            // Movements exported with loop disabled would otherwise play once
+            // and freeze on the final pose; the restart fade cycles them.
+            loopRestartFadeMillis = 250,
             listThumbnail = listThumbnail,
         )
     } else {
