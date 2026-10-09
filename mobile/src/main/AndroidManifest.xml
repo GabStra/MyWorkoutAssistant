@@ -28,6 +28,15 @@
             android:name="libOpenCL.so"
             android:required="false" />
 
+        <!--
+            Isolated inference process: all LiteRT-LM native work runs here, so
+            an engine crash degrades to a readable error in the main process.
+        -->
+        <service
+            android:name=".insights.LlmEngineService"
+            android:exported="false"
+            android:process=":llm" />
+
         <service
             android:name=".DataLayerListenerService"
             android:exported="true">

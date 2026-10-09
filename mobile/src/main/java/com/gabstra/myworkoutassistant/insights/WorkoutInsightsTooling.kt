@@ -71,6 +71,8 @@ internal class WorkoutInsightsChartTimelineToolExecutor(
 
     fun liteRtTools(): List<ToolProvider> = listOf(tool(InsightsOpenApiTool(spec)))
 
+    fun toolSpecsJson(): List<String> = listOf(toolSpecJson(spec))
+
     fun openAiFunctionDefinitions(): List<FunctionDefinition> = listOf(
         FunctionDefinition.builder()
             .name(spec.name)
@@ -186,6 +188,14 @@ internal data class WorkoutInsightsToolSpec(
     val handler: (Map<String, Any?>) -> Any,
 )
 
+internal fun toolSpecJson(spec: WorkoutInsightsToolSpec): String = JSONObject(
+    mapOf(
+        "name" to spec.name,
+        "description" to spec.description,
+        "parametersSchema" to spec.parametersSchema
+    )
+).toString()
+
 internal class WorkoutInsightsToolExecutor(
     private val toolContext: WorkoutInsightsToolContext,
 ) {
@@ -194,6 +204,8 @@ internal class WorkoutInsightsToolExecutor(
     fun liteRtTools(): List<ToolProvider> = specs.values.map { spec ->
         tool(InsightsOpenApiTool(spec))
     }
+
+    fun toolSpecsJson(): List<String> = specs.values.map(::toolSpecJson)
 
     fun openAiFunctionDefinitions(): List<FunctionDefinition> = specs.values.map { spec ->
         FunctionDefinition.builder()
@@ -303,7 +315,7 @@ Workflow:
 7. Stop tool use and write the final answer once you can explain what went well, what drifted, and any important constraint.
 """.trimIndent()
 
-private class InsightsOpenApiTool(
+internal class InsightsOpenApiTool(
     private val spec: WorkoutInsightsToolSpec,
 ) : OpenApiTool {
     override fun getToolDescriptionJsonString(): String {
