@@ -46,11 +46,9 @@ private const val MAX_SESSION_HR_LINES = 6
 
 private const val FINAL_RESPONSE_NUMERIC_POLICY = """
 Final-response numeric policy:
-- Use exact numeric fields only to decide comparisons and coaching meaning.
-- Write qualitative relationships instead, such as higher load, lower volume, matched plan, similar reps, steadier HR, or below the previous session.
-- Avoid writing exact metric values with units in the final markdown, including kg, reps, set counts, bpm, percentages, pace, distance, duration, or volume.
-- If an exact metric value is necessary, copy it verbatim from the supplied evidence; never transform, estimate, round, concatenate, or infer numeric values.
-- If exact metric values are needed in the UI, they must come from deterministic app-rendered evidence, not model-written prose.
+- Exact numbers are allowed only when copied verbatim from the evidence or the Precomputed session facts.
+- When Precomputed session facts are supplied, prefer quoting them: they are computed by the app from the recorded data and are authoritative.
+- Never transform, estimate, round, concatenate, or infer numeric values, and never write a number that is not present in the evidence or facts; describe those relationships qualitatively instead.
 """
 
 private const val WORKOUT_INSIGHTS_SYSTEM_PROMPT_BASE = """
@@ -61,6 +59,7 @@ Explain the workout in plain, useful coaching language.
 
 Rules:
 - Use only the evidence returned by tools.
+- Precomputed session facts, when supplied with the task, are computed by the app from the recorded data; treat them as authoritative and quote their numbers exactly.
 - Do not invent data.
 - Do not provide medical advice or diagnose injuries.
 - If the data is sparse, trimmed, inconsistent, or the workout is incomplete, say so plainly.
@@ -302,13 +301,44 @@ suspend fun buildWorkoutSessionInsightsPrompt(
                 workoutName = workout?.name,
                 workoutCategoryLine = workoutCategoryLine
             )
+            val userAge = workoutStore.birthDateYear
+                .takeIf { it > 0 }
+                ?.let { birthYear -> java.time.LocalDate.now().year - birthYear }
+            val targetBoundsPercentMaxHr = workout?.workoutComponents
+                ?.flatMap { component ->
+                    when (component) {
+                        is com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise -> listOf(component)
+                        is com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset -> component.exercises
+                        else -> emptyList()
+                    }
+                }
+                ?.mapNotNull { exercise ->
+                    val lower = exercise.lowerBoundMaxHRPercent
+                    val upper = exercise.upperBoundMaxHRPercent
+                    if (lower != null && upper != null) lower to upper else null
+                }
+                ?.firstOrNull()
+            val previousSessions = workoutHistoryDao.getRecentDoneWorkoutHistoriesByWorkoutId(
+                workoutId = workoutHistory.workoutId,
+                excludedId = workoutHistory.id,
+                limit = WorkoutSessionFactsBuilder.MAX_PREVIOUS_SESSIONS,
+            )
+            val sessionFacts = WorkoutSessionFactsBuilder.build(
+                workoutHistory = workoutHistory,
+                previousSessionsNewestFirst = previousSessions,
+                targetBoundsPercentMaxHr = targetBoundsPercentMaxHr,
+                userAge = userAge,
+                measuredMaxHeartRate = workoutStore.measuredMaxHeartRate,
+                restingHeartRate = workoutStore.restingHeartRate,
+            )
+            val sessionFactsBlock = sessionFacts.asPromptBlock()
 
             WorkoutInsightsPromptResult.Success(
                 title = "Workout session insights",
                 prompt = buildWorkoutSessionToolCallingPrompt(
                     workoutLabel = workoutLabel,
                     sessionStatusSummary = sessionStatusSummary
-                ),
+                ) + sessionFactsBlock,
                 systemPrompt = buildToolEnabledSystemPrompt(WORKOUT_INSIGHTS_SYSTEM_PROMPT),
                 toolContext = WorkoutInsightsToolContext.WorkoutSession(
                     title = "Workout session insights",
@@ -321,6 +351,7 @@ suspend fun buildWorkoutSessionInsightsPrompt(
                         }
                         append(workoutCategoryLine)
                         append(markdownResult.markdown)
+                        append(sessionFactsBlock)
                     }
                 )
             )
@@ -348,7 +379,7 @@ internal fun buildExercisePrompt(
             "When a TAKEAWAY says lower reps or volume are expected after a successful load increase, do not recommend reducing load just to match previous volume.",
             "If the latest session met plan but still lagged previous, baseline, or recent trend, say that explicitly.",
             "If load improved but reps, sets, or volume worsened, state that tradeoff clearly and account for planned double progression or auto-regulated adjustments when the evidence supports it.",
-            "Use exact numbers for reasoning only; in final markdown, describe metric relationships qualitatively instead of writing kg, reps, set counts, bpm, percentages, duration, or volume values.",
+            "Exact numbers in the final markdown must be copied verbatim from the supplied evidence; describe anything without an exact evidence value qualitatively instead.",
             "",
             "Exercise history:",
             compactedMarkdown
@@ -394,7 +425,7 @@ internal fun buildWorkoutSessionPrompt(
             "When a TAKEAWAY says lower reps or volume are expected after a successful load increase, do not recommend reducing load just to match previous volume.",
             "Do not flatten mixed exercise results into overall progress when exercises diverge.",
             "Do not repeat internal labels; translate them into normal language.",
-            "Use exact numbers for reasoning only; in final markdown, describe metric relationships qualitatively instead of writing kg, reps, set counts, bpm, percentages, duration, or volume values.",
+            "Exact numbers in the final markdown must be copied verbatim from the supplied evidence; describe anything without an exact evidence value qualitatively instead.",
             guidanceBlock.takeIf { it.isNotBlank() },
             "",
             "Workout session:",

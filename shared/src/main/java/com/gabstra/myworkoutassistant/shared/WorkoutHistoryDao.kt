@@ -31,6 +31,20 @@ interface WorkoutHistoryDao {
     )
     suspend fun getLatestWorkoutHistoryByWorkoutId(workoutId: UUID,isDone: Boolean = true): WorkoutHistory?
 
+    @Query(
+        """
+        SELECT * FROM workout_history
+        WHERE workoutId = :workoutId AND isDone = 1 AND id != :excludedId
+        ORDER BY startTime DESC, version DESC, time DESC, date DESC, id DESC
+        LIMIT :limit
+        """
+    )
+    suspend fun getRecentDoneWorkoutHistoriesByWorkoutId(
+        workoutId: UUID,
+        excludedId: UUID,
+        limit: Int,
+    ): List<WorkoutHistory>
+
     @Query("SELECT * FROM workout_history WHERE hasBeenSentToHealth = :hasBeenSentToHealth")
     suspend fun getWorkoutHistoriesByHasBeenSentToHealth(hasBeenSentToHealth: Boolean): List<WorkoutHistory>
 

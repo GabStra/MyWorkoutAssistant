@@ -39,8 +39,8 @@ class WorkoutInsightsPromptBuilderTest {
         assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("Do not omit grounded, decision-useful details just to satisfy brevity, but merge related exercises"))
         assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("Keep each bullet short, focused, and non-redundant."))
         assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("Do not repeat the same fact in multiple sections"))
-        assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("Avoid writing exact metric values with units in the final markdown"))
-        assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("copy it verbatim from the supplied evidence"))
+        assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("Exact numbers are allowed only when copied verbatim from the evidence or the Precomputed session facts"))
+        assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("copied verbatim from the evidence or the Precomputed session facts"))
         assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("Before finalizing, silently verify:"))
         assertFalse(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("## Next session"))
         assertFalse(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("at most 2 bullets per section"))
@@ -60,7 +60,7 @@ class WorkoutInsightsPromptBuilderTest {
         assertTrue(prompt.contains("If Exec, Prev, Best, or Expected numbers disagree with status labels, trust the numbers."))
         assertTrue(prompt.contains("Interpret DOUBLE_PROGRESSION and AUTO_REGULATION as progression systems"))
         assertTrue(prompt.contains("Stay concise by grouping exercises with the same takeaway and avoiding repeated facts across sections."))
-        assertTrue(prompt.contains("Use exact numbers for reasoning only"))
+        assertTrue(prompt.contains("Exact numbers in the final markdown must be copied verbatim from the supplied evidence"))
         assertTrue(prompt.contains("Do not say an exercise reached the top or bottom of a rep range unless a TAKEAWAY line says that directly."))
         assertTrue(prompt.contains("do not recommend reducing load just to match previous volume"))
     }
@@ -75,8 +75,8 @@ class WorkoutInsightsPromptBuilderTest {
         assertTrue(EXERCISE_INSIGHTS_SYSTEM_PROMPT.contains("Do not omit grounded, decision-useful details just to satisfy brevity, but merge related signals"))
         assertTrue(EXERCISE_INSIGHTS_SYSTEM_PROMPT.contains("Keep each bullet short, focused, and non-redundant."))
         assertTrue(EXERCISE_INSIGHTS_SYSTEM_PROMPT.contains("Do not repeat the same fact in multiple sections"))
-        assertTrue(EXERCISE_INSIGHTS_SYSTEM_PROMPT.contains("Avoid writing exact metric values with units in the final markdown"))
-        assertTrue(EXERCISE_INSIGHTS_SYSTEM_PROMPT.contains("copy it verbatim from the supplied evidence"))
+        assertTrue(EXERCISE_INSIGHTS_SYSTEM_PROMPT.contains("Exact numbers are allowed only when copied verbatim from the evidence or the Precomputed session facts"))
+        assertTrue(EXERCISE_INSIGHTS_SYSTEM_PROMPT.contains("copied verbatim from the evidence or the Precomputed session facts"))
         assertFalse(EXERCISE_INSIGHTS_SYSTEM_PROMPT.contains("## Next session"))
         assertFalse(EXERCISE_INSIGHTS_SYSTEM_PROMPT.contains("at most 2 bullets per section"))
 
@@ -90,7 +90,7 @@ class WorkoutInsightsPromptBuilderTest {
         assertTrue(prompt.contains("Interpret DOUBLE_PROGRESSION and AUTO_REGULATION as progression systems"))
         assertTrue(prompt.contains("Use TAKEAWAY lines as authoritative user-facing comparison facts, and do not contradict them."))
         assertTrue(prompt.contains("do not recommend reducing load just to match previous volume"))
-        assertTrue(prompt.contains("Use exact numbers for reasoning only"))
+        assertTrue(prompt.contains("Exact numbers in the final markdown must be copied verbatim from the supplied evidence"))
     }
 
     @Test
