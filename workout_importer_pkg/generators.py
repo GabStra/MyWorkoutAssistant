@@ -72,9 +72,10 @@ This is a coach-authored workout. Hard constraints:
   (exerciseType RUNNING) with targetDistanceMeters; the watch tracks it with GPS
   and shows the distance goal. Never encode a run as reps or as another movement.
 - Rep schemes written as male/female pairs ("@ 22.5/15", "24/20") use the first value.
-- Dumbbell PAIR equipment: selectable loads are PER-PAIR TOTALS (2 x one dumbbell).
-  A coach dumbbell load ("@ 22.5/15") is per hand: prescribe the pair total
-  (22.5 -> targetWeight 45.0, 15 -> 30.0). The app displays it as '22.5 x 2'.
+- Dumbbell PAIR equipment: coach dumbbell loads are per implement — transcribe
+  them exactly as written ("@ 22.5/15" stays 22.5/15); the pipeline normalizes
+  them to the per-pair totals shown in the equipment context. Never round or
+  substitute a listed load for them.
 - BODY_WEIGHT exercises: bodyWeightPercentage must be in percentage form (e.g. 100.0),
   never a fraction like 1.0.
 """.strip()
@@ -83,9 +84,10 @@ STANDARD_GUIDANCE = """
 This is a coach-authored workout. Constraints:
 - Use ONLY movements explicitly present in the workout text; respect the prescribed
   sets, reps, loads, and rest exactly as written.
-- Dumbbell PAIR equipment: selectable loads are PER-PAIR TOTALS (2 x one dumbbell).
-  A coach dumbbell load ("@ 22.5/15") is per hand: prescribe the pair total
-  (22.5 -> targetWeight 45.0, 15 -> 30.0). The app displays it as '22.5 x 2'.
+- Dumbbell PAIR equipment: coach dumbbell loads are per implement — transcribe
+  them exactly as written ("@ 22.5/15" stays 22.5/15); the pipeline normalizes
+  them to the per-pair totals shown in the equipment context. Never round or
+  substitute a listed load for them.
 - When the text states a distance or calorie quantity for a timed row/bike/ski/run
   movement, record it on the set as targetDistanceMeters (meters) or targetCalories.
 - When the text states a time cap bounding a multi-movement block expressed as a

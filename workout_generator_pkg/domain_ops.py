@@ -1159,9 +1159,10 @@ def format_planner_equipment_context(equipment_list, accessory_list=None):
                 )
             if eq_type == "DUMBBELLS":
                 lines.append(
-                    "  - These loads are PER-PAIR TOTALS (2 x the weight of ONE dumbbell). A coach load"
-                    " written for one dumbbell ('@ 22.5') is per hand: prescribe the pair total"
-                    " (22.5 per hand = targetWeight 45; the app displays it as '22.5 x 2')."
+                    "  - These loads are PER-PAIR TOTALS (2 x the weight of ONE dumbbell), while"
+                    " coach dumbbell loads are per implement. Transcribe the coach's dumbbell"
+                    " load exactly as written ('@ 22.5' stays 22.5) — the pipeline normalizes it"
+                    " to the pair total. Never round it or substitute a listed load for it."
                 )
     else:
         lines.append("(none)")

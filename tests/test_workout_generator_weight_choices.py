@@ -262,7 +262,7 @@ def test_planner_context_explains_dumbbell_pair_total_semantics():
     ])
 
     assert "PER-PAIR TOTALS" in formatted
-    assert "22.5 per hand = targetWeight 45" in formatted
+    assert "Transcribe the coach's dumbbell load exactly as written" in formatted
 
 
 def test_plan_contract_repair_points_per_hand_dumbbell_load_at_pair_total():
