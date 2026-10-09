@@ -6,6 +6,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.LineHeightStyle
 import dev.jeziellago.compose.markdowntext.MarkdownText
+import kotlin.math.abs
 
 @Composable
 internal fun WorkoutInsightMarkdown(
@@ -226,11 +227,24 @@ private fun replaceUnsupportedExactMetricMentions(
         .findAll(evidence)
         .map { match -> match.value.normalizeSetLikeMetricMention() }
         .toSet()
-    if (allowedExactMentions.isEmpty() && allowedSetLikeMentions.isEmpty()) return markdown
+    val evidenceDurationsSeconds = extractEvidenceDurationsSeconds(evidence)
+    val evidenceDistancesMeters = extractEvidenceDistancesMeters(evidence)
+    if (allowedExactMentions.isEmpty() && allowedSetLikeMentions.isEmpty() &&
+        evidenceDurationsSeconds.isEmpty() && evidenceDistancesMeters.isEmpty()
+    ) return markdown
+
+    fun isSupportedMetric(match: MatchResult): Boolean {
+        if (match.value.normalizeExactMetricMention() in allowedExactMentions) return true
+        return isSupportedTimeOrDistanceMention(
+            mention = match.value,
+            evidenceDurationsSeconds = evidenceDurationsSeconds,
+            evidenceDistancesMeters = evidenceDistancesMeters,
+        )
+    }
 
     return exactMetricMentionRegex
         .replace(markdown) { match ->
-            if (match.value.normalizeExactMetricMention() in allowedExactMentions) {
+            if (isSupportedMetric(match)) {
                 match.value
             } else {
                 "the recorded value"
@@ -245,6 +259,89 @@ private fun replaceUnsupportedExactMetricMentions(
             }
         }
         .replace(Regex("\\s+([,.;:])"), "$1")
+}
+
+private val clockDurationRegex = Regex("""(?<!\d)(\d{1,3}):(\d{2})(?::(\d{2}))?(?!\d)""")
+private val timeUnitMentionRegex = Regex("""(\d+(?:\.\d+)?)\s*(seconds?|mins?|minutes?)\b""", RegexOption.IGNORE_CASE)
+private val distanceValueUnitRegex = Regex("""(\d+(?:\.\d+)?)\s*(km|mi|m)\b""", RegexOption.IGNORE_CASE)
+
+/**
+ * Clock-formatted durations in evidence lines ("Duration: 52:30") carry no unit
+ * suffix, so the suffix-based allow-list never sees them; without this scan a
+ * model writing "52 minutes and 30 seconds" loses both numbers. Only lines that
+ * mention duration are scanned to keep timestamped history rows out.
+ */
+private fun extractEvidenceDurationsSeconds(evidence: String): List<Double> =
+    evidence.lineSequence()
+        .filter { it.contains("duration", ignoreCase = true) }
+        .flatMap { line -> clockDurationRegex.findAll(line) }
+        .filter { m ->
+            m.groupValues[2].toInt() < 60 &&
+                (m.groupValues[3].isEmpty() || m.groupValues[3].toInt() < 60)
+        }
+        .map { m ->
+            val first = m.groupValues[1].toInt()
+            val second = m.groupValues[2].toInt()
+            val third = m.groupValues[3]
+            if (third.isEmpty()) first * 60.0 + second
+            else first * 3600.0 + second * 60.0 + third.toInt()
+        }
+        .filter { it > 0.0 }
+        .plus(
+            exactMetricMentionRegex.findAll(evidence)
+                .map { it.value }
+                .mapNotNull { timeUnitMentionRegex.find(it.lowercase()) }
+                .map { m ->
+                    val value = m.groupValues[1].toDouble()
+                    if (m.groupValues[2].startsWith("s")) value else value * 60.0
+                },
+        )
+        .toList()
+
+private fun extractEvidenceDistancesMeters(evidence: String): List<Double> =
+    exactMetricMentionRegex.findAll(evidence)
+        .map { it.value }
+        .mapNotNull { distanceValueUnitRegex.find(it.lowercase()) }
+        .map { m ->
+            when (m.groupValues[2]) {
+                "km" -> m.groupValues[1].toDouble() * 1000.0
+                "mi" -> m.groupValues[1].toDouble() * 1609.344
+                else -> m.groupValues[1].toDouble()
+            }
+        }
+        .filter { it > 0.0 }
+        .toList()
+
+/**
+ * Numeric fallback for the exact-string allow-list: a spelled-out duration
+ * ("52 minutes and 30 seconds") survives when it is consistent with an
+ * evidence duration, and distances survive across km/m/mi conversions.
+ */
+private fun isSupportedTimeOrDistanceMention(
+    mention: String,
+    evidenceDurationsSeconds: List<Double>,
+    evidenceDistancesMeters: List<Double>,
+): Boolean {
+    val normalized = mention.lowercase()
+    timeUnitMentionRegex.find(normalized)?.let { m ->
+        val value = m.groupValues[1].toDouble()
+        val seconds = if (m.groupValues[2].startsWith("s")) value else value * 60.0
+        return evidenceDurationsSeconds.any { total ->
+            abs(seconds - total) <= 60.0 || abs(seconds - (total % 60.0)) <= 1.0
+        }
+    }
+    distanceValueUnitRegex.find(normalized)?.let { m ->
+        val value = m.groupValues[1].toDouble()
+        val meters = when (m.groupValues[2]) {
+            "km" -> value * 1000.0
+            "mi" -> value * 1609.344
+            else -> value
+        }
+        return evidenceDistancesMeters.any { distance ->
+            distance > 0.0 && abs(meters - distance) / distance <= 0.02
+        }
+    }
+    return false
 }
 
 private fun buildMetricAllowListEvidence(

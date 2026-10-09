@@ -291,4 +291,33 @@ class WorkoutInsightMarkdownTest {
         assertTrue(processed.contains("the recorded set"))
     }
 
+    @Test
+    fun postProcessInsightMarkdown_allowsSpelledOutDurationsMatchingClockEvidence() {
+        val markdown = """
+            ## Exercise highlights
+            - The session involved a total duration of 52 minutes and 30 seconds.
+            - A fabricated stretch of 47 minutes was also claimed.
+            - Distance covered was 0.8 km.
+        """.trimIndent()
+
+        val processed = postProcessInsightMarkdown(
+            markdown = markdown,
+            toolContext = WorkoutInsightsToolContext.Exercise(
+                title = "Workout session insights",
+                exerciseName = "Cyclette",
+                markdown = "- Duration: 52:30\n- Distance: 0.8 km"
+            ),
+            evidencePrompt = """
+                Workout session:
+                - Total duration: 00:52:30
+            """.trimIndent()
+        )
+
+        assertTrue(processed.contains("52 minutes"))
+        assertTrue(processed.contains("30 seconds"))
+        assertFalse(processed.contains("47 minutes"))
+        assertTrue(processed.contains("0.8 km"))
+        assertTrue(processed.contains("the recorded value"))
+    }
+
 }
