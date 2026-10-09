@@ -35,7 +35,6 @@ def test_periodized_occurrences_share_definition_but_keep_unique_prescription_an
     supplied_definition = {
         "id": definition_id,
         "name": "Back Squat",
-        "instructions": "Canonical bracing instructions",
         "exerciseType": "WEIGHT",
         "equipmentId": equipment_id,
         "muscleGroups": ["FRONT_QUADRICEPS", "BACK_GLUTEAL"],
@@ -70,8 +69,9 @@ def test_periodized_occurrences_share_definition_but_keep_unique_prescription_an
     assert len({item["sets"][0]["id"] for item in prescriptions}) == 2
     assert {item["sets"][0]["weight"] for item in prescriptions} == {70.0, 85.0}
     assert {item["exerciseDefinitionId"] for item in prescriptions} == {definition_id}
-    assert all(item["notes"] == "Canonical bracing instructions" for item in prescriptions)
-    assert all(item["placementNotes"] == "" for item in prescriptions)
+    # Definitions no longer carry instructions, so emitter-owned notes survive untouched.
+    assert all(item["notes"] == "emitter-owned text" for item in prescriptions)
+    assert all(item["placementNotes"] == "emitter-owned text" for item in prescriptions)
     assert all(item["muscleGroups"] == supplied_definition["muscleGroups"] for item in prescriptions)
 
 

@@ -68,7 +68,7 @@ def _emitted_exercise(exercise_id: str, *, reps: int, work_sets: int, placement_
         "type": "Exercise",
         "enabled": True,
         "name": "Dumbbell Lateral Raise",
-        "notes": "Raise in the scapular plane without shrugging.",
+        "notes": "",
         "placementNotes": placement_notes,
         "exerciseType": "WEIGHT",
         "equipmentId": None,
@@ -167,7 +167,6 @@ def test_periodized_generation_writes_importable_schema_v2_package(tmp_path) -> 
     library_definition = {
         "id": library_definition_id,
         "name": "Dumbbell Lateral Raise",
-        "instructions": "Raise in the scapular plane without shrugging.",
         "exerciseType": "WEIGHT",
         "equipmentId": None,
         "bodyWeightPercentage": None,
@@ -216,9 +215,7 @@ def test_periodized_generation_writes_importable_schema_v2_package(tmp_path) -> 
 
     # Transitional fields remain materialized for legacy mobile/Wear readers.
     assert all(exercise["name"] == library_definition["name"] for exercise in prescriptions)
-    assert all(
-        exercise["notes"] == library_definition["instructions"]
-        for exercise in prescriptions
-    )
+    # Definitions no longer carry instructions, so nothing fills component notes from them.
+    assert all(not exercise.get("notes") for exercise in prescriptions)
     assert all(exercise["exerciseType"] == "WEIGHT" for exercise in prescriptions)
     assert all(exercise["requiresLoadCalibration"] is True for exercise in prescriptions)
