@@ -1167,7 +1167,7 @@ private class WearSkeletonFilamentRenderer(
 
     private fun clearBodyRenderable() {
         if (bodyEntity != 0) {
-            scene.removeEntity(bodyEntity)
+            scene.remove(bodyEntity)
             engine.renderableManager.destroy(bodyEntity)
             EntityManager.get().destroy(bodyEntity)
             bodyEntity = 0
@@ -1182,7 +1182,7 @@ private class WearSkeletonFilamentRenderer(
 
     private fun clearFloorRenderable() {
         if (floorEntity != 0) {
-            scene.removeEntity(floorEntity)
+            scene.remove(floorEntity)
             engine.renderableManager.destroy(floorEntity)
             EntityManager.get().destroy(floorEntity)
             floorEntity = 0
