@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.view.Choreographer
 import android.view.Surface
 import android.view.TextureView
@@ -84,6 +85,7 @@ private const val FilamentColorFloatCount = 4
 private const val FilamentColorStrideBytes = FilamentColorFloatCount * 4
 private const val DragRotationDegreesPerPixel = 0.45f
 private const val SkeletonPreviewContentDescription = "Exercise movement preview"
+private const val THUMB_LOG_TAG = "SkeletonThumb"
 private const val ListThumbnailPixelSize = 160
 private const val SkeletonKeyLightYawOffsetDegrees = -25f
 private const val SkeletonKeyLightElevationDegrees = 50f
@@ -756,6 +758,10 @@ private class WearSkeletonFilamentRenderer(
             )
         } else {
             view.setPostProcessingEnabled(true)
+            // Filament's default ACES tone-mapping desaturates the flat skeleton
+            // fill (orange renders as pale yellow). Linear keeps the authored
+            // palette colors.
+            view.setToneMapping(FilamentView.ToneMapping.LINEAR)
             view.setAntiAliasing(FilamentView.AntiAliasing.FXAA)
             view.setMultiSampleAntiAliasingOptions(
                 FilamentView.MultiSampleAntiAliasingOptions().apply {
@@ -961,10 +967,12 @@ private class WearSkeletonFilamentRenderer(
     ) {
         val chain = swapChain
         if (destroyed || chain == null || viewportWidth <= 0 || viewportHeight <= 0) {
+            Log.w(THUMB_LOG_TAG, "renderAndReadPixels unavailable: destroyed=$destroyed chain=${chain != null} viewport=$viewportWidth x $viewportHeight")
             onComplete()
             return
         }
         if (!renderer.beginFrame(chain, frameTimeNanos)) {
+            Log.w(THUMB_LOG_TAG, "beginFrame returned false; skipping frame")
             onComplete()
             return
         }
@@ -1285,6 +1293,7 @@ private object SharedSkeletonThumbnailRuntime : Choreographer.FrameCallback {
     private var readInFlight = false
     private var scheduled = false
     private var lastFrameTimeNanos: Long? = null
+    private var debugFrameCount = 0
 
     fun register(
         context: Context,
@@ -1347,8 +1356,13 @@ private object SharedSkeletonThumbnailRuntime : Choreographer.FrameCallback {
             }
         }
         if (readInFlight) {
+            if (debugFrameCount % 60 == 0) {
+                Log.d(THUMB_LOG_TAG, "doFrame skipped: readInFlight=true slots=${slots.size}")
+            }
+            debugFrameCount++
             return
         }
+        debugFrameCount++
         renderNext(frameTimeNanos)
     }
 
