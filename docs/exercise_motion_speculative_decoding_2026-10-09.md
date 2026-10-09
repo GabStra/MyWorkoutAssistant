@@ -35,7 +35,7 @@ Prompt evaluation dominated: OHP 3.358→29.748 seconds; RDL 3.558→28.492 seco
 
 ## Evidence and limits
 
-Retained diagnostics: `build/exercise_motion/diagnostics/speculative_decoding_20261009/`: `protocol.json`, `draft_metadata.json`, `metadata_repair.json`, `probe.py`, `repair_draft_metadata.py`, `run_arm.ps1`, per-arm reports/raw responses/server logs. Original download remains untouched; corrected copy has suffix `-mrope.gguf`.
+Retained diagnostics: `build/exercise_motion/diagnostics/speculative_decoding_20261009/`: `protocol.json`, `draft_metadata.json`, `metadata_repair.json`, per-arm reports/raw responses/server logs. Original download remains untouched; corrected copy has suffix `-mrope.gguf`. After qualification, the throwaway probe, metadata-repair script, launcher, Python caches, isolated worktree and experiment branch were removed at the user's request. No experimental code was added to production.
 
 Protocol amendments were driven by failures: startup cap increased 120→240 seconds (outer cap 330→420), repeated server launches were forbidden, verbose logs enabled equally for the matched two-slot arms, and slots reduced only for that explicitly separate comparison. Failed arms are preserved separately. Diagnostic scripts compile and the metadata repair has byte-preservation assertions. All owned model servers were stopped.
 
