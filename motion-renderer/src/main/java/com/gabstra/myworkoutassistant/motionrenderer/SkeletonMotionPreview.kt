@@ -1638,11 +1638,12 @@ private fun GeneratedLowPolyMesh.toShadedMesh(
             poseVertexList += normal.z
             poseVertexList += 0f
             if (includeColors) {
-                // The browser bake multiplies the light level into the raw sRGB
-                // color; keep the same space so shading contrast matches.
-                colorList += face.fill.red
-                colorList += face.fill.green
-                colorList += face.fill.blue
+                // Vertex colors reach the shader in linear space while the fills
+                // are authored in sRGB; feeding them unconverted lifts the green
+                // channel and renders the orange fill pale yellow.
+                colorList += face.fill.red.srgbToLinearChannel()
+                colorList += face.fill.green.srgbToLinearChannel()
+                colorList += face.fill.blue.srgbToLinearChannel()
                 colorList += face.fill.alpha
             }
             if (includeIndices) {
