@@ -14,12 +14,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.composables.DialogOutlinedButton
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.ContentSubtitle
 import com.gabstra.myworkoutassistant.composables.ContentTitle
@@ -72,23 +72,21 @@ fun WorkoutInsightsDialog(
             ) {
                 when {
                     state is WorkoutInsightsUiState.ImportingModel -> {
-                        CenteredInsightBodySurface {
+                        CenteredInsightBody {
                             LoadingText("Importing local model...")
                         }
                     }
 
                     !configurationState.isConfigured -> {
-                        SecondarySurface {
-                            Text(
-                                text = configurationState.missingConfigurationMessage,
-                                style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.padding(Spacing.md)
-                            )
-                        }
+                        Text(
+                            text = configurationState.missingConfigurationMessage,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
 
                     state is WorkoutInsightsUiState.PreparingModel -> {
-                        CenteredInsightBodySurface {
+                        CenteredInsightBody {
                             LoadingText(
                                 when (configurationState.mode) {
                                     WorkoutInsightsMode.LOCAL -> "Preparing local request..."
@@ -99,7 +97,7 @@ fun WorkoutInsightsDialog(
                     }
 
                     state is WorkoutInsightsUiState.Generating -> {
-                        CenteredInsightBodySurface {
+                        CenteredInsightBody {
                             LoadingText(
                                 label = state.statusText.ifBlank {
                                     defaultProgressLabel(state.phase)
@@ -109,44 +107,42 @@ fun WorkoutInsightsDialog(
                     }
 
                     state is WorkoutInsightsUiState.Success -> {
-                        InsightBodySurface {
-                            WorkoutInsightMarkdown(
-                                markdown = state.text,
-                            )
-                        }
+                        WorkoutInsightMarkdown(
+                            markdown = state.text,
+                        )
                     }
 
                     state is WorkoutInsightsUiState.Error -> {
-                        SecondarySurface(
-                            backgroundColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.55f)
-                        ) {
-                            Text(
-                                text = state.message,
-                                color = MaterialTheme.colorScheme.onErrorContainer,
-                                style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.padding(Spacing.md)
-                            )
-                        }
+                        Text(
+                            text = state.message,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.fillMaxWidth()
+                        )
                         if (state.canRetryLowMemory && onRetryLowMemory != null) {
-                            TextButton(onClick = onRetryLowMemory) {
-                                Text("Try anyway")
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End
+                            ) {
+                                DialogOutlinedButton(
+                                    text = "Try anyway",
+                                    onClick = onRetryLowMemory
+                                )
                             }
                         }
                     }
 
                     else -> {
-                        SecondarySurface {
-                            Text(
-                                text = when (configurationState.mode) {
-                                    WorkoutInsightsMode.LOCAL ->
-                                        "Generate concise insights from your workout history using the selected local LiteRT-LM model."
-                                    WorkoutInsightsMode.REMOTE ->
-                                        "Generate concise insights from your workout history using the configured hosted OpenAI-compatible API."
-                                },
-                                style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.padding(Spacing.md)
-                            )
-                        }
+                        Text(
+                            text = when (configurationState.mode) {
+                                WorkoutInsightsMode.LOCAL ->
+                                    "Generate concise insights from your workout history using the selected local LiteRT-LM model."
+                                WorkoutInsightsMode.REMOTE ->
+                                    "Generate concise insights from your workout history using the configured hosted OpenAI-compatible API."
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
                 }
             }
@@ -240,37 +236,15 @@ private fun defaultProgressLabel(
 }
 
 @Composable
-private fun InsightBodySurface(
-    content: @Composable ColumnScope.() -> Unit,
-) {
-    SecondarySurface(
-        backgroundColor = MaterialTheme.colorScheme.surface
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(Spacing.md),
-            verticalArrangement = Arrangement.spacedBy(Spacing.sm),
-            content = content
-        )
-    }
-}
-
-@Composable
-private fun CenteredInsightBodySurface(
+private fun CenteredInsightBody(
     content: @Composable () -> Unit,
 ) {
-    SecondarySurface(
-        backgroundColor = MaterialTheme.colorScheme.surface
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 200.dp),
+        contentAlignment = Alignment.Center
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 200.dp)
-                .padding(Spacing.md),
-            contentAlignment = Alignment.Center
-        ) {
-            content()
-        }
+        content()
     }
 }

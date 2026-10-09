@@ -76,7 +76,7 @@ fun StandardDialog(
 
                 ProvideTextStyle(
                     value = MaterialTheme.typography.bodyMedium.copy(
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                 ) {
                     Box(

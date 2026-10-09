@@ -21,7 +21,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -30,7 +29,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -50,6 +48,8 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
+import com.gabstra.myworkoutassistant.composables.DialogOutlinedButton
+import com.gabstra.myworkoutassistant.composables.StandardDialog
 import com.gabstra.myworkoutassistant.shared.datalayer.MotionCaptureSyncDao
 import com.gabstra.myworkoutassistant.shared.datalayer.MotionCaptureSyncMappings
 import com.gabstra.myworkoutassistant.shared.datalayer.SensorSessionPayloadCodec
@@ -453,25 +453,24 @@ private fun SensorSessionDetailScreenContent(
     }
 
     exportedZipPath?.let { path ->
-        AlertDialog(
+        StandardDialog(
             onDismissRequest = onDismissExportDialog,
-            title = { Text("Session exported") },
-            text = { Text(path) },
-            confirmButton = {
-                TextButton(onClick = { onShareExportPath(path) }) {
-                    Text("Share")
+            title = "Session exported",
+            body = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(path)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        DialogOutlinedButton(text = "Copy path", onClick = onCopyExportPath)
+                    }
                 }
             },
-            dismissButton = {
-                Row {
-                    TextButton(onClick = onCopyExportPath) {
-                        Text("Copy path")
-                    }
-                    TextButton(onClick = onDismissExportDialog) {
-                        Text("Close")
-                    }
-                }
-            }
+            confirmText = "Share",
+            onConfirm = { onShareExportPath(path) },
+            dismissText = "Close",
+            onDismissButton = onDismissExportDialog
         )
     }
 }
