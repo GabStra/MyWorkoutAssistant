@@ -63,7 +63,7 @@ fun HistoryFiltersBlock(
                     }
                 }
                 IconButton(
-                    modifier = Modifier.size(40.dp),
+                    modifier = Modifier.size(32.dp),
                     onClick = { onExpandedChange(!isExpanded) },
                 ) {
                     Icon(
@@ -103,7 +103,7 @@ fun HistoryNavigationCard(
         horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
     ) {
         IconButton(
-            modifier = Modifier.size(48.dp),
+            modifier = Modifier.size(40.dp),
             onClick = onGoBack,
             enabled = canGoBack,
             colors = iconColors,
@@ -117,7 +117,7 @@ fun HistoryNavigationCard(
             content = content,
         )
         IconButton(
-            modifier = Modifier.size(48.dp),
+            modifier = Modifier.size(40.dp),
             onClick = onGoForward,
             enabled = canGoForward,
             colors = iconColors,

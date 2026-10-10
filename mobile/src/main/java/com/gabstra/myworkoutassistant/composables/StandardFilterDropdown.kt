@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -63,13 +64,18 @@ fun <T> StandardFilterDropdown(
     marqueeSelectedText: Boolean = true,
     marqueeItems: Boolean = true,
     itemMaxLines: Int = 1,
+    compact: Boolean = false,
 ) {
     var expanded by remember { mutableStateOf(false) }
     var pendingSelection by remember { mutableStateOf<StandardFilterDropdownItem<T>?>(null) }
     var anchorSize by remember { mutableStateOf(IntSize.Zero) }
     val scrollState = rememberScrollState()
     val density = LocalDensity.current
-    val fieldTextStyle = MaterialTheme.typography.bodyLarge
+    val fieldTextStyle = if (compact) {
+        MaterialTheme.typography.bodyMedium
+    } else {
+        MaterialTheme.typography.bodyLarge
+    }
     val popupWidth = with(density) { anchorSize.width.toDp() }
     val displayedText = pendingSelection?.label ?: selectedText
     val accessibilityLabel = "$label $displayedText"
@@ -107,11 +113,15 @@ fun <T> StandardFilterDropdown(
                 enabled = enabled,
                 singleLine = true,
                 textStyle = fieldTextStyle.copy(color = Color.Transparent),
-                label = {
-                    Text(
-                        text = label,
-                        style = MaterialTheme.typography.labelLarge
-                    )
+                label = if (compact) {
+                    null
+                } else {
+                    {
+                        Text(
+                            text = label,
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                    }
                 },
                 trailingIcon = {
                     Icon(
@@ -119,7 +129,9 @@ fun <T> StandardFilterDropdown(
                         contentDescription = null
                     )
                 },
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(if (compact) Modifier.height(44.dp) else Modifier)
             )
 
             Text(
@@ -128,7 +140,7 @@ fun <T> StandardFilterDropdown(
                 maxLines = 1,
                 modifier = Modifier
                     .align(Alignment.CenterStart)
-                    .padding(start = 16.dp, top = 6.dp, end = 48.dp)
+                    .padding(start = 16.dp, top = if (compact) 0.dp else 6.dp, end = 48.dp)
                     .then(
                         if (marqueeSelectedText) {
                             Modifier.basicMarquee(iterations = Int.MAX_VALUE)

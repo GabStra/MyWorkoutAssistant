@@ -10,9 +10,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -37,6 +37,8 @@ import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.outlined.PlayCircle
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -61,7 +63,6 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppAddButton
 import com.gabstra.myworkoutassistant.composables.ConfirmationDialog
-import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.StandardDialog
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.shared.ExerciseDefinition
@@ -89,11 +90,6 @@ private data class ExerciseDefinitionUsage(
     val placementNameOverrides: List<String>,
 )
 
-private data class ExerciseDefinitionDetail(
-    val label: String,
-    val value: String,
-)
-
 private data class ExerciseFamily(
     val id: UUID,
     val name: String,
@@ -105,47 +101,24 @@ private data class ExerciseEquipmentGroup(
     val families: List<ExerciseFamily>,
 )
 
-@Composable
-private fun LibraryMovementPreview(
-    movementRef: ExerciseMovementRef?,
-    contentDescription: String,
-    modifier: Modifier = Modifier,
-) {
-    CompactMovementPreview(movementRef, contentDescription, modifier)
-}
-
 private fun String.toDisplayLabel(): String = lowercase()
     .split('_')
     .joinToString(" ") { word -> word.replaceFirstChar { it.titlecase() } }
 
 private fun ExerciseDefinition.variationLabel(): String = exerciseType.name.toDisplayLabel()
 
-private fun ExerciseDefinition.details(
+private fun ExerciseDefinition.metaChipLabels(
     equipmentNamesById: Map<UUID, String>,
     accessoryNamesById: Map<UUID, String>,
-): List<ExerciseDefinitionDetail> = buildList {
+): List<String> = buildList {
     if (exerciseType == ExerciseType.COUNTUP || exerciseType == ExerciseType.COUNTDOWN) {
-        add(ExerciseDefinitionDetail("Type", "Timed"))
+        add("Timed")
     }
     if (exerciseType == ExerciseType.BODY_WEIGHT) {
-        bodyWeightPercentage?.let { percentage ->
-            add(
-                ExerciseDefinitionDetail(
-                    "Body weight",
-                    "$percentage%",
-                ),
-            )
-        }
+        bodyWeightPercentage?.let { percentage -> add("$percentage% body weight") }
     }
-    requiredAccessoryEquipmentIds.orEmpty().takeIf { it.isNotEmpty() }?.let { accessoryIds ->
-        add(
-            ExerciseDefinitionDetail(
-                "Accessories",
-                accessoryIds.map { id ->
-                    accessoryNamesById[id] ?: equipmentNamesById[id] ?: "Unknown accessory"
-                }.sorted().joinToString(),
-            ),
-        )
+    requiredAccessoryEquipmentIds.orEmpty().forEach { id ->
+        add(accessoryNamesById[id] ?: equipmentNamesById[id] ?: "Unknown accessory")
     }
 }
 
@@ -291,73 +264,113 @@ fun ExerciseLibraryScreen(
                 Icon(Icons.Default.FileOpen, contentDescription = "Import exercise library")
             }
         }
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .verticalScroll(rememberScrollState()),
+        // The list is a LazyColumn: eagerly composing every family card for
+        // every equipment group caused a visible stall when opening the tab.
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+            contentPadding = PaddingValues(bottom = Spacing.md),
         ) {
             if (filteredGroups.isEmpty()) {
-                Text(
-                    if (definitions.isEmpty()) "No exercise definitions yet." else "No matching exercises.",
-                    modifier = Modifier.fillMaxWidth().padding(vertical = Spacing.xl),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                item(key = "empty") {
+                    Text(
+                        if (definitions.isEmpty()) "No exercise definitions yet." else "No matching exercises.",
+                        modifier = Modifier.fillMaxWidth().padding(vertical = Spacing.xl),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             } else {
                 filteredGroups.forEach { group ->
-                    Text(
-                        text = group.label,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = Spacing.lg, bottom = Spacing.sm),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                    GenericSelectableList(
-                items = group.families,
-                selectedItems = selectedFamilies,
-                isSelectionModeActive = isSelectionModeActive,
-                onItemClick = { family ->
-                    expandedFamilyIds = if (family.id in expandedFamilyIds) {
-                        expandedFamilyIds - family.id
-                    } else {
-                        expandedFamilyIds + family.id
+                    item(key = "header:${group.label}") {
+                        Text(
+                            text = group.label,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = Spacing.lg, bottom = Spacing.sm),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
                     }
-                },
-                onEnableSelection = { isSelectionModeActive = true },
-                onDisableSelection = { isSelectionModeActive = false },
-                onSelectionChange = { selectedFamilies = it },
-                onOrderChange = {},
-                isDragDisabled = true,
-                keySelector = { it.id },
-                itemContent = { family, onItemClick, onItemLongClick ->
-                    ExerciseFamilyCard(
-                        family = family,
-                        expanded = family.id in expandedFamilyIds,
-                        usagesByDefinitionId = usagesByDefinitionId,
-                        equipmentNamesById = equipmentNamesById,
-                        accessoryNamesById = accessoryNamesById,
-                        onToggleExpanded = onItemClick,
-                        onItemLongClick = onItemLongClick,
-                        onEdit = onEdit,
-                        onRequestDelete = { definition ->
-                            definitionsPendingDelete = listOf(definition)
-                        },
-                        onOpenWorkout = onOpenWorkout,
-                        onPreviewMovement = { movementPreviewFamily = family },
-                    )
-                },
-                    )
+                    items(
+                        count = group.families.size,
+                        key = { index -> group.families[index].id },
+                    ) { index ->
+                        val family = group.families[index]
+                        val isSelected = family in selectedFamilies
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            if (isSelectionModeActive) {
+                                Checkbox(
+                                    checked = isSelected,
+                                    onCheckedChange = {
+                                        selectedFamilies = if (isSelected) {
+                                            selectedFamilies - family
+                                        } else {
+                                            selectedFamilies + family
+                                        }
+                                    },
+                                    colors = CheckboxDefaults.colors().copy(
+                                        checkedCheckmarkColor = MaterialTheme.colorScheme.onPrimary,
+                                        uncheckedBorderColor = MaterialTheme.colorScheme.primary,
+                                    ),
+                                )
+                            }
+                            Box(modifier = Modifier.weight(1f)) {
+                                ExerciseFamilyCard(
+                                    family = family,
+                                    expanded = family.id in expandedFamilyIds,
+                                    usagesByDefinitionId = usagesByDefinitionId,
+                                    equipmentNamesById = equipmentNamesById,
+                                    accessoryNamesById = accessoryNamesById,
+                                    onToggleExpanded = {
+                                        if (isSelectionModeActive) {
+                                            selectedFamilies = if (isSelected) {
+                                                selectedFamilies - family
+                                            } else {
+                                                selectedFamilies + family
+                                            }
+                                        } else {
+                                            expandedFamilyIds = if (family.id in expandedFamilyIds) {
+                                                expandedFamilyIds - family.id
+                                            } else {
+                                                expandedFamilyIds + family.id
+                                            }
+                                        }
+                                    },
+                                    onItemLongClick = {
+                                        if (!isSelectionModeActive) {
+                                            isSelectionModeActive = true
+                                            selectedFamilies = selectedFamilies + family
+                                        } else {
+                                            isSelectionModeActive = false
+                                            selectedFamilies = emptyList()
+                                        }
+                                    },
+                                    onEdit = onEdit,
+                                    onRequestDelete = { definition ->
+                                        definitionsPendingDelete = listOf(definition)
+                                    },
+                                    onOpenWorkout = onOpenWorkout,
+                                    onPreviewMovement = { movementPreviewFamily = family },
+                                )
+                            }
+                        }
+                    }
                 }
             }
             if (!isSelectionModeActive) {
-                Spacer(Modifier.height(Spacing.md))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center,
-                ) {
-                    AppAddButton(onClick = onAdd)
+                item(key = "add") {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = Spacing.md),
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
+                        AppAddButton(onClick = onAdd)
+                    }
                 }
-                Spacer(Modifier.height(Spacing.md))
             }
         }
         if (isSelectionModeActive) {
@@ -478,22 +491,12 @@ private fun ExerciseFamilyCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = Spacing.md, vertical = Spacing.sm),
+                .padding(horizontal = Spacing.md, vertical = Spacing.md),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                LibraryMovementPreview(
-                    movementRef = familyMovementRef,
-                    contentDescription = if (familyMovementRef == null) {
-                        "No movement available for ${family.name}"
-                    } else {
-                        "Movement preview for ${family.name}"
-                    },
-                    modifier = Modifier.size(72.dp),
-                )
-                Spacer(Modifier.width(Spacing.sm))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = family.name,
@@ -530,14 +533,18 @@ private fun ExerciseFamilyCard(
             }
             if (expanded) {
                 Column(
-                    modifier = Modifier.fillMaxWidth().padding(top = Spacing.xs),
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.md),
                 ) {
+                    HorizontalDivider(
+                        modifier = Modifier.padding(top = Spacing.md),
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+                    )
                     if (familyMovementRef != null) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable(onClick = onPreviewMovement)
-                                .padding(vertical = Spacing.xs),
+                                .clickable(onClick = onPreviewMovement),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
                         ) {
@@ -557,53 +564,54 @@ private fun ExerciseFamilyCard(
                     family.variations.forEachIndexed { variationIndex, definition ->
                         if (variationIndex > 0) {
                             HorizontalDivider(
-                                modifier = Modifier.padding(vertical = Spacing.sm),
+                                modifier = Modifier.padding(vertical = Spacing.md),
                                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
                             )
                         }
                         val activeUsages = usagesByDefinitionId[definition.id].orEmpty()
                             .filter { it.workout.isActive }
-                        Column(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(Spacing.sm),
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(MaterialTheme.shapes.small)
-                                    .combinedClickable(
-                                        onClick = { onEdit(definition) },
-                                        onLongClick = {
-                                            if (usagesByDefinitionId[definition.id].isNullOrEmpty()) {
-                                                onRequestDelete(definition)
-                                            } else {
-                                                Toast.makeText(
-                                                    context,
-                                                    "This variation is used by a workout and can't be deleted.",
-                                                    Toast.LENGTH_LONG,
-                                                ).show()
-                                            }
-                                        },
-                                    ),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text(
-                                    text = definition.name,
-                                    modifier = Modifier.weight(1f),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                )
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                    contentDescription = "Edit ${definition.variationLabel()} variation",
-                                    modifier = Modifier.size(16.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
+                        val editVariation = { onEdit(definition) }
+                        val requestDeleteIfUnused = {
+                            if (usagesByDefinitionId[definition.id].isNullOrEmpty()) {
+                                onRequestDelete(definition)
+                            } else {
+                                Toast.makeText(
+                                    context,
+                                    "This variation is used by a workout and can't be deleted.",
+                                    Toast.LENGTH_LONG,
+                                ).show()
                             }
-                            DetailChipsSection(definition)
-                            ExerciseDefinitionDetailsSection(
-                                definition.details(equipmentNamesById, accessoryNamesById),
-                            )
+                        }
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(MaterialTheme.shapes.small)
+                                .combinedClickable(
+                                    onClick = editVariation,
+                                    onLongClick = requestDeleteIfUnused,
+                                ),
+                            verticalArrangement = Arrangement.spacedBy(Spacing.md),
+                        ) {
+                            if (family.variations.size > 1) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        text = definition.variationLabel(),
+                                        modifier = Modifier.weight(1f),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                        contentDescription = "Edit ${definition.variationLabel()} variation",
+                                        modifier = Modifier.size(16.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                            DetailChipsSection(definition, equipmentNamesById, accessoryNamesById)
                             UsageSection(activeUsages, onOpenWorkout)
                         }
                     }
@@ -617,8 +625,21 @@ private fun ExerciseFamilyCard(
 private fun DetailChip(text: String, emphasized: Boolean) {
     Box(
         modifier = Modifier
+            .border(
+                width = 1.dp,
+                color = if (emphasized) {
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
+                } else {
+                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
+                },
+                shape = MaterialTheme.shapes.small,
+            )
             .background(
-                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (emphasized) 0.42f else 0.18f),
+                if (emphasized) {
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.14f)
+                },
                 MaterialTheme.shapes.small,
             )
             .padding(horizontal = 8.dp, vertical = 3.dp),
@@ -627,7 +648,7 @@ private fun DetailChip(text: String, emphasized: Boolean) {
             text = text,
             style = MaterialTheme.typography.labelSmall,
             color = if (emphasized) {
-                MaterialTheme.colorScheme.onSurface
+                MaterialTheme.colorScheme.primary
             } else {
                 MaterialTheme.colorScheme.onSurfaceVariant
             },
@@ -637,20 +658,25 @@ private fun DetailChip(text: String, emphasized: Boolean) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun DetailChipsSection(definition: ExerciseDefinition) {
+private fun DetailChipsSection(
+    definition: ExerciseDefinition,
+    equipmentNamesById: Map<UUID, String>,
+    accessoryNamesById: Map<UUID, String>,
+) {
     val category = definition.exerciseCategory
     val primaryMuscles = definition.muscleGroups.orEmpty()
     val secondaryMuscles = definition.secondaryMuscleGroups.orEmpty()
-    if (category == null && primaryMuscles.isEmpty() && secondaryMuscles.isEmpty()) return
+    val metaLabels = definition.metaChipLabels(equipmentNamesById, accessoryNamesById)
+    if (category == null && primaryMuscles.isEmpty() && secondaryMuscles.isEmpty() && metaLabels.isEmpty()) return
     Column(
         modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         category?.let {
             Text(
                 text = it.name.toDisplayLabel(),
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = MaterialTheme.colorScheme.tertiaryContent,
             )
         }
         FlowRow(
@@ -662,6 +688,9 @@ private fun DetailChipsSection(definition: ExerciseDefinition) {
             }
             secondaryMuscles.forEach { muscle ->
                 DetailChip(muscle.name.toDisplayLabel(), emphasized = false)
+            }
+            metaLabels.forEach { label ->
+                DetailChip(label, emphasized = false)
             }
         }
     }
@@ -696,38 +725,6 @@ private fun LibrarySelectionAction(
 }
 
 @Composable
-private fun ExerciseDefinitionDetailsSection(
-    details: List<ExerciseDefinitionDetail>,
-) {
-    if (details.isEmpty()) return
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        details.forEach { detail ->
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
-                verticalAlignment = Alignment.Top,
-            ) {
-                Text(
-                    text = detail.label,
-                    modifier = Modifier.width(96.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.tertiaryContent,
-                )
-                Text(
-                    text = detail.value,
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-            }
-        }
-    }
-}
-
-@Composable
 private fun UsageSection(
     usages: List<ExerciseDefinitionUsage>,
     onOpenWorkout: (UUID) -> Unit,
@@ -756,8 +753,8 @@ private fun UsageSection(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Column(
-            modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             visibleUsages.forEach { usage ->
                 Column(modifier = Modifier.fillMaxWidth()) {
@@ -766,7 +763,7 @@ private fun UsageSection(
                             .fillMaxWidth()
                             .clip(MaterialTheme.shapes.small)
                             .clickable { onOpenWorkout(usage.workout.id) }
-                            .padding(start = Spacing.sm, top = 4.dp, bottom = 4.dp),
+                            .padding(start = Spacing.sm, top = 6.dp, bottom = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
                     ) {
@@ -792,7 +789,7 @@ private fun UsageSection(
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                             contentDescription = "Open workout",
-                            modifier = Modifier.size(14.dp),
+                            modifier = Modifier.size(16.dp),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }

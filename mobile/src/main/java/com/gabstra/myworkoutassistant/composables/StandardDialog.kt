@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -58,6 +59,9 @@ fun StandardDialog(
             // read as too light. #141414 keeps the dialog a shade above the
             // black app background without glowing.
             color = Color(0xFF141414),
+            // A 1dp edge lighter than the surface so the dialog stays visible
+            // against the near-black app background.
+            border = BorderStroke(1.dp, Color(0xFF383838)),
             tonalElevation = 0.dp
         ) {
             Column(

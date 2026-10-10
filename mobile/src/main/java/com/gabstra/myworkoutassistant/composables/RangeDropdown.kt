@@ -43,6 +43,7 @@ fun RangeDropdown(
         selectedValue = selectedRange,
         modifier = Modifier
             .fillMaxWidth().padding(horizontal = Spacing.md),
-        isItemSelected = { it == selectedRange }
+        isItemSelected = { it == selectedRange },
+        compact = true
     )
 }
