@@ -11,6 +11,8 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import com.gabstra.myworkoutassistant.shared.export.WorkoutSessionMarkdownResult
+import com.gabstra.myworkoutassistant.shared.export.buildWorkoutSessionMarkdown
 import kotlinx.coroutines.runBlocking
 
 /** The rule the X-bisect localized the degenerate "." response to (chars 600-700). */
@@ -131,6 +133,77 @@ class InsightProbeService : Service() {
                 shortUser,
                 emptyList(),
             )
+            // Dump the REAL session markdown for the newest done history of the
+            // Cyclette workout (no LLM call) to inspect evidence structure.
+            "M" -> {
+                val db = com.gabstra.myworkoutassistant.shared.AppDatabase.getDatabase(context)
+                val repo = com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository(context.filesDir)
+                val workoutStore = repo.getWorkoutStore()
+                val md = runBlocking {
+                    val hid = db.workoutHistoryDao().getLatestWorkoutHistoryByWorkoutId(
+                        java.util.UUID.fromString("ab3db22c-6a5b-47f0-b813-5228fad5b956")
+                    )
+                    if (hid == null) {
+                        null
+                    } else {
+                        buildWorkoutSessionMarkdown(
+                            workoutHistoryId = hid.id,
+                            workoutHistoryDao = db.workoutHistoryDao(),
+                            setHistoryDao = db.setHistoryDao(),
+                            restHistoryDao = db.restHistoryDao(),
+                            exerciseSessionProgressionDao = db.exerciseSessionProgressionDao(),
+                            workoutStore = workoutStore,
+                        )
+                    }
+                }
+                when (md) {
+                    null -> Log.w("InsightProbe", "variant=M no history found")
+                    is WorkoutSessionMarkdownResult.Success ->
+                        Log.i("InsightProbe", "variant=M BODY chars=" + md.markdown.length + "\n" + md.markdown)
+                    else -> Log.w("InsightProbe", "variant=M failed")
+                }
+                return
+            }
+            // Dump the COMPACT markdown + overview lines for the same session.
+            "M2" -> {
+                val db = com.gabstra.myworkoutassistant.shared.AppDatabase.getDatabase(context)
+                val repo = com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository(context.filesDir)
+                val workoutStore = repo.getWorkoutStore()
+                val result = runBlocking {
+                    val hid = db.workoutHistoryDao().getLatestWorkoutHistoryByWorkoutId(
+                        java.util.UUID.fromString("ab3db22c-6a5b-47f0-b813-5228fad5b956")
+                    )
+                    hid
+                }
+                if (result == null) {
+                    Log.w("InsightProbe", "variant=M2 no history")
+                    return
+                }
+                val raw = runBlocking {
+                    buildWorkoutSessionMarkdown(
+                        workoutHistoryId = result.id,
+                        workoutHistoryDao = db.workoutHistoryDao(),
+                        setHistoryDao = db.setHistoryDao(),
+                        restHistoryDao = db.restHistoryDao(),
+                        exerciseSessionProgressionDao = db.exerciseSessionProgressionDao(),
+                        workoutStore = workoutStore,
+                    )
+                }
+                val compact = (raw as? WorkoutSessionMarkdownResult.Success)?.let {
+                    compactWorkoutSessionMarkdown(it.markdown)
+                }
+                if (compact == null) {
+                    Log.w("InsightProbe", "variant=M2 failed")
+                    return
+                }
+                val (top, sections) = splitWorkoutSessionOverviewAndSections(compact)
+                Log.i("InsightProbe", "variant=M2 sections=" + sections.keys)
+                sections.forEach { (title, block) ->
+                    Log.i("InsightProbe", "variant=M2 OVERVIEW[" + title + "]=" + buildWorkoutSectionOverviewLine(block))
+                }
+                Log.i("InsightProbe", "variant=M2 COMPACT\n" + compact)
+                return
+            }
             // Short system + the one suspect rule, isolating the content trigger.
             "Y" -> Triple(
                 shortSystem + "\n\n" + SUSPECT_RULE,

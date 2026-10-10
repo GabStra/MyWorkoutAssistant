@@ -430,7 +430,7 @@ private fun metricsForSetHistories(
             is TimedDurationSetData -> {
                 extractActualDurationSeconds(setData)?.let { durationSeconds ->
                     totalDurationSeconds += durationSeconds
-                    setSummaryEntries += formatDurationSummaryEntry(durationSeconds)
+                    setSummaryEntries += timedSetSummaryEntry(setHistory, setData, durationSeconds)
                 }
             }
             is EnduranceSetData -> {
@@ -478,9 +478,23 @@ private fun formatSetHistoryInline(
             )
         }
         is TimedDurationSetData -> {
-            extractActualDurationSeconds(setData)
-                ?.let(::formatDurationSummaryEntry)
-                ?: "Duration: unknown"
+            val targetSeconds = normalizeTimerValueToSeconds(setData.startTimer)
+            val executedSeconds = setHistory.timedExecutedSeconds()
+            when {
+                executedSeconds != null && targetSeconds > 0 -> {
+                    // Targets alone are ambiguous ("Duration: 45:00" in a 55-minute
+                    // session); state target AND what actually ran so models and
+                    // users can reconcile them.
+                    if (executedSeconds >= targetSeconds - EARLY_STOP_TOLERANCE_SECONDS) {
+                        "Timed ${formatDurationForExport(targetSeconds)} (completed)"
+                    } else {
+                        "Timed ${formatDurationForExport(targetSeconds)} (stopped early at ${formatDurationForExport(executedSeconds)})"
+                    }
+                }
+                extractActualDurationSeconds(setData) != null ->
+                    "Timed ${formatDurationForExport(extractActualDurationSeconds(setData)!!)}"
+                else -> "Duration: unknown"
+            }
         }
         is EnduranceSetData -> {
             extractActualDurationSeconds(setData)
@@ -509,7 +523,36 @@ private fun formatDurationSummaryEntry(
     durationSeconds: Int,
 ): String = "Duration: ${formatDurationForExport(durationSeconds)}"
 
-private fun extractActualDurationSeconds(
+/** One summary entry for a timed set: target plus what actually ran when known. */
+private fun timedSetSummaryEntry(
+    setHistory: SetHistory,
+    setData: TimedDurationSetData,
+    fallbackSeconds: Int,
+): String {
+    val targetSeconds = normalizeTimerValueToSeconds(setData.startTimer).takeIf { it > 0 }
+    val executedSeconds = setHistory.timedExecutedSeconds()
+    return when {
+        executedSeconds != null && targetSeconds != null ->
+            if (executedSeconds >= targetSeconds - EARLY_STOP_TOLERANCE_SECONDS) {
+                "Timed ${formatDurationForExport(targetSeconds)} (completed)"
+            } else {
+                "Timed ${formatDurationForExport(targetSeconds)} (stopped early at ${formatDurationForExport(executedSeconds)})"
+            }
+        else -> "Timed ${formatDurationForExport(fallbackSeconds)}"
+    }
+}
+
+/** Real elapsed seconds of a timed set from its wall-clock boundaries, when recorded. */
+internal fun SetHistory.timedExecutedSeconds(): Int? {
+    val start = startTime ?: return null
+    val end = endTime ?: return null
+    val seconds = java.time.Duration.between(start, end).seconds.toInt()
+    return seconds.takeIf { it > 0 }
+}
+
+private const val EARLY_STOP_TOLERANCE_SECONDS = 5
+
+internal fun extractActualDurationSeconds(
     setData: SetData,
 ): Int? = when (setData) {
     is TimedDurationSetData -> extractTimedDurationSeconds(setData)

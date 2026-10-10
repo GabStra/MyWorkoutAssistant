@@ -34,7 +34,7 @@ class ExerciseSessionCoachingMarkdownTest {
 
         val rendered = markdown.toString()
         assertTrue(rendered.contains("- Total duration: 00:45"))
-        assertTrue(rendered.contains("- Set summary: Duration: 00:45"))
+        assertTrue(rendered.contains("- Set summary: Timed 00:45 (completed)"))
     }
 
     @Test
@@ -75,7 +75,7 @@ class ExerciseSessionCoachingMarkdownTest {
         )
 
         assertTrue(timedMarkdown.toString().contains("- Total duration: 00:45"))
-        assertTrue(timedMarkdown.toString().contains("- 1: Duration: 00:45"))
+        assertTrue(timedMarkdown.toString().contains("- 1: Timed 00:45 (completed)"))
         assertTrue(enduranceMarkdown.toString().contains("- Total duration: 03:00"))
         assertTrue(enduranceMarkdown.toString().contains("- 1: Duration: 03:00"))
     }

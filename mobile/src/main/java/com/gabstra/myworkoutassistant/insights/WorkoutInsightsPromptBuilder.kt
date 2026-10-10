@@ -1084,11 +1084,16 @@ internal fun compactWorkoutSessionMarkdown(
 
     val header = compactWorkoutTopLevelBlock(blocks.first().trim())
     val compactSections = blocks.drop(1).mapNotNull { compactWorkoutSectionData(it) }
+    val structureLines = blocks.drop(1).mapNotNull { compactWorkoutStructureLine(it) }
 
     val compacted = buildString {
         append(header)
         append("\n\n")
         append(compactSections.joinToString("\n\n") { renderCompactWorkoutSection(it) })
+        if (structureLines.isNotEmpty()) {
+            append("\n\n")
+            append(structureLines.joinToString("\n"))
+        }
     }.trim()
 
     if (compacted.length <= markdownCharBudget) return compacted
@@ -1098,6 +1103,10 @@ internal fun compactWorkoutSessionMarkdown(
         append(header.takeWithinBudget(MAX_SECTION_CHAR_BUDGET))
         append("\n\n")
         append(reducedSections.joinToString("\n\n"))
+        if (structureLines.isNotEmpty()) {
+            append("\n\n")
+            append(structureLines.joinToString("\n"))
+        }
     }.trim().takeWithinBudget(markdownCharBudget)
 }
 
@@ -1162,12 +1171,7 @@ private fun compactWorkoutSectionData(sectionMarkdown: String): CompactWorkoutSe
     if (parts.isEmpty()) return null
 
     val heading = parts.first().trim()
-    if (
-        heading.equals("### Warm Up", ignoreCase = true) ||
-        heading.equals("### Warm-Up", ignoreCase = true) ||
-        heading.equals("### Cool Down", ignoreCase = true) ||
-        heading.equals("### Cool-Down", ignoreCase = true)
-    ) return null
+    if (compactWorkoutStructureLine(trimmed) != null) return null
     val keptSubsections = parts.drop(1).mapNotNull { subsection ->
         val normalized = subsection.trim()
         val title = normalized.substringBefore('\n').removePrefix("#### ").trim()
@@ -1183,6 +1187,23 @@ private fun compactWorkoutSectionData(sectionMarkdown: String): CompactWorkoutSe
         subsections = keptSubsections
         )
     )
+}
+
+/**
+ * One-line summary for warm-up/cool-down sections. They used to be dropped entirely,
+ * which hid the session structure from insights (a LISS session showed only its main
+ * set). The single line keeps structure visible at negligible budget cost.
+ */
+internal fun compactWorkoutStructureLine(sectionMarkdown: String): String? {
+    val trimmed = sectionMarkdown.trim()
+    val heading = trimmed.substringBefore('\n').removePrefix("### ").trim()
+    if (heading.lowercase() !in setOf("warm up", "warm-up", "cool down", "cool-down")) return null
+    val executedSummary = trimmed
+        .lineSequence()
+        .firstOrNull { it.startsWith("- Set summary:", ignoreCase = true) }
+        ?.substringAfter(':')
+        ?.trim()
+    return "STRUCTURE $heading | EXEC ${executedSummary ?: "no recorded sets"}"
 }
 
 private fun compactWorkoutSubsectionData(

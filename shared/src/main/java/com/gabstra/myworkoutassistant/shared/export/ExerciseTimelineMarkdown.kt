@@ -67,7 +67,11 @@ internal fun appendExerciseTimelineToMarkdown(
                     }
                     is TimedDurationSetData -> {
                         setLine.append("${setOrdinalCounter.nextLabel(null)}: ")
-                        val durationSeconds = (setData.endTimer - setData.startTimer) / 1000
+                        // Fully-executed countdown sets record endTimer=0, which made
+                        // the naive subtraction render negative durations ("Dur:-5:00").
+                        val durationSeconds = setHistory.timedExecutedSeconds()
+                            ?: extractActualDurationSeconds(setData)
+                            ?: 0
                         setLine.append("Dur:${formatDurationForExport(durationSeconds)}")
                     }
                     is EnduranceSetData -> {
