@@ -72,6 +72,7 @@ import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sqrt
 import com.google.android.filament.Box as FilamentBox
@@ -1368,7 +1369,15 @@ private object SharedSkeletonThumbnailRuntime {
             renderHandler ?: HandlerThread("SkeletonThumbnailRenderer").apply { start() }
                 .let { thread -> Handler(thread.looper).also { renderHandler = it } }
         }
+        if (synchronized(lock) { renderer != null }) {
+            return
+        }
         handler.post {
+            // Re-check on the render thread: two registers may race the first
+            // prewarm; only the first engine survives.
+            if (synchronized(lock) { renderer != null }) {
+                return@post
+            }
             val startedAt = android.os.SystemClock.uptimeMillis()
             val created = WearSkeletonFilamentRenderer(
                 appContext,
@@ -1475,12 +1484,11 @@ private object SharedSkeletonThumbnailRuntime {
         buffer.rewind()
         var pixelIndex = 0
         for (y in 0 until height) {
-            val sourceY = height - 1 - y
-            var sourceIndex = sourceY * width * 4
+            var sourceIndex = y * width * 4
             for (x in 0 until width) {
-                val red = buffer.get(sourceIndex).toInt() and 0xff
-                val green = buffer.get(sourceIndex + 1).toInt() and 0xff
-                val blue = buffer.get(sourceIndex + 2).toInt() and 0xff
+                val red = linearToSrgbChannel((buffer.get(sourceIndex).toInt() and 0xff) / 255.0)
+                val green = linearToSrgbChannel((buffer.get(sourceIndex + 1).toInt() and 0xff) / 255.0)
+                val blue = linearToSrgbChannel((buffer.get(sourceIndex + 2).toInt() and 0xff) / 255.0)
                 val alpha = buffer.get(sourceIndex + 3).toInt() and 0xff
                 scratchPixels[pixelIndex] = (alpha shl 24) or (red shl 16) or (green shl 8) or blue
                 pixelIndex += 1
@@ -1488,6 +1496,13 @@ private object SharedSkeletonThumbnailRuntime {
             }
         }
         slot.publishPixels(scratchPixels, mainHandler)
+    }
+
+    /** The readback holds linear values; bitmaps display sRGB. */
+    private fun linearToSrgbChannel(linear: Double): Int {
+        val clamped = linear.coerceIn(0.0, 1.0)
+        val encoded = if (clamped <= 0.0031308) clamped * 12.92 else 1.055 * Math.pow(clamped, 1.0 / 2.4) - 0.055
+        return (encoded * 255.0).roundToInt().coerceIn(0, 255)
     }
 }
 
