@@ -320,4 +320,44 @@ class WorkoutInsightMarkdownTest {
         assertTrue(processed.contains("the recorded value"))
     }
 
+    @Test
+    fun postProcessInsightMarkdown_allowsFactsQuotedVerbatimFromSessionFactsBlock() {
+        // Regression for the on-device "the recorded value" stripping report: the model
+        // may quote FACT lines verbatim (including the next-session target); those
+        // numbers must survive because the facts ride in toolContext.markdown.
+        val facts = """
+            FACT Session duration: 55:09 (55 minutes)
+            FACT Average heart rate: 140 bpm; peak 154 bpm
+            FACT 80% of HR samples stayed inside the 60-70% target zone
+            FACT Heart-rate drift: the second half averaged -2 bpm versus the first half
+            FACT Next-session target: average heart rate at or under 140 bpm for about 55 minutes
+        """.trimIndent()
+
+        val markdown = """
+            ## What stood out
+            - The session duration was 55 minutes.
+            - The average heart rate was 140 bpm, with a peak of 154 bpm.
+            - 80% of the heart rate samples stayed within the 60-70% target zone.
+            - The heart rate drift in the second half of the session was -2 bpm.
+
+            ## Next session target
+            - - average heart rate at or under 140 bpm for about 55 minutes
+        """.trimIndent()
+
+        val processed = postProcessInsightMarkdown(
+            markdown = markdown,
+            toolContext = WorkoutInsightsToolContext.WorkoutSession(
+                title = "Workout session insights",
+                workoutLabel = "Cyclette - LISS",
+                markdown = facts,
+            ),
+        )
+
+        assertTrue(processed.contains("55 minutes"))
+        assertTrue(processed.contains("140 bpm"))
+        assertTrue(processed.contains("154 bpm"))
+        assertTrue(processed.contains("60-70%"))
+        assertFalse(processed.contains("the recorded value"))
+    }
+
 }
