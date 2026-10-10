@@ -425,11 +425,19 @@ suspend fun buildWorkoutSessionInsightsPrompt(
 
             WorkoutInsightsPromptResult.Success(
                 title = "Workout session insights",
+                // The facts block must NOT ride in the user prompt: on the litertlm
+                // tools path that exact shape deterministically degenerates to a
+                // one-word reply (" minutes", verified on-device via InsightProbe S/S5);
+                // the same facts in the SYSTEM prompt work reliably (probe S6, and the
+                // history chat uses this shape in production).
                 prompt = buildWorkoutSessionToolCallingPrompt(
                     workoutLabel = workoutLabel,
                     sessionStatusSummary = sessionStatusSummary
-                ) + sessionFactsBlock,
-                systemPrompt = buildToolEnabledSystemPrompt(WORKOUT_INSIGHTS_TOOL_SYSTEM_PROMPT),
+                ),
+                systemPrompt = withAlwaysAvailableFacts(
+                    buildToolEnabledSystemPrompt(WORKOUT_INSIGHTS_TOOL_SYSTEM_PROMPT),
+                    sessionFactsBlock,
+                ),
                 coreFactsBlock = sessionFactsBlock,
                 toolContext = WorkoutInsightsToolContext.WorkoutSession(
                     title = "Workout session insights",

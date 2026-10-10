@@ -147,6 +147,48 @@ class InsightProbeService : Service() {
                 shortUser,
                 emptyList(),
             )
+            // Task + neutral padding to the exact same total length as the real prompt.
+            "S4" -> Triple(
+                buildToolEnabledSystemPrompt(WORKOUT_INSIGHTS_TOOL_SYSTEM_PROMPT),
+                REAL_USER_PROMPT.substringBefore("Precomputed session facts") +
+                    "Reference context follows. ".repeat(70),
+                emptyList(),
+            )
+            // Real facts block but with em-dashes and special characters normalized.
+            "S5" -> Triple(
+                buildToolEnabledSystemPrompt(WORKOUT_INSIGHTS_TOOL_SYSTEM_PROMPT),
+                REAL_USER_PROMPT.replace("—", "-").replace("≤", "at or under"),
+                emptyList(),
+            )
+            // FIX CANDIDATE: facts moved from user prompt into the system prompt
+            // (the shape the history chat already uses successfully).
+            "S6" -> Triple(
+                withAlwaysAvailableFacts(
+                    buildToolEnabledSystemPrompt(WORKOUT_INSIGHTS_TOOL_SYSTEM_PROMPT),
+                    REAL_USER_PROMPT.substringAfter("Precomputed session facts (computed by the app from the recorded data; authoritative):"),
+                ),
+                REAL_USER_PROMPT.substringBefore("Precomputed session facts"),
+                emptyList(),
+            )
+            // Exact real on-device request captured from the 16:54 dump (compact system
+            // + task + facts) that returned " minutes".
+            "S" -> Triple(
+                buildToolEnabledSystemPrompt(WORKOUT_INSIGHTS_TOOL_SYSTEM_PROMPT),
+                REAL_USER_PROMPT,
+                emptyList(),
+            )
+            // Same as S with a short appended nudge (length-perturbation escape test).
+            "S2" -> Triple(
+                buildToolEnabledSystemPrompt(WORKOUT_INSIGHTS_TOOL_SYSTEM_PROMPT),
+                REAL_USER_PROMPT + "\nAnswer thoroughly now.",
+                emptyList(),
+            )
+            // Same as S with a slightly longer nudge.
+            "S3" -> Triple(
+                buildToolEnabledSystemPrompt(WORKOUT_INSIGHTS_TOOL_SYSTEM_PROMPT),
+                REAL_USER_PROMPT + "\nStart with the overview tool, then write the full report.",
+                emptyList(),
+            )
             // Exact production insight shape: compact system + long real user prompt.
             "R" -> Triple(
                 buildToolEnabledSystemPrompt(WORKOUT_INSIGHTS_TOOL_SYSTEM_PROMPT),
@@ -197,3 +239,6 @@ class InsightProbeService : Service() {
         )
     }
 }
+
+/** The exact real insight user prompt (task + facts) captured from the on-device 16:54 dump. */
+private const val REAL_USER_PROMPT = "Task: analyze the workout session \"Cyclette - LISS (Workout category: Biking stationary)\" and produce focused coaching insights.\nSession status: completed normally.\n\nWorkflow:\n1. Fetch the compact session overview first.\n2. Treat that overview as a first pass only; if it is mixed, incomplete, truncated, generic, or missing one of the main exercises, fetch specific sections before concluding.\n3. Use summary tools only when the remaining context is too large.\n4. If the session was not completed normally, treat that as an important constraint on interpretation.\n5. For lifting-dominant sessions, do not use modest session HR or 0% high-intensity exposure as the main risk by itself.\n6. Before writing final synthesis, verify the clearest lagging or improving exercise with a narrower retrieval when available.\n7. When a trend claim depends on previous sessions of this workout, retrieve them with get_previous_sessions instead of assuming.\n8. Stop tool use and write the final answer once you can explain what went well, what drifted, and any important constraint.\n\nPrecomputed session facts (computed by the app from the recorded data; authoritative):\nFACT Session duration: 55:09 (55 minutes)\nFACT Average heart rate: 140 bpm; peak 154 bpm\nFACT Heart-rate drift: the second half averaged -2 bpm versus the first half\nFACT 80% of HR samples stayed inside the 60-70% target zone\nFACT Session duration versus recent sessions of this workout: 55 minutes versus 55 minutes typical\nFACT Trend over the last 3 sessions of this workout: regressing — average HR is 6 bpm above the recent 133 bpm average; at a similar duration, a lower average HR means better aerobic efficiency\nFACT HR drift this session: -2 bpm versus your typical -2 bpm on this workout\nFACT Previous-session target check: the target was average HR at or under 131 bpm for about 55 minutes; this session averaged 140 bpm across 55 minutes — target not met\nFACT Next-session target: average heart rate at or under 140 bpm for about 55 minutes"
