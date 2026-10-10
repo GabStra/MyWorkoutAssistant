@@ -1325,6 +1325,7 @@ private object SharedSkeletonThumbnailRuntime {
     ) {
         ensureRuntime(context.applicationContext)
         synchronized(lock) { activeSlotIds += slotId }
+        Log.d(THUMB_LOG_TAG, "register slot=$slotId jsonChars=${skeletonJson.length}")
         // JSON parsing per card is too slow for composition; parse off-main and
         // hand the parsed slot to the render thread.
         Thread {
@@ -1400,14 +1401,16 @@ private object SharedSkeletonThumbnailRuntime {
 
     private fun kick() {
         renderHandler?.post {
-            if (!renderPending) {
-                renderPending = true
+            val alreadyScheduled = renderPending
+            renderPending = true
+            if (!alreadyScheduled) {
                 doFrame(System.nanoTime())
             }
         }
     }
 
     private fun doFrame(nowNanos: Long) {
+        renderPending = false
         val currentRenderer = synchronized(lock) { renderer }
         val buffer = synchronized(lock) { pixelBuffer }
         if (currentRenderer == null || buffer == null) {
@@ -1450,6 +1453,7 @@ private object SharedSkeletonThumbnailRuntime {
             loopRestartFadeMillis = 0,
             loopable = slot.skeleton.loopable,
         )
+        Log.d(THUMB_LOG_TAG, "render slot=${System.identityHashCode(slot)} frame=${playback.frameIndex} elapsed=${slot.elapsedSeconds}")
         renderer.updateScene(
             skeleton = slot.skeleton,
             frameIndex = playback.frameIndex,
@@ -1724,10 +1728,11 @@ private fun buildFloorMesh(
         poseVertices += up.y
         poseVertices += up.z
         poseVertices += 0f
-        // Same space as the browser bake: raw sRGB, multiplied in-shader.
-        colors += color.red
-        colors += color.green
-        colors += color.blue
+        // Vertex colors reach the shader in linear space; convert the authored
+        // sRGB grid color or it renders a hue step lighter (orange as yellow).
+        colors += color.red.srgbToLinearChannel()
+        colors += color.green.srgbToLinearChannel()
+        colors += color.blue.srgbToLinearChannel()
         colors += color.alpha
     }
 

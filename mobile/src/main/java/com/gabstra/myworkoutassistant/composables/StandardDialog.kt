@@ -17,6 +17,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -53,7 +54,10 @@ fun StandardDialog(
                 .fillMaxWidth()
                 .widthIn(max = maxWidth),
             shape = MaterialTheme.shapes.small,
-            color = MaterialTheme.colorScheme.background,
+            // Pure black read as "no dialog at all"; MediumDarkerGray (#2D2D2D)
+            // read as too light. #141414 keeps the dialog a shade above the
+            // black app background without glowing.
+            color = Color(0xFF141414),
             tonalElevation = 0.dp
         ) {
             Column(
