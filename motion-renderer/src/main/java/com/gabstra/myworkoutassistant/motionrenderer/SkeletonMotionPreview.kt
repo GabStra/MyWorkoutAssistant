@@ -70,6 +70,7 @@ import kotlin.math.abs
 import kotlin.math.acos
 import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -87,8 +88,6 @@ private const val FilamentColorFloatCount = 4
 private const val FilamentColorStrideBytes = FilamentColorFloatCount * 4
 private const val DragRotationDegreesPerPixel = 0.45f
 private const val SkeletonPreviewContentDescription = "Exercise movement preview"
-private const val THUMB_LOG_TAG = "SkeletonThumb"
-private const val ListThumbnailPixelSize = 160
 private const val SkeletonKeyLightYawOffsetDegrees = -25f
 private const val SkeletonKeyLightElevationDegrees = 50f
 private const val SkeletonAmbientLightLevel = 0.38f
@@ -131,6 +130,8 @@ private data class WearSkeleton(
     val frames: List<WearSkeletonFrame>,
     val bounds: WearSkeletonBounds,
     val display: WearSkeletonDisplay,
+    val renderFloorY: Float? = null,
+    val groundContactMode: String? = null,
     val limbSidesByFrame: List<Map<LimbKey, WearSkeletonVec3>>,
     val bodyAxesByFrame: List<BodyAxes>,
     val fixedRig: FixedRigPlayback? = null,
@@ -280,18 +281,7 @@ fun SkeletonMotionPreview(
     dragRotationDegreesPerPixel: Float = DragRotationDegreesPerPixel,
     dragRotationHorizontalInset: Dp = 0.dp,
     isRenderingActive: Boolean = true,
-    listThumbnail: Boolean = false,
 ) {
-    if (listThumbnail) {
-        SkeletonListThumbnailPreview(
-            skeletonJson = skeletonJson,
-            modifier = modifier,
-            backgroundColor = backgroundColor,
-            primaryFill = primaryFill,
-            isRenderingActive = isRenderingActive,
-        )
-        return
-    }
     val skeleton = remember(skeletonJson) {
         parseWearSkeleton(skeletonJson)
     }
@@ -435,49 +425,6 @@ fun SkeletonMotionPreview(
                 modifier = Modifier
                     .fillMaxSize()
                     .then(movementInteractionModifier),
-            )
-        }
-    }
-}
-
-@Composable
-private fun SkeletonListThumbnailPreview(
-    skeletonJson: String,
-    modifier: Modifier,
-    backgroundColor: Color,
-    primaryFill: Color,
-    isRenderingActive: Boolean,
-) {
-    val context = LocalContext.current.applicationContext
-    var frameBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
-    val slotId = remember { Any() }
-    DisposableEffect(skeletonJson, backgroundColor, primaryFill, isRenderingActive) {
-        if (isRenderingActive) {
-            SharedSkeletonThumbnailRuntime.register(
-                context = context,
-                slotId = slotId,
-                skeletonJson = skeletonJson,
-                backgroundColor = backgroundColor,
-                primaryFill = primaryFill,
-                onFrame = { frameBitmap = it },
-            )
-        }
-        onDispose {
-            SharedSkeletonThumbnailRuntime.unregister(slotId)
-        }
-    }
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(backgroundColor)
-            .semantics { contentDescription = SkeletonPreviewContentDescription },
-    ) {
-        frameBitmap?.let { bitmap ->
-            Image(
-                bitmap = bitmap,
-                contentDescription = null,
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Fit,
             )
         }
     }
@@ -699,8 +646,6 @@ private class WearSkeletonFilamentView(
 
 private class WearSkeletonFilamentRenderer(
     private val context: Context,
-    private val thumbnailMode: Boolean = false,
-    private val readbackHandler: Handler = Handler(Looper.getMainLooper()),
 ) {
     private val uiHelper = UiHelper(UiHelper.ContextErrorPolicy.DONT_CHECK)
     private val engine: Engine
@@ -730,6 +675,8 @@ private class WearSkeletonFilamentRenderer(
     private var lastFrameCursor: Double? = null
     private var lastPalette: SkeletonPalette? = null
     private var lastBounds: FilamentMeshBounds? = null
+    private var lastFloorPlacement: FloorPlacement? = null
+    private var lastFloorLineHalfWidth: Float? = null
     private var lastCameraTarget: WearSkeletonVec3? = null
     private var lastOrbitHorizontalRadius: Float? = null
     private var lastOrbitVerticalHalfExtent: Float? = null
@@ -751,27 +698,17 @@ private class WearSkeletonFilamentRenderer(
         camera = engine.createCamera(cameraEntity)
         view.setScene(scene)
         view.setCamera(camera)
-        if (thumbnailMode) {
-            view.setPostProcessingEnabled(false)
-            view.setAntiAliasing(FilamentView.AntiAliasing.NONE)
-            view.setMultiSampleAntiAliasingOptions(
-                FilamentView.MultiSampleAntiAliasingOptions().apply {
-                    enabled = false
-                }
-            )
-        } else {
-            view.setPostProcessingEnabled(true)
-            // Filament's default ACES tone-mapping desaturates the flat skeleton
-            // fill (orange renders as pale yellow). Linear keeps the authored
-            // palette colors.
-            view.setToneMapping(FilamentView.ToneMapping.LINEAR)
-            view.setAntiAliasing(FilamentView.AntiAliasing.FXAA)
-            view.setMultiSampleAntiAliasingOptions(
-                FilamentView.MultiSampleAntiAliasingOptions().apply {
-                    enabled = false
-                }
-            )
-        }
+        view.setPostProcessingEnabled(true)
+        // Filament's default ACES tone-mapping desaturates the flat skeleton
+        // fill (orange renders as pale yellow). Linear keeps the authored
+        // palette colors.
+        view.setToneMapping(FilamentView.ToneMapping.LINEAR)
+        view.setAntiAliasing(FilamentView.AntiAliasing.FXAA)
+        view.setMultiSampleAntiAliasingOptions(
+            FilamentView.MultiSampleAntiAliasingOptions().apply {
+                enabled = false
+            }
+        )
         renderer.setClearOptions(
             Renderer.ClearOptions().apply {
                 clear = true
@@ -793,12 +730,6 @@ private class WearSkeletonFilamentRenderer(
             setParameter("visibility", 1f)
             setParameter("keyLightDirection", 0f, 1f, 0f)
             setParameter("backgroundColor", 0f, 0f, 0f)
-        }
-        if (thumbnailMode) {
-            viewportWidth = ListThumbnailPixelSize
-            viewportHeight = ListThumbnailPixelSize
-            view.setViewport(Viewport(0, 0, viewportWidth, viewportHeight))
-            swapChain = engine.createSwapChain(viewportWidth, viewportHeight, 0)
         }
     }
 
@@ -867,25 +798,19 @@ private class WearSkeletonFilamentRenderer(
 
         if (skeletonChanged) {
             initialFitPitchDegrees = viewPitchDegrees
-            if (thumbnailMode) {
-                val thumbnailBounds = skeleton.bounds.toStableFilamentBounds()
-                lastBounds = thumbnailBounds
-                lastCameraTarget = thumbnailBounds.center
-                lastOrbitHorizontalRadius = null
-                lastOrbitVerticalHalfExtent = null
-            } else {
-                val cameraFrame = skeleton.toStableRenderedSceneCameraFrame(
-                    palette = palette,
-                    pitchDegrees = viewPitchDegrees,
-                )
-                lastBounds = cameraFrame.bounds
-                lastCameraTarget = cameraFrame.target
-                lastOrbitHorizontalRadius = cameraFrame.orbitHorizontalRadius
-                lastOrbitVerticalHalfExtent = cameraFrame.orbitVerticalHalfExtent
-            }
-            replaceFloorRenderable(buildFloorMesh(skeleton, palette.grid))
+            val cameraFrame = skeleton.toStableRenderedSceneCameraFrame(
+                palette = palette,
+                pitchDegrees = viewPitchDegrees,
+            )
+            lastBounds = cameraFrame.bounds
+            lastCameraTarget = cameraFrame.target
+            lastOrbitHorizontalRadius = cameraFrame.orbitHorizontalRadius
+            lastOrbitVerticalHalfExtent = cameraFrame.orbitVerticalHalfExtent
+            lastFloorPlacement = cameraFrame.floor
+            lastFloorLineHalfWidth = null
+            if (cameraFrame.floor == null) clearFloorRenderable()
         } else if (paletteChanged) {
-            replaceFloorRenderable(buildFloorMesh(skeleton, palette.grid))
+            lastFloorLineHalfWidth = null
         }
 
         if (poseChanged || paletteChanged) {
@@ -963,45 +888,12 @@ private class WearSkeletonFilamentRenderer(
         }
     }
 
-    fun renderAndReadPixels(
-        frameTimeNanos: Long,
-        output: ByteBuffer,
-        onComplete: () -> Unit,
-    ) {
-        val chain = swapChain
-        if (destroyed || chain == null || viewportWidth <= 0 || viewportHeight <= 0) {
-            Log.w(THUMB_LOG_TAG, "renderAndReadPixels unavailable: destroyed=$destroyed chain=${chain != null} viewport=$viewportWidth x $viewportHeight")
-            onComplete()
-            return
-        }
-        if (!renderer.beginFrame(chain, frameTimeNanos)) {
-            Log.w(THUMB_LOG_TAG, "beginFrame returned false; skipping frame")
-            onComplete()
-            return
-        }
-        renderer.render(view)
-        output.clear()
-        val descriptor = Texture.PixelBufferDescriptor(
-            output,
-            Texture.Format.RGBA,
-            Texture.Type.UBYTE,
-        )
-        descriptor.setCallback(readbackHandler) {
-            output.rewind()
-            onComplete()
-        }
-        renderer.readPixels(0, 0, viewportWidth, viewportHeight, descriptor)
-        renderer.endFrame()
-    }
-
     fun destroy() {
         if (destroyed) {
             return
         }
         destroyed = true
-        if (!thumbnailMode) {
-            uiHelper.detach()
-        }
+        uiHelper.detach()
         swapChain?.let { chain ->
             engine.destroySwapChain(chain)
             engine.flushAndWait()
@@ -1234,6 +1126,15 @@ private class WearSkeletonFilamentRenderer(
 
         val aspect = viewportWidth.toDouble() / viewportHeight.toDouble()
         val projection = cameraFrame.fixedProjection(aspect)
+        lastFloorPlacement?.let { placement ->
+            val halfWidth = floorLineHalfWidth(projection.top - projection.bottom, viewportHeight, lastPitchDegrees)
+            if (lastFloorLineHalfWidth != halfWidth) {
+                lastPalette?.let { palette ->
+                    replaceFloorRenderable(buildFloorMesh(placement, palette.grid, halfWidth))
+                    lastFloorLineHalfWidth = halfWidth
+                }
+            }
+        }
         camera.setProjection(
             Camera.Projection.ORTHO,
             projection.left,
@@ -1257,265 +1158,6 @@ private object WearSkeletonFilamentRuntime {
     }
 }
 
-private fun createListThumbnailBitmap(): Bitmap {
-    return Bitmap.createBitmap(
-        ListThumbnailPixelSize,
-        ListThumbnailPixelSize,
-        Bitmap.Config.ARGB_8888,
-    )
-}
-
-private class ThumbnailSlot(
-    val skeleton: WearSkeleton,
-    val palette: SkeletonPalette,
-    val backgroundColor: Color,
-    val keyLightDirection: WearSkeletonVec3,
-    private val onFrame: (ImageBitmap) -> Unit,
-    var elapsedSeconds: Double = 0.0,
-) {
-    private val bitmaps = arrayOf(createListThumbnailBitmap(), createListThumbnailBitmap())
-    private val frames = arrayOf(bitmaps[0].asImageBitmap(), bitmaps[1].asImageBitmap())
-    private var displayIndex = 1
-
-    /**
-     * Called on the render thread; the finished bitmap hops to the main thread
-     * because Compose state must be written there.
-     */
-    fun publishPixels(pixels: IntArray, mainHandler: Handler) {
-        val writeIndex = 1 - displayIndex
-        val width = ListThumbnailPixelSize
-        bitmaps[writeIndex].setPixels(pixels, 0, width, 0, 0, width, width)
-        displayIndex = writeIndex
-        val frame = frames[writeIndex]
-        mainHandler.post { onFrame(frame) }
-    }
-}
-
-/**
- * Renders every visible list thumbnail from ONE shared offscreen filament
- * renderer, round-robin, on a dedicated render thread. Filament requires the
- * engine's GL calls to stay on the thread the engine was created on, so the
- * whole loop (updateScene, beginFrame, render, readPixels, endFrame) lives on
- * a HandlerThread; only finished bitmaps are handed back to the main thread.
- */
-private object SharedSkeletonThumbnailRuntime {
-    private const val FRAME_DELAY_MILLIS = 16L
-
-    private val mainHandler = Handler(Looper.getMainLooper())
-    private val lock = Any()
-    private val slots = LinkedHashMap<Any, ThumbnailSlot>()
-    private val activeSlotIds = HashSet<Any>()
-    private val scratchPixels = IntArray(ListThumbnailPixelSize * ListThumbnailPixelSize)
-    private var renderer: WearSkeletonFilamentRenderer? = null
-    private var pixelBuffer: ByteBuffer? = null
-    private var renderHandler: Handler? = null
-    private var renderPending = false
-    private var prewarmStarted = false
-    private var nextSlotIndex = 0
-    private var readInFlight = false
-    private var skipCount = 0
-    private var lastFrameTimeNanos: Long? = null
-
-    fun register(
-        context: Context,
-        slotId: Any,
-        skeletonJson: String,
-        backgroundColor: Color,
-        primaryFill: Color,
-        onFrame: (ImageBitmap) -> Unit,
-    ) {
-        ensureRuntime(context.applicationContext)
-        synchronized(lock) { activeSlotIds += slotId }
-        Log.d(THUMB_LOG_TAG, "register slot=$slotId jsonChars=${skeletonJson.length}")
-        // JSON parsing per card is too slow for composition; parse off-main and
-        // hand the parsed slot to the render thread.
-        Thread {
-            val parsed = runCatching { parseWearSkeleton(skeletonJson) }.getOrNull()
-                ?: return@Thread
-            val yaw = parsed.display.viewYawDegrees ?: -28f
-            val slot = ThumbnailSlot(
-                skeleton = parsed,
-                palette = createSkeletonPalette(primaryFill),
-                backgroundColor = backgroundColor,
-                keyLightDirection = skeletonKeyLightDirection(yaw),
-                onFrame = onFrame,
-            )
-            val stillWanted = synchronized(lock) {
-                if (slotId in activeSlotIds) {
-                    slots[slotId] = slot
-                    true
-                } else {
-                    false
-                }
-            }
-            if (stillWanted) {
-                kick()
-            }
-        }.start()
-    }
-
-    fun unregister(slotId: Any) {
-        synchronized(lock) {
-            activeSlotIds.remove(slotId)
-            slots.remove(slotId)
-        }
-    }
-
-    /**
-     * The engine, material compile and offscreen swapchain take hundreds of
-     * milliseconds; they are built once on the render thread itself so opening
-     * the library never blocks composition.
-     */
-    private fun ensureRuntime(appContext: Context) {
-        val handler = synchronized(lock) {
-            renderHandler ?: HandlerThread("SkeletonThumbnailRenderer").apply { start() }
-                .let { thread -> Handler(thread.looper).also { renderHandler = it } }
-        }
-        if (synchronized(lock) { renderer != null }) {
-            return
-        }
-        handler.post {
-            // Re-check on the render thread: two registers may race the first
-            // prewarm; only the first engine survives.
-            if (synchronized(lock) { renderer != null }) {
-                return@post
-            }
-            val startedAt = android.os.SystemClock.uptimeMillis()
-            val created = WearSkeletonFilamentRenderer(
-                appContext,
-                thumbnailMode = true,
-                readbackHandler = handler,
-            )
-            val buffer = ByteBuffer.allocateDirect(ListThumbnailPixelSize * ListThumbnailPixelSize * 4)
-                .order(ByteOrder.nativeOrder())
-            Log.d(
-                THUMB_LOG_TAG,
-                "thumbnail renderer prewarm took ${android.os.SystemClock.uptimeMillis() - startedAt}ms",
-            )
-            synchronized(lock) {
-                renderer = created
-                pixelBuffer = buffer
-            }
-            kick()
-        }
-    }
-
-    private fun kick() {
-        renderHandler?.post {
-            val alreadyScheduled = renderPending
-            renderPending = true
-            if (!alreadyScheduled) {
-                doFrame(System.nanoTime())
-            }
-        }
-    }
-
-    private fun doFrame(nowNanos: Long) {
-        renderPending = false
-        val currentRenderer = synchronized(lock) { renderer }
-        val buffer = synchronized(lock) { pixelBuffer }
-        if (currentRenderer == null || buffer == null) {
-            renderPending = false
-            return
-        }
-        val snapshot = synchronized(lock) { slots.values.toList() }
-        if (snapshot.isEmpty()) {
-            renderPending = false
-            lastFrameTimeNanos = null
-            return
-        }
-        val previousFrameTimeNanos = lastFrameTimeNanos
-        lastFrameTimeNanos = nowNanos
-        if (previousFrameTimeNanos != null) {
-            val deltaSeconds = (nowNanos - previousFrameTimeNanos) / 1_000_000_000.0
-            snapshot.forEach { slot -> slot.elapsedSeconds += deltaSeconds }
-        }
-        if (readInFlight) {
-            skipCount++
-            if (skipCount == 30 || skipCount == 150) {
-                Log.w(THUMB_LOG_TAG, "STUCK? readInFlight for $skipCount consecutive frames")
-            }
-            kick()
-            return
-        }
-        skipCount = 0
-        renderNext(currentRenderer, buffer, nowNanos, snapshot)
-    }
-
-    private fun renderNext(
-        renderer: WearSkeletonFilamentRenderer,
-        pixelBuffer: ByteBuffer,
-        frameTimeNanos: Long,
-        snapshot: List<ThumbnailSlot>,
-    ) {
-        val slot = pickSlot(snapshot) ?: run {
-            renderPending = false
-            return
-        }
-        val playback = resolveLoopPlayback(
-            elapsedSeconds = slot.elapsedSeconds,
-            frameCount = slot.skeleton.frames.size,
-            fps = slot.skeleton.fps,
-            loopRestartFadeMillis = 0,
-            loopable = slot.skeleton.loopable,
-        )
-        Log.d(THUMB_LOG_TAG, "render slot=${System.identityHashCode(slot)} frame=${playback.frameIndex} elapsed=${slot.elapsedSeconds}")
-        renderer.updateScene(
-            skeleton = slot.skeleton,
-            frameIndex = playback.frameIndex,
-            frameCursor = playback.frameCursor,
-            viewYawDegrees = slot.skeleton.display.viewYawDegrees ?: -28f,
-            viewPitchDegrees = slot.skeleton.display.viewPitchDegrees ?: 15f,
-            palette = slot.palette,
-            visibility = playback.visibility,
-            backgroundColor = slot.backgroundColor,
-            keyLightDirection = slot.keyLightDirection,
-        )
-        readInFlight = true
-        renderer.renderAndReadPixels(frameTimeNanos, pixelBuffer) {
-            Log.d(THUMB_LOG_TAG, "readback complete")
-            copyPixelsToSlot(slot, pixelBuffer)
-            readInFlight = false
-            kick()
-        }
-    }
-
-    private fun pickSlot(snapshot: List<ThumbnailSlot>): ThumbnailSlot? {
-        if (snapshot.isEmpty()) {
-            return null
-        }
-        val index = nextSlotIndex.floorMod(snapshot.size)
-        nextSlotIndex = index + 1
-        return snapshot[index]
-    }
-
-    private fun copyPixelsToSlot(slot: ThumbnailSlot, buffer: ByteBuffer) {
-        val width = ListThumbnailPixelSize
-        val height = ListThumbnailPixelSize
-        buffer.rewind()
-        var pixelIndex = 0
-        for (y in 0 until height) {
-            var sourceIndex = y * width * 4
-            for (x in 0 until width) {
-                val red = linearToSrgbChannel((buffer.get(sourceIndex).toInt() and 0xff) / 255.0)
-                val green = linearToSrgbChannel((buffer.get(sourceIndex + 1).toInt() and 0xff) / 255.0)
-                val blue = linearToSrgbChannel((buffer.get(sourceIndex + 2).toInt() and 0xff) / 255.0)
-                val alpha = buffer.get(sourceIndex + 3).toInt() and 0xff
-                scratchPixels[pixelIndex] = (alpha shl 24) or (red shl 16) or (green shl 8) or blue
-                pixelIndex += 1
-                sourceIndex += 4
-            }
-        }
-        slot.publishPixels(scratchPixels, mainHandler)
-    }
-
-    /** The readback holds linear values; bitmaps display sRGB. */
-    private fun linearToSrgbChannel(linear: Double): Int {
-        val clamped = linear.coerceIn(0.0, 1.0)
-        val encoded = if (clamped <= 0.0031308) clamped * 12.92 else 1.055 * Math.pow(clamped, 1.0 / 2.4) - 0.055
-        return (encoded * 255.0).roundToInt().coerceIn(0, 255)
-    }
-}
 
 private data class ShadedMeshData(
     val poseVertices: FloatArray,
@@ -1553,9 +1195,17 @@ private data class FilamentMeshBounds(
     )
 }
 
+private data class FloorPlacement(
+    val centerX: Float,
+    val centerZ: Float,
+    val floorY: Float,
+    val size: Float,
+)
+
 private data class StableRenderedSceneCameraFrame(
     val bounds: FilamentMeshBounds,
     val target: WearSkeletonVec3,
+    val floor: FloorPlacement?,
     val orbitHorizontalRadius: Float,
     val orbitVerticalHalfExtent: Float,
 )
@@ -1715,11 +1365,21 @@ private fun GeneratedLowPolyMesh.toShadedMesh(
     )
 }
 
+private const val FloorSizeScale = 1.24f
+private const val FloorCellSize = 0.25f
+private const val FloorLineHalfWidth = 0.0023f
+
+private fun floorLineHalfWidth(projectionHeight: Double, viewportHeight: Int, pitchDegrees: Float): Float {
+    // A floor viewed exactly edge-on has no projected area; bound the expansion near the horizon.
+    val foreshortening = abs(sin(pitchDegrees * PI / 180.0)).coerceAtLeast(0.05)
+    return max(FloorLineHalfWidth, (projectionHeight / viewportHeight.coerceAtLeast(1) / foreshortening * 0.5).toFloat())
+}
+
 private fun buildFloorMesh(
-    skeleton: WearSkeleton,
+    placement: FloorPlacement,
     color: Color,
+    lineHalfWidth: Float,
 ): ShadedMeshData {
-    val bounds = skeleton.bounds
     val poseVertices = ArrayList<Float>()
     val colors = ArrayList<Float>()
     val indices = ArrayList<Int>()
@@ -1743,27 +1403,14 @@ private fun buildFloorMesh(
         colors += color.alpha
     }
 
-    val floorY = bounds.minY
-    val width = (bounds.maxX - bounds.minX).coerceAtLeast(0.001f)
-    val depth = (bounds.maxZ - bounds.minZ).coerceAtLeast(0.001f)
-    val floorSize = max(width, depth) * 1.24f
+    val floorY = placement.floorY
+    val divisions = ceil(placement.size / FloorCellSize).toInt().coerceAtLeast(1)
+    val floorSize = divisions * FloorCellSize
     val halfFloorSize = floorSize * 0.5f
-    // Match the browser: a stationary floor beneath the body's central
-    // position, independent of the reach of hands or feet across the clip.
-    val roots = skeleton.frames.mapNotNull { it.joints["pelvis"] ?: it.joints["spine1"] }
-    fun medianOrFallback(values: List<Float>, fallback: Float): Float {
-        if (values.isEmpty()) return fallback
-        val sorted = values.sorted()
-        return (sorted[(sorted.size - 1) / 2] + sorted[sorted.size / 2]) * 0.5f
-    }
-    val centerX = medianOrFallback(roots.map { it.x }, (bounds.minX + bounds.maxX) * 0.5f)
-    val centerZ = medianOrFallback(roots.map { it.z }, (bounds.minZ + bounds.maxZ) * 0.5f)
-    val minX = centerX - halfFloorSize
-    val maxX = centerX + halfFloorSize
-    val minZ = centerZ - halfFloorSize
-    val maxZ = centerZ + halfFloorSize
-    val lineHalfWidth = floorSize * 0.0046f
-    val divisions = 4
+    val minX = placement.centerX - halfFloorSize
+    val maxX = placement.centerX + halfFloorSize
+    val minZ = placement.centerZ - halfFloorSize
+    val maxZ = placement.centerZ + halfFloorSize
 
     fun addFloorQuad(
         a: WearSkeletonVec3,
@@ -1807,7 +1454,10 @@ private fun buildFloorMesh(
         colors = colors.toFloatArray(),
         indices = indices.toIntArray(),
         vertexCount = poseVertices.size / FilamentPoseFloatCount,
-        modelBounds = bounds.toStableFilamentBounds(),
+        modelBounds = FilamentMeshBounds(
+            min = WearSkeletonVec3(minX - lineHalfWidth, floorY, minZ - lineHalfWidth),
+            max = WearSkeletonVec3(maxX + lineHalfWidth, floorY, maxZ + lineHalfWidth),
+        ),
     )
 }
 
@@ -1886,12 +1536,13 @@ private fun WearSkeleton.toStableRenderedSceneCameraFrame(
 
     val frameVertices = ArrayList<List<WearSkeletonVec3>>(frames.size)
     val bodyProportions = stableBodyProportions()
-    frames.forEachIndexed { frameIndex, frame ->
+    frames.indices.forEach { frameIndex ->
+        val frame = frameAt(frameIndex.toDouble())
         val meshVertices = buildSingleLowPolyMesh(
             joints = frame.joints,
             palette = palette,
-            stableLimbSides = limbSidesByFrame.getOrNull(frameIndex).orEmpty(),
-            stableBodyAxes = bodyAxesByFrame.getOrNull(frameIndex),
+            stableLimbSides = sidesAt(frameIndex.toDouble()),
+            stableBodyAxes = if (fixedRig != null) frame.joints.toBodyAxes() else bodyAxesByFrame.getOrNull(frameIndex),
             boneSides = frame.boneSides,
             bodyProportions = bodyProportions,
         )?.vertices.orEmpty()
@@ -1907,6 +1558,7 @@ private fun WearSkeleton.toStableRenderedSceneCameraFrame(
     } else {
         bounds.toStableFilamentBounds()
     }
+    // Keep the grid and orbit pivot fixed at the full animation's mesh midpoint.
     val orbitCenterX = modelBounds.center.x
     val orbitCenterZ = modelBounds.center.z
     val verticalOriginY = modelBounds.center.y
@@ -1932,29 +1584,36 @@ private fun WearSkeleton.toStableRenderedSceneCameraFrame(
         vertices.forEach(::includeInOrbitEnvelope)
     }
 
-    val skeletonHeight = (bounds.maxY - bounds.minY).coerceAtLeast(0.001f)
-    val skeletonWidth = (bounds.maxX - bounds.minX).coerceAtLeast(0.001f)
-    val skeletonDepth = (bounds.maxZ - bounds.minZ).coerceAtLeast(0.001f)
-    val floorY = bounds.minY
-    val floorSize = max(skeletonWidth, skeletonDepth) * 1.24f
-    val halfFloorSize = floorSize * 0.5f
-    val floorLineHalfWidth = floorSize * 0.0046f
-    val floorCenterX = (bounds.minX + bounds.maxX) * 0.5f
-    val floorCenterZ = (bounds.minZ + bounds.maxZ) * 0.5f
-    val floorMinimumCorner = WearSkeletonVec3(
-        floorCenterX - halfFloorSize - floorLineHalfWidth,
-        floorY,
-        floorCenterZ - halfFloorSize - floorLineHalfWidth,
+    val floorPlacement = if (groundContactMode == "none") null else FloorPlacement(
+        centerX = orbitCenterX,
+        centerZ = orbitCenterZ,
+        floorY = renderFloorY ?: modelBounds.min.y,
+        size = ceil(max(
+            modelBounds.max.x - modelBounds.min.x,
+            modelBounds.max.z - modelBounds.min.z,
+        ) * FloorSizeScale / FloorCellSize).coerceAtLeast(1f) * FloorCellSize,
     )
-    val floorMaximumCorner = WearSkeletonVec3(
-        floorCenterX + halfFloorSize + floorLineHalfWidth,
-        floorY,
-        floorCenterZ + halfFloorSize + floorLineHalfWidth,
-    )
-    includeInBounds(floorMinimumCorner)
-    includeInBounds(floorMaximumCorner)
-    includeInOrbitEnvelope(floorMinimumCorner)
-    includeInOrbitEnvelope(floorMaximumCorner)
+    floorPlacement?.let { placement ->
+        val halfFloorSize = placement.size * 0.5f
+        val floorLineHalfWidth = FloorLineHalfWidth
+        val floorCenterX = placement.centerX
+        val floorCenterZ = placement.centerZ
+        val floorY = placement.floorY
+        val floorMinimumCorner = WearSkeletonVec3(
+            floorCenterX - halfFloorSize - floorLineHalfWidth,
+            floorY,
+            floorCenterZ - halfFloorSize - floorLineHalfWidth,
+        )
+        val floorMaximumCorner = WearSkeletonVec3(
+            floorCenterX + halfFloorSize + floorLineHalfWidth,
+            floorY,
+            floorCenterZ + halfFloorSize + floorLineHalfWidth,
+        )
+        includeInBounds(floorMinimumCorner)
+        includeInBounds(floorMaximumCorner)
+        includeInOrbitEnvelope(floorMinimumCorner)
+        includeInOrbitEnvelope(floorMaximumCorner)
+    }
 
     val renderedBounds = FilamentMeshBounds(
         min = WearSkeletonVec3(minX, minY, minZ),
@@ -1988,6 +1647,7 @@ private fun WearSkeleton.toStableRenderedSceneCameraFrame(
             y = verticalOriginY + verticalTargetOffset,
             z = orbitCenterZ,
         ),
+        floor = floorPlacement,
         orbitHorizontalRadius = orbitHorizontalRadius.coerceAtLeast(0.001f),
         orbitVerticalHalfExtent = orbitVerticalHalfExtent.coerceAtLeast(0.001f),
     )
@@ -3226,43 +2886,6 @@ private fun neutralHeadPitchJoint(
     return neck + rotated * length
 }
 
-/** Damp per-keyframe shimmer in the rig coordinate tracks at load time with a
- *  wrapped [0.25, 0.5, 0.25] filter. Applied outside FixedRigPlayback.parse so
- *  the playback math keeps its exact cross-implementation parity contract.
- *  Rows whose neighbours moved further than [RIG_SMOOTHING_MAX_STEP] are cuts
- *  or teleports and stay untouched. */
-private const val RIG_SMOOTHING_MAX_STEP = 0.35
-
-private fun smoothRigCoordinateJson(rig: JsonObject, frameCount: Int, wrap: Boolean): JsonObject {
-    val rows = rig.getAsJsonArray("coordinates") ?: return rig
-    if (rows.size() < 3) return rig
-    fun row(index: Int): List<Float> {
-        val bounded = if (wrap) (index % frameCount + frameCount) % frameCount else index.coerceIn(0, frameCount - 1)
-        return rows.get(bounded).asJsonArray.map { it.asFloat }
-    }
-    val smoothed = JsonArray()
-    for (index in 0 until rows.size()) {
-        val current = row(index)
-        val previous = row(index - 1)
-        val next = row(index + 1)
-        val cut = current.indices.any { component ->
-            abs(previous[component] - current[component]) > RIG_SMOOTHING_MAX_STEP ||
-                abs(next[component] - current[component]) > RIG_SMOOTHING_MAX_STEP
-        }
-        val out = JsonArray()
-        if (cut) {
-            current.forEach { out.add(it) }
-        } else {
-            for (component in current.indices) {
-                out.add(previous[component] * 0.25f + current[component] * 0.5f + next[component] * 0.25f)
-            }
-        }
-        smoothed.add(out)
-    }
-    val result = rig.deepCopy()
-    result.add("coordinates", smoothed)
-    return result
-}
 
 private fun buildStableBodyAxes(
     frames: List<WearSkeletonFrame>,
@@ -3387,18 +3010,25 @@ private fun parseWearSkeleton(json: String): WearSkeleton {
         )
     }
     val loopable = root.optionalJsonObject("loop")?.optionalBoolean("enabled") ?: true
-    val smoothedFrames = smoothJointTracks(frames, loopable)
+    val fixedRig = root.optionalJsonObject("fixedRig")?.let { FixedRigPlayback.parse(it, frames.size) }
+    val playbackFrames = if (fixedRig == null) smoothJointTracks(frames, loopable) else frames.mapIndexed { index, frame ->
+        frame.copy(joints = fixedRig.sample(index.toDouble(), wrap = loopable).mapValues { (_, point) ->
+            displayCoordinateTransform.apply(WearSkeletonVec3(point[0].toFloat(), point[1].toFloat(), point[2].toFloat()))
+        })
+    }
     return WearSkeleton(
         fps = root.get("fps")?.asFloat ?: 30f,
         loopable = loopable,
         bounds = displayCoordinateTransform.apply(boundsObject.toWearSkeletonBounds()),
-        frames = smoothedFrames,
+        frames = playbackFrames,
         display = root.toWearSkeletonDisplay(),
-        limbSidesByFrame = buildStableLimbSides(smoothedFrames, loopable),
-        bodyAxesByFrame = buildStableBodyAxes(smoothedFrames),
-        fixedRig = root.optionalJsonObject("fixedRig")?.let {
-            FixedRigPlayback.parse(smoothRigCoordinateJson(it, frames.size, loopable), frames.size)
+        limbSidesByFrame = buildStableLimbSides(playbackFrames, loopable),
+        bodyAxesByFrame = buildStableBodyAxes(playbackFrames),
+        fixedRig = fixedRig,
+        renderFloorY = root.optionalFloat("renderFloorY")?.takeIf { it.isFinite() }?.let {
+            displayCoordinateTransform.apply(WearSkeletonVec3(0f, it, 0f)).y
         },
+        groundContactMode = root.optionalString("groundContactMode")?.trim()?.lowercase(),
         displayTransform = displayCoordinateTransform,
     )
 }

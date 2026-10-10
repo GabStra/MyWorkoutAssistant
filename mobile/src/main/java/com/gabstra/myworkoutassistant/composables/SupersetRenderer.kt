@@ -93,7 +93,6 @@ fun SupersetRenderer(
                                 exercise = exercise,
                                 appViewModel = appViewModel,
                                 modifier = Modifier.weight(1f),
-                                previewSize = 48.dp,
                                 horizontalPadding = 0.dp,
                                 verticalPadding = 2.dp,
                             )

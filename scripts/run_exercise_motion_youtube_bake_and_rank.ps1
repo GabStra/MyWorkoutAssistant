@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Mandatory = $true)]
     [string]$ExerciseName,
 
@@ -120,9 +120,9 @@ param(
     [switch]$SkipFinalOutputValidation,
     [double]$FinalOutputValidationMinScore = 0.90,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
-    [string]$LlamaCppModel = "C:\Users\gabri\Downloads\Qwen3.5-9B-UD-Q4_K_XL.gguf",
+    [string]$LlamaCppModel = (Join-Path (Split-Path -Parent $PSScriptRoot) "models/Qwen3.5-9B-Q6_K/Qwen3.5-9B-Q6_K.gguf"),
     [string]$LlamaCppServerCommand = "C:\Users\gabri\Documents\llama.cpp\build-master\bin\Release\llama-server.exe",
-    [string]$LlamaCppMmproj = "C:\Users\gabri\Downloads\mmproj-BF16(6).gguf",
+    [string]$LlamaCppMmproj = (Join-Path (Split-Path -Parent $PSScriptRoot) "models/Qwen3.5-9B-Q6_K/mmproj-BF16.gguf"),
     [AllowEmptyString()]
     [string]$LlamaCppMtpModel = "",
     [int]$LlamaCppSpecDraftNMax = 3,
@@ -140,7 +140,7 @@ param(
     [string]$LlamaCppFlashAttn = "on",
     [string]$LlamaCppCacheTypeK = "q8_0",
     [string]$LlamaCppCacheTypeV = "q8_0",
-    [Nullable[int]]$LlamaCppParallel = 6,
+    [Nullable[int]]$LlamaCppParallel = 3,
     [Nullable[int]]$LlamaCppThreadsHttp = 8,
     [Nullable[int]]$LlamaCppCacheReuse,
     [string]$LlamaCppFit = "on",
@@ -570,8 +570,8 @@ function Assert-SelectedWearSkeletonContract {
 }
 
 function Ensure-LlamaCppParallelContext {
-    # Multi-image reviews can exceed 4K prompt tokens before response generation.
-    $minContextPerSlot = 6144
+    # Multi-image source reviews need room for prompts exceeding 10K tokens.
+    $minContextPerSlot = 16384
     $parallelSlots = Get-LlamaCppParallelSlots
     $minTotalContext = $parallelSlots * $minContextPerSlot
     if ($null -ne $LlamaCppCtxSize -and $LlamaCppCtxSize -lt $minTotalContext) {

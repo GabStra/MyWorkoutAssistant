@@ -260,6 +260,12 @@ def test_effective_configuration_requires_requested_wave_size_and_arm_settings()
     }
 
     assert motion_speed_harness.effective_configuration_error("qwen-shared", metrics, 2) is None
+    overlap_metrics = dict(metrics, effectiveMaxConcurrentStagedWaves=2,
+                           stagedWaveWorkerMode="workspace_scoped_persistent_cpu_overlap_queue")
+    assert motion_speed_harness.effective_configuration_error("shared-overlap", overlap_metrics, 2) is None
+    assert "overlap high-water=3" in motion_speed_harness.effective_configuration_error(
+        "shared-overlap", dict(overlap_metrics, overlapHighWater=3), 2
+    )
     assert "expected 1" in motion_speed_harness.effective_configuration_error(
         "qwen-shared", dict(metrics, effectiveMaxConcurrentStagedWaves=2), 2
     )
@@ -563,11 +569,9 @@ def test_extract_metrics_records_stable_accepted_artifact_and_frame_hashes(tmp_p
     assert metrics["prefetchQueueDepth"] == 40
 
 
-def test_current_shared_overlap_arm_is_rejected_before_model_run():
-    assert "serial" in motion_speed_harness.UNSUPPORTED_ARMS["shared-overlap"]
-    assert "clamps MaxConcurrentStagedWaves to 1" in motion_speed_harness.UNSUPPORTED_ARMS[
-        "shared-overlap"
-    ]
+def test_shared_overlap_arm_requests_two_waves_and_shared_gpu_owner():
+    assert "shared-overlap" in motion_speed_harness.ARMS
+    assert motion_speed_harness.ARM_EFFECTIVE_SETTINGS["shared-overlap"]["effectiveMaxConcurrentStagedWaves"] == 2
 
 
 def test_default_harness_wave_size_matches_production_library_wrapper():

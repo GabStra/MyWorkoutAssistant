@@ -249,3 +249,131 @@ def test_cycle_support_cache_cannot_replace_selected_interval_articulation(monke
         with pytest.raises(ReachedSupportProjection):
             motion._fit_controlled_motion(payload, timeout_seconds=10., shared_support=cache)
     np.testing.assert_allclose(captured[0], captured[1], atol=1e-10)
+
+
+def test_support_initialization_timeout_retains_best_evaluated_pose(monkeypatch):
+    from exercise_motion_pkg import support_geometry
+
+    names, points = stance(8)
+    rig = motion.FixedRig(points, names)
+    pose = rig.decode(rig.initial)[0]
+    slot = rig.slots[names.index('right_ankle')]
+    rig.initial[:, slot] += .1
+    original = rig.decode(rig.initial)
+    evidence = {'required': True, 'status': 'confirmed',
+                'stationaryJoints': ['left_foot', 'right_foot'],
+                'coplanarGroups': [{'joints': ['left_foot', 'right_foot'],
+                                   'normal': [0., 1., 0.]}]}
+    observed = {}
+
+    def interrupted_solve(residual, initial, *_args, **_kwargs):
+        before = residual(initial)
+        improved = initial.reshape(rig.initial.shape).copy()
+        improved[:, slot] -= .1
+        after = residual(improved.ravel())
+        assert after @ after < before @ before
+        observed['best'] = improved
+        # A later unsuccessful trial must not replace the best iterate.
+        residual(initial)
+        raise TimeoutError
+
+    monkeypatch.setattr(motion, 'solve_trajectory', interrupted_solve)
+    with pytest.raises(TimeoutError):
+        support_geometry.initialize_supported_motion(
+            rig, original, evidence, pose, {}, float('inf'))
+    np.testing.assert_allclose(rig.initial, observed['best'], atol=1e-10)
+
+
+@pytest.mark.parametrize('anchor_shift', [0., .02])
+def test_export_contacts_use_registered_motion_without_replacing_camera_source(monkeypatch, anchor_shift):
+    from exercise_motion_pkg import rig_playback, scene_placement
+
+    names, points = stance(8)
+    camera_points = points + [0.2, 0., 0.]
+    payload = {'fps': 30., 'jointNames': names,
+               'sourcePoseCameraReference': {'retained': True},
+               'renderFloorY': float(points[0, names.index('left_foot'), 1]),
+               'frames': [{'timeSec': i / 30.,
+                           'joints': dict(zip(names, frame.tolist())),
+                           'controlledSourceJoints': dict(zip(names, camera.tolist()))}
+                          for i, (frame, camera) in enumerate(zip(points, camera_points))],
+               'sourceFootSupportEvidence': {'contacts': [
+                   {'jointName': 'left_foot', 'startFrame': 0, 'endFrame': 7,
+                    'contactState': 'full_sole', 'surfaceKind': 'ground'}]}}
+
+    class ReachedPlayback(Exception):
+        pass
+
+    expected = {}
+
+    def relocate_anchors(_constraint, pinned, targets, **_kwargs):
+        targets = targets.copy()
+        targets[:, :, 0][pinned] += anchor_shift
+        expected['targets'] = targets
+        return targets, {'adjustedGroupCount': int(anchor_shift != 0.),
+                         'maximumShiftMeters': anchor_shift}
+
+    def check_export(candidate, **_kwargs):
+        for index, frame in enumerate(candidate['frames']):
+            contact_reference = frame['supportContactReferenceJoints']
+            np.testing.assert_allclose(contact_reference['left_foot'],
+                                       expected['targets'][index, names.index('left_foot')], atol=1e-10)
+            assert np.linalg.norm(np.asarray(frame['controlledSourceJoints']['left_foot'])
+                                  - contact_reference['left_foot']) > .15
+        raise ReachedPlayback
+
+    monkeypatch.setattr(rig_playback, 'validate_rig_playback', check_export)
+    monkeypatch.setattr(scene_placement, 'normalize_scene_placement', lambda candidate: candidate)
+    monkeypatch.setattr(motion, '_align_shared_contact_anchors_to_source_projection', relocate_anchors)
+    with pytest.raises(ReachedPlayback):
+        motion._fit_controlled_motion_impl(payload, max_evaluations=1, timeout_seconds=30.)
+
+
+def test_support_initialization_sparse_jacobian_covers_cross_frame_dependencies(monkeypatch):
+    from exercise_motion_pkg import support_geometry
+
+    names, points = stance(4)
+    rig = motion.FixedRig(points, names)
+    evidence = {'required': True, 'status': 'confirmed',
+                'stationaryJoints': ['left_foot', 'right_foot'],
+                'coplanarGroups': [{'joints': ['left_foot', 'right_foot'],
+                                   'normal': [0., 1., 0.]}]}
+    checked = []
+
+    def inspect_pattern(residual, initial, pattern, *_args, **_kwargs):
+        probe = initial + np.random.default_rng(21).normal(0., .001, initial.shape)
+        numerical = approx_derivative(residual, probe, method='3-point', abs_step=1e-6)
+        declared = pattern.toarray().astype(bool)
+        assert declared.shape == numerical.shape
+        assert not np.any((np.abs(numerical) > 1e-4) & ~declared)
+        checked.append(True)
+        return SimpleNamespace(x=initial, nfev=1)
+
+    monkeypatch.setattr(motion, 'solve_trajectory', inspect_pattern)
+    support_geometry.initialize_supported_motion(
+        rig, points, evidence, points[0], {}, float('inf'))
+    assert checked
+
+
+@pytest.mark.parametrize('shared_group', [False, True])
+def test_source_anchor_adjustment_preserves_pinned_rigid_segment(shared_group):
+    targets = np.tile(np.array([[0., 0., 0.], [0., 0., .1]]), (7, 1, 1))
+    pinned = np.ones((7, 2), dtype=bool)
+    groups = np.tile(['ankle', 'ankle' if shared_group else 'toe'], (7, 1))
+    constraint = {'available': True, 'anchorGroups': groups,
+                  'projection': np.array([[1., 0., 0.], [0., 1., 0.]]),
+                  'offset': np.zeros(2), 'observations': [
+                      {'sharedAnchorGroup': 'ankle', 'jointIndex': 0,
+                       'leftFrame': 0, 'rightFrame': 0, 'alpha': 0.,
+                       'confidenceWeight': 1., 'sourcePoint': np.array([.5, 0.])}]}
+    rig = SimpleNamespace(parents=[-1, 0], offsets=np.array([[0., 0., 0.], [0., 0., .1]]))
+    corrected, report = motion._align_shared_contact_anchors_to_source_projection(
+        constraint, pinned, targets, rig=rig)
+    np.testing.assert_allclose(np.linalg.norm(corrected[:, 1]-corrected[:, 0], axis=-1), .1)
+    if shared_group:
+        assert report['adjustedGroupCount'] == 1
+        np.testing.assert_allclose(corrected[:, :, 0], .5)
+    else:
+        assert report['adjustedGroupCount'] == 0
+        assert report['skippedRigidContactGroupCount'] == 1
+        np.testing.assert_array_equal(corrected, targets)

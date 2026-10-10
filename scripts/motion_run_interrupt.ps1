@@ -7,6 +7,7 @@
 if (-not ("MotionRunInterrupt" -as [type])) {
     Add-Type @"
 using System;
+using System.IO;
 using System.Threading;
 
 public static class MotionRunInterrupt
@@ -15,10 +16,12 @@ public static class MotionRunInterrupt
     private static int _acknowledged;
     private static int _handlerRegistered;
     private static int _silent;
+    private static string _cancelPath;
 
     public static bool CancelRequested
     {
-        get { return Interlocked.CompareExchange(ref _cancelRequested, 0, 0) != 0; }
+        get { return Interlocked.CompareExchange(ref _cancelRequested, 0, 0) != 0 ||
+                     (!String.IsNullOrEmpty(_cancelPath) && File.Exists(_cancelPath)); }
     }
 
     public static bool Acknowledged
@@ -48,6 +51,13 @@ public static class MotionRunInterrupt
             return;
         }
 
+        // Piped child wrappers may not receive the console event themselves.
+        _cancelPath = Environment.GetEnvironmentVariable("EXERCISE_MOTION_CANCEL_PATH");
+        if (String.IsNullOrEmpty(_cancelPath))
+        {
+            _cancelPath = Path.Combine(Path.GetTempPath(), "motion-cancel-" + Guid.NewGuid().ToString("N"));
+            Environment.SetEnvironmentVariable("EXERCISE_MOTION_CANCEL_PATH", _cancelPath);
+        }
         Console.CancelKeyPress += OnCancelKeyPress;
     }
 
@@ -56,10 +66,18 @@ public static class MotionRunInterrupt
         return Interlocked.CompareExchange(ref _acknowledged, 1, 0) == 0;
     }
 
+    public static void RequestCancellation()
+    {
+        Interlocked.Exchange(ref _cancelRequested, 1);
+        try { File.WriteAllText(_cancelPath, "cancelled"); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+    }
+
     private static void OnCancelKeyPress(object sender, ConsoleCancelEventArgs e)
     {
         e.Cancel = true;
-        Interlocked.Exchange(ref _cancelRequested, 1);
+        RequestCancellation();
         if (Silent)
         {
             Interlocked.Exchange(ref _acknowledged, 1);

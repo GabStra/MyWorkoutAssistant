@@ -3033,7 +3033,7 @@ def test_polish_stages_order_contact_before_temporal_before_seam():
     assert stage_fit_refinement_budget(
         10., stage='C', minimum_update_seconds=10.8, prioritize_fit=True) is None
     assert stage_fit_refinement_budget(
-        20., stage='B', minimum_update_seconds=10.8, prioritize_fit=True) == 7.0
+        20., stage='B', minimum_update_seconds=10.8, prioritize_fit=True) == 11.3
     assert not timed_out_stage_c_fit_is_stalled({'jerk', 'loopSeam'}, True)
     assert not timed_out_stage_c_fit_is_stalled({'rootContinuity'}, True)
     assert timed_out_stage_c_fit_is_stalled({'jointShake', 'settling'}, True)

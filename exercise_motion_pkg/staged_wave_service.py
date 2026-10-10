@@ -1,7 +1,9 @@
 """Run staged-wave manifests through one queue-backed Python process."""
 from __future__ import annotations
 
-from contextlib import contextmanager, redirect_stderr, redirect_stdout
+from contextlib import contextmanager
+from contextvars import copy_context
+from exercise_motion_pkg.request_logging import route_request_logs, request_log
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import argparse
@@ -31,6 +33,57 @@ MAX_RETAINED_CONSUMED_RESULTS = 512
 MAX_RETAINED_CANCEL_MARKERS = 512
 ADMISSION_MUTEX_NAME = r"Global\MyWorkoutAssistant.StagedWaveAdmission.v1"
 ADMISSION_MUTEX_PREFIX = r"Global\MyWorkoutAssistant.StagedWaveAdmission.v2."
+
+
+class WaveGpuGate:
+    """Share a wave's VLM slots; serialize extraction and prefer ready reviews."""
+
+    def __init__(self):
+        self.condition = threading.Condition()
+        self.owner = None
+        self.users = 0
+        self.review_waiters = 0
+
+    @contextmanager
+    def phase(self, wave_id, stage, cancelled=lambda: False, *, deadline=None):
+        if stage == "cpu_preparation":
+            yield cancelled
+            return
+        def check_deadline():
+            if deadline is not None and time.perf_counter() >= deadline:
+                from .bake_and_rank import CandidateWallTimeBudgetExpired
+                raise CandidateWallTimeBudgetExpired("Candidate budget expired waiting for the GPU")
+
+        key = (wave_id, stage)
+        review = stage == "final_review"
+        with self.condition:
+            if review:
+                self.review_waiters += 1
+            try:
+                while (self.owner is not None and not (review and self.owner == key)) or (
+                    not review and self.review_waiters > 0
+                ):
+                    if cancelled():
+                        raise KeyboardInterrupt("Motion run was cancelled waiting for the GPU")
+                    check_deadline()
+                    self.condition.wait(timeout=0.25)
+                check_deadline()
+                if cancelled():
+                    raise KeyboardInterrupt("Motion run was cancelled before the next GPU phase")
+                self.owner = key
+                self.users += 1
+            finally:
+                if review:
+                    self.review_waiters -= 1
+                self.condition.notify_all()
+        try:
+            yield
+        finally:
+            with self.condition:
+                self.users -= 1
+                if not self.users:
+                    self.owner = None
+                self.condition.notify_all()
 
 
 def _queue_admission_mutex_name(queue_root: Path) -> str:
@@ -143,13 +196,22 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
         stream.write("\n")
         stream.flush()
         os.fsync(stream.fileno())
-    os.replace(temporary, path)
+    for attempt in range(25):
+        try:
+            os.replace(temporary, path)
+            break
+        except PermissionError:
+            # Windows readers can briefly hold the destination during replacement.
+            if attempt == 24:
+                raise
+            time.sleep(0.02)
 
 
 def _execute_wave_request(
     request: dict[str, Any],
     *,
     render_executor: ThreadPoolExecutor,
+    accelerator_phase=None,
 ) -> dict[str, Any]:
     from exercise_motion_pkg.cli import build_parser, run_staged_bake_wave_manifest
 
@@ -163,6 +225,7 @@ def _execute_wave_request(
         args,
         progress=lambda message: print(message, flush=True),
         render_executor=render_executor,
+        accelerator_phase=accelerator_phase,
     )
     manifest_path = args.staged_wave_manifest.expanduser().resolve()
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -335,6 +398,7 @@ def run_staged_wave_service(
     queue_root: Path,
     *,
     execute_wave: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    recover_only: bool = False,
     poll_interval_seconds: float = 0.2,
     max_wave_items: int = 1,
     idle_timeout_seconds: float = DEFAULT_IDLE_TIMEOUT_SECONDS,
@@ -352,10 +416,11 @@ def run_staged_wave_service(
         timeout_seconds=0,
         stale_after_seconds=0,
     )
-    with service_lease:
+    with service_lease, route_request_logs():
         return _run_staged_wave_service_locked(
             queue_root,
             execute_wave=execute_wave,
+            recover_only=recover_only,
             poll_interval_seconds=poll_interval_seconds,
             max_wave_items=max_wave_items,
             idle_timeout_seconds=idle_timeout_seconds,
@@ -368,6 +433,7 @@ def _run_staged_wave_service_locked(
     queue_root: Path,
     *,
     execute_wave: Callable[[dict[str, Any]], dict[str, Any]] | None,
+    recover_only: bool,
     poll_interval_seconds: float,
     max_wave_items: int,
     idle_timeout_seconds: float,
@@ -433,6 +499,8 @@ def _run_staged_wave_service_locked(
                 status=AMBIGUOUS_RECOVERY_STATUS,
             )
             os.replace(claimed_path, ambiguous / claimed_path.name)
+    if recover_only:
+        return 0
     stop_path.unlink(missing_ok=True)
     _prune_staged_wave_records(queue_root)
 
@@ -489,170 +557,249 @@ def _run_staged_wave_service_locked(
         max_workers=render_prefetch_worker_limit(max(1, int(max_wave_items))),
         thread_name_prefix="motion-render-prefetch-service",
     )
-    executor = execute_wave or (
-        lambda request: _execute_wave_request(request, render_executor=render_executor)
-    )
     processed_count = 0
     idle_since = time.monotonic()
+    active_requests: dict[str, dict[str, Any]] = {}
+    gpu_gate = WaveGpuGate()
+    gpu_lease_count = 0
+    gpu_owner = None
+
+    def publish_active_state():
+        with state_lock:
+            active = [dict(value) for value in active_requests.values()]
+            current = gpu_owner or (active[0] if active else {})
+            state.update(
+                status="running" if active else "idle",
+                currentRequestId=current.get("requestId"),
+                currentWaveId=current.get("waveId"),
+                gpuOwnerWaveId=gpu_owner.get("waveId") if gpu_owner else None,
+                activeRequests=active,
+            )
+        write_state_snapshot()
+
+    def process_request(claimed_path):
+        try:
+            return process_claimed_request(claimed_path)
+        finally:
+            with state_lock:
+                active_requests.pop(claimed_path.stem, None)
+            publish_active_state()
+
+    def process_claimed_request(claimed_path):
+        request_key = claimed_path.stem
+
+        @contextmanager
+        def accelerator_phase(wave_id, stage, *, deadline=None):
+            nonlocal gpu_owner, gpu_lease_count
+            with state_lock:
+                entry = active_requests[request_key]
+                run_id = entry.get("runId")
+                if gpu_owner is None or gpu_owner.get("requestId") != request_key:
+                    entry["phase"] = stage if stage == "cpu_preparation" else "waiting_gpu"
+                    entry["waitingForPhase"] = stage
+            publish_active_state()
+            cancelled = lambda: bool(run_id and (cancelled_runs / f"{run_id}.json").exists())
+            with gpu_gate.phase(wave_id, stage, cancelled, deadline=deadline):
+                if stage == "cpu_preparation":
+                    yield cancelled
+                    return
+                with state_lock:
+                    entry.pop("waitingForPhase", None)
+                    entry["phase"] = stage
+                    gpu_lease_count += 1
+                    gpu_owner = dict(entry)
+                publish_active_state()
+                try:
+                    yield
+                finally:
+                    with state_lock:
+                        gpu_lease_count -= 1
+                        if not gpu_lease_count:
+                            entry["phase"] = "cpu_preparation"
+                            gpu_owner = None
+                    publish_active_state()
+
+        def execute(request):
+            if execute_wave is not None:
+                with accelerator_phase(request["waveId"], "whole_wave"):
+                    return execute_wave(request)
+            return _execute_wave_request(
+                request, render_executor=render_executor, accelerator_phase=accelerator_phase,
+            )
+
+        request_path = requests / claimed_path.name
+        wave_id = claimed_path.stem
+        result_path = results / f"{wave_id}.json"
+        if result_path.exists():
+            claimed_path.unlink(missing_ok=True)
+            request_path.unlink(missing_ok=True)
+            return 0
+        started = time.perf_counter()
+        request_payload: dict[str, Any] = {}
+        error_message = None
+        execution_result: dict[str, Any] = {}
+        execution_completed_successfully = False
+        log_path = None
+        try:
+            decoded_request = json.loads(claimed_path.read_text(encoding="utf-8"))
+            if not isinstance(decoded_request, dict):
+                raise ValueError("Staged-wave service request must be a JSON object")
+            request_payload = decoded_request
+            request_id = _request_id(request_payload, wave_id)
+            wave_id_value = str(request_payload.get("waveId") or "")
+            if not wave_id_value:
+                raise ValueError("Staged-wave request has no wave ID")
+            # The PowerShell supervisor checks this durable field before
+            # stopping shared model services. Publish synchronously
+            # before the executor can enter model/render work; the
+            # periodic heartbeat alone leaves a shutdown race window.
+            with state_lock:
+                active_requests[request_key]["waveId"] = wave_id_value
+            publish_active_state()
+            log_path_value = request_payload.get("logPath")
+            log_path = Path(str(log_path_value)) if log_path_value else None
+            run_id = _request_run_id(request_payload)
+            if (
+                source_identity_fingerprint is not None
+                and request_payload.get("sourceIdentityFingerprint")
+                != source_identity_fingerprint
+            ):
+                error_message = (
+                    "Staged-wave request source identity does not match the "
+                    "loaded service code; request was not executed."
+                )
+            elif (
+                service_configuration_fingerprint is not None
+                and request_payload.get("serviceConfigurationFingerprint")
+                != service_configuration_fingerprint
+            ):
+                error_message = (
+                    "Staged-wave request runtime configuration does not match "
+                    "the loaded service; request was not executed."
+                )
+            elif run_id and (cancelled_runs / f"{run_id}.json").exists():
+                error_message = "Motion run was cancelled before this wave started."
+            else:
+                if log_path is None:
+                    execution_result = execute(request_payload)
+                else:
+                    log_path.parent.mkdir(parents=True, exist_ok=True)
+                    with log_path.open("a", encoding="utf-8", newline="\n") as log_stream:
+                        with request_log(log_stream):
+                            execution_result = execute(request_payload)
+                execution_completed_successfully = True
+        except BaseException as exc:
+            error_message = f"{type(exc).__name__}: {exc}"
+            if log_path is not None:
+                try:
+                    with log_path.open("a", encoding="utf-8", newline="\n") as log_stream:
+                        traceback.print_exc(file=log_stream)
+                except OSError:
+                    pass
+        finally:
+            elapsed = time.perf_counter() - started
+            try:
+                request_id = _request_id(request_payload, wave_id)
+            except (TypeError, ValueError):
+                request_id = wave_id
+            result_wave_id = (
+                str(request_payload.get("waveId") or wave_id)
+                if isinstance(request_payload, dict)
+                else wave_id
+            )
+            request_run_id = (
+                _request_run_id(request_payload)
+                if isinstance(request_payload, dict)
+                else ""
+            )
+            cancelled_without_successful_execution = bool(
+                request_run_id
+                and not execution_completed_successfully
+                and (cancelled_runs / f"{request_run_id}.json").exists()
+            )
+            _publish_result(
+                results,
+                request_id=request_id,
+                wave_id=result_wave_id,
+                exit_code=(
+                    130
+                    if cancelled_without_successful_execution
+                    else (1 if error_message else 0)
+                ),
+                report_path=execution_result.get("reportPath"),
+                error=error_message,
+                elapsed_seconds=elapsed,
+                status=(
+                    "cancelled"
+                    if cancelled_without_successful_execution
+                    else "failed"
+                    if error_message
+                    else "completed"
+                ),
+            )
+            claimed_path.unlink(missing_ok=True)
+        return 1
+
+    request_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="motion-wave-service")
+    running_requests = {}
     try:
         while True:
+            for future in list(running_requests):
+                if future.done():
+                    processed_count += future.result()
+                    del running_requests[future]
+                    idle_since = time.monotonic()
+                    _prune_staged_wave_records(queue_root)
             request_paths = sorted(requests.glob("*.json"), key=_request_enqueued_order)
-            if not request_paths:
+            if not request_paths and not running_requests:
                 stop_requested = stop_path.exists()
                 idle_expired = time.monotonic() - idle_since >= idle_timeout_seconds
                 if stop_requested or idle_expired:
-                    # Producers hold this same OS-level admission lock while
-                    # publishing. Mark stopping before releasing the lock, and
-                    # recheck the queue under the lock, so a producer either
-                    # publishes first (and we keep serving) or observes the
-                    # stopping worker and starts/reuses a fresh one.
                     with staged_wave_admission_lock(queue_root):
-                        request_paths = sorted(
-                            requests.glob("*.json"),
-                            key=_request_enqueued_order,
-                        )
-                        if not request_paths:
-                            stop_requested = stop_path.exists()
-                            idle_expired = (
-                                time.monotonic() - idle_since >= idle_timeout_seconds
-                            )
-                            if stop_requested or idle_expired:
-                                update_state(
-                                    status="stopping",
-                                    currentRequestId=None,
-                                    currentWaveId=None,
-                                )
-                                write_state_snapshot()
-                                break
-                    if not request_paths:
-                        continue
-                else:
-                    time.sleep(max(0.01, poll_interval_seconds))
-                    continue
+                        if not list(requests.glob("*.json")):
+                            update_state(status="stopping", currentRequestId=None, currentWaveId=None, publish=True)
+                            break
             for request_path in request_paths:
+                with state_lock:
+                    active = list(active_requests.values())
+                    can_overlap = bool(active) and all(entry.get("allowCpuPhaseOverlap") is True for entry in active)
+                    cpu_ready = any(entry.get("phase") == "cpu_preparation" for entry in active)
+                if len(running_requests) >= 2 or (running_requests and not (can_overlap and cpu_ready)):
+                    break
+                try:
+                    payload = json.loads(request_path.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    payload = {}
+                if not isinstance(payload, dict):
+                    payload = {}
+                if running_requests and payload.get("allowCpuPhaseOverlap") is not True:
+                    break
                 claimed_path = processing / request_path.name
                 try:
                     os.replace(request_path, claimed_path)
                 except FileNotFoundError:
                     continue
-                wave_id = request_path.stem
-                result_path = results / f"{wave_id}.json"
-                if result_path.exists():
-                    claimed_path.unlink(missing_ok=True)
-                    request_path.unlink(missing_ok=True)
-                    continue
-                started = time.perf_counter()
-                request_payload: dict[str, Any] = {}
-                error_message = None
-                execution_result: dict[str, Any] = {}
-                execution_completed_successfully = False
-                update_state(status="running", currentRequestId=wave_id, currentWaveId=None)
-                log_path = None
-                try:
-                    decoded_request = json.loads(claimed_path.read_text(encoding="utf-8"))
-                    if not isinstance(decoded_request, dict):
-                        raise ValueError("Staged-wave service request must be a JSON object")
-                    request_payload = decoded_request
-                    request_id = _request_id(request_payload, wave_id)
-                    wave_id_value = str(request_payload.get("waveId") or "")
-                    if not wave_id_value:
-                        raise ValueError("Staged-wave request has no wave ID")
-                    # The PowerShell supervisor checks this durable field before
-                    # stopping shared model services. Publish synchronously
-                    # before the executor can enter model/render work; the
-                    # periodic heartbeat alone leaves a shutdown race window.
-                    update_state(
-                        currentRequestId=request_id,
-                        currentWaveId=wave_id_value,
-                        publish=True,
-                    )
-                    log_path_value = request_payload.get("logPath")
-                    log_path = Path(str(log_path_value)) if log_path_value else None
-                    run_id = _request_run_id(request_payload)
-                    if (
-                        source_identity_fingerprint is not None
-                        and request_payload.get("sourceIdentityFingerprint")
-                        != source_identity_fingerprint
-                    ):
-                        error_message = (
-                            "Staged-wave request source identity does not match the "
-                            "loaded service code; request was not executed."
-                        )
-                    elif (
-                        service_configuration_fingerprint is not None
-                        and request_payload.get("serviceConfigurationFingerprint")
-                        != service_configuration_fingerprint
-                    ):
-                        error_message = (
-                            "Staged-wave request runtime configuration does not match "
-                            "the loaded service; request was not executed."
-                        )
-                    elif run_id and (cancelled_runs / f"{run_id}.json").exists():
-                        error_message = "Motion run was cancelled before this wave started."
-                    else:
-                        if log_path is None:
-                            execution_result = executor(request_payload)
-                        else:
-                            log_path.parent.mkdir(parents=True, exist_ok=True)
-                            with log_path.open("a", encoding="utf-8", newline="\n") as log_stream:
-                                with redirect_stdout(log_stream), redirect_stderr(log_stream):
-                                    execution_result = executor(request_payload)
-                        execution_completed_successfully = True
-                except BaseException as exc:
-                    error_message = f"{type(exc).__name__}: {exc}"
-                    if log_path is not None:
-                        try:
-                            with log_path.open("a", encoding="utf-8", newline="\n") as log_stream:
-                                traceback.print_exc(file=log_stream)
-                        except OSError:
-                            pass
-                finally:
-                    elapsed = time.perf_counter() - started
-                    try:
-                        request_id = _request_id(request_payload, wave_id)
-                    except (TypeError, ValueError):
-                        request_id = wave_id
-                    result_wave_id = (
-                        str(request_payload.get("waveId") or wave_id)
-                        if isinstance(request_payload, dict)
-                        else wave_id
-                    )
-                    request_run_id = (
-                        _request_run_id(request_payload)
-                        if isinstance(request_payload, dict)
-                        else ""
-                    )
-                    cancelled_without_successful_execution = bool(
-                        request_run_id
-                        and not execution_completed_successfully
-                        and (cancelled_runs / f"{request_run_id}.json").exists()
-                    )
-                    _publish_result(
-                        results,
-                        request_id=request_id,
-                        wave_id=result_wave_id,
-                        exit_code=(
-                            130
-                            if cancelled_without_successful_execution
-                            else (1 if error_message else 0)
-                        ),
-                        report_path=execution_result.get("reportPath"),
-                        error=error_message,
-                        elapsed_seconds=elapsed,
-                        status=(
-                            "cancelled"
-                            if cancelled_without_successful_execution
-                            else "failed"
-                            if error_message
-                            else "completed"
-                        ),
-                    )
-                    claimed_path.unlink(missing_ok=True)
-                    processed_count += 1
-                    idle_since = time.monotonic()
-                    update_state(status="idle", currentRequestId=None, currentWaveId=None)
-                    _prune_staged_wave_records(queue_root)
+                with state_lock:
+                    active_requests[claimed_path.stem] = {
+                        "requestId": claimed_path.stem,
+                        "waveId": payload.get("waveId"),
+                        "runId": payload.get("runId"),
+                        "phase": "starting",
+                        "allowCpuPhaseOverlap": payload.get("allowCpuPhaseOverlap") is True,
+                    }
+                publish_active_state()
+                future = request_executor.submit(copy_context().run, process_request, claimed_path)
+                running_requests[future] = claimed_path
+            time.sleep(max(0.01, poll_interval_seconds))
+    except BaseException:
+        with state_lock:
+            run_ids = {entry.get("runId") for entry in active_requests.values()}
+        for run_id in run_ids:
+            if run_id:
+                _write_json_atomic(cancelled_runs / f"{run_id}.json", {"runId": run_id})
+        raise
     finally:
+        request_executor.shutdown(wait=True)
         update_state(
             status="stopped",
             currentRequestId=None,
@@ -672,6 +819,7 @@ def _run_staged_wave_service_locked(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Queue-backed staged-wave worker service")
     parser.add_argument("--queue-root", required=True, type=Path)
+    parser.add_argument("--recover-only", action="store_true", help="Recover abandoned claims under the worker lease without executing queued work")
     parser.add_argument("--max-wave-items", type=int, default=1)
     parser.add_argument(
         "--idle-timeout-seconds",
@@ -683,6 +831,7 @@ def main() -> None:
     args = parser.parse_args()
     processed = run_staged_wave_service(
         args.queue_root,
+        recover_only=args.recover_only,
         max_wave_items=args.max_wave_items,
         idle_timeout_seconds=args.idle_timeout_seconds,
         source_identity_fingerprint=args.source_identity_fingerprint or None,
@@ -690,7 +839,10 @@ def main() -> None:
             args.service_configuration_fingerprint or None
         ),
     )
-    print(f"Staged-wave service stopped after {processed} waves.", flush=True)
+    if args.recover_only:
+        print("Staged-wave queue recovery complete; no generation executed.", flush=True)
+    else:
+        print(f"Staged-wave service stopped after {processed} waves.", flush=True)
 
 
 if __name__ == "__main__":

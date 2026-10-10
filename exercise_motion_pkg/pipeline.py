@@ -762,6 +762,7 @@ def _run_generation_pipeline_uncached(
         request=request,
         paths=paths,
         input_video_path=input_video_path,
+        run_extraction_exclusive=run_reconstruction_exclusive,
     )
     active_spinepose_json_dir = spinepose_source.json_dir
     timings["spineposeSource"] = spinepose_source.payload
@@ -1544,6 +1545,7 @@ def resolve_spinepose_json_source(
     request: GenerateRequest,
     paths: PipelinePaths,
     input_video_path: Path,
+    run_extraction_exclusive: Callable[[Callable[[], Any]], Any] | None = None,
 ) -> SpinePoseJsonSource:
     if not request.spinepose_enabled:
         return SpinePoseJsonSource(
@@ -1599,14 +1601,21 @@ def resolve_spinepose_json_source(
             },
         )
 
-    result_payload = run_spinepose_extraction(
-        command=command,
-        input_video_path=input_video_path,
-        output_dir=output_dir,
-        logs_dir=paths.logs_dir,
-        mode=request.spinepose_mode,
-        model_version=request.spinepose_model_version,
-        device=request.spinepose_device,
+    def extract():
+        return run_spinepose_extraction(
+            command=command,
+            input_video_path=input_video_path,
+            output_dir=output_dir,
+            logs_dir=paths.logs_dir,
+            mode=request.spinepose_mode,
+            model_version=request.spinepose_model_version,
+            device=request.spinepose_device,
+        )
+
+    result_payload = (
+        run_extraction_exclusive(extract)
+        if run_extraction_exclusive is not None and _spinepose_uses_gpu(request.spinepose_device)
+        else extract()
     )
     if not _has_spinepose_json_frames(output_dir):
         raise RuntimeError(f"SpinePose command finished but produced no JSON frames in {output_dir}.")

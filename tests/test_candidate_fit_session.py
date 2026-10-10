@@ -610,6 +610,31 @@ def test_abandoned_speculative_fit_raises_instead_of_holding_slot(tmp_path):
                 pass
 
 
+def test_promoted_speculative_fit_keeps_its_own_priority(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    def fit():
+        with fit_runtime.speculative_fit_context(), fit_runtime.candidate_fit_session(tmp_path):
+            assert not fit_runtime.fit_should_yield_for_priority()
+            with fit_runtime.cpu_fit_slot(timeout_seconds=0.5):
+                return 'prepared'
+
+    with fit_runtime.prioritize_fit_workspaces([tmp_path]), ThreadPoolExecutor(max_workers=1) as executor:
+        assert executor.submit(fit).result(timeout=2) == 'prepared'
+
+
+def test_nested_fit_priority_preserves_owner_and_explicit_cancellation(tmp_path):
+    with fit_runtime.speculative_workspace(tmp_path):
+        with fit_runtime.speculative_fit_context(), fit_runtime.candidate_fit_session(tmp_path):
+            with fit_runtime.prioritize_fit_workspaces([tmp_path]):
+                with fit_runtime.prioritize_fit_workspaces([tmp_path]):
+                    assert not fit_runtime.fit_should_yield_for_priority()
+                assert fit_runtime._PRIORITY_WORKSPACES[str(tmp_path.resolve())] == 1
+                fit_runtime.abandon_speculative_workspace(tmp_path)
+                assert fit_runtime.fit_should_yield_for_priority()
+    assert str(tmp_path.resolve()) not in fit_runtime._PRIORITY_WORKSPACES
+
+
 def test_browser_fit_cancellation_is_owned_by_task_not_workspace(tmp_path):
     import pytest
     from exercise_motion_pkg.browser_workers import BrowserWorkers

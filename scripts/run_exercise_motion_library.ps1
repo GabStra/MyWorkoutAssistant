@@ -21,6 +21,9 @@ param(
 
     [int]$StagedWaveSize = 8,
 
+    [ValidateRange(1, 2)]
+    [int]$MaxConcurrentStagedWaves = 1,
+
     [ValidateRange(1, 100000)]
     [int]$FirstPassCandidateBudget = 24,
     [ValidateRange(1, 86400)]
@@ -165,6 +168,7 @@ $runSignatureSource = @(
     "$PrefetchWorkers",
     "$PrefetchQueueDepth",
     "$StagedWaveSize",
+    "$MaxConcurrentStagedWaves",
     "discovery-turns-v1",
     "$FirstPassCandidateBudget", "$FirstPassReviewSeconds",
     "$DeferredCandidateBudget", "$DeferredReviewSeconds", "$StagedWaveMaxWaitSeconds",
@@ -247,10 +251,14 @@ function Invoke-MovementPass {
     if (-not $DisableStagedWaves) {
         $runnerArguments += @(
             "-StagedWaveSize", "$StagedWaveSize",
+            "-MaxConcurrentStagedWaves", "$MaxConcurrentStagedWaves",
             "-GpuDiscoveryBakeOverlap", $GpuDiscoveryBakeOverlap,
             "-WarmGvhmrWorker:`$true",
             "-KeepLlamaCppServer:`$true"
         )
+    }
+    if (-not $DisableStagedWaves -and $MaxConcurrentStagedWaves -gt 1) {
+        $runnerArguments += "-SharedLlamaServer"
     }
     $runnerArguments += $RemainingArguments
 

@@ -487,7 +487,8 @@ def write_preview_html(
     default_auto_alignment_rotations = (
         []
         if authoritative_world_alignment
-        else _compute_preview_auto_alignment(preview_clip.frames)
+        else _compute_preview_auto_alignment(
+            preview_clip.frames, preserve_world_up=_clip_has_explicit_render_floor(preview_clip))
     )
     default_auto_alignment = _serialize_preview_rotations(default_auto_alignment_rotations)
     default_scene_inverted = _aligned_body_points_down(preview_clip.frames, default_auto_alignment_rotations)
@@ -495,7 +496,9 @@ def write_preview_html(
         {
             **loop,
             "autoAlignment": _serialize_preview_rotations(
-                _compute_preview_auto_alignment(preview_clip.frames[loop["startFrame"]: loop["endFrame"] + 1])
+                _compute_preview_auto_alignment(
+                    preview_clip.frames[loop["startFrame"]: loop["endFrame"] + 1],
+                    preserve_world_up=_clip_has_explicit_render_floor(preview_clip))
             ),
         }
         for loop in _detect_preview_loops(preview_clip)
@@ -947,7 +950,8 @@ def build_wear_skeleton_payload(
     active_start_frame = int(selected_loop["startFrame"]) if selected_loop is not None else 0
     active_end_frame = int(selected_loop["endFrame"]) if selected_loop is not None else max(0, preview_clip.frame_count - 1)
     active_frames = preview_clip.frames[active_start_frame:active_end_frame + 1]
-    auto_alignment = _compute_preview_auto_alignment(active_frames)
+    auto_alignment = _compute_preview_auto_alignment(
+        active_frames, preserve_world_up=_clip_has_explicit_render_floor(preview_clip))
     root_joint = _find_root_joint(preview_clip)
     active_root_anchor = None if raw_motion_review else _compute_stable_root_anchor(active_frames, root_joint)
     transformed_frames = _build_wear_transformed_frames(
@@ -980,6 +984,11 @@ def build_wear_skeleton_payload(
         centered_frames,
         active_start_frame=active_start_frame,
     )
+    if _clip_has_explicit_render_floor(preview_clip):
+        plane = preview_clip.metadata["ground"]["renderGroundPlane"]
+        render_floor_y = -float(plane["offset"]) / float(plane["normal"][1]) - scene_origin[1]
+        if wear_coordinate_normalization.get("transform") == "rotate_x_pi":
+            render_floor_y = -render_floor_y
     elevated_support_surfaces = _authoritative_baked_elevated_support_surfaces(
         clip,
         centered_frames,
@@ -1035,7 +1044,9 @@ def detect_preview_loops_for_clip(clip: MotionClip) -> list[dict[str, object]]:
         {
             **loop,
             "autoAlignment": _serialize_preview_rotations(
-                _compute_preview_auto_alignment(preview_clip.frames[loop["startFrame"]: loop["endFrame"] + 1])
+                _compute_preview_auto_alignment(
+                    preview_clip.frames[loop["startFrame"]: loop["endFrame"] + 1],
+                    preserve_world_up=_clip_has_explicit_render_floor(preview_clip))
             ),
         }
         for loop in _detect_preview_loops(preview_clip)
@@ -1298,6 +1309,13 @@ def _wear_skeleton_requires_world_up_correction(
         if not isinstance(joints, dict):
             continue
         head = joints.get("head")
+        pelvis = joints.get("pelvis")
+        neck = joints.get("neck") or joints.get("spine3") or head
+        if _is_serialized_point(pelvis) and _is_serialized_point(neck):
+            torso = [float(neck[axis]) - float(pelvis[axis]) for axis in range(3)]
+            torso_length = math.sqrt(sum(value * value for value in torso))
+            if torso_length > 1e-8 and abs(torso[1]) / torso_length < 0.55:
+                continue
         feet = [joints.get("left_foot"), joints.get("right_foot")]
         valid_feet = [point for point in feet if _is_serialized_point(point)]
         if not _is_serialized_point(head) or not valid_feet:
@@ -2046,6 +2064,17 @@ def _clip_has_authoritative_video_floor_alignment(clip: MotionClip) -> bool:
     return clip_preserves_video_floor_orientation(clip)
 
 
+def _clip_has_explicit_render_floor(clip: MotionClip) -> bool:
+    ground = clip.metadata.get("ground") if isinstance(clip.metadata, dict) else None
+    plane = ground.get("renderGroundPlane") if isinstance(ground, dict) else None
+    if not isinstance(plane, dict):
+        return False
+    normal = plane.get("normal")
+    offset = plane.get("offset")
+    return bool(_is_serialized_point(normal) and abs(float(normal[1])) >= 0.8
+                and isinstance(offset, (int, float)) and math.isfinite(offset))
+
+
 def _center_preview_clip_for_render(clip: MotionClip) -> MotionClip:
     if not clip.frames:
         return clip
@@ -2324,12 +2353,15 @@ def _estimate_preview_movement_plane_yaw_rotation(
 
 def _compute_preview_auto_alignment(
     frames: list[MotionFrame],
+    *,
+    preserve_world_up: bool = False,
 ) -> list[tuple[tuple[float, float, float], float]]:
     if not frames:
         return []
     if _classify_torso_alignment_mode(frames) == "horizontal_plane":
         rotations: list[tuple[tuple[float, float, float], float]] = []
-        leveling_rotation = _estimate_horizontal_spine_leveling_rotation(frames)
+        # Presentation yaw may change; an explicit floor owns pitch and roll.
+        leveling_rotation = None if preserve_world_up else _estimate_horizontal_spine_leveling_rotation(frames)
         aligned_frames = frames
         if leveling_rotation is not None:
             rotations.append(leveling_rotation)
@@ -5595,49 +5627,26 @@ def _build_html(
     }}
 
     function bakedWearFloorCenter() {{
-      // The body owns the floor anchor; reaching limbs only affect framing.
-      const roots = (playbackState.frames ?? []).map(frame =>
-        getFrameRootPoint(frame, "pelvis")).filter(Boolean);
-      if (!roots.length) return bakedWearReviewBounds.center;
-      const median = values => {{
-        values.sort((a, b) => a - b);
-        return (values[Math.floor((values.length - 1) / 2)] + values[Math.floor(values.length / 2)]) / 2;
-      }};
-      return {{ x: median(roots.map(point => point.x)), z: median(roots.map(point => point.z)) }};
-    }}
-
-    function bakedWearSupportExtent() {{
-      // The floor exists under the support path. Airborne or reaching limbs
-      // must not inflate the rendered ground size for traveling movements.
-      const supportJoints = ["pelvis", "left_foot", "right_foot"];
-      let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
-      for (const frame of (playbackState.frames ?? [])) {{
-        const joints = frame?.joints;
-        if (!joints) continue;
-        for (const jointName of supportJoints) {{
-          const point = joints[jointName];
-          if (!Array.isArray(point) || point.length < 3) continue;
-          minX = Math.min(minX, point[0]);
-          maxX = Math.max(maxX, point[0]);
-          minZ = Math.min(minZ, point[2]);
-          maxZ = Math.max(maxZ, point[2]);
-        }}
-      }}
-      if (!Number.isFinite(minX)) return null;
-      return {{ width: maxX - minX, depth: maxZ - minZ }};
+      const bounds = bakedWearReviewBounds.sourceBounds;
+      return {{ x: (bounds.minX + bounds.maxX) * 0.5, z: (bounds.minZ + bounds.maxZ) * 0.5 }};
     }}
 
     function refreshGroundPlacement() {{
       if (renderingBakedWearPayload && bakedWearReviewBounds?.sourceBounds) {{
         const bounds = bakedWearReviewBounds.sourceBounds;
         const height = Math.max(0.001, bounds.maxY - bounds.minY);
-        const supportExtent = bakedWearSupportExtent();
-        // Keep a floor under a stationary body while letting genuine support
-        // travel (jumps, lunges) extend the ground only as far as needed.
-        const minimumExtent = height * 0.75;
-        const width = Math.max(supportExtent ? supportExtent.width : 0.001, minimumExtent);
-        const depth = Math.max(supportExtent ? supportExtent.depth : 0.001, minimumExtent);
-        const floorSize = Math.max(width, depth) * 1.24;
+        const cellSize = 0.25;
+        const divisions = Math.max(1, Math.ceil(
+          Math.max(bounds.maxX - bounds.minX, bounds.maxZ - bounds.minZ) * 1.24 / cellSize
+        ));
+        const floorSize = divisions * cellSize;
+        if (bakedWearGrid.userData.divisions !== divisions) {{
+          const replacement = new THREE.GridHelper(1, divisions, 0x1ed6e3, 0x1ed6e3);
+          bakedWearGrid.geometry.dispose();
+          bakedWearGrid.geometry = replacement.geometry;
+          replacement.material.dispose();
+          bakedWearGrid.userData.divisions = divisions;
+        }}
         const floorY = Number.isFinite(bakedWearRenderFloorY)
           ? bakedWearRenderFloorY
           : bakedWearGroundContactMode === "none"
@@ -8710,7 +8719,10 @@ def _build_html(
     }}
 
     function stableWearReviewBounds(exportPayload, frames) {{
-      const fallback = computeBakedWearBounds(frames);
+      const points = bakedMeshFitPoints(frames);
+      const fallback = computeBakedWearBounds([{{joints: Object.fromEntries(
+        points.map((point, index) => [index, [point.x, point.y, point.z]])
+      )}}]);
       const exported = fallback; // Joint corrections can invalidate saved bounds.
       const finiteOrFallback = (name) => {{
         const value = Number(exported[name]);
@@ -8769,6 +8781,13 @@ def _build_html(
       const normalizedHeadFootOrder = frames.flatMap((frame) => {{
         const joints = frame.joints ?? {{}};
         const head = joints.head;
+        const pelvis = joints.pelvis;
+        const neck = joints.neck ?? joints.spine3 ?? head;
+        if (Array.isArray(pelvis) && Array.isArray(neck)) {{
+          const torso = neck.map((value, axis) => Number(value) - Number(pelvis[axis]));
+          const torsoLength = Math.hypot(...torso);
+          if (torsoLength > 1e-8 && Math.abs(torso[1]) / torsoLength < 0.55) return [];
+        }}
         const feet = [joints.left_foot, joints.right_foot].filter(
           (point) => Array.isArray(point) && point.length >= 3
         );
@@ -9455,7 +9474,6 @@ def _build_html(
         exportPayload?.groundContactMode ?? "unknown"
       ).trim().toLowerCase();
       playbackState = {{ frames, boundsFrames: frames, loopable: exportPayload.loop?.enabled === true, fixedRig: exportPayload.fixedRig ?? null }};
-      bakedWearReviewBounds = stableWearReviewBounds(exportPayload, frames);
       const exportedRenderFloorY = exportPayload?.renderFloorY == null
         ? Number.NaN : Number(exportPayload.renderFloorY);
       bakedWearRenderFloorY = Number.isFinite(exportedRenderFloorY)
@@ -9512,6 +9530,7 @@ def _build_html(
         viewport.style.width = "100vw";
         viewport.style.height = "100vh";
       }}
+      bakedWearReviewBounds = stableWearReviewBounds(exportPayload, frames);
       resize();
       invalidateSceneBoundsCache();
       applySceneReframe();
@@ -10532,6 +10551,11 @@ def _build_html(
     const bakedMeshProjectionCache = new WeakMap();
     function bakedMeshFitPoints(frames) {{
       if (bakedMeshFitCache.has(frames)) return bakedMeshFitCache.get(frames);
+      if (wearStableFrames !== frames) {{
+        wearStableFrames = frames;
+        wearStableSidesByFrame = wearBuildStableSidesByFrame();
+        wearStableBodyAxesByFrame = wearBuildStableBodyAxesByFrame();
+      }}
       const points = [];
       frames.forEach((frame, index) => {{
         const joints = Object.fromEntries(Object.entries(frame.joints ?? {{}})
@@ -10570,7 +10594,18 @@ def _build_html(
       let maxRight = 0.001;
       let maxUp = 0.001;
       let sampled = false;
-      for (const point of cachedFit ? [] : bakedMeshFitPoints(playbackState.frames ?? [])) {{
+      const fitPoints = cachedFit ? [] : [...bakedMeshFitPoints(playbackState.frames ?? [])];
+      if (!cachedFit && bakedWearGrid.visible) {{
+        const halfSize = bakedWearGrid.scale.x * 0.5;
+        for (const x of [-halfSize, halfSize]) {{
+          for (const z of [-halfSize, halfSize]) {{
+            fitPoints.push(new THREE.Vector3(
+              bakedWearGrid.position.x + x, bakedWearGrid.position.y, bakedWearGrid.position.z + z
+            ));
+          }}
+        }}
+      }}
+      for (const point of fitPoints) {{
           sampled = true;
           const offsetX = point.x - center.x;
           const offsetY = point.y - center.y;

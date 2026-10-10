@@ -1367,7 +1367,8 @@ def test_validated_pre_reconstruction_distinct_end_state_blocks_post_reconstruct
     assert authority["authoritative"] is True
     assert authority["reason"] == "exact_pre_reconstruction_distinct_end_state_validated"
     assert len(loops) == 1
-    assert loops[0].loop_index == -1
+    assert loops[0].loop_index == 0
+    assert loops[0].artifact_class == bake_and_rank_module.BOUNDED_MOVEMENT_SELECTION
 
 
 def test_pre_reconstruction_interval_is_authoritative_when_endpoint_contract_is_unavailable(
@@ -8716,8 +8717,17 @@ def test_spinepose_source_resolver_runs_large_v2_cuda_command_by_default(
     source_video.write_bytes(b"video")
     paths = PipelinePaths.create(tmp_path / "workspace", "cat-cow")
     captured: dict[str, object] = {}
+    exclusive_active = False
+    def exclusive(operation):
+        nonlocal exclusive_active
+        exclusive_active = True
+        try:
+            return operation()
+        finally:
+            exclusive_active = False
 
     def fake_run_spinepose_extraction(**kwargs: object) -> dict[str, object]:
+        assert exclusive_active, "SpinePose CUDA extraction bypassed the GPU lease"
         captured.update(kwargs)
         output_dir = Path(kwargs["output_dir"])
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -8746,6 +8756,7 @@ def test_spinepose_source_resolver_runs_large_v2_cuda_command_by_default(
         ),
         paths=paths,
         input_video_path=source_video,
+        run_extraction_exclusive=exclusive,
     )
 
     assert result.json_dir == paths.root / "spinepose_json"
@@ -12117,9 +12128,11 @@ def test_llama_cpp_defaults_use_current_master_qwen35_and_mmproj() -> None:
         "build-master\\bin\\Release\\llama-server.exe"
     )
     assert llama_defaults_module.DEFAULT_LLAMA_CPP_MODEL.endswith(
-        "Qwen3.5-9B-UD-Q4_K_XL.gguf"
+        "Qwen3.5-9B-Q6_K.gguf"
     )
-    assert llama_defaults_module.DEFAULT_LLAMA_CPP_MMPROJ.endswith("mmproj-BF16(6).gguf")
+    assert llama_defaults_module.DEFAULT_LLAMA_CPP_MMPROJ.endswith("mmproj-BF16.gguf")
+    assert llama_defaults_module.DEFAULT_TEXT_LLAMA_CPP_MODEL == llama_defaults_module.DEFAULT_LLAMA_CPP_MODEL
+    assert llama_defaults_module.DEFAULT_EXERCISE_CONTRACT_LLAMA_CPP_MODEL == llama_defaults_module.DEFAULT_LLAMA_CPP_MODEL
     assert llama_defaults_module.DEFAULT_LLAMA_CPP_MTP_MODEL is None
     assert llama_defaults_module.DEFAULT_LLAMA_CPP_SPEC_DRAFT_N_MAX == 3
     assert llama_defaults_module.DEFAULT_LLAMA_CPP_TEMPERATURE == pytest.approx(0.0)
@@ -19959,7 +19972,7 @@ def test_staged_wave_hands_off_shared_llama_before_reconstruction_and_reuses_fin
     ) -> dict[str, object]:
         assert final_request.require_reconstruction_cache is True
         assert final_request.fallback_candidates == 0
-        assert shared_vision_session is sessions[2]
+        assert shared_vision_session is sessions[1]
         assert prepared_candidates == [candidate]
         assert prepared_candidate_video_paths == {
             candidate.workspace_slug: tmp_path / "source.mp4"
@@ -19982,11 +19995,10 @@ def test_staged_wave_hands_off_shared_llama_before_reconstruction_and_reuses_fin
         "exclusive_start_1",
         "reconstruction_generated",
         "exclusive_end_1",
-        "session_1_closed_True",
         "final_validated",
-        "session_2_closed_False",
+        "session_1_closed_False",
     ]
-    assert len(sessions) == 3
+    assert len(sessions) == 2
     assert report["completedExerciseCount"] == 1
     assert report["retryExerciseCount"] == 0
     state = report["items"][0]
@@ -20349,7 +20361,23 @@ def test_generate_candidate_motion_consumes_prepared_cut_without_revalidating_so
         lambda **kwargs: (kwargs["selected_video_path"], 0.0),
     )
 
-    def fake_run_generation(generation_request: object) -> object:
+    gpu_active = False
+    gpu_calls = []
+
+    def exclusive(operation):
+        nonlocal gpu_active
+        assert not gpu_active
+        gpu_active = True
+        try:
+            gpu_calls.append("extraction")
+            return operation()
+        finally:
+            gpu_active = False
+
+    def fake_run_generation(generation_request, *, run_reconstruction_exclusive, raw_motion_validator):
+        assert not gpu_active, "CPU preparation held the GPU"
+        run_reconstruction_exclusive(lambda: gpu_active or pytest.fail("Extraction lacked its GPU lease"))
+        assert not gpu_active, "CPU validation held the GPU"
         generation_requests.append(generation_request)
         return generation_result
 
@@ -20364,8 +20392,10 @@ def test_generate_candidate_motion_consumes_prepared_cut_without_revalidating_so
         request=request,
         source_cut_caption_images=lambda **_kwargs: pytest.fail("source VLM was called"),
         prepared_video_path=prepared_video,
+        run_reconstruction_exclusive=exclusive,
     )
 
+    assert gpu_calls == ["extraction"]
     assert result is generation_result
     assert len(generation_requests) == 1
     assert generation_requests[0].video_path == prepared_video.resolve()
@@ -49282,6 +49312,13 @@ def test_materialized_acceptance_rejects_hard_deterministic_target_motion_failur
         loop_end_seconds=2.0,
         candidate={"videoId": "row"},
     )
+    write_motion_strength_skeleton(item.skeleton_path, [0.0, 0.30, 0.0])
+    payload = json.loads(item.skeleton_path.read_text(encoding="utf-8"))
+    payload["fps"] = 30.0
+    bake_and_rank_module.artifact_state_for_baked_payload(
+        payload, contract=None, selection_class=bake_and_rank_module.FULL_CLIP_BAKE,
+    )
+    item.skeleton_path.write_text(json.dumps(payload), encoding="utf-8")
     ranking = LoopRanking(
         score=0.84,
         reasons=["model_liked_preview"],
@@ -49324,6 +49361,10 @@ def test_materialized_acceptance_rejects_hard_deterministic_target_motion_failur
         },
     )
 
+    monkeypatch.setattr(
+        bake_and_rank_module, "source_selection_clearance_for_review_item",
+        lambda *_args, **_kwargs: {"status": "cleared"},
+    )
     selected = bake_and_rank_module.apply_materialized_output_acceptance_gate(
         (item, ranking),
         request=BakeAndRankRequest(
@@ -49372,6 +49413,13 @@ def test_materialized_acceptance_rejects_deterministic_phase_failure_despite_fin
         loop_end_seconds=2.0,
         candidate={"videoId": "partial"},
     )
+    write_motion_strength_skeleton(item.skeleton_path, [0.0, 0.30, 0.0])
+    payload = json.loads(item.skeleton_path.read_text(encoding="utf-8"))
+    payload["fps"] = 30.0
+    bake_and_rank_module.artifact_state_for_baked_payload(
+        payload, contract=None, selection_class=bake_and_rank_module.FULL_CLIP_BAKE,
+    )
+    item.skeleton_path.write_text(json.dumps(payload), encoding="utf-8")
     ranking = LoopRanking(
         score=0.92,
         reasons=["model_liked_preview"],
@@ -49420,6 +49468,10 @@ def test_materialized_acceptance_rejects_deterministic_phase_failure_despite_fin
         },
     )
 
+    monkeypatch.setattr(
+        bake_and_rank_module, "source_selection_clearance_for_review_item",
+        lambda *_args, **_kwargs: {"status": "cleared"},
+    )
     selected = bake_and_rank_module.apply_materialized_output_acceptance_gate(
         (item, ranking),
         request=BakeAndRankRequest(
@@ -54720,6 +54772,7 @@ def test_source_projection_alignment_preserves_grounded_sole_anchor_group() -> N
         "adjustedGroupCount": 0,
         "maximumShiftMeters": 0.0,
         "skippedGroundAnchoredGroupCount": 1,
+        "skippedRigidContactGroupCount": 0,
     }
 
     # When the support is not ground-anchored, preserve the same shared group
@@ -54734,6 +54787,7 @@ def test_source_projection_alignment_preserves_grounded_sole_anchor_group() -> N
         "adjustedGroupCount": 1,
         "maximumShiftMeters": 1.0,
         "skippedGroundAnchoredGroupCount": 0,
+        "skippedRigidContactGroupCount": 0,
     }
 
 

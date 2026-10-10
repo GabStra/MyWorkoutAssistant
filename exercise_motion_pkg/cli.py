@@ -1295,6 +1295,7 @@ def run_staged_bake_wave_manifest(
     request=None,
     progress=None,
     render_executor=None,
+    accelerator_phase=None,
 ):
     """Execute one serialized staged-wave manifest using shared CLI settings."""
     if args.staged_wave_manifest is None:
@@ -1364,6 +1365,7 @@ def run_staged_bake_wave_manifest(
         wave_id=wave_id,
         progress=progress,
         render_executor=render_executor,
+        accelerator_phase=accelerator_phase,
     )
 
 

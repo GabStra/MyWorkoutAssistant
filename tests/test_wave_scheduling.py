@@ -72,11 +72,13 @@ def test_render_prefetch_setting_controls_overlap_with_unfinished_generation(
         lambda candidate, **k: tmp_path / f'{candidate.video_id}.mp4')
     prefetch_started = threading.Event()
     prefetched = []
+    first_finalized = threading.Event()
 
     def generate(candidate, **kwargs):
         if candidate.exercise_id == 'last':
             if render_prefetch_enabled:
                 assert prefetch_started.wait(3), 'earlier render did not overlap generation'
+                assert first_finalized.wait(3), 'completed exercise waited for the slow sibling reconstruction'
             else:
                 assert not prefetch_started.wait(0.2), 'disabled render prefetch still started'
         return SimpleNamespace(reconstruction_cache_status='generated', reconstruction_results_pkl=None)
@@ -90,6 +92,8 @@ def test_render_prefetch_setting_controls_overlap_with_unfinished_generation(
 
     def finalize(request, **kwargs):
         finalized.extend(candidate.exercise_id for candidate in kwargs['prepared_candidates'])
+        if request.workspace.name == 'first':
+            first_finalized.set()
         return {'selected': {'selectedWearSkeletonPath': str(tmp_path / 'wear.json')}}
 
     monkeypatch.setattr(wave, 'generate_candidate_motion', generate)
@@ -103,9 +107,12 @@ def test_render_prefetch_setting_controls_overlap_with_unfinished_generation(
     assert report['metrics']['renderPrefetchWorkers'] == (1 if render_prefetch_enabled else 0)
 
 
-def test_persistent_render_prefetch_is_drained_before_wave_returns(tmp_path, monkeypatch):
+@pytest.mark.parametrize("use_service_phases", [False, True])
+def test_persistent_render_prefetch_is_drained_before_wave_returns(tmp_path, monkeypatch, use_service_phases):
     from concurrent.futures import ThreadPoolExecutor
-    from exercise_motion_pkg import resource_budget
+    from exercise_motion_pkg import resource_budget, fit_runtime
+    if use_service_phases:
+        monkeypatch.setattr(fit_runtime, 'DEFAULT_CANDIDATE_FIT_BUDGET_SECONDS', 0.05)
 
     monkeypatch.setenv("EXERCISE_MOTION_RENDER_PREFETCH", "on")
 
@@ -150,12 +157,23 @@ def test_persistent_render_prefetch_is_drained_before_wave_returns(tmp_path, mon
         return {'status': 'prepared'}
 
     def finalize(request, **kwargs):
-        finalization_finished.set()
+        if request.workspace.name == 'first':
+            assert prefetch_finished.is_set(), 'finalization duplicated an active preparation'
+            finalization_finished.set()
+        kwargs['shared_vision_session'].caption_images()
         return {'selected': {'selectedWearSkeletonPath': str(tmp_path / 'wear.json')}}
 
     monkeypatch.setattr(wave, 'generate_candidate_motion', generate)
     monkeypatch.setattr(wave, 'prepare_cpu_render_cache', prefetch)
     monkeypatch.setattr(wave, 'run_bake_and_rank_pipeline', finalize)
+
+    from contextlib import contextmanager
+    phases = []
+
+    @contextmanager
+    def accelerator_phase(wave_id, stage):
+        phases.append(stage)
+        yield lambda: False
 
     shared_render_executor = ThreadPoolExecutor(max_workers=1)
     wave_executor = ThreadPoolExecutor(max_workers=1)
@@ -166,15 +184,20 @@ def test_persistent_render_prefetch_is_drained_before_wave_returns(tmp_path, mon
             workspace=tmp_path / 'wave',
             wave_id='persistent-prefetch',
             render_executor=shared_render_executor,
+            accelerator_phase=accelerator_phase if use_service_phases else None,
         )
         assert prefetch_started.wait(3)
-        assert finalization_finished.wait(3)
+        assert not finalization_finished.wait(0.1), 'finalization duplicated an active preparation'
         assert not future.done(), 'wave returned while its persistent prefetch was still running'
 
         allow_prefetch_to_finish.set()
         report = future.result(timeout=3)
         assert prefetch_finished.is_set()
         assert report['completedExerciseCount'] == 2
+        if use_service_phases:
+            assert phases[0] == 'source_and_generation'
+            assert phases.count('final_review') == 2
+            assert phases[-1] == 'reconstruction'
         from exercise_motion_pkg import fit_runtime
         speculative_workspace = items[0].request.workspace / candidates['first'].workspace_slug
         assert not fit_runtime.active_speculative_workspace(speculative_workspace)

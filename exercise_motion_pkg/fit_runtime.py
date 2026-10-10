@@ -17,7 +17,7 @@ _CURRENT = ContextVar('movement_fit_session', default=None)
 _SPECULATIVE_FIT = ContextVar('speculative_fit', default=False)
 _FIT_GUARD = threading.Condition(threading.Lock())
 _FIT_IN_USE = 0
-_PRIORITY_WORKSPACES: set[str] = set()
+_PRIORITY_WORKSPACES: dict[str, int] = {}
 _ACTIVE_SPECULATIVE_WORKSPACES: set[str] = set()
 _ABANDONED_SPECULATIVE_WORKSPACES: set[str] = set()
 
@@ -133,11 +133,13 @@ def fit_should_yield_for_priority() -> bool:
         speculative = bool(_SPECULATIVE_FIT.get())
         if not speculative:
             return False
+        if workspace is not None and workspace in _ABANDONED_SPECULATIVE_WORKSPACES:
+            return True
         if _PRIORITY_DEPTH.get() > 0:
             # This thread's own finalization owns the priority: yielding to it
             # would abort the fit that finalization is waiting for.
             return False
-        return bool(_PRIORITY_WORKSPACES) or (
+        return (bool(_PRIORITY_WORKSPACES) and workspace not in _PRIORITY_WORKSPACES) or (
             workspace is not None and workspace in _ABANDONED_SPECULATIVE_WORKSPACES
         )
 
@@ -153,13 +155,19 @@ def prioritize_fit_workspaces(workspaces):
             yield
             return
         with _FIT_GUARD:
-            _PRIORITY_WORKSPACES.update(keys)
+            for key in keys:
+                _PRIORITY_WORKSPACES[key] = _PRIORITY_WORKSPACES.get(key, 0) + 1
             _FIT_GUARD.notify_all()
         try:
             yield
         finally:
             with _FIT_GUARD:
-                _PRIORITY_WORKSPACES.difference_update(keys)
+                for key in keys:
+                    remaining = _PRIORITY_WORKSPACES[key] - 1
+                    if remaining:
+                        _PRIORITY_WORKSPACES[key] = remaining
+                    else:
+                        del _PRIORITY_WORKSPACES[key]
                 _FIT_GUARD.notify_all()
     finally:
         _PRIORITY_DEPTH.reset(token)
@@ -194,7 +202,7 @@ def cpu_fit_slot(*, timeout_seconds=None):
             and workspace in _ABANDONED_SPECULATIVE_WORKSPACES
         )
         priority_blocked = (
-            not own_priority
+            not priority
             and (
                 (speculative and bool(_PRIORITY_WORKSPACES))
                 or (

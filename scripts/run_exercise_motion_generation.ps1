@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$ExerciseSlug,
     [string]$ExerciseName,
 
@@ -34,8 +34,8 @@ param(
     [switch]$UseSourceAsIs,
     [double]$SegmentStartSeconds = -1.0,
     [double]$SegmentEndSeconds = -1.0,
-    [string]$LlamaCppModel = "C:\\Users\\gabri\\Downloads\\Qwen3.5-9B-UD-Q4_K_XL.gguf",
-    [string]$LlamaCppMmproj = "C:\\Users\\gabri\\Downloads\\mmproj-BF16(6).gguf",
+    [string]$LlamaCppModel = (Join-Path (Split-Path -Parent $PSScriptRoot) "models/Qwen3.5-9B-Q6_K/Qwen3.5-9B-Q6_K.gguf"),
+    [string]$LlamaCppMmproj = (Join-Path (Split-Path -Parent $PSScriptRoot) "models/Qwen3.5-9B-Q6_K/mmproj-BF16.gguf"),
     [AllowEmptyString()]
     [string]$LlamaCppMtpModel = "",
     [int]$LlamaCppSpecDraftNMax = 3,

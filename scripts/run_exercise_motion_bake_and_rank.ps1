@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Mandatory = $true)]
     [string]$CandidatesJson,
 
@@ -64,9 +64,9 @@ param(
     [switch]$SkipFinalOutputValidation,
     [double]$FinalOutputValidationMinScore = 0.90,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
-    [string]$LlamaCppModel = "C:\Users\gabri\Downloads\Qwen3.5-9B-UD-Q4_K_XL.gguf",
+    [string]$LlamaCppModel = (Join-Path (Split-Path -Parent $PSScriptRoot) "models/Qwen3.5-9B-Q6_K/Qwen3.5-9B-Q6_K.gguf"),
     [string]$LlamaCppServerCommand = "C:\Users\gabri\Documents\llama.cpp\build-master\bin\Release\llama-server.exe",
-    [string]$LlamaCppMmproj = "C:\Users\gabri\Downloads\mmproj-BF16(6).gguf",
+    [string]$LlamaCppMmproj = (Join-Path (Split-Path -Parent $PSScriptRoot) "models/Qwen3.5-9B-Q6_K/mmproj-BF16.gguf"),
     [AllowEmptyString()]
     [string]$LlamaCppMtpModel = "",
     [int]$LlamaCppSpecDraftNMax = 3,
@@ -87,7 +87,7 @@ param(
     [string]$LlamaCppCacheTypeK = "q8_0",
     [ValidateSet("f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1")]
     [string]$LlamaCppCacheTypeV = "q8_0",
-    [Nullable[int]]$LlamaCppParallel = 6,
+    [Nullable[int]]$LlamaCppParallel = 3,
     [Nullable[int]]$LlamaCppThreadsHttp = 8,
     [Nullable[int]]$LlamaCppCacheReuse = $null,
     [ValidateSet("on", "off")]
@@ -167,7 +167,7 @@ function Get-BasicPythonCommand {
 }
 
 function Ensure-LlamaCppParallelContext {
-    $minContextPerSlot = 4096
+    $minContextPerSlot = 16384
     $parallelSlots = if ($null -ne $LlamaCppParallel) { [Math]::Max(1, [int]$LlamaCppParallel) } else { 1 }
     $minTotalContext = $parallelSlots * $minContextPerSlot
     if ($null -ne $LlamaCppCtxSize -and $LlamaCppCtxSize -lt $minTotalContext) {

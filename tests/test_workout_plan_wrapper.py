@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -10,6 +11,105 @@ import time
 from pathlib import Path
 
 import pytest
+
+
+def test_motion_cancellation_reaches_piped_child_wrapper(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    helper = str(repo_root / "scripts/motion_run_interrupt.ps1").replace("'", "''")
+    marker = str(tmp_path / "cancel").replace("'", "''")
+    child = tmp_path / "child.ps1"
+    child.write_text(
+        f". '{helper}'\nWrite-Output 'ready'\n"
+        "$deadline = [DateTime]::UtcNow.AddSeconds(10)\n"
+        "while (-not (Test-MotionRunCancelRequested)) {\n"
+        "    if ([DateTime]::UtcNow -ge $deadline) { exit 1 }\n"
+        "    Start-Sleep -Milliseconds 50\n"
+        "}\nexit 130\n",
+        encoding="utf-8",
+    )
+    child_path = str(child).replace("'", "''")
+    command = f"""
+    $ErrorActionPreference = 'Stop'
+    $env:EXERCISE_MOTION_CANCEL_PATH = '{marker}'
+    . '{helper}'
+    if (Test-MotionRunCancelRequested) {{ throw 'Cancellation was already set' }}
+    & pwsh -NoProfile -File '{child_path}' 2>&1 | ForEach-Object {{
+        if ("$_" -eq 'ready') {{ [MotionRunInterrupt]::RequestCancellation() }}
+    }}
+    if ($LASTEXITCODE -ne 130) {{ throw "Child did not receive cancellation: $LASTEXITCODE" }}
+    exit 0
+    """
+    result = subprocess.run(["pwsh", "-NoProfile", "-Command", command], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows process-tree shutdown")
+def test_cancellation_stops_idle_staged_worker(tmp_path: Path) -> None:
+    wrapper = Path(__file__).resolve().parents[1] / "scripts/run_exercise_motion_workout_plan.ps1"
+    command = r"""
+    $ErrorActionPreference = 'Stop'
+    $tokens = $null; $errors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($env:MOTION_WRAPPER_PATH, [ref]$tokens, [ref]$errors)
+    foreach ($function in $ast.FindAll({ param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -in @('Get-StagedBakeQueueServiceState', 'Stop-StagedBakeQueueServiceProcessTree', 'Stop-StagedBakeQueueService')
+    }, $true)) { Invoke-Expression $function.Extent.Text }
+    function Convert-ReconstructionMetadata { param($Value) return $Value }
+    function Test-MotionRunCancelRequested { return $true }
+    $script:StagedWaveServiceQueueRoot = $env:MOTION_TEST_ROOT
+    $movementRunId = 'cancel-idle-test'
+    $worker = Start-Process -FilePath $env:MOTION_TEST_PYTHON -ArgumentList @('-c', '"import time; time.sleep(30)"') -WindowStyle Hidden -PassThru
+    try {
+        @{schemaVersion=1; queueRoot=$script:StagedWaveServiceQueueRoot; pid=$worker.Id; processIdentity=$worker.StartTime.ToUniversalTime().ToFileTimeUtc();
+          currentWaveId=$null; status='idle'; updatedAtEpoch=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()/1000.0} |
+            ConvertTo-Json | Set-Content (Join-Path $script:StagedWaveServiceQueueRoot 'worker_state.json')
+        $confirmed = Stop-StagedBakeQueueService -Cancel
+        if (-not $confirmed -or -not $worker.WaitForExit(1000)) { throw 'Cancellation left the idle worker alive' }
+    } finally {
+        if (-not $worker.HasExited) { $worker.Kill() }
+        $worker.Dispose()
+    }
+    """
+    environment = dict(os.environ, MOTION_WRAPPER_PATH=str(wrapper), MOTION_TEST_ROOT=str(tmp_path), MOTION_TEST_PYTHON=sys.executable)
+    result = subprocess.run(["pwsh", "-NoProfile", "-Command", command], env=environment, capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_workout_plan_bake_flags_are_supported_by_cli() -> None:
+    from exercise_motion_pkg.cli import build_parser
+
+    repo_root = Path(__file__).resolve().parents[1]
+    script = (repo_root / "scripts/run_exercise_motion_workout_plan.ps1").read_text(encoding="utf-8")
+    bake_arguments = script.split("$bakeArgs = @(", 1)[1].split("\n    $workItems +=", 1)[0]
+    # Check argument declarations, including optional flags, without running models.
+    flags = set(re.findall(r'"(--[a-z][a-z0-9-]*)"', bake_arguments))
+    parser = build_parser()
+    subcommands = next(action for action in parser._actions if action.dest == "command")
+    accepted = set(subcommands.choices["bake-and-rank"]._option_string_actions)
+    assert flags <= accepted, f"Unsupported bake flags: {sorted(flags - accepted)}"
+
+
+def test_background_jobs_load_reconstruction_metadata_helper() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = (repo_root / "scripts/run_exercise_motion_workout_plan.ps1").read_text(encoding="utf-8")
+    setup = re.search(
+        r"(?m)^\$reconstructionCompatPath = .*\n\$script:ReconstructionJobInitialization = .*",
+        script,
+    )
+    assert setup is not None
+    scripts_path = str(repo_root / "scripts").replace("'", "''")
+    command = setup.group().replace("$PSScriptRoot", f"'{scripts_path}'") + """
+    $ErrorActionPreference = 'Stop'
+    $job = Start-Job -InitializationScript $script:ReconstructionJobInitialization -ScriptBlock {
+        '{"wham":{"value":1}}' | ConvertFrom-Json | Convert-ReconstructionMetadata | ConvertTo-Json -Compress
+    }
+    try {
+        $result = Receive-Job $job -Wait -ErrorAction Stop
+        if (($result | ConvertFrom-Json).reconstruction.value -ne 1) { throw 'Metadata conversion failed' }
+    } finally { Remove-Job $job -Force }
+    """
+    result = subprocess.run(["pwsh", "-NoProfile", "-Command", command], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def write_fake_motion_cli(tmp_path: Path) -> tuple[Path, Path]:
@@ -2002,9 +2102,9 @@ def test_staged_wave_producer_retries_if_idle_worker_closed_admission(tmp_path: 
         $functionAsts = $ast.FindAll({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
-                $node.Name -in @('Invoke-WithStagedWaveAdmissionLock', 'Publish-StagedBakeQueueRequest')
+                $node.Name -in @('Get-StagedWaveAdmissionMutexNames', 'Invoke-WithStagedWaveAdmissionLock', 'Publish-StagedBakeQueueRequest')
         }, $true)
-        if ($functionAsts.Count -ne 2) { throw 'Staged-wave admission functions were not found.' }
+        if ($functionAsts.Count -ne 3) { throw 'Staged-wave admission functions were not found.' }
         foreach ($functionAst in $functionAsts) { Invoke-Expression $functionAst.Extent.Text }
 
         $script:ensureCount = 0
@@ -2448,3 +2548,48 @@ def test_workout_plan_wrapper_preserves_bake_attempt_manifests() -> None:
     assert "Save-AttemptSelectionManifest" in script
     assert "best_no_selection_manifest.json" in script
     assert "Restore-BestNoSelectionManifest" in script
+
+
+@pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None, reason="Windows PowerShell startup guard")
+@pytest.mark.parametrize("owner", ["cancelled", "uncancelled", "live"])
+def test_startup_recovers_only_dead_staged_claims(tmp_path: Path, owner: str) -> None:
+    root = tmp_path / "workspace"
+    queue = root / "staged-wave-services" / "v1"
+    (queue / "processing").mkdir(parents=True)
+    request = {"requestId": "old-request", "waveId": "old-wave", "runId": "old-run"}
+    claim = queue / "processing" / "old-request.json"
+    claim.write_text(json.dumps(request), encoding="utf-8")
+    if owner != "uncancelled":
+        (queue / "cancelled_runs").mkdir()
+        (queue / "cancelled_runs" / "old-run.json").write_text("{}")
+    wrapper = Path(__file__).resolve().parents[1] / "scripts/run_exercise_motion_workout_plan.ps1"
+    command = r"""
+    $ErrorActionPreference = 'Stop'
+    $errors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($env:MOTION_WRAPPER_PATH, [ref]$null, [ref]$errors)
+    $node = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Assert-StagedWaveWorkspaceIsQuiescent' }, $true)
+    . ([scriptblock]::Create($node.Extent.Text))
+    function Invoke-WithStagedWaveAdmissionLock { param($QueueRoot, $Operation) & $Operation }
+    function Get-StagedBakeQueueServiceState {
+        param($QueueRoot)
+        [pscustomobject]@{ processState = $(if ($env:MOTION_OWNER -eq 'live') {'running'} else {'stopped'});
+            matchingProcess = ($env:MOTION_OWNER -eq 'live'); healthy = $true;
+            state = [pscustomobject]@{ status = 'running'; currentRequestId='old-request'; currentWaveId='old-wave' } }
+    }
+    $PythonCommand = $env:MOTION_TEST_PYTHON
+    Assert-StagedWaveWorkspaceIsQuiescent -WorkspaceRoot $env:MOTION_TEST_WORKSPACE
+    """
+    environment = dict(os.environ, MOTION_WRAPPER_PATH=str(wrapper), MOTION_TEST_WORKSPACE=str(root),
+                       MOTION_TEST_PYTHON=sys.executable, MOTION_OWNER=owner)
+    result = subprocess.run(["pwsh", "-NoProfile", "-Command", command], env=environment,
+                            cwd=wrapper.parents[1], capture_output=True, text=True, timeout=30)
+    if owner == "cancelled":
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert not claim.exists()
+        terminal = json.loads((queue / "results" / "old-request.json").read_text())
+        assert terminal["status"] == "cancelled"
+        assert json.loads((queue / "consumed" / "old-request.request.json").read_text()) == request
+    else:
+        assert result.returncode != 0
+        assert "Resolve this queue" in result.stdout + result.stderr
+        assert (claim if owner == "live" else queue / "ambiguous" / claim.name).is_file()

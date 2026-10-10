@@ -121,7 +121,7 @@ android {
 dependencies {
     implementation(project(":shared"))
     implementation(project(":motion-renderer"))
-    implementation("androidx.wear.compose:compose-material-core:1.7.0")
+    implementation("androidx.wear.compose:compose-material-core:1.7.1")
     implementation("androidx.navigation:navigation-compose:2.10.2")
     implementation("androidx.compose.ui:ui-graphics:1.12.1")
 
@@ -142,10 +142,10 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 
     // Wear Compose
-    implementation("androidx.wear.compose:compose-material3:1.7.0")
-    implementation("androidx.wear.compose:compose-navigation:1.7.0")
-    implementation("androidx.wear.compose:compose-ui-tooling:1.7.0")
-    implementation("androidx.wear.compose:compose-foundation:1.7.0")
+    implementation("androidx.wear.compose:compose-material3:1.7.1")
+    implementation("androidx.wear.compose:compose-navigation:1.7.1")
+    implementation("androidx.wear.compose:compose-ui-tooling:1.7.1")
+    implementation("androidx.wear.compose:compose-foundation:1.7.1")
 
     // AndroidX / Google
     implementation("androidx.core:core-ktx:1.19.1")
@@ -166,7 +166,7 @@ dependencies {
 
     // Data / utils
     implementation("androidx.room:room-ktx:2.8.5")
-    implementation("com.google.guava:guava:33.7.1-android")
+    implementation("com.google.guava:guava:33.7.2-android")
     implementation("com.google.code.gson:gson:2.14.0")
 
     // Polar SDK + Rx

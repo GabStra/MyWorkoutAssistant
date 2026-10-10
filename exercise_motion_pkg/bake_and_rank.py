@@ -610,7 +610,7 @@ SOURCE_CUT_BOUNDARY_AUDIT_FRAME_COUNT = 12
 SOURCE_CUT_BOUNDARY_AUDIT_TILE_WIDTH = 480
 SOURCE_CUT_BOUNDARY_AUDIT_JPEG_QUALITY = 92
 DEFAULT_FINAL_OUTPUT_VALIDATION_MIN_SCORE = 0.90
-SELECTION_VALIDATION_POLICY_VERSION = 128
+SELECTION_VALIDATION_POLICY_VERSION = 129
 FINAL_OUTPUT_VALIDATION_POLICY_VERSION = 82
 RETAINED_SELECTED_REVALIDATION_VERSION = 18
 # These policy versions isolate source-review caches from unrelated edits to
@@ -4997,6 +4997,8 @@ def choose_top_materialized_review_items(
 
 def selected_artifact_score(selected: SelectedArtifact) -> float:
     _item, ranking = selected
+    if materialized_output_was_rejected(selected):
+        return 0.0
     if ranking is None:
         return 1.0
     if selection_blocking_ranking_reason(ranking) is not None:
@@ -5788,10 +5790,12 @@ def apply_materialized_output_acceptance_gate(
             "invalid", "motion_output", tuple(rejection_reasons), True
         ).to_dict()
         payload["materializedValidationStatus"] = "rejected"
+        payload["materializedOutputRejected"] = True
+        payload["materializedOutputRejectionReasons"] = rejection_reasons
         payload["materializedHardRejectionReasons"] = rejection_reasons
         payload["materializedWarnings"] = []
         payload["manualBoundaryReviewRequired"] = False
-        return item, replace(ranking, payload=payload)
+        return item, replace(ranking, score=0.0, model_score=0.0, payload=payload)
     persist_reconciled_review_item_artifact_state(item, artifact_state)
     if selected[1] is None:
         if source_clearance.get("status") in {"cleared", "not_required"}:
@@ -13200,9 +13204,9 @@ def source_confirmed_support_stationarity_metrics(
 ) -> dict[str, Any]:
     """Check that RECONSTRUCTION preserves support which is stationary in source pixels.
 
-    Unsupported, moving, or unavailable feet do not fail it. Full-clip
-    continuous support is judged against the same planted-foot limits used on
-    source pixels, not a tighter 2D-stillness bound.
+    Unsupported, moving, or unavailable feet do not fail it. Full-clip ankle
+    proxies retain their articulation allowance; explicitly observed contact
+    patches use the local planted-contact limit, including full-clip plants.
     """
     frames = motion_frames_from_export_payload(motion_payload)
     # Cycle selection rebases contact intervals onto the exported frames.
@@ -13350,13 +13354,16 @@ def source_confirmed_support_stationarity_metrics(
                 evaluated_intervals.append(interval_metric)
                 continue
             if interval.get("anchorGroupId"):
+                # Relocation compares episode anchors; sliding is measured below.
+                anchor_samples = points[:max(3, math.ceil(len(points) * 0.10))]
                 observed_anchor_points.setdefault(
                     (
                         joint_name,
                         str(interval["anchorGroupId"]),
                         interval.get("airborneEpoch"),
                     ), []
-                ).extend(points)
+                ).append([statistics.median(point[axis] for point in anchor_samples)
+                          for axis in range(3)])
             axis_ranges = [
                 max(point[axis] for point in points) - min(point[axis] for point in points)
                 for axis in range(3)
@@ -13365,14 +13372,15 @@ def source_confirmed_support_stationarity_metrics(
             vertical_range_ratio = axis_ranges[1] / body_span
             endpoint_displacement_ratio = math.dist(points[0], points[-1]) / body_span
             is_full_clip_interval = start_frame == 0 and end_frame == len(frames) - 1
+            full_clip_proxy = is_full_clip_interval and interval.get("supportKind") != "observed_foot_patch"
             interval_range_threshold = (
                 chunk_range_threshold
-                if is_full_clip_interval
+                if full_clip_proxy
                 else SOURCE_POSE_CONTACT_LOCAL_RANGE_RATIO_THRESHOLD
             )
             interval_endpoint_threshold = (
                 endpoint_threshold
-                if is_full_clip_interval
+                if full_clip_proxy
                 else SOURCE_POSE_CONTACT_LOCAL_RANGE_RATIO_THRESHOLD
             )
             # Keep the same planted-foot limits used on source pixels.
@@ -23068,8 +23076,8 @@ def generate_candidate_motion(
         kwargs: dict[str, Any] = {}
         if callable_accepts_keyword(run_generation_pipeline, "raw_motion_validator"):
             kwargs["raw_motion_validator"] = validate_raw_motion
-        if callable_accepts_keyword(run_generation_pipeline, "run_processing_exclusive"):
-            kwargs["run_processing_exclusive"] = run_reconstruction_exclusive
+        if callable_accepts_keyword(run_generation_pipeline, "run_reconstruction_exclusive"):
+            kwargs["run_reconstruction_exclusive"] = run_reconstruction_exclusive
             return run_generation_pipeline(active_request, **kwargs)
         if run_reconstruction_exclusive is not None:
             return run_reconstruction_exclusive(lambda: run_generation_pipeline(active_request, **kwargs))
@@ -23793,9 +23801,11 @@ def build_candidate_review_eligible_loops(
     if bool(source_interval_authority.get("authoritative")):
         movement_instance = source_interval_authority.get("movementInstance")
         if (
-            isinstance(movement_instance, dict)
+            source_interval_authority.get("reason") == "exact_pre_reconstruction_distinct_end_state_validated"
+            or isinstance(movement_instance, dict)
             and movement_instance.get("completionMode") == "distinct_end_state"
         ):
+            movement_instance = movement_instance if isinstance(movement_instance, dict) else {}
             end_ratio = parse_optional_float(movement_instance.get("endRatio"))
             frame_count = int(getattr(cleaned_clip, "frame_count", 0) or 0)
             fps = max(float(getattr(cleaned_clip, "fps", 30.0) or 30.0), 1e-9)

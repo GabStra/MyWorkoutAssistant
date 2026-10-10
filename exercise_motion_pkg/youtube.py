@@ -37,6 +37,7 @@ from exercise_motion_pkg.shared_llama_server import (
 # whole generation phase; attached clients keep extending their wait while a
 # live foreign generation holder owns the GPU, bounded by this ceiling.
 FOREIGN_GENERATION_MAX_WAIT_SECONDS = 20 * 60.0
+_SHARED_POSE_HANDOFF_LOCK = threading.Lock()
 from exercise_motion_pkg.llama_defaults import (
     DEFAULT_LLAMA_CPP_BATCH_SIZE,
     DEFAULT_LLAMA_CPP_CACHE_TYPE_K,
@@ -6359,11 +6360,21 @@ def exercise_motion_contract_prompt_body(prompt_contract: dict[str, Any]) -> str
         for key in EXERCISE_MOTION_CONTRACT_PROMPT_FIELD_KEYS
         if key in prompt_contract
     }
-    authority = contract_field_authority(str(prompt_contract.get("exerciseName") or ""), structured)
+    authority = {
+        key: field
+        for key, field in contract_field_authority(
+            str(prompt_contract.get("exerciseName") or ""), structured
+        ).items()
+        if field["required"]
+    }
+    # Omit only the synthesized summary; custom prose may contain additional requirements.
+    if advisory_text == synthesize_exercise_motion_advisory_text(structured):
+        advisory_text = ""
     return (
-        f"{advisory_text}\n"
-        f"{single_dumbbell_naming_requirement(str(prompt_contract.get('exerciseName') or ''))}"
-        "Generated guidance is advisory, including carry position and endpoint expectations. "
+        (f"{advisory_text}\n" if advisory_text else "")
+        + f"{single_dumbbell_naming_requirement(str(prompt_contract.get('exerciseName') or ''))}"
+        "All structured fields are generated advisory expectations unless listed in Field authority, "
+        "including carry position and endpoint expectations. "
         "Only explicit target requirements can establish a variant mismatch. "
         "Check equipment and implement count in the source video; the skeleton intentionally omits equipment. "
         "An obscured implement count is uncertain, not a mismatch. Apart from explicit naming requirements, "
@@ -7758,25 +7769,50 @@ def rank_candidate_with_yolo_pose(
             settings.youtube_cookies,
             cache_dir=settings.youtube_preview_cache_dir,
         )
-        result = run_yolo_pose_prefilter(
-            video_path=video_path,
-            settings=PosePrefilterSettings(
-                model=settings.pose_prefilter_model,
-                sample_fps=settings.pose_prefilter_sample_fps,
-                max_seconds=settings.pose_prefilter_max_seconds,
-                scan_strategy=settings.pose_prefilter_scan_strategy,
-                window_seconds=settings.pose_prefilter_window_seconds,
-                overlap_seconds=settings.pose_prefilter_overlap_seconds,
-                min_score=settings.pose_prefilter_min_score,
-                min_keypoint_confidence=settings.pose_prefilter_min_keypoint_confidence,
-                min_body_scale=settings.pose_prefilter_min_body_scale,
-                max_candidates=settings.resolved_pose_prefilter_candidates_per_exercise(),
-                device=settings.pose_prefilter_device,
-                batch_size=settings.pose_prefilter_batch_size,
-                target_exercise_name=exercise.name,
-                target_motion_contract=exercise_motion_contract,
-            ),
+        pose_settings = PosePrefilterSettings(
+            model=settings.pose_prefilter_model,
+            sample_fps=settings.pose_prefilter_sample_fps,
+            max_seconds=settings.pose_prefilter_max_seconds,
+            scan_strategy=settings.pose_prefilter_scan_strategy,
+            window_seconds=settings.pose_prefilter_window_seconds,
+            overlap_seconds=settings.pose_prefilter_overlap_seconds,
+            min_score=settings.pose_prefilter_min_score,
+            min_keypoint_confidence=settings.pose_prefilter_min_keypoint_confidence,
+            min_body_scale=settings.pose_prefilter_min_body_scale,
+            max_candidates=settings.resolved_pose_prefilter_candidates_per_exercise(),
+            device=settings.pose_prefilter_device,
+            batch_size=settings.pose_prefilter_batch_size,
+            target_exercise_name=exercise.name,
+            target_motion_contract=exercise_motion_contract,
         )
+
+        def operation():
+            try:
+                return run_yolo_pose_prefilter(video_path=video_path, settings=pose_settings)
+            finally:
+                if settings.llama_cpp_shared_server:
+                    release_yolo_pose_cuda_memory()
+
+        if settings.llama_cpp_shared_server:
+            from .bake_and_rank import BakeAndRankRequest, LazyLlamaCppVisionSession
+
+            # Shared discovery uses the same drain/residency protocol as baking.
+            with _SHARED_POSE_HANDOFF_LOCK:
+                session = LazyLlamaCppVisionSession(BakeAndRankRequest(
+                    candidates_json=Path(temp_dir.name) / 'candidates.json',
+                    workspace=Path(temp_dir.name), body_model_root=None,
+                    shared_llama_server=True,
+                    llama_cpp_base_url=settings.llama_cpp_base_url,
+                    llama_cpp_model=settings.llama_cpp_model,
+                    llama_cpp_server_command=settings.llama_cpp_server_command,
+                ))
+                try:
+                    result = session.run_without_llama_overlap(
+                        operation, small_stage='yolo_pose_prefilter', small_min_free_mib=1024)
+                finally:
+                    session.close()
+        else:
+            result = operation()
         return result.score, result.reasons, result.payload
     finally:
         temp_dir.cleanup()

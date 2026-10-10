@@ -1,4 +1,4 @@
-[CmdletBinding(PositionalBinding = $false)]
+﻿[CmdletBinding(PositionalBinding = $false)]
 param(
     [Parameter(Mandatory = $true)]
     [string]$WorkoutPlanJson,
@@ -76,11 +76,11 @@ param(
     # Wave-overlap pipelining: how many staged waves may run at once. 1 is
     # exactly the serialized behavior (one wave at a time, nothing else in
     # the bake lane). Values > 1 only admit a new wave while every running
-    # wave is in its CPU-bound final_validation phase, and require
+    # wave is in its CPU-only cpu_preparation phase, and require
     # -SharedLlamaServer: without it each wave's VLM phases spawn a dedicated
     # ~8 GiB llama-server that cannot co-reside on the GPU (the run clamps
-    # the cap back to 1 in that case). Each wave process also runs its own
-    # CPU fit lanes, so this cap bounds total CPU consumption.
+    # the cap back to 1 in that case). The service shares the bounded CPU
+    # preparation executor across at most two active waves.
     [ValidateRange(1, 8)]
     [int]$MaxConcurrentStagedWaves = 1,
     [ValidateRange(0, 100000)]
@@ -154,13 +154,13 @@ param(
     [double]$FinalOutputValidationMinScore = 0.90,
     [switch]$ComparativeSegmentSelection,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
-    [string]$LlamaCppModel = "C:\Users\gabri\Downloads\Qwen3.5-9B-UD-Q4_K_XL.gguf",
+    [string]$LlamaCppModel = (Join-Path (Split-Path -Parent $PSScriptRoot) "models/Qwen3.5-9B-Q6_K/Qwen3.5-9B-Q6_K.gguf"),
     [string]$LlamaCppServerCommand = "C:\Users\gabri\Documents\llama.cpp\build-master\bin\Release\llama-server.exe",
-    [string]$LlamaCppMmproj = "C:\Users\gabri\Downloads\mmproj-BF16(6).gguf",
+    [string]$LlamaCppMmproj = (Join-Path (Split-Path -Parent $PSScriptRoot) "models/Qwen3.5-9B-Q6_K/mmproj-BF16.gguf"),
     [AllowEmptyString()]
     [string]$LlamaCppMtpModel = "",
     [int]$LlamaCppSpecDraftNMax = 3,
-    [string]$TextLlamaCppModel = "C:\Users\gabri\Downloads\Qwen3.5-9B-UD-Q4_K_XL.gguf",
+    [string]$TextLlamaCppModel = (Join-Path (Split-Path -Parent $PSScriptRoot) "models/Qwen3.5-9B-Q6_K/Qwen3.5-9B-Q6_K.gguf"),
     [AllowEmptyString()]
     [string]$TextLlamaCppMmproj = "",
     [string]$LlamaCppBackend = "gpu",
@@ -173,12 +173,8 @@ param(
     [string]$LlamaCppFlashAttn = "on",
     [string]$LlamaCppCacheTypeK = "q8_0",
     [string]$LlamaCppCacheTypeV = "q8_0",
-    # 6 slots (not 8): the per-slot context floor then keeps total context at
-    # 49152, leaving ~2.5 GiB VRAM headroom on the 12 GiB card beside the
-    # desktop. At 8 slots the floor-raised 65536-context server peaked ~9.8 GiB
-    # and hard-hung CUDA under desktop memory pressure (2026-10-01 speed-harness
-    # finding); review workers above the slot count simply queue at the server.
-    [Nullable[int]]$LlamaCppParallel = 6,
+    # Three 16K slots retain the existing 48K cache budget and fit longer source reviews.
+    [Nullable[int]]$LlamaCppParallel = 3,
     [Nullable[int]]$LlamaCppThreadsHttp = 8,
     [Nullable[int]]$LlamaCppCacheReuse,
     [string]$LlamaCppFit = "on",
@@ -217,6 +213,8 @@ $StagedWaveAmbiguousRecoveryStatus = "ambiguous_recovery"
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "reconstruction_compat.ps1")
+$reconstructionCompatPath = (Join-Path $PSScriptRoot "reconstruction_compat.ps1").Replace("'", "''")
+$script:ReconstructionJobInitialization = [scriptblock]::Create(". '$reconstructionCompatPath'")
 Import-Module (Join-Path $PSScriptRoot "motion_source_identity.psm1") -Force
 . (Join-Path $PSScriptRoot "motion_run_interrupt.ps1")
 trap {
@@ -379,7 +377,7 @@ function Add-LlamaCppTuningArgs {
 }
 
 function Ensure-LlamaCppParallelContext {
-    $minContextPerSlot = 8192
+    $minContextPerSlot = 16384
     $parallelSlots = if ($null -ne $LlamaCppParallel) { [Math]::Max(1, [int]$LlamaCppParallel) } else { 1 }
     $minTotalContext = $parallelSlots * $minContextPerSlot
     if ($null -ne $LlamaCppCtxSize -and $LlamaCppCtxSize -lt $minTotalContext) {
@@ -2200,6 +2198,15 @@ function Start-SharedLlamaServer {
         -ServiceState "running"
     $deadline = (Get-Date).AddSeconds($LlamaCppServerStartupTimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
+        if (Test-MotionRunCancelRequested) {
+            Stop-SharedLlamaServer -Server ([pscustomobject]@{
+                processId = $process.Id
+                sessionDir = $SessionDir
+                sessionLeaseKey = $sessionLeaseKey
+                runtimeOwner = $runtimeOwner
+            })
+            Exit-IfMotionRunInterrupted
+        }
         if ($process.HasExited) {
             if (Test-SharedLlamaServerStoppedByLiveExclusiveHandoff -SessionDir $SessionDir) {
                 Write-Host "Shared llama.cpp startup was quiesced by a live exclusive GPU handoff; restart remains pending."
@@ -2296,6 +2303,18 @@ function Test-SharedLlamaServerRestartAdmission {
 function Test-SharedLlamaExclusiveHandoffActive {
     param([string]$SessionDir)
 
+    # An idle extractor still occupies VRAM between GPU operations. Its owner
+    # clears this marker after releasing the worker for the next VLM request.
+    $holdersPath = Join-Path $SessionDir "generation-holders"
+    if (Test-Path -LiteralPath $holdersPath -PathType Container) {
+        foreach ($holderPath in @(Get-ChildItem -LiteralPath $holdersPath -Filter '*.json' -File)) {
+            try {
+                $holder = Get-Content -LiteralPath $holderPath.FullName -Raw | ConvertFrom-Json
+                $holderState = Get-MotionProcessIdentityState -ProcessId ([int]$holder.pid) -ExpectedProcessIdentity ([long]$holder.processIdentity)
+                if ($holderState -ne "stopped") { return $true }
+            } catch { return $true }
+        }
+    }
     $stopIntentPath = Join-Path $SessionDir "stop_intent.json"
     if (-not (Test-Path -LiteralPath $stopIntentPath -PathType Leaf)) {
         return $false
@@ -2342,7 +2361,7 @@ function Get-SharedLlamaBakeRestartCounts {
     # source and final validation phases need the shared vision server, so a
     # blanket "any bake job" gate can strand those phases after a model
     # handoff. Treat unknown/missing checkpoints conservatively.
-    $safeStages = @("source_validation", "reconstruction_released", "final_validation")
+    $safeStages = @("source_validation", "reconstruction_released", "cpu_preparation", "final_validation", "generation_and_validation")
     $safeCount = 0
     $unsafeCount = 0
     foreach ($job in @($RunningJobs)) {
@@ -2511,6 +2530,17 @@ function Start-GvhmrWarmWorker {
     $startupErrorPath = Join-Path $SessionDir "startup_error.json"
     $deadline = (Get-Date).AddSeconds($GvhmrWorkerStartupTimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
+        if (Test-MotionRunCancelRequested) {
+            # The caller has no worker handle until startup returns.
+            Stop-GvhmrWarmWorker -Worker ([pscustomobject]@{
+                containerName = $containerName
+                containerId = $containerId
+                sessionDir = $SessionDir
+                sessionLeaseKey = $sessionLeaseKey
+                runtimeOwner = $runtimeOwner
+            })
+            Exit-IfMotionRunInterrupted
+        }
         if (Test-Path -LiteralPath $readyPath) {
             $ready = Get-Content -LiteralPath $readyPath -Raw | ConvertFrom-Json
             Write-Host ("Motion extractor ready in {0}s ({1})." -f $ready.loadSeconds, $ready.gpuName)
@@ -2573,7 +2603,14 @@ function Stop-GvhmrWarmWorker {
         Write-Warning "Failed to stop warm RECONSTRUCTION worker container '$($Worker.containerName)': $($_.Exception.Message)"
     }
     $runtimeState = Release-MotionServiceSessionLease -SessionDirectory $Worker.sessionLeaseKey
-    if ($runtimeState -ne "stopped") {
+    if ($runtimeState -eq "stopped") {
+        # Docker termination may bypass the worker's Python finally block.
+        foreach ($marker in @("ready.json", "heartbeat.json")) {
+            Remove-Item -LiteralPath (Join-Path $Worker.sessionDir $marker) -Force -ErrorAction SilentlyContinue
+        }
+        @{ status = "stopped"; stoppedByPid = $PID } | ConvertTo-Json |
+            Set-Content -LiteralPath (Join-Path $Worker.sessionDir "stopped.json") -Encoding UTF8
+    } else {
         Write-Warning "Warm $($Worker.runtimeOwner.service) shutdown could not be confirmed; preserving its session owner evidence."
     }
 }
@@ -3089,7 +3126,7 @@ function Start-InitialDiscoveryJob {
     $yieldRequestPath = Join-Path (Split-Path -Parent $WorkItem.exerciseCandidatesPath) 'discovery_yield.request'
     if (Test-Path -LiteralPath $yieldRequestPath) { Remove-Item -LiteralPath $yieldRequestPath -Force }
     Write-Host ("Finding a source for {0}." -f $WorkItem.exerciseName)
-    $job = Start-Job -Name "discover-$($WorkItem.exerciseSlug)" -ScriptBlock {
+    $job = Start-Job -InitializationScript $script:ReconstructionJobInitialization -Name "discover-$($WorkItem.exerciseSlug)" -ScriptBlock {
         param(
             [string]$PythonCommand,
             [string[]]$DiscoveryArguments,
@@ -3250,7 +3287,7 @@ function Start-InitialDiscoveryJob {
 function Start-CandidatePrefetchJob {
     param([object]$WorkItem)
 
-    $job = Start-Job -Name "prefetch-$($WorkItem.exerciseSlug)" -ScriptBlock {
+    $job = Start-Job -InitializationScript $script:ReconstructionJobInitialization -Name "prefetch-$($WorkItem.exerciseSlug)" -ScriptBlock {
         param(
             [string]$PythonCommand,
             [string[]]$PrefetchArguments,
@@ -3320,7 +3357,7 @@ function Start-SourceDownloadJob {
     } else {
         $WorkItem.fallbackSourceDownloadArgumentsSha256
     }
-    $job = Start-Job -Name "source-download-$Kind-$($WorkItem.exerciseSlug)" -ScriptBlock {
+    $job = Start-Job -InitializationScript $script:ReconstructionJobInitialization -Name "source-download-$Kind-$($WorkItem.exerciseSlug)" -ScriptBlock {
         param(
             [string]$PythonCommand,
             [string[]]$SourceDownloadArguments,
@@ -3898,7 +3935,7 @@ function Start-BakeJob {
         $script:AnnouncedIndividualGeneration = $true
     }
     Write-Host ("Generating: {0}" -f $WorkItem.exerciseName)
-    $job = Start-Job -Name $WorkItem.exerciseSlug -ScriptBlock {
+    $job = Start-Job -InitializationScript $script:ReconstructionJobInitialization -Name $WorkItem.exerciseSlug -ScriptBlock {
         param(
             [string]$PythonCommand,
             [string[]]$DiscoveryArguments,
@@ -5116,11 +5153,19 @@ function Stop-StagedBakeQueueService {
         Write-Warning "Could not confirm staged-wave worker ownership during shutdown; preserving its model dependencies."
         return $false
     }
+    if (@($service.state.activeRequests | Where-Object {
+        -not [string]::IsNullOrWhiteSpace([string]$_.runId) -and $_.runId -ne $movementRunId
+    }).Count -gt 0) {
+        Write-Warning "The staged-wave worker is serving another run; preserving its process and model dependencies."
+        return $false
+    }
     $activeWavePrefix = "$movementRunId-wave-"
     $activeWaveId = if ($service.state) { [string]$service.state.currentWaveId } else { "" }
-    if (-not $activeWaveId.StartsWith($activeWavePrefix, [StringComparison]::OrdinalIgnoreCase)) {
+    if (-not $activeWaveId.StartsWith($activeWavePrefix, [StringComparison]::OrdinalIgnoreCase) -and
+        -not ($Cancel -and [string]::IsNullOrWhiteSpace($activeWaveId))) {
         # The cancellation marker prevents a queued request from starting.
-        # Keep an idle worker, or a worker serving another run, alive.
+        # Failure recovery can retain an idle worker; user cancellation stops it.
+        # A worker serving another run must remain alive.
         return $true
     }
     if (-not $service.matchingProcess) {
@@ -5235,11 +5280,13 @@ function Start-StagedBakeWaveJob {
         workspace = $waveWorkspace
         items = @(
             $WorkItems | ForEach-Object {
+                $candidateSnapshotPath = Join-Path $waveWorkspace ("candidates-{0}.json" -f [guid]::NewGuid().ToString('N'))
+                Copy-Item -LiteralPath $_.exerciseCandidatesPath -Destination $candidateSnapshotPath -ErrorAction Stop
                 [ordered]@{
                     exerciseId = $_.exerciseId
                     exerciseName = $_.exerciseName
                     exercisePlanJson = $_.exercisePlanPath
-                    candidatesJson = $_.exerciseCandidatesPath
+                    candidatesJson = $candidateSnapshotPath
                     workspace = $_.bakeWorkspace
                 }
             }
@@ -5262,6 +5309,7 @@ function Start-StagedBakeWaveJob {
         enqueuedAtUnixNs = $enqueuedAtUnixNs
         runId = $movementRunId
         waveId = $waveId
+        allowCpuPhaseOverlap = $effectiveMaxConcurrentStagedWaves -gt 1
         sourceIdentityFingerprint = $script:MotionSourceIdentityFingerprint
         serviceConfigurationFingerprint = (Get-StagedBakeServiceConfigurationFingerprint `
             -ConfiguredPythonCommand $PythonCommand `
@@ -5384,6 +5432,9 @@ function Start-StagedBakeWaveJob {
                     $ExpectedRequestId,
                     [StringComparison]::OrdinalIgnoreCase
                 )
+                if (-not $workerMatchesRequest) {
+                    $workerMatchesRequest = @($workerState.activeRequests | Where-Object { $_.requestId -eq $ExpectedRequestId }).Count -gt 0
+                }
                 if ($workerState.schemaVersion -ne 1 -or -not $stateQueueMatches -or
                     $null -eq $workerProcess -or -not $workerIdentityMatches) {
                     # A published request may already have been claimed. If
@@ -6172,6 +6223,13 @@ function Get-StagedWaveActivityText {
                 }
                 return "Checking sources: $finished/$($items.Count)$metaText$latestSuffix$workText"
             }
+            "generation_and_validation" {
+                $extracted = @($items | Where-Object { "$($_.reconstruction.status)" -eq 'prepared' }).Count
+                $reviewed = @($items | Where-Object { "$($_.finalValidation.status)" -notin @('', 'pending') }).Count
+                $kept = @($items | Where-Object { "$($_.status)" -eq 'completed' }).Count
+                $active = @($items | Where-Object { $null -ne (Get-ObjectProperty -Object $_ -Name 'finalValidationActivity') }).Count
+                return "Processing: $extracted/$($items.Count) extracted | $reviewed reviewed | $kept ready | $active validating"
+            }
             "reconstruction_generation" {
                 $eligible = @($items | Where-Object { "$($_.source.status)" -eq "prepared" })
                 $finished = @($eligible | Where-Object { "$($_.reconstruction.status)" -ne "pending" }).Count
@@ -6347,7 +6405,7 @@ function Get-FlaggedJobCount {
 
 # Wave-overlap admission (MaxConcurrentStagedWaves). A new staged wave may
 # start only while:
-#   - every running staged wave is parked in final_validation (CPU-bound
+#   - every running staged wave is parked in cpu_preparation (CPU-only
 #     fits; source_validation and reconstruction_generation would oversubscribe the
 #     per-process CPU fit lanes or contend for the exclusive GPU), and
 #   - the running staged wave count is below the overlap cap, and
@@ -6372,7 +6430,7 @@ function Test-StagedWaveOverlapAdmission {
     })
     $allWavesInFinalValidation = $true
     foreach ($stagedWaveJob in $stagedWaveJobs) {
-        if ("$(Get-StagedWaveCheckpointStage -Job $stagedWaveJob)" -ne "final_validation") {
+        if ("$(Get-StagedWaveCheckpointStage -Job $stagedWaveJob)" -notin @("cpu_preparation", "generation_and_validation")) {
             $allWavesInFinalValidation = $false
             break
         }
@@ -6386,6 +6444,31 @@ function Test-StagedWaveOverlapAdmission {
     return [pscustomobject]@{
         admitted = $admitted
         runningStagedWaveCount = $stagedWaveJobs.Count
+    }
+}
+
+function Receive-StagedWaveReadyItems {
+    param([object[]]$RunningJobs, [System.Collections.Queue]$CompletionQueue)
+
+    foreach ($job in $RunningJobs) {
+        if (-not ($job.PSObject.Properties.Name -contains 'IsStagedWave') -or -not $job.IsStagedWave) { continue }
+        $checkpointPath = Join-Path $job.WaveWorkspace 'staged_wave_checkpoint.json'
+        if (-not (Test-Path -LiteralPath $checkpointPath -PathType Leaf)) { continue }
+        try {
+            $checkpoint = Get-Content -LiteralPath $checkpointPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
+        } catch { continue }
+        if (-not ($job.PSObject.Properties.Name -contains 'CompletedExerciseIds')) {
+            $job | Add-Member -MemberType NoteProperty -Name CompletedExerciseIds -Value @{}
+        }
+        foreach ($state in @($checkpoint.items)) {
+            $exerciseId = "$($state.exerciseId)"
+            if ("$($state.status)" -ne 'completed' -or $job.CompletedExerciseIds.ContainsKey($exerciseId)) { continue }
+            $workItem = @($job.WorkItems | Where-Object { "$($_.exerciseId)" -eq $exerciseId }) | Select-Object -First 1
+            if ($null -eq $workItem) { continue }
+            Add-StagedWaveTimelineOutcome -WorkItem $workItem -WaveState $state
+            $CompletionQueue.Enqueue($workItem)
+            $job.CompletedExerciseIds[$exerciseId] = $true
+        }
     }
 }
 
@@ -6670,7 +6753,13 @@ if ($llamaCppDiscoveryUsesGpu) {
 $discoveryUsesGpu = $gpuDiscoveryStages.Count -gt 0
 $gpuLockSetting = "$env:EXERCISE_MOTION_GPU_LOCK".Trim().ToLowerInvariant()
 $globalGpuLockEnabled = [string]::IsNullOrWhiteSpace($gpuLockSetting) -or $gpuLockSetting -notin @("0", "false", "off", "no")
-$effectiveGpuDiscoveryBakeOverlap = if ($discoveryUsesGpu -and $globalGpuLockEnabled) {
+$effectiveGpuDiscoveryBakeOverlap = if (
+    $SharedLlamaServer -and $StagedWaveSize -gt 0 -and $MaxConcurrentStagedWaves -gt 1 -and
+    $GpuDiscoveryBakeOverlap -ne 'avoid'
+) {
+    # Shared discovery coordinates CUDA prefilter handoffs and counts VLM calls.
+    'allow'
+} elseif ($discoveryUsesGpu -and $globalGpuLockEnabled) {
     # The shared GPU lock serializes CUDA model residency across processes.
     # Scheduling both lanes together only makes one side wait while retaining
     # a resident llama.cpp session, which blocks the bake-side pose/source work.
@@ -6755,6 +6844,15 @@ function Assert-StagedWaveWorkspaceIsQuiescent {
                 ForEach-Object { $_.FullName }
         )
         $service = Get-StagedBakeQueueServiceState -QueueRoot $queueRoot
+        if ($processingPaths.Count -gt 0 -and $service.processState -eq "stopped") {
+            # Recovery takes the worker lease and never executes queued generation.
+            & $PythonCommand -m exercise_motion_pkg.staged_wave_service --queue-root $queueRoot --recover-only
+            if ($LASTEXITCODE -ne 0) {
+                throw "Staged-wave queue recovery failed; retained records were not cleared: $queueRoot"
+            }
+            $processingPaths = @(Get-ChildItem -LiteralPath (Join-Path $queueRoot "processing") -Filter "*.json" -File | ForEach-Object { $_.FullName })
+            $ambiguousPaths = @(Get-ChildItem -LiteralPath (Join-Path $queueRoot "ambiguous") -Filter "*.json" -File | ForEach-Object { $_.FullName })
+        }
         $workerState = $service.state
         $workerBusy = $false
         if ($service.matchingProcess) {
@@ -7104,9 +7202,9 @@ $effectiveMaxConcurrentStagedWaves = if ($MaxConcurrentStagedWaves -gt 1 -and -n
 } else {
     [int]$MaxConcurrentStagedWaves
 }
-if ($stagedWavesEnabled -and $effectiveMaxConcurrentStagedWaves -gt 1) {
-    Write-Warning "The persistent staged-wave service processes one wave at a time; MaxConcurrentStagedWaves is reduced to 1 for this run."
-    $effectiveMaxConcurrentStagedWaves = 1
+if ($stagedWavesEnabled -and $effectiveMaxConcurrentStagedWaves -gt 2) {
+    Write-Warning "The persistent staged-wave service supports two active waves; MaxConcurrentStagedWaves is reduced to 2 for this run."
+    $effectiveMaxConcurrentStagedWaves = 2
 }
 $resolvedSharedLlamaServerSessionDir = $null
 if ($effectiveSharedLlamaServer) {
@@ -7427,7 +7525,6 @@ foreach ($exercise in $exerciseList.exercises) {
         "--source-outcome-index", $resolvedSourceOutcomeIndexJson,
         "--workspace", $bakeWorkspace,
         "--body-model-root", $resolvedBodyModelRoot,
-        "--reconstruction-python", "python",
         "--reconstruction-timeout-seconds", "$ReconstructionTimeoutSeconds",
         "--segment-confidence-threshold", "$SegmentConfidenceThreshold",
         "--segment-padding-seconds", "$SegmentPaddingSeconds",
@@ -8116,7 +8213,7 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
 
             # Wave-overlap admission replaces the old serialized
             # "no bake jobs at all" requirement: a new staged wave may start
-            # while every running wave is in its CPU-bound final_validation
+            # while every running wave is in its CPU-only cpu_preparation
             # phase, below the overlap cap, and with no full GPU-capable
             # pipeline (legacy fallback bake) queued or running. Trivial
             # completion jobs no longer block the next wave; they run in
@@ -8235,6 +8332,7 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                 continue
             }
 
+            Receive-StagedWaveReadyItems -RunningJobs $bakeRunningJobs -CompletionQueue $pendingCompletionItems
             Write-StagedWaveProgressUpdates -RunningJobs $runningJobs
             if ($DetailedProgressLogs) {
                 Write-LiveLogUpdates -RunningJobs $runningJobs
@@ -8531,6 +8629,8 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                             }
                         }
                         foreach ($waveItem in @($job.WorkItems)) {
+                            if ($job.PSObject.Properties.Name -contains 'CompletedExerciseIds' -and
+                                $job.CompletedExerciseIds.ContainsKey("$($waveItem.exerciseId)")) { continue }
                             $waveState = $waveStates["$($waveItem.exerciseId)"]
                             $reuseStagedResult = (
                                 $waveResult -and
@@ -8672,7 +8772,7 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
             $stagedWaveShutdownConfirmed = [bool](Stop-StagedBakeQueueService -RunFailure)
         }
         if ($stagedWaveShutdownConfirmed) {
-            Stop-MotionModelServicesAfterStagedWorker `
+            $null = Stop-MotionModelServicesAfterStagedWorker `
                 -StagedWaveShutdownConfirmed $stagedWaveShutdownConfirmed `
                 -WarmGvhmrWorker $warmGvhmrWorkerInstance `
                 -SharedLlamaServer $sharedLlamaServerInstance
@@ -8705,7 +8805,6 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
 }
 
 if (Test-MotionRunCancelRequested) {
-    Write-Host "Motion run stopped." -ForegroundColor Yellow
     exit 130
 }
 
@@ -8730,7 +8829,7 @@ $summary = [ordered]@{
     excludeYoutubeUrls = @($ExcludeYoutubeUrl | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     exerciseListJsonPath = $exerciseListPath
     processingOrder = "pipelined_discovery_source_download_and_bake"
-    stagedWaveWorkerMode = if ($stagedWavesEnabled) { "workspace_scoped_persistent_serial_queue" } else { "disabled" }
+    stagedWaveWorkerMode = if (-not $stagedWavesEnabled) { "disabled" } elseif ($effectiveMaxConcurrentStagedWaves -gt 1) { "workspace_scoped_persistent_cpu_overlap_queue" } else { "workspace_scoped_persistent_serial_queue" }
     speedProfile = $SpeedProfile
     exerciseWorkers = $ExerciseWorkers
     discoveryWorkers = $resolvedDiscoveryWorkers
@@ -8835,11 +8934,24 @@ if (-not [string]::IsNullOrWhiteSpace($MobilePackageOutputJson)) {
 }
 } finally {
     if (-not $script:MotionServiceShutdownUnconfirmed) {
-        Stop-StagedBakeQueueService -Cancel
+        $stagedWorkerStopped = Stop-StagedBakeQueueService -Cancel
+        if ((Test-MotionRunCancelRequested) -and -not $stagedWorkerStopped) {
+            $script:MotionServiceShutdownUnconfirmed = $true
+        }
     }
     foreach ($sessionDirectory in @($script:MotionServiceSessionLeases.Keys)) {
-        Release-MotionServiceSessionLease -SessionDirectory $sessionDirectory
+        $runtimeState = Release-MotionServiceSessionLease -SessionDirectory $sessionDirectory
+        if ($runtimeState -ne "stopped") {
+            $script:MotionServiceShutdownUnconfirmed = $true
+        }
     }
     Release-MotionWorkspaceLease -Lease $script:MotionWorkspaceLease
     $script:MotionWorkspaceLease = $null
+    if (Test-MotionRunCancelRequested) {
+        if ($script:MotionServiceShutdownUnconfirmed) {
+            Write-Warning "Motion run cancellation finished, but worker shutdown is unconfirmed; retained ownership evidence requires inspection."
+        } else {
+            Write-Host "Motion run stopped." -ForegroundColor Yellow
+        }
+    }
 }

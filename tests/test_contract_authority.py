@@ -6,6 +6,30 @@ import pytest
 from exercise_motion_pkg import youtube as module
 
 
+@pytest.mark.parametrize("custom_advisory", [False, True])
+def test_contract_prompt_includes_values_once_and_preserves_explicit_requirements(custom_advisory):
+    contract = {
+        "exerciseName": "Single Dumbbell Press",
+        "validStartState": "Hold the implement at shoulder height.",
+        "validEndState": "Return the implement to shoulder height.",
+        "requiredPhases": ["Press overhead.", "Lower to the start."],
+    }
+    advisory = module.synthesize_exercise_motion_advisory_text(contract)
+    contract["advisoryText"] = "Keep the specified support contact visible." if custom_advisory else advisory
+
+    prompt = module.exercise_motion_contract_prompt_body(contract)
+
+    for value in (contract["validStartState"], contract["validEndState"], *contract["requiredPhases"]):
+        assert prompt.count(value) == 1
+    assert (contract["advisoryText"] in prompt) == custom_advisory
+    authority = json.loads(prompt.split("Field authority: ", 1)[1].splitlines()[0])
+    assert authority["implementCount"]["value"] == 1
+    assert authority["implementCount"]["required"] is True
+    assert "validStartState" not in authority
+    structured = json.loads(prompt.split("Structured movement contract: ", 1)[1])
+    assert structured["requiredPhases"] == contract["requiredPhases"]
+
+
 @pytest.fixture
 def target():
     return module.ExerciseEntry(exercise_id="example", slug="example", name="Example Press")

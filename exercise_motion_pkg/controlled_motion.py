@@ -54,7 +54,7 @@ SUPPORT_REFERENCE_CONTACT_LIMIT_METERS = min(
     PLAYBACK_CONTACT_LIMIT_METERS * 0.5,
 )
 
-CONTROLLED_MOTION_STRATEGY = 'fixed_rig_controlled_motion_v75_frame_bound_anatomy_reference'
+CONTROLLED_MOTION_STRATEGY = 'fixed_rig_controlled_motion_v78_rigid_contact_anchor_projection'
 # Feasibility pre-flight threshold, calibrated from fit reports: every
 # successful fit's target bones matched the rig within ~0.002m, while
 # structurally conflicted fits measured 0.05-0.15m before burning their
@@ -557,13 +557,13 @@ def stage_fit_refinement_budget(
     default_budget = min(remaining - 0.5, max(5.0, remaining * {
         'A': 0.40, 'B': 0.35, 'C': 0.30,
     }.get(stage, 0.35)))
-    if not prioritize_fit or stage != 'C' or minimum_update_seconds <= 0:
+    if minimum_update_seconds <= 0:
         return default_budget
 
-    # A timed-out post-fit block can retain a partial iterate but cannot report
-    # its post-update cost. Use twice the measured estimate for a whole block;
-    # otherwise defer directly to the outer continuation's larger window.
-    required_budget = 2.0 * float(minimum_update_seconds) + 0.5
+    # Every stage must afford a measured update; prioritized Stage C reserves
+    # twice that estimate before deferring to the outer continuation.
+    update_allowance = 2.0 if prioritize_fit and stage == 'C' else 1.0
+    required_budget = update_allowance * float(minimum_update_seconds) + 0.5
     available_budget = max(0.0, remaining - 0.5)
     if required_budget > available_budget:
         return None
@@ -4833,7 +4833,7 @@ def _prepare_source_projection_fit_constraints(payload, frames, names, points, p
 
 
 def _align_shared_contact_anchors_to_source_projection(
-    constraint, pinned, contact_targets, *, ground_contacts=None,
+    constraint, pinned, contact_targets, *, ground_contacts=None, rig=None,
 ):
     """Align non-ground contact groups without splitting linked sole anchors."""
     result = np.asarray(contact_targets, dtype=float).copy()
@@ -4864,6 +4864,7 @@ def _align_shared_contact_anchors_to_source_projection(
     offset = constraint['offset']
     shifts = []
     skipped_ground_groups = 0
+    skipped_rigid_groups = 0
     for group, observations in grouped_observations.items():
         design_rows = []
         residual_rows = []
@@ -4898,12 +4899,30 @@ def _align_shared_contact_anchors_to_source_projection(
         correction, _, _, _ = np.linalg.lstsq(design, residual, rcond=None)
         if not np.isfinite(correction).all() or not np.any(active):
             continue
-        result[active] += correction
+        proposed = result.copy()
+        proposed[active] += correction
+        if rig is not None:
+            rigid_conflict = False
+            for child, parent in enumerate(rig.parents):
+                if parent < 0:
+                    continue
+                linked = pinned[:, child] & pinned[:, parent] & (active[:, child] | active[:, parent])
+                lengths = np.linalg.norm(proposed[linked, child]-proposed[linked, parent], axis=-1)
+                if np.any(np.abs(lengths-np.linalg.norm(rig.offsets[child]))
+                          > 2. * KEYFRAME_CONTACT_LIMIT_METERS):
+                    rigid_conflict = True
+                    break
+            if rigid_conflict:
+                # Keep feasible physical anchors; camera matching remains soft.
+                skipped_rigid_groups += 1
+                continue
+        result = proposed
         shifts.append(float(np.linalg.norm(correction)))
     return result, {
         'adjustedGroupCount': len(shifts),
         'maximumShiftMeters': max(shifts, default=0.),
         'skippedGroundAnchoredGroupCount': skipped_ground_groups,
+        'skippedRigidContactGroupCount': skipped_rigid_groups,
     }
 
 
@@ -6523,6 +6542,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
     contact_targets, source_anchor_adjustment = _align_shared_contact_anchors_to_source_projection(
         source_projection_constraint, pinned, contact_targets,
         ground_contacts=ground_contacts,
+        rig=rig,
     )
     if source_anchor_adjustment['adjustedGroupCount']:
         target, _, placement_report = contact_consistent_target(
@@ -8121,12 +8141,13 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 frame['controlledSourceJoints']={n:v.tolist() for n,v in zip(names,registered_source)}
             # Same articulation reference keyframe anatomy acceptance uses.
             frame['controlledArticulationReferenceJoints'] = {
-                n: v.tolist() for n, v in zip(names, reference[index])}
+                n: v.tolist() for n, v in zip(names, anatomical_reference[index])}
             frame['joints']={n:v.tolist() for n,v in zip(names,values)}
+            # Preserve source-projection anchor adjustments in playback authority.
+            frame['supportContactReferenceJoints'] = dict(zip(names, contact_targets[index].tolist()))
             if body_support.get('required'):
                 frame['supportAlignmentReferenceJoints'] = dict(zip(names, alignment_source[index].tolist()))
                 frame['supportCorrectedReferenceJoints'] = dict(zip(names, reference[index].tolist()))
-                frame['supportContactReferenceJoints'] = dict(zip(names, registered_source.tolist()))
                 for name in body_support.get('stationaryJoints', []):
                     frame['supportContactReferenceJoints'][name] = support_pose[names.index(name)].tolist()
         candidate['fixedRig'] = fixed_rig_payload

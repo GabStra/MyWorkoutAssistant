@@ -123,7 +123,6 @@ fun ExerciseMovementPreviewPage(
     modifier: Modifier = Modifier,
     dragRotationEnabled: Boolean = true,
     compactStatusIcons: Boolean = false,
-    listThumbnail: Boolean = false,
 ) {
     if (movementRef == null) {
         MovementStatus(
@@ -169,7 +168,6 @@ fun ExerciseMovementPreviewPage(
             movementJson = state.json,
             modifier = modifier,
             dragRotationEnabled = dragRotationEnabled,
-            listThumbnail = listThumbnail,
         )
     }
 }
@@ -206,7 +204,6 @@ fun ExerciseMovementPreviewPage(
     movementJson: String?,
     modifier: Modifier = Modifier,
     dragRotationEnabled: Boolean = true,
-    listThumbnail: Boolean = false,
 ) {
     val backgroundColor = MaterialTheme.colorScheme.background
     val primaryFill = MaterialTheme.colorScheme.primary
@@ -223,7 +220,6 @@ fun ExerciseMovementPreviewPage(
             // Movements exported with loop disabled would otherwise play once
             // and freeze on the final pose; the restart fade cycles them.
             loopRestartFadeMillis = 250,
-            listThumbnail = listThumbnail,
         )
     } else {
         MovementStatusMessage(

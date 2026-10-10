@@ -61,12 +61,13 @@ console.log(JSON.stringify({open:run(false), closed:run(true)}));
     np.testing.assert_allclose(np.sum(np.array(result['closed'])*directions, axis=1), 0, atol=1e-12)
 
 
-def test_floor_center_uses_body_position_not_reaching_limbs(tmp_path):
+def test_floor_uses_full_rendered_extent_midpoint_and_padding(tmp_path):
     node = shutil.which('node')
     if not node:
         pytest.skip('Requires Node')
     source = (ROOT / 'exercise_motion_pkg/preview.py').read_text(encoding='utf-8')
-    kernel = source[source.index('    function bakedWearFloorCenter()'):source.index('    function refreshGroundPlacement()')]
+    kernel = source[source.index('    function bakedWearFloorCenter()'):source.index('      bakedWearGrid.visible = false;', source.index('    function refreshGroundPlacement()'))] + '    }}'
+    bounds_kernel = source[source.index('    function computeBakedWearBounds(frames)'):source.index('    function sanitizedPlaybackSpeed(value)')]
     script = tmp_path / 'floor.js'
     script.write_text('''
 const playbackState = {frames: [
@@ -74,6 +75,22 @@ const playbackState = {frames: [
  {joints:{pelvis:[3,2,5],hand:[-100,2,-100]}}
 ]};
 const getFrameRootPoint = frame => ({x:frame.joints.pelvis[0],z:frame.joints.pelvis[2]});
-''' + kernel.replace('{{', '{').replace('}}', '}') + '\nconsole.log(JSON.stringify(bakedWearFloorCenter()));', encoding='utf-8')
+const THREE = {Vector3: class {constructor(x,y,z){Object.assign(this,{x,y,z})}},
+ GridHelper: class {constructor(size,divisions){this.geometry={divisions,dispose(){}};this.material={dispose(){}}}}};
+const bakedMeshFitPoints = () => [{x:-4,y:0,z:-1},{x:10,y:2,z:3}];
+''' + bounds_kernel.replace('{{', '{').replace('}}', '}').replace('{UNIFORM_CAPSULE_RADIUS}', '0.03') + '''
+const bakedWearReviewBounds = stableWearReviewBounds({},playbackState.frames);
+const renderingBakedWearPayload = true, bakedWearRenderFloorY = 0;
+const bakedWearGroundContactMode = 'feet', grid = {};
+const bakedWearGrid = {userData:{},geometry:{dispose(){}},position:{set(){}}, quaternion:{identity(){}}, scale:{set(x){this.size=x}}};
+const shouldShowBakedWearGrid = () => true;
+''' + kernel.replace('{{', '{').replace('}}', '}').replace('{UNIFORM_CAPSULE_RADIUS}', '0.03') + '''
+refreshGroundPlacement();
+const travel = {...bakedWearFloorCenter(),size:bakedWearGrid.scale.size,divisions:bakedWearGrid.geometry.divisions};
+Object.assign(bakedWearReviewBounds.sourceBounds,{minX:0,maxX:1,minZ:0,maxZ:0.5});
+refreshGroundPlacement();
+console.log(JSON.stringify({travel,stationary:{size:bakedWearGrid.scale.size,divisions:bakedWearGrid.geometry.divisions}}));
+''', encoding='utf-8')
     value = json.loads(subprocess.check_output([node, str(script)], text=True, timeout=15))
-    assert value == {'x': 2, 'z': 4}
+    assert value['travel'] == {'x': 3, 'z': 1, 'size': 17.5, 'divisions': 70}
+    assert value['stationary'] == {'size': 1.25, 'divisions': 5}

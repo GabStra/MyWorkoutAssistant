@@ -1,5 +1,6 @@
 $ErrorActionPreference = 'Stop'
 $runner = Join-Path $PSScriptRoot '../scripts/run_exercise_motion_workout_plan.ps1'
+. (Join-Path $PSScriptRoot '../scripts/reconstruction_compat.ps1')
 $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($runner, [ref]$null, [ref]$errors)
 if ($errors.Count) { throw ($errors | Out-String) }
@@ -59,13 +60,21 @@ $script:StagedWaveServiceQueueRoot = Join-Path $resolvedWorkspaceRoot 'staged-wa
 $script:MotionSourceIdentityFingerprint = 'test-source-fingerprint'
 $script:PublishedWaveCount = 0
 $PythonCommand = 'unused'
-$item = [pscustomobject]@{ exerciseId='curl'; exerciseName='Curl'; exerciseCandidatesPath='candidates.json'; bakeWorkspace='durable-exercise-cache'; bakeArgs=@() }
+New-Item -ItemType Directory -Force -Path $resolvedWorkspaceRoot | Out-Null
+$candidatesPath = Join-Path $resolvedWorkspaceRoot 'candidates.json'
+'{"version":1}' | Set-Content -LiteralPath $candidatesPath
+$item = [pscustomobject]@{ exerciseId='curl'; exerciseName='Curl'; exerciseCandidatesPath=$candidatesPath; bakeWorkspace='durable-exercise-cache'; bakeArgs=@() }
 $movementRunId = 'run-one'
 $first = Start-StagedBakeWaveJob -WorkItems @($item) -WaveIndex 1
+'{"version":2}' | Set-Content -LiteralPath $candidatesPath
 $movementRunId = 'run-two'
 $second = Start-StagedBakeWaveJob -WorkItems @($item) -WaveIndex 1
 if ($first.WaveWorkspace -eq $second.WaveWorkspace) { throw 'Runs share a wave workspace' }
 $manifest = Get-Content (Join-Path $second.WaveWorkspace 'wave_manifest.json') -Raw | ConvertFrom-Json
+$firstManifest = Get-Content (Join-Path $first.WaveWorkspace 'wave_manifest.json') -Raw | ConvertFrom-Json
+$firstSnapshot = Get-Content $firstManifest.items[0].candidatesJson -Raw | ConvertFrom-Json
+$secondSnapshot = Get-Content $manifest.items[0].candidatesJson -Raw | ConvertFrom-Json
+if ($firstSnapshot.version -ne 1 -or $secondSnapshot.version -ne 2) { throw 'Admitted candidates were rewritten' }
 if ($manifest.items[0].workspace -ne $item.bakeWorkspace) { throw 'Durable exercise cache changed' }
 foreach ($job in @($first, $second)) {
     Wait-Job -Job $job | Out-Null

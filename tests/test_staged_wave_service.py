@@ -6,6 +6,7 @@ import time
 from types import SimpleNamespace
 
 import pytest
+from contextvars import copy_context
 
 from exercise_motion_pkg.staged_wave_service import (
     ADMISSION_LOCK_VERSION,
@@ -15,6 +16,94 @@ from exercise_motion_pkg.staged_wave_service import (
     _prune_staged_wave_records,
     run_staged_wave_service,
 )
+
+
+@pytest.mark.parametrize('cancel_first', [False, True])
+def test_service_overlaps_cpu_preparation_with_next_gpu_phase_and_isolates_logs(tmp_path, monkeypatch, cancel_first):
+    from exercise_motion_pkg import staged_wave_service as service
+
+    queue = tmp_path / 'queue'
+    requests = queue / 'requests'
+    requests.mkdir(parents=True)
+    for index, name in enumerate(['first', 'second']):
+        (requests / f'{name}.json').write_text(json.dumps({
+            'requestId': name, 'waveId': name, 'runId': name,
+            'enqueuedAtUnixNs': index + 1, 'allowCpuPhaseOverlap': True,
+            'logPath': str(tmp_path / f'{name}.log'),
+        }))
+    first_cpu_started = threading.Event()
+    second_gpu_started = threading.Event()
+    gpu_active = []
+    reviews = []
+
+    def execute(request, *, render_executor, accelerator_phase):
+        name = request['waveId']
+        with accelerator_phase(name, 'source_and_generation'):
+            assert not gpu_active
+            gpu_active.append(name)
+            print(f'{name} gpu', flush=True)
+            if name == 'second':
+                assert first_cpu_started.wait(2)
+                second_gpu_started.set()
+                if cancel_first:
+                    (queue / 'cancelled_runs' / 'first.json').write_text('{}')
+            gpu_active.pop()
+        if name == 'first':
+            def prepare():
+                first_cpu_started.set()
+                assert second_gpu_started.wait(2), 'next GPU phase did not overlap CPU preparation'
+                print('first cpu', flush=True)
+            render_executor.submit(copy_context().run, prepare).result(timeout=3)
+        with accelerator_phase(name, 'final_review'):
+            assert not gpu_active
+            gpu_active.append(name)
+            print(f'{name} review', flush=True)
+            reviews.append(name)
+            gpu_active.pop()
+        return {'reportPath': str(tmp_path / f'{name}-report.json')}
+
+    monkeypatch.setattr(service, '_execute_wave_request', execute)
+    assert run_staged_wave_service(queue, poll_interval_seconds=0.005, idle_timeout_seconds=0.05) == 2
+    assert 'second' not in (tmp_path / 'first.log').read_text()
+    assert 'first' not in (tmp_path / 'second.log').read_text()
+    assert 'first cpu' in (tmp_path / 'first.log').read_text()
+    first_result = json.loads((queue / 'results' / 'first.json').read_text())
+    assert first_result['exitCode'] == (130 if cancel_first else 0)
+    assert ('first' in reviews) is (not cancel_first)
+    state = json.loads((queue / 'worker_state.json').read_text())
+    assert state['activeRequests'] == []
+    assert state['gpuOwnerWaveId'] is None
+
+
+def test_service_terminalizes_non_object_request_without_retaining_an_active_owner(tmp_path):
+    root = tmp_path / "queue"
+    (root / "requests").mkdir(parents=True)
+    (root / "requests" / "invalid.json").write_text("[]", encoding="utf-8")
+    assert run_staged_wave_service(root, idle_timeout_seconds=0.05, poll_interval_seconds=0.01) == 1
+    result = json.loads((root / "results" / "invalid.json").read_text())
+    state = json.loads((root / "worker_state.json").read_text())
+    assert result["status"] == "failed"
+    assert "JSON object" in result["error"]
+    assert state["activeRequests"] == []
+    assert not list((root / "processing").glob("*.json"))
+
+
+def test_atomic_service_record_retries_transient_windows_sharing_violation(tmp_path, monkeypatch):
+    from exercise_motion_pkg import staged_wave_service as service
+    original_replace = service.os.replace
+    attempts = []
+
+    def replace(source, destination):
+        attempts.append(destination)
+        if len(attempts) == 1:
+            raise PermissionError("temporary sharing violation")
+        return original_replace(source, destination)
+
+    monkeypatch.setattr(service.os, "replace", replace)
+    path = tmp_path / "worker_state.json"
+    service._write_json_atomic(path, {"status": "running"})
+    assert json.loads(path.read_text()) == {"status": "running"}
+    assert len(attempts) == 2
 
 
 def test_windows_admission_mutex_is_queue_scoped_with_legacy_worker_fallback(tmp_path):
@@ -167,9 +256,12 @@ def test_queue_service_processes_wave_request_and_stops_after_drain(tmp_path: Pa
     while not result_path.exists() and time.monotonic() < deadline:
         time.sleep(0.01)
     assert result_path.exists()
+    (queue_root / "stop.request").write_text("stop after queued work drains", encoding="utf-8")
+    service_thread.join(timeout=2)
+    assert not service_thread.is_alive()
     service_state = json.loads(state_path.read_text(encoding="utf-8"))
     assert service_state["pid"] > 0
-    assert service_state["status"] in {"idle", "running"}
+    assert service_state["status"] == "stopped"
     assert service_state["sourceIdentityFingerprint"] == "source-v1"
     assert service_state["serviceConfigurationFingerprint"] == "runtime-config-v1"
     assert response["waveId"] == "run-wave-0001"
@@ -368,7 +460,7 @@ def test_service_dispatches_manifest_arguments_through_the_cli_wave_entrypoint(
     )
     captured = {}
 
-    def fake_run(args, *, progress, render_executor):
+    def fake_run(args, *, progress, render_executor, accelerator_phase=None):
         captured["command"] = args.command
         captured["manifest"] = args.staged_wave_manifest
         captured["progress"] = progress
@@ -382,7 +474,6 @@ def test_service_dispatches_manifest_arguments_through_the_cli_wave_entrypoint(
             "arguments": [
                 "bake-and-rank",
                 "--candidates-json", str(tmp_path / "candidates.json"),
-                "--reconstruction-repo-path", str(tmp_path / "reconstruction"),
                 "--body-model-root", str(tmp_path / "body-models"),
                 "--workspace", str(tmp_path / "workspace"),
                 "--staged-wave-manifest", str(manifest_path),
@@ -563,7 +654,8 @@ def test_queue_service_retains_ambiguous_processing_request_without_replaying(tm
     assert result["processed"] == 0
 
 
-def test_queue_service_terminalizes_cancelled_processing_request_without_replaying(tmp_path: Path):
+@pytest.mark.parametrize("recover_only", [False, True])
+def test_queue_service_terminalizes_cancelled_processing_request_without_replaying(tmp_path: Path, recover_only):
     queue_root = tmp_path / "queue"
     processing = queue_root / "processing"
     processing.mkdir(parents=True)
@@ -581,6 +673,10 @@ def test_queue_service_terminalizes_cancelled_processing_request_without_replayi
     (cancelled_runs / "run-cancelled-recovery.json").write_text(
         json.dumps({"runId": "run-cancelled-recovery"}), encoding="utf-8"
     )
+    pending_path = queue_root / "requests" / "pending.json"
+    if recover_only:
+        pending_path.parent.mkdir()
+        pending_path.write_text(json.dumps({"requestId": "pending", "waveId": "pending"}))
     executed = []
 
     result = {}
@@ -588,6 +684,7 @@ def test_queue_service_terminalizes_cancelled_processing_request_without_replayi
     def run_service():
         result["processed"] = run_staged_wave_service(
             queue_root,
+            recover_only=recover_only,
             execute_wave=lambda payload: executed.append(payload["requestId"]) or {},
             poll_interval_seconds=0.01,
         )
@@ -606,15 +703,18 @@ def test_queue_service_terminalizes_cancelled_processing_request_without_replayi
     assert payload["status"] == "cancelled"
     assert "not replayed" in payload["error"]
     assert executed == []
+    # The result is published before claim archival; inspect cleanup after shutdown.
+    (queue_root / "stop.request").write_text("test shutdown", encoding="utf-8")
+    service_thread.join(timeout=2)
+    assert not service_thread.is_alive()
+    assert result["processed"] == 0
+    if recover_only:
+        assert pending_path.is_file()
     assert not request_path.exists()
     assert not (queue_root / "ambiguous" / request_path.name).exists()
     archived_request = queue_root / "consumed" / "request-cancelled-recovery.request.json"
     assert json.loads(archived_request.read_text(encoding="utf-8")) == request
 
-    (queue_root / "stop.request").write_text("test shutdown", encoding="utf-8")
-    service_thread.join(timeout=2)
-    assert not service_thread.is_alive()
-    assert result["processed"] == 0
 
 
 def test_queue_service_os_lease_prevents_a_second_in_process_owner(tmp_path: Path):
@@ -801,3 +901,67 @@ def test_queue_pruning_expires_old_terminal_records_and_unreferenced_cancel_mark
     assert in_flight_request.exists()
     assert not ambiguous_request.exists()
     assert recent_ambiguous_request.exists()
+
+
+def test_gpu_gate_shares_review_slots_and_prioritizes_review_over_extraction():
+    from concurrent.futures import ThreadPoolExecutor
+    from exercise_motion_pkg.staged_wave_service import WaveGpuGate
+
+    gate = WaveGpuGate()
+    barrier = threading.Barrier(3, timeout=3)
+    def parallel_review():
+        with gate.phase("wave", "final_review"):
+            barrier.wait()
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        jobs = [executor.submit(parallel_review) for _ in range(3)]
+        for job in jobs:
+            job.result(timeout=4)
+
+    order = []
+    def run(stage):
+        with gate.phase("next", stage):
+            order.append(stage)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        with gate.phase("current", "reconstruction"):
+            review = executor.submit(run, "final_review")
+            with gate.condition:
+                assert gate.condition.wait_for(lambda: gate.review_waiters == 1, timeout=2)
+            extraction = executor.submit(run, "reconstruction")
+        review.result(timeout=3)
+        extraction.result(timeout=3)
+    assert order == ["final_review", "reconstruction"]
+
+
+def test_gpu_gate_cancellation_interrupts_a_queued_review():
+    from concurrent.futures import ThreadPoolExecutor
+    from exercise_motion_pkg.staged_wave_service import WaveGpuGate
+
+    gate = WaveGpuGate()
+    cancelled = threading.Event()
+    def review():
+        with gate.phase("cancelled", "final_review", cancelled.is_set):
+            pytest.fail("Cancelled review acquired the GPU")
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with gate.phase("current", "reconstruction"):
+            job = executor.submit(review)
+            with gate.condition:
+                assert gate.condition.wait_for(lambda: gate.review_waiters == 1, timeout=2)
+            cancelled.set()
+            with pytest.raises(KeyboardInterrupt, match="cancelled"):
+                job.result(timeout=2)
+    assert gate.review_waiters == 0
+    with gate.phase("next", "reconstruction"):
+        pass
+
+
+def test_gpu_gate_preserves_candidate_deadline_while_queued():
+    from exercise_motion_pkg.staged_wave_service import WaveGpuGate
+    from exercise_motion_pkg.bake_and_rank import CandidateWallTimeBudgetExpired
+
+    gate = WaveGpuGate()
+    with gate.phase("current", "reconstruction"):
+        with pytest.raises(CandidateWallTimeBudgetExpired, match="waiting for the GPU"):
+            with gate.phase("expired", "final_review", deadline=time.perf_counter() - 1):
+                pytest.fail("Expired candidate acquired the GPU")
+        assert gate.users == 1
+        assert gate.review_waiters == 0

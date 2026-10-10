@@ -200,13 +200,15 @@ def test_cpu_render_prefetch_uses_production_baker_without_caption_model(tmp_pat
     assert calls[0][1]["exercise_motion_contract"] == {"contract": "current"}
 
 
-def test_wave_overlaps_cpu_render_with_extraction_but_waits_to_start_final_vlm(tmp_path, monkeypatch):
+def test_wave_overlaps_cpu_render_with_extraction_and_releases_worker_for_review(tmp_path, monkeypatch):
     rendered = threading.Event()
     second_extracted = threading.Event()
     gpu_released = threading.Event()
     class Session:
         def __init__(self, request): pass
-        def caption_images(self, **kwargs): pytest.fail("Test must not call a model")
+        def caption_images(self, **kwargs):
+            assert gpu_released.is_set()
+            return '{}'
         def run_without_llama_overlap(self, operation): return operation()
         def close(self, **kwargs): pass
     monkeypatch.setattr(wave, "LazyLlamaCppVisionSession", Session)
@@ -233,9 +235,13 @@ def test_wave_overlaps_cpu_render_with_extraction_but_waits_to_start_final_vlm(t
             assert second_extracted.wait(5)
         return {"status": "prepared"}
     monkeypatch.setattr(wave, "prepare_cpu_render_cache", render)
-    monkeypatch.setattr(wave, "_stop_warm_reconstruction_worker_before_vlm",
-        lambda items: gpu_released.set() or {"stopped": True})
+    def release_worker(items):
+        if rendered.is_set():
+            gpu_released.set()
+        return {"stopped": True}
+    monkeypatch.setattr(wave, "_stop_warm_reconstruction_worker_before_vlm", release_worker)
     def finalize(request, **kwargs):
+        kwargs['shared_vision_session'].caption_images()
         assert gpu_released.is_set()
         return {"selected": {"candidate": {"videoId": request.workspace.name}}, "candidateResults": []}
     monkeypatch.setattr(wave, "run_bake_and_rank_pipeline", finalize)
@@ -253,8 +259,10 @@ def test_wave_overlaps_cpu_render_with_extraction_but_waits_to_start_final_vlm(t
         assert final["elapsedSeconds"] == pytest.approx(sum(timing.values()), abs=.002)
 
 
-def test_finalization_abandons_unfinished_speculative_prefetch(tmp_path, monkeypatch):
+def test_finalization_drains_expired_speculative_prefetch_before_processing(tmp_path, monkeypatch):
     import time as time_module
+    from exercise_motion_pkg import fit_runtime
+    monkeypatch.setattr(fit_runtime, 'DEFAULT_CANDIDATE_FIT_BUDGET_SECONDS', 0.05)
     finalize_started = threading.Event()
     release_render = threading.Event()
     render_started = threading.Event()
@@ -301,9 +309,11 @@ def test_finalization_abandons_unfinished_speculative_prefetch(tmp_path, monkeyp
 
     def render(_item, candidate, result, contract):
         render_started.set()
-        # Stay unfinished until finalization has already started process().
-        assert finalize_started.wait(5)
-        release_render.wait(5)
+        deadline = time_module.monotonic() + 3
+        while not fit_runtime.speculative_prefetch_abandoned(_item.request.workspace / candidate.workspace_slug):
+            assert time_module.monotonic() < deadline, 'Expired preparation was not abandoned'
+            release_render.wait(0.01)
+        release_render.set()
         return {"status": "prepared", "artifactCount": 0}
 
     monkeypatch.setattr(wave, "prepare_cpu_render_cache", render)
@@ -311,9 +321,8 @@ def test_finalization_abandons_unfinished_speculative_prefetch(tmp_path, monkeyp
 
     def finalize(request, **kwargs):
         finalize_started.set()
-        # Give the abandon path a moment; must not block on the stuck prefetch.
-        time_module.sleep(0.05)
-        release_render.set()
+        if request.workspace.name == 'slow':
+            assert release_render.is_set(), 'Finalization duplicated an undrained preparation'
         return {"selected": {"candidate": {"videoId": request.workspace.name}}, "candidateResults": []}
 
     monkeypatch.setattr(wave, "run_bake_and_rank_pipeline", finalize)

@@ -21,7 +21,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.formatTime
-import com.gabstra.myworkoutassistant.screens.CompactMovementPreview
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.RestHistory
 import com.gabstra.myworkoutassistant.shared.SetHistory
@@ -449,7 +448,6 @@ internal fun WorkoutExerciseHeader(
     exercise: Exercise,
     appViewModel: AppViewModel,
     modifier: Modifier = Modifier,
-    previewSize: androidx.compose.ui.unit.Dp = 72.dp,
     horizontalPadding: androidx.compose.ui.unit.Dp = 16.dp,
     verticalPadding: androidx.compose.ui.unit.Dp = 8.dp,
 ) {
@@ -458,23 +456,12 @@ internal fun WorkoutExerciseHeader(
     }
     val familyName = linkedDefinition?.name ?: exercise.name
     val nameOverride = exercise.nameOverride?.trim()?.takeIf { it.isNotEmpty() }
-    val movementRef = exercise.movementRef ?: linkedDefinition?.movementRef
     val textColor = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray
 
     Row(
         modifier = modifier.padding(horizontal = horizontalPadding, vertical = verticalPadding),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        CompactMovementPreview(
-            movementRef = movementRef,
-            contentDescription = if (movementRef == null) {
-                "No movement available for $familyName"
-            } else {
-                "Movement preview for $familyName"
-            },
-            modifier = Modifier.size(previewSize),
-        )
-        Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE),

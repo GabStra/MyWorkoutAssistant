@@ -13,7 +13,7 @@ GPU/VRAM high-water samples, and terminal statuses.
 Usage:
   python scripts/motion_speed_harness.py --arms qwen-full,qwen-shared
   python scripts/motion_speed_harness.py --arms qwen-full --exercises slug-a,slug-b
-  python scripts/motion_speed_harness.py --fixtures <fixture_manifest.json> --arms qwen-full
+  python scripts/motion_speed_harness.py --fixtures <fixture_manifest.json> --arms qwen-shared,shared-overlap --staged-wave-size 1
 """
 from __future__ import annotations
 
@@ -60,22 +60,23 @@ ARMS: dict[str, list[str]] = {
     "qwen-shared": [
         "-WarmGvhmrWorker:$true", "-KeepLlamaCppServer:$true", "-SharedLlamaServer",
     ],
+    "shared-overlap": [
+        "-WarmGvhmrWorker:$true", "-KeepLlamaCppServer:$true", "-SharedLlamaServer",
+        "-MaxConcurrentStagedWaves", "2",
+    ],
 }
 
-UNSUPPORTED_ARMS = {
-    "shared-overlap": (
-        "the current workspace-scoped persistent staged-wave service is serial "
-        "and the runner clamps MaxConcurrentStagedWaves to 1; no overlap would occur"
-    ),
-}
+UNSUPPORTED_ARMS = {}
 
 ARM_EFFECTIVE_SETTINGS = {
     "qwen-full": {"sharedLlamaServerEnabled": False, "effectiveMaxConcurrentStagedWaves": 1},
     "qwen-shared": {"sharedLlamaServerEnabled": True, "effectiveMaxConcurrentStagedWaves": 1},
+    "shared-overlap": {"sharedLlamaServerEnabled": True, "effectiveMaxConcurrentStagedWaves": 2},
 }
 ARM_BACKEND_SETTINGS = {
     "qwen-full": {"visualDecisionBackend": "qwen-chat", "finalOutputReviewBackend": "qwen-chat"},
     "qwen-shared": {"visualDecisionBackend": "qwen-chat", "finalOutputReviewBackend": "qwen-chat"},
+    "shared-overlap": {"visualDecisionBackend": "qwen-chat", "finalOutputReviewBackend": "qwen-chat"},
 }
 ARM_REVIEW_ARTIFACT_SETTINGS = {
     arm: {
@@ -1854,13 +1855,16 @@ def effective_configuration_error(
             )
     expected_high_water = expected["effectiveMaxConcurrentStagedWaves"]
     expected_high_water = expected_high_water if expected_staged_enabled else 0
-    if metrics.get("overlapHighWater") != expected_high_water:
+    observed_high_water = metrics.get("overlapHighWater")
+    allowed_high_water = range(1, expected_high_water + 1) if arm == "shared-overlap" and expected_staged_enabled else (expected_high_water,)
+    if observed_high_water not in allowed_high_water:
         return (
             f"observed overlap high-water={metrics.get('overlapHighWater')!r}, "
-            f"expected {expected_high_water}"
+            f"expected a value in {list(allowed_high_water)}"
         )
     expected_worker_mode = (
-        "workspace_scoped_persistent_serial_queue" if expected_staged_enabled else "disabled"
+        ("workspace_scoped_persistent_cpu_overlap_queue" if expected["effectiveMaxConcurrentStagedWaves"] > 1
+         else "workspace_scoped_persistent_serial_queue") if expected_staged_enabled else "disabled"
     )
     if metrics.get("stagedWaveWorkerMode") != expected_worker_mode:
         return (

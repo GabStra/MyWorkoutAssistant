@@ -464,8 +464,11 @@ def initialize_supported_motion(rig, original, evidence, pose, calibration, dead
     scale = body_scale(original, rig.names)
     from .support_alignment import alignment_features, alignment_constraint_errors, alignment_dependencies
     source_alignment = alignment_features(original if alignment_reference is None else alignment_reference, rig.names, evidence)
+    best_coordinates = rig.initial.copy()
+    best_cost = float('inf')
 
     def residual(values):
+        nonlocal best_coordinates, best_cost
         from .fit_runtime import fit_should_yield_for_priority
         if fit_should_yield_for_priority() or monotonic() > deadline:
             raise TimeoutError
@@ -490,16 +493,16 @@ def initialize_supported_motion(rig, original, evidence, pose, calibration, dead
                 candidate, rig.names, pose_only=True, margin=ANATOMY_FIT_MARGIN)[0],
             1000.*np.minimum(collision_clearances(candidate, rig.names, scale)[0]-.003*scale, 0.),
             .0001*(coordinates-source_coordinates),
-            # Acceptance rejects stationary ptp > 5 mm. Soft-penalize wander about
-            # the median plant so under-iterated projections do not leave 7–17 mm drift.
-            (400. * (candidate[:, indices] - np.median(candidate[:, indices], axis=0, keepdims=True))
-             ).reshape(count, -1),
         ], axis=1).ravel()
         # Independent pose projections can choose different redundant spine
         # configurations in adjacent frames. Regularize the correction itself
         # before making it the reference for the final trajectory fit.
         correction_acceleration = np.diff(candidate-desired, n=2, axis=0)*(fps*.15)**2
-        return np.r_[frame_errors, correction_acceleration.ravel()]
+        errors = np.r_[frame_errors, correction_acceleration.ravel()]
+        cost = float(errors @ errors)
+        if cost < best_cost:
+            best_coordinates, best_cost = coordinates.copy(), cost
+        return errors
 
     contact_rows = [j*3+k for j in contact_indices for k in range(3)]
     grip_rows = (np.asarray([joint_dependencies(rig, equipment['endpointPair'])])
@@ -508,17 +511,20 @@ def initialize_supported_motion(rig, original, evidence, pose, calibration, dead
     collision_rows = [joint_dependencies(rig, [*a, *b]) for _, a, b, _, _ in collision_specs(rig.names)]
     direction_rows = np.repeat(np.asarray([joint_dependencies(rig, [rig.names[j], rig.names[parent]])
                                          for j, parent in zip(direction_children, direction_parents)]), 3, axis=0)
-    plant_rows = np.repeat(
-        np.asarray([joint_dependencies(rig, [rig.names[j]]) for j in indices]), 3, axis=0)
     frame_pattern = np.vstack([rig.dependencies, direction_rows, rig.dependencies[contact_rows], grip_rows,
         geometry_dependencies(rig, evidence), alignment_dependencies(rig, evidence), anatomical_structure_dependencies(rig, original, rig.names),
-        collision_rows, np.eye(rig.width), plant_rows])
+        collision_rows, np.eye(rig.width)])
     pattern = kron(eye(count), csr_matrix(frame_pattern), format='csr')
     d2 = csr_matrix(abs(np.diff(np.eye(count), n=2, axis=0)))
     pattern = vstack([pattern, kron(d2, csr_matrix(rig.dependencies))], format='csr')
     if pattern.shape != (residual(rig.initial.ravel()).size, rig.initial.size):
         raise ValueError('Support projection residual and dependency shapes differ')
-    solved = solve_trajectory(residual, rig.initial.ravel(), pattern, max(1, int(max_evaluations)))
+    try:
+        solved = solve_trajectory(residual, rig.initial.ravel(), pattern, max(1, int(max_evaluations)))
+    except TimeoutError:
+        # Preserve evaluated progress for the caller's independent support gates.
+        rig.initial[:] = best_coordinates
+        raise
     calibration['projectionEvaluations'] = solved.nfev
     calibration['projectionEvaluationBudget'] = int(max_evaluations)
     rig.initial[:] = solved.x.reshape(count, rig.width)
