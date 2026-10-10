@@ -314,7 +314,7 @@ Workflow:
 4. If the session was not completed normally, treat that as an important constraint on interpretation.
 5. For lifting-dominant sessions, do not use modest session HR or 0% high-intensity exposure as the main risk by itself.
 6. Before writing final synthesis, verify the clearest lagging or improving exercise with a narrower retrieval when available.
-7. When a trend claim depends on previous sessions of this workout, retrieve them with get_previous_sessions instead of assuming.
+7. Before writing ANY claim about previous sessions or trends — including "no previous sessions" — call get_previous_sessions; per-exercise PREV lines are not workout history.
 8. Stop tool use and write the final answer once you can explain what went well, what drifted, and any important constraint.
 """.trimIndent()
 
