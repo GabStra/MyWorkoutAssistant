@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.motionrenderer
 import android.content.Context
 import android.graphics.Bitmap
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.Looper
 import android.util.Log
 import android.view.Choreographer
@@ -698,6 +699,7 @@ private class WearSkeletonFilamentView(
 private class WearSkeletonFilamentRenderer(
     private val context: Context,
     private val thumbnailMode: Boolean = false,
+    private val readbackHandler: Handler = Handler(Looper.getMainLooper()),
 ) {
     private val uiHelper = UiHelper(UiHelper.ContextErrorPolicy.DONT_CHECK)
     private val engine: Engine
@@ -983,7 +985,7 @@ private class WearSkeletonFilamentRenderer(
             Texture.Format.RGBA,
             Texture.Type.UBYTE,
         )
-        descriptor.setCallback(Handler(Looper.getMainLooper())) {
+        descriptor.setCallback(readbackHandler) {
             output.rewind()
             onComplete()
         }
@@ -1267,33 +1269,50 @@ private class ThumbnailSlot(
     val palette: SkeletonPalette,
     val backgroundColor: Color,
     val keyLightDirection: WearSkeletonVec3,
-    val onFrame: (ImageBitmap) -> Unit,
+    private val onFrame: (ImageBitmap) -> Unit,
     var elapsedSeconds: Double = 0.0,
 ) {
     private val bitmaps = arrayOf(createListThumbnailBitmap(), createListThumbnailBitmap())
     private val frames = arrayOf(bitmaps[0].asImageBitmap(), bitmaps[1].asImageBitmap())
     private var displayIndex = 1
 
-    fun publishPixels(pixels: IntArray) {
+    /**
+     * Called on the render thread; the finished bitmap hops to the main thread
+     * because Compose state must be written there.
+     */
+    fun publishPixels(pixels: IntArray, mainHandler: Handler) {
         val writeIndex = 1 - displayIndex
         val width = ListThumbnailPixelSize
         bitmaps[writeIndex].setPixels(pixels, 0, width, 0, 0, width, width)
         displayIndex = writeIndex
-        onFrame(frames[writeIndex])
+        val frame = frames[writeIndex]
+        mainHandler.post { onFrame(frame) }
     }
 }
 
-private object SharedSkeletonThumbnailRuntime : Choreographer.FrameCallback {
-    private val choreographer = Choreographer.getInstance()
+/**
+ * Renders every visible list thumbnail from ONE shared offscreen filament
+ * renderer, round-robin, on a dedicated render thread. Filament requires the
+ * engine's GL calls to stay on the thread the engine was created on, so the
+ * whole loop (updateScene, beginFrame, render, readPixels, endFrame) lives on
+ * a HandlerThread; only finished bitmaps are handed back to the main thread.
+ */
+private object SharedSkeletonThumbnailRuntime {
+    private const val FRAME_DELAY_MILLIS = 16L
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val lock = Any()
     private val slots = LinkedHashMap<Any, ThumbnailSlot>()
+    private val activeSlotIds = HashSet<Any>()
     private val scratchPixels = IntArray(ListThumbnailPixelSize * ListThumbnailPixelSize)
     private var renderer: WearSkeletonFilamentRenderer? = null
     private var pixelBuffer: ByteBuffer? = null
+    private var renderHandler: Handler? = null
+    private var renderPending = false
+    private var prewarmStarted = false
     private var nextSlotIndex = 0
     private var readInFlight = false
-    private var scheduled = false
     private var lastFrameTimeNanos: Long? = null
-    private var debugFrameCount = 0
 
     fun register(
         context: Context,
@@ -1303,114 +1322,118 @@ private object SharedSkeletonThumbnailRuntime : Choreographer.FrameCallback {
         primaryFill: Color,
         onFrame: (ImageBitmap) -> Unit,
     ) {
-        ensureRenderer(context.applicationContext)
-        val appContext = context.applicationContext
+        ensureRuntime(context.applicationContext)
+        synchronized(lock) { activeSlotIds += slotId }
         // JSON parsing per card is too slow for composition; parse off-main and
-        // hop back to insert the slot (slots are main-confined).
+        // hand the parsed slot to the render thread.
         Thread {
             val parsed = runCatching { parseWearSkeleton(skeletonJson) }.getOrNull()
-            mainHandler.post {
-                if (parsed == null) {
-                    return@post
+                ?: return@Thread
+            val yaw = parsed.display.viewYawDegrees ?: -28f
+            val slot = ThumbnailSlot(
+                skeleton = parsed,
+                palette = createSkeletonPalette(primaryFill),
+                backgroundColor = backgroundColor,
+                keyLightDirection = skeletonKeyLightDirection(yaw),
+                onFrame = onFrame,
+            )
+            val stillWanted = synchronized(lock) {
+                if (slotId in activeSlotIds) {
+                    slots[slotId] = slot
+                    true
+                } else {
+                    false
                 }
-                val yaw = parsed.display.viewYawDegrees ?: -28f
-                slots[slotId] = ThumbnailSlot(
-                    skeleton = parsed,
-                    palette = createSkeletonPalette(primaryFill),
-                    backgroundColor = backgroundColor,
-                    keyLightDirection = skeletonKeyLightDirection(yaw),
-                    onFrame = onFrame,
-                )
-                start()
+            }
+            if (stillWanted) {
+                kick()
             }
         }.start()
     }
 
     fun unregister(slotId: Any) {
-        slots.remove(slotId)
-        if (slots.isEmpty()) {
-            stop()
+        synchronized(lock) {
+            activeSlotIds.remove(slotId)
+            slots.remove(slotId)
         }
     }
-
-    private fun start() {
-        if (!scheduled) {
-            scheduled = true
-            choreographer.postFrameCallback(this)
-        }
-    }
-
-    private val mainHandler = Handler(Looper.getMainLooper())
-    private var prewarmStarted = false
 
     /**
-     * Creating the engine, compiling the material and allocating the offscreen
-     * swapchain takes hundreds of milliseconds; doing that inline with the first
-     * registration froze the tab that opens the library. The shared renderer is
-     * therefore built on a background thread and handed back to the main thread.
+     * The engine, material compile and offscreen swapchain take hundreds of
+     * milliseconds; they are built once on the render thread itself so opening
+     * the library never blocks composition.
      */
-    private fun ensureRenderer(appContext: Context) {
-        if (renderer != null || prewarmStarted) {
-            return
+    private fun ensureRuntime(appContext: Context) {
+        val handler = synchronized(lock) {
+            renderHandler ?: HandlerThread("SkeletonThumbnailRenderer").apply { start() }
+                .let { thread -> Handler(thread.looper).also { renderHandler = it } }
         }
-        prewarmStarted = true
-        Thread {
+        handler.post {
             val startedAt = android.os.SystemClock.uptimeMillis()
-            val created = WearSkeletonFilamentRenderer(appContext, thumbnailMode = true)
+            val created = WearSkeletonFilamentRenderer(
+                appContext,
+                thumbnailMode = true,
+                readbackHandler = handler,
+            )
             val buffer = ByteBuffer.allocateDirect(ListThumbnailPixelSize * ListThumbnailPixelSize * 4)
                 .order(ByteOrder.nativeOrder())
             Log.d(
                 THUMB_LOG_TAG,
                 "thumbnail renderer prewarm took ${android.os.SystemClock.uptimeMillis() - startedAt}ms",
             )
-            mainHandler.post {
-                if (renderer == null) {
-                    renderer = created
-                    pixelBuffer = buffer
-                    start()
-                } else {
-                    created.destroy()
-                }
+            synchronized(lock) {
+                renderer = created
+                pixelBuffer = buffer
             }
-        }.start()
+            kick()
+        }
     }
 
-    private fun stop() {
-        scheduled = false
-        lastFrameTimeNanos = null
-        choreographer.removeFrameCallback(this)
+    private fun kick() {
+        renderHandler?.post {
+            if (!renderPending) {
+                renderPending = true
+                doFrame(System.nanoTime())
+            }
+        }
     }
 
-    override fun doFrame(frameTimeNanos: Long) {
-        scheduled = false
-        if (slots.isEmpty()) {
+    private fun doFrame(nowNanos: Long) {
+        val currentRenderer = synchronized(lock) { renderer }
+        val buffer = synchronized(lock) { pixelBuffer }
+        if (currentRenderer == null || buffer == null) {
+            renderPending = false
+            return
+        }
+        val snapshot = synchronized(lock) { slots.values.toList() }
+        if (snapshot.isEmpty()) {
+            renderPending = false
             lastFrameTimeNanos = null
             return
         }
-        start()
         val previousFrameTimeNanos = lastFrameTimeNanos
-        lastFrameTimeNanos = frameTimeNanos
+        lastFrameTimeNanos = nowNanos
         if (previousFrameTimeNanos != null) {
-            val deltaSeconds = (frameTimeNanos - previousFrameTimeNanos) / 1_000_000_000.0
-            slots.values.forEach { slot ->
-                slot.elapsedSeconds += deltaSeconds
-            }
+            val deltaSeconds = (nowNanos - previousFrameTimeNanos) / 1_000_000_000.0
+            snapshot.forEach { slot -> slot.elapsedSeconds += deltaSeconds }
         }
         if (readInFlight) {
-            if (debugFrameCount % 60 == 0) {
-                Log.d(THUMB_LOG_TAG, "doFrame skipped: readInFlight=true slots=${slots.size}")
-            }
-            debugFrameCount++
+            kick()
             return
         }
-        debugFrameCount++
-        renderNext(frameTimeNanos)
+        renderNext(currentRenderer, buffer, nowNanos, snapshot)
     }
 
-    private fun renderNext(frameTimeNanos: Long) {
-        val renderer = renderer ?: return
-        val pixelBuffer = pixelBuffer ?: return
-        val slot = pickSlot() ?: return
+    private fun renderNext(
+        renderer: WearSkeletonFilamentRenderer,
+        pixelBuffer: ByteBuffer,
+        frameTimeNanos: Long,
+        snapshot: List<ThumbnailSlot>,
+    ) {
+        val slot = pickSlot(snapshot) ?: run {
+            renderPending = false
+            return
+        }
         val playback = resolveLoopPlayback(
             elapsedSeconds = slot.elapsedSeconds,
             frameCount = slot.skeleton.frames.size,
@@ -1433,17 +1456,17 @@ private object SharedSkeletonThumbnailRuntime : Choreographer.FrameCallback {
         renderer.renderAndReadPixels(frameTimeNanos, pixelBuffer) {
             copyPixelsToSlot(slot, pixelBuffer)
             readInFlight = false
+            kick()
         }
     }
 
-    private fun pickSlot(): ThumbnailSlot? {
-        if (slots.isEmpty()) {
+    private fun pickSlot(snapshot: List<ThumbnailSlot>): ThumbnailSlot? {
+        if (snapshot.isEmpty()) {
             return null
         }
-        val values = slots.values.toList()
-        val index = nextSlotIndex.floorMod(values.size)
+        val index = nextSlotIndex.floorMod(snapshot.size)
         nextSlotIndex = index + 1
-        return values[index]
+        return snapshot[index]
     }
 
     private fun copyPixelsToSlot(slot: ThumbnailSlot, buffer: ByteBuffer) {
@@ -1464,7 +1487,7 @@ private object SharedSkeletonThumbnailRuntime : Choreographer.FrameCallback {
                 sourceIndex += 4
             }
         }
-        slot.publishPixels(scratchPixels)
+        slot.publishPixels(scratchPixels, mainHandler)
     }
 }
 
