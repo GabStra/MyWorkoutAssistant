@@ -23,6 +23,7 @@ import com.gabstra.myworkoutassistant.shared.ExerciseInfo
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgression
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
 import com.gabstra.myworkoutassistant.shared.WorkoutPlan
+import com.gabstra.myworkoutassistant.shared.WorkoutManager
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.findWorkoutForHistory
 import com.gabstra.myworkoutassistant.shared.initializeSetData
@@ -1149,16 +1150,26 @@ open class AppViewModel : WorkoutViewModel() {
 
                     workouts.forEach {
                         try {
-                            val workoutHistory = workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(it.id)
+                            // Sessions are recorded against the workout VERSION that ran
+                            // them; after an edit the latest session lives under an older
+                            // version id, so resolve it across all versions of this workout.
+                            val workoutHistory = WorkoutManager.workoutVersionIds(it, workoutStore.workouts)
+                                .mapNotNull { versionId ->
+                                    workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(versionId)
+                                }
+                                .maxByOrNull { history -> history.startTime }
                                 ?: return@forEach
+                            // The latest session may have run under an older version whose
+                            // exercise ids differ; derive infos/record from that version.
+                            val sessionWorkout = workoutStore.workouts.firstOrNull { w -> w.id == workoutHistory.workoutId } ?: it
                             val setHistories =
                                 setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
-                            val exercises = it.workoutComponents.filterIsInstance<Exercise>() + it.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
+                            val exercises = sessionWorkout.workoutComponents.filterIsInstance<Exercise>() + sessionWorkout.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
                             val exerciseInfos = exercises.mapNotNull { exercise ->
                                 getExerciseInfoDao().getExerciseInfoById(exercise.id)
                             }
 
-                            val workoutRecord = workoutRecordDao.getWorkoutRecordByWorkoutId(it.id)
+                            val workoutRecord = workoutRecordDao.getWorkoutRecordByWorkoutHistoryId(workoutHistory.id)
                             val exerciseSessionProgressions = exerciseSessionProgressionDao.getByWorkoutHistoryId(workoutHistory.id)
 
                             val errorLogs = try {
@@ -1312,16 +1323,16 @@ open class AppViewModel : WorkoutViewModel() {
     }
 
     private suspend fun resolveWorkoutHistoryForSync(): com.gabstra.myworkoutassistant.shared.WorkoutHistory? {
-        val selectedWorkoutId = selectedWorkout.value.id
         val persistedCurrentHistory = currentWorkoutHistory?.id?.let { workoutHistoryDao.getWorkoutHistoryById(it) }
-        val latestUnfinishedHistory = workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(
-            selectedWorkoutId,
-            isDone = false
-        )
-        val latestCompletedHistory = workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(
-            selectedWorkoutId,
-            isDone = true
-        )
+        // Match across all versions: a session recorded before an edit lives under an
+        // older version id of the same workout.
+        val versionIds = WorkoutManager.workoutVersionIds(selectedWorkout.value, workoutStore.workouts)
+        val latestUnfinishedHistory = versionIds
+            .mapNotNull { workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(it, isDone = false) }
+            .maxByOrNull { history -> history.startTime }
+        val latestCompletedHistory = versionIds
+            .mapNotNull { workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(it, isDone = true) }
+            .maxByOrNull { history -> history.startTime }
 
         return if (workoutState.value is WorkoutState.Completed) {
             latestCompletedHistory ?: persistedCurrentHistory ?: latestUnfinishedHistory
