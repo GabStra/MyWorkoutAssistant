@@ -100,6 +100,7 @@ import com.gabstra.myworkoutassistant.exportWorkoutSessionToMarkdown
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.getEnabledStatusOfWorkoutComponent
 import com.gabstra.myworkoutassistant.insights.ConfigurableWorkoutInsightsEngine
+import com.gabstra.myworkoutassistant.insights.InsightTokenCounter
 import com.gabstra.myworkoutassistant.insights.LiteRtLmModelHealth
 import com.gabstra.myworkoutassistant.insights.LiteRtLmModelStore
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsDialog
@@ -339,7 +340,7 @@ fun WorkoutDetailScreen(
         mutableStateOf(initialSelectedTabIndex in 1..2)
     }
     var historyFilterRange by remember(workout.id) { mutableStateOf(FilterRange.ALL) }
-    var isHistoryFiltersExpanded by rememberSaveable(workout.id) { mutableStateOf(true) }
+    var isHistoryFiltersExpanded by rememberSaveable(workout.id) { mutableStateOf(false) }
     var selectedIntervalWorkoutHistoryIds by remember(workout.id) {
         mutableStateOf<Set<UUID>>(emptySet())
     }
@@ -478,7 +479,7 @@ fun WorkoutDetailScreen(
         }
     }
 
-    fun generateWorkoutInsights(allowLowMemory: Boolean = false) {
+    fun generateWorkoutInsights() {
         if (!MobileLlmFeatureFlags.isEnabled(context)) return
         val historyId = displayedWorkoutHistoryId
         if (historyId == null) {
@@ -493,6 +494,7 @@ fun WorkoutDetailScreen(
             insightsState = WorkoutInsightsUiState.PreparingModel
             when (
                 val promptResult = withContext(Dispatchers.IO) {
+                    InsightTokenCounter.loadNow(context)
                     buildWorkoutSessionInsightsPrompt(
                         workoutHistoryId = historyId,
                         workoutHistoryDao = workoutHistoryDao,
@@ -515,7 +517,7 @@ fun WorkoutDetailScreen(
                                 prompt = promptResult.prompt,
                                 systemPrompt = promptResult.systemPrompt,
                                 toolContext = promptResult.toolContext,
-                                allowLowMemoryLoad = allowLowMemory,
+                                useTransportToolCalling = true,
                             )
                         ).collectLatest { chunk ->
                             insightsState = WorkoutInsightsUiState.Generating(
@@ -532,16 +534,9 @@ fun WorkoutDetailScreen(
                             text = finalText.ifBlank { "No insights were generated." }
                         )
                     }.onFailure { error ->
-                        insightsState = if (error is LiteRtLmModelHealth.LowMemoryException) {
-                            WorkoutInsightsUiState.Error(
-                                message = error.message ?: "Not enough free memory to load the model.",
-                                canRetryLowMemory = true,
-                            )
-                        } else {
-                            WorkoutInsightsUiState.Error(
-                                error.message ?: "Unable to generate local insights."
-                            )
-                        }
+                        insightsState = WorkoutInsightsUiState.Error(
+                            error.message ?: "Unable to generate local insights."
+                        )
                     }
                 }
             }
@@ -1719,7 +1714,6 @@ fun WorkoutDetailScreen(
                         null
                     },
                     onGenerate = { generateWorkoutInsights() },
-                    onRetryLowMemory = { generateWorkoutInsights(allowLowMemory = true) },
                 )
             }
         }

@@ -16,6 +16,19 @@ import java.util.UUID
 
 class WorkoutManager {
     companion object {
+        /**
+         * Every version id of the same logical workout. Workouts are versioned
+         * copy-on-write (edit = new id, same globalId), and each session is
+         * recorded against the version that ran it — so "same workout" queries
+         * (latest session, previous sessions, sync) must match all version ids,
+         * never the current id alone.
+         */
+        fun workoutVersionIds(workout: Workout, allWorkouts: List<Workout>): List<UUID> =
+            allWorkouts
+                .filter { it.globalId == workout.globalId }
+                .map { it.id }
+                .distinct()
+
         fun updateWorkoutOld(workouts: List<Workout>, oldWorkout: Workout, updatedWorkout: Workout) : List<Workout> {
             return workouts.map { workout ->
                 if (workout == oldWorkout) updatedWorkout else workout

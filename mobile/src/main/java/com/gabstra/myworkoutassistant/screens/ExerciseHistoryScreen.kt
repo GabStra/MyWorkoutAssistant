@@ -452,10 +452,7 @@ fun ExerciseHistoryScreen(
                     selectedWorkoutHistory = selectableWorkoutHistories[index + 1]
                 }
             },
-            contentPadding = PaddingValues(
-                horizontal = Spacing.xs,
-                vertical = Spacing.sm,
-            ),
+            contentPadding = PaddingValues(horizontal = Spacing.xs),
         ) {
             Text(
                 text = selectedWorkoutHistory!!.date.format(dateFormatter) + " " +

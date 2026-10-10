@@ -19,7 +19,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.gabstra.myworkoutassistant.composables.DialogOutlinedButton
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.ContentSubtitle
 import com.gabstra.myworkoutassistant.composables.ContentTitle
@@ -38,7 +37,6 @@ sealed class WorkoutInsightsUiState {
     data class Success(val title: String, val text: String) : WorkoutInsightsUiState()
     data class Error(
         val message: String,
-        val canRetryLowMemory: Boolean = false,
     ) : WorkoutInsightsUiState()
 }
 
@@ -51,7 +49,6 @@ fun WorkoutInsightsDialog(
     onDismiss: () -> Unit,
     onConfigure: (() -> Unit)?,
     onGenerate: () -> Unit,
-    onRetryLowMemory: (() -> Unit)? = null,
 ) {
     if (!show) return
 
@@ -119,17 +116,6 @@ fun WorkoutInsightsDialog(
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.fillMaxWidth()
                         )
-                        if (state.canRetryLowMemory && onRetryLowMemory != null) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.End
-                            ) {
-                                DialogOutlinedButton(
-                                    text = "Try anyway",
-                                    onClick = onRetryLowMemory
-                                )
-                            }
-                        }
                     }
 
                     else -> {

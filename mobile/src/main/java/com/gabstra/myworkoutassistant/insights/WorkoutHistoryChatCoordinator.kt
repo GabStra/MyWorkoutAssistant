@@ -50,10 +50,7 @@ suspend fun prepareExerciseHistoryChatContext(
             WorkoutHistoryChatPrepareResult.Ready(
                 title = "${exercise.name} — chat",
                 toolContext = toolContext,
-                systemPrompt = buildHistoryChatSystemPromptWithExportedData(
-                    instructionsPrompt = buildExerciseHistoryChatSystemPrompt(),
-                    toolContext = toolContext,
-                ),
+                systemPrompt = buildHistoryChatToolCallingSystemPrompt("one exercise"),
             )
         }
     }
@@ -87,9 +84,9 @@ suspend fun prepareWorkoutSessionHistoryChatContext(
             WorkoutHistoryChatPrepareResult.Ready(
                 title = "${promptResult.title} — chat",
                 toolContext = toolContext,
-                systemPrompt = buildHistoryChatSystemPromptWithExportedData(
-                    instructionsPrompt = buildWorkoutSessionHistoryChatSystemPrompt(),
-                    toolContext = toolContext,
+                systemPrompt = withAlwaysAvailableFacts(
+                    systemPrompt = buildHistoryChatToolCallingSystemPrompt("one completed workout session"),
+                    coreFactsBlock = promptResult.coreFactsBlock,
                 ),
             )
         }

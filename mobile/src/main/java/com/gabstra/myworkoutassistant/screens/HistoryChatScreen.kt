@@ -51,6 +51,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.insights.ConfigurableWorkoutInsightsEngine
+import com.gabstra.myworkoutassistant.insights.InsightTokenCounter
 import com.gabstra.myworkoutassistant.insights.HistoryChatLimits
 import com.gabstra.myworkoutassistant.insights.HistoryChatMessage
 import com.gabstra.myworkoutassistant.insights.HistoryChatMessageRole
@@ -182,7 +183,7 @@ private sealed class HistoryChatPrepareUi {
 private fun buildHistoryChatIntroMessage(): HistoryChatMessage =
     HistoryChatMessage(
         role = HistoryChatMessageRole.Assistant,
-        content = "Ask about this exported workout history. I can answer questions about the recorded sessions, sets, reps, load, rest, timing, heart-rate context, labels, and progression data that are available in this chat's history export.",
+        content = "Ask anything about this history — sessions, sets, reps, load, rest, timing, heart-rate context, labels, and progression. I'll look up the recorded data before answering.",
         isUiOnly = true,
     )
 
@@ -228,6 +229,7 @@ fun HistoryChatScreen(
     LaunchedEffect(mode, workouts, workoutStore) {
         prepareUi = HistoryChatPrepareUi.Loading
         val result = withContext(Dispatchers.IO) {
+            InsightTokenCounter.loadNow(context)
             when (mode) {
                 is HistoryChatScreenMode.Exercise -> {
                     val workout = workouts.find { it.id == mode.workoutId }
@@ -268,8 +270,7 @@ fun HistoryChatScreen(
                         prompt = "",
                         systemPrompt = result.systemPrompt,
                         toolContext = result.toolContext,
-                        useTransportToolCalling = false,
-                        historyChatSystemIncludesData = true,
+                        useTransportToolCalling = true,
                     ),
                 )
         }
@@ -296,6 +297,8 @@ fun HistoryChatScreen(
                 maxTurns = HistoryChatLimits.MAX_PRIOR_TURNS + 1,
                 maxChars = HistoryChatLimits.MAX_CONVERSATION_HISTORY_CHARS,
                 includeAssistantMessages = true,
+                tokenCounter = { text -> InsightTokenCounter.countTokens(text) },
+                maxTokens = HistoryChatLimits.MAX_CONVERSATION_HISTORY_TOKENS,
             )
             val request = ready.requestBase.copy(
                 prompt = userMessage.content,
@@ -366,7 +369,7 @@ fun HistoryChatScreen(
                 ),
                 title = {
                     Text(
-                        text = "History chat",
+                        text = "Ask your history",
                         style = MaterialTheme.typography.titleLarge,
                     )
                 },

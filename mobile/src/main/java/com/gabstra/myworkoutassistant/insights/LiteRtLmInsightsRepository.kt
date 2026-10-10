@@ -49,12 +49,6 @@ data class WorkoutInsightsRequest(
      * Ordered chat messages for history chat requests. The last message should be the current user turn.
      */
     val conversationMessages: List<HistoryChatMessage> = emptyList(),
-    /**
-     * Skips the free-memory pre-flight for this request. Set by the explicit
-     * "try anyway" override after a low-memory refusal; an overshoot then dies
-     * only in the isolated :llm process and surfaces as a readable error.
-     */
-    val allowLowMemoryLoad: Boolean = false,
     val debugRecorder: WorkoutInsightsDebugDumpRecorder? = null,
 )
 
@@ -86,11 +80,6 @@ class LiteRtLmInsightsRepository(
     ): Flow<WorkoutInsightsChunk> = flow {
         val modelPath = LiteRtLmModelStore.getConfiguredModelPath(context)
             ?: error("No LiteRT-LM model configured.")
-        if (!request.allowLowMemoryLoad) {
-            // Main process, so the typed LowMemoryException reaches the UI
-            // intact across the request the user can override.
-            LiteRtLmModelHealth.requireEnoughFreeMemory(context, modelPath)
-        }
         runWorkoutInsightsGeneration(
             request = request,
             logTag = LOG_TAG,
@@ -411,7 +400,14 @@ private suspend fun LiteRtLmInsightsRepository.generateToolCallingResponse(
             visionEnabled = false,
             systemPrompt = transportRequest.systemPrompt,
             maxOutputToken = transportRequest.maxOutputTokens,
-            initialMessages = emptyList(),
+            initialMessages = transportRequest.conversationMessages
+                .dropLast(1)
+                .map { message ->
+                    when (message.role) {
+                        HistoryChatMessageRole.User -> "user" to message.content.trim()
+                        HistoryChatMessageRole.Assistant -> "model" to message.content.trim()
+                    }
+                },
             toolSpecsJson = toolExecutor.toolSpecsJson(),
         ),
     )
@@ -437,7 +433,7 @@ private suspend fun LiteRtLmInsightsRepository.generateToolCallingResponse(
             transportRequest.debugRecorder,
         )
         var response = session.sendMessage(
-            LlmSessionMessage.User(transportRequest.prompt),
+            buildLlmSessionMessage(transportRequest),
             onChunk = {},
         )
         logAssistantTurn(

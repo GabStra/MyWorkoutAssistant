@@ -316,10 +316,37 @@ class OpenAiInsightsRepository(
         messages.addAll(
             ChatCompletionCreateParams.builder()
                 .addSystemMessage(transportRequest.systemPrompt)
-                .addUserMessage(transportRequest.prompt)
                 .build()
                 .messages()
         )
+        if (transportRequest.conversationMessages.isNotEmpty()) {
+            messages.addAll(
+                transportRequest.conversationMessages.map { message ->
+                    when (message.role) {
+                        HistoryChatMessageRole.User ->
+                            ChatCompletionMessageParam.ofUser(
+                                ChatCompletionUserMessageParam.builder()
+                                    .content(message.content.trim())
+                                    .build()
+                            )
+                        HistoryChatMessageRole.Assistant ->
+                            ChatCompletionMessageParam.ofAssistant(
+                                ChatCompletionAssistantMessageParam.builder()
+                                    .content(message.content.trim())
+                                    .build()
+                            )
+                    }
+                }
+            )
+        } else {
+            messages.add(
+                ChatCompletionCreateParams.builder()
+                    .addUserMessage(transportRequest.prompt)
+                    .build()
+                    .messages()
+                    .last()
+            )
+        }
 
         onProgress(WorkoutInsightsPhase.PREPARING_TOOLS, "Preparing insight tools...")
         transportRequest.debugRecorder?.recordTransportRequest(

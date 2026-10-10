@@ -57,6 +57,9 @@ data class WorkoutInsightsTransportRequest(
 )
 
 private const val MAX_FINAL_SYNTHESIS_ATTEMPTS = 2
+
+/** Explicit decode cap for full insight generations on the tools path (context is 8K). */
+private const val MAX_INSIGHT_OUTPUT_TOKENS = 2_048
 private const val REPEATED_TEXT_RESTART_STATUS = "Repeated text detected. Restarting insight generation..."
 private const val REPEATED_TEXT_RETRY_SYSTEM_INSTRUCTION = """
 The previous generation was stopped because it began repeating text.
@@ -124,7 +127,15 @@ internal suspend fun runWorkoutInsightsGeneration(
                         chartTimelineToolContext = null,
                         requestLogLabel = "${transportLabel}_chat_request".withAttemptLogSuffix(finalAttempt),
                         responseLogLabel = "${transportLabel}_chat_raw_response".withAttemptLogSuffix(finalAttempt),
-                        maxOutputTokens = HistoryChatLimits.MAX_OUTPUT_TOKENS,
+                        // Chat replies stay short; full insights get a generous explicit
+                        // cap. Null is NOT safe on the LiteRT tools path: with
+                        // maxOutputToken unset the runtime stops after the first token
+                        // (verified on-device: deterministic "." responses after full prefill).
+                        maxOutputTokens = if (request.conversationMessages.isNotEmpty()) {
+                            HistoryChatLimits.MAX_OUTPUT_TOKENS
+                        } else {
+                            MAX_INSIGHT_OUTPUT_TOKENS
+                        },
                         debugRecorder = request.debugRecorder,
                     ),
                     { chunk ->

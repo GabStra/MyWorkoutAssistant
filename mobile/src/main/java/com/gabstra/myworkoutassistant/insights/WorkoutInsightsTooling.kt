@@ -178,6 +178,8 @@ sealed class WorkoutInsightsToolContext {
         override val title: String,
         val workoutLabel: String,
         override val markdown: String,
+        /** Compact per-session summaries of previous completed sessions of the same workout, oldest-first. */
+        val previousSessionsMarkdown: String = "",
     ) : WorkoutInsightsToolContext()
 }
 
@@ -312,7 +314,8 @@ Workflow:
 4. If the session was not completed normally, treat that as an important constraint on interpretation.
 5. For lifting-dominant sessions, do not use modest session HR or 0% high-intensity exposure as the main risk by itself.
 6. Before writing final synthesis, verify the clearest lagging or improving exercise with a narrower retrieval when available.
-7. Stop tool use and write the final answer once you can explain what went well, what drifted, and any important constraint.
+7. When a trend claim depends on previous sessions of this workout, retrieve them with get_previous_sessions instead of assuming.
+8. Stop tool use and write the final answer once you can explain what went well, what drifted, and any important constraint.
 """.trimIndent()
 
 internal class InsightsOpenApiTool(
@@ -538,6 +541,24 @@ private fun buildWorkoutSessionSpecs(
                     "sectionTitle" to requested,
                     "truncated" to (match.length > maxChars),
                     "section" to match.takeWithinBudget(maxChars)
+                )
+            }
+        ),
+        WorkoutInsightsToolSpec(
+            name = "get_previous_sessions",
+            description = "Get compact summaries of the previous completed sessions of this same workout (date, duration, average and peak heart rate). Use this when the user asks about past sessions or progress across sessions.",
+            parametersSchema = maxCharsParametersSchema(defaultMaxChars = 1600),
+            handler = { args ->
+                val maxChars = args.maxCharsOrDefault(1600)
+                mapOf(
+                    "ok" to true,
+                    "target" to toolContext.workoutLabel,
+                    "truncated" to (toolContext.previousSessionsMarkdown.length > maxChars),
+                    "previousSessions" to if (toolContext.previousSessionsMarkdown.isBlank()) {
+                        "No previous completed sessions of this workout were found."
+                    } else {
+                        toolContext.previousSessionsMarkdown.takeWithinBudget(maxChars)
+                    }
                 )
             }
         ),

@@ -7,6 +7,7 @@ import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
+import com.gabstra.myworkoutassistant.shared.WorkoutManager
 import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.export.ExerciseHistoryMarkdownResult
@@ -122,6 +123,33 @@ internal val WORKOUT_INSIGHTS_SYSTEM_PROMPT = listOf(
     FINAL_RESPONSE_NUMERIC_POLICY.trimIndent()
 ).joinToString("\n\n")
 
+/**
+ * Compact coaching rules for the TOOLS path. The full prompts above were sized for
+ * the old inline-everything flow; combined with tool definitions and the task block
+ * they make the first turn large enough that the on-device model degenerates
+ * (verified on-device: deterministic "." responses). Keeps the load-bearing
+ * guardrails only.
+ */
+internal val WORKOUT_INSIGHTS_TOOL_SYSTEM_PROMPT = """
+You are a workout insights assistant. Explain the workout in plain, useful coaching language.
+
+Rules:
+- Base the final answer only on retrieved tool outputs. Precomputed session facts supplied with the task are computed by the app from recorded data; treat them as authoritative and quote their numbers exactly.
+- A number is allowed only when copied verbatim from evidence or the precomputed facts. Never transform, estimate, round, or infer numbers; describe those relationships qualitatively.
+- Do not give medical advice or diagnose injuries.
+- If evidence is sparse, partial, or the session did not complete normally, say so plainly; never describe an incomplete session as completed.
+- Never call something improved if the number is lower than the comparison value; when one exercise improved and another lagged, say that explicitly.
+- For lifting-dominant sessions, prioritize load, reps, and completed work; use HR only as supporting context.
+- Interpret double progression and auto-regulation as progression systems: after a planned load increase, lower reps or volume are expected, not a regression.
+
+Respond in markdown with exactly these sections:
+## What stood out
+## Exercise highlights
+## Next session target
+
+`## Next session target` is exactly one bullet quoting the next-session target fact numbers, or stating plainly that no such fact exists. Start every bullet with "- ". No text outside the sections. No filler.
+""".trimIndent()
+
 private const val EXERCISE_INSIGHTS_SYSTEM_PROMPT_BASE = """
 You are an exercise insights assistant.
 
@@ -188,6 +216,21 @@ internal val EXERCISE_INSIGHTS_SYSTEM_PROMPT = listOf(
     FINAL_RESPONSE_NUMERIC_POLICY.trimIndent()
 ).joinToString("\n\n")
 
+/** Compact variant for the TOOLS path; see [WORKOUT_INSIGHTS_TOOL_SYSTEM_PROMPT]. */
+internal val EXERCISE_INSIGHTS_TOOL_SYSTEM_PROMPT = """
+You are an exercise insights assistant. Explain this exercise's recent performance in plain, useful coaching language.
+
+Rules:
+- Base the final answer only on retrieved tool outputs. Precomputed facts supplied with the task are app-computed and authoritative; quote their numbers exactly.
+- A number is allowed only when copied verbatim from evidence or the precomputed facts. Never transform, estimate, round, or infer numbers.
+- Do not give medical advice or diagnose injuries.
+- Focus on the latest completed session first; use recent history only where it changes the interpretation.
+- If the latest session met plan but still lagged previous, baseline, or recent trend, say that explicitly. Never call something improved if the number is lower than the comparison value.
+- Interpret double progression and auto-regulation as progression systems: after a planned load increase, lower reps or volume are expected, not a regression.
+
+Respond in concise markdown bullets. Start every bullet with "- ". No filler.
+""".trimIndent()
+
 sealed class WorkoutInsightsPromptResult {
     data class Success(
         val title: String,
@@ -196,6 +239,8 @@ sealed class WorkoutInsightsPromptResult {
         val toolContext: WorkoutInsightsToolContext? = null,
         val chartAnalysisContext: String? = null,
         val chartTimelineToolContext: WorkoutInsightsChartTimelineContext? = null,
+        /** Small always-available facts block (deterministic FACT lines) for history-chat system prompts. */
+        val coreFactsBlock: String = "",
     ) : WorkoutInsightsPromptResult()
 
     data class Failure(val message: String) : WorkoutInsightsPromptResult()
@@ -253,7 +298,7 @@ suspend fun buildExerciseInsightsPrompt(
             WorkoutInsightsPromptResult.Success(
                 title = "${exercise.name} insights",
                 prompt = buildExerciseToolCallingPrompt(exercise.name),
-                systemPrompt = buildToolEnabledSystemPrompt(EXERCISE_INSIGHTS_SYSTEM_PROMPT),
+                systemPrompt = buildToolEnabledSystemPrompt(EXERCISE_INSIGHTS_TOOL_SYSTEM_PROMPT),
                 toolContext = WorkoutInsightsToolContext.Exercise(
                     title = "${exercise.name} insights",
                     exerciseName = exercise.name,
@@ -263,6 +308,32 @@ suspend fun buildExerciseInsightsPrompt(
         }
     }
 }
+
+private const val PREVIOUS_SESSIONS_TOOL_LIMIT = 6
+
+/** One compact line per previous completed session, oldest-first, for the chat retrieval tool. */
+private fun buildPreviousSessionsToolMarkdown(
+    previousSessionsNewestFirst: List<com.gabstra.myworkoutassistant.shared.WorkoutHistory>,
+): String = previousSessionsNewestFirst
+    .asReversed()
+    .joinToString("\n") { history ->
+        buildString {
+            append(history.date)
+            append(' ')
+            append(history.time)
+            append(" | ")
+            append("${(history.duration / 60.0).roundToInt()} minutes")
+            val heartRates = history.heartBeatRecords.filter { it > 0 }
+            if (heartRates.isNotEmpty()) {
+                append(" | avg ")
+                append(heartRates.average().roundToInt())
+                append(" bpm, peak ")
+                append(heartRates.max())
+                append(" bpm")
+            }
+            if (!history.isDone) append(" | incomplete")
+        }
+    }
 
 suspend fun buildWorkoutSessionInsightsPrompt(
     workoutHistoryId: UUID,
@@ -322,10 +393,25 @@ suspend fun buildWorkoutSessionInsightsPrompt(
                     if (lower != null && upper != null) lower to upper else null
                 }
                 ?.firstOrNull()
-            val previousSessions = workoutHistoryDao.getRecentDoneWorkoutHistoriesByWorkoutId(
-                workoutId = workoutHistory.workoutId,
-                excludedId = workoutHistory.id,
-                limit = WorkoutSessionFactsBuilder.MAX_PREVIOUS_SESSIONS,
+            // Workouts are versioned copy-on-write: every edit creates a new id with the
+            // same globalId, and each session is recorded against the version that ran it.
+            // "Same workout" therefore means same globalId — matching by the current
+            // version's id alone splits history across edits.
+            val equivalentWorkoutIds = workout
+                ?.let { current -> WorkoutManager.workoutVersionIds(current, workoutStore.workouts) }
+                ?: listOf(workoutHistory.workoutId)
+            suspend fun recentEquivalentPreviousSessions(limit: Int): List<com.gabstra.myworkoutassistant.shared.WorkoutHistory> =
+                equivalentWorkoutIds.flatMap { equivalentId ->
+                    workoutHistoryDao.getRecentDoneWorkoutHistoriesByWorkoutId(
+                        workoutId = equivalentId,
+                        excludedId = workoutHistory.id,
+                        limit = limit,
+                    )
+                }.sortedByDescending { it.startTime }.take(limit)
+
+            val previousSessions = recentEquivalentPreviousSessions(WorkoutSessionFactsBuilder.MAX_PREVIOUS_SESSIONS)
+            val previousSessionsMarkdown = buildPreviousSessionsToolMarkdown(
+                recentEquivalentPreviousSessions(PREVIOUS_SESSIONS_TOOL_LIMIT),
             )
             val sessionFacts = WorkoutSessionFactsBuilder.build(
                 workoutHistory = workoutHistory,
@@ -343,10 +429,12 @@ suspend fun buildWorkoutSessionInsightsPrompt(
                     workoutLabel = workoutLabel,
                     sessionStatusSummary = sessionStatusSummary
                 ) + sessionFactsBlock,
-                systemPrompt = buildToolEnabledSystemPrompt(WORKOUT_INSIGHTS_SYSTEM_PROMPT),
+                systemPrompt = buildToolEnabledSystemPrompt(WORKOUT_INSIGHTS_TOOL_SYSTEM_PROMPT),
+                coreFactsBlock = sessionFactsBlock,
                 toolContext = WorkoutInsightsToolContext.WorkoutSession(
                     title = "Workout session insights",
                     workoutLabel = workoutLabel,
+                    previousSessionsMarkdown = previousSessionsMarkdown,
                     markdown = buildString {
                         append(sessionStatusLine)
                         if (workoutCategoryGuidance.isNotBlank()) {
@@ -2924,6 +3012,9 @@ private fun structuredTag(
 internal fun estimateTokenCount(
     text: String,
 ): Int {
+    // Exact Gemma token count when the bundled tokenizer is loaded; the char
+    // heuristic below is only the not-yet-loaded fallback.
+    InsightTokenCounter.countTokens(text)?.let { return it }
     val trimmed = text.trim()
     if (trimmed.isEmpty()) return 0
     val scaledLength = trimmed.length * ESTIMATED_CHARS_PER_TOKEN_DENOMINATOR

@@ -78,6 +78,7 @@ import com.gabstra.myworkoutassistant.shared.FilterRange
 import com.gabstra.myworkoutassistant.ensureRestSeparatedBySets
 import com.gabstra.myworkoutassistant.exportExerciseHistoryToMarkdown
 import com.gabstra.myworkoutassistant.insights.ConfigurableWorkoutInsightsEngine
+import com.gabstra.myworkoutassistant.insights.InsightTokenCounter
 import com.gabstra.myworkoutassistant.insights.LiteRtLmModelStore
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsRequest
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsSettingsStore
@@ -275,6 +276,7 @@ fun ExerciseDetailScreen(
             insightsState = WorkoutInsightsUiState.PreparingModel
             when (
                 val promptResult = withContext(Dispatchers.IO) {
+                    InsightTokenCounter.loadNow(context)
                     val db = AppDatabase.getDatabase(context)
                     buildExerciseInsightsPrompt(
                         exercise = exercise,
@@ -301,7 +303,8 @@ fun ExerciseDetailScreen(
                                 title = promptResult.title,
                                 prompt = promptResult.prompt,
                                 systemPrompt = promptResult.systemPrompt,
-                                toolContext = promptResult.toolContext
+                                toolContext = promptResult.toolContext,
+                                useTransportToolCalling = true,
                             )
                         ).collectLatest { chunk ->
                             insightsState = WorkoutInsightsUiState.Generating(

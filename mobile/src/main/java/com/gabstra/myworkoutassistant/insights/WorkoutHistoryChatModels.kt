@@ -26,6 +26,8 @@ internal fun selectConversationWindowMessages(
     maxTurns: Int,
     maxChars: Int,
     includeAssistantMessages: Boolean = true,
+    tokenCounter: ((String) -> Int?)? = null,
+    maxTokens: Int? = null,
 ): List<HistoryChatMessage> {
     val conversationMessages = messages.filterNot { it.isUiOnly }
     if (conversationMessages.isEmpty()) return emptyList()
@@ -63,6 +65,15 @@ internal fun selectConversationWindowMessages(
     ) {
         selectedTurns.removeAt(0)
     }
+    if (tokenCounter != null && maxTokens != null) {
+        while (selectedTurns.size > 1) {
+            val totalTokens = selectedTurns.sumOf { turn ->
+                turn.sumOf { tokenCounter(it.content)?.toLong() ?: 0L }
+            }
+            if (totalTokens <= maxTokens) break
+            selectedTurns.removeAt(0)
+        }
+    }
     return selectedTurns.flatten()
 }
 
@@ -72,6 +83,12 @@ internal object HistoryChatLimits {
 
     /** Soft cap on characters for the "Conversation so far" block inside the user prompt. */
     const val MAX_CONVERSATION_HISTORY_CHARS = 12_000
+
+    /**
+     * Hard cap (exact Gemma token count) on the conversation window shared with the
+     * system prompt, tool definitions and tool outputs inside the model context.
+     */
+    const val MAX_CONVERSATION_HISTORY_TOKENS = 3_000
 
     /**
      * Upper bound on **new** tokens generated per assistant reply (local LiteRT decode and remote

@@ -24,6 +24,40 @@ internal fun buildExerciseHistoryChatSystemPrompt(): String =
 internal fun buildWorkoutSessionHistoryChatSystemPrompt(): String =
     buildHistoryChatInlineSystemPrompt(buildGenericHistoryChatBase("one completed workout session"))
 
+private fun buildHistoryChatToolCallingBase(scope: String): String = """
+You are the in-app history chat for $scope.
+
+You have retrieval tools for scoped workout-history data. Use them to look up facts before answering: summaries, comparisons, progress, targets, rest, timing, heart-rate context, labels, or practical next steps.
+
+Answer the current user question directly. Use earlier conversation only as follow-up context. If the current question changes topic, follow the new topic.
+
+Your tools cover this chat's scope: $scope, and where the tools expose them, previous sessions of the same workout or the exercise's own history. If the user asks about anything beyond what the tools can retrieve (other workouts, other exercises, or older history), say plainly what is not available and answer with whatever relevant context the tools do provide.
+
+If a claim depends on numbers, the numbers must appear verbatim in retrieved tool output. Do not invent, round, fix, or infer missing numbers.
+
+Be concise by default. For simple questions, use one short paragraph or up to 3 bullets. Do not create a session-by-session breakdown, timeline, or headings unless the user asks for that.
+
+Always answer in complete sentences. Never reply with a bare "?", a single word, or an empty answer — if you cannot retrieve what a question needs, explain that in a full sentence.
+
+If the tools cannot support an answer, say what is missing. Do not give medical advice, diagnoses, or injury treatment.
+""".trimIndent()
+
+/** System prompt for history chat when retrieval tools are enabled (no inline export). */
+internal fun buildHistoryChatToolCallingSystemPrompt(scope: String): String =
+    buildToolEnabledSystemPrompt(buildHistoryChatToolCallingBase(scope))
+
+/**
+ * Appends the deterministic always-available facts so the model can discuss the
+ * current session even when it fails to call retrieval tools.
+ */
+internal fun withAlwaysAvailableFacts(systemPrompt: String, coreFactsBlock: String): String =
+    if (coreFactsBlock.isBlank()) {
+        systemPrompt
+    } else {
+        systemPrompt + "\n\n--- Known facts about this chat's subject (always available; use tools for detail) ---\n\n" +
+            coreFactsBlock.trim()
+    }
+
 /**
  * Appends the compacted export once after [instructionsPrompt] (chat instructions only, no history yet).
  */
