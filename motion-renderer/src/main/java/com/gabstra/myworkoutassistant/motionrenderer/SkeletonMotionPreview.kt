@@ -1313,6 +1313,7 @@ private object SharedSkeletonThumbnailRuntime {
     private var prewarmStarted = false
     private var nextSlotIndex = 0
     private var readInFlight = false
+    private var skipCount = 0
     private var lastFrameTimeNanos: Long? = null
 
     fun register(
@@ -1430,9 +1431,14 @@ private object SharedSkeletonThumbnailRuntime {
             snapshot.forEach { slot -> slot.elapsedSeconds += deltaSeconds }
         }
         if (readInFlight) {
+            skipCount++
+            if (skipCount == 30 || skipCount == 150) {
+                Log.w(THUMB_LOG_TAG, "STUCK? readInFlight for $skipCount consecutive frames")
+            }
             kick()
             return
         }
+        skipCount = 0
         renderNext(currentRenderer, buffer, nowNanos, snapshot)
     }
 
@@ -1467,6 +1473,7 @@ private object SharedSkeletonThumbnailRuntime {
         )
         readInFlight = true
         renderer.renderAndReadPixels(frameTimeNanos, pixelBuffer) {
+            Log.d(THUMB_LOG_TAG, "readback complete")
             copyPixelsToSlot(slot, pixelBuffer)
             readInFlight = false
             kick()
