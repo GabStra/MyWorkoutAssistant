@@ -463,7 +463,7 @@ private suspend fun LiteRtLmInsightsRepository.generateToolCallingResponse(
             val status = toolCalls.joinToString { it.name }.lowercase()
             onProgress(
                 phaseForToolCalls(toolCalls.map { it.name }),
-                "Tool round ${round + 1}: $status"
+                "Reading your workout data (step ${round + 1})..."
             )
             val toolResponses = toolCalls.map { toolCall ->
                 val arguments = JSONObject(toolCall.argumentsJson)

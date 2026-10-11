@@ -416,7 +416,7 @@ class OpenAiInsightsRepository(
             )
             onProgress(
                 phaseForToolCalls(toolCalls.map { it.toolName() }),
-                "Tool round ${round + 1}: ${toolCalls.joinToString { it.toolName() }.lowercase()}"
+                "Reading your workout data (step ${round + 1})..."
             )
 
             messages.add(ChatCompletionMessageParam.ofAssistant(message.toParam()))

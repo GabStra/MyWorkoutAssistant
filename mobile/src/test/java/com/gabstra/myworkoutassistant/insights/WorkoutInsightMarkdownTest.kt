@@ -321,6 +321,52 @@ class WorkoutInsightMarkdownTest {
     }
 
     @Test
+    fun postProcessInsightMarkdown_dropsExerciseHighlightsSectionThatSaysNothing() {
+        val markdown = """
+            ## What stood out
+            - Trajectory is regressing: average HR 6 bpm above the recent 133 bpm average.
+
+            ## Exercise highlights
+            - No specific exercise-level highlights were retrieved.
+
+            ## Next session target
+            - Keep average HR at or under 140 bpm for about 55 minutes
+        """.trimIndent()
+
+        val processed = postProcessInsightMarkdown(
+            markdown = markdown,
+            toolContext = null,
+        )
+
+        assertFalse(processed.contains("Exercise highlights"))
+        assertTrue(processed.contains("What stood out"))
+        assertTrue(processed.contains("Next session target"))
+        assertTrue(processed.contains("Keep average HR"))
+    }
+
+    @Test
+    fun postProcessInsightMarkdown_keepsExerciseHighlightsSectionWithRealContent() {
+        val markdown = """
+            ## What stood out
+            - Trajectory is regressing: average HR 6 bpm above the recent 133 bpm average.
+
+            ## Exercise highlights
+            - Main Set interval executed at 96% of samples inside the target zone.
+
+            ## Next session target
+            - Keep average HR at or under 140 bpm for about 55 minutes
+        """.trimIndent()
+
+        val processed = postProcessInsightMarkdown(
+            markdown = markdown,
+            toolContext = null,
+        )
+
+        assertTrue(processed.contains("Exercise highlights"))
+        assertTrue(processed.contains("96%"))
+    }
+
+    @Test
     fun postProcessInsightMarkdown_allowsFactsQuotedVerbatimFromSessionFactsBlock() {
         // Regression for the on-device "the recorded value" stripping report: the model
         // may quote FACT lines verbatim (including the next-session target); those

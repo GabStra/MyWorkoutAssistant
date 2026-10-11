@@ -148,7 +148,7 @@ Format — exactly three sections, no other headings, bullets only, no empty bul
 
 - What stood out: 2-3 bullets, max ~20 words each; first bullet = trajectory verdict with its key number; fold the target-check verdict into a bullet.
 - Exercise highlights: 1-2 exercise-specific bullets; if none apply, one short bullet saying so.
-- Next session target: exactly one bullet quoting the target fact numbers, or stating plainly that none exists.
+- Next session target: exactly one bullet written as a short instruction starting with a verb (e.g. "Keep average HR at or under 140 bpm for about 55 minutes"), quoting the target fact numbers; if no such fact exists, say so in one sentence.
 Whole answer under ~110 words.
 """.trimIndent()
 

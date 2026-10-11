@@ -182,12 +182,43 @@ private fun normalizeStarBlobPseudoHeadings(markdown: String): String {
     return s
 }
 
+/**
+ * Drops the "Exercise highlights" section when it carries no finding — the model is
+ * told to write a nothing-to-say bullet when nothing applies, and a whole section
+ * that says nothing is noise for the reader.
+ */
+internal fun removeEmptyExerciseHighlightsSection(markdown: String): String {
+    val sectionRegex = Regex(
+        """(?ms)^##\s*Exercise highlights\s*\n(.*?)(?=^##\s|\Z)"""
+    )
+    val section = sectionRegex.find(markdown) ?: return markdown
+    val body = section.groupValues[1]
+    val saysNothing = body
+        .lineSequence()
+        .map(String::trim)
+        .filter { it.isNotEmpty() }
+        .all { line ->
+            val lower = line.removePrefix("- ").lowercase()
+            lower.startsWith("no ") && (
+                lower.contains("highlight") ||
+                    lower.contains("exercise-specific") ||
+                    lower.contains("exercise level") ||
+                    lower.contains("detail") ||
+                    lower.contains("nothing")
+                )
+        }
+    if (!saysNothing) return markdown
+    return markdown.replaceRange(section.range, "")
+        .replace(Regex("""\n{3,}"""), "\n\n")
+        .trim() + "\n"
+}
+
 internal fun postProcessInsightMarkdown(
     markdown: String,
     toolContext: WorkoutInsightsToolContext?,
     evidencePrompt: String? = null,
 ): String {
-    var processed = sanitizeInsightMarkdown(markdown)
+    var processed = removeEmptyExerciseHighlightsSection(sanitizeInsightMarkdown(markdown))
     if (toolContext != null) {
         processed = replaceUnsupportedExactMetricMentions(
             markdown = processed,
