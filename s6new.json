@@ -1,0 +1,138 @@
+{
+  "schema_version": 1,
+  "session_id": "58714881-193f-436c-8a2e-33d781e6287f",
+  "started_at_epoch_ms": 1791657219373,
+  "mode": "LOCAL",
+  "request": {
+    "title": "probe-S6",
+    "tool_context_type": "Exercise",
+    "has_chart_image": false,
+    "has_chart_timeline_tool_context": false,
+    "uses_transport_tool_calling": true,
+    "history_chat_system_includes_data": false,
+    "custom_instructions": ""
+  },
+  "finished_at_epoch_ms": 1791657259563,
+  "transport_requests": [],
+  "status_updates": [
+    {
+      "recorded_at_epoch_ms": 1791657219376,
+      "phase": "PREPARING_TOOLS",
+      "status_text": "Loading insight model..."
+    },
+    {
+      "recorded_at_epoch_ms": 1791657219377,
+      "phase": "PREPARING_TOOLS",
+      "status_text": "Loading insight model..."
+    },
+    {
+      "recorded_at_epoch_ms": 1791657242649,
+      "phase": "PREPARING_TOOLS",
+      "status_text": "Preparing insight tools..."
+    },
+    {
+      "recorded_at_epoch_ms": 1791657242652,
+      "phase": "PREPARING_TOOLS",
+      "status_text": "Preparing insight tools..."
+    },
+    {
+      "recorded_at_epoch_ms": 1791657245974,
+      "phase": "FETCHING_CONTEXT",
+      "status_text": "Tool round 1: get_context_overview"
+    },
+    {
+      "recorded_at_epoch_ms": 1791657245974,
+      "phase": "FETCHING_CONTEXT",
+      "status_text": "Tool round 1: get_context_overview"
+    },
+    {
+      "recorded_at_epoch_ms": 1791657259414,
+      "phase": "FINAL_SYNTHESIS",
+      "status_text": "Generating insight..."
+    },
+    {
+      "recorded_at_epoch_ms": 1791657259447,
+      "phase": "FINAL_SYNTHESIS",
+      "status_text": "Generating insight..."
+    }
+  ],
+  "blocks": [
+    {
+      "index": 1,
+      "recorded_at_epoch_ms": 1791657219377,
+      "label": "litert_chat_system_prompt",
+      "body": "You are a workout insights assistant. Write the insight a good coach would send after this session.\n\nContent rules:\n- Lead with trajectory: how this session compares to recent sessions of the same workout, using the precomputed trend facts and get_previous_sessions. The user was there; do not restate what happened (status, duration, structure).\n- Give at most one main mechanism that explains the result (e.g. stable drift, pacing change, expected reset after an edit).\n- State plan adherence plainly; when one part improved and another lagged, say that explicitly.\n- Never call something improved if the number is lower than the comparison value.\n- A number is allowed only when copied verbatim from evidence or the precomputed facts. Never transform, estimate, round, or infer numbers; describe those relationships qualitatively.\n- Ignore structural noise (listed set durations, segment counts) unless it explains the outcome.\n- PREV\/progression lines describe per-exercise progression state and can legitimately say \"No previous session\" after the workout was edited; that does NOT mean the workout has no history. Trust the FACT lines and get_previous_sessions for cross-session history.\n- Do not give medical advice or diagnose injuries.\n- If evidence is sparse or the session did not complete normally, say so plainly; never describe an incomplete session as completed.\n\nRespond in markdown with exactly these sections:\n## What stood out\n## Exercise highlights\n## Next session target\n\n`## What stood out` opens with the trajectory verdict. `## Next session target` is exactly one bullet quoting the next-session target fact numbers, or stating plainly that no such fact exists. Start every bullet with \"- \". No text outside the sections. No filler.\n\nRetrieval policy:\n- You have tools for scoped workout-history retrieval and compression.\n- Start with the smallest useful retrieval.\n- Treat the first overview as scouting context, not final evidence, unless it already covers the needed exercises and comparisons explicitly.\n- Prefer latest explicit metrics first, then recent trend context.\n- Investigate further whenever the current evidence is mixed, truncated, generic, or missing exercise-level detail needed for final synthesis.\n- If a workout has multiple main exercises, verify the relevant lagging or improving exercise with a narrower retrieval before concluding.\n- Use summarization tools only when raw scoped context would be too verbose.\n- Stop calling tools once you have enough evidence to answer confidently.\n- Do not ask for data outside the available tools.\n\nFinal synthesis policy:\n- Base the final answer only on retrieved tool outputs.\n- If evidence is partial, say so plainly instead of overreaching.\n- If a tool payload says `truncated: true` or the returned text ends with `...`, fetch narrower context before concluding.\n- Do not write a workout-level risk from a generic overview alone when an exercise section is available.\n\n--- Known facts about this chat's subject (always available; use tools for detail) ---\n\nFACT Session duration: 55:09 (55 minutes)\nFACT Average heart rate: 140 bpm; peak 154 bpm\nFACT Heart-rate drift: the second half averaged -2 bpm versus the first half\nFACT 80% of HR samples stayed inside the 60-70% target zone\nFACT Session duration versus recent sessions of this workout: 55 minutes versus 55 minutes typical\nFACT Trend over the last 3 sessions of this workout: regressing — average HR is 6 bpm above the recent 133 bpm average; at a similar duration, a lower average HR means better aerobic efficiency\nFACT HR drift this session: -2 bpm versus your typical -2 bpm on this workout\nFACT Previous-session target check: the target was average HR at or under 131 bpm for about 55 minutes; this session averaged 140 bpm across 55 minutes — target not met\nFACT Next-session target: average heart rate at or under 140 bpm for about 55 minutes"
+    },
+    {
+      "index": 2,
+      "recorded_at_epoch_ms": 1791657219379,
+      "label": "litert_chat_user_prompt",
+      "body": "Task: analyze the workout session \"Cyclette - LISS (Workout category: Biking stationary)\" and produce focused coaching insights.\nSession status: completed normally.\n\nWorkflow:\n1. Fetch the compact session overview first.\n2. Treat that overview as a first pass only; if it is mixed, incomplete, truncated, generic, or missing one of the main exercises, fetch specific sections before concluding.\n3. Use summary tools only when the remaining context is too large.\n4. If the session was not completed normally, treat that as an important constraint on interpretation.\n5. For lifting-dominant sessions, do not use modest session HR or 0% high-intensity exposure as the main risk by itself.\n6. Before writing final synthesis, verify the clearest lagging or improving exercise with a narrower retrieval when available.\n7. When a trend claim depends on previous sessions of this workout, retrieve them with get_previous_sessions instead of assuming.\n8. Stop tool use and write the final answer once you can explain what went well, what drifted, and any important constraint.\n\n"
+    },
+    {
+      "index": 3,
+      "recorded_at_epoch_ms": 1791657242652,
+      "label": "litert_chat_request_system_prompt",
+      "body": "You are a workout insights assistant. Write the insight a good coach would send after this session.\n\nContent rules:\n- Lead with trajectory: how this session compares to recent sessions of the same workout, using the precomputed trend facts and get_previous_sessions. The user was there; do not restate what happened (status, duration, structure).\n- Give at most one main mechanism that explains the result (e.g. stable drift, pacing change, expected reset after an edit).\n- State plan adherence plainly; when one part improved and another lagged, say that explicitly.\n- Never call something improved if the number is lower than the comparison value.\n- A number is allowed only when copied verbatim from evidence or the precomputed facts. Never transform, estimate, round, or infer numbers; describe those relationships qualitatively.\n- Ignore structural noise (listed set durations, segment counts) unless it explains the outcome.\n- PREV\/progression lines describe per-exercise progression state and can legitimately say \"No previous session\" after the workout was edited; that does NOT mean the workout has no history. Trust the FACT lines and get_previous_sessions for cross-session history.\n- Do not give medical advice or diagnose injuries.\n- If evidence is sparse or the session did not complete normally, say so plainly; never describe an incomplete session as completed.\n\nRespond in markdown with exactly these sections:\n## What stood out\n## Exercise highlights\n## Next session target\n\n`## What stood out` opens with the trajectory verdict. `## Next session target` is exactly one bullet quoting the next-session target fact numbers, or stating plainly that no such fact exists. Start every bullet with \"- \". No text outside the sections. No filler.\n\nRetrieval policy:\n- You have tools for scoped workout-history retrieval and compression.\n- Start with the smallest useful retrieval.\n- Treat the first overview as scouting context, not final evidence, unless it already covers the needed exercises and comparisons explicitly.\n- Prefer latest explicit metrics first, then recent trend context.\n- Investigate further whenever the current evidence is mixed, truncated, generic, or missing exercise-level detail needed for final synthesis.\n- If a workout has multiple main exercises, verify the relevant lagging or improving exercise with a narrower retrieval before concluding.\n- Use summarization tools only when raw scoped context would be too verbose.\n- Stop calling tools once you have enough evidence to answer confidently.\n- Do not ask for data outside the available tools.\n\nFinal synthesis policy:\n- Base the final answer only on retrieved tool outputs.\n- If evidence is partial, say so plainly instead of overreaching.\n- If a tool payload says `truncated: true` or the returned text ends with `...`, fetch narrower context before concluding.\n- Do not write a workout-level risk from a generic overview alone when an exercise section is available.\n\n--- Known facts about this chat's subject (always available; use tools for detail) ---\n\nFACT Session duration: 55:09 (55 minutes)\nFACT Average heart rate: 140 bpm; peak 154 bpm\nFACT Heart-rate drift: the second half averaged -2 bpm versus the first half\nFACT 80% of HR samples stayed inside the 60-70% target zone\nFACT Session duration versus recent sessions of this workout: 55 minutes versus 55 minutes typical\nFACT Trend over the last 3 sessions of this workout: regressing — average HR is 6 bpm above the recent 133 bpm average; at a similar duration, a lower average HR means better aerobic efficiency\nFACT HR drift this session: -2 bpm versus your typical -2 bpm on this workout\nFACT Previous-session target check: the target was average HR at or under 131 bpm for about 55 minutes; this session averaged 140 bpm across 55 minutes — target not met\nFACT Next-session target: average heart rate at or under 140 bpm for about 55 minutes"
+    },
+    {
+      "index": 4,
+      "recorded_at_epoch_ms": 1791657242662,
+      "label": "litert_chat_request_tool_definitions",
+      "body": "Tool: get_context_overview\nDescription: Get the compact overview for the current insight target. Use this first when you need high-level context before deciding on narrower retrieval.\nParameters:\n{\n  \"type\": \"object\",\n  \"properties\": {\n    \"max_chars\": {\n      \"type\": \"integer\",\n      \"description\": \"Maximum number of characters in the returned payload. Default: 1200.\"\n    }\n  }\n}\n\nTool: get_latest_session\nDescription: Get the latest completed session details for the current exercise. Prefer this before broader history when diagnosing current performance.\nParameters:\n{\n  \"type\": \"object\",\n  \"properties\": {\n    \"max_chars\": {\n      \"type\": \"integer\",\n      \"description\": \"Maximum number of characters in the returned payload. Default: 1400.\"\n    }\n  }\n}\n\nTool: get_recent_sessions\nDescription: Get the most recent completed sessions for the current exercise. Use this when you need short-term trend context after checking the latest session.\nParameters:\n{\n  \"type\": \"object\",\n  \"properties\": {\n    \"limit\": {\n      \"type\": \"integer\",\n      \"description\": \"How many recent sessions to return. Default: 3.\"\n    },\n    \"max_chars\": {\n      \"type\": \"integer\",\n      \"description\": \"Maximum number of characters in the returned payload. Default: 2200.\"\n    }\n  }\n}\n\nTool: summarize_older_history\nDescription: Return a compact summary of older exercise history while keeping the newest sessions separate. Use only when recent sessions are not enough.\nParameters:\n{\n  \"type\": \"object\",\n  \"properties\": {\n    \"keep_recent\": {\n      \"type\": \"integer\",\n      \"description\": \"How many most recent sessions to exclude from the summary. Default: 2.\"\n    },\n    \"max_chars\": {\n      \"type\": \"integer\",\n      \"description\": \"Maximum number of characters in the returned summary. Default: 1400.\"\n    }\n  }\n}\n\nTool: get_full_compact_history\nDescription: Get the full compacted exercise history when a broader view is required and the smaller tools are still insufficient.\nParameters:\n{\n  \"type\": \"object\",\n  \"properties\": {\n    \"max_chars\": {\n      \"type\": \"integer\",\n      \"description\": \"Maximum number of characters in the returned payload. Default: 3000.\"\n    }\n  }\n}"
+    },
+    {
+      "index": 5,
+      "recorded_at_epoch_ms": 1791657242668,
+      "label": "litert_chat_request_turn_1_user_message",
+      "body": "Task: analyze the workout session \"Cyclette - LISS (Workout category: Biking stationary)\" and produce focused coaching insights.\nSession status: completed normally.\n\nWorkflow:\n1. Fetch the compact session overview first.\n2. Treat that overview as a first pass only; if it is mixed, incomplete, truncated, generic, or missing one of the main exercises, fetch specific sections before concluding.\n3. Use summary tools only when the remaining context is too large.\n4. If the session was not completed normally, treat that as an important constraint on interpretation.\n5. For lifting-dominant sessions, do not use modest session HR or 0% high-intensity exposure as the main risk by itself.\n6. Before writing final synthesis, verify the clearest lagging or improving exercise with a narrower retrieval when available.\n7. When a trend claim depends on previous sessions of this workout, retrieve them with get_previous_sessions instead of assuming.\n8. Stop tool use and write the final answer once you can explain what went well, what drifted, and any important constraint.\n\n"
+    },
+    {
+      "index": 6,
+      "recorded_at_epoch_ms": 1791657245971,
+      "label": "litert_chat_request_turn_1_assistant",
+      "body": "Tool calls:\nTool: get_context_overview\nArguments:\n{}"
+    },
+    {
+      "index": 7,
+      "recorded_at_epoch_ms": 1791657245974,
+      "label": "litert_chat_request_tool_round_1_get_context_overview_arguments",
+      "body": "{}"
+    },
+    {
+      "index": 8,
+      "recorded_at_epoch_ms": 1791657245977,
+      "label": "litert_chat_request_tool_round_1_get_context_overview_result",
+      "body": "{\"ok\":true,\"target\":\"Probe Squat\",\"overview\":\"# Probe Squat history\"}"
+    },
+    {
+      "index": 9,
+      "recorded_at_epoch_ms": 1791657245977,
+      "label": "litert_chat_request_turn_2_tool_message",
+      "body": "Tool: get_context_overview\nPayload:\n{\"ok\":true,\"target\":\"Probe Squat\",\"overview\":\"# Probe Squat history\"}"
+    },
+    {
+      "index": 10,
+      "recorded_at_epoch_ms": 1791657259299,
+      "label": "litert_chat_request_turn_2_assistant",
+      "body": "Text:\n## What stood out\n- Trajectory: This session's heart rate performance deviates from the recent trend, as the average heart rate was higher than the average for the last three sessions of this workout.\n- Mechanism: The increased heart rate suggests a slight increase in overall effort or a less efficient aerobic pacing compared to previous sessions.\n- Plan adherence: Pacing was adhered to, although the overall average heart rate did not meet the target set for that segment.\n\n## Exercise highlights\n- Probe Squat: No specific exercise details were retrieved for this session in the available context.\n\n## Next session target\n- - average heart rate at or under 140 bpm for about 55 minutes"
+    },
+    {
+      "index": 11,
+      "recorded_at_epoch_ms": 1791657259413,
+      "label": "litert_chat_final_raw_response",
+      "body": "## What stood out\n- Trajectory: This session's heart rate performance deviates from the recent trend, as the average heart rate was higher than the average for the last three sessions of this workout.\n- Mechanism: The increased heart rate suggests a slight increase in overall effort or a less efficient aerobic pacing compared to previous sessions.\n- Plan adherence: Pacing was adhered to, although the overall average heart rate did not meet the target set for that segment.\n\n## Exercise highlights\n- Probe Squat: No specific exercise details were retrieved for this session in the available context.\n\n## Next session target\n- - average heart rate at or under 140 bpm for about 55 minutes"
+    },
+    {
+      "index": 12,
+      "recorded_at_epoch_ms": 1791657259445,
+      "label": "litert_chat_final_postprocessed_response",
+      "body": "## What stood out\n\n- Trajectory: This session's heart rate performance deviates from the recent trend, as the average heart rate was higher than the average for the last three sessions of this workout.\n- Mechanism: The increased heart rate suggests a slight increase in overall effort or a less efficient aerobic pacing compared to previous sessions.\n- Plan adherence: Pacing was adhered to, although the overall average heart rate did not meet the target set for that segment.\n\n## Exercise highlights\n\n- Probe Squat: No specific exercise details were retrieved for this session in the available context.\n\n## Next session target\n\n- average heart rate at or under the recorded value for about the recorded value"
+    }
+  ],
+  "result": {
+    "outcome": "success",
+    "final_displayed_text": "## What stood out\n\n- Trajectory: This session's heart rate performance deviates from the recent trend, as the average heart rate was higher than the average for the last three sessions of this workout.\n- Mechanism: The increased heart rate suggests a slight increase in overall effort or a less efficient aerobic pacing compared to previous sessions.\n- Plan adherence: Pacing was adhered to, although the overall average heart rate did not meet the target set for that segment.\n\n## Exercise highlights\n\n- Probe Squat: No specific exercise details were retrieved for this session in the available context.\n\n## Next session target\n\n- average heart rate at or under the recorded value for about the recorded value",
+    "error_message": null
+  }
+}
