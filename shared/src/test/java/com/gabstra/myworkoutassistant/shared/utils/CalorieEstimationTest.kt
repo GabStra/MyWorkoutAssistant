@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.shared.utils
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.math.roundToInt
 
 class CalorieEstimationTest {
 
@@ -91,5 +92,27 @@ class CalorieEstimationTest {
         )
         assertEquals(keytel, implausibleVo2Max)
         assertEquals(keytel, missingHrMax)
+    }
+
+    @Test
+    fun `whole-effort wrapper equals clamped rate applied over the duration`() {
+        for (heartRate in listOf(60, 120, 150, 190)) {
+            for (female in listOf(null, true, false)) {
+                val rate = estimateKcalPerMinute(
+                    heartRateBpm = heartRate,
+                    weightKg = 75.0,
+                    ageYears = 30,
+                    female = female,
+                    vo2MaxMlKgMin = 45.0,
+                    maxHeartRateBpm = 195,
+                )
+                // The wrapper clamps negative near-rest totals at zero (female
+                // formula at HR 60 goes negative); the rate function does not.
+                assertEquals(
+                    (rate * 30).roundToInt().coerceAtLeast(0),
+                    estimateCaloriesKcal(heartRate, 30 * 60_000L, 75.0, 30, female = female, vo2MaxMlKgMin = 45.0, maxHeartRateBpm = 195),
+                )
+            }
+        }
     }
 }

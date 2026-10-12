@@ -46,10 +46,8 @@ import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.buildTimedSetGoalLabel
-import com.gabstra.myworkoutassistant.shared.getEffectiveMaxHeartRate
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
-import com.gabstra.myworkoutassistant.shared.utils.estimateCaloriesKcal
 import com.gabstra.myworkoutassistant.presentation.theme.tertiaryContent
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workout.timer.canResumeRunningEnduranceTimer
@@ -334,25 +332,14 @@ fun EnduranceSetScreen (
         val overLimit = displayMillis >= currentSet.startTimer && !set.autoStop
         val showCalories by viewModel.calorieDisplayEnabled
         val latestHeartRate by viewModel.latestHeartRateBpm
-        val ageYears by viewModel.userAge
-        val weightKg by viewModel.bodyWeight
-        val screenProfile = viewModel.screenState.value
-        val caloriesKcal = if (showCalories && latestHeartRate > 0) {
-            estimateCaloriesKcal(
-                heartRateBpm = latestHeartRate,
-                durationMillis = displayMillis.toLong(),
-                weightKg = weightKg,
-                ageYears = ageYears,
-                female = screenProfile.userFemale,
-                vo2MaxMlKgMin = screenProfile.userVo2MaxMlKgMin,
-                maxHeartRateBpm = getEffectiveMaxHeartRate(
-                    screenProfile.userAge,
-                    screenProfile.measuredMaxHeartRate,
-                ),
-                restingHeartRateBpm = screenProfile.restingHeartRate,
-            )
-        } else {
-            0
+        val liveCaloriesKcal by viewModel.liveCaloriesKcal
+
+        // Feed the per-set calorie integral on every clock tick and HR update;
+        // the accumulator charges each interval at the previous sample's rate.
+        LaunchedEffect(displayMillis, latestHeartRate) {
+            if (showCalories && latestHeartRate > 0) {
+                viewModel.feedLiveCalorieSample(latestHeartRate, displayMillis.toLong())
+            }
         }
         Column(
             modifier = Modifier.fillMaxWidth(),
@@ -380,9 +367,9 @@ fun EnduranceSetScreen (
                     color = if (overLimit) Green else MaterialTheme.colorScheme.onBackground,
                 )
             }
-            if (caloriesKcal > 0) {
+            if (showCalories && liveCaloriesKcal > 0) {
                 Text(
-                    text = "≈ $caloriesKcal kcal",
+                    text = "≈ $liveCaloriesKcal kcal",
                     style = MaterialTheme.typography.bodyExtraSmall,
                     color = MaterialTheme.colorScheme.tertiaryContent
                 )
@@ -424,6 +411,7 @@ fun EnduranceSetScreen (
     }
 
     fun startTimer() {
+        viewModel.resetLiveCalorieAccumulator()
         // Ensure startTime is set
         if (state.startTime == null) {
             state.startTime = LocalDateTime.now()

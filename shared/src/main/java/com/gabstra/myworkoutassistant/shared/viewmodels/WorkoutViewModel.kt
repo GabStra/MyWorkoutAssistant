@@ -107,16 +107,20 @@ import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutResumeInfo
 import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutScreenState
 import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutSessionPhase
 import com.gabstra.myworkoutassistant.shared.workout.display.displayCounterKindForSetState
+import com.gabstra.myworkoutassistant.shared.getEffectiveMaxHeartRate
 import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
 import com.gabstra.myworkoutassistant.shared.utils.DoubleProgressionHelper
+import com.gabstra.myworkoutassistant.shared.utils.LiveCalorieAccumulator
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.utils.Ternary
 import com.gabstra.myworkoutassistant.shared.utils.compareSetListsUnordered
+import com.gabstra.myworkoutassistant.shared.utils.estimateKcalPerMinute
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import kotlin.coroutines.CoroutineContext
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -633,6 +637,13 @@ open class WorkoutViewModel(
     // the first beat arrives. Backs the live calorie estimate on timed sets.
     private var _latestHeartRateBpm = mutableIntStateOf(0)
     val latestHeartRateBpm: State<Int> = _latestHeartRateBpm
+
+    // Live per-set calorie estimate: an integral of past HR samples accumulated
+    // by [LiveCalorieAccumulator] while a set runs, so the value shown on the
+    // timer screens never falls back mid-set.
+    private val liveCalorieAccumulator = LiveCalorieAccumulator()
+    private var _liveCaloriesKcal = mutableIntStateOf(0)
+    val liveCaloriesKcal: State<Int> = _liveCaloriesKcal
 
     // Plate recalculation debouncer and state
     private val plateRecalculationDebouncer = PlateRecalculationDebouncer(viewModelScope, debounceDelayMs = 400L)
@@ -2357,6 +2368,38 @@ open class WorkoutViewModel(
     open fun registerHeartBeat(heartBeat: Int) {
         heartBeatHistory.add(heartBeat)
         _latestHeartRateBpm.intValue = heartBeat
+    }
+
+    /**
+     * Folds one live HR sample into the per-set calorie estimate. [elapsedMillis]
+     * is the active set's on-screen elapsed clock, so paused time and time after
+     * the set ends are charged nothing. Timer screens feed this on every display
+     * tick while calories are shown; [resetLiveCalorieAccumulator] starts a
+     * fresh run when a set (re)starts.
+     */
+    fun feedLiveCalorieSample(heartRateBpm: Int, elapsedMillis: Long) {
+        if (heartRateBpm <= 0) return
+        val screenProfile = _screenState.value
+        val cumulativeKcal = liveCalorieAccumulator.onSample(heartRateBpm, elapsedMillis) { hr ->
+            estimateKcalPerMinute(
+                heartRateBpm = hr,
+                weightKg = _bodyWeight.doubleValue,
+                ageYears = _userAge.intValue,
+                female = screenProfile.userFemale,
+                vo2MaxMlKgMin = screenProfile.userVo2MaxMlKgMin,
+                maxHeartRateBpm = getEffectiveMaxHeartRate(
+                    screenProfile.userAge,
+                    screenProfile.measuredMaxHeartRate,
+                ),
+                restingHeartRateBpm = screenProfile.restingHeartRate,
+            )
+        }
+        _liveCaloriesKcal.intValue = cumulativeKcal.roundToInt()
+    }
+
+    fun resetLiveCalorieAccumulator() {
+        liveCalorieAccumulator.reset()
+        _liveCaloriesKcal.intValue = 0
     }
 
     internal fun updateWorkout(currentExercise: Exercise, updatedExercise: Exercise) {
