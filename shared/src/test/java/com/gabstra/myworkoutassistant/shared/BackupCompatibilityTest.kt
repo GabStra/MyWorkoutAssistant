@@ -230,6 +230,73 @@ class BackupCompatibilityTest {
         assertEquals(movementJson, reparsedMovement.resolveMovementJson())
     }
 
+    @Test
+    fun `app backup json round trip preserves insights settings`() {
+        val backup = AppBackup(
+            WorkoutStore = WorkoutStore(
+                workouts = emptyList(),
+                birthDateYear = 1990,
+                weightKg = 80.0,
+                progressionPercentageAmount = 0.0
+            ),
+            WorkoutHistories = emptyList(),
+            SetHistories = emptyList(),
+            ExerciseInfos = emptyList(),
+            WorkoutSchedules = emptyList(),
+            WorkoutRecords = emptyList(),
+            ExerciseSessionProgressions = emptyList(),
+            MobileLlmEnabled = true,
+            WorkoutInsightsMode = "REMOTE",
+            RemoteInsightsBaseUrl = "http://192.168.1.10:8080/v1",
+            RemoteInsightsApiKey = "sk-test",
+            RemoteInsightsModel = "test-model",
+            WorkoutInsightsCustomInstructions = "Keep advice brief."
+        )
+
+        val reparsed = fromJSONtoAppBackup(fromAppBackupToJSON(backup))
+
+        assertEquals(true, reparsed.MobileLlmEnabled)
+        assertEquals("REMOTE", reparsed.WorkoutInsightsMode)
+        assertEquals("http://192.168.1.10:8080/v1", reparsed.RemoteInsightsBaseUrl)
+        assertEquals("sk-test", reparsed.RemoteInsightsApiKey)
+        assertEquals("test-model", reparsed.RemoteInsightsModel)
+        assertEquals("Keep advice brief.", reparsed.WorkoutInsightsCustomInstructions)
+    }
+
+    @Test
+    fun `legacy backup without insights settings deserializes with null defaults`() {
+        val backupJson = """
+            {
+              "WorkoutStore": {
+                "workouts": [],
+                "polarDeviceId": null,
+                "birthDateYear": 1990,
+                "weightKg": 80.0,
+                "equipments": [],
+                "workoutPlans": [],
+                "progressionPercentageAmount": 0.0,
+                "measuredMaxHeartRate": null,
+                "restingHeartRate": null
+              },
+              "WorkoutHistories": [],
+              "SetHistories": [],
+              "ExerciseInfos": [],
+              "WorkoutSchedules": [],
+              "WorkoutRecords": [],
+              "ExerciseSessionProgressions": []
+            }
+        """.trimIndent()
+
+        val backup = fromJSONtoAppBackup(backupJson)
+
+        assertNull(backup.MobileLlmEnabled)
+        assertNull(backup.WorkoutInsightsMode)
+        assertNull(backup.RemoteInsightsBaseUrl)
+        assertNull(backup.RemoteInsightsApiKey)
+        assertNull(backup.RemoteInsightsModel)
+        assertNull(backup.WorkoutInsightsCustomInstructions)
+    }
+
     @Suppress("UNCHECKED_CAST")
     @Test
     fun `workout history normalization coerces erased numeric heartbeat records to ints`() {

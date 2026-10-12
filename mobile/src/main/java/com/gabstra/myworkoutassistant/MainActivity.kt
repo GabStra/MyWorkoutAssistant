@@ -71,6 +71,7 @@ import com.gabstra.myworkoutassistant.composables.SyncStatusBadge
 import com.gabstra.myworkoutassistant.composables.LocalBreadcrumbContent
 import com.gabstra.myworkoutassistant.insights.LiteRtLmModelStore
 import com.gabstra.myworkoutassistant.insights.LiteRtLmBackendPreference
+import com.gabstra.myworkoutassistant.insights.RemoteOpenAiConfig
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsMode
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsSettingsStore
 import com.gabstra.myworkoutassistant.screens.ErrorLogsScreen
@@ -335,6 +336,53 @@ class MainActivity : ComponentActivity() {
         MainActivityIntentRouter.route(intent, appViewModel)
     }
 
+}
+
+/**
+ * Bumped whenever a restore applies insights settings from a backup, so the
+ * Settings screen state re-derives from preferences instead of overwriting
+ * the restored values on the next save.
+ */
+private var insightsSettingsRestoredStamp by mutableStateOf(0)
+
+/**
+ * Applies insights settings carried in a backup. Null fields (older backups,
+ * or settings that were unset when the backup was taken) leave the current
+ * device preferences untouched.
+ */
+private fun applyInsightsSettingsFromBackup(appBackup: AppBackup, context: Context) {
+    var appliedAny = false
+    appBackup.MobileLlmEnabled?.let {
+        WorkoutInsightsSettingsStore.setEnabled(context, it)
+        appliedAny = true
+    }
+    appBackup.WorkoutInsightsMode
+        ?.let { modeName -> WorkoutInsightsMode.entries.firstOrNull { it.name == modeName } }
+        ?.let {
+            WorkoutInsightsSettingsStore.setMode(context, it)
+            appliedAny = true
+        }
+    if (appBackup.RemoteInsightsBaseUrl != null ||
+        appBackup.RemoteInsightsApiKey != null ||
+        appBackup.RemoteInsightsModel != null
+    ) {
+        WorkoutInsightsSettingsStore.setRemoteConfig(
+            context,
+            RemoteOpenAiConfig(
+                baseUrl = appBackup.RemoteInsightsBaseUrl.orEmpty(),
+                apiKey = appBackup.RemoteInsightsApiKey.orEmpty(),
+                model = appBackup.RemoteInsightsModel.orEmpty(),
+            )
+        )
+        appliedAny = true
+    }
+    appBackup.WorkoutInsightsCustomInstructions?.let {
+        WorkoutInsightsSettingsStore.setCustomInstructions(context, it)
+        appliedAny = true
+    }
+    if (appliedAny) {
+        insightsSettingsRestoredStamp++
+    }
 }
 
 @OptIn(FlowPreview::class)
@@ -909,6 +957,8 @@ fun MyWorkoutAssistantNavHost(
             }
 
             if (restoreSuccess) {
+                applyInsightsSettingsFromBackup(appBackup, context)
+
                 // Backfill ExerciseSessionProgression entries for workouts that don't have them but should
                 /*backfillExerciseSessionProgressions(
                     workoutStore = newWorkoutStore,
@@ -1193,19 +1243,19 @@ fun MyWorkoutAssistantNavHost(
     var configuredLiteRtModelName by remember {
         mutableStateOf(LiteRtLmModelStore.getConfiguredModelName(context))
     }
-    var mobileLlmEnabled by remember {
+    var mobileLlmEnabled by remember(insightsSettingsRestoredStamp) {
         mutableStateOf(WorkoutInsightsSettingsStore.isEnabled(context))
     }
-    var workoutInsightsMode by remember {
+    var workoutInsightsMode by remember(insightsSettingsRestoredStamp) {
         mutableStateOf(WorkoutInsightsSettingsStore.getMode(context))
     }
     var liteRtBackendPreference by remember {
         mutableStateOf(LiteRtLmModelStore.getBackendPreference(context))
     }
-    var remoteInsightsConfig by remember {
+    var remoteInsightsConfig by remember(insightsSettingsRestoredStamp) {
         mutableStateOf(WorkoutInsightsSettingsStore.getRemoteConfig(context))
     }
-    var workoutInsightsCustomInstructions by remember {
+    var workoutInsightsCustomInstructions by remember(insightsSettingsRestoredStamp) {
         mutableStateOf(WorkoutInsightsSettingsStore.getCustomInstructions(context))
     }
     var isImportingLiteRtModel by remember { mutableStateOf(false) }

@@ -44,7 +44,25 @@ class AppBackupAdapter : JsonDeserializer<AppBackup> {
                 jsonObject.get("ExerciseMovements"),
                 context,
                 ExerciseMovementBackup::class.java
-            )
+            ),
+            MobileLlmEnabled = jsonObject.get("MobileLlmEnabled")
+                ?.takeUnless { it.isJsonNull }
+                ?.asBoolean,
+            WorkoutInsightsMode = jsonObject.get("WorkoutInsightsMode")
+                ?.takeUnless { it.isJsonNull }
+                ?.asString,
+            RemoteInsightsBaseUrl = jsonObject.get("RemoteInsightsBaseUrl")
+                ?.takeUnless { it.isJsonNull }
+                ?.asString,
+            RemoteInsightsApiKey = jsonObject.get("RemoteInsightsApiKey")
+                ?.takeUnless { it.isJsonNull }
+                ?.asString,
+            RemoteInsightsModel = jsonObject.get("RemoteInsightsModel")
+                ?.takeUnless { it.isJsonNull }
+                ?.asString,
+            WorkoutInsightsCustomInstructions = jsonObject.get("WorkoutInsightsCustomInstructions")
+                ?.takeUnless { it.isJsonNull }
+                ?.asString
         )
     }
 

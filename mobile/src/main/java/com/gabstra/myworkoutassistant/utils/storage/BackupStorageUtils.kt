@@ -54,6 +54,7 @@ import androidx.health.connect.client.records.metadata.Metadata
 import androidx.health.connect.client.units.Energy
 import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.AppBackupArchive
+import com.gabstra.myworkoutassistant.insights.WorkoutInsightsSettingsStore
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.BackupFileType
 import com.gabstra.myworkoutassistant.shared.ExerciseInfo
@@ -1010,6 +1011,8 @@ suspend fun createAppBackup(workoutStore: WorkoutStore, db: AppDatabase, context
             // Get all error logs
             val errorLogs = errorLogDao.getAllErrorLogs().first()
 
+            val remoteInsightsConfig = context?.let { WorkoutInsightsSettingsStore.getRemoteConfig(it) }
+
             // Create AppBackup
             val appBackup = AppBackup(
                 workoutStore,
@@ -1021,7 +1024,15 @@ suspend fun createAppBackup(workoutStore: WorkoutStore, db: AppDatabase, context
                 exerciseSessionProgressions,
                 errorLogs.takeIf { it.isNotEmpty() },
                 restHistories,
-                ExerciseMovements = context?.let { collectExerciseMovementBackups(it, workoutStore) }
+                ExerciseMovements = context?.let { collectExerciseMovementBackups(it, workoutStore) },
+                MobileLlmEnabled = context?.let { WorkoutInsightsSettingsStore.isEnabled(it) },
+                WorkoutInsightsMode = context?.let { WorkoutInsightsSettingsStore.getMode(it).name },
+                RemoteInsightsBaseUrl = remoteInsightsConfig?.baseUrl?.trim()?.ifEmpty { null },
+                RemoteInsightsApiKey = remoteInsightsConfig?.apiKey?.trim()?.ifEmpty { null },
+                RemoteInsightsModel = remoteInsightsConfig?.model?.trim()?.ifEmpty { null },
+                WorkoutInsightsCustomInstructions = context?.let {
+                    WorkoutInsightsSettingsStore.getCustomInstructions(it).trim().ifEmpty { null }
+                }
             )
 
             // Check if AppBackup has any data before returning
