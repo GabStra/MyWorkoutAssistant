@@ -434,7 +434,7 @@ if ($LASTEXITCODE -ne 0) {
 
 $selectionPath = Join-Path $Workspace "selection_manifest.json"
 if (Test-Path -LiteralPath $selectionPath) {
-    $selection = Get-Content -LiteralPath $selectionPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
+    $selection = Get-Content -LiteralPath $selectionPath -Raw | ConvertFrom-ReconstructionJson
     if ($selection.selected) {
         Write-Host "Wear skeleton JSON: $($selection.selected.selectedWearSkeletonPath)"
         if ($selection.PSObject.Properties.Name -contains "selectedResults" -and @($selection.selectedResults).Count -gt 1) {

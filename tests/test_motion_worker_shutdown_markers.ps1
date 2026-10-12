@@ -26,6 +26,29 @@ try {
             throw 'Unconfirmed shutdown discarded owner evidence'
         }
     }
+    $startup = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.IfStatementAst] -and $n.Extent.Text.StartsWith('if ($effectiveWarmGvhmrWorker)') -and $n.Extent.Text.Contains('$activeGvhmrWorkerSessionDir =') }, $true)
+    $effectiveWarmGvhmrWorker = $true
+    $gvhmrWarmWorkerScriptPath = $runner
+    $GvhmrWorkerSessionDir = $session
+    function Acquire-MotionServiceSessionLease {
+        param($SessionDirectory, $Stage)
+        if ($script:RuntimeState -ne 'stopped') { throw 'owner unconfirmed' }
+        return $SessionDirectory
+    }
+    foreach ($state in @('unknown', 'stopped')) {
+        $script:RuntimeState = $state
+        '{}' | Set-Content (Join-Path $session 'ready.json')
+        Remove-Item (Join-Path $session 'stopped.json') -ErrorAction SilentlyContinue
+        try { . ([scriptblock]::Create($startup.Extent.Text)) } catch {
+            if ($state -ne 'unknown' -or $_.Exception.Message -ne 'owner unconfirmed') { throw }
+        }
+        if ((Test-Path (Join-Path $session 'ready.json')) -ne ($state -eq 'unknown')) {
+            throw 'Startup recovery did not respect service ownership'
+        }
+        if ((Test-Path (Join-Path $session 'stopped.json')) -ne ($state -eq 'stopped')) {
+            throw 'Startup recovery published incorrect stopped state'
+        }
+    }
 } finally {
     Remove-Item -LiteralPath $session -Recurse -Force
 }

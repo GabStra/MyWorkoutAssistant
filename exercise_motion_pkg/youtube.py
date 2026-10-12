@@ -8180,6 +8180,7 @@ def discover_and_rank_youtube_candidates(
         settings.pose_prefilter_enabled
         and vision_ranker is None
         and settings.llama_cpp_auto_start_server
+        and not settings.llama_cpp_shared_server
         and settings.llama_cpp_base_url is not None
     ):
         # A previous discovery process may have kept its local server alive
@@ -9458,6 +9459,9 @@ class LlamaCppVisionRanker:
                 # restarting here discards peer work and repeats model startup.
                 # An unresponsive models endpoint still follows recovery below.
                 return
+            if self._attaches_shared_server():
+                self._ensure_server()
+                return
             if self.process is not None and not self.settings.keep_llama_cpp_server:
                 self._stop_owned_llama_cpp_server()
                 self._ensure_server()
@@ -9783,6 +9787,9 @@ class LlamaCppVisionRanker:
         if self.settings.llama_cpp_base_url is None:
             return None
         try:
+            health = httpx.get(f"{self.settings.llama_cpp_base_url.rstrip('/')}/health", timeout=5.0)
+            if health.status_code != 200:
+                return None
             response = httpx.get(f"{self.settings.llama_cpp_base_url.rstrip('/')}/v1/models", timeout=5.0)
             if response.status_code >= 500:
                 return None

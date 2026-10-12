@@ -189,7 +189,7 @@ function Write-RunState {
 
     $counts = [ordered]@{}
     if (-not [string]::IsNullOrWhiteSpace($SummaryJson) -and (Test-Path -LiteralPath $SummaryJson)) {
-        $summary = Get-Content -LiteralPath $SummaryJson -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
+        $summary = Get-Content -LiteralPath $SummaryJson -Raw | ConvertFrom-ReconstructionJson
         foreach ($group in @($summary.exercises | Group-Object status)) {
             $counts[$group.Name] = $group.Count
         }
@@ -302,10 +302,10 @@ function Test-ExistingSelectionRevalidationNeeded {
     )
     foreach ($selectionFile in $exerciseSelectionFiles) {
         try {
-            $selection = Get-Content -LiteralPath $selectionFile.FullName -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
+            $selection = Get-Content -LiteralPath $selectionFile.FullName -Raw | ConvertFrom-ReconstructionJson
             $markerPath = Join-Path $selectionFile.Directory.FullName "revalidation.json"
             if (Test-Path -LiteralPath $markerPath) {
-                $marker = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
+                $marker = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-ReconstructionJson
                 if (@($marker.reasons) -contains 'final_output_validation_no_frames') {
                     return $true
                 }
@@ -420,7 +420,7 @@ Invoke-AutoResetDiscoveryRejections
 Invoke-PassBoundaryRevalidation
 if (-not $Fresh -and (Test-Path -LiteralPath $statePath)) {
     try {
-        $existingState = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
+        $existingState = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-ReconstructionJson
         $skipFirstPass = (
             $existingState.signature -eq $runSignature -and
             $existingState.phase -in @("first_pass_completed", "deferred_pass_started", "deferred_pass_completed")
@@ -435,7 +435,7 @@ if (-not $skipFirstPass) {
     Write-RunState -Phase "first_pass_started"
     Invoke-MovementPass -FirstPass -ReuseSelected:(-not $Fresh)
     Copy-Item -Force -LiteralPath $summaryPath -Destination $firstPassSummaryPath
-    $firstPassSummary = Get-Content -LiteralPath $firstPassSummaryPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
+    $firstPassSummary = Get-Content -LiteralPath $firstPassSummaryPath -Raw | ConvertFrom-ReconstructionJson
     foreach ($exercise in @($firstPassSummary.exercises)) {
         if ($exercise.status -ne "completed") {
             $exercise | Add-Member -NotePropertyName firstPassStatus -NotePropertyValue $exercise.status -Force
@@ -454,7 +454,7 @@ function Get-DiscoveryReviewCount {
     foreach ($directory in Get-ChildItem -LiteralPath $resolvedWorkspaceRoot -Directory) {
         foreach ($file in Get-ChildItem -LiteralPath $directory.FullName -Filter 'discovery_review_*.json' -File) {
             try {
-                $checkpoint = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
+                $checkpoint = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-ReconstructionJson
                 $count += @($checkpoint.reviewed.PSObject.Properties).Count
             } catch { Write-Verbose "Cannot read discovery checkpoint $($file.FullName)." }
         }
@@ -483,7 +483,7 @@ while ($true) {
     Copy-Item -Force -LiteralPath $summaryPath -Destination $deferredPassSummaryPath
     Write-MovementPackage -MotionSummaryJson $deferredPassSummaryPath
     Write-RunState -Phase "deferred_pass_completed" -SummaryJson $deferredPassSummaryPath
-    $roundSummary = Get-Content -LiteralPath $deferredPassSummaryPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
+    $roundSummary = Get-Content -LiteralPath $deferredPassSummaryPath -Raw | ConvertFrom-ReconstructionJson
     $unresolved = @($roundSummary.exercises | Where-Object status -ne 'completed').Count
     $newReviews = (Get-DiscoveryReviewCount) - $beforeReviewCount
     $pendingSourceTurns = @(Get-ChildItem -LiteralPath $resolvedWorkspaceRoot -Directory | Where-Object {

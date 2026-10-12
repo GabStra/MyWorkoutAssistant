@@ -10,9 +10,31 @@ foreach ($functionName in @('Get-FlaggedJobCount', 'Get-StagedWaveCheckpointStag
     if ($null -eq $node) { throw "Function $functionName not found in runner" }
     . ([scriptblock]::Create($node.Extent.Text))
 }
-function Convert-ReconstructionMetadata { process { $_ } }
+. (Join-Path $PSScriptRoot '../scripts/reconstruction_compat.ps1')
 # The runner initializes this script-scoped cache at file scope; mirror it.
 $script:StagedWaveCheckpointStageCacheByPath = @{}
+
+$source = Get-Content -LiteralPath $runner -Raw
+$admissionStart = $source.IndexOf('            $canLaunchDiscovery = ')
+$admissionEnd = $source.IndexOf('            while ($canLaunchDiscovery', $admissionStart)
+if ($admissionStart -lt 0 -or $admissionEnd -le $admissionStart) { throw 'Discovery admission not found' }
+$discoveryAdmission = [scriptblock]::Create($source.Substring($admissionStart, $admissionEnd - $admissionStart))
+foreach ($case in @(
+    @{ ready = $true; avoid = $false; running = 1; legacy = 0; expected = $false },
+    @{ ready = $true; avoid = $false; running = 0; legacy = 0; expected = $false },
+    @{ ready = $false; avoid = $false; running = 1; legacy = 0; expected = $true },
+    @{ ready = $false; avoid = $true; running = 1; legacy = 0; expected = $false },
+    @{ ready = $false; avoid = $true; running = 0; legacy = 1; expected = $false },
+    @{ ready = $false; avoid = $true; running = 0; legacy = 0; expected = $true }
+)) {
+    $stagedWaveReady = $case.ready
+    $avoidGpuDiscoveryBakeOverlap = $case.avoid
+    $bakeRunningJobs = @(1..$case.running | Where-Object { $case.running -gt 0 })
+    $pendingLegacyBakeItems = [System.Collections.Queue]::new()
+    if ($case.legacy) { $pendingLegacyBakeItems.Enqueue('legacy') }
+    . $discoveryAdmission
+    if ($canLaunchDiscovery -ne $case.expected) { throw 'Discovery admission contradicts ready-wave yielding or blocks useful overlap' }
+}
 
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ('motion-wave-overlap-test-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $testRoot | Out-Null
@@ -134,10 +156,21 @@ $streamCheckpoint = Join-Path $streamWorkspace 'staged_wave_checkpoint.json'
     @{ exerciseId = 'fast'; status = 'completed' }, @{ exerciseId = 'slow'; status = 'pending' }
 ) } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $streamCheckpoint
 $completionQueue = [System.Collections.Queue]::new()
+$script:CheckpointParseCount = 0
+function ConvertFrom-ReconstructionJson { process { $script:CheckpointParseCount++; $_ | ConvertFrom-Json } }
 Receive-StagedWaveReadyItems -RunningJobs @($streamJob) -CompletionQueue $completionQueue
 Receive-StagedWaveReadyItems -RunningJobs @($streamJob) -CompletionQueue $completionQueue
+Assert-True ($script:CheckpointParseCount -eq 1) 'Unchanged checkpoint must only be parsed once'
 Assert-True ($completionQueue.Count -eq 1 -and $completionQueue.Peek().exerciseId -eq 'fast') 'Fast movement must export once while its sibling remains pending'
 Assert-True ($streamJob.CompletedExerciseIds.ContainsKey('fast')) 'Terminal wave processing must recognize the earlier export'
+$checkpointTimestamp = (Get-Item -LiteralPath $streamCheckpoint).LastWriteTimeUtc
+@{ stage = 'generation_and_validation'; items = @(
+    @{ exerciseId = 'fast'; status = 'completed' }, @{ exerciseId = 'slow'; status = 'completed' }
+) } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $streamCheckpoint
+(Get-Item -LiteralPath $streamCheckpoint).LastWriteTimeUtc = $checkpointTimestamp
+Receive-StagedWaveReadyItems -RunningJobs @($streamJob) -CompletionQueue $completionQueue
+Assert-True ($script:CheckpointParseCount -eq 2 -and $completionQueue.Count -eq 2) 'Changed checkpoint must reveal the new completion even if its timestamp is unchanged'
+. (Join-Path $PSScriptRoot '../scripts/reconstruction_compat.ps1')
 
 # Server restart remains blocked while a live extractor holds VRAM, even between GPU operations.
 function Get-MotionProcessIdentityState { param($ProcessId, $ExpectedProcessIdentity); return $script:FakeHolderState }

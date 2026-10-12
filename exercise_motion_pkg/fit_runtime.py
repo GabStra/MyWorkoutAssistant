@@ -17,6 +17,7 @@ _CURRENT = ContextVar('movement_fit_session', default=None)
 _SPECULATIVE_FIT = ContextVar('speculative_fit', default=False)
 _FIT_GUARD = threading.Condition(threading.Lock())
 _FIT_IN_USE = 0
+_FIT_SPENT_BY_INPUT: dict[tuple, float] = {}
 _PRIORITY_WORKSPACES: dict[str, int] = {}
 _ACTIVE_SPECULATIVE_WORKSPACES: set[str] = set()
 _ABANDONED_SPECULATIVE_WORKSPACES: set[str] = set()
@@ -288,6 +289,16 @@ class CandidateFitSession:
         self.reused_fits = 0
         self.reused_frames = 0
         self.cache_namespace = fit_cache_source_namespace()
+        self.budget_key = None
+        if self.path:
+            motion_path = self.path.parent / 'motion.cleaned.json'
+            try:
+                motion_digest = hashlib.sha256(motion_path.read_bytes()).hexdigest()
+            except FileNotFoundError:
+                motion_digest = None
+            self.budget_key = (str(self.path.resolve()), self.cache_namespace, motion_digest)
+        with _FIT_GUARD:
+            self.previously_spent = _FIT_SPENT_BY_INPUT.get(self.budget_key, 0.) if self.budget_key else 0.
         if self.path:
             try:
                 value = json.loads(self.path.read_text(encoding='utf-8'))
@@ -304,7 +315,7 @@ class CandidateFitSession:
     def remaining(self):
         if self.started is None:
             self.started = monotonic()
-        return max(0., self.budget_seconds-(monotonic()-self.started))
+        return max(0., self.budget_seconds-self.previously_spent-(monotonic()-self.started))
 
     def save(self):
         if self.path:
@@ -419,4 +430,7 @@ def candidate_fit_session(workspace=None, *, budget_seconds=DEFAULT_CANDIDATE_FI
         try:
             session.save()
         finally:
+            if session.budget_key is not None and session.started is not None:
+                with _FIT_GUARD:
+                    _FIT_SPENT_BY_INPUT[session.budget_key] = session.previously_spent + max(0., monotonic()-session.started)
             _CURRENT.reset(token)

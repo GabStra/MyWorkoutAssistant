@@ -193,6 +193,8 @@ def test_persistent_render_prefetch_is_drained_before_wave_returns(tmp_path, mon
         allow_prefetch_to_finish.set()
         report = future.result(timeout=3)
         assert prefetch_finished.is_set()
+        assert all(entry['status'] == 'prepared' for entry in report['metrics']['cpuRenderPrefetch'].values()), \
+            'A wall-clock join timer discarded completed, reusable preparation'
         assert report['completedExerciseCount'] == 2
         if use_service_phases:
             assert phases[0] == 'source_and_generation'

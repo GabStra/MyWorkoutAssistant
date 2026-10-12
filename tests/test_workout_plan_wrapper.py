@@ -54,7 +54,7 @@ def test_cancellation_stops_idle_staged_worker(tmp_path: Path) -> None:
         $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
         $node.Name -in @('Get-StagedBakeQueueServiceState', 'Stop-StagedBakeQueueServiceProcessTree', 'Stop-StagedBakeQueueService')
     }, $true)) { Invoke-Expression $function.Extent.Text }
-    function Convert-ReconstructionMetadata { param($Value) return $Value }
+    function ConvertFrom-ReconstructionJson { process { $_ | ConvertFrom-Json } }
     function Test-MotionRunCancelRequested { return $true }
     $script:StagedWaveServiceQueueRoot = $env:MOTION_TEST_ROOT
     $movementRunId = 'cancel-idle-test'
@@ -915,7 +915,7 @@ def test_scheduler_failure_preserves_model_services_when_staged_worker_state_is_
         if ($functionAsts.Count -ne 7) { throw 'A staged-wave service function was not found.' }
         foreach ($functionAst in $functionAsts) { Invoke-Expression $functionAst.Extent.Text }
 
-        function Convert-ReconstructionMetadata { param($Value) return $Value }
+        function ConvertFrom-ReconstructionJson { process { $_ | ConvertFrom-Json } }
         function Test-MotionRunCancelRequested { return $false }
         function ConvertTo-StagedServiceArgument {
             param([string]$Value)

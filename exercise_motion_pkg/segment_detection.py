@@ -1834,6 +1834,10 @@ class LlamaCppVisionClient:
                     if critical is exc:
                         raise
                     raise critical from exc
+                if critical.cause_type == "HTTP503" and "loading model" in str(critical.details.get("body", "")).lower():
+                    self._wait_for_chat_ready_after_recovery(critical, request_deadline=request_deadline)
+                    recovery_events.append({"completed": True, "waitedForModelLoad": True})
+                    continue
                 recovery_events.append(
                     self._recover_after_vlm_failure(
                         critical,
@@ -1942,20 +1946,22 @@ class LlamaCppVisionClient:
         error.add_details(recoveryEvents=[*recovery_events, event])
         return event
 
-    def _wait_for_chat_ready_after_recovery(self, error: CriticalVlmInteractionError) -> None:
+    def _wait_for_chat_ready_after_recovery(self, error: CriticalVlmInteractionError, *, request_deadline: float | None = None) -> None:
         if self.base_url is None:
             return
         deadline = time.monotonic() + min(60.0, max(10.0, self.request_timeout_seconds / 2.0))
+        if request_deadline is not None:
+            deadline = min(deadline, request_deadline)
         last_error: str | None = None
         while time.monotonic() < deadline:
             try:
-                models = self.client.get(f"{self.base_url}/v1/models", timeout=5.0)
+                models = self.client.get(f"{self.base_url}/health", timeout=min(5.0, max(0.001, deadline - time.monotonic())))
                 if models.status_code == 200:
                     # Inference probes queue behind real work and can timeout
                     # on a healthy busy server. Readiness needs no generation.
                     return
                 else:
-                    last_error = f"models_status={models.status_code}"
+                    last_error = f"health_status={models.status_code}"
             except Exception as exc:
                 last_error = f"{type(exc).__name__}: {exc}"
             time.sleep(1.0)

@@ -707,6 +707,42 @@ def test_foreign_stop_intent_gates_discovery_request_until_released(tmp_path, mo
         detach_shared_llama_request_publisher()
 
 
+def test_request_admission_rechecks_intent_under_transition_lock(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+    coordinator = SharedLlamaServerCoordinator(tmp_path, base_url=None, stop_server=lambda: None)
+    locked = False
+
+    @contextmanager
+    def transition():
+        nonlocal locked
+        locked = True
+        try:
+            yield
+        finally:
+            locked = False
+
+    def publish():
+        assert locked, 'Counter publication raced the stop-intent publisher'
+
+    monkeypatch.setattr(coordinator, '_transition_lock', transition)
+    monkeypatch.setattr(coordinator, 'begin_counted_request', publish)
+    monkeypatch.setattr(coordinator, 'foreign_stop_intent_live', lambda: True)
+    assert not coordinator.try_begin_counted_request()
+    monkeypatch.setattr(coordinator, 'foreign_stop_intent_live', lambda: False)
+    assert coordinator.try_begin_counted_request()
+
+
+def test_handoff_wait_records_owner_identity(tmp_path, capsys):
+    from exercise_motion_pkg.shared_llama_server import QuiesceSummary
+    coordinator = SharedLlamaServerCoordinator(tmp_path, base_url=None, stop_server=lambda: None)
+    summary = QuiesceSummary()
+    owner = {'pid': 42, 'processIdentity': 123, 'activeRequests': 1}
+    coordinator._record_quiesce_blocker(summary, 'inflight', owner, time.monotonic())
+    assert summary.blocking_owners == [{'phase': 'inflight', 'owner': owner}]
+    event = json.loads(capsys.readouterr().out)
+    assert event['owner'] == owner and event['waiterPid'] == os.getpid()
+
+
 def test_foreign_stop_intent_refuses_after_request_wait_budget(tmp_path, monkeypatch):
     session_dir = _attached_publisher_session_dir(tmp_path, monkeypatch)
     observed: list[int | None] = []

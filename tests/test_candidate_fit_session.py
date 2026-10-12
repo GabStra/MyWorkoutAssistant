@@ -130,11 +130,11 @@ def test_candidate_budget_covers_distinct_variants_and_reuses_exact_fit(monkeypa
 
     def fit(payload, **kwargs):
         calls.append(kwargs['timeout_seconds'])
-        now[0] += 6.
+        now[0] += 60.
         return payload, {'applied': False, 'reason': 'fit_timeout'}
 
     monkeypatch.setattr(motion, '_fit_observed_cycles', fit)
-    with fit_runtime.candidate_fit_session(budget_seconds=10.) as session:
+    with fit_runtime.candidate_fit_session(budget_seconds=100.) as session:
         motion.fit_controlled_motion({'frames': [], 'variant': 1})
         _, reused = motion.fit_controlled_motion({'frames': [], 'variant': 1})
         assert reused['reusedCandidateFit']
@@ -142,7 +142,7 @@ def test_candidate_budget_covers_distinct_variants_and_reuses_exact_fit(monkeypa
         _, exhausted = motion.fit_controlled_motion({'frames': [], 'variant': 3})
         assert exhausted['budgetOwner'] == 'candidate'
         assert session.fit_calls == 2
-    assert calls == [10., 4.]
+    assert calls == [100., 40.]
     assert fit_runtime.current_fit_session() is None
 
 

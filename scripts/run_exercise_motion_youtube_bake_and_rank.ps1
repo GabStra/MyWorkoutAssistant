@@ -501,7 +501,7 @@ function Get-SelectionManifest {
     if (-not (Test-Path -LiteralPath $SelectionPath)) {
         return $null
     }
-    return Get-Content -LiteralPath $SelectionPath -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
+    return Get-Content -LiteralPath $SelectionPath -Raw | ConvertFrom-ReconstructionJson
 }
 
 function Get-SelectedResultCount {
@@ -665,7 +665,7 @@ function Get-RecommendationCounts {
     if (-not (Test-Path -LiteralPath $CandidatesJson)) {
         return @{ Recommended = 0; Candidate = 0; Rejected = 0 }
     }
-        $payload = Get-Content -LiteralPath $CandidatesJson -Raw | ConvertFrom-Json | Convert-ReconstructionMetadata
+        $payload = Get-Content -LiteralPath $CandidatesJson -Raw | ConvertFrom-ReconstructionJson
     $recommended = 0
     $candidate = 0
     $rejected = 0

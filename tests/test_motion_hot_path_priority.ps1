@@ -1,5 +1,7 @@
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
+. (Join-Path $root 'scripts/reconstruction_compat.ps1')
+function Exit-IfMotionRunInterrupted { }
 $runner = Join-Path $root 'scripts/run_exercise_motion_workout_plan.ps1'
 $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($runner, [ref]$null, [ref]$errors)
@@ -15,6 +17,7 @@ function Get-FunctionText([string]$Name) {
 
 foreach ($name in @(
     'Test-BakeStageReady',
+    'Get-CandidateManifestCounts',
     'Test-SelectionHasNeedsMotionProcessing',
     'Test-CandidateIdentityEvidenceComplete',
     'Test-HasIdentityReviewedRecommendedCandidate',
@@ -29,6 +32,15 @@ foreach ($name in @(
 function Test-MovementSkeletonIntegrity {
     param([string]$Path)
     return (Test-Path -LiteralPath $Path)
+}
+
+$retainedPayload = '{"exercises":[{"candidates":[{"status":"recommended"}]}]}' | ConvertFrom-Json
+if (-not (Test-HasIdentityReviewedRecommendedCandidate -Payload $retainedPayload)) {
+    throw 'Identity resume check did not reuse its parsed manifest without reading a file.'
+}
+$retainedCounts = Get-CandidateManifestCounts -Payload $retainedPayload
+if ($retainedCounts.candidateCount -ne 1 -or $retainedCounts.recommendedCount -ne 1) {
+    throw 'Candidate counts did not reuse the parsed manifest.'
 }
 
 $SelectionValidationPolicyVersion = 70
@@ -129,6 +141,23 @@ try {
         throw 'Completed bake reuse must honor the motion-processing-only resume switch.'
     }
 
+    $script:priorityCalls = 0
+    function Get-BakeQueuePriority { param($WorkItem); $script:priorityCalls++; return $WorkItem.priority }
+    $stableQueue = [System.Collections.Queue]::new()
+    $stableQueue.Enqueue([pscustomobject]@{ priority = 2 })
+    $stableQueue.Enqueue([pscustomobject]@{ priority = 0 })
+    Optimize-PendingBakeQueue -Queue $stableQueue
+    Optimize-PendingBakeQueue -Queue $stableQueue
+    if ($script:priorityCalls -ne 2) { throw 'Queued items were repeatedly rescanned.' }
+    $stableQueue.Enqueue([pscustomobject]@{ priority = 1 })
+    Optimize-PendingBakeQueue -Queue $stableQueue
+    if ($script:priorityCalls -ne 3) { throw 'Only the newly queued item should need a priority scan.' }
+    $beforeCancel = @($stableQueue)
+    function Exit-IfMotionRunInterrupted { throw 'cancelled' }
+    try { Optimize-PendingBakeQueue -Queue $stableQueue; throw 'Cancellation was ignored.' } catch {
+        if ($_.Exception.Message -ne 'cancelled') { throw }
+    }
+    if ($stableQueue.Count -ne 3 -or $stableQueue.Peek() -ne $beforeCancel[0]) { throw 'Cancellation discarded queued work.' }
     Write-Output 'Hot-path keep priority checks passed.'
 } finally {
     $resolvedFixture = [IO.Path]::GetFullPath($fixture)

@@ -56,6 +56,8 @@ class WaveGpuGate:
 
         key = (wave_id, stage)
         review = stage == "final_review"
+        queued_at = time.perf_counter()
+        next_wait_log = queued_at + 5.0
         with self.condition:
             if review:
                 self.review_waiters += 1
@@ -66,6 +68,12 @@ class WaveGpuGate:
                     if cancelled():
                         raise KeyboardInterrupt("Motion run was cancelled waiting for the GPU")
                     check_deadline()
+                    if time.perf_counter() >= next_wait_log:
+                        print(json.dumps({"event": "wave_gpu_admission_wait", "waveId": wave_id,
+                                          "requestedPhase": stage, "owner": self.owner,
+                                          "reviewWaiters": self.review_waiters,
+                                          "waitSeconds": round(time.perf_counter() - queued_at, 3)}), flush=True)
+                        next_wait_log = time.perf_counter() + 5.0
                     self.condition.wait(timeout=0.25)
                 check_deadline()
                 if cancelled():
@@ -450,12 +458,21 @@ def _run_staged_wave_service_locked(
     stop_path = queue_root / "stop.request"
     for directory in (requests, processing, results, consumed, ambiguous, cancelled_runs):
         directory.mkdir(parents=True, exist_ok=True)
-    for claimed_path in processing.glob("*.json"):
+    recovery_paths = list(processing.glob("*.json"))
+    for pending_path in requests.glob("*.json"):
+        try:
+            pending_request = json.loads(pending_path.read_text(encoding="utf-8"))
+            run_id = _request_run_id(pending_request) if isinstance(pending_request, dict) else ""
+            if run_id and (cancelled_runs / f"{run_id}.json").is_file():
+                recovery_paths.append(pending_path)
+        except (OSError, ValueError, TypeError):
+            continue
+    for claimed_path in recovery_paths:
         result_path = results / claimed_path.name
         request_path = requests / claimed_path.name
         if result_path.exists():
             claimed_path.unlink(missing_ok=True)
-        elif request_path.exists():
+        elif claimed_path.parent == processing and request_path.exists():
             claimed_path.unlink(missing_ok=True)
         else:
             try:

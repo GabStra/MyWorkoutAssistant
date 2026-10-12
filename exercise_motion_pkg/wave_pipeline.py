@@ -1778,28 +1778,23 @@ def _run_staged_bake_wave(
                     if future.done():
                         collect_prefetch_result(candidate)
                         continue
-                    from .fit_runtime import DEFAULT_CANDIDATE_FIT_BUDGET_SECONDS
-                    budget = item.request.candidate_timeout_seconds or DEFAULT_CANDIDATE_FIT_BUDGET_SECONDS
+                    if future.cancel():
+                        metrics["cpuRenderPrefetch"][key] = {"status": "cancelled_for_finalization", "cancelledBeforeStart": True}
+                        continue
                     with prioritize_fit_workspaces([item.request.workspace / candidate.workspace_slug]):
                         try:
-                            deadline = time.monotonic() + max(0.0, float(budget))
                             with accelerator_phase(wave_id, "cpu_preparation") as cancelled:
                                 while not future.done():
                                     if callable(cancelled) and cancelled():
                                         raise KeyboardInterrupt("Motion run cancelled during CPU preparation")
-                                    remaining = deadline - time.monotonic()
-                                    if remaining <= 0:
-                                        raise TimeoutError("CPU preparation budget expired")
                                     try:
-                                        future.result(timeout=min(0.25, remaining))
+                                        # The active fit owns its budget and must finish saving its cache.
+                                        future.result(timeout=0.25)
                                     except TimeoutError:
+                                        if future.done():
+                                            raise
                                         continue
                                 future.result()
-                        except TimeoutError:
-                            abandon_speculative_workspace(item.request.workspace / candidate.workspace_slug)
-                            _drain_render_prefetch_futures(
-                                {key: future}, {key: render_workspaces[key]}, preserve_active_exception=False,
-                            )
                         except KeyboardInterrupt:
                             abandon_speculative_workspace(item.request.workspace / candidate.workspace_slug)
                             raise
@@ -1809,11 +1804,6 @@ def _run_staged_bake_wave(
                         else:
                             collect_prefetch_result(candidate)
                             continue
-                    metrics["cpuRenderPrefetch"][key] = {
-                        "status": "abandoned_for_finalization",
-                        "cancelledBeforeStart": False,
-                    }
-
             def process():
                 set_final_activity(
                     "bake/fit/review",

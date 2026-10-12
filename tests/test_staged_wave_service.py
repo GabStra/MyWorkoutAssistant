@@ -655,9 +655,10 @@ def test_queue_service_retains_ambiguous_processing_request_without_replaying(tm
 
 
 @pytest.mark.parametrize("recover_only", [False, True])
-def test_queue_service_terminalizes_cancelled_processing_request_without_replaying(tmp_path: Path, recover_only):
+@pytest.mark.parametrize("request_directory", ["processing", "requests"])
+def test_queue_service_terminalizes_cancelled_processing_request_without_replaying(tmp_path: Path, recover_only, request_directory):
     queue_root = tmp_path / "queue"
-    processing = queue_root / "processing"
+    processing = queue_root / request_directory
     processing.mkdir(parents=True)
     request = {
         "schemaVersion": 1,
@@ -675,7 +676,7 @@ def test_queue_service_terminalizes_cancelled_processing_request_without_replayi
     )
     pending_path = queue_root / "requests" / "pending.json"
     if recover_only:
-        pending_path.parent.mkdir()
+        pending_path.parent.mkdir(exist_ok=True)
         pending_path.write_text(json.dumps({"requestId": "pending", "waveId": "pending"}))
     executed = []
 

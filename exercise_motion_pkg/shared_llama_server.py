@@ -208,6 +208,7 @@ class QuiesceSummary:
     peak_foreign_active_requests: int = 0
     stopped_server: bool = False
     reclaimed_stale_markers: list[str] = field(default_factory=list)
+    blocking_owners: list[dict] = field(default_factory=list)
 
 
 class SharedLlamaServerCoordinator:
@@ -319,6 +320,13 @@ class SharedLlamaServerCoordinator:
             self._counted_active_requests = max(0, self._counted_active_requests - 1)
             self.publish_active_requests(self._counted_active_requests)
 
+    def try_begin_counted_request(self) -> bool:
+        with self._transition_lock():
+            if self.foreign_stop_intent_live():
+                return False
+            self.begin_counted_request()
+            return True
+
     def counted_active_requests(self) -> int:
         with self._counted_lock:
             return self._counted_active_requests
@@ -332,8 +340,13 @@ class SharedLlamaServerCoordinator:
         waits indefinitely), then publish the counter *before* the wrapped
         request starts so the drainer's settle window observes it.
         """
-        self._wait_out_foreign_stop_intent(max_wait_seconds)
-        self.begin_counted_request()
+        started = time.monotonic()
+        while True:
+            remaining = None if max_wait_seconds is None else max(0.0, max_wait_seconds - (time.monotonic() - started))
+            self._wait_out_foreign_stop_intent(remaining)
+            # Publish under the same lock as stop intent; no request may slip into a GPU handoff.
+            if self.try_begin_counted_request():
+                break
         try:
             yield
         finally:
@@ -391,6 +404,7 @@ class SharedLlamaServerCoordinator:
         summary = QuiesceSummary()
         started = time.monotonic()
         intent_path = self.session_dir / STOP_INTENT_FILE_NAME
+        next_wait_log = started + 5.0
         while True:
             with self._transition_lock():
                 acquired = self._try_acquire_stop_intent(intent_path, summary)
@@ -403,6 +417,9 @@ class SharedLlamaServerCoordinator:
                         self.publish_active_requests(self._counted_active_requests)
             if acquired:
                 break
+            if time.monotonic() >= next_wait_log:
+                self._record_quiesce_blocker(summary, "stop_intent", _read_json(intent_path), started)
+                next_wait_log = time.monotonic() + 5.0
             time.sleep(self._poll_seconds)
         self._drain_foreign_inflight(summary)
         summary.stopped_server = self._stop_shared_server()
@@ -449,6 +466,8 @@ class SharedLlamaServerCoordinator:
 
     def _drain_foreign_inflight(self, summary: QuiesceSummary) -> None:
         settled_observations = 0
+        started = time.monotonic()
+        next_wait_log = started + 5.0
         while True:
             snapshots = self.inflight_snapshots()
             # Crashed clients leave their counters behind; drop them so the
@@ -470,7 +489,23 @@ class SharedLlamaServerCoordinator:
                 sum(s.active_requests for s in snapshots if s.live),
             )
             settled_observations = 0
+            if time.monotonic() >= next_wait_log:
+                for snapshot in snapshots:
+                    if snapshot.live and snapshot.active_requests > 0:
+                        self._record_quiesce_blocker(summary, "inflight", _read_json(snapshot.path), started)
+                next_wait_log = time.monotonic() + 5.0
             time.sleep(self._poll_seconds)
+
+    def _record_quiesce_blocker(self, summary, phase, owner, started):
+        if owner is None:
+            return
+        blocker = {"phase": phase, "owner": owner}
+        if not any(previous["phase"] == phase and previous["owner"].get("pid") == owner.get("pid")
+                   and previous["owner"].get("processIdentity") == owner.get("processIdentity")
+                   for previous in summary.blocking_owners):
+            summary.blocking_owners.append(blocker)
+        print(json.dumps({"event": "shared_gpu_handoff_wait", "waiterPid": os.getpid(),
+                          "waitSeconds": round(time.monotonic() - started, 3), **blocker}), flush=True)
 
     def _stop_shared_server(self) -> bool:
         try:
