@@ -234,7 +234,7 @@ def run_yolo_pose_prefilter(
     payload = dict(result.payload)
     payload["resolvedModelPath"] = model_path
     payload["scanStrategy"] = normalize_pose_scan_strategy(settings.scan_strategy)
-    payload["samplingPolicyVersion"] = 2
+    payload["samplingPolicyVersion"] = 3
     payload["cameraPolicyVersion"] = POSE_CAMERA_POLICY_VERSION
     payload["sampledFrameCount"] = len(samples)
     payload["dominantPoseSamples"] = dominant_pose_samples_payload(samples, metadata=metadata)
@@ -268,7 +268,7 @@ def refresh_legacy_spread_pose_evidence(
     exercise_name: str, contract: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
     """Refresh hidden-1-FPS discovery evidence locally without rediscovery."""
-    if (not isinstance(payload, dict) or payload.get("samplingPolicyVersion") == 2
+    if (not isinstance(payload, dict) or payload.get("samplingPolicyVersion") in (2, 3)
             or normalize_pose_scan_strategy(payload.get("scanStrategy")) != "spread"
             or float(payload.get("sampleFps") or 0.) <= 1.):
         return payload
@@ -808,6 +808,8 @@ def build_pose_sample_plan(
     strategy = normalize_pose_scan_strategy(settings.scan_strategy)
     if strategy == "full":
         frames = list(range(0, max(0, metadata.frame_count), sample_step))
+        if frames and frames[-1] != metadata.frame_count - 1:
+            frames.append(metadata.frame_count - 1)
         return frames, [{"startSeconds": 0.0, "endSeconds": duration_seconds}]
 
     budget_seconds = (

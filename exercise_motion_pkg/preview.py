@@ -7183,7 +7183,7 @@ def _build_html(
         ? activeSourceFootSupportEvidence.supportContacts
         : [];
       return [...new Set(contacts
-        .filter((contact) => contact?.surfaceKind !== "contract_inferred_support_surface"
+        .filter((contact) => !String(contact?.surfaceKind || "").startsWith("contract_")
           && (contact?.continuousSupport || contact?.sourceStationarySupportCandidate))
         .map((contact) => String(contact.jointName || ""))
         .filter((jointName) => payload.jointNames.includes(jointName)))];

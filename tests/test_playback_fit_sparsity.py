@@ -342,6 +342,7 @@ def test_support_initialization_sparse_jacobian_covers_cross_frame_dependencies(
 
     def inspect_pattern(residual, initial, pattern, *_args, **_kwargs):
         probe = initial + np.random.default_rng(21).normal(0., .001, initial.shape)
+        probe.reshape(len(points), rig.width)[:, rig.slots[names.index('head')]] += .8
         numerical = approx_derivative(residual, probe, method='3-point', abs_step=1e-6)
         declared = pattern.toarray().astype(bool)
         assert declared.shape == numerical.shape

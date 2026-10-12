@@ -100,6 +100,8 @@ def test_legacy_sparse_pose_refresh_uses_local_video_and_reuses_evidence(tmp_pat
     assert calls[0]['settings'].sample_fps == 8.
     assert calls[0]['settings'].max_seconds == 32.
     assert refresh(fresh) is fresh
+    current = {**fresh, 'samplingPolicyVersion': 3}
+    assert refresh(current) is current
     assert refresh({**legacy, 'sampleFps': 1.})['sampleFps'] == 1.
     assert len(calls) == 1
     video.write_bytes(b'different local video')

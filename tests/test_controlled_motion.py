@@ -2057,6 +2057,8 @@ def test_selected_cycle_fit_stops_when_source_endpoint_coverage_is_incomplete(mo
         raise AssertionError('fit solver must not run without selected-cycle endpoint evidence')
 
     monkeypatch.setattr(motion, 'solve_trajectory', unexpected_solver_call)
+    from exercise_motion_pkg import anatomical_repair
+    monkeypatch.setattr(anatomical_repair, 'repair_rig_anatomy', unexpected_solver_call)
     result, report = motion.fit_controlled_motion(
         current,
         max_evaluations=1,

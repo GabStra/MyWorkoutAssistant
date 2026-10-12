@@ -17,6 +17,64 @@ SOURCE_REVIEW_AUTHORITY_VERSION = 2
 SOURCE_REVIEW_REQUIRED = "source_cut_review_required"
 
 
+def source_cut_pose_evidence_needs_review(
+    metrics: dict[str, Any] | None,
+    *,
+    visual_integrity_passed: bool = True,
+) -> bool:
+    """Keep unresolved or contradictory pose evidence out of terminal rejection."""
+    if not visual_integrity_passed or not isinstance(metrics, dict):
+        return False
+    required_regions = metrics.get("requiredRegionObservations")
+    if (
+        isinstance(required_regions, dict)
+        and required_regions.get("required") is True
+        and required_regions.get("available") is True
+        and required_regions.get("passed") is False
+    ):
+        return False
+
+    endpoints = metrics.get("sourcePoseEndpointContractValidation")
+    if (
+        isinstance(endpoints, dict)
+        and endpoints.get("passed") is False
+        and (endpoints.get("blockingMismatches") or endpoints.get("rawBlockingMismatches"))
+    ):
+        return False
+
+    phase = metrics.get("candidateFullRepetitionPhaseCompletenessMetrics")
+    phase_required = isinstance(phase, dict) and phase.get("required") is True
+    phase_passed = isinstance(phase, dict) and phase.get("passed") is True
+    if phase_required:
+        reason = str(phase.get("reason") or "").casefold()
+        signal = phase.get("phaseSignalEvidence")
+        if "unavailable" in reason or "insufficient" in reason:
+            return True
+        if isinstance(signal, dict) and signal.get("resolved") is False:
+            return True
+        if not phase_passed:
+            return False
+
+    target_motion = metrics.get("targetMotionObservability")
+    if isinstance(target_motion, dict) and target_motion.get("required") is True:
+        if target_motion.get("available") is False or target_motion.get("passed") is None:
+            return True
+        if target_motion.get("passed") is False:
+            if not (phase_required and phase_passed):
+                return False
+            return True
+        if target_motion.get("passed") is not True:
+            return True
+    elif target_motion is None and phase_required and phase_passed:
+        return True
+
+    if not isinstance(endpoints, dict) or endpoints.get("available") is False:
+        return True
+    if endpoints.get("passed") is False:
+        return not bool(endpoints.get("blockingMismatches") or endpoints.get("rawBlockingMismatches"))
+    return endpoints.get("passed") is not True
+
+
 def evidence_text(value: Any) -> str:
     return value.strip() if isinstance(value, str) else ""
 

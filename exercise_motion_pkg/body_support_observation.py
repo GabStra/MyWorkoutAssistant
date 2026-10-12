@@ -163,6 +163,16 @@ def materialize_body_support(payload, source_pose, contract=None):
     bench/normal direction may still be estimated from torso landmark medians.
     """
     evidence = payload.get('sourceFootSupportEvidence') or {}
+    # A hinged torso is not a rigid pelvis-to-upper-back support plane.
+    if any((contract or {}).get(key, {}).get('torsoOrientation') == 'hinged'
+           for key in ('startPoseConstraints', 'endPoseConstraints')):
+        support = evidence.get('bodySupport') or {}
+        if any(set(chain.get('endpoints') or []) == {'pelvis', 'neck'}
+               for chain in support.get('nonPenetrationChains', [])):
+            evidence.pop('bodySupport', None)
+        return
+    if contract is not None and not requires_body_support(contract):
+        return
     if (evidence.get('bodySupport') or {}).get('status') == 'confirmed':
         # Retained evidence can be only partially materialized. Fill missing
         # ground-foot anchors from the same hash-matched source observation,
@@ -385,6 +395,9 @@ def _confirmed_observed_ground_sole_sides(evidence, source_pose, joint_names):
             continue
         states = (feet.get(side) or {}).get('states') or []
         normalized_states = {str(state).casefold() for state in states}
+        # Stationarity alone cannot put an entirely unobserved sole on the ground.
+        if patch.get('available') is True and 'full_sole' not in normalized_states:
+            continue
         # Unknown samples do not contradict an exact source observation. Any
         # observed release or partial sole does, so never widen it to a full
         # clip anchor.

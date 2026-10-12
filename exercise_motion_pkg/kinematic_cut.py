@@ -1040,33 +1040,39 @@ def _distinct_end_state_excursion_proposals(
     """Recover a one-way transition when categorical pose labels are unreliable.
 
     A complete excursion contains the requested transition followed by a reset.
-    For a distinct-end contract, the first signal extreme is the natural finish;
-    retaining the return would contradict the contract merely because a 2-D
-    support-mode classifier could not label the endpoints.
+    Score both halves against the requested endpoints: the clip may start
+    in the end pose and show a reset before the requested transition.
     """
     cycles = detect_cycles(signal)
     if not cycles:
         return []
     start_constraints = contract.get("startPoseConstraints")
-    scored: list[tuple[float, int, Cycle]] = []
+    end_constraints = contract.get("endPoseConstraints")
+    scored: list[tuple[float, int, Cycle, float, float]] = []
     for index, cycle in enumerate(cycles):
-        start_score = _state_score_at(frames, signal, cycle.start_seconds, start_constraints)
-        confidence = min(cycle.amplitude, 1.0) * signal.quality * (0.5 + 0.5 * start_score)
-        scored.append((confidence, index, cycle))
+        for start, end in (
+            (cycle.start_seconds, cycle.peak_seconds),
+            (cycle.peak_seconds, cycle.end_seconds),
+        ):
+            if end - start < DEFAULT_MIN_CYCLE_SECONDS:
+                continue
+            start_score = _state_score_at(frames, signal, start, start_constraints)
+            end_score = _state_score_at(frames, signal, end, end_constraints)
+            endpoint_score = (start_score + end_score) / 2.0
+            confidence = min(cycle.amplitude, 1.0) * signal.quality * (0.5 + 0.5 * endpoint_score)
+            scored.append((confidence, index, cycle, start, end))
     scored.sort(key=lambda item: (-item[0], item[1]))
     proposals: list[CutProposal] = []
-    for confidence, _, cycle in scored[:max_proposals]:
-        if cycle.peak_seconds - cycle.start_seconds < DEFAULT_MIN_CYCLE_SECONDS:
-            continue
+    for confidence, _, cycle, start, end in scored[:max_proposals]:
         proposals.append(
             CutProposal(
-                start_seconds=cycle.start_seconds,
-                end_seconds=cycle.peak_seconds,
+                start_seconds=start,
+                end_seconds=end,
                 policy="distinct_end_state_signal_extreme",
                 confidence=max(0.0, min(1.0, confidence)),
                 stats={
                     "amplitudeTorsoUnits": cycle.amplitude,
-                    "durationSeconds": cycle.peak_seconds - cycle.start_seconds,
+                    "durationSeconds": end - start,
                     "cycleCount": float(len(cycles)),
                     "explainedVarianceRatio": signal.explained_variance_ratio,
                     "fallbackReason": "categorical_endpoint_states_unavailable",

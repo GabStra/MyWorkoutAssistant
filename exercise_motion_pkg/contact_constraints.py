@@ -177,7 +177,7 @@ def motion_support_contacts(evidence: dict[str, Any] | None) -> list[dict[str, A
 
 def is_stationary_contact(contact: dict[str, Any]) -> bool:
     """Surface proximity alone does not authorize a tangential lock."""
-    if contact.get("surfaceKind") == "contract_inferred_support_surface":
+    if str(contact.get("surfaceKind") or "").startswith("contract_"):
         # A generated posture plus a slow image-space joint is not observed
         # physical contact. Treat it as advisory, including cached evidence.
         return False

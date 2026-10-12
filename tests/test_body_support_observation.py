@@ -134,7 +134,7 @@ def test_hash_matched_confirmed_support_adds_only_observed_stationary_ground_fee
                 'available': True,
                 'feet': {
                     'left': {'states': ['unknown'] * 4 + ['full_sole'] * 4 + ['unknown'] * 4},
-                    'right': {'states': ['unknown'] * frame_count},
+                    'right': {'states': ['unknown'] * 4 + ['full_sole'] * 4 + ['unknown'] * 4},
                 },
             },
         }

@@ -127,6 +127,24 @@ def test_retry_disposition_keeps_uncertainty_separate_from_quality():
     assert wave_retry_disposition({"source": {"failureReason": "no_source_passed_exact_window_validation"}}) == "next_source"
 
 
+@pytest.mark.parametrize("phase", [
+    {"required": True, "passed": False, "reason": "source_pose_samples_unavailable"},
+    {"required": True, "passed": False, "reason": "one_way_partial_repetition_phase",
+     "phaseSignalEvidence": {"resolved": False}},
+])
+def test_known_endpoint_mismatch_stays_hard_when_phase_evidence_is_uncertain(phase):
+    metrics = {
+        "candidateFullRepetitionPhaseCompletenessMetrics": phase,
+        "sourcePoseEndpointContractValidation": {
+            "available": True,
+            "passed": False,
+            "blockingMismatches": [{"endpoint": "end", "field": "supportMode"}],
+        },
+    }
+
+    assert not authority.source_cut_pose_evidence_needs_review(metrics)
+
+
 def test_replay_only_legacy_negative_model_cuts(tmp_path):
     payload = {"selectedSpan": None, "sourceCutRanking": {
         "reasons": ["source_candidate_window_choice_failed"],

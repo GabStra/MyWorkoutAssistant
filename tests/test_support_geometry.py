@@ -10,6 +10,21 @@ from exercise_motion_pkg.support_geometry import (
 )
 
 
+def test_support_head_preservation_uses_body_relative_source_articulation():
+    from exercise_motion_pkg.support_geometry import _head_articulation_residual
+    names = ['left_hip', 'right_hip', 'pelvis', 'neck', 'head']
+    source = np.array([[[-.2, 0., 0.], [.2, 0., 0.], [0., 0., 0.],
+                        [0., 1., 0.], [0., 1.2, 0.]]])
+    candidate = source.copy()
+    angle = np.deg2rad(45.)
+    candidate[:, -1] = [0., 1.+.2*np.cos(angle), .2*np.sin(angle)]
+    assert np.isclose(_head_articulation_residual(candidate, source, names)[0, 0],
+                      np.deg2rad(31.))
+    rotation = Rotation.from_euler('xyz', [30., 20., 10.], degrees=True)
+    rotated = rotation.apply(source.reshape(-1, 3)).reshape(source.shape) + 3.
+    np.testing.assert_allclose(_head_articulation_residual(rotated, source, names), 0., atol=1e-8)
+
+
 def test_supported_chain_range_uses_feasible_reference_but_free_arm_keeps_source():
     from exercise_motion_pkg.support_geometry import moving_support_articulations
     names = [f'{side}_{part}' for side in ('left', 'right') for part in ('hip', 'shoulder', 'elbow', 'wrist')]

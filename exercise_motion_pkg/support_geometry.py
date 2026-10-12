@@ -268,11 +268,28 @@ def validated_support_reference(payload):
     return reference, None
 
 
-def calibrate_support_pose(rig, points, evidence, alignment_reference=None):
+def _head_articulation_residual(points, reference, names):
+    from .temporal_quality import body_local_head_direction
+    source = body_local_head_direction(reference, names)
+    current = body_local_head_direction(points, names)
+    if source is None or current is None:
+        return np.empty((len(points), 0))
+    angle = np.arccos(np.clip(np.sum(source * current, axis=1), -1., 1.))
+    return np.maximum(angle - np.deg2rad(14.), 0.)[:, None]
+
+
+def _head_articulation_dependencies(rig, points):
+    from .controlled_motion import joint_dependencies
+    if not _head_articulation_residual(points, points, rig.names).shape[1]:
+        return np.empty((0, rig.width))
+    return joint_dependencies(rig, ('pelvis', 'left_hip', 'right_hip', 'neck', 'head'))[None, :]
+
+
+def calibrate_support_pose(rig, points, evidence, alignment_reference=None, *, articulation_reference=None):
     """Find one feasible fixed-rig support pose, retaining bone lengths."""
     from scipy.optimize import least_squares
     from .physical_validation import anatomical_structure_residuals, collision_clearances, body_scale
-    from .controlled_motion import ANATOMY_FIT_MARGIN
+    from .controlled_motion import ANATOMY_FIT_MARGIN, SUPPORT_HEAD_ARTICULATION_FIT_WEIGHT
 
     if evidence.get('status') != 'confirmed' or not evidence_is_complete(evidence, rig.names):
         return None, {'passed': False, 'reason': 'supported_body_evidence_unresolved'}
@@ -280,6 +297,7 @@ def calibrate_support_pose(rig, points, evidence, alignment_reference=None):
     target = np.median(points, axis=0)
     closest = int(np.argmin(np.sum((points[:, indices]-target[indices])**2, axis=(1, 2))))
     initial = rig.initial[closest].copy()
+    head_reference = (points if articulation_reference is None else articulation_reference)[closest:closest+1]
     scale = body_scale(points, rig.names)
     from .support_alignment import (alignment_features, alignment_constraint_errors,
                                     alignment_dependencies)
@@ -303,6 +321,8 @@ def calibrate_support_pose(rig, points, evidence, alignment_reference=None):
                      1000.*np.asarray(anchor_errors),
                      1000.*anatomical_structure_residuals(
                          candidate, rig.names, pose_only=True, margin=ANATOMY_FIT_MARGIN)[0].ravel(),
+                     SUPPORT_HEAD_ARTICULATION_FIT_WEIGHT*_head_articulation_residual(
+                         candidate, head_reference, rig.names).ravel(),
                      1000.*np.minimum(collision_clearances(candidate, rig.names, scale)[0]-.003*scale, 0.).ravel(),
                      .001*(values-initial)]
 
@@ -327,6 +347,7 @@ def calibrate_support_pose(rig, points, evidence, alignment_reference=None):
         rows.append(np.asarray(joint_dependencies(rig, [anchor])))
     structure_rows = np.atleast_2d(anatomical_structure_dependencies(rig, initial_points, rig.names))
     rows.extend(structure_rows)
+    rows.extend(_head_articulation_dependencies(rig, initial_points))
     for _label, first, second, _ratio, _adjacent in collision_specs(rig.names):
         rows.append(np.asarray(joint_dependencies(rig, [*first, *second])))
     rows.append(np.eye(rig.width))
@@ -417,12 +438,13 @@ def moving_support_articulations(points, names, evidence, *, support_corrected_p
 
 
 def initialize_supported_motion(rig, original, evidence, pose, calibration, deadline, fps=30., alignment_reference=None,
-                                *, pinned=None, contact_targets=None, equipment=None, max_evaluations=40):
+                                *, pinned=None, contact_targets=None, equipment=None, max_evaluations=40,
+                                articulation_reference=None):
     """Project observed articulation onto contacts without locking ancestors."""
     from time import monotonic
     from scipy.sparse import eye, kron, csr_matrix, vstack
     from .controlled_motion import (joint_dependencies, solve_trajectory, anatomical_structure_dependencies,
-                                    ANATOMY_FIT_MARGIN)
+                                    ANATOMY_FIT_MARGIN, SUPPORT_HEAD_ARTICULATION_FIT_WEIGHT)
     from .physical_validation import SOCKET_ALIGNMENT_MAX_LATERAL_RATIO
     from .physical_validation import anatomical_structure_residuals, collision_clearances, collision_specs, body_scale
 
@@ -430,6 +452,7 @@ def initialize_supported_motion(rig, original, evidence, pose, calibration, dead
     indices = [rig.names.index(n) for n in stationary]
     source_coordinates = rig.initial.copy()
     source_points = rig.decode(source_coordinates)
+    head_reference = original if articulation_reference is None else articulation_reference
     count = len(original)
     contact_active = np.zeros(source_points.shape[:2], dtype=bool) if pinned is None else pinned.copy()
     contact_active[:, indices] = True
@@ -491,6 +514,8 @@ def initialize_supported_motion(rig, original, evidence, pose, calibration, dead
             200.*alignment_constraint_errors(candidate, source_alignment, rig.names, evidence),
             1000.*anatomical_structure_residuals(
                 candidate, rig.names, pose_only=True, margin=ANATOMY_FIT_MARGIN)[0],
+            SUPPORT_HEAD_ARTICULATION_FIT_WEIGHT*_head_articulation_residual(
+                candidate, head_reference, rig.names),
             1000.*np.minimum(collision_clearances(candidate, rig.names, scale)[0]-.003*scale, 0.),
             .0001*(coordinates-source_coordinates),
         ], axis=1).ravel()
@@ -513,7 +538,7 @@ def initialize_supported_motion(rig, original, evidence, pose, calibration, dead
                                          for j, parent in zip(direction_children, direction_parents)]), 3, axis=0)
     frame_pattern = np.vstack([rig.dependencies, direction_rows, rig.dependencies[contact_rows], grip_rows,
         geometry_dependencies(rig, evidence), alignment_dependencies(rig, evidence), anatomical_structure_dependencies(rig, original, rig.names),
-        collision_rows, np.eye(rig.width)])
+        _head_articulation_dependencies(rig, original), collision_rows, np.eye(rig.width)])
     pattern = kron(eye(count), csr_matrix(frame_pattern), format='csr')
     d2 = csr_matrix(abs(np.diff(np.eye(count), n=2, axis=0)))
     pattern = vstack([pattern, kron(d2, csr_matrix(rig.dependencies))], format='csr')

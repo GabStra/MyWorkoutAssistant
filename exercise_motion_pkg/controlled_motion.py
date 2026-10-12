@@ -4224,6 +4224,35 @@ def _authoritative_support_projection_joints(body_support, names):
     return stationary & plane_constrained_joints
 
 
+def _source_projection_constraint_report(constraint):
+    diagnostics = {
+        key: constraint.get(key)
+        for key in (
+            'available', 'reason', 'sourceFrameCount', 'observationCount',
+            'distinctFitTimeCount', 'cameraAuthority', 'weight',
+            'cycleBoundaryCoverage', 'cycleBoundaryObservationCount',
+            'cycleBoundaryFitMultiplier',
+            'supportAnchorObservationCount', 'supportAnchorProjectionOmittedCount',
+            'endpointPostureObservationCount', 'endpointPostureCoverage',
+            'endpointPostureWindowHalfWidthSeconds', 'endpointPostureFitMultiplier',
+            'selectedIntervalKind', 'selectedIntervalEvidenceSource', 'selectedIntervalReason',
+        )
+    }
+    diagnostics.update({
+        'supportRelativeObservationCount': len(
+            constraint.get('supportRelativeObservations') or []
+        ),
+        'supportRelativeJointNames': constraint.get(
+            'supportRelativeJointNames', []),
+        'supportRelativeWeight': constraint.get('supportRelativeWeight'),
+    })
+    diagnostics['sharedAnchorAdjustment'] = {
+        'adjustedGroupCount': 0,
+        'maximumShiftMeters': 0.,
+    }
+    return diagnostics
+
+
 def _prepare_source_projection_fit_constraints(payload, frames, names, points, pinned, scale):
     """Project retained source observations into the fit using its fixed camera."""
     retained = payload.get('sourcePoseCameraReference')
@@ -5834,6 +5863,17 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         return payload, {**report, 'reason': 'unrepresented_heel_contact'}
     if (payload.get('postBakeForefootContactConstraint') or {}).get('requiresReconstruction'):
         return payload, {**report, 'reason': 'upstream_contacts_unresolved'}
+    # Missing observed endpoints cannot be recovered by anatomy or support solves.
+    coverage_constraint = _prepare_source_projection_fit_constraints(
+        payload, frames, names, points, pinned, body_scale(points, names))
+    coverage_gaps = _selected_interval_source_fit_coverage_gaps(payload, coverage_constraint)
+    if coverage_gaps:
+        return payload, {
+            **report, 'reason': 'selected_source_interval_source_evidence_incomplete',
+            'sourceProjectionConstraint': _source_projection_constraint_report(coverage_constraint),
+            'sourceIntervalFitCoverageGaps': coverage_gaps,
+            'elapsedSeconds': monotonic() - started,
+        }
     root_index = names.index('pelvis')
     if all('controlledArticulationReferenceJoints' in frame for frame in frames):
         source_axes = body_orientation_axes(reference[:1], names)
@@ -5986,7 +6026,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             }
         else:
             support_pose, support_calibration = calibrate_support_pose(
-                rig, points, body_support, alignment_reference=alignment_source)
+                rig, points, body_support, alignment_reference=alignment_source,
+                articulation_reference=anatomical_reference)
             support_calibration['elapsedSeconds'] = monotonic()-support_started
         report['supportCalibration'] = support_calibration
         if support_pose is None:
@@ -6062,7 +6103,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                     rig, points, body_support, support_pose, support_calibration,
                     support_deadline, fps=fps, alignment_reference=alignment_source,
                     pinned=pinned, contact_targets=contact_targets, equipment=equipment,
-                    max_evaluations=projection_evals)
+                    max_evaluations=projection_evals, articulation_reference=anatomical_reference)
                 report['supportInitializationSeconds'] = monotonic()-support_started
                 report['supportInitializationStrategy'] = 'supported_motion_ls'
             except TimeoutError:
@@ -6504,31 +6545,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
     source_projection_constraint = _prepare_source_projection_fit_constraints(
         payload, frames, names, points, pinned, scale,
     )
-    report['sourceProjectionConstraint'] = {
-        key: source_projection_constraint.get(key)
-        for key in (
-            'available', 'reason', 'sourceFrameCount', 'observationCount',
-            'distinctFitTimeCount', 'cameraAuthority', 'weight',
-            'cycleBoundaryCoverage', 'cycleBoundaryObservationCount',
-            'cycleBoundaryFitMultiplier',
-            'supportAnchorObservationCount', 'supportAnchorProjectionOmittedCount',
-            'endpointPostureObservationCount', 'endpointPostureCoverage',
-            'endpointPostureWindowHalfWidthSeconds', 'endpointPostureFitMultiplier',
-            'selectedIntervalKind', 'selectedIntervalEvidenceSource', 'selectedIntervalReason',
-        )
-    }
-    report['sourceProjectionConstraint'].update({
-        'supportRelativeObservationCount': len(
-            source_projection_constraint.get('supportRelativeObservations') or []
-        ),
-        'supportRelativeJointNames': source_projection_constraint.get(
-            'supportRelativeJointNames', []),
-        'supportRelativeWeight': source_projection_constraint.get('supportRelativeWeight'),
-    })
-    report['sourceProjectionConstraint']['sharedAnchorAdjustment'] = {
-        'adjustedGroupCount': 0,
-        'maximumShiftMeters': 0.,
-    }
+    report['sourceProjectionConstraint'] = _source_projection_constraint_report(source_projection_constraint)
     source_interval_coverage_gaps = _selected_interval_source_fit_coverage_gaps(
         payload, source_projection_constraint,
     )

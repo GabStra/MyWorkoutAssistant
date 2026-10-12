@@ -904,7 +904,7 @@ FULL_REPETITION_PHASE_COMPLETENESS_MIN_RANGE_RATIO = 0.12
 FULL_REPETITION_PHASE_COMPLETENESS_MAX_ENDPOINT_DELTA_RATIO = 0.55
 FULL_REPETITION_PHASE_COMPLETENESS_EDGE_MARGIN_RATIO = 0.12
 FULL_REPETITION_PHASE_COMPLETENESS_MIN_FRAMES = 5
-EXACT_SOURCE_PHASE_VALIDATION_POLICY_VERSION = 47
+EXACT_SOURCE_PHASE_VALIDATION_POLICY_VERSION = 48
 SOURCE_ENDPOINT_RETURN_HAND_HEIGHT_DELTA_RATIO_MAX = 0.20
 SOURCE_ENDPOINT_RETURN_ROOT_HORIZONTAL_DISPLACEMENT_RATIO_MAX = 0.065
 RAW_RECONSTRUCTION_SOURCE_FIDELITY_MIN_COMPARABLE_FRAME_RATIO = 0.60
@@ -1828,66 +1828,143 @@ def parse_source_window_variant(
     )
 
 
+def contiguous_source_pose_sample_runs(pose_payload: dict[str, Any]) -> list[list[dict[str, Any]]]:
+    samples = pose_payload.get("dominantPoseSamples")
+    if not isinstance(samples, list):
+        return []
+    timed_samples = sorted(
+        (
+            (time_seconds, sample)
+            for sample in samples
+            if isinstance(sample, dict)
+            and (time_seconds := source_pose_sample_time_seconds(sample)) is not None
+        ),
+        key=lambda item: item[0],
+    )
+    runs: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    previous_time: float | None = None
+    for time_seconds, sample in timed_samples:
+        if (
+            previous_time is not None
+            and time_seconds - previous_time > SOURCE_POSE_SUPPORT_MAX_OBSERVATION_GAP_SECONDS
+        ):
+            if len(current) >= 8:
+                runs.append(current)
+            current = []
+        current.append(sample)
+        previous_time = time_seconds
+    if len(current) >= 8:
+        runs.append(current)
+    return runs
+
+
+def source_window_pose_phase_is_complete(ranked_candidate: RankedCandidate) -> bool:
+    contract = source_window_motion_contract_from_candidate(ranked_candidate.candidate)
+    hint = ranked_candidate.source_chunk_hint
+    if not observable_motion_spec_requires_return(contract) or hint is None:
+        return False
+    vision = ranked_candidate.candidate.get("visionPayload")
+    pose = vision.get("posePrefilter") if isinstance(vision, dict) else None
+    if not isinstance(pose, dict):
+        return False
+    current = source_pose_skeleton_payload_for_window(
+        pose,
+        candidate_window=DetectionWindow(
+            index=0,
+            start_seconds=hint.start_seconds,
+            end_seconds=hint.end_seconds,
+        ),
+    )
+    if current is None:
+        return False
+    frames = current.get("frames") or []
+    if any(
+        float(right["sourceTimeSec"]) - float(left["sourceTimeSec"])
+        > SOURCE_POSE_SUPPORT_MAX_OBSERVATION_GAP_SECONDS
+        for left, right in zip(frames, frames[1:])
+    ):
+        return False
+    return bool(full_repetition_phase_completeness_metrics_from_source_pose_payload(
+        current,
+        exercise_name=ranked_candidate.exercise_name,
+        ranking_payload={"exerciseMotionContract": contract},
+    ).get("passed"))
+
+
 def observed_complete_source_window_variants(
     ranked_candidate: RankedCandidate,
 ) -> list[SourceWindowVariant]:
-    """Recover complete source intervals when the discovery hint is partial.
+    """Recover source intervals from each contiguous pose-sampled run.
 
-    Cached pose phases propose where to look; exact source review still owns
-    identity, framing and completeness. These are source contexts, not final
-    output-cycle boundaries.
+    Pose proposals only identify where exact source review should look. They
+    never cross gaps in the sampled evidence or replace source review.
     """
-    from .repetition_phase import major_phase_runs
-
     contract = source_window_motion_contract_from_candidate(ranked_candidate.candidate)
-    if not observable_motion_spec_requires_return(contract):
-        return []
     vision = ranked_candidate.candidate.get("visionPayload") or {}
     pose = vision.get("posePrefilter")
     duration = source_window_video_duration_seconds(ranked_candidate)
     if not isinstance(pose, dict) or duration is None:
         return []
-    ranking = {"exerciseMotionContract": contract}
     hint = ranked_candidate.source_chunk_hint
-    if hint is not None:
-        current = source_pose_skeleton_payload_for_window(pose, candidate_window=DetectionWindow(
-            index=0, start_seconds=hint.start_seconds, end_seconds=hint.end_seconds))
-        if current and full_repetition_phase_completeness_metrics_from_source_pose_payload(
-                current, exercise_name=ranked_candidate.exercise_name, ranking_payload=ranking).get("passed"):
-            return []
-    payload = source_pose_skeleton_payload_for_window(pose, candidate_window=DetectionWindow(
-        index=0, start_seconds=0., end_seconds=duration))
-    if payload is None:
-        return []
-    frames = payload["frames"]
-    if any(float(right["sourceTimeSec"])-float(left["sourceTimeSec"])
-           > SOURCE_POSE_SUPPORT_MAX_OBSERVATION_GAP_SECONDS for left, right in zip(frames, frames[1:])):
-        return []
-    metrics = full_repetition_phase_completeness_metrics_from_source_pose_payload(
-        payload, exercise_name=ranked_candidate.exercise_name, ranking_payload=ranking)
-    spec = metrics.get("observableMotionSpec")
-    if not isinstance(spec, dict):
-        return []
-    track = dominant_observable_motion_phase_track(
-        frames, spec=spec, body_span=metrics.get("bodyHeight") or 0.)
-    if track is None or len(track["values"]) != len(frames):
-        return []
-    evidence = phase_track_signal_evidence(track["values"])
-    if not evidence["resolved"]:
-        return []
-    runs = major_phase_runs(evidence["smoothedValues"])
-    variants = []
-    for first, last in zip(runs, runs[2:]):
-        start, end = first[1], last[2]
-        interval = {**payload, "frames": frames[start:end+1]}
-        if not full_repetition_phase_completeness_metrics_from_source_pose_payload(
-                interval, exercise_name=ranked_candidate.exercise_name, ranking_payload=ranking).get("passed"):
+    requires_return = observable_motion_spec_requires_return(contract)
+
+    ranked_variants: list[tuple[float, float, float, SourceWindowVariant]] = []
+    for sample_run in contiguous_source_pose_sample_runs(pose):
+        run_start = source_pose_sample_time_seconds(sample_run[0])
+        run_end = source_pose_sample_time_seconds(sample_run[-1])
+        if run_start is None or run_end is None:
             continue
-        variants.append(SourceWindowVariant(
-            SourceChunkHint(float(frames[start]["sourceTimeSec"]), float(frames[end]["sourceTimeSec"]),
-                            hint.score if hint is not None else None),
-            "observed_complete_source_cycle"))
-    return sorted(variants, key=lambda variant: variant.hint.duration_seconds)[:2]
+        proposals = propose_source_cut(
+            contract=contract,
+            dominant_pose_samples=sample_run,
+            max_proposals=2,
+            span_start_seconds=run_start,
+            span_end_seconds=run_end,
+            span_pad_seconds=0.0,
+        )
+        for proposal in proposals:
+            start = max(0.0, float(proposal.start_seconds))
+            end = min(duration, float(proposal.end_seconds))
+            if end - start < SOURCE_CUT_REFINEMENT_MIN_SECONDS:
+                continue
+            endpoint_quality = parse_optional_float(proposal.stats.get("endpointQuality"))
+            if requires_return:
+                interval = source_pose_skeleton_payload_for_window(
+                    pose,
+                    candidate_window=DetectionWindow(
+                        index=0,
+                        start_seconds=start,
+                        end_seconds=end,
+                    ),
+                )
+                if interval is None:
+                    continue
+                phase_metrics = full_repetition_phase_completeness_metrics_from_source_pose_payload(
+                    interval,
+                    exercise_name=ranked_candidate.exercise_name,
+                    ranking_payload={"exerciseMotionContract": contract},
+                )
+                if not phase_metrics.get("passed"):
+                    continue
+                endpoint_delta = parse_optional_float(phase_metrics.get("endpointPhaseDeltaRatio"))
+                if endpoint_delta is not None:
+                    endpoint_quality = clamp_unit(1.0 - endpoint_delta)
+            confidence = clamp_unit(float(proposal.confidence))
+            endpoint_quality = confidence if endpoint_quality is None else clamp_unit(endpoint_quality)
+            variant = SourceWindowVariant(
+                    SourceChunkHint(
+                        start,
+                        end,
+                        confidence,
+                    ),
+                    "observed_complete_source_cycle" if requires_return else "pose_prefilter_source_proposal",
+                )
+            ranked_variants.append(
+                (confidence, endpoint_quality, variant.hint.duration_seconds, variant)
+            )
+    ranked_variants.sort(key=lambda item: (-item[0], -item[1], item[2], item[3].hint.start_seconds))
+    return [item[3] for item in ranked_variants[:2]]
 
 
 def collect_source_window_variants(
@@ -1914,8 +1991,33 @@ def collect_source_window_variants(
         variants.append(variant)
         return True
 
-    for observed_variant in observed_complete_source_window_variants(ranked_candidate):
-        add_variant(observed_variant)
+    observed_variants = observed_complete_source_window_variants(ranked_candidate)
+    requires_return = observable_motion_spec_requires_return(
+        source_window_motion_contract_from_candidate(ranked_candidate.candidate)
+    )
+    current_phase_complete = requires_return and source_window_pose_phase_is_complete(ranked_candidate)
+
+    def add_pose_proposal(variant: SourceWindowVariant) -> bool:
+        max_seconds = (
+            float(request.segment_max_seconds)
+            if float(request.segment_max_seconds) > 0.0
+            else resolved_segment_max_seconds(
+                request,
+                ranked_candidate=ranked_candidate,
+                source_hint=variant.hint,
+            )
+        )
+        if (
+            variant.hint.duration_seconds < SOURCE_CUT_REFINEMENT_MIN_SECONDS
+            or variant.hint.duration_seconds > max_seconds
+            or (variant.hint.score is not None and variant.hint.score < SOURCE_GATE_MIN_BEST_CHUNK_SCORE)
+        ):
+            return False
+        return add_variant(variant, allow_short_fallback=True)
+
+    if requires_return and not current_phase_complete:
+        for observed_variant in observed_variants:
+            add_pose_proposal(observed_variant)
     current_hint = ranked_candidate.source_chunk_hint
     current_variant = (
         SourceWindowVariant(current_hint, "ranked_best_chunk")
@@ -1928,7 +2030,6 @@ def collect_source_window_variants(
     vision_payload = ranked_candidate.candidate.get("visionPayload")
     if isinstance(vision_payload, dict):
         reviewed_chunks = vision_payload.get("reviewedChunks")
-        reviewed_variant_count = 0
         if isinstance(reviewed_chunks, list):
             for index, chunk in enumerate(reviewed_chunks):
                 if not isinstance(chunk, dict) or parse_optional_bool(chunk.get("valid")) is False:
@@ -1946,14 +2047,10 @@ def collect_source_window_variants(
                     # complete extraction interval. Duration estimates guide
                     # discovery, but must not erase that evidence; pre-RECONSTRUCTION
                     # source validation still confirms the actual boundaries.
-                    if add_variant(variant, allow_short_fallback=True):
-                        reviewed_variant_count += 1
+                    add_variant(variant, allow_short_fallback=True)
 
-        # If source-video semantic review produced usable windows, treat that
-        # reviewed list as authoritative. Pose-only windows are just a fast
-        # deterministic prefilter and can include good-looking sub-drills from
-        # tutorial videos that are not the requested full movement.
-        pose_payload = vision_payload.get("posePrefilter") if reviewed_variant_count == 0 else None
+        # Keep reviewed windows ahead of pose-prefilter alternatives.
+        pose_payload = vision_payload.get("posePrefilter")
         if isinstance(pose_payload, dict):
             valid_chunks = pose_payload.get("validChunks")
             if isinstance(valid_chunks, list):
@@ -1970,6 +2067,10 @@ def collect_source_window_variants(
                         or variant.hint.score >= SOURCE_GATE_STRONG_BEST_CHUNK_SCORE
                     ):
                         add_variant(variant)
+
+    if not requires_return or current_phase_complete:
+        for observed_variant in observed_variants:
+            add_pose_proposal(observed_variant)
 
     if variants:
         motion_contract = source_window_motion_contract_from_candidate(ranked_candidate.candidate)
@@ -3313,12 +3414,13 @@ class LazyLlamaCppVisionSession:
         # the owning process releases it.
         return self._shared is not None and self._shared.stop_intent_live()
 
-    def _shared_request_admitted_locked(self) -> None:
+    def _shared_request_admitted_locked(self) -> bool:
         # Sessions count admitted requests through the coordinator's counted
         # scopes (not absolute publishes) so concurrent client-level counts in
         # this same pid add up instead of clobbering each other.
         if self._shared is not None:
-            self._shared.begin_counted_request()
+            return self._shared.try_begin_counted_request()
+        return True
 
     def _shared_request_released_locked(self) -> None:
         if self._shared is not None:
@@ -3327,57 +3429,61 @@ class LazyLlamaCppVisionSession:
     def caption_images(self, *args: Any, **kwargs: Any) -> str:
         queued_at = time.perf_counter()
         with self._condition:
-            # Once CUDA-exclusive work is queued, drain it before admitting
-            # another VLM request. This turns N per-exercise model swaps into
-            # one swap around a group of deterministic validations. In shared
-            # mode a foreign exclusive phase gates admissions the same way.
-            while (
-                self._reconstruction_active
-                or self._exclusive_waiters > 0
-                or self._active_calls >= self._max_active_calls
-                or self._shared_blocks_admission_locked()
-            ):
+            while True:
+                # Once CUDA-exclusive work is queued, drain it before admitting
+                # another VLM request. This turns N per-exercise model swaps into
+                # one swap around a group of deterministic validations. In shared
+                # mode a foreign exclusive phase gates admissions the same way.
+                while (
+                    self._reconstruction_active
+                    or self._exclusive_waiters > 0
+                    or self._active_calls >= self._max_active_calls
+                    or self._shared_blocks_admission_locked()
+                ):
+                    if self._closed:
+                        raise RuntimeError("llama.cpp vision session was already closed.")
+                    deadline = self._candidate_deadlines.get()
+                    if deadline is not None and time.perf_counter() >= deadline:
+                        raise CandidateWallTimeBudgetExpired("Candidate budget expired waiting for a VLM slot.")
+                    self._condition.wait(timeout=0.25)
                 if self._closed:
                     raise RuntimeError("llama.cpp vision session was already closed.")
-                deadline = self._candidate_deadlines.get()
-                if deadline is not None and time.perf_counter() >= deadline:
-                    raise CandidateWallTimeBudgetExpired("Candidate budget expired waiting for a VLM slot.")
-                self._condition.wait(timeout=0.25)
-            if self._closed:
-                raise RuntimeError("llama.cpp vision session was already closed.")
+                if self._ranker is None:
+                    self._release_cached_exclusive_models()
+                    stage_started = time.perf_counter()
+                    startup_id = self.startup_count + 1
+                    self._record_lifecycle_event_locked(
+                        "ranker_starting",
+                        startupId=startup_id,
+                    )
+                    self._ranker = LlamaCppVisionRanker(self.settings)
+                    startup_seconds = elapsed_seconds(stage_started)
+                    gpu_lock_wait_seconds = getattr(
+                        self._ranker,
+                        "gpu_lock_wait_seconds",
+                        0.0,
+                    )
+                    self.gpu_lock_wait_seconds = round(
+                        self.gpu_lock_wait_seconds + gpu_lock_wait_seconds,
+                        3,
+                    )
+                    self.startup_seconds = round(self.startup_seconds + startup_seconds, 3)
+                    self.startup_count += 1
+                    self._record_lifecycle_event_locked(
+                        "ranker_started",
+                        startupId=startup_id,
+                        startupSeconds=round(startup_seconds, 3),
+                        gpuLockWaitSeconds=round(float(gpu_lock_wait_seconds), 3),
+                    )
+                ranker = self._ranker
+                if not self._shared_request_admitted_locked():
+                    self._condition.wait(timeout=0.25)
+                    continue
+                self._active_calls += 1
+                self._peak_active_calls = max(self._peak_active_calls, self._active_calls)
+                candidate_deadline = self._candidate_deadlines.get()
+                break
             self.queue_wait_seconds += time.perf_counter() - queued_at
-            if self._ranker is None:
-                self._release_cached_exclusive_models()
-                stage_started = time.perf_counter()
-                startup_id = self.startup_count + 1
-                self._record_lifecycle_event_locked(
-                    "ranker_starting",
-                    startupId=startup_id,
-                )
-                self._ranker = LlamaCppVisionRanker(self.settings)
-                startup_seconds = elapsed_seconds(stage_started)
-                gpu_lock_wait_seconds = getattr(
-                    self._ranker,
-                    "gpu_lock_wait_seconds",
-                    0.0,
-                )
-                self.gpu_lock_wait_seconds = round(
-                    self.gpu_lock_wait_seconds + gpu_lock_wait_seconds,
-                    3,
-                )
-                self.startup_seconds = round(self.startup_seconds + startup_seconds, 3)
-                self.startup_count += 1
-                self._record_lifecycle_event_locked(
-                    "ranker_started",
-                    startupId=startup_id,
-                    startupSeconds=round(startup_seconds, 3),
-                    gpuLockWaitSeconds=round(float(gpu_lock_wait_seconds), 3),
-                )
-            ranker = self._ranker
-            self._active_calls += 1
-            self._peak_active_calls = max(self._peak_active_calls, self._active_calls)
-            self._shared_request_admitted_locked()
-            candidate_deadline = self._candidate_deadlines.get()
         candidate_budget_limited_request = False
         if candidate_deadline is not None:
             remaining_seconds = candidate_deadline - time.perf_counter()
@@ -3523,6 +3629,7 @@ class LazyLlamaCppVisionSession:
                         peakForeignActiveRequests=quiesce_summary.peak_foreign_active_requests,
                         stoppedServer=quiesce_summary.stopped_server,
                         reclaimedStaleMarkers=quiesce_summary.reclaimed_stale_markers,
+                        blockingOwners=quiesce_summary.blocking_owners,
                     )
                 self._close_ranker_locked(force_stop_server=True, final_close=False)
             except Exception:
@@ -18721,10 +18828,8 @@ def source_family_failure_stage(
 ) -> str | None:
     """Classify failed windows by the pipeline layer that owned the failure.
 
-    This deliberately ignores individual threshold tags. Two different windows
-    that both fail reconstruction, for example, are replicated evidence that
-    this source is not productive for the current pipeline even if the exact
-    joint artifact differs between windows.
+    Window-local failures do not establish that an entire source video is
+    unusable; another observed interval can contain the requested movement.
     """
     if any(str(reason).strip() for reason in materialized_rejection_reasons):
         # A materialized verdict belongs to this exact source window. It must
@@ -18744,7 +18849,7 @@ def source_family_failure_stage(
         "skipped_source_gate",
         "skipped_pre_reconstruction_source_validation",
     } or candidate_result_source_segment_detection_no_span(result):
-        return "source_validation"
+        return None
     if status == "failed":
         return None
     return None
@@ -25147,10 +25252,13 @@ def exact_pose_single_cycle_refinement_candidates(
     exercise_motion_contract: dict[str, Any],
     max_proposals: int = 6,
 ) -> list[dict[str, Any]]:
-    """Split an exact-pose-confirmed multi-repetition cut into single cycles."""
+    """Find a complete cycle or correct transition within an exact-pose parent."""
     if not (
-        validation.get("hasCompleteMajorCycle") is True
-        and validation.get("hasSingleMajorCycle") is False
+        (
+            validation.get("hasCompleteMajorCycle") is True
+            and validation.get("hasSingleMajorCycle") is False
+        )
+        or exact_source_endpoint_mismatch_is_hard_reject(validation)
     ):
         return []
     if int(candidate.get("exactCycleRefinementDepth") or 0) >= 1:
@@ -25480,6 +25588,47 @@ def source_cut_return_phase_expansion_candidates(
     return proposals
 
 
+def source_cut_repeats_failed_window(
+    candidate: dict[str, Any], attempts: list[dict[str, Any]],
+) -> bool:
+    """Avoid revalidating sub-frame shifts; preserve actual boundary repairs."""
+    start = parse_optional_float(candidate.get("startSeconds"))
+    end = parse_optional_float(candidate.get("endSeconds"))
+    if start is None or end is None:
+        return False
+    for attempt in attempts:
+        if attempt.get("passed") or attempt.get("failureClass") == "validation_execution_failed":
+            continue
+        old_start = parse_optional_float(attempt.get("startSeconds"))
+        old_end = parse_optional_float(attempt.get("endSeconds"))
+        if old_start is None or old_end is None:
+            continue
+        if abs(start - old_start) <= 1e-6 and abs(end - old_end) <= 1e-6:
+            return True
+        # Evidence-directed repairs must get their own exact confirmation.
+        if any(candidate.get(key) for key in (
+            "exactCycleRefinementDepth", "exactBoundaryExpansionDepth", "exactContractTrimDepth",
+        )):
+            continue
+        validation = attempt.get("validation") or {}
+        endpoint_validation = validation.get("sourcePoseEndpointContractValidation") or {}
+        if any(
+            (mismatch.get("endpoint") == "start" and abs(start - old_start) > 1e-6)
+            or (mismatch.get("endpoint") == "end" and abs(end - old_end) > 1e-6)
+            for mismatch in endpoint_validation.get("blockingMismatches") or []
+            if isinstance(mismatch, dict)
+        ):
+            continue
+        if (
+            attempt.get("failureClass") == "pose_confirmed_incomplete"
+            and abs((end - start) - (old_end - old_start)) > 1e-6
+        ):
+            continue
+        if abs(start - old_start) <= 0.05 and abs(end - old_end) <= 0.05:
+            return True
+    return False
+
+
 def select_exact_pose_confirmed_source_cut(
     ranking: LoopRanking,
     *,
@@ -25505,6 +25654,7 @@ def select_exact_pose_confirmed_source_cut(
     selected_video_path: Path | None = None
     selected_materialization: str | None = None
     candidate_queue = list(candidates)
+    duplicate_window_count = 0
     parent_fallback_enqueued = False
     while True:
         # Repair arm for fragmented scorecard windows: when every fragment
@@ -25552,6 +25702,9 @@ def select_exact_pose_confirmed_source_cut(
         if not candidate_queue or len(attempts) >= SOURCE_CUT_MAX_CONFIRMATION_ATTEMPTS:
             break
         candidate = candidate_queue.pop(0)
+        if source_cut_repeats_failed_window(candidate, attempts):
+            duplicate_window_count += 1
+            continue
         candidate_id = normalize_source_cut_candidate_id(candidate.get("candidateId")) or "unknown"
         candidate_dir = output_dir / f"source_candidate_{candidate_id}"
         candidate_video_path: Path | None = None
@@ -25812,6 +25965,7 @@ def select_exact_pose_confirmed_source_cut(
                 SOURCE_CUT_DETERMINISTIC_CONFIRMATION_POLICY_VERSION
             ),
             "sourceCutDeterministicConfirmationAttempts": attempts,
+            "sourceCutDuplicateConfirmationWindowCount": duplicate_window_count,
             "sourceCutDeterministicConfirmationPassed": selected_candidate is not None,
         }
     )
@@ -27524,10 +27678,9 @@ def constrain_baked_payload_to_source_articulation(
     from .support_geometry import declare_support_requirements
     declare_support_requirements(payload, exercise_motion_contract)
     from .body_support_observation import (materialize_body_support, materialize_hand_support,
-        materialize_stationary_sole_support, materialize_observed_ground_contacts, requires_body_support)
-    if requires_body_support(exercise_motion_contract):
-        materialize_body_support(payload, source_pose_reference, exercise_motion_contract)
-    materialize_stationary_sole_support(payload)
+        materialize_stationary_sole_support, materialize_observed_ground_contacts)
+    materialize_body_support(payload, source_pose_reference, exercise_motion_contract)
+    payload["sourceFootSupportEvidence"] = materialize_stationary_sole_support(payload)
     materialize_hand_support(payload, source_pose_reference)
     materialize_observed_ground_contacts(payload, source_pose_reference)
     if use_controlled_motion_fit:
@@ -32032,6 +32185,12 @@ def fuse_reconstructed_support_evidence(
         return source_support_evidence, {"applied": False, "reason": "reconstructed_trajectory_unavailable"}
 
     fused = copy.deepcopy(source_support_evidence)
+    # Old caches promoted contract-only posture hints to physical contacts.
+    for contact in fused.get("supportContacts") or []:
+        if isinstance(contact, dict) and str(contact.get("surfaceKind") or "").startswith("contract_"):
+            contact.update(surfaceKind="contract_inferred_support_surface",
+                           sourceStationarySupportCandidate=False, continuousSupport=False,
+                           contactMotion="unknown")
     fused_feet = fused.get("feet")
     assert isinstance(fused_feet, dict)
     body_spans = [body_span_for_frame(frame) for frame in frames if isinstance(frame, dict)]
@@ -38462,11 +38621,7 @@ def source_pose_stationary_support_evidence(
         if isinstance(start_constraints, dict)
         else ""
     )
-    # A contract-confirmed suspended body is supported by an external upper-
-    # limb anchor. Infer that anchor from the exact source trajectory, using
-    # the same stationarity thresholds as every other support surface. This is
-    # semantic support inference, not an exercise-name special case, and also
-    # covers rings, straps, ladders, and similar suspended movements.
+    # Contract posture and stationarity propose contacts, not physical anchors.
     if endpoint_support_modes.intersection({"hanging", "suspended"}):
         for joint_name in ("left_wrist", "right_wrist"):
             points = [
@@ -38501,8 +38656,9 @@ def source_pose_stationary_support_evidence(
                     {
                         "jointName": joint_name,
                         "supportKind": "external_anchor",
-                        "surfaceKind": "contract_confirmed_suspended_support",
-                        "sourceStationarySupportCandidate": True,
+                        "surfaceKind": "contract_inferred_support_surface",
+                        "sourceStationarySupportCandidate": False,
+                        "contactMotion": "unknown",
                         "startRatio": 0.0,
                         "endRatio": 1.0,
                         "confidence": 1.0,
@@ -38512,9 +38668,7 @@ def source_pose_stationary_support_evidence(
                 )
     # A seated body has an external support at the pelvis even while both feet
     # and legs move continuously (cycling, rowing, seated machines, etc.).
-    # Infer that contact only when the exact source confirms both the seated
-    # contract and a stationary pelvis trajectory; this avoids turning a
-    # transient seated-looking pose into an artificial root lock.
+    # Keep the stationary pelvis as advisory until actual contact is observed.
     if "seated" in endpoint_support_modes:
         pelvis_points = [
             [float(point[0]), float(point[1])]
@@ -38548,8 +38702,9 @@ def source_pose_stationary_support_evidence(
                         {
                             "jointName": "pelvis",
                             "supportKind": "external_surface",
-                            "surfaceKind": "contract_confirmed_seated_support",
-                            "sourceStationarySupportCandidate": True,
+                            "surfaceKind": "contract_inferred_support_surface",
+                            "sourceStationarySupportCandidate": False,
+                            "contactMotion": "unknown",
                             "startRatio": 0.0,
                             "endRatio": 1.0,
                             "confidence": 1.0,
@@ -40321,6 +40476,44 @@ def source_cut_scorecard_row(
     }
 
 
+def _cut_scorecard_quality(row: dict[str, Any]) -> tuple[float | None, float | None]:
+    """Return comparable movement-completeness and endpoint-evidence scores."""
+    def value(*keys: str) -> float | None:
+        for key in keys:
+            if key not in row or row[key] is None:
+                continue
+            raw = row[key]
+            if isinstance(raw, bool):
+                return float(raw)
+            parsed = parse_optional_float(raw)
+            if parsed is not None:
+                return clamp_unit(parsed)
+        return None
+
+    completeness = value("completeMovement", "full_movement", "fullMovement")
+    endpoint_values = {
+        "start": value("startBoundaryClean", "start_boundary_clean"),
+        "end": value("finishBoundaryClean", "finish_boundary_clean"),
+    }
+    topology = row.get("movementTopologyEvidence")
+    if isinstance(topology, dict):
+        state_scores = {
+            "match": 1.0,
+            "uncertain": 0.5,
+            "mismatch": 0.0,
+        }
+        for endpoint, key in (("start", "startStateMatch"), ("end", "endStateMatch")):
+            state = topology.get(key)
+            if endpoint_values[endpoint] is None and isinstance(state, str) and state.casefold() in state_scores:
+                endpoint_values[endpoint] = state_scores[state.casefold()]
+    endpoint_quality = (
+        sum(endpoint_values.values()) / 2.0
+        if all(score is not None for score in endpoint_values.values())
+        else None
+    )
+    return completeness, endpoint_quality
+
+
 def build_source_cut_scorecard_ranking(
     payload: dict[str, Any],
     candidates: list[SourceCutCandidate],
@@ -40347,7 +40540,7 @@ def build_source_cut_scorecard_ranking(
         )
         for item in source_cut_scorecard_candidate_payloads(payload)
     ]
-    passing: list[tuple[float, float, float, SourceCutCandidate, dict[str, Any]]] = []
+    passing: list[tuple[SourceCutCandidate, dict[str, Any]]] = []
     for row in rows:
         candidate = candidates_by_id.get(str(row["id"]))
         phase_metrics = candidate.motion_coverage.get("candidateFullRepetitionPhaseCompletenessMetrics") if candidate else None
@@ -40356,16 +40549,11 @@ def build_source_cut_scorecard_ranking(
             row["rejectionReasons"] = dedupe_text([*row["rejectionReasons"], "source_cut_pose_confirmed_partial_movement"])
         if candidate is None or not bool(row["passed"]):
             continue
-        score = float(row["score"])
-        passing.append(
-            (
-                source_cut_candidate_duration(candidate),
-                -score,
-                -float(candidate.window.end_seconds),
-                candidate,
-                row,
-            )
-        )
+        passing.append((candidate, row))
+
+    quality = [_cut_scorecard_quality(row) for _, row in passing]
+    rank_completeness = bool(quality) and all(item[0] is not None for item in quality)
+    rank_endpoints = bool(quality) and all(item[1] is not None for item in quality)
 
     base_payload: dict[str, Any] = {
         "sourceCutScorecardSchemaVersion": 3,
@@ -40390,8 +40578,17 @@ def build_source_cut_scorecard_ranking(
             model_score=0.0,
         )
 
-    _duration, negative_score, _negative_end, selected, selected_row = min(passing)
-    score = -negative_score
+    selected, selected_row = min(
+        passing,
+        key=lambda item: (
+            -(_cut_scorecard_quality(item[1])[0] or 0.0) if rank_completeness else 0.0,
+            -(_cut_scorecard_quality(item[1])[1] or 0.0) if rank_endpoints else 0.0,
+            source_cut_candidate_duration(item[0]),
+            -float(item[1]["score"]),
+            -float(item[0].window.end_seconds),
+        ),
+    )
+    score = float(selected_row["score"])
     note = str(selected_row.get("note") or "source_candidate_scorecard_passed")
     return LoopRanking(
         score=score,
@@ -41030,7 +41227,9 @@ def rank_cut_candidate_batch_with_caption_images(
 
                 ranking = assess_source_rejection(
                     ranking,
-                    review_observation(extract_json_object_with_trailing_repair(batch_raw_responses[-1])),
+                    review_observation({
+                        "candidates": [candidate_rows[normalize_source_cut_candidate_id(candidate.candidate_id)]]
+                    }),
                     independent_review=independent_source_review,
                 )
             ranking, boundary_raw = review_source_cut_boundaries(
@@ -42562,13 +42761,16 @@ def selected_window_is_materially_shorter(
 
 
 def shortest_passing_cut_ranking(rankings: Iterable[LoopRanking]) -> LoopRanking | None:
-    passing: list[tuple[float, float, float, int, LoopRanking]] = []
+    passing: list[tuple[float, float, float, int, LoopRanking, tuple[float | None, float | None]]] = []
     for index, ranking in enumerate(rankings):
         if ranking.score <= 0.0:
             continue
         selected_window = selected_window_from_cut_ranking(ranking)
         if selected_window is None:
             continue
+        payload = ranking.payload if isinstance(ranking.payload, dict) else {}
+        selected_scorecard = payload.get("selectedScorecard")
+        quality = _cut_scorecard_quality(selected_scorecard) if isinstance(selected_scorecard, dict) else (None, None)
         passing.append(
             (
                 window_duration_seconds(selected_window),
@@ -42576,11 +42778,24 @@ def shortest_passing_cut_ranking(rankings: Iterable[LoopRanking]) -> LoopRanking
                 -selected_window.end_seconds,
                 index,
                 ranking,
+                quality,
             )
         )
     if not passing:
         return None
-    return min(passing)[4]
+    rank_completeness = all(item[5][0] is not None for item in passing)
+    rank_endpoints = all(item[5][1] is not None for item in passing)
+    return min(
+        passing,
+        key=lambda item: (
+            -item[5][0] if rank_completeness else 0.0,
+            -item[5][1] if rank_endpoints else 0.0,
+            item[0],
+            item[1],
+            item[2],
+            item[3],
+        ),
+    )[4]
 
 
 def movement_cut_row_reject_tags(row: dict[str, Any]) -> set[str]:
@@ -43979,10 +44194,22 @@ def rank_source_video_cut_candidates_with_caption_images(
             if source_cut_candidate_passes_visual_integrity(candidate)
             and not source_cut_candidate_passes_frame_motion(candidate)
         )
+        from .source_review_authority import source_cut_pose_evidence_needs_review
+
+        pose_evidence_review_candidate_ids = [
+            candidate.candidate_id
+            for candidate in all_candidates
+            if source_cut_pose_evidence_needs_review(
+                candidate.motion_coverage,
+                visual_integrity_passed=source_cut_candidate_passes_visual_integrity(candidate),
+            )
+        ]
         reasons = ["source_candidate_window_choice_failed"]
         if required_region_filtered_count:
             reasons.append("source_cut_required_region_unobserved")
         reasons.append("source_cut_deterministic_candidate_filter_failed")
+        if pose_evidence_review_candidate_ids:
+            reasons.append("source_cut_review_required")
         return (
             LoopRanking(
                 score=0.0,
@@ -43996,6 +44223,7 @@ def rank_source_video_cut_candidates_with_caption_images(
                         if source_cut_candidate_render_was_skipped(candidate)
                     ),
                     "sourceCutDeterministicCandidateFilterFailed": True,
+                    "sourceCutPoseEvidenceReviewCandidateIds": pose_evidence_review_candidate_ids,
                     "sourceCutVisualIntegrityFilteredCount": visual_filtered_count,
                     "sourceCutFrameMotionFilteredCount": frame_motion_filtered_count,
                     "sourceCutMotionCoverageFilteredCount": sum(
