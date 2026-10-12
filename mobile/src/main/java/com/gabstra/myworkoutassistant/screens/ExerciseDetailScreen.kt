@@ -857,10 +857,16 @@ fun ExerciseDetailScreen(
                 state = insightsState,
                 configurationState = insightsConfigurationState,
                 onDismiss = { showInsightsDialog = false },
-                onConfigure = if (insightsConfigurationState.mode == com.gabstra.myworkoutassistant.insights.WorkoutInsightsMode.LOCAL) {
-                    { modelPickerLauncher.launch(LiteRtLmModelStore.pickerMimeTypes) }
-                } else {
-                    null
+                onConfigure = when (insightsConfigurationState.mode) {
+                    com.gabstra.myworkoutassistant.insights.WorkoutInsightsMode.LOCAL -> {
+                        { modelPickerLauncher.launch(LiteRtLmModelStore.pickerMimeTypes) }
+                    }
+                    com.gabstra.myworkoutassistant.insights.WorkoutInsightsMode.REMOTE -> {
+                        {
+                            showInsightsDialog = false
+                            appViewModel.setScreenData(ScreenData.Settings())
+                        }
+                    }
                 },
                 onGenerate = { generateExerciseInsights() },
             )

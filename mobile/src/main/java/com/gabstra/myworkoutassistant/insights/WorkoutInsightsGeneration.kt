@@ -207,11 +207,24 @@ internal suspend fun runWorkoutInsightsGeneration(
             rawReply.ifBlank { "No reply was generated." },
             request.debugRecorder,
         )
-        val normalizedReply = postProcessInsightMarkdown(
+        val isHistoryChat = request.conversationMessages.isNotEmpty()
+        val outcome = postProcessInsightMarkdownWithDropReport(
             markdown = rawReply,
             toolContext = request.toolContext,
-            evidencePrompt = request.prompt
+            evidencePrompt = request.prompt,
+            applySessionTargetSection = !isHistoryChat,
+            enforceNumericContract = !isHistoryChat,
         )
+        var normalizedReply = outcome.markdown
+        if (!isHistoryChat && outcome.misquotedDrops.isNotEmpty()) {
+            normalizedReply = recoverMisquotedLines(
+                outcome = outcome,
+                request = request,
+                logTag = logTag,
+                transportLabel = transportLabel,
+                generateText = generateText,
+            )
+        }
         if (normalizedReply != rawReply) {
             logWorkoutInsightsBlock(
                 logTag,
@@ -352,7 +365,8 @@ internal suspend fun runWorkoutInsightsGeneration(
     val normalizedInsight = postProcessInsightMarkdown(
         markdown = rawInsight,
         toolContext = request.toolContext,
-        evidencePrompt = finalPrompt
+        evidencePrompt = finalPrompt,
+        applySessionTargetSection = request.conversationMessages.isEmpty(),
     )
     if (normalizedInsight != rawInsight) {
         logWorkoutInsightsBlock(
@@ -373,6 +387,84 @@ internal suspend fun runWorkoutInsightsGeneration(
         )
     }
     onAfterChartAnalysis?.invoke()
+}
+
+private const val MISQUOTED_LINE_REWRITE_SYSTEM_PROMPT = """
+You rewrite workout insight bullets that were removed because they misquoted app-computed facts.
+Rules:
+- Quote the fact numbers given in each correction exactly; never transform, round, or invent numbers.
+- Keep each bullet's original meaning; change only what the correction requires.
+- Output one rewritten bullet per removed bullet, each on its own line starting with "- ", in the same order.
+- No headings, no explanations, no extra text.
+"""
+
+private fun buildMisquotedLineRewritePrompt(drops: List<MisquotedLineDrop>): String = buildString {
+    appendLine("Removed insight bullets and the facts they misquoted:")
+    drops.forEach { drop ->
+        appendLine("- Removed: \"${drop.originalLine}\" — because: ${drop.reason}.")
+    }
+    append("Rewrite each removed bullet, quoting the fact numbers exactly.")
+}
+
+/**
+ * One-shot recovery for lines the numeric contract dropped: the model rewrites its own
+ * sentences given the exact fact-based corrections, on the PLAIN generation path (no tool
+ * loop, tiny prompt — same class as chart analysis). Each rewrite is re-validated against
+ * the binding checks and the allowlist; only survivors are spliced back into their sections.
+ * Bounded to a single call, and any failure simply keeps the dropped (safe) state.
+ */
+private suspend fun recoverMisquotedLines(
+    outcome: PostProcessOutcome,
+    request: WorkoutInsightsRequest,
+    logTag: String,
+    transportLabel: String,
+    generateText: suspend (WorkoutInsightsTransportRequest) -> String,
+): String {
+    val evidence = request.toolContext?.markdown.orEmpty()
+    val facts = parseSessionNumericFacts(evidence) ?: return outcome.markdown
+    return try {
+        val reply = generateText(
+            WorkoutInsightsTransportRequest(
+                systemPrompt = MISQUOTED_LINE_REWRITE_SYSTEM_PROMPT,
+                prompt = buildMisquotedLineRewritePrompt(outcome.misquotedDrops),
+                imagePngBytes = null,
+                toolContext = null,
+                conversationMessages = emptyList(),
+                chartTimelineToolContext = null,
+                requestLogLabel = "${transportLabel}_misquoted_rewrite_request",
+                responseLogLabel = "${transportLabel}_misquoted_rewrite_response",
+                maxOutputTokens = 512,
+                debugRecorder = request.debugRecorder,
+            )
+        )
+        val candidates = reply.lines()
+            .map(String::trim)
+            .filter { it.startsWith("- ") }
+            .map { it.removePrefix("- ").trim() }
+            .filter(String::isNotBlank)
+        logWorkoutInsightsBlock(
+            logTag,
+            "${transportLabel}_misquoted_rewrite_candidates",
+            candidates.joinToString("\n").ifBlank { "none" },
+            request.debugRecorder,
+        )
+        val accepted = validateRewrittenLines(candidates, facts, evidence)
+            .take(outcome.misquotedDrops.size)
+        if (accepted.isEmpty()) {
+            outcome.markdown
+        } else {
+            spliceRewrittenBullets(outcome.markdown, outcome.misquotedDrops.zip(accepted))
+        }
+    } catch (exception: Exception) {
+        if (exception is kotlinx.coroutines.CancellationException) throw exception
+        logWorkoutInsightsBlock(
+            logTag,
+            "${transportLabel}_misquoted_rewrite_failed",
+            exception.message ?: "unknown error",
+            request.debugRecorder,
+        )
+        outcome.markdown
+    }
 }
 
 private fun String.withAttemptLogSuffix(

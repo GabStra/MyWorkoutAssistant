@@ -789,7 +789,8 @@ fun SettingsScreen(
                             OutlinedTextField(
                                 value = remoteApiKeyState.value,
                                 onValueChange = { remoteApiKeyState.value = it },
-                                label = { Text("Remote API key") },
+                                label = { Text("Remote API key (optional)") },
+                                placeholder = { Text("Leave empty for servers without authentication") },
                                 modifier = Modifier
                                     .fillMaxWidth()
                             .padding(vertical = Spacing.xs)

@@ -180,6 +180,11 @@ sealed class WorkoutInsightsToolContext {
         override val markdown: String,
         /** Compact per-session summaries of previous completed sessions of the same workout, oldest-first. */
         val previousSessionsMarkdown: String = "",
+        /**
+         * App-composed next-session-target bullet (see WorkoutSessionFacts); when set, the
+         * insight pipeline renders this section deterministically instead of model text.
+         */
+        val nextSessionTargetBullet: String? = null,
     ) : WorkoutInsightsToolContext()
 }
 

@@ -6,7 +6,6 @@ import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.RestHistory
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.formatNumber
-import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
@@ -150,28 +149,15 @@ internal fun appendIntervalHeartRateLineForExport(
     line.append(" | HR: $setAvgHR bpm (${setMinHR}–${setMaxHR})")
 
     if (exercise == null) return
-    val loPct = exercise.lowerBoundMaxHRPercent
-    val hiPct = exercise.upperBoundMaxHRPercent
-    if (loPct != null && hiPct != null) {
-        val lowHr = getHeartRateFromPercentage(
-            loPct,
-            userAge,
-            workoutStore.measuredMaxHeartRate,
-            workoutStore.restingHeartRate
-        )
-        val highHr = getHeartRateFromPercentage(
-            hiPct,
-            userAge,
-            workoutStore.measuredMaxHeartRate,
-            workoutStore.restingHeartRate
-        )
+    if (exercise.lowerBoundMaxHRPercent != null && exercise.upperBoundMaxHRPercent != null) {
+        val (lowHr, highHr) = targetZoneBpmBounds(exercise, workoutStore, userAge)!!
         val hrInZoneCount = setHRRecords.count { it in lowHr..highHr }
         val zonePercentage = if (setHRRecords.isNotEmpty()) {
             (hrInZoneCount.toFloat() / setHRRecords.size * 100).roundToInt()
         } else {
             0
         }
-        line.append(" | Target zone: $zonePercentage%")
+        line.append(" | Target zone: $zonePercentage% ($lowHr-$highHr bpm)")
     }
 }
 

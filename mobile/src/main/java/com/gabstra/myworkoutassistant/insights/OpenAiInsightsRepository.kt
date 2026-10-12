@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Base64
 import android.util.Log
 import com.openai.client.okhttp.OpenAIOkHttpClient
+import com.openai.client.OpenAIClient
 import com.openai.core.http.StreamResponse
 import com.openai.models.chat.completions.ChatCompletionChunk
 import com.openai.models.chat.completions.ChatCompletionAssistantMessageParam
@@ -33,8 +34,9 @@ class OpenAiInsightsRepository(
     ): Flow<WorkoutInsightsChunk> = flow {
         val config = WorkoutInsightsSettingsStore.getRemoteConfig(context)
         require(config.isComplete()) {
-            "Remote insights are not configured. Set the base URL, API key, and model in Settings."
+            "Remote insights are not configured. Set the base URL and model in Settings."
         }
+        val client = createClient(config)
         runWorkoutInsightsGeneration(
             request = request,
             logTag = LiteRtLmInsightsRepository.LOG_TAG,
@@ -42,12 +44,14 @@ class OpenAiInsightsRepository(
             emitChunk = { emit(it) },
             generateText = { transportRequest ->
                 generateResponse(
+                    client = client,
                     config = config,
                     transportRequest = transportRequest,
                 )
             },
             streamText = { transportRequest, onChunk, onProgress ->
                 generateResponseStream(
+                    client = client,
                     config = config,
                     transportRequest = transportRequest,
                     onChunk = onChunk,
@@ -57,12 +61,21 @@ class OpenAiInsightsRepository(
         )
     }.flowOn(Dispatchers.IO)
 
+    private fun createClient(config: RemoteOpenAiConfig): OpenAIClient {
+        return OpenAIOkHttpClient.builder()
+            .apiKey(config.apiKey.trim().ifBlank { REMOTE_OPENAI_KEY_PLACEHOLDER })
+            .baseUrl(normalizeBaseUrl(config.baseUrl))
+            .build()
+    }
+
     private suspend fun generateResponse(
+        client: OpenAIClient,
         config: RemoteOpenAiConfig,
         transportRequest: WorkoutInsightsTransportRequest,
     ): String {
         val accumulated = StringBuilder()
         generateResponseStream(
+            client = client,
             config = config,
             transportRequest = transportRequest,
             onChunk = { chunk -> accumulated.append(chunk) },
@@ -79,6 +92,7 @@ class OpenAiInsightsRepository(
     }
 
     private suspend fun generateResponseStream(
+        client: OpenAIClient,
         config: RemoteOpenAiConfig,
         transportRequest: WorkoutInsightsTransportRequest,
         onChunk: suspend (String) -> Unit,
@@ -86,6 +100,7 @@ class OpenAiInsightsRepository(
     ) {
         if (transportRequest.imagePngBytes != null && transportRequest.chartTimelineToolContext != null) {
             val finalText = generateChartAnalysisWithTimelineToolsResponse(
+                client = client,
                 config = config,
                 transportRequest = transportRequest,
                 onProgress = onProgress,
@@ -97,6 +112,7 @@ class OpenAiInsightsRepository(
         }
         if (transportRequest.imagePngBytes == null && transportRequest.toolContext != null) {
             val finalText = generateToolCallingResponse(
+                client = client,
                 config = config,
                 transportRequest = transportRequest,
                 onProgress = onProgress,
@@ -106,11 +122,6 @@ class OpenAiInsightsRepository(
             }
             return
         }
-
-        val client = OpenAIOkHttpClient.builder()
-            .apiKey(config.apiKey.trim())
-            .baseUrl(normalizeBaseUrl(config.baseUrl))
-            .build()
 
         Log.d(
             LiteRtLmInsightsRepository.LOG_TAG,
@@ -149,14 +160,11 @@ class OpenAiInsightsRepository(
     }
 
     private suspend fun generateChartAnalysisWithTimelineToolsResponse(
+        client: OpenAIClient,
         config: RemoteOpenAiConfig,
         transportRequest: WorkoutInsightsTransportRequest,
         onProgress: suspend (WorkoutInsightsPhase, String) -> Unit,
     ): String {
-        val client = OpenAIOkHttpClient.builder()
-            .apiKey(config.apiKey.trim())
-            .baseUrl(normalizeBaseUrl(config.baseUrl))
-            .build()
         val toolExecutor = WorkoutInsightsChartTimelineToolExecutor(
             requireNotNull(transportRequest.chartTimelineToolContext)
         )
@@ -302,14 +310,11 @@ class OpenAiInsightsRepository(
     }
 
     private suspend fun generateToolCallingResponse(
+        client: OpenAIClient,
         config: RemoteOpenAiConfig,
         transportRequest: WorkoutInsightsTransportRequest,
         onProgress: suspend (WorkoutInsightsPhase, String) -> Unit,
     ): String {
-        val client = OpenAIOkHttpClient.builder()
-            .apiKey(config.apiKey.trim())
-            .baseUrl(normalizeBaseUrl(config.baseUrl))
-            .build()
         val toolExecutor = WorkoutInsightsToolExecutor(requireNotNull(transportRequest.toolContext))
         val messages = mutableListOf<ChatCompletionMessageParam>()
 
@@ -530,16 +535,7 @@ class OpenAiInsightsRepository(
         streamResponse: StreamResponse<ChatCompletionChunk>,
         onChunk: suspend (String) -> Unit,
     ) {
-        val chunkIterator = streamResponse.stream().iterator()
-        while (chunkIterator.hasNext()) {
-            val chunk = chunkIterator.next()
-            for (choice in chunk.choices()) {
-                val contentDelta = choice.delta().content().orElse(null)
-                if (!contentDelta.isNullOrBlank()) {
-                    onChunk(contentDelta)
-                }
-            }
-        }
+        collectChatCompletionContent(streamResponse.stream().iterator(), onChunk)
     }
 
     private fun normalizeBaseUrl(
@@ -609,5 +605,28 @@ class OpenAiInsightsRepository(
             rendered,
             debugRecorder,
         )
+    }
+}
+
+/** Sent when the user leaves the API key empty; unauthenticated servers ignore it, hosted ones reject it with a clear 401. */
+private const val REMOTE_OPENAI_KEY_PLACEHOLDER = "none"
+
+/**
+ * Streams content deltas to [onChunk]. Some OpenAI-compatible servers emit one
+ * token per chunk, so whitespace-only deltas (newlines, spaces) are significant
+ * markdown content and must be kept; only null or empty content is skipped.
+ */
+internal suspend fun collectChatCompletionContent(
+    chunks: Iterator<ChatCompletionChunk>,
+    onChunk: suspend (String) -> Unit,
+) {
+    while (chunks.hasNext()) {
+        val chunk = chunks.next()
+        for (choice in chunk.choices()) {
+            val contentDelta = choice.delta().content().orElse(null)
+            if (!contentDelta.isNullOrEmpty()) {
+                onChunk(contentDelta)
+            }
+        }
     }
 }

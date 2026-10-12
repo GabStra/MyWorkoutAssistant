@@ -213,12 +213,50 @@ internal fun removeEmptyExerciseHighlightsSection(markdown: String): String {
         .trim() + "\n"
 }
 
+internal data class MisquotedLineDrop(
+    /** Heading of the `##` section the line belonged to ("What stood out", …); null when none. */
+    val sectionHeading: String?,
+    /** The dropped line as it appeared (including its "- " bullet prefix). */
+    val originalLine: String,
+    /** Drop reason: the misquoted text plus the fact-based correction, model-readable. */
+    val reason: String,
+)
+
+internal data class PostProcessOutcome(
+    val markdown: String,
+    /** Lines dropped for misquoting facts; candidates for the one-shot rewrite recovery. */
+    val misquotedDrops: List<MisquotedLineDrop>,
+)
+
 internal fun postProcessInsightMarkdown(
     markdown: String,
     toolContext: WorkoutInsightsToolContext?,
     evidencePrompt: String? = null,
-): String {
+    applySessionTargetSection: Boolean = false,
+    enforceNumericContract: Boolean = false,
+): String = postProcessInsightMarkdownWithDropReport(
+    markdown = markdown,
+    toolContext = toolContext,
+    evidencePrompt = evidencePrompt,
+    applySessionTargetSection = applySessionTargetSection,
+    enforceNumericContract = enforceNumericContract,
+).markdown
+
+internal fun postProcessInsightMarkdownWithDropReport(
+    markdown: String,
+    toolContext: WorkoutInsightsToolContext?,
+    evidencePrompt: String? = null,
+    applySessionTargetSection: Boolean = false,
+    enforceNumericContract: Boolean = false,
+): PostProcessOutcome {
     var processed = removeEmptyExerciseHighlightsSection(sanitizeInsightMarkdown(markdown))
+    val sessionContext = toolContext as? WorkoutInsightsToolContext.WorkoutSession
+    if (applySessionTargetSection && sessionContext?.nextSessionTargetBullet != null) {
+        // The next-session target is the grading bar for the next session, so the app renders
+        // it verbatim instead of trusting the model's transcription.
+        processed = composeNextSessionTargetSection(processed, sessionContext.nextSessionTargetBullet)
+    }
+    var misquotedDrops: List<MisquotedLineDrop> = emptyList()
     if (toolContext != null) {
         processed = replaceUnsupportedExactMetricMentions(
             markdown = processed,
@@ -227,13 +265,157 @@ internal fun postProcessInsightMarkdown(
                 evidencePrompt = evidencePrompt,
             )
         )
+        if (enforceNumericContract) {
+            parseSessionNumericFacts(toolContext.markdown)?.let { facts ->
+                val (kept, drops) = dropMisquotedLines(processed, facts)
+                processed = kept
+                misquotedDrops = drops
+            }
+        }
+        processed = removeEmptyMarkdownSections(processed)
     }
 
-    val workoutSessionContext = toolContext as? WorkoutInsightsToolContext.WorkoutSession ?: return processed
+    val workoutSessionContext = sessionContext ?: return PostProcessOutcome(processed, misquotedDrops)
     if (!isLiftingDominantLowIntensitySession(workoutSessionContext.markdown)) {
-        return processed
+        return PostProcessOutcome(processed, misquotedDrops)
     }
-    return removeLowIntensityLiftingRiskBullets(processed)
+    return PostProcessOutcome(removeLowIntensityLiftingRiskBullets(processed), misquotedDrops)
+}
+
+/**
+ * Drops lines whose metric mentions disagree with the app-computed facts (right value, wrong
+ * meaning — the class the exact-string allowlist cannot catch) and reports them so the
+ * generation flow can offer the model one rewrite chance. Read-only w.r.t. surviving text.
+ */
+private fun dropMisquotedLines(
+    markdown: String,
+    facts: SessionNumericFacts,
+): Pair<String, List<MisquotedLineDrop>> {
+    val dropped = mutableListOf<MisquotedLineDrop>()
+    val kept = mutableListOf<String>()
+    var currentHeading: String? = null
+    for (line in markdown.lines()) {
+        if (line.startsWith("## ")) {
+            currentHeading = line.removePrefix("## ").trim()
+        }
+        val violations = if (line.isBlank()) emptyList() else validateSessionNumericContract(line, facts)
+        if (violations.isEmpty()) {
+            kept.add(line)
+        } else {
+            dropped += MisquotedLineDrop(
+                sectionHeading = currentHeading,
+                originalLine = line,
+                reason = violations.joinToString("; ") { "\"${it.quotedText}\" — ${it.correction}" },
+            )
+        }
+    }
+    return kept.joinToString("\n") to dropped
+}
+
+/**
+ * Re-inserts rewrite-recovered bullets: at the end of their original section when it still
+ * exists, otherwise the section heading is re-created (it may have been removed when the drop
+ * emptied it). The result is re-sanitized for layout.
+ */
+internal fun spliceRewrittenBullets(
+    markdown: String,
+    rewrites: List<Pair<MisquotedLineDrop, String>>,
+): String {
+    val lines = markdown.lines().toMutableList()
+    for ((drop, bullet) in rewrites) {
+        val replacement = "- ${bullet.trim().removePrefix("-").trim()}"
+        val headingLine = drop.sectionHeading?.let { "## $it" }
+        val headingIndex = headingLine?.let { heading ->
+            lines.indexOfFirst { it.trim() == heading }
+        }?.takeIf { it >= 0 }
+        when {
+            headingIndex == null && drop.sectionHeading == null -> lines.add(replacement)
+            headingIndex == null -> {
+                lines.add("")
+                lines.add("## ${drop.sectionHeading}")
+                lines.add(replacement)
+            }
+            else -> {
+                var insertAt = lines.size
+                for (index in headingIndex + 1 until lines.size) {
+                    if (lines[index].startsWith("## ")) {
+                        insertAt = index
+                        break
+                    }
+                }
+                while (insertAt > headingIndex + 1 && lines[insertAt - 1].isBlank()) insertAt--
+                lines.add(insertAt, replacement)
+            }
+        }
+    }
+    return sanitizeInsightMarkdown(lines.joinToString("\n"))
+}
+
+/**
+ * A rewrite candidate survives only if it no longer misquotes any fact and every number it
+ * mentions is allowlisted by the evidence.
+ */
+internal fun validateRewrittenLines(
+    candidates: List<String>,
+    facts: SessionNumericFacts,
+    evidence: String,
+): List<String> = candidates.filter { candidate ->
+    validateSessionNumericContract(candidate, facts).isEmpty() && isAllowlistedLine(candidate, evidence)
+}
+
+private fun isAllowlistedLine(line: String, evidence: String): Boolean {
+    val filtered = replaceUnsupportedExactMetricMentions(markdown = line, evidence = evidence)
+    // A line whose only metrics were unsupported is dropped outright by the allowlist —
+    // empty output means the candidate did not survive, not that it was clean.
+    if (filtered.isBlank()) return false
+    return !filtered.contains(REDACTED_METRIC_VALUE_PHRASE) && !filtered.contains(REDACTED_METRIC_SET_PHRASE)
+}
+
+private val nextSessionTargetSectionRegex = Regex(
+    """^##\s*next session target[^\n]*\n(.*?)(?=^##\s|\Z)""",
+    setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE, RegexOption.DOT_MATCHES_ALL),
+)
+
+/**
+ * Renders the app-composed next-session-target bullet as the whole section body: replaces the
+ * model's section when present, appends the section when the model omitted it.
+ */
+internal fun composeNextSessionTargetSection(markdown: String, bullet: String): String {
+    val replacement = "## Next session target\n- ${bullet.trim()}\n"
+    val section = nextSessionTargetSectionRegex.find(markdown) ?: return markdown.trimEnd() +
+        "\n\n" + replacement
+    return markdown.replaceRange(section.range, replacement)
+        .replace(Regex("\n{3,}"), "\n\n")
+        .trim() + "\n"
+}
+
+/**
+ * Removes `##` section headings whose body holds no content at all. Redaction drops can
+ * empty a section (e.g. the only "Exercise highlights" bullet carried unsupported numbers),
+ * and a bare heading is presentation noise for the reader.
+ */
+internal fun removeEmptyMarkdownSections(markdown: String): String {
+    val lines = markdown.lines()
+    val builder = StringBuilder()
+    var index = 0
+    while (index < lines.size) {
+        val line = lines[index]
+        if (line.startsWith("## ")) {
+            var sectionEnd = index + 1
+            while (sectionEnd < lines.size && !lines[sectionEnd].startsWith("## ")) {
+                sectionEnd++
+            }
+            val bodyHasContent = lines.subList(index + 1, sectionEnd).any(String::isNotBlank)
+            if (bodyHasContent) {
+                lines.subList(index, sectionEnd).forEach { builder.append(it).append('\n') }
+            }
+            index = sectionEnd
+        } else {
+            builder.append(line).append('\n')
+            index++
+        }
+    }
+    return builder.toString().replace(Regex("\n{3,}"), "\n\n").trim()
 }
 
 private val exactMetricMentionRegex = Regex(
@@ -245,6 +427,9 @@ private val setLikeMetricMentionRegex = Regex(
     """(?<![A-Za-z0-9.])\d+(?:\.\d+)?\s*x\s*\d+(?=$|[^A-Za-z0-9.])""",
     RegexOption.IGNORE_CASE
 )
+
+private const val REDACTED_METRIC_VALUE_PHRASE = "the recorded value"
+private const val REDACTED_METRIC_SET_PHRASE = "the recorded set"
 
 private fun replaceUnsupportedExactMetricMentions(
     markdown: String,
@@ -273,23 +458,37 @@ private fun replaceUnsupportedExactMetricMentions(
         )
     }
 
-    return exactMetricMentionRegex
+    val replaced = exactMetricMentionRegex
         .replace(markdown) { match ->
             if (isSupportedMetric(match)) {
                 match.value
             } else {
-                "the recorded value"
+                REDACTED_METRIC_VALUE_PHRASE
             }
         }.let { exactFiltered ->
             setLikeMetricMentionRegex.replace(exactFiltered) { match ->
                 if (match.value.normalizeSetLikeMetricMention() in allowedSetLikeMentions) {
                     match.value
                 } else {
-                    "the recorded set"
+                    REDACTED_METRIC_SET_PHRASE
                 }
             }
         }
         .replace(Regex("\\s+([,.;:])"), "$1")
+
+    // A line whose every metric mention was redacted carries no verifiable content and reads
+    // as broken prose ("of the recorded value and the recorded value") — drop the whole line.
+    return replaced.lines()
+        .filter { line ->
+            val hasRedaction = line.contains(REDACTED_METRIC_VALUE_PHRASE) ||
+                line.contains(REDACTED_METRIC_SET_PHRASE)
+            if (!hasRedaction) return@filter true
+            exactMetricMentionRegex.findAll(line).any(::isSupportedMetric) ||
+                setLikeMetricMentionRegex.findAll(line).any { match ->
+                    match.value.normalizeSetLikeMetricMention() in allowedSetLikeMentions
+                }
+        }
+        .joinToString("\n")
 }
 
 private val clockDurationRegex = Regex("""(?<!\d)(\d{1,3}):(\d{2})(?::(\d{2}))?(?!\d)""")

@@ -14,6 +14,7 @@ import com.gabstra.myworkoutassistant.shared.export.ExerciseHistoryMarkdownResul
 import com.gabstra.myworkoutassistant.shared.export.WorkoutSessionMarkdownResult
 import com.gabstra.myworkoutassistant.shared.export.buildExerciseHistoryMarkdown
 import com.gabstra.myworkoutassistant.shared.export.buildWorkoutSessionMarkdown
+import com.gabstra.myworkoutassistant.shared.export.normalizeHeartRatePercentBound
 import com.gabstra.myworkoutassistant.shared.workout.history.SessionTimelineItem
 import com.gabstra.myworkoutassistant.shared.workout.history.mergeSessionTimeline
 import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionStatus
@@ -102,6 +103,7 @@ Requirements:
 - Do not repeat the same fact in multiple sections; if a section would only repeat an earlier point, skip that bullet.
 - If session status is not completed normally, mention that status early in `## What stood out`.
 - When a previous-session target check fact is supplied, state its verdict in `## What stood out`.
+- HR target zones are percent of heart-rate reserve (Karvonen: (HR − resting) / (max − resting)), NOT percent of max HR. When you mention a zone, say "X-Y% of heart-rate reserve" and include the bpm bounds from the evidence.
 - `## Next session target` is exactly one bullet: quote the next-session target fact numbers and say why that target is the right next step; if no next-session target fact exists, state that plainly.
 - start every bullet with "- "
 - no introduction or conclusion outside the required sections
@@ -138,6 +140,7 @@ Content:
 - Name one mechanism for the result; state plan adherence plainly; mixed outcomes explicitly.
 - PREV lines are per-exercise progression and may say "No previous session" after a workout edit — that is not workout history; trust FACT lines and get_previous_sessions.
 - Numbers only verbatim from evidence or facts; never transform, round, or invent. Never call something improved if the number is lower.
+- HR target zones are % of heart-rate reserve (Karvonen), NOT % of max HR; when quoting a zone, include its bpm bounds from the evidence.
 - Ignore structural noise unless explanatory. No medical advice or diagnoses.
 - If evidence is sparse or the session incomplete, say so plainly.
 
@@ -146,7 +149,7 @@ Format — exactly three sections, no other headings, bullets only, no empty bul
 ## Exercise highlights
 ## Next session target
 
-- What stood out: 2-3 bullets, max ~20 words each; first bullet = trajectory verdict with its key number; fold the target-check verdict into a bullet.
+- What stood out: 2-3 bullets, max ~20 words each; the FIRST bullet must quote a number from the trend fact or the previous-session target check fact (if the check says "target not met", lead with that); fold the target-check verdict into a bullet.
 - Exercise highlights: 1-2 exercise-specific bullets; if none apply, one short bullet saying so.
 - Next session target: exactly one bullet written as a short instruction starting with a verb (e.g. "Keep average HR at or under 140 bpm for about 55 minutes"), quoting the target fact numbers; if no such fact exists, say so in one sentence.
 Whole answer under ~110 words.
@@ -392,7 +395,12 @@ suspend fun buildWorkoutSessionInsightsPrompt(
                 ?.mapNotNull { exercise ->
                     val lower = exercise.lowerBoundMaxHRPercent
                     val upper = exercise.upperBoundMaxHRPercent
-                    if (lower != null && upper != null) lower to upper else null
+                    if (lower != null && upper != null) {
+                        // Bounds were historically stored as 0..1 fractions or 0..100 percents.
+                        normalizeHeartRatePercentBound(lower) to normalizeHeartRatePercentBound(upper)
+                    } else {
+                        null
+                    }
                 }
                 ?.firstOrNull()
             // Workouts are versioned copy-on-write: every edit creates a new id with the
@@ -445,6 +453,7 @@ suspend fun buildWorkoutSessionInsightsPrompt(
                     title = "Workout session insights",
                     workoutLabel = workoutLabel,
                     previousSessionsMarkdown = previousSessionsMarkdown,
+                    nextSessionTargetBullet = sessionFacts.nextSessionTargetBullet,
                     markdown = buildString {
                         append(sessionStatusLine)
                         if (workoutCategoryGuidance.isNotBlank()) {

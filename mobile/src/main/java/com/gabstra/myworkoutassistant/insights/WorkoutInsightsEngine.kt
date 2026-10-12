@@ -26,8 +26,12 @@ data class RemoteOpenAiConfig(
     val apiKey: String = "",
     val model: String = "",
 ) {
-    fun isComplete(): Boolean =
-        baseUrl.isNotBlank() && apiKey.isNotBlank() && model.isNotBlank()
+    /**
+     * The API key is optional: self-hosted OpenAI-compatible servers (llama.cpp,
+     * LM Studio, Ollama, vLLM) commonly run without authentication. Hosted
+     * providers reject the placeholder key with a clear 401.
+     */
+    fun isComplete(): Boolean = baseUrl.isNotBlank() && model.isNotBlank()
 }
 
 data class WorkoutInsightsConfigurationState(

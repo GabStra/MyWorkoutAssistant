@@ -6,6 +6,18 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class WorkoutInsightMarkdownTest {
+
+    private val factsContext = """
+        FACT Session duration: 55:09 (55 minutes)
+        FACT Average heart rate: 140 bpm; peak 154 bpm
+        FACT Whole-session time in target zone: 80% of HR samples inside 60-70% of heart-rate reserve (135-150 bpm)
+        FACT Previous-session target check: the target was average HR at or under 131 bpm for about 55 minutes; this session averaged 140 bpm across 55 minutes — target not met
+        FACT Next-session target: average heart rate at or under 131 bpm for about 55 minutes
+
+        ### Main Set
+        #### Recovery Context
+        - Work samples in target zone: 96% (135-150 bpm)
+    """.trimIndent()
     @Test
     fun sanitizeInsightMarkdown_normalizes_triple_star_exercise_headings() {
         val raw =
@@ -251,7 +263,11 @@ class WorkoutInsightMarkdownTest {
         assertFalse(processed.contains("677 kg"))
         assertFalse(processed.contains("425 kg"))
         assertFalse(processed.contains("10 bpm"))
-        assertTrue(processed.contains("the recorded value"))
+        // Lines whose every metric was unsupported are dropped outright instead of surviving
+        // as broken "the recorded value" prose.
+        assertFalse(processed.contains("the recorded value"))
+        assertFalse(processed.contains("Bench Press total volume"))
+        assertFalse(processed.contains("Pull-Ups used the same load"))
     }
 
     @Test
@@ -287,7 +303,10 @@ class WorkoutInsightMarkdownTest {
         assertFalse(processed.contains("5 kg"))
         assertFalse(processed.contains("677 x 8"))
         assertTrue(processed.contains("67 x 8"))
-        assertTrue(processed.contains("the recorded value"))
+        // "You started using 677 kg and a different bodyweight of 5 kg." had no supported
+        // metric left after redaction, so the whole line is gone.
+        assertFalse(processed.contains("the recorded value"))
+        assertFalse(processed.contains("You started using"))
         assertTrue(processed.contains("the recorded set"))
     }
 
@@ -317,7 +336,8 @@ class WorkoutInsightMarkdownTest {
         assertTrue(processed.contains("30 seconds"))
         assertFalse(processed.contains("47 minutes"))
         assertTrue(processed.contains("0.8 km"))
-        assertTrue(processed.contains("the recorded value"))
+        assertFalse(processed.contains("the recorded value"))
+        assertFalse(processed.contains("fabricated"))
     }
 
     @Test
@@ -404,6 +424,194 @@ class WorkoutInsightMarkdownTest {
         assertTrue(processed.contains("154 bpm"))
         assertTrue(processed.contains("60-70%"))
         assertFalse(processed.contains("the recorded value"))
+    }
+
+    @Test
+    fun postProcessInsightMarkdown_dropsFullyRedactedBulletsAndTheirEmptySection() {
+        // Regression for the on-device report where a highlight read
+        // "The session involved a total duration of the recorded value and the recorded value."
+        val markdown = """
+            ## What stood out
+            - Average HR was 140 bpm, peak 154 bpm.
+
+            ## Exercise highlights
+            - The session involved a total duration of the recorded value and the recorded value.
+
+            ## Next session target
+            - Keep average HR at or under 140 bpm for about 55 minutes
+        """.trimIndent()
+
+        val processed = postProcessInsightMarkdown(
+            markdown = markdown,
+            toolContext = WorkoutInsightsToolContext.WorkoutSession(
+                title = "Workout session insights",
+                workoutLabel = "Cyclette - LISS",
+                markdown = """
+                    FACT Session duration: 55:09 (55 minutes)
+                    FACT Average heart rate: 140 bpm; peak 154 bpm
+                    FACT Next-session target: average heart rate at or under 140 bpm for about 55 minutes
+                """.trimIndent(),
+            ),
+        )
+
+        assertFalse(processed.contains("the recorded value"))
+        assertFalse(processed.contains("total duration of"))
+        // The emptied section heading is removed with its bullet.
+        assertFalse(processed.contains("Exercise highlights"))
+        assertTrue(processed.contains("What stood out"))
+        assertTrue(processed.contains("140 bpm"))
+        assertTrue(processed.contains("Keep average HR at or under 140 bpm"))
+    }
+
+    @Test
+    fun composeNextSessionTargetSection_replacesModelSectionWithAppBullet() {
+        val markdown = """
+            ## What stood out
+            - Target not met: 140 bpm against the 131 bpm bar.
+
+            ## Next session target
+            - Ride easier next time, around the recorded value bpm.
+        """.trimIndent()
+
+        val composed = composeNextSessionTargetSection(
+            markdown = markdown,
+            bullet = "Keep average heart rate at or under 131 bpm for about 55 minutes.",
+        )
+
+        assertTrue(composed.contains("## Next session target"))
+        assertTrue(composed.contains("- Keep average heart rate at or under 131 bpm for about 55 minutes."))
+        assertFalse(composed.contains("Ride easier"))
+        assertTrue(composed.contains("Target not met"))
+    }
+
+    @Test
+    fun composeNextSessionTargetSection_appendsSectionWhenModelOmittedIt() {
+        val composed = composeNextSessionTargetSection(
+            markdown = "## What stood out\n- Solid session.",
+            bullet = "Keep average heart rate at or under 131 bpm for about 55 minutes.",
+        )
+
+        assertTrue(composed.contains("## Next session target"))
+        assertTrue(composed.contains("- Keep average heart rate at or under 131 bpm for about 55 minutes."))
+    }
+
+    @Test
+    fun postProcessInsightMarkdown_doesNotInjectTargetSectionWhenNotApplied() {
+        val markdown = "## What stood out\n- Solid session.\n\n## Next session target\n- Model wrote this."
+
+        val processed = postProcessInsightMarkdown(
+            markdown = markdown,
+            toolContext = WorkoutInsightsToolContext.WorkoutSession(
+                title = "Workout session insights",
+                workoutLabel = "Cyclette - LISS",
+                markdown = "",
+                nextSessionTargetBullet = "Keep average heart rate at or under 131 bpm for about 55 minutes.",
+            ),
+            applySessionTargetSection = false,
+        )
+
+        assertTrue(processed.contains("Model wrote this."))
+        assertFalse(processed.contains("Keep average heart rate at or under 131 bpm"))
+    }
+
+    @Test
+    fun postProcessInsightMarkdownWithDropReport_dropsAndReportsMisquotedLinesWhenEnforced() {
+        val markdown = """
+            ## What stood out
+            - The session averaged 154 bpm.
+            - Target not met: 140 bpm against 131.
+
+            ## Next session target
+            - Keep average heart rate at or under 131 bpm for about 55 minutes.
+        """.trimIndent()
+
+        val outcome = postProcessInsightMarkdownWithDropReport(
+            markdown = markdown,
+            toolContext = WorkoutInsightsToolContext.WorkoutSession(
+                title = "Workout session insights",
+                workoutLabel = "Cyclette - LISS",
+                markdown = factsContext,
+            ),
+            enforceNumericContract = true,
+        )
+
+        assertFalse(outcome.markdown.contains("averaged 154 bpm"))
+        assertTrue(outcome.markdown.contains("Target not met"))
+        assertEquals(1, outcome.misquotedDrops.size)
+        assertEquals("What stood out", outcome.misquotedDrops.single().sectionHeading)
+        assertTrue(outcome.misquotedDrops.single().reason.contains("average is 140 bpm"))
+    }
+
+    @Test
+    fun postProcessInsightMarkdown_keepsMisquotedLinesWhenNotEnforced() {
+        val markdown = "## What stood out\n- The session averaged 154 bpm."
+
+        val outcome = postProcessInsightMarkdownWithDropReport(
+            markdown = markdown,
+            toolContext = WorkoutInsightsToolContext.WorkoutSession(
+                title = "Workout session insights",
+                workoutLabel = "Cyclette - LISS",
+                markdown = factsContext,
+            ),
+        )
+
+        assertTrue(outcome.markdown.contains("averaged 154 bpm"))
+        assertTrue(outcome.misquotedDrops.isEmpty())
+    }
+
+    @Test
+    fun spliceRewrittenBullets_insertsIntoExistingSection() {
+        val markdown = """
+            ## What stood out
+            - Target not met: 140 bpm against 131.
+
+            ## Next session target
+            - Keep average heart rate at or under 131 bpm for about 55 minutes.
+        """.trimIndent()
+        val drop = MisquotedLineDrop("What stood out", "- The session averaged 154 bpm.", "reason")
+
+        val spliced = spliceRewrittenBullets(markdown, listOf(drop to "Average HR was 140 bpm, peak 154 bpm"))
+
+        assertTrue(
+            spliced.contains(
+                "## What stood out\n\n- Target not met: 140 bpm against 131.\n- Average HR was 140 bpm, peak 154 bpm"
+            )
+        )
+        assertTrue(spliced.contains("## Next session target"))
+    }
+
+    @Test
+    fun spliceRewrittenBullets_recreatesSectionHeadingWhenDropEmptiedIt() {
+        val markdown = """
+            ## What stood out
+            - Solid session.
+
+            ## Next session target
+            - Keep average heart rate at or under 131 bpm for about 55 minutes.
+        """.trimIndent()
+        val drop = MisquotedLineDrop("Exercise highlights", "- The session averaged 154 bpm.", "reason")
+
+        val spliced = spliceRewrittenBullets(markdown, listOf(drop to "Average HR was 140 bpm, peak 154 bpm"))
+
+        assertTrue(spliced.contains("## Exercise highlights\n\n- Average HR was 140 bpm, peak 154 bpm"))
+        assertTrue(spliced.contains("Solid session."))
+    }
+
+    @Test
+    fun validateRewrittenLines_acceptsFactQuotingAndRejectsTheRest() {
+        val facts = parseSessionNumericFacts(factsContext)!!
+
+        val accepted = validateRewrittenLines(
+            listOf(
+                "Average HR was 140 bpm, peak 154 bpm.",
+                "The session averaged 154 bpm.",
+                "Average HR was 999 bpm.",
+            ),
+            facts = facts,
+            evidence = factsContext,
+        )
+
+        assertEquals(listOf("Average HR was 140 bpm, peak 154 bpm."), accepted)
     }
 
 }

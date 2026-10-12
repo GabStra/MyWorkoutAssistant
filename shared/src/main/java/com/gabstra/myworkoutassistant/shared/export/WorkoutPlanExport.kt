@@ -278,7 +278,12 @@ private fun appendExerciseDetails(
     }
     
     if (exercise.lowerBoundMaxHRPercent != null && exercise.upperBoundMaxHRPercent != null) {
-        markdown.append("  - **Heart Rate Zone**: ${formatNumber(exercise.lowerBoundMaxHRPercent.toDouble() * 100)}%-${formatNumber(exercise.upperBoundMaxHRPercent.toDouble() * 100)}% of max HR\n")
+        val zoneBpm = targetZoneBpmBounds(exercise, workoutStore)
+        markdown.append(
+            "  - **Heart Rate Zone**: ${formatHeartRatePercentBound(exercise.lowerBoundMaxHRPercent)}%-" +
+                "${formatHeartRatePercentBound(exercise.upperBoundMaxHRPercent)}% $HEART_RATE_RESERVE_UNIT_PHRASE" +
+                (zoneBpm?.let { " (${it.first}-${it.second} bpm)" } ?: "") + "\n"
+        )
     }
     
     if (exercise.generateWarmUpSets) {

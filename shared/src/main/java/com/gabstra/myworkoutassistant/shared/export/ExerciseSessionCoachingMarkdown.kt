@@ -12,7 +12,6 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.formatNumber
-import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
@@ -134,8 +133,11 @@ internal fun appendExerciseContextMarkdown(
     markdown.append("- Progression mode: ${exercise.progressionMode.name}\n")
 
     if (exercise.lowerBoundMaxHRPercent != null && exercise.upperBoundMaxHRPercent != null) {
+        val zoneBpm = targetZoneBpmBounds(exercise, workoutStore)
         markdown.append(
-            "- Exercise target zone: ${formatPercentValue(exercise.lowerBoundMaxHRPercent.toDouble())}%-${formatPercentValue(exercise.upperBoundMaxHRPercent.toDouble())}% of max HR\n"
+            "- Exercise target zone: ${formatHeartRatePercentBound(exercise.lowerBoundMaxHRPercent)}%-" +
+                "${formatHeartRatePercentBound(exercise.upperBoundMaxHRPercent)}% $HEART_RATE_RESERVE_UNIT_PHRASE" +
+                (zoneBpm?.let { " (${it.first}-${it.second} bpm)" } ?: "") + "\n"
         )
     }
 
@@ -154,11 +156,6 @@ internal fun appendExerciseContextMarkdown(
     }
 
     markdown.append("\n")
-}
-
-private fun formatPercentValue(value: Double): String {
-    val normalized = if (value in 0.0..1.0) value * 100.0 else value
-    return formatNumber(normalized)
 }
 
 internal fun appendPlannedMarkdown(
@@ -303,21 +300,11 @@ internal fun appendExerciseRecoveryContextMarkdown(
             "- Work HR: avg ${workSamples.average().roundToInt()} bpm | peak ${workSamples.maxOrNull() ?: 0} bpm\n"
         )
         if (exercise.lowerBoundMaxHRPercent != null && exercise.upperBoundMaxHRPercent != null) {
-            val lowHr = getHeartRateFromPercentage(
-                exercise.lowerBoundMaxHRPercent,
-                userAge,
-                workoutStore.measuredMaxHeartRate,
-                workoutStore.restingHeartRate
-            )
-            val highHr = getHeartRateFromPercentage(
-                exercise.upperBoundMaxHRPercent,
-                userAge,
-                workoutStore.measuredMaxHeartRate,
-                workoutStore.restingHeartRate
-            )
-            val inZone = workSamples.count { it in lowHr..highHr }
-            val pct = (inZone.toDouble() / workSamples.size.toDouble() * 100.0).roundToInt()
-            markdown.append("- Work samples in target zone: $pct%\n")
+            targetZoneBpmBounds(exercise, workoutStore, userAge)?.let { (lowHr, highHr) ->
+                val inZone = workSamples.count { it in lowHr..highHr }
+                val pct = (inZone.toDouble() / workSamples.size.toDouble() * 100.0).roundToInt()
+                markdown.append("- Work samples in target zone: $pct% ($lowHr-$highHr bpm)\n")
+            }
         }
     }
     if (restSamples.isNotEmpty()) {

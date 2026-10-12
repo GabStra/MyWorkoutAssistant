@@ -103,8 +103,8 @@ object WorkoutInsightsSettingsStore {
                     mode = mode,
                     modeLabel = mode.label,
                     isConfigured = config.isComplete(),
-                    missingConfigurationMessage = "Remote insights are selected, but the base URL, API key, or model is missing. Configure them in Settings to enable the hosted OpenAI API.",
-                    configureActionLabel = null,
+                    missingConfigurationMessage = "Remote insights are selected, but the base URL or model is missing. Configure them in Settings to enable the hosted OpenAI-compatible API.",
+                    configureActionLabel = "Open settings",
                 )
             }
         }

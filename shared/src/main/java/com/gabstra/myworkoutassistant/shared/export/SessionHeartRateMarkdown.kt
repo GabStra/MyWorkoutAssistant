@@ -4,7 +4,6 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.RestHistory
 import com.gabstra.myworkoutassistant.shared.SetHistory
-import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -48,24 +47,14 @@ internal fun appendSessionHeartRateMarkdown(
         val loBoundPct = exercise.lowerBoundMaxHRPercent
         val hiBoundPct = exercise.upperBoundMaxHRPercent
         if (loBoundPct != null && hiBoundPct != null) {
-            val lowHr = getHeartRateFromPercentage(
-                loBoundPct,
-                userAge,
-                workoutStore.measuredMaxHeartRate,
-                workoutStore.restingHeartRate
-            )
-            val highHr = getHeartRateFromPercentage(
-                hiBoundPct,
-                userAge,
-                workoutStore.measuredMaxHeartRate,
-                workoutStore.restingHeartRate
-            )
+            val (lowHr, highHr) = targetZoneBpmBounds(exercise, workoutStore, userAge)!!
             val hrInZoneCount = valid.count { it in lowHr..highHr }
             val zonePct = if (valid.isNotEmpty()) {
                 (hrInZoneCount.toFloat() / valid.size * 100).roundToInt()
             } else 0
             markdown.append(
-                "- Target band: $zonePct% between $lowHr-$highHr bpm\n"
+                "- Target band: $zonePct% of samples between $lowHr-$highHr bpm " +
+                    "(${formatHeartRatePercentBound(loBoundPct)}-${formatHeartRatePercentBound(hiBoundPct)}% $HEART_RATE_RESERVE_UNIT_PHRASE)\n"
             )
         }
     }
@@ -131,21 +120,13 @@ internal fun appendExerciseHeartRateMarkdown(
     val loBoundPct = exerciseForTargetBand.lowerBoundMaxHRPercent
     val hiBoundPct = exerciseForTargetBand.upperBoundMaxHRPercent
     if (loBoundPct != null && hiBoundPct != null) {
-        val lowHr = getHeartRateFromPercentage(
-            loBoundPct,
-            userAge,
-            workoutStore.measuredMaxHeartRate,
-            workoutStore.restingHeartRate
-        )
-        val highHr = getHeartRateFromPercentage(
-            hiBoundPct,
-            userAge,
-            workoutStore.measuredMaxHeartRate,
-            workoutStore.restingHeartRate
-        )
+        val (lowHr, highHr) = targetZoneBpmBounds(exerciseForTargetBand, workoutStore, userAge)!!
         val hrInZoneCount = intervalSamples.count { it in lowHr..highHr }
         val zonePct = (hrInZoneCount.toFloat() / intervalSamples.size * 100).roundToInt()
-        markdown.append("- Target band: $zonePct% between $lowHr-$highHr bpm\n")
+        markdown.append(
+            "- Target band: $zonePct% of samples between $lowHr-$highHr bpm " +
+                "(${formatHeartRatePercentBound(loBoundPct)}-${formatHeartRatePercentBound(hiBoundPct)}% $HEART_RATE_RESERVE_UNIT_PHRASE)\n"
+        )
     }
     markdown.append("\n")
 }

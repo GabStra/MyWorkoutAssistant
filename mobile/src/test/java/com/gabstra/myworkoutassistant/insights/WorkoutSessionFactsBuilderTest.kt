@@ -44,8 +44,9 @@ class WorkoutSessionFactsBuilderTest {
         assertTrue(text.contains("FACT Session duration: 52:30 (53 minutes)"))
         assertTrue(text.contains("FACT Average heart rate: 125 bpm; peak 130 bpm"))
         assertTrue(text.contains("FACT Heart-rate drift: the second half averaged +10 bpm versus the first half"))
-        assertTrue(Regex("""FACT \d+% of HR samples stayed inside the 60-70% target zone""").containsMatchIn(text))
+        assertTrue(Regex("""FACT Whole-session time in target zone: \d+% of HR samples inside 60-70% of heart-rate reserve \(\d+-\d+ bpm\)""").containsMatchIn(text))
         assertTrue(text.contains("FACT Next-session target: average heart rate at or under 125 bpm for about 50 minutes"))
+        assertEquals("Keep average heart rate at or under 125 bpm for about 50 minutes.", facts.nextSessionTargetBullet)
         assertFalse(text.contains("target check"))
         assertFalse(text.contains("versus recent sessions"))
     }
@@ -90,6 +91,9 @@ class WorkoutSessionFactsBuilderTest {
         val text = facts.lines.joinToString("\n")
         assertTrue(text.contains("regressing — average HR is 20 bpm above the recent 130 bpm average"))
         assertTrue(text.contains("this session averaged 150 bpm across 40 minutes — target not met"))
+        // A missed target holds its bar; the next-session target must not ratchet up to the current average.
+        assertTrue(text.contains("FACT Next-session target: average heart rate at or under 130 bpm for about 40 minutes"))
+        assertEquals("Keep average heart rate at or under 130 bpm for about 40 minutes.", facts.nextSessionTargetBullet)
     }
 
     @Test
