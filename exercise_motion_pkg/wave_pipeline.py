@@ -831,8 +831,10 @@ def prepare_cpu_render_cache(item: StagedWaveItem, candidate: RankedCandidate, r
         candidate_workspace=workspace, exercise_motion_contract=contract)
     loops = bake.build_candidate_review_eligible_loops(bake.load_motion_json(cleaned), source_interval_authority=authority)
     support = bake.pre_reconstruction_source_foot_support_evidence(workspace)
-    from .body_support_observation import requires_body_support, observed_stationary_sole_contacts, observe_body_support
-    if requires_body_support(contract) or observed_stationary_sole_contacts(support):
+    from .body_support_observation import source_support_observation_needed, observe_body_support
+    source_pose = bake.load_verified_source_pose_reference(
+        workspace/'segment_detection/exact_source_pose_reference.json', workspace/'input/selected_segment.mp4')
+    if source_support_observation_needed(source_pose, support):
         observation = observe_body_support(workspace/'input/selected_segment.mp4', None,
                                            workspace/'segment_detection/body_support')
         if observation.get('status') != 'observed':
@@ -1297,11 +1299,13 @@ def _run_staged_bake_wave(
                         # Contact semantics must be available before the CPU-only
                         # prefetch, otherwise it fits once without them and again
                         # after the final stage acquires its visual model.
-                        from .body_support_observation import requires_body_support, observed_stationary_sole_contacts, observe_body_support
-                        from .bake_and_rank import load_pre_reconstruction_exact_source_phase_metrics
+                        from .body_support_observation import source_support_observation_needed, observe_body_support
+                        from .bake_and_rank import load_pre_reconstruction_exact_source_phase_metrics, load_verified_source_pose_reference
                         candidate_workspace = item.request.workspace / candidate.workspace_slug
                         phase_metrics = load_pre_reconstruction_exact_source_phase_metrics(candidate_workspace) or {}
-                        if requires_body_support(contract) or observed_stationary_sole_contacts(phase_metrics.get('sourceFootSupportEvidence')):
+                        source_pose = load_verified_source_pose_reference(
+                            candidate_workspace/'segment_detection/exact_source_pose_reference.json', selected_video)
+                        if source_support_observation_needed(source_pose, phase_metrics.get('sourceFootSupportEvidence')):
                             observe_body_support(selected_video, source_session.caption_images,
                                                  candidate_workspace/'segment_detection/body_support')
                     except Exception as exc:

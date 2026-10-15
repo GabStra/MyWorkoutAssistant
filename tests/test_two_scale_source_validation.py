@@ -18,7 +18,7 @@ def test_two_scale_uses_structured_required_accessory_and_marks_generated_contra
     }
     equipment = bake_and_rank.two_scale_named_equipment("Ring Fallout", contract)
     assert equipment == "rings"
-    assert bake_and_rank.two_scale_identity_equipment_consistent(
+    assert bake_and_rank.two_scale_required_equipment_observed(
         {"visibleEquipment": ["gymnastic rings"]}, equipment=equipment
     )
     multi_equipment_contract = {
@@ -42,7 +42,7 @@ def test_two_scale_uses_structured_required_accessory_and_marks_generated_contra
         {"motionContext": {"requiredAccessories": [{"name": "Adjustable Bench"}]}},
     )
     assert box_jump_requirements == ["box", "bench"]
-    assert bake_and_rank.two_scale_identity_equipment_consistent(
+    assert bake_and_rank.two_scale_required_equipment_observed(
         {"visibleEquipment": ["box"]}, equipment=", ".join(box_jump_requirements)
     )
     guidance = bake_and_rank.two_scale_contract_authority_guidance(contract)
@@ -84,6 +84,7 @@ def test_required_equipment_is_not_inferred_from_ambiguous_narrative(visible, ev
     (False, False, False, False), (False, True, True, False), (False, False, False, True),
     (False, True, False, "identity_missing"), (False, True, False, "identity_uncertain"),
     (False, True, False, "identity_mismatch"),
+    (False, True, False, "identity_equipment_alias"),
 ])
 def test_full_resolution_equipment_evidence_preserves_action_gates(
     tmp_path, monkeypatch, uncertain, complete, conflict, malformed,
@@ -133,14 +134,23 @@ def test_full_resolution_equipment_evidence_preserves_action_gates(
         if prompt.startswith("You verify only exercise identity"):
             if malformed == "identity_missing":
                 return '{"verdict":"match","evidence":"unfinished'
+            if malformed == "identity_equipment_alias":
+                return json.dumps({"verdict": "match", "visibleEquipment": ["dumbbell pair"]})
             if malformed in {"identity_uncertain", "identity_mismatch"}:
                 return json.dumps({"verdict": malformed.removeprefix("identity_"), "visibleEquipment": ["dumbbell"]})
             return json.dumps({"verdict": "match", "visibleEquipment": ["dumbbell"]})
         return json.dumps(topology_response())
     result = bake_and_rank.validate_two_scale_source_with_caption_images(
         make_review_item(tmp_path), uniform_sheet_paths=sheets, output_dir=tmp_path / "review",
-        caption_images=caption_images)
-    assert result["passed"] is (not uncertain and complete and not conflict and not malformed)
+        caption_images=caption_images,
+        exercise_motion_contract=make_review_item(tmp_path).candidate["exerciseMotionContract"])
+    assert result["passed"] is (
+        not uncertain and complete and not conflict
+        and (not malformed or malformed == "identity_equipment_alias")
+    )
+    if malformed == "identity_equipment_alias":
+        assert result["gates"]["identity"]["passed"] is True
+        assert "equipmentConsistent" not in result["gates"]["identity"]
     assert result["gates"]["targetBlindEquipmentDetail"]["clear"] is (not uncertain)
     if malformed in {"identity_missing", "identity_uncertain"}:
         assert result["reviewStatus"] == "incomplete"
@@ -689,8 +699,9 @@ def test_authoritative_dumbbell_pair_requires_two_clear_target_blind_objects(
 
     result = bake_and_rank.validate_two_scale_source_with_caption_images(
         item, uniform_sheet_paths=[sheet], output_dir=tmp_path / "review", caption_images=caption_images,
+        exercise_motion_contract=contract,
     )
-    assert result["gates"]["identity"]["equipmentConsistent"] is True
+    assert "equipmentConsistent" not in result["gates"]["identity"]
     assert result["gates"]["completeness"]["requiredEquipmentObserved"] is expected_quantity_observed
     assert result["gates"]["targetBlindEquipmentDetail"]["requiredEquipmentObserved"] is expected_quantity_observed
     assert result["passed"] is expected_quantity_observed, result["rejectionReasons"]

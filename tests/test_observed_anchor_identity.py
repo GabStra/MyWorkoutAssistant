@@ -30,6 +30,7 @@ def test_persistent_foot_pitch_is_measured_against_observed_ground(roll, pitch, 
     assert result['feet']['left']['states'] == [state] * 8
     assert result['contacts'][0]['minimumLiftRatio'] == pytest.approx(
         0. if pitch == 0. else np.sin(abs(pitch) - np.deg2rad(8)))
+    assert result['contacts'][0]['verticalOnly'] == (state == 'heel_only')
 
 
 @pytest.mark.parametrize('image_height', [360, 640, 960])
@@ -194,12 +195,12 @@ def test_neutral_pitch_does_not_promote_forefoot_evidence_to_an_ankle_lock():
     result = classify_foot_contacts(observations, evidence, source)
     mask = contact_mask({'sourceFootSupportEvidence': result}, ['left_ankle', 'left_foot'], 20)
     assert mask[:10].all()
-    assert not mask[10:, 1].any()
+    assert mask[10:, 1].all()
     assert not mask[10:, 0].any()
     height_only = vertical_only_contact_mask(
         result, ['left_ankle', 'left_foot'], 20,
     )
-    assert height_only[10:, 1].all()
+    assert not height_only[10:, 1].any()
     assert not height_only[10:, 0].any()
     assert result['contacts'][-1]['minimumLiftRatio'] == 0.
     assert result['contacts'][0].get('ankleAnchorGroupId')
@@ -215,6 +216,38 @@ def test_neutral_pitch_does_not_promote_forefoot_evidence_to_an_ankle_lock():
     assert result['contacts'][0]['ankleAnchorGroupId'] == result['contacts'][1]['ankleAnchorGroupId']
     mask = contact_mask({'sourceFootSupportEvidence': result}, ['left_ankle', 'left_foot'], 20)
     assert not mask[8:12].any()
+
+
+@pytest.mark.parametrize('failure', [None, 'different_video', 'moving_toe', 'wrong_ankle'])
+def test_uncalibrated_visible_contact_requires_matching_video_and_independent_still_toe(failure):
+    from exercise_motion_pkg.foot_contact_observation import classify_foot_contacts
+    from exercise_motion_pkg.sequence_stabilization import contact_mask
+    joints = {
+        'left_ankle': {'image': [.5, .8], 'world': [0., 0., 0.], 'confidence': .99},
+        'left_heel': {'image': [.5, .9], 'world': [0., 0., 0.], 'confidence': .99},
+        'left_toe': {'image': [.6, .9], 'world': [.2, 0., 0.], 'confidence': .99},
+    }
+    observations = {'available': True, 'source': 'observed', 'fps': 30., 'sourceVideoSha256': 'same',
+                    'frames': [{'timeSeconds': i / 30., 'joints': copy.deepcopy(joints)} for i in range(12)]}
+    source = {'frames': [{'sourceTimeSec': i / 30., 'joints': {'left_ankle': [.5, .8]}}
+                         for i in range(12)]}
+    evidence = {'contacts': [], 'bodySupportObservation': {
+        'status': 'observed', 'sourceVideoSha256': 'other' if failure == 'different_video' else 'same',
+        'observation': {'leftFoot': 'stationary_full_sole', 'leftFootSurface': 'ground'}}}
+    if failure == 'moving_toe':
+        observations['frames'][6]['joints']['left_toe']['image'][0] += .04
+    if failure == 'wrong_ankle':
+        for frame in source['frames']:
+            frame['joints']['left_ankle'][0] = .4
+    result = classify_foot_contacts(observations, evidence, source)
+    mask = contact_mask({'sourceFootSupportEvidence': result}, ['left_ankle', 'left_foot'], 12)
+    if failure:
+        assert not result['contacts'] and not mask.any()
+    else:
+        assert mask[:, 1].all() and not mask[:, 0].any()
+        assert result['contacts'][0]['minimumLiftRatio'] == 0.
+        assert result['contacts'][0]['source'] == 'exact_visual_contact_and_independent_stationary_toe'
+        assert result['feet']['left']['pitchReferenceSource'] == 'heel_unobserved'
 
 
 @pytest.mark.parametrize(

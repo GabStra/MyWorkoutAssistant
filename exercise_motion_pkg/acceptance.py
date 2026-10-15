@@ -98,6 +98,13 @@ def source_selection_clearance_is_current(
         if clearance.get("exerciseMotionContractSha256") != contract_hash:
             return False
     try:
+        # The display clip may be trimmed; clearance belongs to the retained reconstruction input.
+        original_source = selected.get("selectedInputSourceVideoPath")
+        if original_source:
+            original_path = Path(str(original_source))
+            if not original_path.is_absolute() and selected_source_path is not None:
+                original_path = selected_source_path.parent / original_path
+            selected_source_path = original_path
         source_manifest_path = Path(clearance["sourceManifestPath"])
         selected_segment_path = Path(clearance["selectedSegmentPath"])
         hashes_current = (

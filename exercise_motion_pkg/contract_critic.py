@@ -1,14 +1,9 @@
 """Advisory LLM critic for generated exercise-motion contracts.
 
-Deterministic contract validation can only reject contracts that contradict
-themselves; a regenerated contract can be internally consistent and still
-semantically wrong for the requested movement (for example a traveling
-lunge described as returning to its exact start). The critic reads the
-contract's own phases and states, flags such contradictions structurally,
-and returns replace-only patch operations constrained to a closed field
-whitelist. Applying the patch, re-normalizing, and re-validating the
-contract stay in deterministic code; the critic never invents fields or
-values outside the vocabulary.
+The critic records semantic suggestions for diagnostics. Its output is not
+source evidence and cannot establish new movement requirements or trigger
+repairs of a usable contract. Parsing constrains suggestions to the existing
+field vocabulary; deterministic validation remains the repair authority.
 """
 from __future__ import annotations
 
@@ -18,7 +13,7 @@ from typing import Any, Callable
 
 CONTRACT_CRITIC_PROMPT_MARKER = "semantic consistency review"
 MAX_CONTRACT_CRITIC_ISSUES = 3
-CONTRACT_CRITIC_MAX_TOKENS = 384
+CONTRACT_CRITIC_MAX_TOKENS = 1536
 
 TEXT_FIELD_MIN_CHARS = 12
 TEXT_FIELD_MAX_CHARS = 280
@@ -45,9 +40,11 @@ PATCHABLE_CONTRACT_FIELDS: dict[str, tuple[str, ...] | None] = {
     ),
     "requiresReturnToStart": ("true", "false"),
     "groundContactMode": ("continuous", "intermittent", "none"),
+    "implementSupportMode": ("hands_only", "body_supported", "mixed", "external", "none"),
     "handRelationship": ("rigid_pair", "independent", "single", "none", "unknown"),
     "validStartState": None,
     "validEndState": None,
+    "requiredPhases": None,
     **{f"startPoseConstraints.{key}": values for key, values in POSE_CONSTRAINT_ENUMS.items()},
     **{f"endPoseConstraints.{key}": values for key, values in POSE_CONSTRAINT_ENUMS.items()},
 }
@@ -60,6 +57,7 @@ def contract_critic_projection(contract: dict[str, Any]) -> dict[str, Any]:
         "completionMode",
         "requiresReturnToStart",
         "groundContactMode",
+        "implementSupportMode",
         "handRelationship",
         "validStartState",
         "validEndState",
@@ -67,6 +65,9 @@ def contract_critic_projection(contract: dict[str, Any]) -> dict[str, Any]:
         "endPoseConstraints",
         "requiredPhases",
         "singleExecutionDurationSeconds",
+        "motionContext",
+        "primaryMovingRegions",
+        "referenceRegions",
     )
     projection: dict[str, Any] = {}
     for key in keys:
@@ -82,8 +83,34 @@ def build_contract_critic_prompt(
     equipment: str | None,
     contract: dict[str, Any],
 ) -> str:
+    if contract.get("contractScope") == "definition_only":
+        fields = (
+            "movementType", "completionMode", "requiresReturnToStart",
+            "groundContactMode", "implementSupportMode", "handRelationship",
+        )
+        allowed = "; ".join(
+            f"{field}: {', '.join(PATCHABLE_CONTRACT_FIELDS[field] or ())}"
+            for field in fields if field in contract
+        )
+        return (
+            f"{CONTRACT_CRITIC_PROMPT_MARKER}: check definition-level exercise requirements.\n"
+            f"Exercise request: {exercise_name}"
+            + (f" (equipment: {equipment})" if equipment else "")
+            + "\nContract: "
+            + json.dumps(contract_critic_projection(contract), ensure_ascii=False)
+            + "\nCheck only concrete contradictions between the exercise definition, equipment, "
+            "movement type, completion boundary, broad body action, and implement relationship. "
+            "No source video has been seen; do not invent posture, contacts, or phase detail. "
+            "Return minified JSON only: "
+            '{"issues":[{"field":"<field>","value":"<corrected value>",'
+            '"evidence":"<short reason>"}]}. '
+            f"At most {MAX_CONTRACT_CRITIC_ISSUES} issues. Allowed fields and values: {allowed}. "
+            'Return {"issues":[]} when consistent.\n'
+        )
     allowed = "; ".join(
-        f"{field}: {', '.join(values)}" if values else f"{field}: corrected short posture sentence"
+        f"{field}: {', '.join(values)}" if values else (
+            f"{field}: array of corrected short phase sentences" if field == "requiredPhases"
+            else f"{field}: corrected short posture sentence")
         for field, values in PATCHABLE_CONTRACT_FIELDS.items()
     )
     return (
@@ -92,7 +119,20 @@ def build_contract_critic_prompt(
         + (f" (equipment: {equipment})" if equipment else "")
         + "\nContract:\n"
         + json.dumps(contract_critic_projection(contract), ensure_ascii=False)
-        + "\nCheck that the structured fields agree with the movement the required phases and states actually describe:\n"
+        + "\nThe original exercise name and supplied equipment/accessories are the immutable target definition. "
+        "Do not replace a supplied variant with a more common version or infer accessory contacts from its name. "
+        "Review only concrete contradictions between the structured fields, defining action and that target. "
+        "Do not treat internally consistent states and phases as authority to redefine the requested exercise.\n"
+        "A required accessory does not establish which body part contacts it. Lying means pelvis and upper back "
+        "resting on a surface, not just a horizontal torso. Hands-and-feet support with a suspended torso uses "
+        "supportMode any; torsoOrientation describes its pose. Prioritize false supportMode and torsoOrientation "
+        "requirements over wording corrections.\n"
+        "Check that the structured fields agree with the movement the required phases and states actually describe:\n"
+        "Report semantic errors, not stylistic shortening or values already correct. Prioritize incorrect actions, "
+        "equipment relationships and contacts over wording corrections.\n"
+        "- rigid_pair means both hands on the same rigid implement, not two separate implements. "
+        "implementSupportMode describes one rigid two-hand implement; separate implements or single-hand use "
+        "use none. Do not infer a rigid pair from bilateral movement.\n"
         "- If the phases travel or advance to a new position (stepping or walking forward, a carry distance, "
         "moving between positions), completionMode must not be return_to_start unless a phase explicitly "
         "returns to the exact starting position; prefer distinct_end_state or active_travel.\n"
@@ -101,11 +141,17 @@ def build_contract_critic_prompt(
         "- The end state must describe where the phases actually finish and must differ from the start state "
         "when completionMode is distinct_end_state.\n"
         "- Start and end pose constraints must match the described postures.\n"
+        "- requiredPhases must describe exactly one execution, not multiple repetitions. Do not make optional "
+        "pauses, coaching cues, or setup into required action phases. To correct phases, return their complete "
+        "replacement array of short strings, not a placeholder or a sentence saying they need correction.\n"
+        "A correction must identify a concrete contradiction or missing defining action, not a preference for conventional technique. "
         "Only report clear semantic contradictions with the described movement; do not invent requirements "
         "and do not judge exercise quality or difficulty.\n"
         "Return minified JSON only with this schema: "
-        '{"issues": [{"field": "<field>", "from": "<current value>", "value": "<corrected value>", '
-        '"evidence": "<short reason quoting the contract>"}]}\n'
+        '{"issues": [{"field": "<field>", "value": "<corrected value>", '
+        '"evidence": "<short reason>"}]}\n'
+        "Do not echo the old value or include a from field. Keep text values under 160 characters and "
+        "evidence under 80 characters so the complete JSON fits the response budget.\n"
         "Allowed fields and values: "
         + allowed
         + "\n"
@@ -169,7 +215,15 @@ def parse_contract_critic_issues(raw: Any) -> list[dict[str, Any]] | None:
         if field not in PATCHABLE_CONTRACT_FIELDS:
             continue
         allowed = PATCHABLE_CONTRACT_FIELDS[field]
-        if allowed is None:
+        if field == "requiredPhases":
+            phases = item.get("value")
+            if not isinstance(phases, list) or not 1 <= len(phases) <= 8 or any(
+                not isinstance(phase, str) or not TEXT_FIELD_MIN_CHARS <= len(phase.strip()) <= TEXT_FIELD_MAX_CHARS
+                for phase in phases
+            ):
+                return None
+            normalized_value = [phase.strip() for phase in phases]
+        elif allowed is None:
             text_value = str(item.get("value") or "").strip()
             if not TEXT_FIELD_MIN_CHARS <= len(text_value) <= TEXT_FIELD_MAX_CHARS:
                 continue
@@ -180,7 +234,7 @@ def parse_contract_critic_issues(raw: Any) -> list[dict[str, Any]] | None:
                 continue
         evidence = str(item.get("evidence") or "").strip()
         if not evidence:
-            continue
+            return None
         issue: dict[str, Any] = {
             "field": field,
             "value": normalized_value,
@@ -222,28 +276,13 @@ def apply_contract_critic_patches(
         if claimed_from and _value_text(current) != _value_text(claimed_from):
             continue
         coerced = _coerce_patch_value(field, issue["value"])
+        if current == coerced:
+            continue
         target[keys[-1]] = coerced
         recorded = dict(issue)
         recorded["value"] = coerced
         applied.append(recorded)
     return patched, applied
-
-
-def critic_issue_validation_texts(issues: list[dict[str, Any]]) -> list[str]:
-    """Format critic ops for the existing repair-prompt validation-issues list."""
-    texts: list[str] = []
-    for issue in issues:
-        field = str(issue.get("field") or "").strip()
-        value = issue.get("value")
-        evidence = str(issue.get("evidence") or "").strip()
-        claimed_from = issue.get("from")
-        if claimed_from is not None and str(claimed_from).strip():
-            texts.append(
-                f"critic: {field} from {claimed_from} -> {value}: {evidence}"
-            )
-        else:
-            texts.append(f"critic: {field} -> {value}: {evidence}")
-    return texts
 
 
 def critique_exercise_motion_contract(
@@ -254,7 +293,7 @@ def critique_exercise_motion_contract(
     caption_images: Callable[..., str],
     caption_kwargs: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Run one advisory critic call; retry once on malformed JSON; [] on skip."""
+    """Run an advisory critic call, with one bounded malformed-response retry."""
     prompt = build_contract_critic_prompt(
         exercise_name=exercise_name,
         equipment=equipment,
@@ -270,5 +309,7 @@ def critique_exercise_motion_contract(
         raw = caption_images(**kwargs)
         parsed = parse_contract_critic_issues(raw)
         if parsed is not None:
+            if contract.get("contractScope") == "definition_only":
+                parsed = [issue for issue in parsed if issue["field"] in contract]
             return parsed
-    return []
+    raise ValueError("Contract critic returned malformed advice after two attempts.")

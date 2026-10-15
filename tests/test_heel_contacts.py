@@ -3,6 +3,7 @@ import json
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from exercise_motion_pkg.foot_kinematics import HEEL_BEHIND_ANKLE_RATIO
 from exercise_motion_pkg.heel_contacts import heel_contact_tracks
@@ -55,7 +56,8 @@ def test_material_heel_anchor_allows_toe_rotation_and_releases_contact():
     np.testing.assert_array_equal(errors[5:], 0.)
 
 
-def test_fitter_and_playback_enforce_heel_support():
+@pytest.mark.parametrize('state', ['heel_only', 'toe_only'])
+def test_fitter_and_playback_enforce_partial_foot_support(state):
     from test_controlled_motion_pipeline import accepted_payload
     from exercise_motion_pkg.controlled_motion import fit_controlled_motion
     from exercise_motion_pkg.rig_playback import validate_rig_playback, decode_rig
@@ -64,6 +66,7 @@ def test_fitter_and_playback_enforce_heel_support():
     original.pop('controlledMotionFit')
     original.pop('fixedRig')
     original['sourceFootSupportEvidence'] = evidence()
+    original['sourceFootSupportEvidence']['contacts'][0].update(contactState=state, verticalOnly=False)
     result, report = fit_controlled_motion(original, max_evaluations=2, timeout_seconds=10.)
     assert report['applied'], report
     valid = validate_rig_playback(result)
@@ -78,4 +81,4 @@ def test_fitter_and_playback_enforce_heel_support():
         frame['joints'] = dict(zip(moved['jointNames'], pose.tolist()))
     rejected = validate_rig_playback(moved)
     assert not rejected['passed']
-    assert rejected['maximumHeelContactErrorMeters'] >= .0099
+    assert rejected['maximumContactErrorMeters'] >= .0099

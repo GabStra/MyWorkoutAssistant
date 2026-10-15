@@ -10,7 +10,7 @@ import numpy as np
 from exercise_motion_pkg.segment_detection import DetectionWindow
 
 
-CAMERA_STABILITY_POLICY_VERSION = 3
+CAMERA_STABILITY_POLICY_VERSION = 4
 CAMERA_STABILITY_SAMPLE_FPS = 4.0
 CAMERA_STABILITY_MAX_SAMPLES_PER_SCENE = 48
 CAMERA_STABILITY_MIN_FEATURES = 16
@@ -166,6 +166,13 @@ def analyze_scene_camera_stability(
         if cumulative_translation > 1e-9
         else 0.0
     )
+    # A pan followed by a return still moves the camera during reconstruction.
+    translation_excursions = np.linalg.norm(
+        np.cumsum(np.column_stack((dx_values, dy_values)), axis=0), axis=1)
+    peak_index = int(np.argmax(translation_excursions))
+    maximum_translation_excursion = float(translation_excursions[peak_index])
+    excursion_coherence = maximum_translation_excursion / max(
+        sum(translations[:peak_index + 1]), 1e-9)
     median_translation = percentile(translations, 50)
     p90_translation = percentile(translations, 90)
     median_rotation = percentile(rotations, 50)
@@ -176,8 +183,8 @@ def analyze_scene_camera_stability(
     net_zoom = abs(sum(signed_zoom_changes))
     sustained_pan = (
         median_translation >= 0.004
-        and net_translation >= 0.035
-        and directional_coherence >= 0.55
+        and maximum_translation_excursion >= 0.035
+        and excursion_coherence >= 0.55
     )
     sustained_rotation = median_rotation >= 0.15 and net_rotation >= 1.5
     sustained_zoom = median_zoom >= 0.003 and net_zoom >= 0.04
@@ -225,6 +232,8 @@ def analyze_scene_camera_stability(
         "cumulativeTranslationRatio": round(cumulative_translation, 6),
         "netTranslationRatio": round(net_translation, 6),
         "directionalCoherence": round(directional_coherence, 4),
+        "maximumTranslationExcursionRatio": round(maximum_translation_excursion, 6),
+        "excursionDirectionalCoherence": round(excursion_coherence, 4),
         "medianRotationDegrees": round(median_rotation, 4),
         "p90RotationDegrees": round(p90_rotation, 4),
         "netRotationDegrees": round(net_rotation, 4),

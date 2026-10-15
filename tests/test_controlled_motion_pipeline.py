@@ -57,6 +57,116 @@ def test_pipeline_reuse_skips_earlier_positional_repairs(monkeypatch):
     assert pose_digest(result)==before
 
 
+def test_support_materialization_keeps_source_and_rig_evidence_separate(monkeypatch):
+    from exercise_motion_pkg import body_support_observation, controlled_motion, support_geometry
+    from exercise_motion_pkg import scene_placement
+    from exercise_motion_pkg.contact_constraints import (
+        _source_evidence_from_motion_space, motion_space_support_evidence,
+        fit_motion_space_support_evidence_scope,
+    )
+    from exercise_motion_pkg.sequence_stabilization import contact_mask
+
+    payload = accepted_payload()
+    payload['sourcePoseCameraReference'] = {
+        'camera': {'bilateralAssignment': 'swapped'},
+    }
+    source_evidence = {
+        'contacts': [{'jointName': 'left_foot', 'contactMotion': 'stationary'}],
+    }
+    rig_evidence = {
+        'contacts': [{'jointName': 'right_foot', 'contactMotion': 'stationary'}],
+        'bodySupport': {'required': True, 'status': 'confirmed',
+                        'stationaryJoints': ['right_foot']},
+    }
+    payload['sourceFootSupportEvidence'] = copy.deepcopy(source_evidence)
+    source_view = motion_space_support_evidence(payload)
+    payload['motionSpaceSupportEvidence'] = copy.deepcopy(source_view)
+    monkeypatch.setattr(support_geometry, 'declare_support_requirements', lambda *_: None)
+    for name in ('materialize_body_support', 'materialize_hand_support',
+                 'materialize_observed_ground_contacts'):
+        monkeypatch.setattr(body_support_observation, name, lambda *_: None)
+    monkeypatch.setattr(body_support_observation, 'materialize_stationary_sole_support',
+                        lambda _: copy.deepcopy(rig_evidence))
+    monkeypatch.setattr(controlled_motion, 'can_reuse_controlled_motion', lambda _: True)
+    monkeypatch.setattr(scene_placement, 'normalize_scene_placement', lambda value: value)
+    payload['controlledMotionFit']['fitSourceEvidenceDigest'] = (
+        controlled_motion_fit_source_evidence_digest(payload)
+    )
+
+    result, _ = bake_and_rank.constrain_baked_payload_to_source_articulation(payload)
+
+    assert result is payload
+    assert result['sourceFootSupportEvidence'] == source_evidence
+    assert result['motionSpaceSupportEvidence'] == source_view
+    assert _source_evidence_from_motion_space(result['motionSpaceSupportEvidence']) == source_evidence
+    portable_digest = pose_digest(result)
+    with fit_motion_space_support_evidence_scope(result, rig_evidence):
+        assert pose_digest(result) == portable_digest
+
+    monkeypatch.setattr(body_support_observation, 'materialize_stationary_sole_support',
+                        lambda _: copy.deepcopy(rig_evidence))
+    pinned = contact_mask(result, result['jointNames'], len(result['frames']))
+    assert pinned[:, result['jointNames'].index('right_foot')].all()
+    assert not pinned[:, result['jointNames'].index('left_foot')].any()
+
+
+def test_stale_materialized_source_recovers_only_matching_valid_rig_view():
+    from exercise_motion_pkg import controlled_motion
+    from exercise_motion_pkg.contact_constraints import (
+        _source_evidence_from_motion_space, _support_evidence_digest,
+        _swap_support_evidence_sides, motion_space_support_evidence,
+        source_support_mapping_unresolved,
+    )
+
+    canonical = {
+        'contacts': [{'jointName': 'left_foot', 'contactMotion': 'stationary'}],
+        'bodySupportObservation': {'status': 'observed', 'sourceVideoSha256': 'video-A'},
+    }
+    source_digest = _support_evidence_digest(canonical)
+    mapped = _swap_support_evidence_sides(canonical)
+    mapped['motionSpaceMapping'] = {
+        'bilateralAssignment': 'swapped', 'sourceEvidenceSha256': source_digest,
+    }
+    stale_source = copy.deepcopy(mapped)
+    stale_source['bodySupport'] = {'stationaryJoints': ['right_foot']}
+    payload = {
+        'sourceFootSupportEvidence': stale_source,
+        'motionSpaceSupportEvidence': copy.deepcopy(mapped),
+        'sourcePoseCameraReference': {'camera': {'bilateralAssignment': 'swapped'}},
+    }
+
+    assert _source_evidence_from_motion_space(stale_source) is None
+    assert _source_evidence_from_motion_space(mapped) == canonical
+    assert motion_space_support_evidence(payload) == mapped
+    assert not source_support_mapping_unresolved(payload)
+
+    changed_contact = copy.deepcopy(payload)
+    changed_contact['sourceFootSupportEvidence']['contacts'][0][
+        'contactMotion'] = 'airborne'
+    assert motion_space_support_evidence(changed_contact) == {}
+    assert source_support_mapping_unresolved(changed_contact)
+
+    changed_identity = copy.deepcopy(payload)
+    changed_identity['sourceFootSupportEvidence']['bodySupportObservation'][
+        'sourceVideoSha256'] = 'video-B'
+    assert motion_space_support_evidence(changed_identity) == {}
+    assert source_support_mapping_unresolved(changed_identity)
+
+    mismatched = copy.deepcopy(payload)
+    mismatched['motionSpaceSupportEvidence']['motionSpaceMapping'][
+        'sourceEvidenceSha256'] = '0' * 64
+    assert motion_space_support_evidence(mismatched) == {}
+    assert source_support_mapping_unresolved(mismatched)
+
+    legacy_fit = accepted_payload()
+    legacy_fit['sourcePoseCameraReference'] = payload['sourcePoseCameraReference']
+    legacy_fit['sourceFootSupportEvidence'] = stale_source
+    legacy_fit['motionSpaceSupportEvidence'] = mismatched['motionSpaceSupportEvidence']
+    assert not can_reuse_controlled_motion(legacy_fit)
+    _, report = controlled_motion.fit_controlled_motion(legacy_fit)
+    assert report['reason'] == 'source_support_mapping_unresolved'
+
+
 def test_postfit_stabilization_rebinds_fit_digest_and_preserves_source_evidence(monkeypatch):
     import copy
     from exercise_motion_pkg import controlled_motion, sequence_stabilization

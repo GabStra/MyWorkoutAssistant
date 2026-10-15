@@ -94,6 +94,52 @@ def _fit_support_evidence_identity(payload: dict[str, Any]) -> str:
     })
 
 
+def _recover_matching_cached_motion_support(payload: dict[str, Any], fallback_mapping: dict[str, Any]):
+    """Return a self-validating rig view tied to a stale source mapping digest."""
+    cached = payload.get("motionSpaceSupportEvidence")
+    if not isinstance(cached, dict):
+        return None
+    cached_mapping = cached.get("motionSpaceMapping")
+    if not isinstance(cached_mapping, dict):
+        return None
+    if (fallback_mapping.get("bilateralAssignment") != "swapped"
+            or cached_mapping.get("bilateralAssignment") != "swapped"
+            or fallback_mapping.get("sourceEvidenceSha256")
+            != cached_mapping.get("sourceEvidenceSha256")
+            or _source_evidence_from_motion_space(cached) is None):
+        return None
+    fallback = payload.get("sourceFootSupportEvidence")
+    if not isinstance(fallback, dict):
+        return None
+    # The known bug replaced only bodySupport during materialization. Any
+    # other difference may be a newer source contact/patch/identity update and
+    # must remain authoritative rather than being overwritten by the cache.
+    def source_fields(evidence: dict[str, Any]) -> dict[str, Any]:
+        fields = deepcopy(evidence)
+        fields.pop("bodySupport", None)
+        fields.pop("motionSpaceMapping", None)
+        return fields
+
+    if source_fields(fallback) != source_fields(cached):
+        return None
+    camera_reference = payload.get("sourcePoseCameraReference") or {}
+    camera = camera_reference.get("camera") if isinstance(camera_reference, dict) else None
+    if not isinstance(camera, dict) or camera.get("bilateralAssignment") != "swapped":
+        return None
+    return cached
+
+
+def source_support_mapping_unresolved(payload: dict[str, Any]) -> bool:
+    """Block reuse/refitting when a mapped source view lost its canonical proof."""
+    source = payload.get("sourceFootSupportEvidence")
+    if not isinstance(source, dict):
+        return False
+    mapping = source.get("motionSpaceMapping")
+    if not isinstance(mapping, dict) or _source_evidence_from_motion_space(source) is not None:
+        return False
+    return _recover_matching_cached_motion_support(payload, mapping) is None
+
+
 @contextmanager
 def fit_motion_space_support_evidence_scope(payload: dict[str, Any], evidence: dict[str, Any]):
     """Expose materialized rig-side support only during this fit call tree."""
@@ -137,10 +183,19 @@ def motion_space_support_evidence(
         if source_evidence is not None:
             return evidence if camera_is_swapped else source_evidence
         # A stale or modified motion-space view must not silently constrain the
-        # opposite rig side. Recover canonical evidence from the payload when
-        # possible; otherwise disable these unverified constraints.
+        # opposite rig side. A valid, separately stored mapped view can recover
+        # the original source evidence only when both views carry the same
+        # original source digest. This handles older artifacts that overwrote
+        # the canonical field after materialization without weakening the
+        # bilateral mapping check.
         fallback = payload.get("sourceFootSupportEvidence")
-        if not isinstance(fallback, dict) or isinstance(fallback.get("motionSpaceMapping"), dict):
+        fallback_mapping = (fallback.get("motionSpaceMapping")
+                            if isinstance(fallback, dict) else None)
+        if isinstance(fallback_mapping, dict):
+            recovered = _recover_matching_cached_motion_support(payload, fallback_mapping)
+            if recovered is not None:
+                return recovered
+        if not isinstance(fallback, dict) or isinstance(fallback_mapping, dict):
             return {}
         evidence = fallback
 
@@ -164,15 +219,30 @@ def motion_space_support_evidence(
     return mapped
 
 
+def has_continuous_ankle_support(evidence, side):
+    """Observed pitch changes or flight supersede a legacy whole-clip ankle pin."""
+    foot = ((evidence or {}).get('feet') or {}).get(side) or {}
+    states = (((evidence or {}).get('footPatchEvidence') or {}).get('feet') or {}).get(side) or {}
+    if (((evidence or {}).get('footPatchEvidence') or {}).get('available') is True
+            and foot.get('reconstructed3dSupport')):
+        return False
+    return bool(foot.get('continuousSupport') and is_stationary_contact(foot)
+                and not any(state in {'toe_only', 'heel_only', 'airborne'}
+                            for state in states.get('states') or []))
+
+
 def motion_support_contacts(evidence: dict[str, Any] | None) -> list[dict[str, Any]]:
     """Normalize modern and legacy support evidence without inventing contacts."""
     evidence = evidence or {}
     contacts = list(evidence.get("contacts") or []) + list(evidence.get("supportContacts") or [])
     for side, record in (evidence.get("feet") or {}).items():
-        if isinstance(record, dict) and record.get("continuousSupport"):
+        if isinstance(record, dict) and has_continuous_ankle_support(evidence, side):
             contacts.append({**record, "jointName": record.get("jointName", f"{side}_ankle"),
                              "startRatio": 0.0, "endRatio": 1.0})
-    return [contact for contact in contacts if isinstance(contact, dict)]
+    patch_available = (evidence.get('footPatchEvidence') or {}).get('available') is True
+    return [contact for contact in contacts if isinstance(contact, dict)
+            and not (patch_available and contact.get('reconstructed3dSupport')
+                     and str(contact.get('jointName') or '').endswith(('_ankle', '_foot', '_heel')))]
 
 
 def is_stationary_contact(contact: dict[str, Any]) -> bool:
@@ -270,7 +340,8 @@ def vertical_only_contact_mask(evidence, names, count):
     result = np.zeros((count, len(names)), dtype=bool)
     for contact in motion_support_contacts(evidence):
         if (contact.get('verticalOnly') is not True
-                and contact.get('contactState') != 'toe_only'):
+                and (contact.get('contactState') != 'toe_only'
+                     or contact.get('verticalOnly') is False)):
             continue
         if not is_stationary_contact(contact) or contact.get('contactState') == 'heel_only':
             continue

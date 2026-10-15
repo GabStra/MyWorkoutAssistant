@@ -475,7 +475,8 @@ def test_fit_support_materialization_removes_stale_full_clip_foot_anchors():
         frame['joints']['left_foot'][0] += frame_index * .01
     from exercise_motion_pkg.support_geometry import validate_support_geometry
     support = validate_support_geometry(moving_candidate)
-    assert support['required'] is False
+    assert support['required'] and not support['passed']
+    assert support['unresolvedSides'] == ['right']
     assert moving_candidate['sourceFootSupportEvidence']['bodySupport'] == (
         payload['sourceFootSupportEvidence']['bodySupport']
     )

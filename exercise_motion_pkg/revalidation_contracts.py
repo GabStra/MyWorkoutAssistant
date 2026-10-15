@@ -7,8 +7,9 @@ from typing import Any
 
 from exercise_motion_pkg.youtube import (
     EXERCISE_MOTION_CONTRACT_CACHE_VERSION, ExerciseEntry,
-    exercise_motion_contract_has_specific_topology, exercise_motion_contract_is_usable,
+    exercise_motion_contract_is_usable,
     exercise_motion_contract_uses_candidate_evidence,
+    normalize_definition_exercise_motion_contract_response,
 )
 
 
@@ -23,7 +24,7 @@ class RevalidationContractCache:
                 contract = payload.get('contract')
                 if payload.get('schemaVersion') != EXERCISE_MOTION_CONTRACT_CACHE_VERSION or not isinstance(contract, dict):
                     continue
-                if exercise_motion_contract_uses_candidate_evidence(contract) or not exercise_motion_contract_has_specific_topology(contract):
+                if exercise_motion_contract_uses_candidate_evidence(contract):
                     continue
                 key = str(contract.get('exerciseName') or '').casefold().strip()
                 self._contracts.setdefault(key, []).append({**contract, 'cachePath': str(path), 'cacheStatus': 'reused'})
@@ -35,6 +36,15 @@ class RevalidationContractCache:
         for contract in self._contracts.get(name.casefold().strip(), []):
             if contract.get('motionContext', {}) != context:
                 continue
+            if contract.get('contractScope') == 'definition_only' and contract.get('contractPolicyVersion') == 34:
+                try:
+                    spec = contract.get('observableMotionSpec') or {}
+                    contract = normalize_definition_exercise_motion_contract_response(
+                        {**contract, 'primaryAxis': spec.get('primaryAxis'),
+                         'motionPattern': spec.get('motionPattern')},
+                        exercise=exercise, source='migrated_revalidation_contract')
+                except (ValueError, AttributeError):
+                    continue
             if exercise_motion_contract_is_usable(contract, exercise=exercise):
                 return dict(contract)
         return None

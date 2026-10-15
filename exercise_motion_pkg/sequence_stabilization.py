@@ -120,15 +120,19 @@ def denoise_features(features, fps):
                     'policy': 'animation_bandwidth_v3'}
 
 
-def contact_mask(payload, names, count):
+def contact_mask(payload, names, count, *, support_evidence=None):
     pinned = np.zeros((count, len(names)), dtype=bool)
-    for contact in motion_support_contacts(motion_space_support_evidence(payload)):
+    if support_evidence is None:
+        from .body_support_observation import materialize_stationary_sole_support
+        support_evidence = materialize_stationary_sole_support(payload)
+    for contact in motion_support_contacts(support_evidence):
         if contact.get('contactState') == 'heel_only':
             # Heel-only is not a pin in this shoe model. Skip it so other
             # observed plants can still constrain the retained interval.
             continue
         if (contact.get('verticalOnly') is True
-                or contact.get('contactState') == 'toe_only'):
+                or (contact.get('contactState') == 'toe_only'
+                    and contact.get('verticalOnly') is not False)):
             # Height-only contacts constrain the surface normal. They must not
             # become full XYZ pins in the sequence-wide tangential projector.
             continue
@@ -148,9 +152,12 @@ def contact_mask(payload, names, count):
 
 
 def pose_digest(payload):
+    # Temporary fit constraints must not change the stored artifact's identity.
+    support = motion_space_support_evidence(
+        payload, evidence_override=payload.get('sourceFootSupportEvidence') or {})
     contents = {'fps': payload.get('fps'), 'jointNames': payload.get('jointNames'),
                 'frames': [{k: f.get(k) for k in ('timeSec', 'joints', 'sourceJoints', 'cameraPlacementReferenceJoints', 'controlledSourceJoints', 'controlledArticulationReferenceJoints', 'correctedAnatomicalReferenceJoints', 'supportCorrectedReferenceJoints', 'supportContactReferenceJoints', 'supportAlignmentReferenceJoints')} for f in payload.get('frames', [])],
-                'supports': motion_space_support_evidence(payload), 'floor': payload.get('renderFloorY'),
+                'supports': support, 'floor': payload.get('renderFloorY'),
                 'fixedRig': payload.get('fixedRig'), 'loop': payload.get('loop')}
     if 'anatomicalSourceRepair' in payload:
         contents['anatomicalSourceRepair'] = payload['anatomicalSourceRepair']
@@ -200,10 +207,11 @@ def stabilize_exported_sequence(payload, *, max_evaluations=35, timeout_seconds=
         # relatively after the projection.
         report['inputPhysicalReasons'] = sorted({
             str(event.get('reason')) for event in (before.get('events') or [])})
-    pinned = contact_mask(payload, names, len(frames))
+    from .body_support_observation import materialize_stationary_sole_support
+    support_evidence = materialize_stationary_sole_support(payload)
+    pinned = contact_mask(payload, names, len(frames), support_evidence=support_evidence)
     if pinned is None:
         return payload, {**report, 'reason': 'unrepresented_heel_contact'}
-    support_evidence = motion_space_support_evidence(payload)
     vertical_mask = vertical_only_contact_mask(support_evidence, names, len(frames)) & ~pinned
     vertical_targets = points.copy()
     if np.any(vertical_mask):

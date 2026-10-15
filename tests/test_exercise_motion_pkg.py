@@ -14379,35 +14379,17 @@ def test_exercise_motion_contract_generation_prompt_is_structured_json_guidance(
         )
     )
 
-    assert "Describe one complete visible movement" in prompt
-    assert "Return minified JSON only" in prompt
-    assert "Use exactly these keys" in prompt
+    assert "Classify the requested exercise from its definition" in prompt
+    assert "before any video is selected" in prompt
     assert "completionMode" in prompt
-    assert "requiresReturnToStart" in prompt
-    assert "one-way target action" in prompt
-    assert "normally followed by assistance or a non-target reset" in prompt
     assert "distinct_end_state" in prompt
-    assert "final requiredPhases entry must explicitly describe returning" in prompt
-    assert "do not stop at the second side and omit its return" in prompt
-    assert "advisoryText" not in prompt
-    assert "validStartState" in prompt
+    assert "Do not emit validStartState, validEndState" in prompt
     assert "requiredPhases" in prompt
     assert "referenceRegions" in prompt
     assert "primaryAxis" in prompt
     assert "motionPattern" in prompt
-    assert "smallest region set that distinguishes the exercise" in prompt
-    assert "Do not add lowering, reracking, release, or reset" in prompt
-    assert "common instructional/demo form" in prompt
-    assert "set supportMode to any rather than guessing" in prompt
-    assert "Prefer any over an advanced support guess" in prompt
-    assert "supportMode describes the loaded body posture" in prompt
-    assert "supporting the body from behind or beside the hips" in prompt
-    assert "inverted over hands planted on the floor is hand-supported, not hanging" in prompt
-    assert "Use hanging only when the hands are above the head" in prompt
-    assert "suspended torso from beside or below the hips" in prompt
-    assert "hands planted on the floor, use below_hips rather than above_head" in prompt
-    assert "Every item in requiredAccessories remains required" in prompt
-    assert "serve that role at the appropriate phase of normal execution" in prompt
+    assert "Do not describe or guess exact start/end posture" in prompt
+    assert "Preserve named variants and required accessories" in prompt
     assert "body-only skeleton animation" not in prompt
 
 
@@ -14425,36 +14407,46 @@ def test_exercise_motion_contract_prompt_surfaces_required_accessory_names() -> 
         )
     )
 
-    assert (
-        "Required accessories that must serve their authoritative roles at the appropriate phase: Pull-Up Station"
-        in prompt
-    )
-    assert "Target exercise: Windshield Wiper (using Pull-Up Station)" in prompt
+    assert "Target exercise: Windshield Wiper" in prompt
+    assert '"name": "Pull-Up Station"' in prompt
 
 
 def test_exercise_motion_contract_prompt_keeps_rack_setup_role_out_of_rep_phases() -> None:
-    prompt = build_exercise_motion_contract_prompt(
-        ExerciseEntry(
-            exercise_id="floor-press",
-            name="Barbell Floor Press",
-            slug="barbell-floor-press",
-            motion_context={
-                "primaryEquipment": {"type": "BARBELL", "name": "Barbell"},
-                "requiredAccessories": [
-                    {
-                        "type": "ACCESSORY",
-                        "name": "Squat Rack",
-                        "capabilities": ["RACKED_BAR_SUPPORT"],
-                    },
-                ],
-            },
-        )
+    exercise = ExerciseEntry(
+        exercise_id="floor-press",
+        name="Barbell Floor Press",
+        slug="barbell-floor-press",
+        motion_context={
+            "primaryEquipment": {"type": "BARBELL", "name": "Barbell"},
+            "requiredAccessories": [
+                {
+                    "type": "ACCESSORY",
+                    "name": "Squat Rack",
+                    "capabilities": ["RACKED_BAR_SUPPORT"],
+                },
+            ],
+        },
     )
+    prompt = build_exercise_motion_contract_prompt(exercise)
 
-    assert "Required accessories that must serve their authoritative roles at the appropriate phase: Squat Rack" in prompt
-    assert "RACKED_BAR_SUPPORT accessories (Squat Rack) support a loaded bar at its required setup/start/end height" in prompt
-    assert "do not require rack contact during the repetition" in prompt
-    assert "Do not add setup, unracking, reracking, or fixture contact as required exercise action phases" in prompt
+    assert '"name": "Squat Rack"' in prompt
+    assert '"RACKED_BAR_SUPPORT"' in prompt
+    assert "Do not describe or guess exact start/end posture" in prompt
+    contract = {
+        "exerciseName": exercise.name,
+        "advisoryText": "Complete one Barbell Floor Press execution.",
+        "motionContext": exercise.motion_context,
+        "contractScope": "definition_only",
+    }
+    candidate = YouTubeCandidate(
+        url="https://example.test/press", video_id="press", title="Press demo",
+        channel=None, duration_seconds=10, view_count=None, upload_date=None,
+        description_snippet=None, thumbnail=None,
+    )
+    review_prompt = build_candidate_vision_prompt(exercise.name, candidate, contract)
+    assert "Rack setup accessory: Squat Rack" in review_prompt
+    assert "do not require rack contact within the movement-only chunk" in review_prompt
+    assert "Required support/accessories: Squat Rack" not in review_prompt
 
 
 def test_exercise_motion_contract_prompt_surfaces_primary_equipment_as_required() -> None:
@@ -14475,14 +14467,9 @@ def test_exercise_motion_contract_prompt_surfaces_primary_equipment_as_required(
         )
     )
 
-    assert (
-        "Target exercise: Dumbbell Pullover (using Dumbbell Pair, Adjustable Bench)"
-        in prompt
-    )
-    assert (
-        "Required primary equipment that the described movement must use exactly: Dumbbell Pair"
-        in prompt
-    )
+    assert "Target exercise: Dumbbell Pullover" in prompt
+    assert '"name": "Dumbbell Pair"' in prompt
+    assert '"name": "Adjustable Bench"' in prompt
 
 
 def _usable_motion_contract(
@@ -14947,6 +14934,7 @@ def test_prefetch_exercise_motion_contracts_reuses_one_parallel_ranker_and_cache
                         {
                             "movementType": "repetition",
                             "groundContactMode": "continuous",
+                            "completionMode": "return_to_start",
                             **pose_contract_fields(),
                             "validStartState": "upright start",
                         "validEndState": "upright start",
@@ -15022,7 +15010,7 @@ def test_exercise_motion_contract_prompt_requests_natural_completion_policy() ->
     assert "completionMode" in prompt
     assert "return_to_start" in prompt
     assert "distinct_end_state" in prompt
-    assert "natural finish" in prompt
+    assert "natural completion boundary" in prompt
     assert "body-only skeleton animation" not in prompt
     assert "Skeleton:" not in prompt
 
@@ -15134,16 +15122,16 @@ def test_unrequested_title_variant_terms_are_deterministic(
         assert expected in terms
 
 
-def test_two_scale_identity_requires_explicit_required_equipment() -> None:
-    assert bake_and_rank_module.two_scale_identity_equipment_consistent(
+def test_two_scale_equipment_gate_requires_explicit_required_equipment() -> None:
+    assert bake_and_rank_module.two_scale_required_equipment_observed(
         {"visibleEquipment": ["dumbbells"]},
         equipment="dumbbell",
     )
-    assert not bake_and_rank_module.two_scale_identity_equipment_consistent(
+    assert not bake_and_rank_module.two_scale_required_equipment_observed(
         {"visibleEquipment": ["kettlebell"]},
         equipment="dumbbell",
     )
-    assert not bake_and_rank_module.two_scale_identity_equipment_consistent(
+    assert not bake_and_rank_module.two_scale_required_equipment_observed(
         {"observedAction": "performer appears to hold the requested implement"},
         equipment="dumbbell",
     )
@@ -16520,6 +16508,7 @@ def test_exercise_motion_contract_generation_uses_bounded_token_budget() -> None
                     ),
                     "movementType": "repetition",
                     "groundContactMode": "none",
+                    "completionMode": "return_to_start",
                     "requiresReturnToStart": True,
                     **pose_contract_fields(
                         support_mode="hanging",
@@ -16553,7 +16542,7 @@ def test_exercise_motion_contract_generation_uses_bounded_token_budget() -> None
     )
 
     assert contract["status"] == "generated"
-    assert contract["advisoryText"].startswith("Source: hanging from the bar before the pull")
+    assert contract["advisoryText"] == "Target exercise: Weighted Pull-Ups"
     assert contract["movementType"] == "repetition"
     assert contract["requiresReturnToStart"] is True
     assert contract["completionMode"] == "return_to_start"
@@ -16565,7 +16554,7 @@ def test_exercise_motion_contract_generation_uses_bounded_token_budget() -> None
     assert captured["top_k"] == 0
     assert captured["frame_paths"] == []
     assert "Weighted Pull-Ups" in str(captured["prompt"])
-    assert "Return minified JSON only" in str(captured["prompt"])
+    assert "Return one minified JSON object" in str(captured["prompt"])
 
 
 def test_exercise_motion_contract_generation_falls_back_to_direct_mode() -> None:
@@ -16586,6 +16575,7 @@ def test_exercise_motion_contract_generation_falls_back_to_direct_mode() -> None
                 {
                     "movementType": "repetition",
                     "groundContactMode": "continuous",
+                    "completionMode": "return_to_start",
                     **pose_contract_fields(),
                     "validStartState": "standing upright before the squat",
                     "validEndState": "standing upright after the squat",
@@ -16614,7 +16604,7 @@ def test_exercise_motion_contract_generation_falls_back_to_direct_mode() -> None
     assert contract["status"] == "generated"
     assert contract["generationMode"] == "direct"
     assert contract["generationFallbackReasons"] == [
-        "thinking: exercise motion contract payload must include plain guidance text."
+        "thinking: exercise definition contract needs a movement type"
     ]
 
 
@@ -16630,7 +16620,7 @@ def test_exercise_motion_contract_generation_retries_independently_after_invalid
             if len(prompts) == 1:
                 return json.dumps(
                     {
-                        "movementType": "repetition",
+                        "movementType": "unknown",
                         "groundContactMode": "continuous",
                         "completionMode": "return_to_start",
                         "requiresReturnToStart": True,
@@ -16685,11 +16675,11 @@ def test_exercise_motion_contract_generation_retries_independently_after_invalid
     assert contract["completionMode"] == "distinct_end_state"
     assert contract["requiresReturnToStart"] is False
     assert contract["generationFallbackReasons"] == [
-        "thinking: anatomically invalid support phrase: standing on knees"
+        "thinking: exercise definition contract needs a movement type"
     ]
 
 
-def test_exercise_motion_contract_generation_repairs_schema_label_posture_states() -> None:
+def test_exercise_motion_contract_generation_ignores_unsourced_posture_states() -> None:
     prompts: list[str] = []
 
     class FakeClient:
@@ -16751,12 +16741,11 @@ def test_exercise_motion_contract_generation_repairs_schema_label_posture_states
         ranker=FakeRanker(),
     )
 
-    assert len(prompts) == 3
-    assert "Do not put the JSON inside advisoryText" in prompts[-1]
-    assert "Do not write schema labels such as supportMode" in prompts[-1]
+    assert len(prompts) == 1
     assert contract["status"] == "generated"
-    assert contract["generationMode"] == "direct_repair"
-    assert contract["validStartState"].startswith("standing upright")
+    assert contract["generationMode"] == "thinking"
+    assert contract["contractScope"] == "definition_only"
+    assert "validStartState" not in contract
 
 
 def test_contract_normalization_rejects_schema_objects_without_explicit_text() -> None:
@@ -17219,7 +17208,7 @@ def test_normalize_exercise_motion_contract_repairs_schema_leaking_phase_labels(
     assert youtube_module.exercise_motion_contract_quality_issues(contract) == []
 
 
-def test_required_phase_length_limit_keeps_a_complete_sentence_boundary() -> None:
+def test_required_phase_keeps_the_complete_movement_description() -> None:
     phase = (
         "Return to start: Stand with dumbbells at sides, elbows down. "
         "Pull dumbbells upward along the torso by leading with elbows, keeping them close to the body. "
@@ -17229,9 +17218,8 @@ def test_required_phase_length_limit_keeps_a_complete_sentence_boundary() -> Non
     normalized = youtube_module.normalize_required_phase_labels([phase])
 
     assert len(normalized) == 1
-    assert len(normalized[0]) <= 180
-    assert normalized[0].endswith("body.")
-    assert "Continue until" not in normalized[0]
+    assert normalized[0] == phase.rstrip(".")
+    assert "Continue until" in normalized[0]
 
 
 def test_candidate_vision_prompt_requires_accessory_support_role() -> None:
@@ -17288,6 +17276,32 @@ def test_source_pose_endpoint_contract_rejects_overhead_split_when_front_rack_st
     mismatches = {(item["endpoint"], item["field"]) for item in validation["mismatches"]}
     assert ("start", "handHeight") in mismatches
     assert ("start", "stance") in mismatches
+
+
+def test_definition_contract_preserves_explicit_named_endpoint_requirement_without_pose_fields() -> None:
+    from exercise_motion_pkg.youtube import normalize_definition_exercise_motion_contract_response
+
+    exercise = ExerciseEntry(exercise_id="kneeling-press", name="Kneeling Press", slug="kneeling-press")
+    contract = normalize_definition_exercise_motion_contract_response(
+        {
+            "movementType": "repetition", "completionMode": "return_to_start",
+            "groundContactMode": "continuous", "primaryMovingRegions": ["upper_limb"],
+            "referenceRegions": ["torso"], "primaryAxis": "vertical",
+            "motionPattern": "joint_travel",
+        }, exercise=exercise, source="llm",
+    )
+    endpoints = {
+        "available": True,
+        "start": {"supportMode": "standing"},
+        "end": {"supportMode": "standing"},
+    }
+
+    validation = bake_and_rank_module.validate_source_pose_endpoints_against_contract(endpoints, contract)
+
+    assert "startPoseConstraints" not in contract
+    assert validation["passed"] is False
+    assert any(item["field"] == "supportMode" and item["expected"] == "kneeling"
+               for item in validation["blockingMismatches"])
 
 
 def test_source_pose_endpoint_contract_accepts_hinged_below_hip_rack_pull_boundary() -> None:
@@ -18130,6 +18144,7 @@ def test_bake_contract_generation_uses_shared_budget_and_direct_fallback(tmp_pat
             {
                 "movementType": "repetition",
                 "groundContactMode": "continuous",
+                "completionMode": "return_to_start",
                 **pose_contract_fields(),
                 "validStartState": "standing upright before the squat",
                 "validEndState": "standing upright after the squat",
@@ -18151,7 +18166,7 @@ def test_bake_contract_generation_uses_shared_budget_and_direct_fallback(tmp_pat
     assert contract["exerciseMotionContractStatus"] == "generated_on_demand"
     assert contract["generationMode"] == "direct"
     assert contract["generationFallbackReasons"] == [
-        "thinking: ValueError: exercise motion contract payload must include plain guidance text."
+        "thinking: ValueError: exercise definition contract needs a movement type"
     ]
 
 
@@ -34713,6 +34728,8 @@ def test_exercise_motion_contract_resolver_generates_on_demand_and_caches_per_ex
         return json.dumps(
                 {
                     "movementType": "repetition",
+                    "groundContactMode": "continuous",
+                    "completionMode": "return_to_start",
                     "requiresReturnToStart": True,
                     **pose_contract_fields(hand_height="shoulder_chest"),
                     "validStartState": "standing with the barbell on the upper back",
@@ -34770,20 +34787,18 @@ def test_exercise_motion_contract_resolver_generates_on_demand_and_caches_per_ex
     assert first is not None
     assert candidate.candidate["exerciseMotionContract"] is first
     assert first["exerciseMotionContractStatus"] == "generated_on_demand"
-    assert "squat descent; bottom position; ascent back to standing" in first["advisoryText"]
-    assert "front-rack squats" in first["advisoryText"]
+    assert "Complete one Barbell Back Squat execution" in first["advisoryText"]
+    assert "bottom position" not in first["advisoryText"]
+    assert "front-rack squats" not in first["advisoryText"]
     assert len(prompts) == 1
     assert disable_reasoning_values == [False]
     assert temperatures == [0.0]
     assert top_ps == [1.0]
     assert top_ks == [0]
-    assert "Describe one complete visible movement" in prompts[0]
+    assert "Classify the requested exercise from its definition" in prompts[0]
     assert "Target exercise: Barbell Back Squat" in prompts[0]
-    assert (
-        "Required accessories that must serve their authoritative roles at the appropriate phase: Squat Rack"
-        in prompts[0]
-    )
-    assert "Treat a named support or surface qualifier as part of the target movement" in prompts[0]
+    assert '"name": "Squat Rack"' in prompts[0]
+    assert "Do not describe or guess exact start/end posture" in prompts[0]
 
 
 def test_exercise_motion_contract_resolver_reuses_candidate_contract_without_llm(
@@ -46146,6 +46161,7 @@ def write_camera_stability_test_video(
     camera_pan: bool,
     textured_background: bool = True,
     fps: int = 30,
+    camera_return: bool = False,
 ) -> None:
     import cv2  # type: ignore
 
@@ -46172,6 +46188,9 @@ def write_camera_stability_test_video(
         frame_total = fps * 4
         for frame_index in range(frame_total):
             camera_offset = int(round(180 * frame_index / max(1, frame_total - 1))) if camera_pan else 0
+            if camera_pan and camera_return:
+                phase = frame_index / max(1, frame_total - 1)
+                camera_offset = int(round(45 * (1 - abs(2 * phase - 1))))
             frame = canvas[:, camera_offset : camera_offset + width].copy()
             body_offset = int(round(12 * math.sin(frame_index / 8.0)))
             cv2.rectangle(frame, (130, 45 + body_offset), (190, 155 + body_offset), (20, 40, 230), -1)
@@ -46219,6 +46238,30 @@ def test_background_camera_stability_rejects_sustained_camera_pan(tmp_path: Path
     assert scene["classification"] == "unstable"
     assert scene["passed"] is False
     assert "source_scene_unstable_camera" in scene["rejectionReasons"]
+
+
+def test_background_camera_stability_rejects_pan_that_returns_to_start(tmp_path: Path) -> None:
+    video_path = tmp_path / "camera-return.mp4"
+    write_camera_stability_test_video(video_path, camera_pan=True, camera_return=True)
+    report = camera_stability_module.analyze_video_scene_camera_stability(
+        video_path,
+        scene_windows=[DetectionWindow(index=0, start_seconds=0.0, end_seconds=4.0)],
+        pose_payload=camera_stability_pose_mask_payload(),
+    )
+    scene = report["scenes"][0]
+    assert scene["netTranslationRatio"] < 0.035
+    assert not any(camera_stability_module.is_confident_strong_camera_motion_step(pair)
+                   for pair in scene["pairs"] if pair.get("status") == "ok")
+    assert scene["maximumTranslationExcursionRatio"] >= 0.035
+    assert scene["classification"] == "unstable"
+    assert "sustained_camera_translation" in scene["classificationReasons"]
+    candidate = bake_and_rank_module.SourceCutCandidate(
+        candidate_id="A", window=DetectionWindow(index=0, start_seconds=0.0, end_seconds=4.0),
+        frame_paths=[Path("candidate.jpg")], chunking={"strategy": "kinematic_cycle"},
+        visual_integrity=bake_and_rank_module.merge_source_cut_camera_stability(
+            {"passed": True, "rejectionReasons": []}, scene),
+    )
+    assert not bake_and_rank_module.source_cut_candidate_eligible_for_vlm(candidate)
 
 
 def test_background_camera_stability_is_fail_open_without_trackable_background(tmp_path: Path) -> None:

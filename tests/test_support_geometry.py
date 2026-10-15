@@ -217,7 +217,7 @@ def test_support_requirements_do_not_freeze_active_torso_or_standing_exercises()
     current = {}
     declare_support_requirements(current, {'primaryMovingRegions': ['elbows'],
         'referenceRegions': ['torso'], 'startPoseConstraints': {'supportMode': 'lying'}})
-    assert not validate_support_geometry(current)['passed']
+    assert validate_support_geometry(current)['passed']  # Contract posture alone does not establish contact.
 
 
 def test_rebasing_support_does_not_rotate_free_arms_with_the_spine():

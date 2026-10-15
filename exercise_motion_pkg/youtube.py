@@ -1086,7 +1086,7 @@ class YouTubeRankingSettings:
     rank_with_vision: bool = False
     exercise_name_rewrite_enabled: bool = True
     exercise_motion_contract_enabled: bool = True
-    exercise_motion_contract_critic_enabled: bool = True
+    exercise_motion_contract_critic_enabled: bool = False
     exercise_motion_contract_cache_dir: Path | None = None
     semantic_gate_enabled: bool = False
     semantic_gate_candidates_per_exercise: int | None = 24
@@ -2698,7 +2698,7 @@ def youtube_query_planning_context(
 ) -> dict[str, Any]:
     context = motion_context if isinstance(motion_context, dict) else {}
     contract = motion_contract if isinstance(motion_contract, dict) else {}
-    return {
+    planning = {
         "primaryEquipment": context.get("primaryEquipment"),
         "requiredAccessories": context.get("requiredAccessories"),
         "exerciseType": context.get("exerciseType"),
@@ -2710,6 +2710,7 @@ def youtube_query_planning_context(
         "mustBeVisibleRegions": contract.get("mustBeVisibleRegions"),
         "existingAliases": contract.get("youtubeQueryAliases"),
     }
+    return {key: value for key, value in planning.items() if value is not None}
 
 
 def parse_deepseek_query_payload(raw: str, *, max_queries: int) -> list[str]:
@@ -4384,147 +4385,36 @@ def single_dumbbell_naming_requirement(exercise_name: str) -> str:
 
 def build_exercise_motion_contract_prompt(exercise: ExerciseEntry) -> str:
     context_json = json.dumps(exercise.motion_context, ensure_ascii=True, sort_keys=True)
-    primary_equipment = exercise.motion_context.get("primaryEquipment")
-    primary_equipment_name = (
-        str(primary_equipment.get("name") or primary_equipment.get("type") or "").strip()
-        if isinstance(primary_equipment, dict)
-        else ""
-    )
-    required_accessories = exercise.motion_context.get("requiredAccessories")
-    required_accessory_names = [
-        str(accessory.get("name") or accessory.get("type") or "").strip()
-        for accessory in required_accessories
-        if isinstance(accessory, dict)
-        and str(accessory.get("name") or accessory.get("type") or "").strip()
-    ] if isinstance(required_accessories, list) else []
-    required_accessories_line = (
-        "Required accessories that must serve their authoritative roles at the appropriate phase: "
-        + ", ".join(required_accessory_names)
-        if required_accessory_names
-        else "Required accessories: none specified"
-    )
-    rack_support_accessories = [
-        str(accessory.get("name") or accessory.get("type") or "").strip()
-        for accessory in required_accessories
-        if isinstance(accessory, dict)
-        and isinstance(accessory.get("capabilities"), list)
-        and "RACKED_BAR_SUPPORT" in {
-            str(capability).strip().upper()
-            for capability in accessory.get("capabilities", [])
-        }
-        and str(accessory.get("name") or accessory.get("type") or "").strip()
-    ] if isinstance(required_accessories, list) else []
-    required_context_names = [
-        name
-        for name in (primary_equipment_name, *required_accessory_names)
-        if name
-    ]
-    qualified_target_name = (
-        f"{exercise.name} (using {', '.join(required_context_names)})"
-        if required_context_names
-        else exercise.name
-    )
-    primary_equipment_line = (
-        f"Required primary equipment that the described movement must use exactly: {primary_equipment_name}"
-        if primary_equipment_name
-        else "Required primary equipment: none specified"
-    )
     return (
-        f"Target exercise: {qualified_target_name}\n"
-        f"{primary_equipment_line}\n"
-        f"{required_accessories_line}\n"
-        f"Motion context: {context_json}\n"
+        f"Target exercise: {exercise.name}\n"
+        f"Authoritative equipment and definition: {context_json}\n"
         f"{single_dumbbell_naming_requirement(exercise.name)}"
-        "Describe one complete visible movement for the exact named exercise.\n"
-        "Use the normal exercise definition. Do not guess mechanics from separate words in the name. "
-        "The normal definition is the common instructional/demo form, not an advanced progression, assistance variation, "
-        "or harder support of the same movement. Do not choose standing, seated, single-arm, band-assisted, or similar "
-        "qualifiers unless the exercise name or motion context names that qualifier. If support cannot be uniquely "
-        "determined from the name and context, set supportMode to any rather than guessing.\n"
-        "Treat a named support or surface qualifier as part of the target movement. When the name specifies a bench, "
-        "box, wall, rings, incline, decline, or similar support, describe how the body contacts or uses that support; "
-        "do not silently replace it with the common floor or standing form. For each required accessory, determine "
-        "whether it supports the body, anchors the movement, or is held as an implement from the target name and context.\n"
-        "validStartState is the posture before the first exercise-defining movement. requiredPhases lists every visible "
-        "phase in time order through the natural finish. Choose completionMode return_to_start only when one normal "
-        "execution visibly returns to the same posture. Choose distinct_end_state when one normal execution ends in a "
-        "different stable posture, such as a clean, snatch, jerk, jump onto a destination, or one-way transition. "
-        "A repeated exercise can still have a one-way target action: when the exercise-defining phase is an eccentric "
-        "lowering, release, ballistic action, dismount, or other action normally followed by assistance or a non-target "
-        "reset, choose distinct_end_state. Do not make that assistance or reset a required return phase merely because "
-        "the athlete may repeat the exercise afterward. "
-        "Decide this natural boundary before writing any phases: if athletes commonly catch themselves with the hands, "
-        "step down, drop an implement, receive assistance, or otherwise reset after the target action, that reset is not "
-        "proof of a return_to_start repetition. "
-        "When completionMode is return_to_start, the final requiredPhases entry must explicitly describe returning to "
-        "validStartState; for an alternating left/right repetition, do not stop at the second side and omit its return. "
-        "Do not add lowering, reracking, release, or reset merely to force a distinct finish back to the start.\n"
-        "Make validStartState, validEndState, and every required phase exercise-specific and visibly testable. "
-        "Name the relevant posture, implement position, support state, and joint/body action. Never use generic placeholders "
-        "such as stable exercise posture, move away, turning point, perform the action, or return through the action.\n"
-        "For a hold, carry, or transition, describe the distinct validEndState.\n"
-        "List setup and cleanup actions that must be outside the selected movement, such as approach, unrack, repositioning, rerack, release, or walking away.\n"
-        "Only list body regions that must be visible to recognize the movement. Use generic observable language, not coaching advice.\n"
-        "Describe the target-defining body motion with primaryMovingRegions, referenceRegions, primaryAxis, and motionPattern. "
-        "Use the smallest region set that distinguishes the exercise: for example, a shrug is shoulder travel relative to the torso, "
-        "not generic upper-limb motion. referenceRegions is the body region whose relationship to the moving region makes the action "
-        "recognizable; use an empty list only when no body-relative reference is meaningful. primaryAxis is the main anatomical travel "
-        "direction, not the camera direction. motionPattern must describe the visible relationship rather than the implement.\n"
-        "Return minified JSON only. No markdown table, code fence, timestamps, chain-of-thought, or explanation.\n"
-        "Return one top-level contract object. Do not put the JSON inside advisoryText, guidance, contract, or another string; "
-        "those are not output keys. validStartState and validEndState must describe the actual body posture in ordinary "
-        "anatomical prose. Do not write schema labels such as supportMode, handHeight, torsoOrientation, kneeState, or "
-        "stance into either state description. validStartState and validEndState must be strings, and requiredPhases "
-        "must be an array of strings. Do not return objects or structured metadata for these fields.\n"
-        "Use exactly these keys: movementType, groundContactMode, implementSupportMode, handRelationship, completionMode, requiresReturnToStart, validStartState, validEndState, startPoseConstraints, endPoseConstraints, requiredPhases, singleExecutionDurationSeconds, "
-        "primaryMovingRegions, referenceRegions, primaryAxis, motionPattern, mustBeVisibleRegions, excludedSetupOrCleanup.\n"
-        "movementType must be one of: repetition, cyclic, hold, carry, transition_sequence, unknown.\n"
-        "singleExecutionDurationSeconds is an object with minSec and maxSec estimating the visible duration of ONE "
-        "complete execution of the movement (one repetition, hold, carry distance, or full transition sequence), "
-        "excluding setup, rest, talking, and repeated repetitions. Use conservative values when unsure.\n"
-        "handRelationship must be rigid_pair only when both hands maintain fixed spacing on the same rigid implement throughout the movement; independent for separate implements or independently moving hands, single for one-hand use, none for no hand-equipment relationship, or unknown. Do not infer rigid_pair from bilateral motion or hands supporting equipment alone.\n"
-        "completionMode must be one of: return_to_start, distinct_end_state, stable_hold, active_travel, "
-        "representative_cycle, alternating_pair. requiresReturnToStart must agree with completionMode and is true only "
-        "for return_to_start.\n"
-        "startPoseConstraints and endPoseConstraints must each be objects with exactly supportMode, handHeight, "
-        "torsoOrientation, kneeState, stance. Use only: supportMode standing|seated|lying|kneeling|hanging|any; "
-        "handHeight above_head|shoulder_chest|hip|below_hips|any; torsoOrientation upright|hinged|horizontal|any; "
-        "kneeState extended|flexed|deep_flexion|any; stance narrow|shoulder_width|wide|split|any. Use any when a "
-        "constraint is not essential or cannot be inferred from the normal exercise definition. Prefer any over an "
-        "advanced support guess. These constraints "
-        "describe the visible body, not the unrendered implement. A lying, supine, or prone torso is horizontal, not "
-        "upright merely because it is straight or aligned with a bench. Never describe a kneeling posture as standing. "
-        "When shoulders, hips, and knees remain aligned while the body lowers, describe rotation about the knees rather "
-        "than a hip hinge.\n"
-        "supportMode describes the loaded body posture, not merely whether the feet touch a surface. Do not label a "
-        "body seated beside, suspended from, leaning on, or supported by the hands as standing just because the feet "
-        "also contact the floor. If the available posture labels do not accurately describe the exercise-defining "
-        "support relationship, use any. A body inverted over hands planted on the floor is hand-supported, not hanging; "
-        "use supportMode any and groundContactMode continuous when no more accurate support label is available. "
-        "Use hanging only when the hands are above the head and the body hangs below them. When the hands support a "
-        "suspended torso from beside or below the hips, use supportMode any and handHeight below_hips. "
-        "handHeight is the visible spatial relationship, not the anatomical arm position: for an inverted body with "
-        "hands planted on the floor, use below_hips rather than above_head. Otherwise, use "
-        "below_hips for hands supporting the body from behind or beside the hips, and any when occlusion makes it uncertain.\n"
-        "groundContactMode must be continuous when at least one body support normally remains on the floor, "
-        "intermittent when the movement intentionally contains airborne phases, or none when the body is hanging, suspended, swimming, or otherwise not floor-supported.\n"
-        "implementSupportMode describes how one rigid implement is supported during the exercise. Use hands_only when both hands define and carry the implement pose throughout, body_supported when the implement primarily rests on the hips, torso, shoulders, or back and the hands only stabilize it, mixed when support intentionally transfers between the body and both hands, external when a rack or machine owns its pose, or none when no single rigid two-hand implement is involved.\n"
-        "primaryMovingRegions and mustBeVisibleRegions may only contain: hands, elbows, shoulders, torso, head, hips, knees, feet, upper_limb, lower_limb.\n"
-        "referenceRegions uses the same region values. primaryAxis must be vertical, horizontal, depth, or any. "
-        "motionPattern must be joint_travel, body_toward_anchor, body_away_from_anchor, limb_toward_body, "
-        "limb_away_from_body, distal_limb_vertical, joint_flex_extend, or other. Do not use both primaryAxis any, "
-        "motionPattern other, and an empty referenceRegions list for a moving exercise; that combination is not testable enough.\n"
-        "Use joint_flex_extend when the target is elbow or knee articulation and the joint center should remain mostly "
-        "anchored while the distal limb rotates. Flexion closes the joint angle and extension opens it; do not describe "
-        "a lowering phase as extension when it visibly closes the elbow or knee angle.\n"
-        "Equipment and accessory context is part of the exact movement identity. Use it to distinguish seated, standing, supported, machine, and other adjacent variants, but do not invent a qualifier unsupported by the context. "
-        "Every item in requiredAccessories remains required by this exercise definition, not optional background context. Use its explicit capability or authoritative equipment-record role, and require it to serve that role at the appropriate phase of normal execution; do not choose a same-named movement variant that omits it.\n"
-        + (
-            f"RACKED_BAR_SUPPORT accessories ({', '.join(rack_support_accessories)}) support a loaded bar at its required setup/start/end height. Preserve that as a required setup or endpoint-support role, but do not require rack contact during the repetition. Do not add setup, unracking, reracking, or fixture contact as required exercise action phases unless the named exercise explicitly includes those actions.\n"
-            if rack_support_accessories
-            else "Do not turn required accessory setup, attachment, or storage into an exercise action phase unless the named exercise explicitly includes that action.\n"
-        )
-        + "A required accessory may be held, anchored, or used to support the body according to its authoritative role. Do not infer suspension, hanging, or a body-support posture from the accessory name alone. If its role or posture is not established, use supportMode any and avoid adding an unsupported posture requirement.\n"
+        "Classify the requested exercise from its definition, before any video is selected. "
+        "Describe only its movement type, natural completion boundary, broad body action, "
+        "and implement relationship. Preserve named variants and required accessories. "
+        "Do not describe or guess exact start/end posture, support contacts, stance, "
+        "joint angles, pauses, phase timing, or duration; those require source footage. "
+        "Do not emit validStartState, validEndState, startPoseConstraints, "
+        "endPoseConstraints, requiredPhases, or singleExecutionDurationSeconds.\n"
+        "Return one minified JSON object with exactly these keys: movementType, "
+        "groundContactMode, implementSupportMode, handRelationship, completionMode, "
+        "primaryMovingRegions, referenceRegions, primaryAxis, motionPattern, "
+        "mustBeVisibleRegions.\n"
+        "movementType: repetition|cyclic|hold|carry|transition_sequence. "
+        "completionMode: return_to_start|distinct_end_state|stable_hold|active_travel|"
+        "representative_cycle|alternating_pair. A movement ending after a distinct "
+        "one-way action is distinct_end_state even if the athlete later resets. "
+        "groundContactMode: continuous|intermittent|none.\n"
+        "handRelationship: rigid_pair only for both hands fixed on the same rigid "
+        "implement; independent for separate implements; single for one working "
+        "hand; none or unknown otherwise. implementSupportMode describes support "
+        "of one rigid implement: hands_only|body_supported|mixed|external|none. "
+        "Separate dumbbells or kettlebells have implementSupportMode none.\n"
+        "Regions: hands|elbows|shoulders|torso|head|hips|knees|feet|upper_limb|"
+        "lower_limb. primaryAxis: vertical|horizontal|depth|any. motionPattern: "
+        "joint_travel|body_toward_anchor|body_away_from_anchor|limb_toward_body|"
+        "limb_away_from_body|distal_limb_vertical|joint_flex_extend|other. "
+        "Use the smallest region set that identifies the action. No explanation."
     )
 
 
@@ -4586,25 +4476,15 @@ def _copy_contract_generation_metadata(
     return target
 
 
-def _apply_contract_critic_to_usable_draft(
+def _record_contract_critic_advice(
     *,
     contract: dict[str, Any],
     exercise: ExerciseEntry,
     settings: YouTubeRankingSettings,
     ranker: "LlamaCppVisionRanker",
-    started: float,
-) -> tuple[dict[str, Any] | None, list[dict[str, Any]], dict[str, Any] | None]:
-    """Critique a usable draft.
-
-    Returns ``(accepted_contract, critic_issues, repair_draft)``.
-    - accepted_contract is set when the draft is clean or a patch succeeds
-    - repair_draft is set when critic ops need a repair attempt
-    - critic_issues are recorded for repair prompts / final visibility
-    """
-    from .contract_critic import (
-        apply_contract_critic_patches,
-        critique_exercise_motion_contract,
-    )
+) -> dict[str, Any]:
+    """Keep unverified semantic suggestions separate from contract requirements."""
+    from .contract_critic import critique_exercise_motion_contract
 
     try:
         issues = critique_exercise_motion_contract(
@@ -4615,6 +4495,17 @@ def _apply_contract_critic_to_usable_draft(
             caption_kwargs=_contract_critic_caption_kwargs(ranker=ranker, settings=settings),
         )
     except Exception as exc:
+        from .vlm_errors import critical_vlm_interaction_error, vlm_error_payload
+        critical = critical_vlm_interaction_error(exc)
+        if critical is not None:
+            try:
+                error = json.loads(critical.details.get("body", "")).get("error", {})
+            except (ValueError, TypeError, AttributeError):
+                error = {}
+            # An incomplete advisory response does not invalidate a usable draft.
+            if isinstance(error, dict) and error.get("code") == "structured_output_failed":
+                contract["criticError"] = vlm_error_payload(exc)
+                return contract
         if is_critical_vlm_interaction_error(exc):
             add_vlm_context(
                 exc,
@@ -4623,29 +4514,12 @@ def _apply_contract_critic_to_usable_draft(
                 model=settings.llama_cpp_model,
             )
             raise
-        return contract, [], None
+        contract["criticError"] = vlm_error_payload(exc)
+        return contract
 
-    if not issues:
-        return contract, [], None
-
-    patched_payload, applied = apply_contract_critic_patches(contract, issues)
-    if not applied:
-        return None, issues, contract
-
-    try:
-        renormalized = normalize_exercise_motion_contract(
-            patched_payload,
-            exercise=exercise,
-            source="llm",
-        )
-    except Exception:
-        return None, issues, contract
-
-    _copy_contract_generation_metadata(renormalized, contract, started=started)
-    if exercise_motion_contract_is_usable(renormalized, exercise=exercise):
-        renormalized["criticAdjustments"] = applied
-        return renormalized, issues, None
-    return None, issues, renormalized
+    if issues:
+        contract["criticIssues"] = issues
+    return contract
 
 
 def generate_exercise_motion_contract_with_ranker(
@@ -4654,38 +4528,27 @@ def generate_exercise_motion_contract_with_ranker(
     settings: YouTubeRankingSettings,
     ranker: "LlamaCppVisionRanker",
 ) -> dict[str, Any]:
-    from .contract_critic import critic_issue_validation_texts
-
     started = time.monotonic()
     failed_attempts: list[str] = []
     rejected_drafts: list[dict[str, Any]] = []
     repair_draft: dict[str, Any] | None = None
-    usable_draft: dict[str, Any] | None = None
-    critic_issues: list[dict[str, Any]] = []
-    pending_critic_repair = False
     attempt_specs = (
         ("thinking", False, False),
         ("direct", True, False),
         ("direct_repair", True, True),
     )
     for attempt_mode, disable_reasoning, use_repair_draft in attempt_specs:
-        if pending_critic_repair and attempt_mode == "direct":
-            continue
-        if pending_critic_repair and attempt_mode != "direct_repair":
-            continue
         prompt = build_exercise_motion_contract_prompt(exercise)
         if use_repair_draft and repair_draft is not None:
             repair_issues = _exercise_motion_contract_generation_validation_issues(
                 repair_draft,
                 exercise=exercise,
             )
-            if critic_issues:
-                repair_issues = [*repair_issues, *critic_issue_validation_texts(critic_issues)]
             prompt += (
                 "\nThe previous draft failed deterministic contract validation. Correct the entire contract, not "
-                "only the quoted words. Re-evaluate the physical support posture, natural target-action boundary, "
-                "completionMode, requiresReturnToStart, end state, and required phases from normal exercise knowledge. "
-                "Do not preserve a return phase when it is normally assistance or reset.\n"
+                "only the quoted words. Re-evaluate the movement type, natural target-action boundary, "
+                "completion mode, body action, and implement relationship. "
+                "Do not add source-dependent posture or phases.\n"
                 f"Validation issues: {json.dumps(repair_issues, ensure_ascii=False)}\n"
                 "Previous draft: "
                 f"{json.dumps(exercise_motion_contract_for_prompt(repair_draft), ensure_ascii=False)}\n"
@@ -4717,7 +4580,9 @@ def generate_exercise_motion_contract_with_ranker(
         raw: Any = None
         try:
             raw = ranker.client.caption_images(**caption_kwargs)
-            contract = normalize_exercise_motion_contract_response(raw, exercise=exercise, source="llm")
+            contract = normalize_definition_exercise_motion_contract_response(
+                raw, exercise=exercise, source="llm",
+            )
             contract["motionContext"] = exercise.motion_context
             contract["model"] = settings.llama_cpp_model
             contract["generationMode"] = attempt_mode
@@ -4725,31 +4590,14 @@ def generate_exercise_motion_contract_with_ranker(
             if exercise_motion_contract_is_usable(contract, exercise=exercise):
                 if failed_attempts:
                     contract["generationFallbackReasons"] = failed_attempts
-                if pending_critic_repair:
-                    if critic_issues:
-                        contract["criticIssues"] = critic_issues
-                    return contract
                 if not settings.exercise_motion_contract_critic_enabled:
                     return contract
-                accepted, critic_issues, critic_repair = _apply_contract_critic_to_usable_draft(
+                return _record_contract_critic_advice(
                     contract=contract,
                     exercise=exercise,
                     settings=settings,
                     ranker=ranker,
-                    started=started,
                 )
-                if accepted is not None:
-                    return accepted
-                usable_draft = contract
-                repair_draft = critic_repair if critic_repair is not None else contract
-                if attempt_mode == "direct_repair":
-                    usable_draft["criticIssues"] = critic_issues
-                    usable_draft["generationElapsedSeconds"] = round_elapsed(
-                        time.monotonic() - started
-                    )
-                    return usable_draft
-                pending_critic_repair = True
-                continue
             failed_attempts.append(
                 f"{attempt_mode}: {exercise_motion_contract_unusable_reason(contract, exercise=exercise)}"
             )
@@ -4783,12 +4631,6 @@ def generate_exercise_motion_contract_with_ranker(
                     "rawResponse": exercise_motion_contract_raw_response_for_diagnostics(raw),
                 }
             )
-
-    if usable_draft is not None:
-        if critic_issues:
-            usable_draft["criticIssues"] = critic_issues
-        usable_draft["generationElapsedSeconds"] = round_elapsed(time.monotonic() - started)
-        return usable_draft
 
     return {
         "schemaVersion": 1,
@@ -4928,6 +4770,35 @@ def normalize_exercise_motion_contract_response(
     return normalize_exercise_motion_contract_text(payload, exercise=exercise, source=source)
 
 
+def normalize_definition_exercise_motion_contract_response(
+    payload: Any, *, exercise: ExerciseEntry, source: str,
+) -> dict[str, Any]:
+    """Keep only definition-level requirements before any video has been seen."""
+    raw = extract_exercise_motion_contract_json_payload(payload)
+    if raw is None:
+        raise ValueError("exercise definition contract must be a JSON object")
+    movement_type = normalize_exercise_movement_type(raw.get("movementType"))
+    if movement_type in (None, "unknown"):
+        raise ValueError("exercise definition contract needs a movement type")
+    completion_mode = normalize_exercise_completion_mode(raw.get("completionMode"))
+    if completion_mode is None:
+        raise ValueError("exercise definition contract needs a completion mode")
+    definition = {
+        key: raw[key]
+        for key in (
+            "movementType", "groundContactMode", "implementSupportMode", "handRelationship",
+            "completionMode", "primaryMovingRegions", "referenceRegions", "primaryAxis",
+            "motionPattern", "mustBeVisibleRegions",
+        )
+        if key in raw
+    }
+    definition.update({
+        "contractScope": "definition_only",
+        "requiresReturnToStart": completion_mode == "return_to_start",
+    })
+    return normalize_exercise_motion_contract(definition, exercise=exercise, source=source)
+
+
 def exercise_motion_contract_uses_candidate_evidence(contract: dict[str, Any]) -> bool:
     """Recognize legacy video-derived contracts at every contract admission boundary."""
     return (
@@ -4953,8 +4824,18 @@ def normalize_exercise_motion_contract(
     }:
         raise ValueError("Candidate observations cannot define the requested exercise contract.")
     validate_contract_text_shapes(payload)
-    if exercise.motion_context and not isinstance(payload.get("motionContext"), dict):
-        payload = {**payload, "motionContext": exercise.motion_context}
+    if payload.get("contractScope") == "definition_only":
+        definition_keys = {
+            "contractScope", "advisoryText", "movementType", "groundContactMode",
+            "implementSupportMode", "handRelationship", "completionMode",
+            "requiresReturnToStart", "primaryMovingRegions", "referenceRegions",
+            "primaryAxis", "motionPattern", "mustBeVisibleRegions",
+        }
+        payload = {key: value for key, value in payload.items() if key in definition_keys}
+        payload["advisoryText"] = f"Target exercise: {exercise.name}"
+    payload = {**payload, "exerciseName": exercise.name}
+    if exercise.motion_context:
+        payload["motionContext"] = exercise.motion_context
     structured_fields = normalized_exercise_motion_contract_fields(payload)
     structured_advisory_text = synthesize_exercise_motion_advisory_text(structured_fields)
     advisory_text = ""
@@ -4970,6 +4851,8 @@ def normalize_exercise_motion_contract(
         raise ValueError("exercise motion contract payload must include plain guidance text.")
     contract = normalize_exercise_motion_contract_text(advisory_text, exercise=exercise, source=source)
     contract.update(structured_fields)
+    if payload.get("contractScope") == "definition_only":
+        contract["contractScope"] = "definition_only"
     contract["contractPolicyVersion"] = EXERCISE_MOTION_CONTRACT_POLICY_VERSION
     return contract
 
@@ -5310,9 +5193,10 @@ def normalized_exercise_motion_contract_fields(payload: dict[str, Any]) -> dict[
     )
     if implement_support_mode is not None:
         fields["implementSupportMode"] = implement_support_mode
-    from .equipment_constraints import HAND_RELATIONSHIPS
+    from .equipment_constraints import HAND_RELATIONSHIPS, normalized_equipment_relationships
     if isinstance(payload.get("handRelationship"), str) and payload["handRelationship"] in HAND_RELATIONSHIPS:
         fields["handRelationship"] = payload["handRelationship"]
+    fields.update(normalized_equipment_relationships({**fields, "exerciseName": payload.get("exerciseName")}))
 
     explicit_completion_mode = normalize_exercise_completion_mode(
         first_contract_value(payload, "completionMode", "completion_mode", "movementCompletionMode")
@@ -5364,9 +5248,8 @@ def normalized_exercise_motion_contract_fields(payload: dict[str, Any]) -> dict[
         "boundaryRule": ("boundaryRule", "boundary"),
     }
     for output_key, aliases in string_fields.items():
-        text = cleaned_contract_string(
-            explicit_contract_text_value(first_contract_value(payload, *aliases)),
-            280,
+        text = complete_contract_description(
+            explicit_contract_text_value(first_contract_value(payload, *aliases)), 1024,
         )
         if text:
             fields[output_key] = text
@@ -5414,8 +5297,8 @@ def normalized_exercise_motion_contract_fields(payload: dict[str, Any]) -> dict[
     ):
         # The final observable phase already ends at validStartState; label that
         # existing phase explicitly instead of inventing an additional action.
-        required_phases[-1] = truncate_contract_phase_label(
-            f"Return to start: {required_phases[-1]}", 180,
+        required_phases[-1] = complete_contract_description(
+            f"Return to start: {required_phases[-1]}", 512,
         )
     if required_phases:
         fields["requiredPhases"] = required_phases
@@ -5486,7 +5369,7 @@ def normalized_exercise_motion_contract_fields(payload: dict[str, Any]) -> dict[
     return fields
 
 
-EXERCISE_MOTION_CONTRACT_POLICY_VERSION = 30
+EXERCISE_MOTION_CONTRACT_POLICY_VERSION = 35
 EXERCISE_MOTION_CONTRACT_CACHE_VERSION = 14
 
 
@@ -5585,6 +5468,35 @@ def load_cached_exercise_motion_contract(
 ) -> dict[str, Any] | None:
     cache_path = exercise_motion_contract_cache_path(exercise, settings)
     payload = _read_exercise_motion_contract_cache_payload(cache_path)
+    if payload is None and cache_path is not None:
+        previous_key = exercise_motion_contract_cache_key_payload(exercise, settings)
+        previous_key["contractPolicyVersion"] = 34
+        previous_path = exercise_motion_contract_cache_path_for_key_payload(
+            settings.exercise_motion_contract_cache_dir, previous_key,
+        )
+        previous_payload = _read_exercise_motion_contract_cache_payload(previous_path)
+        previous_contract = previous_payload.get("contract") if isinstance(previous_payload, dict) else None
+        if (isinstance(previous_contract, dict)
+                and previous_payload.get("schemaVersion") == EXERCISE_MOTION_CONTRACT_CACHE_VERSION
+                and previous_contract.get("contractScope") == "definition_only"
+                and not exercise_motion_contract_uses_candidate_evidence(previous_contract)
+                and previous_contract.get("contractPolicyVersion") == 34
+                and previous_contract.get("status") == "generated"
+                and previous_contract.get("exerciseName") == exercise.name
+                and previous_contract.get("motionContext", {}) == exercise.motion_context):
+            spec = previous_contract.get("observableMotionSpec")
+            spec = spec if isinstance(spec, dict) else {}
+            try:
+                migrated = normalize_definition_exercise_motion_contract_response(
+                    {**previous_contract, "primaryAxis": spec.get("primaryAxis"),
+                     "motionPattern": spec.get("motionPattern")},
+                    exercise=exercise, source="migrated_definition_contract",
+                )
+            except ValueError:
+                migrated = None
+            if migrated is not None:
+                cache_exercise_motion_contract(exercise, settings, migrated)
+                payload = _read_exercise_motion_contract_cache_payload(cache_path)
     if payload is None:
         # The key scheme changed, not necessarily the artifact: a legacy
         # prompt-keyed entry stays reusable when its contract was generated
@@ -5849,6 +5761,7 @@ def prefetch_exercise_motion_contracts(
 
 EXERCISE_MOTION_CONTRACT_PROMPT_FIELD_KEYS = (
     "contractPolicyVersion",
+    "contractScope",
     "motionContext",
     "movementType",
     "groundContactMode",
@@ -5863,6 +5776,7 @@ EXERCISE_MOTION_CONTRACT_PROMPT_FIELD_KEYS = (
     "referenceRegions",
     "mustBeVisibleRegions",
     "handRelationship",
+    "implementSupportMode",
     "allowedExerciseTransitions",
     "excludedSetupOrCleanup",
     "boundaryRule",
@@ -5989,21 +5903,12 @@ def cleaned_contract_string_list(value: Any, *, limit: int, item_limit: int) -> 
     return cleaned
 
 
-def truncate_contract_phase_label(value: str, limit: int) -> str:
-    """Bound phase text without cutting through a word or complete sentence."""
-    text = re.sub(r"\s+", " ", str(value)).strip()
-    if len(text) <= limit:
-        return text
-    prefix = text[:limit + 1]
-    sentence_ends = [
-        match.end()
-        for match in re.finditer(r"[.!?](?=\s|$)|;(?=\s|$)", prefix)
-        if match.end() >= limit // 2
-    ]
-    if sentence_ends:
-        return text[:max(sentence_ends)].rstrip()
-    word_boundary = text.rfind(" ", 0, limit + 1)
-    return text[:word_boundary].rstrip() if word_boundary > 0 else text[:limit].rstrip()
+def complete_contract_description(value: Any, limit: int) -> str:
+    """Reject excessive prose instead of silently deleting movement evidence."""
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if len(text) > limit:
+        raise ValueError(f"Movement description is too long (maximum {limit} characters).")
+    return text
 
 
 def normalize_required_phase_labels(value: Any) -> list[str]:
@@ -6014,7 +5919,7 @@ def normalize_required_phase_labels(value: Any) -> list[str]:
         raw_phase = explicit_contract_text_value(item)
         if raw_phase is None:
             continue
-        raw_phase = cleaned_contract_string(raw_phase, 360)
+        raw_phase = complete_contract_description(raw_phase, 512)
         phase = raw_phase.strip()
         description_match = re.search(
             r"(?:^|\b)description\s*:\s*(.+)$", phase, flags=re.IGNORECASE
@@ -6028,7 +5933,7 @@ def normalize_required_phase_labels(value: Any) -> list[str]:
         if not phase or "..." in phase or "\u2026" in phase:
             continue
         if phase.casefold() not in {item.casefold() for item in normalized}:
-            normalized.append(truncate_contract_phase_label(phase, 180))
+            normalized.append(phase)
     return normalized
 
 
@@ -6116,6 +6021,10 @@ def exercise_motion_contract_quality_issues(
     ]
     posture_text = " ".join(posture_state_texts)
     issues = exercise_motion_contract_identity_issues(contract, exercise=exercise)
+    if contract.get("implementSupportMode") == "hands_only" and contract.get("handRelationship") in {
+        "independent", "single", "none",
+    }:
+        issues.append("hands_only implement support requires rigid_pair hand relationship")
     target_name = exercise.name if exercise is not None else str(contract.get("exerciseName") or "")
     single_dumbbell_target = normalize_exercise_name(target_name).startswith("single dumbbell ")
     if single_dumbbell_target and re.search(
@@ -6180,7 +6089,7 @@ def exercise_motion_contract_quality_issues(
     phase_labels = cleaned_contract_string_list(
         contract.get("requiredPhases"),
         limit=8,
-        item_limit=240,
+        item_limit=512,
     )
     phase_text = " ".join(phase_labels).casefold()
     if any(
@@ -6190,7 +6099,7 @@ def exercise_motion_contract_quality_issues(
         for phase in phase_labels
     ):
         issues.append("required phase contains schema labels or truncated text")
-    if completion_mode == "return_to_start" and not re.search(
+    if phase_labels and completion_mode == "return_to_start" and not re.search(
         r"\b(?:return|returns|returned|back)\b",
         phase_text,
     ):
@@ -6207,6 +6116,8 @@ def exercise_motion_contract_quality_issues(
 
 def exercise_motion_contract_has_specific_topology(contract: dict[str, Any] | None) -> bool:
     if not isinstance(contract, dict):
+        return False
+    if contract.get("contractScope") == "definition_only":
         return False
     if int(contract.get("contractPolicyVersion") or 0) < EXERCISE_MOTION_CONTRACT_POLICY_VERSION:
         return False
@@ -6274,9 +6185,20 @@ def exercise_motion_contract_is_usable(
         and (
             # Full exercise contracts include movement topology fields.
             exercise_motion_contract_has_specific_topology(contract)
+            or (
+                contract.get("contractScope") == "definition_only"
+                and contract.get("contractPolicyVersion") == EXERCISE_MOTION_CONTRACT_POLICY_VERSION
+                and normalize_exercise_movement_type(contract.get("movementType")) not in {None, "unknown"}
+                and normalize_exercise_completion_mode(contract.get("completionMode")) is not None
+                and isinstance(contract.get("observableMotionSpec"), dict)
+                and bool(contract["observableMotionSpec"].get("primaryMovingRegions"))
+            )
             # For some prefetch/caching flows (e.g. unit tests), we accept
             # minimal contracts that still carry query aliases.
-            or bool(contract.get("youtubeQueryAliases"))
+            or (
+                contract.get("contractScope") != "definition_only"
+                and bool(contract.get("youtubeQueryAliases"))
+            )
         )
     )
 
@@ -6297,7 +6219,14 @@ def exercise_motion_contract_unusable_reason(
     quality_issues = exercise_motion_contract_quality_issues(contract, exercise=exercise)
     if quality_issues:
         return "; ".join(quality_issues)
-    if not exercise_motion_contract_has_specific_topology(contract) and not contract.get("youtubeQueryAliases"):
+    if (contract.get("contractScope") == "definition_only"
+            and contract.get("contractPolicyVersion") != EXERCISE_MOTION_CONTRACT_POLICY_VERSION):
+        return "definition contract uses an outdated policy version"
+    if contract.get("contractScope") == "definition_only":
+        return "definition contract had no valid broad body action"
+    if (not exercise_motion_contract_has_specific_topology(contract)
+            and contract.get("contractScope") != "definition_only"
+            and not contract.get("youtubeQueryAliases")):
         return "generated exercise motion contract had no specific movement topology"
     return "generated exercise motion contract was not cacheable"
 
@@ -6354,6 +6283,17 @@ def exercise_motion_contract_prompt_sha256(contract: dict[str, Any] | None) -> s
 def exercise_motion_contract_prompt_body(prompt_contract: dict[str, Any]) -> str:
     from .contract_authority import contract_field_authority
 
+    if prompt_contract.get("contractScope") == "definition_only":
+        name = str(prompt_contract.get("exerciseName") or "")
+        context = prompt_contract.get("motionContext") or {}
+        return (
+            f"Exact target exercise: {name}\n"
+            "Authoritative equipment and exercise definition: "
+            + json.dumps(context, ensure_ascii=True, sort_keys=True)
+            + "\nJudge the actual action, supports, and natural boundaries from the source frames. "
+            "The definition contract contains no observed posture, contact, phase timing, or endpoint claims.\n"
+        )
+
     advisory_text = cleaned_contract_advisory_text(prompt_contract.get("advisoryText"))
     structured = {
         key: prompt_contract[key]
@@ -6402,8 +6342,8 @@ def build_candidate_semantic_gate_prompt(exercise: ExerciseEntry, candidate: You
     duration_text = str(candidate.duration_seconds) if candidate.duration_seconds is not None else "unknown"
     return (
         "Text-only semantic gate. Classify whether the YouTube title/description is the exact target movement. "
-        "The requestedMovement in the motion context defines the target's phases and endpoints. "
-        "A component phase described there is part of the requested movement, not an unrequested variant. "
+        "The original exercise name and supplied equipment/accessories define the target. "
+        "Generated movement descriptions do not add target requirements or override that definition. "
         "Instructional wording describes presentation; let visual review verify actual execution. "
         "Reject routines, compilations, briefly mentioned exercises, wrong base movements, and named variants not in the target. "
         "First identify every movement-changing qualifier expressed by the target and every qualifier expressed by the candidate. "
@@ -6719,18 +6659,9 @@ def run_youtube_candidate_review_pass(
 
     if settings.semantic_gate_enabled:
         semantic_gate_started = time.monotonic()
-        semantic_exercise = exercise
-        if isinstance(exercise_motion_contract, dict):
-            movement = {key: exercise_motion_contract[key] for key in (
-                "validStartState", "validEndState", "requiredPhases", "movementTopology",
-                "groundContactMode", "handRelationship",
-            ) if key in exercise_motion_contract}
-            semantic_exercise = dataclass_replace(exercise, motion_context={
-                **(exercise.motion_context or {}), "requestedMovement": movement,
-            })
         try:
             reviewed = rank_candidates_with_semantic_gate(
-                exercise=semantic_exercise,
+                exercise=exercise,
                 ranked=reviewed,
                 settings=settings,
                 semantic_gate=semantic_gate,
@@ -11867,6 +11798,20 @@ def build_candidate_vision_prompt(
         for accessory in required_accessories or []
         if isinstance(accessory, dict)
         and str(accessory.get("name") or accessory.get("type") or "").strip()
+        and "RACKED_BAR_SUPPORT" not in {
+            str(capability).strip().upper()
+            for capability in (accessory.get("capabilities") or [])
+        }
+    ]
+    rack_accessories = [
+        str(accessory.get("name") or accessory.get("type") or "").strip()
+        for accessory in required_accessories or []
+        if isinstance(accessory, dict)
+        and "RACKED_BAR_SUPPORT" in {
+            str(capability).strip().upper()
+            for capability in (accessory.get("capabilities") or [])
+        }
+        and str(accessory.get("name") or accessory.get("type") or "").strip()
     ]
     required_support_note = (
         "Required support/accessories: "
@@ -11877,6 +11822,12 @@ def build_candidate_vision_prompt(
         if accessory_names
         else ""
     )
+    if rack_accessories:
+        required_support_note += (
+            "Rack setup accessory: " + ", ".join(rack_accessories)
+            + ". It supports setup outside the isolated repetition; do not require rack contact "
+            "within the movement-only chunk.\n"
+        )
     one_way_boundary_note = (
         "This contract ends at a distinct end state. Frames showing assistance or reset after that natural end are "
         "outside the target interval, not proof that the target action is partial. If one clean uninterrupted target "
@@ -11922,9 +11873,13 @@ def build_candidate_vision_prompt(
         else 'Set movement_end_posture_visible true only if the chunk visibly reaches the natural end posture of that same movement or repetition. Set it false for clips that stop mid-rep or before the movement resolves.\n'
     )
     contract_gate_guidance = (
+        "The original target name and supplied definition establish requirements; generated descriptions are advisory. "
+        "For both holds and dynamic movements, do not reject solely for generated tempo, posture or contact details "
+        "that the target does not require; still verify the defining action, actual support and complete execution.\n"
+    ) + (
         'Verify the prescribed hold posture, support, equipment and all hold-defining requirements. Set contract_start_state_match, contract_end_state_match and all_required_phases_visible from the sustained hold interval; do not require entry or release transitions for stable_hold.\n'
         if completion_mode == "stable_hold"
-        else 'Independently verify the exercise-specific contract: set contract_start_state_match and contract_end_state_match true only when the visible boundary postures match the described start and end states, and set all_required_phases_visible true only when every required phase in the guidance is visibly present in order. Do not substitute a nearby posture or infer an omitted phase. When no more-specific contract detail is supplied, apply these fields to the generic start/action/end movement definition above.\n'
+        else 'Verify the defining action and complete execution of the requested exercise. Set contract_start_state_match and contract_end_state_match from its natural movement boundaries; set all_required_phases_visible from the defining action and explicitly requested phases in order. Generated pauses, tempo, setup and coaching cues are advisory and their absence alone must not make these fields false. Explicit pauses or holds requested by the target remain required. Generated posture details do not override the original target name, equipment or accessories. Do not infer an unseen defining action or approve an incomplete execution.\n'
     )
     setup_gate_guidance = (
         'Set no_setup_or_talking_frames false for actual setup, talking, instruction, title cards or unrelated idle content. The prescribed active hold itself is exercise content.\n'

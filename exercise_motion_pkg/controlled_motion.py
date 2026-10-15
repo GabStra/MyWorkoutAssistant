@@ -42,11 +42,13 @@ ROOT_TRAVEL_SMALL_MOTION_BODY_RATIO = .05
 ROOT_TRAVEL_FIT_WEIGHT = 2000.
 
 
-def contact_iterate_is_feasible(keyframe_error, playback_error, floor_penetration):
-    """Preserve iterates that clear both stored and interpolated contact gates."""
+def contact_iterate_is_feasible(keyframe_error, playback_error, floor_penetration,
+                               *, maximum_anatomy_residual=0.):
+    """Preserve contact-feasible iterates without introducing structural damage."""
     return (keyframe_error < KEYFRAME_CONTACT_LIMIT_METERS
             and playback_error < PLAYBACK_CONTACT_LIMIT_METERS
-            and floor_penetration <= PLAYBACK_FLOOR_LIMIT_METERS)
+            and floor_penetration <= PLAYBACK_FLOOR_LIMIT_METERS
+            and maximum_anatomy_residual <= 1e-6)
 
 
 SUPPORT_REFERENCE_CONTACT_LIMIT_METERS = min(
@@ -54,7 +56,7 @@ SUPPORT_REFERENCE_CONTACT_LIMIT_METERS = min(
     PLAYBACK_CONTACT_LIMIT_METERS * 0.5,
 )
 
-CONTROLLED_MOTION_STRATEGY = 'fixed_rig_controlled_motion_v78_rigid_contact_anchor_projection'
+CONTROLLED_MOTION_STRATEGY = 'fixed_rig_controlled_motion_v80_observed_stationary_toe_support'
 # Feasibility pre-flight threshold, calibrated from fit reports: every
 # successful fit's target bones matched the rig within ~0.002m, while
 # structurally conflicted fits measured 0.05-0.15m before burning their
@@ -163,7 +165,10 @@ def controlled_fit_processing_incomplete(report):
     # Do not keep retrying just because the soft LS watchdog fired.
     if isinstance(checks, dict) and checks and any(value is False for value in checks.values()):
         return False
-    return (report.get('reason') in {'fit_timeout', 'fit_evaluation_limit'}
+    return (report.get('reason') in {
+                'fit_timeout', 'fit_evaluation_limit',
+                'retained_interval_skipped_insufficient_validation_budget',
+            }
             or report.get('optimizerTermination') in {'time_budget', 'evaluation_limit'}) or any(
         controlled_fit_processing_incomplete(attempt.get('fitReport', attempt))
         for attempt in report.get('cycleSelectionAttempts', [])
@@ -776,6 +781,9 @@ def loop_disabled_playback_passed(payload):
 def can_reuse_controlled_motion(payload):
     from .support_geometry import validate_support_geometry, validate_supported_shoe_orientation
     from .support_alignment import validate_payload_alignment
+    from .contact_constraints import source_support_mapping_unresolved
+    if source_support_mapping_unresolved(payload):
+        return False
     report = payload.get('controlledMotionFit') or {}
     checks = report.get('checks') or {}
     open_seam = intentional_open_loop_seam(payload)
@@ -4287,6 +4295,12 @@ def _prepare_source_projection_fit_constraints(payload, frames, names, points, p
         _recenter_constant_image_offset,
         source_pose_reference_for_motion,
     )
+    from .pose_fidelity import materialized_camera_placement_transform
+    placement = materialized_camera_placement_transform(source_pose, payload)
+    if not placement.get('available'):
+        return {**unavailable, 'reason': placement.get('reason', 'source_camera_placement_unavailable')}
+    # Transport the retained camera into the placed skeleton's coordinate frame.
+    rotation = rotation @ placement['orientation'] / placement['scale']
     source_window = source_pose_reference_for_motion(
         source_pose,
         payload,
@@ -4694,6 +4708,7 @@ def _prepare_source_projection_fit_constraints(payload, frames, names, points, p
             if group.get('planeOffsetMeters') is not None
             for joint_name in group.get('joints') or []
         }
+        measured_support_joints = set()
         for support_name in sorted(
             set(body_support.get('stationaryJoints') or []) & support_plane_joints
         ):
@@ -4709,8 +4724,20 @@ def _prepare_source_projection_fit_constraints(payload, frames, names, points, p
                 continue
             support_motion_name = _bilateral_name(source_support_name, swap=swap)
             support_joint_index = fit_joint_index.get(support_motion_name)
-            if support_joint_index is None:
+            if support_joint_index is None or support_motion_name in measured_support_joints:
                 continue
+            measured_support_joints.add(support_motion_name)
+            support_evidence = payload.get('sourceFootSupportEvidence') or {}
+            pixel_evidence = support_evidence.get('supportRelativePixelTracks') or {}
+            pixel_rows = {}
+            if (pixel_evidence.get('available') is True
+                    and pixel_evidence.get('sourceVideoSha256')
+                    and pixel_evidence.get('sourceVideoSha256')
+                    == (support_evidence.get('bodySupportObservation') or {}).get('sourceVideoSha256')):
+                pixel_rows = {
+                    round(float(row['sourceTimeSec']), 6): row['sourceDelta']
+                    for row in (pixel_evidence.get('tracks') or {}).get(source_support_name, [])
+                }
 
             source_center_modes = []
             if 'pelvis' in fit_joint_index:
@@ -4780,6 +4807,14 @@ def _prepare_source_projection_fit_constraints(payload, frames, names, points, p
                     alpha = 0. if span <= 1e-12 else float((source_time - times[left]) / span)
                 support_point = np.asarray(support_point, dtype=float)[:2]
                 source_delta = center_point - support_point
+                pixel_delta = pixel_rows.get(round(
+                    source_time + float(source_pose.get('sourceTimeOriginSec', 0.)), 6))
+                use_pixel_delta = (
+                    center_names == ('left_hip', 'right_hip') and pixel_delta is not None
+                    and np.asarray(pixel_delta).shape == (2,)
+                    and np.isfinite(pixel_delta).all())
+                if use_pixel_delta:
+                    source_delta = np.asarray(pixel_delta, dtype=float)
                 if (not np.isfinite(source_delta).all()
                         or not np.isfinite(support_point).all()):
                     continue
@@ -4798,6 +4833,7 @@ def _prepare_source_projection_fit_constraints(payload, frames, names, points, p
                     'sourceCenterJoints': tuple(center_names),
                     'sourceSupportJoint': source_support_name,
                     'supportGroup': support_motion_name,
+                    'sourceEvidence': 'source_pixel_tracking' if use_pixel_delta else 'source_pose',
                 })
                 seen_times.add(source_time)
                 support_relative_joint_names.append(support_motion_name)
@@ -4862,7 +4898,7 @@ def _prepare_source_projection_fit_constraints(payload, frames, names, points, p
 
 
 def _align_shared_contact_anchors_to_source_projection(
-    constraint, pinned, contact_targets, *, ground_contacts=None, rig=None,
+    constraint, pinned, contact_targets, *, ground_contacts=None, rig=None, body_support=None,
 ):
     """Align non-ground contact groups without splitting linked sole anchors."""
     result = np.asarray(contact_targets, dtype=float).copy()
@@ -4893,7 +4929,10 @@ def _align_shared_contact_anchors_to_source_projection(
     offset = constraint['offset']
     shifts = []
     skipped_ground_groups = 0
+    skipped_support_groups = 0
     skipped_rigid_groups = 0
+    stationary_support = set((body_support or {}).get('stationaryJoints') or []) if (
+        (body_support or {}).get('status') == 'confirmed') else set()
     for group, observations in grouped_observations.items():
         design_rows = []
         residual_rows = []
@@ -4912,6 +4951,13 @@ def _align_shared_contact_anchors_to_source_projection(
             # target and let the source-projection residual remain a soft fit
             # constraint instead of relocating the contact anchor.
             skipped_ground_groups += 1
+            continue
+        if rig is not None and any(
+                (name in stationary_support or name.endswith(('_ankle', '_foot')))
+                and np.any(active[:, joint])
+                for joint, name in enumerate(rig.names)):
+            # Stationary foot pins and calibrated supports cannot be relocated by a 2D projection.
+            skipped_support_groups += 1
             continue
         for observation in observations:
             joint = observation['jointIndex']
@@ -4951,6 +4997,7 @@ def _align_shared_contact_anchors_to_source_projection(
         'adjustedGroupCount': len(shifts),
         'maximumShiftMeters': max(shifts, default=0.),
         'skippedGroundAnchoredGroupCount': skipped_ground_groups,
+        'skippedObservedSupportGroupCount': skipped_support_groups,
         'skippedRigidContactGroupCount': skipped_rigid_groups,
     }
 
@@ -5156,6 +5203,8 @@ def _source_support_relative_fit_evidence(candidate, constraint):
         'passed': bool(passed),
         'observationCount': len(observations),
         'supportJointNames': constraint.get('supportRelativeJointNames') or [],
+        'pixelTrackObservationCount': sum(
+            row.get('sourceEvidence') == 'source_pixel_tracking' for row in observations),
         'relativePathRmsBodyRatio': rms_body_ratio,
         'relativePositionOffsetBodyRatio': position_offset_body_ratio,
         'sourceTravelRatiosBySupport': source_travel_by_support,
@@ -5298,6 +5347,19 @@ def rotation_prior_dependencies(width):
 
 def fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=None):
     """Schedule numerical fitting separately from concurrent browser/review work."""
+    from .contact_constraints import source_support_mapping_unresolved
+    if source_support_mapping_unresolved(payload):
+        return payload, {
+            "applied": False,
+            "reason": "source_support_mapping_unresolved",
+        }
+    from .support_geometry import support_contact_readiness
+    support_readiness = support_contact_readiness(payload)
+    if not support_readiness['passed']:
+        return payload, {'applied': False, 'strategy': CONTROLLED_MOTION_STRATEGY,
+                         'reason': support_readiness['rejectionReasons'][0],
+                         'failureStage': 'source_support_contact_readiness',
+                         'sourceContactReadiness': support_readiness}
     from .fit_runtime import FitSlotTimeout, cpu_fit_slot
     try:
         with cpu_fit_slot(timeout_seconds=timeout_seconds) as waited:
@@ -5375,6 +5437,7 @@ def _fit_candidate_motion(payload, *, max_evaluations=None, timeout_seconds=None
                          'remainingSeconds': remaining,
                          'candidateFitBudget': candidate_fit_budget}
     session.fit_calls += 1
+    session.started = monotonic()
     try:
         # Cycle attempts share one deadline. When using the frame-scaled default,
         # allow up to 2x that base if the candidate session still has time so a
@@ -5388,6 +5451,9 @@ def _fit_candidate_motion(payload, *, max_evaluations=None, timeout_seconds=None
         result, report = _fit_observed_cycles(payload, max_evaluations=max_evaluations,
             timeout_seconds=allocated)
     finally:
+        # Browser work and rendering between fits do not consume the fit budget.
+        session.previously_spent += max(0., monotonic() - session.started)
+        session.started = None
         session.save()
     report['candidateFitBudget'] = {'seconds': session.budget_seconds,
         'remainingSeconds': session.remaining(), 'fitCalls': session.fit_calls,
@@ -5697,8 +5763,10 @@ def _fit_observed_cycles(payload, *, max_evaluations=None, timeout_seconds=None)
         }
     else:
         if retained_fit_has_validation_budget:
+            retained_input = deepcopy(payload)
+            retained_input['loop'] = {**(retained_input.get('loop') or {}), 'enabled': False}
             retained, retained_report, retained_attempt_elapsed = fit_attempt(
-                payload, remaining_before_retained)
+                retained_input, remaining_before_retained)
         else:
             retained, retained_report = payload, {
                 'applied': False,
@@ -6417,7 +6485,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
     if body_support.get('required'):
         from .support_geometry import moving_support_articulations
         support_articulation_tracks = tuple(moving_support_articulations(
-            support_range_reference, names, body_support, support_corrected_points=reference))
+            support_range_reference, names, body_support, support_corrected_points=reference,
+            constraint_endpoints=[names[j] for j in np.flatnonzero(np.any(pinned, axis=0))]))
     height_only_mask = vertical_only_contact_mask(
         fit_support_evidence, names, len(frames),
     ) & ~pinned
@@ -6560,6 +6629,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         source_projection_constraint, pinned, contact_targets,
         ground_contacts=ground_contacts,
         rig=rig,
+        body_support=body_support,
     )
     if source_anchor_adjustment['adjustedGroupCount']:
         target, _, placement_report = contact_consistent_target(
@@ -7074,7 +7144,21 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 0., float(floor) - float(min(candidate[:,:,1].min(), subframe[:,:,1].min())))
             if (contact_iterate_is_feasible(contact_err, play_err, floor_pen)
                     and cost < best_feasible_cost):
-                best_feasible_cost, best_feasible_coordinates = cost, values.copy()
+                # Contact-only selection can replace a valid supported spine
+                # with a cheaper iterate just beyond the final anatomy gate.
+                anatomy_max = max(
+                    float(np.max(anatomical_structure_residuals(
+                        candidate, names, reference=anatomical_reference)[0], initial=0.)),
+                    float(np.max(anatomical_structure_residuals(
+                        subframe, names,
+                        reference=(anatomical_reference[subframe_first] * (1. - subframe_alpha)
+                                   + anatomical_reference[subframe_last] * subframe_alpha)
+                    )[0], initial=0.)),
+                )
+                if contact_iterate_is_feasible(
+                        contact_err, play_err, floor_pen,
+                        maximum_anatomy_residual=anatomy_max):
+                    best_feasible_cost, best_feasible_coordinates = cost, values.copy()
         return errors
     hybrid_jacobian_enabled = _hybrid_jacobian_enabled()
 

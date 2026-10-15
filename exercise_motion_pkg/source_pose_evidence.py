@@ -107,7 +107,10 @@ def audit_source_pose(payload, observations=None):
                 if observed.get('confidence', 0) < .65:
                     continue
                 candidate = np.asarray(observed['image'])*factor
-                primary = np.asarray(payload['frames'][index]['joints'][name][:2])*factor
+                original = payload['frames'][index].get('joints', {}).get(name)
+                if original is None:
+                    continue
+                primary = np.asarray(original[:2])*factor
                 if np.linalg.norm(candidate-primary) < .05*span:
                     recovered[name] = observed
                     continue
@@ -171,4 +174,3 @@ def verify_source_pose(payload, video_path: Path | None):
 # diagnostics). Whether the cleaned remainder is good enough is decided by
 # the phase, contract, support, and fidelity validations that consume it —
 # and ultimately by the VLM review of the rendered movement.
-

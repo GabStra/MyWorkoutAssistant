@@ -244,6 +244,7 @@ from exercise_motion_pkg.youtube import (
     contract_pose_support_mode,
     find_cached_youtube_preview,
     normalize_exercise_motion_contract,
+    normalize_definition_exercise_motion_contract_response,
     normalize_exercise_motion_contract_response,
     normalize_ground_contact_mode,
     normalize_implement_support_mode,
@@ -553,7 +554,7 @@ SOURCE_CUT_MIN_ESTIMATED_DURATION_RATIO = 1.0
 SOURCE_CUT_ROBUST_MIN_SECONDS = 1.5
 SOURCE_CUT_ROBUST_MIN_ESTIMATED_DURATION_RATIO = 1.0
 ACTIVE_TRAVEL_SOURCE_CUT_MIN_SECONDS = 2.0
-SOURCE_SELECTION_POLICY_VERSION = 62
+SOURCE_SELECTION_POLICY_VERSION = 64
 SOURCE_SELECTION_CLEARANCE_POLICY_VERSION = 2
 
 SOURCE_OVERLAY_VISIBILITY_INSTRUCTIONS = (
@@ -610,13 +611,13 @@ SOURCE_CUT_BOUNDARY_AUDIT_FRAME_COUNT = 12
 SOURCE_CUT_BOUNDARY_AUDIT_TILE_WIDTH = 480
 SOURCE_CUT_BOUNDARY_AUDIT_JPEG_QUALITY = 92
 DEFAULT_FINAL_OUTPUT_VALIDATION_MIN_SCORE = 0.90
-SELECTION_VALIDATION_POLICY_VERSION = 129
+SELECTION_VALIDATION_POLICY_VERSION = 132
 FINAL_OUTPUT_VALIDATION_POLICY_VERSION = 82
 RETAINED_SELECTED_REVALIDATION_VERSION = 18
 # These policy versions isolate source-review caches from unrelated edits to
 # this large pipeline module. Prompt text and image bytes are already part of
 # each question key; bump the aggregate version when verdict semantics change.
-SOURCE_REVIEW_AGGREGATE_CACHE_POLICY_VERSION = 3
+SOURCE_REVIEW_AGGREGATE_CACHE_POLICY_VERSION = 4
 SOURCE_REVIEW_QUESTION_CACHE_POLICY_VERSION = 1
 SOURCE_OUTPUT_TARGET_MOTION_REJECTION_REASON = (
     "materialized_target_motion_not_preserved_from_source"
@@ -2701,6 +2702,9 @@ def artifact_state_for_baked_payload(
     source_parent_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     loop = payload.get("loop")
+    # Selecting a bounded interval must not turn its distinct endpoints into a cyclic seam.
+    if selection_class == BOUNDED_MOVEMENT_SELECTION and isinstance(loop, dict):
+        loop["enabled"] = False
     loop_enabled = isinstance(loop, dict) and loop.get("enabled") is True
     requires_cycle = required_final_artifact_class(contract) == CYCLIC_REBAKE
     completion_mode = kinematic_contract_completion_mode(contract)
@@ -2711,11 +2715,11 @@ def artifact_state_for_baked_payload(
         selection_class=selection_class,
     )
     evidence = {
-        "loopEnabled": loop_enabled,
         "completionMode": completion_mode or None,
         "sourceCyclePreflight": payload.get("sourceCyclePreflight"),
         "observedCycleProposalCount": len(payload.get("observedCycleProposals") or []),
         **(selection_evidence or {}),
+        "loopEnabled": loop_enabled,
     }
     if artifact_class == CYCLIC_REBAKE and isinstance(payload.get("frames"), list):
         evidence["cyclicRebake"] = baked_payload_identity(payload)
@@ -6635,7 +6639,6 @@ def two_scale_completeness_failure_is_independent_outlier(
     identity_passed = bool(
         isinstance(identity, dict)
         and identity.get("passed") is True
-        and identity.get("equipmentConsistent") is not False
     )
     if not identity_passed:
         return False
@@ -6705,7 +6708,6 @@ def two_scale_small_motion_failure_is_independent_outlier(
         isinstance(gates, dict)
         and isinstance(gates.get("identity"), dict)
         and gates["identity"].get("passed") is True
-        and gates["identity"].get("equipmentConsistent") is not False
         and isinstance(gates.get("uniform"), dict)
         and gates["uniform"].get("passed") is True
         and isinstance(gates.get("topology"), dict)
@@ -7821,6 +7823,12 @@ def two_scale_contract_authority_guidance(contract: dict[str, Any] | None) -> st
             "No verified movement contract is supplied. Use the exact exercise name, structured library context, and "
             "visible action; keep unsupported posture and endpoint requirements uncertain.\n"
         )
+    if contract.get("contractScope") == "definition_only":
+        return (
+            "The definition contract states broad action and completion requirements only. "
+            "Use the exact exercise name and structured equipment context for identity, and the visible source "
+            "for posture, support contacts, phases, and endpoints.\n"
+        )
     status = str(contract.get("status") or "").casefold()
     source = str(contract.get("source") or "").casefold()
     if status == "generated" or "llm" in source or source == "two_scale_revalidation":
@@ -7913,25 +7921,6 @@ def two_scale_observed_named_equipment(
         for value in values
         if normalize_observed_equipment_name(value)
     } if isinstance(values, list) else set()
-
-
-def two_scale_identity_equipment_consistent(
-    identity: dict[str, Any] | None,
-    *,
-    equipment: str,
-) -> bool:
-    if equipment == "none":
-        return True
-    observed = two_scale_observed_named_equipment(identity)
-    expected = [
-        normalize_observed_equipment_name(value)
-        for value in re.split(r"\s*[,;]\s*", equipment)
-        if value.strip()
-    ]
-    return bool(expected) and all(
-        any(equipment_names_are_motion_equivalent(value, item) for item in observed)
-        for value in expected
-    )
 
 
 def two_scale_observation_fields_consistent(payload: dict[str, Any] | None) -> bool:
@@ -8147,6 +8136,12 @@ def build_two_scale_evidence_consistency_prompt(
         "targetBlindFullResolutionEquipment": equipment_detail,
     }
     topology = movement_topology_from_contract(contract)
+    topology_guidance = (
+        "Candidate movement topology: "
+        + json.dumps(topology, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+        + "\n"
+        if topology is not None else ""
+    )
     return (
         "Audit only the consistency of independent written visual observations. Do not inspect or imagine images, "
         "and do not repair conflicting evidence in favor of the requested exercise.\n"
@@ -8155,9 +8150,8 @@ def build_two_scale_evidence_consistency_prompt(
         + two_scale_equipment_role_policy(exercise_name, contract)
         + "\n"
         + two_scale_contract_authority_guidance(contract)
-        + "Candidate movement topology: "
-        + json.dumps(topology, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
-        + "\nIndependent observation evidence: "
+        + topology_guidance
+        + "Independent observation evidence: "
         + json.dumps(evidence, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
         + "\nTarget-blind observations are intentionally independent and may be noisy. A missing qualifier is not a "
         "contradiction. A loose posture description is not a contradiction when the visible action sequence otherwise "
@@ -8267,9 +8261,9 @@ def generate_specific_exercise_motion_contract(
             if generation_mode == "direct_repair" and last_contract is not None:
                 attempt_prompt += (
                     "\nThe previous draft failed deterministic contract validation. Correct the entire contract, not "
-                    "only the quoted words. Re-evaluate the physical support posture, natural target-action boundary, "
-                    "completionMode, requiresReturnToStart, end state, and required phases from normal exercise knowledge. "
-                    "Do not preserve a return phase when it is normally assistance or reset.\n"
+                    "only the quoted words. Re-evaluate the movement type, natural target-action boundary, "
+                    "completionMode, broad body action, and implement relationship. "
+                    "Do not add source-dependent posture or phases.\n"
                     "Validation issues: "
                     + json.dumps(
                         exercise_motion_contract_quality_issues(last_contract, exercise=exercise),
@@ -8277,7 +8271,7 @@ def generate_specific_exercise_motion_contract(
                     )
                     + "\nPrevious draft: "
                     + json.dumps(exercise_motion_contract_for_prompt(last_contract), ensure_ascii=False, default=str)
-                    + "\nReturn one corrected minified JSON object using the original required keys."
+                    + "\nReturn one corrected minified JSON object using the definition-only keys."
                 )
             else:
                 attempt_prompt += "\nCorrect the previous contract validation failures: " + " | ".join(failures)
@@ -8296,13 +8290,13 @@ def generate_specific_exercise_motion_contract(
                 top_p=1.0,
                 top_k=0,
             )
-            contract = normalize_exercise_motion_contract_response(
+            contract = normalize_definition_exercise_motion_contract_response(
                 last_raw,
                 exercise=exercise,
                 source=source,
             )
             last_contract = contract
-            if exercise_motion_contract_has_specific_topology(contract) and exercise_motion_contract_is_usable(contract, exercise=exercise):
+            if exercise_motion_contract_is_usable(contract, exercise=exercise):
                 contract["generationMode"] = generation_mode
                 if failures:
                     contract["generationFallbackReasons"] = failures
@@ -8321,7 +8315,7 @@ def resolve_two_scale_exercise_motion_contract(
     contract: dict[str, Any] | None,
     caption_images: Callable[..., str],
 ) -> tuple[dict[str, Any] | None, str | None, str | None]:
-    if exercise_motion_contract_has_specific_topology(contract):
+    if exercise_motion_contract_is_usable(contract):
         return contract, None, None
     motion_context = (
         contract.get("motionContext")
@@ -8798,7 +8792,8 @@ def _validate_two_scale_source_uncached(
     jobs["observation"] = lambda: question("observation", motion_sheet_paths,
         build_target_blind_source_observation_prompt(motion_focused=True, completion_mode=completion_mode), max_tokens=512,
         reusable=two_scale_observation_fields_consistent)
-    if specific_contract is not None:
+    topology_required = movement_topology_from_contract(specific_contract) is not None
+    if topology_required:
         jobs["topology"] = lambda: question("topology", [*uniform_sheet_paths, *motion_sheet_paths],
             build_two_scale_topology_verification_prompt(exercise_name=exercise_name, equipment=equipment,
                 contract=specific_contract) + detail_guidance, max_tokens=768,
@@ -8813,8 +8808,8 @@ def _validate_two_scale_source_uncached(
     raw_motion_observation, motion_observation = answers["observation"]
     raw_topology_validation: str | None = None
     topology_validation: dict[str, Any] | None = None
-    topology_passed = False
-    if specific_contract is not None:
+    topology_passed = specific_contract is not None and not topology_required
+    if topology_required:
         raw_topology_validation, topology_validation = answers["topology"]
         normalized_topology = normalize_two_scale_topology_positions(
             topology_validation,
@@ -8853,14 +8848,9 @@ def _validate_two_scale_source_uncached(
         prompt=consistency_prompt,
         max_tokens=384,
     )
-    identity_equipment_consistent = two_scale_identity_equipment_consistent(
-        identity,
-        equipment=equipment,
-    )
     identity_passed = bool(
         isinstance(identity, dict)
         and identity.get("verdict") == "match"
-        and identity_equipment_consistent
     )
     uniform_passed = bool(uniform_results) and all(
         isinstance(result, dict)
@@ -9017,7 +9007,7 @@ def _validate_two_scale_source_uncached(
         )
     if specific_contract is None:
         rejection_reasons.append("two_scale_source_specific_contract_missing")
-    elif not topology_passed:
+    elif topology_required and not topology_passed:
         rejection_reasons.append("two_scale_source_topology_not_verified")
     if (
         endpoint_contract_validation.get("available")
@@ -9071,7 +9061,6 @@ def _validate_two_scale_source_uncached(
             },
             "identity": {
                 "passed": identity_passed,
-                "equipmentConsistent": identity_equipment_consistent,
                 "response": identity,
                 "rawResponse": raw_identity,
             },
@@ -9095,6 +9084,7 @@ def _validate_two_scale_source_uncached(
                 "rawResponse": raw_motion_observation,
             },
             "topology": {
+                "required": topology_required,
                 "passed": topology_passed,
                 "response": topology_validation,
                 "rawResponse": raw_topology_validation,
@@ -10430,10 +10420,13 @@ def materialized_output_acceptance_metrics(
     paired_hands_metrics["sourceArmSymmetryEvidence"] = source_symmetry
     paired_hands_metrics["exportedArmSymmetry"] = output_symmetry
     from .equipment_constraints import supported_bilateral_geometry_metrics
-    from .body_support_observation import requires_body_support
+    from .support_geometry import support_evidence
+    observed_support = support_evidence(export_payload or {})
     supported_pair = supported_bilateral_geometry_metrics(
         export_payload or {}, required=(rigid_paired_hands_required
-            and requires_body_support(exercise_motion_contract)))
+            and observed_support.get('status') == 'confirmed'
+            and bool({'pelvis', 'left_shoulder', 'right_shoulder'}.intersection(
+                observed_support.get('stationaryJoints') or []))))
     paired_hands_metrics["supportedBilateralGeometry"] = supported_pair
     paired_hands_blocking = paired_hands_blocking or not supported_pair["passed"]
     if rigid_paired_hands_required and source_symmetry["accepted"] and output_symmetry["severe"]:
@@ -11742,10 +11735,14 @@ def validate_source_pose_endpoints_against_contract(
     for endpoint, contract_key in (("start", "startPoseConstraints"), ("end", "endPoseConstraints")):
         observed = endpoint_features.get(endpoint)
         expected = contract.get(contract_key)
-        if not isinstance(observed, dict) or not isinstance(expected, dict):
+        if not isinstance(observed, dict):
             continue
+        if not isinstance(expected, dict):
+            expected = {}
         for field in ("supportMode", "handHeight", "torsoOrientation", "kneeState", "stance"):
             explicit_value = endpoint_requirement(explicit, endpoint, field)
+            if not expected and explicit_value is None:
+                continue
             expected_value = explicit_value or str(expected.get(field) or "any")
             observed_value = str(observed.get(field) or "unknown")
             passed = source_pose_constraint_compatibility(expected_value, observed_value, field=field)
@@ -13447,6 +13444,13 @@ def source_confirmed_support_stationarity_metrics(
             if interval.get("contactState") == "heel_only":
                 joint_name = f"{side}_heel"
                 points = joint_points_from_frames(interval_frames, joint_name=joint_name)
+                if not points:
+                    from .heel_contacts import HeelContacts
+                    ankle, toe = f"{side}_ankle", f"{side}_foot"
+                    pairs = [[frame['joints'][ankle], frame['joints'][toe]] for frame in interval_frames
+                             if ankle in frame.get('joints', {}) and toe in frame.get('joints', {})]
+                    points = (HeelContacts([(0, 1)], None, None).positions(np.asarray(pairs))[:, 0].tolist()
+                              if pairs else [])
             expected_count = max(1, end_frame - start_frame + 1)
             coverage_ratio = len(points) / expected_count
             interval_metric: dict[str, Any] = {
@@ -13522,10 +13526,16 @@ def source_confirmed_support_stationarity_metrics(
             # Returning to the anchor does not undo sliding during contact.
             # Ankle-only evidence is different: the ankle may articulate about
             # the contact patch, so retain that allowance only for an ankle.
+            if interval.get("supportKind") == "observed_foot_patch":
+                from .support_geometry import TOLERANCE_METERS
+                interval_range_threshold = min(interval_range_threshold, TOLERANCE_METERS / body_span)
+                interval_endpoint_threshold = min(interval_endpoint_threshold, TOLERANCE_METERS / body_span)
+                support_plane_range_threshold = min(support_plane_range_threshold, TOLERANCE_METERS / body_span)
             stationary = bool(
                 vertical_range_ratio <= support_plane_range_threshold
                 and (
-                    range_ratio <= interval_range_threshold
+                    (interval.get("verticalOnly") is True and interval.get("contactState") != "heel_only")
+                    or range_ratio <= interval_range_threshold
                     or (joint_name.endswith("_ankle")
                         and endpoint_displacement_ratio <= interval_endpoint_threshold)
                 )
@@ -18110,8 +18120,6 @@ def build_exercise_motion_contract_resolver(
         if (
             candidate_contract is not None
             and exercise_motion_contract_is_usable(candidate_contract, exercise=exercise)
-            and exercise_motion_contract_has_specific_topology(candidate_contract)
-            and movement_topology_from_contract(candidate_contract) is not None
             and normalize_ground_contact_mode(candidate_contract.get("groundContactMode")) is not None
         ):
             ranked_candidate.candidate["exerciseMotionContract"] = candidate_contract
@@ -19605,7 +19613,7 @@ def revalidate_library_workspace(
             current_contract = exercise_motion_contract_for_review_item(item, ranking)
             if (
                 review_caption_images is not None
-                and not exercise_motion_contract_has_specific_topology(current_contract)
+                and not exercise_motion_contract_is_usable(current_contract)
             ):
                 resolved_contract, raw_contract_response, contract_error = (
                     resolve_two_scale_exercise_motion_contract(
@@ -24034,7 +24042,6 @@ def require_current_source_contract(contract: dict[str, Any] | None, candidate: 
         name=candidate.exercise_name, slug=candidate.exercise_slug)
     if (
         not exercise_motion_contract_is_usable(contract, exercise=exercise)
-        or not exercise_motion_contract_has_specific_topology(contract)
         or exercise_motion_contract_uses_candidate_evidence(contract)
     ):
         raise ExerciseMotionContractRejected(
@@ -24516,7 +24523,6 @@ def cached_source_selection_matches_validation_mode(
         if (
             not isinstance(contract, dict)
             or not exercise_motion_contract_is_usable(contract, exercise=exercise)
-            or not exercise_motion_contract_has_specific_topology(contract)
             or exercise_motion_contract_uses_candidate_evidence(contract)
         ):
             return False
@@ -25164,9 +25170,6 @@ def exact_source_phase_validation_rejection_reasons(
     )
     if exact_source_endpoint_mismatch_is_hard_reject(validation):
         reasons.append("source_cut_pose_contract_mismatch")
-    readiness = validation.get("sourceBodySupportReadiness") or {}
-    if readiness.get("required") and not readiness.get("ready"):
-        reasons.append("source_cut_supported_body_stationarity_unresolved")
     return dedupe_text(reasons)
 
 
@@ -25732,19 +25735,8 @@ def select_exact_pose_confirmed_source_cut(
                     "Required exact source-pose validator failed: "
                     + infrastructure_error
                 )
-            support_readiness = validation.get("sourceBodySupportReadiness") or {}
-            unresolved_support = bool(support_readiness.get("unresolvedAnchors"))
-            # Unresolved support on a multi-repetition parent must not block
-            # splitting into single cycles; each child is confirmed on its own.
             allow_cycle_refinement = (
                 not exact_source_validation_effectively_passed(validation)
-                and (
-                    not unresolved_support
-                    or (
-                        validation.get("hasCompleteMajorCycle") is True
-                        and validation.get("hasSingleMajorCycle") is False
-                    )
-                )
             )
             cycle_refinements = exact_pose_single_cycle_refinement_candidates(
                 candidate,
@@ -26673,10 +26665,6 @@ def validate_exact_pre_reconstruction_source_video(
         required=required,
         reason="exact_source_video_phase_metrics_unavailable",
     )
-    from .body_support_observation import requires_body_support, body_support_source_readiness
-    if requires_body_support(exercise_motion_contract):
-        metrics["sourceBodySupportReadiness"] = body_support_source_readiness(
-            source_pose_reference, exercise_motion_contract)
     endpoint_features = metrics.get("sourcePoseEndpointFeatures")
     metrics["sourcePoseEndpointContractValidation"] = validate_source_pose_endpoints_against_contract(
         endpoint_features if isinstance(endpoint_features, dict) else None,
@@ -27031,9 +27019,6 @@ def exact_source_validation_effectively_passed(validation: dict[str, Any]) -> bo
         isinstance(source_pose_audit, dict)
         and source_pose_audit.get("unresolved") is True
     ):
-        return False
-    readiness = validation.get("sourceBodySupportReadiness") or {}
-    if readiness.get("required") and not readiness.get("ready"):
         return False
     phase_passed = bool(validation.get("passed", True)) or bool(
         validation.get("poseFailureOverriddenByVlm")
@@ -27678,9 +27663,8 @@ def constrain_baked_payload_to_source_articulation(
     from .support_geometry import declare_support_requirements
     declare_support_requirements(payload, exercise_motion_contract)
     from .body_support_observation import (materialize_body_support, materialize_hand_support,
-        materialize_stationary_sole_support, materialize_observed_ground_contacts)
+        materialize_observed_ground_contacts)
     materialize_body_support(payload, source_pose_reference, exercise_motion_contract)
-    payload["sourceFootSupportEvidence"] = materialize_stationary_sole_support(payload)
     materialize_hand_support(payload, source_pose_reference)
     materialize_observed_ground_contacts(payload, source_pose_reference)
     if use_controlled_motion_fit:
@@ -28139,18 +28123,28 @@ def bake_preview_loops_with_playwright(
 
     checkpoint = candidate_workspace / "baked_stage_checkpoint.json"
     from .body_support_observation import (
-        requires_body_support, observe_body_support, observed_stationary_sole_contacts, stationary_source_track)
+        observe_body_support, source_support_observation_needed)
     source_pose = load_verified_source_pose_reference(
         candidate_workspace / 'segment_detection' / 'exact_source_pose_reference.json',
         candidate_workspace / 'input' / 'selected_segment.mp4')
-    stationary_support_candidate = any(stationary_source_track(source_pose, name)
-                                      for name in ('left_wrist', 'right_wrist', 'left_ankle', 'right_ankle'))
-    if (requires_body_support(exercise_motion_contract)
-            or observed_stationary_sole_contacts(source_foot_support_evidence) or stationary_support_candidate):
+    if source_support_observation_needed(source_pose, source_foot_support_evidence):
         source_foot_support_evidence = copy.deepcopy(source_foot_support_evidence or {})
         source_foot_support_evidence['bodySupportObservation'] = observe_body_support(
             candidate_workspace / 'input' / 'selected_segment.mp4', caption_images,
             candidate_workspace / 'segment_detection' / 'body_support')
+        if source_pose is not None:
+            raw_path = candidate_workspace / 'raw' / 'motion.raw.json'
+            alignment = (loads_reconstruction_metadata(raw_path.read_text(encoding='utf-8'))
+                         .get('metadata', {}).get('videoWorldAlignment', {})) if raw_path.is_file() else {}
+            source_foot_support_evidence = add_observed_foot_contacts(
+                source_foot_support_evidence,
+                observe_foot_landmarks(candidate_workspace / 'input' / 'selected_segment.mp4'),
+                source_pose, alignment.get('cameraGroundPlane', {}).get('normal'), alignment)
+        from .source_support_tracking import observe_support_relative_tracks
+        source_foot_support_evidence['supportRelativePixelTracks'] = observe_support_relative_tracks(
+            candidate_workspace / 'input' / 'selected_segment.mp4', source_pose,
+            source_foot_support_evidence['bodySupportObservation'],
+            cache_dir=candidate_workspace / 'segment_detection' / 'body_support')
     settings = {
         "loops": [asdict(loop) for loop in eligible_loops], "reviewFrames": review_frames,
         "rankVariants": rank_preview_variants, "adaptive": adaptive_preview_settings,
@@ -28169,6 +28163,7 @@ def bake_preview_loops_with_playwright(
                               Path(__file__).with_name("contact_constraints.py"),
                               Path(__file__).with_name("foot_contact_observation.py"),
                               Path(__file__).with_name("body_support_observation.py"),
+                              Path(__file__).with_name("source_support_tracking.py"),
                               Path(__file__).with_name("support_geometry.py"),
                               Path(__file__).with_name("support_alignment.py"),
                               Path(__file__).with_name("articulation_trajectory.py"),
@@ -29334,9 +29329,10 @@ def _bake_preview_loops_with_playwright_uncached(
                             and corrected_artifact_state.get("artifactClass") == FULL_CLIP_BAKE
                             and corrected_artifact_state.get("lineageComplete") is True
                         ):
-                            from .body_support_observation import requires_body_support
+                            from .support_geometry import support_evidence, plant_only_body_support
 
-                            if not requires_body_support(exercise_motion_contract):
+                            observed_support = support_evidence(corrected_payload)
+                            if not observed_support.get('required') or plant_only_body_support(observed_support):
                                 parent_fit_report = export_payload.get("controlledMotionFit")
                                 for queued_cycle in eligible_loop_queue:
                                     queued_bounds = eligible_loop_cycle_bounds(queued_cycle)
@@ -29621,6 +29617,11 @@ def pre_render_deterministic_gate(
     support_payload = copy.deepcopy(payload)
     declare_support_requirements(support_payload, exercise_motion_contract)
     support_geometry = validate_support_geometry(support_payload)
+    support_stationarity = source_confirmed_support_stationarity_metrics(
+        payload, payload.get('sourceFootSupportEvidence'))
+    support_rejections = list(support_stationarity.get('rejectionReasons', []))
+    if support_stationarity.get('required') and not support_stationarity.get('evaluated'):
+        support_rejections.append('source_support_contact_geometry_unavailable')
     cleanup_support = (
         materialized_cleanup_support_metrics(candidate_workspace, skeleton_path=skeleton_path)
         if candidate_workspace is not None
@@ -29643,6 +29644,7 @@ def pre_render_deterministic_gate(
                          + kinematics.get("processingIncompleteReasons", [])
                          + fidelity.get("rejectionReasons", [])
                          + support_geometry.get("rejectionReasons", [])
+                         + support_rejections
                          + class_gate["rejectionReasons"]
                          + (["materialized_support_contact_contradiction"]
                             if cleanup_support.get("supportContactContradiction") else [])
@@ -29655,6 +29657,7 @@ def pre_render_deterministic_gate(
             "artifactClassGate": class_gate,
             "kinematics": kinematics, "sourcePoseFidelity": fidelity,
             "supportGeometry": support_geometry, "cleanupSupport": cleanup_support,
+            "sourceSupportStationarity": support_stationarity,
             "loopBridge": loop_bridge}
 
 
@@ -31302,12 +31305,8 @@ def source_contact_intervals_from_evidence(
     if not isinstance(source_support_evidence, dict) or frame_count <= 0:
         return []
     intervals: list[dict[str, Any]] = []
-    contacts = source_support_evidence.get("contacts")
-    generic_contacts = source_support_evidence.get("supportContacts")
-    contact_records = (
-        (contacts if isinstance(contacts, list) else [])
-        + (generic_contacts if isinstance(generic_contacts, list) else [])
-    )
+    from .contact_constraints import motion_support_contacts
+    contact_records = motion_support_contacts(source_support_evidence)
     if contact_records:
         for contact in contact_records:
             if not isinstance(contact, dict):
@@ -31353,12 +31352,12 @@ def source_contact_intervals_from_evidence(
                 }
             )
     feet = source_support_evidence.get("feet")
+    from .contact_constraints import has_continuous_ankle_support
     continuous_foot_joints: set[str] = set()
     if isinstance(feet, dict):
         for side in ("left", "right"):
             foot = feet.get(side)
-            if (not isinstance(foot, dict) or not bool(foot.get("continuousSupport"))
-                    or not is_stationary_contact(foot)):
+            if not isinstance(foot, dict) or not has_continuous_ankle_support(source_support_evidence, side):
                 continue
             joint_name = str(foot.get("jointName") or f"{side}_ankle")
             continuous_foot_joints.add(joint_name)
@@ -32235,6 +32234,7 @@ def fuse_reconstructed_support_evidence(
         if (
             not isinstance(foot_evidence, dict)
             or bool(foot_evidence.get("continuousSupport"))
+            or (fused.get("footPatchEvidence") or {}).get("available") is True
             or side in explicit_airborne_sides
             or bool(foot_evidence.get("supportSplitByObservedAirborne"))
         ):
@@ -32314,6 +32314,9 @@ def fuse_reconstructed_support_evidence(
                 or contact.get("surfaceKind") == "contract_inferred_support_surface"):
             continue
         joint_name = str(contact.get("jointName") or "")
+        if (joint_name.endswith(("_foot", "_ankle", "_heel"))
+                and (fused.get("footPatchEvidence") or {}).get("available") is True):
+            continue
         side = joint_name.split("_", 1)[0]
         if (
             side in explicit_airborne_sides
@@ -35711,7 +35714,8 @@ def build_source_cut_candidate_choice_prompt(
         "The target name supplies the requested exercise and explicit qualifiers. No generated posture description is authoritative. "
         "Assess identity separately from trimming: identityMatch must be match, mismatch, or uncertain, based on visible actions and explicit target qualifiers. "
         "A partial cut of the right exercise is a boundary failure, not wrong_exercise. "
-        "Give identityEvidence for every identity decision, including approval; give boundaryEvidence for a partial/bad-boundary/setup rejection, "
+        "Give identityEvidence for every identity decision, including approval; give boundaryEvidence for a partial/bad-boundary/setup rejection. "
+        "For an approved candidate, boundaryEvidence must be an empty string; do not describe positive boundary proof or expected endpoint posture. "
         "and qualityEvidence for mechanics, visibility, or synthetic-footage rejection. Describe visible observations, not an expected pose invented for the exercise. "
         "If the necessary evidence is unclear, use unclear or low_confidence instead of asserting a definite defect. "
         "For a static hold or continuous travel exercise, a stable representative interval is complete without approach, exit, or an invented return phase. "
@@ -39287,13 +39291,6 @@ def source_cut_exact_confirmation_proves_complete_phase(
         and region_observations.get("passed") is False
     ):
         return False
-    support_readiness = validation.get("sourceBodySupportReadiness")
-    if (
-        isinstance(support_readiness, dict)
-        and support_readiness.get("required")
-        and support_readiness.get("ready") is not True
-    ):
-        return False
     return True
 
 
@@ -40361,7 +40358,7 @@ def source_cut_scorecard_row(
             "note": note,
             "identityMatch": payload.get("identityMatch"),
             "identityEvidence": payload.get("identityEvidence"),
-            "boundaryEvidence": payload.get("boundaryEvidence"),
+            "boundaryEvidence": payload.get("boundaryEvidence") if approved is not True else "",
             "qualityEvidence": payload.get("qualityEvidence"),
             "clefTypedDecisionSummary": payload.get("clefTypedDecisionSummary"),
             "score": clamp_unit(model_score),

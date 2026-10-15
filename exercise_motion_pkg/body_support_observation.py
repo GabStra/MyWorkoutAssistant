@@ -10,7 +10,7 @@ from pathlib import Path
 
 import numpy as np
 
-POLICY_VERSION = 3
+POLICY_VERSION = 4
 BODY_SUPPORT_ANCHORS = ('pelvis', 'left_shoulder', 'right_shoulder')
 _REGION_ANCHORS = {
     'shoulders': ('left_shoulder', 'right_shoulder'),
@@ -39,16 +39,11 @@ def body_support_required_anchors(contract=None):
     return tuple(name for name in BODY_SUPPORT_ANCHORS if name not in excluded)
 
 
-def requires_body_support(contract):
-    contract = contract or {}
-    moving = _contract_primary_moving_regions(contract)
-    reference = set(contract.get('referenceRegions') or [])
-    spec = contract.get('observableMotionSpec') or {}
-    if isinstance(spec, dict):
-        reference.update(spec.get('referenceRegions') or [])
-    return ((contract.get('startPoseConstraints') or {}).get('supportMode') == 'lying'
-            and 'torso' in {str(region).casefold() for region in reference}
-            and not moving.intersection({'torso', 'spine', 'hips', 'pelvis', 'core'}))
+def source_support_observation_needed(source_pose, evidence):
+    """Source tracks request contact observation; contracts cannot declare contact."""
+    return bool(observed_stationary_sole_contacts(evidence)) or any(
+        stationary_source_track(source_pose, name)
+        for name in (*BODY_SUPPORT_ANCHORS, 'left_wrist', 'right_wrist', 'left_ankle', 'right_ankle'))
 
 
 def observe_body_support(video_path, caption_images, cache_dir):
@@ -89,6 +84,9 @@ Return JSON only with these exact fields:
  "pelvis":"stationary_support|moving|unknown",
  "upperBack":"stationary_support|moving|unknown",
  "head":"stationary_support|moving|unknown",
+ "pelvisContactSurface":"floor|bench|seat|wall|other|none|unknown",
+ "upperBackContactSurface":"floor|bench|seat|wall|other|none|unknown",
+ "headContactSurface":"floor|bench|seat|wall|other|none|unknown",
  "leftFoot":"stationary_full_sole|stationary_forefoot|moving|unknown",
  "rightFoot":"stationary_full_sole|stationary_forefoot|moving|unknown",
  "leftFootSurface":"ground|raised_surface|unknown",
@@ -98,6 +96,9 @@ Return JSON only with these exact fields:
  "handsSameHorizontalSurface":true or false,
  "observations":"Brief visible evidence for the reported contacts"}
 Horizontal describes the actual surface, not its apparent screen angle.
+ContactSurface means DIRECT visible contact with that surface, not indirect
+support through the feet. A free-standing torso has contact surface none even
+when upright and stationary. Require direct contact throughout the samples.
 Full sole means heel AND forefoot visibly planted. A lifted heel is forefoot.
 Do not assume both feet or hands agree when only one is visible.
 For handsSameHorizontalSurface, require both hands visibly resting on the same
@@ -155,6 +156,41 @@ def stationary_source_track(source_pose, joint, *, max_leading_gap_ratio=0.15):
                 <= SOURCE_POSE_SUPPORT_STATIONARY_ENDPOINT_RATIO_THRESHOLD)
 
 
+def observed_body_support_contacts(observed):
+    """Direct contact and stationarity are separate evidence requirements."""
+    if observed.get('status') != 'observed' or observed.get('policyVersion') != POLICY_VERSION:
+        return set()
+    answer = observed.get('observation') or {}
+    surfaces = {'floor', 'bench', 'seat', 'wall', 'other'}
+    contacts = set()
+    for region, joints in (
+        ('pelvis', ('pelvis',)),
+        ('upperBack', ('left_shoulder', 'right_shoulder')),
+        ('head', ('head',)),
+    ):
+        if (answer.get(region) == 'stationary_support'
+                and answer.get(f'{region}ContactSurface') in surfaces):
+            contacts.update(joints)
+    return contacts
+
+
+def remove_unobserved_torso_support(evidence):
+    support = evidence.get('bodySupport') or {}
+    if support.get('reason') == 'supported_reference_body_requires_observed_surface_geometry':
+        evidence.pop('bodySupport', None)
+    elif support.get('source') == 'exact_source_contacts_and_stationary_pose_tracks':
+        observed = evidence.get('bodySupportObservation') or {}
+        contacts = observed_body_support_contacts(observed)
+        if support.get('sourceVideoSha256') != observed.get('sourceVideoSha256'):
+            contacts = set()
+        if not set(BODY_SUPPORT_ANCHORS).issubset(contacts):
+            contacts = set()
+        removed = set(BODY_SUPPORT_ANCHORS) | {'head', 'neck', 'spine1', 'spine2', 'spine3'}
+        if contacts:
+            removed -= contacts | {'neck', 'spine1', 'spine2', 'spine3'}
+        _remove_materialized_support_joints(evidence, removed)
+
+
 def materialize_body_support(payload, source_pose, contract=None):
     """Convert confirmed contacts to constraints in the baked coordinate frame.
 
@@ -163,17 +199,10 @@ def materialize_body_support(payload, source_pose, contract=None):
     bench/normal direction may still be estimated from torso landmark medians.
     """
     evidence = payload.get('sourceFootSupportEvidence') or {}
-    # A hinged torso is not a rigid pelvis-to-upper-back support plane.
-    if any((contract or {}).get(key, {}).get('torsoOrientation') == 'hinged'
-           for key in ('startPoseConstraints', 'endPoseConstraints')):
-        support = evidence.get('bodySupport') or {}
-        if any(set(chain.get('endpoints') or []) == {'pelvis', 'neck'}
-               for chain in support.get('nonPenetrationChains', [])):
-            evidence.pop('bodySupport', None)
-        return
-    if contract is not None and not requires_body_support(contract):
-        return
-    if (evidence.get('bodySupport') or {}).get('status') == 'confirmed':
+    remove_unobserved_torso_support(evidence)
+    existing = evidence.get('bodySupport') or {}
+    if (existing.get('status') == 'confirmed'
+            and set(BODY_SUPPORT_ANCHORS).intersection(existing.get('stationaryJoints') or [])):
         # Retained evidence can be only partially materialized. Fill missing
         # ground-foot anchors from the same hash-matched source observation,
         # while retaining all existing torso and support constraints.
@@ -182,7 +211,8 @@ def materialize_body_support(payload, source_pose, contract=None):
     observed = evidence.get('bodySupportObservation') or {}
     answer = observed.get('observation') or {}
     anchors = list(body_support_required_anchors(contract))
-    if not (observed.get('status') == 'observed'
+    contacts = observed_body_support_contacts(observed)
+    if not (set(BODY_SUPPORT_ANCHORS).issubset(contacts)
             and answer.get('pelvisAndUpperBackSameSurface') is True
             and answer.get('pelvis') == answer.get('upperBack') == 'stationary_support'
             and answer.get('torsoSurface') in {'horizontal', 'inclined', 'vertical'}
@@ -218,7 +248,7 @@ def materialize_body_support(payload, source_pose, contract=None):
                'nonPenetrationChains': [{'endpoints': ['pelvis', 'neck'],
                                          'joints': ['spine1', 'spine2', 'spine3'], 'normal': normal}],
                'soleContacts': []}
-    if answer.get('head') == 'stationary_support' and stationary_source_track(source_pose, 'head'):
+    if 'head' in contacts and stationary_source_track(source_pose, 'head'):
         support['stationaryJoints'].append('head')
     sides = []
     for side in ('left', 'right'):
@@ -522,6 +552,11 @@ def _remove_unverified_materialized_foot_support(evidence, corroborated_sides):
         for side in ('left', 'right') if side not in corroborated_sides
         for joint in ('ankle', 'foot')
     }
+    _remove_materialized_support_joints(evidence, removed_joints)
+
+
+def _remove_materialized_support_joints(evidence, removed_joints):
+    support = evidence.get('bodySupport') or {}
     if not removed_joints.intersection(support.get('stationaryJoints') or []):
         return
 
@@ -545,6 +580,11 @@ def _remove_unverified_materialized_foot_support(evidence, corroborated_sides):
         contact for contact in support.get('soleContacts') or []
         if not removed_joints.intersection(contact.get('joints') or [])
     ]
+    support['nonPenetrationChains'] = [
+        chain for chain in support.get('nonPenetrationChains') or []
+        if not removed_joints.intersection(
+            [*(chain.get('joints') or []), *(chain.get('endpoints') or [])])
+    ]
 
     if (not support['stationaryJoints'] and not support['coplanarGroups']
             and not support.get('nonPenetrationChains') and not support['soleContacts']):
@@ -558,6 +598,7 @@ def materialize_stationary_sole_support(payload):
         motion_space_support_evidence,
     )
     evidence = deepcopy(motion_space_support_evidence(payload))
+    remove_unobserved_torso_support(evidence)
     existing = evidence.get('bodySupport') or {}
     if existing.get('required') and existing.get('status') != 'confirmed':
         return evidence  # New foot evidence cannot resolve missing torso observations.

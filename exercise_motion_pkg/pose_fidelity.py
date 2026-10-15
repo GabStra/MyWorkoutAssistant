@@ -319,7 +319,7 @@ def source_pose_reference_for_motion(
     return selected_reference
 
 
-def materialized_camera_pose_fidelity_metrics(source_payload, motion_payload):
+def materialized_camera_placement_transform(source_payload, motion_payload):
     """Carry the correction camera through unchanged root-relative body shape.
 
     Registration uses retained pre-fit coordinates, never the fitted output
@@ -330,7 +330,7 @@ def materialized_camera_pose_fidelity_metrics(source_payload, motion_payload):
 
     reference = motion_payload.get('sourcePoseCameraReference')
     if reference is None:
-        return registered_camera_pose_fidelity_metrics(source_payload, motion_payload)
+        return {'available': True, 'orientation': np.eye(3), 'scale': 1., 'origin': np.zeros(3)}
     def unavailable(reason):
         return _unavailable_metrics(source_frame_count=len(source_payload.get('frames', [])),
                                     motion_frame_count=len(motion_payload.get('frames', [])), reason=reason)
@@ -392,18 +392,37 @@ def materialized_camera_pose_fidelity_metrics(source_payload, motion_payload):
         return unavailable('source_camera_placement_not_rigid')
     origins = np.asarray(placed_roots)-scale*np.asarray(original_roots) @ orientation
     origin = origins.mean(0)
+    return {'available': True, 'orientation': orientation, 'scale': scale, 'origin': origin,
+            'maximumError': float(np.max(error)),
+            'rootTranslationRange': np.ptp(origins, axis=0).tolist()}
+
+
+def materialized_camera_pose_fidelity_metrics(source_payload, motion_payload):
+    """Evaluate placed motion with the same retained camera used by fitting."""
+    import numpy as np
+    reference = motion_payload.get('sourcePoseCameraReference')
+    if reference is None:
+        return registered_camera_pose_fidelity_metrics(source_payload, motion_payload)
+    placement = materialized_camera_placement_transform(source_payload, motion_payload)
+    if not placement.get('available'):
+        return placement
+    orientation, scale, origin = (placement[key] for key in ('orientation', 'scale', 'origin'))
+    if motion_payload.get('frames') and all('sourceTimeSec' in f for f in motion_payload['frames']):
+        source_payload = source_pose_reference_for_motion(source_payload, motion_payload)
     restored = {**motion_payload, 'frames': [{**f, 'joints': {
         n: ((np.asarray(p)-origin) @ orientation.T/scale).tolist()
         for n, p in f['joints'].items()
     }} for f in motion_payload.get('frames', [])]}
     camera = reference.get('camera')
     if not isinstance(camera, dict):
-        return unavailable('invalid_source_camera_reference')
+        return _unavailable_metrics(source_frame_count=len(source_payload.get('frames', [])),
+                                    motion_frame_count=len(motion_payload.get('frames', [])),
+                                    reason='invalid_source_camera_reference')
     metrics = registered_camera_pose_fidelity_metrics(source_payload, restored, camera_reference=camera)
     return {**metrics, 'cameraAuthority': 'retained_source_correction_camera',
-            'cameraPlacementMaximumError': float(np.max(error)),
+            'cameraPlacementMaximumError': placement['maximumError'],
             'cameraPlacementBasis': 'root_relative_shape_and_one_constant_origin',
-            'cameraReferenceRootTranslationRange': np.ptp(origins, axis=0).tolist()}
+            'cameraReferenceRootTranslationRange': placement['rootTranslationRange']}
 
 
 def source_to_motion_pose_fidelity_metrics(

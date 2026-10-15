@@ -179,7 +179,7 @@ def validate_rig_playback(payload, *, subdivisions=4):
     points=sample_rig(rig,cursors,wrap=cyclic);scale=body_scale(points,names)
     originals=np.asarray([[f['joints'][n] for n in names] for f in payload['frames']],dtype=float)
     sample_error=float(np.max(abs(points[::subdivisions]-originals)))
-    pinned=contact_mask(payload,names,count)
+    pinned=contact_mask(payload,names,count,support_evidence=support_evidence)
     if pinned is None:
         return {'passed':False,'reason':'unrepresented_heel_contact'}
     source=np.asarray([[f.get('supportContactReferenceJoints', f.get('controlledSourceJoints',f['joints']))[n] for n in names] for f in payload['frames']],dtype=float)

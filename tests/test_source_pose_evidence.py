@@ -52,6 +52,20 @@ def test_independent_anchored_track_recovers_faulty_chain():
     assert all(e['status'] == 'recovered' for e in result['sourcePoseEvidenceAudit']['events'])
 
 
+def test_missing_joint_in_flagged_chain_stays_unknown_without_index_error():
+    primary = corrupt(reference())
+    for frame in primary['frames'][4:7]:
+        frame['joints'].pop('right_elbow')
+        frame['jointConfidence'].pop('right_elbow')
+
+    result = audit_source_pose(primary, observations(reference()))
+
+    assert result['sourcePoseEvidenceAudit']['unresolved']
+    assert all(event['status'] == 'unknown' for event in result['sourcePoseEvidenceAudit']['events'])
+    for frame in result['frames'][4:7]:
+        assert not {'right_shoulder', 'right_elbow', 'right_wrist'} & frame['joints'].keys()
+
+
 def test_wrong_independent_person_cannot_replace_source():
     other = observations(reference())
     for frame in other['frames']:

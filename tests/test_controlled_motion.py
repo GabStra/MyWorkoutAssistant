@@ -18,6 +18,10 @@ def test_contact_iterate_selection_distinguishes_stored_precision_from_playback_
     assert not motion.contact_iterate_is_feasible(.0004, .003, .001)
     assert not motion.contact_iterate_is_feasible(.0004, .002, .003)
     assert not motion.contact_iterate_is_feasible(.0005, .002, .001)
+    assert not motion.contact_iterate_is_feasible(
+        .0004, .002, .001, maximum_anatomy_residual=1.8874316553146864e-05)
+    assert motion.contact_iterate_is_feasible(
+        .0004, .002, .001, maximum_anatomy_residual=6.05171231182755e-08)
 
 
 def test_coupled_playback_repair_preserves_stored_contact_precision(monkeypatch):
@@ -1458,9 +1462,9 @@ def test_confirmed_source_support_adds_relative_pelvis_path_fit_rows():
     current['sourceFootSupportEvidence'] = {'bodySupport': {
         'required': True,
         'status': 'confirmed',
-        'stationaryJoints': ['left_foot'],
+        'stationaryJoints': ['left_ankle', 'left_foot'],
         'coplanarGroups': [{
-            'joints': ['left_foot'],
+            'joints': ['left_ankle', 'left_foot'],
             'normal': [0., 1., 0.],
             'planeOffsetMeters': float(points[0, names.index('left_foot'), 1]),
         }],
@@ -1561,6 +1565,31 @@ def test_confirmed_source_support_adds_relative_pelvis_path_fit_rows():
         jacobian[:, coordinate_index].toarray().ravel(), numeric,
         rtol=2e-3, atol=2e-4,
     )
+
+    pose = current['sourcePoseCameraReference']['sourcePose']
+    for frame in pose['frames']:
+        frame['joints'].pop('pelvis', None)
+    support = current['sourceFootSupportEvidence']
+    support['bodySupportObservation'] = {'sourceVideoSha256': 'verified-source'}
+    support['supportRelativePixelTracks'] = {
+        'available': True, 'sourceVideoSha256': 'verified-source',
+        'tracks': {'left_ankle': [
+            {'sourceTimeSec': frame['sourceTimeSec'], 'sourceDelta': [.1, .2]}
+            for frame in pose['frames']]},
+    }
+    pixel_constraint = motion._prepare_source_projection_fit_constraints(
+        current, current['frames'], names, points,
+        np.zeros(points.shape[:2], dtype=bool), motion.body_scale(points, names))
+    pixel_rows = pixel_constraint['supportRelativeObservations']
+    assert len(pixel_rows) == len(points)
+    assert all(row['sourceEvidence'] == 'source_pixel_tracking' for row in pixel_rows)
+    np.testing.assert_allclose([row['sourceDelta'] for row in pixel_rows], [[.1, .2]]*len(points))
+    support['supportRelativePixelTracks']['sourceVideoSha256'] = 'other-source'
+    fallback = motion._prepare_source_projection_fit_constraints(
+        current, current['frames'], names, points,
+        np.zeros(points.shape[:2], dtype=bool), motion.body_scale(points, names))
+    assert all(row['sourceEvidence'] == 'source_pose'
+               for row in fallback['supportRelativeObservations'])
 
 
 def test_selected_cycle_boundaries_get_stronger_source_projection_fit_rows():

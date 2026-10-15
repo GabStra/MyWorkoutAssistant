@@ -16,7 +16,7 @@ import numpy as np
 from .contact_constraints import contact_frame_bounds, is_stationary_contact
 
 MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task"
-POLICY_VERSION = 10
+POLICY_VERSION = 11
 # Classification changes reuse the exact same expensive landmark observations.
 OBSERVATION_CACHE_VERSION = 3
 LANDMARKS = {"left_shoulder": 11, "right_shoulder": 12,
@@ -313,8 +313,21 @@ def classify_foot_contacts(
                 calibration[start:end + 1] = True
         calibration &= valid
         states = ["unknown"] * count
-        if np.count_nonzero(calibration) < 4:
+        uncalibrated_toe = np.count_nonzero(calibration) < 4
+        observed = evidence.get('bodySupportObservation') or {}
+        answer = observed.get('observation') or {}
+        toe_contact_observed = (
+            observed.get('status') == 'observed'
+            and isinstance(observations.get('sourceVideoSha256'), str)
+            and observed.get('sourceVideoSha256') == observations['sourceVideoSha256']
+            and answer.get(f'{side}Foot') in {'stationary_full_sole', 'stationary_forefoot'}
+            and answer.get(f'{side}FootSurface') in {'ground', 'raised_surface'})
+        if uncalibrated_toe and not toe_contact_observed:
             result["feet"][side] = {"states": states, "reason": "no_observed_stance_calibration"}
+            continue
+        if uncalibrated_toe and np.count_nonzero(valid) < 3:
+            result['feet'][side] = {'states': states, 'reason': 'independent_foot_identity_unverified',
+                                    'validObservationCount': int(valid.sum())}
             continue
         # Estimate the neutral observed sole orientation from supported stance,
         # not from the reconstructed foot or an assumed camera angle.
@@ -322,12 +335,17 @@ def classify_foot_contacts(
         tolerances = []
         for track in (image_pitch, world_pitch):
             samples = track[calibration]
-            center = 0.0 if ground_referenced else float(np.median(samples))
+            center = 0.0 if ground_referenced or uncalibrated_toe else float(np.median(samples))
             references.append(center)
-            tolerances.append(np.deg2rad(8) if ground_referenced else
+            tolerances.append(np.deg2rad(8) if ground_referenced or uncalibrated_toe else
                               max(np.deg2rad(8), 3 * 1.4826 * float(np.median(np.abs(samples - center)))))
         for index in range(count):
             if not valid[index]:
+                continue
+            if uncalibrated_toe:
+                # Confirm only the visible toe; absent heel calibration cannot
+                # establish a flat sole or a lifted heel.
+                states[index] = 'toe_only'
                 continue
             if not possible_contact[index]:
                 # Flight needs positive separation evidence, not merely a
@@ -374,8 +392,12 @@ def classify_foot_contacts(
                 centers = np.array([np.median(chunk, axis=0) for chunk in chunks])
                 spread = float(np.linalg.norm(np.ptp(centers, axis=0)))
                 stationary = spread <= max(0.005, scale * 0.15)
+                if uncalibrated_toe and np.linalg.norm(np.ptp(anchor_points, axis=0)) > max(.005, scale * .15):
+                    states[start:end] = ['unknown'] * (end - start)
+                    start = end
+                    continue
                 lift_ratio = 0.0
-                if state in {"toe_only", "heel_only"}:
+                if state in {"toe_only", "heel_only"} and not uncalibrated_toe:
                     lift_angle = min(
                         max(0.0, float(np.median(np.abs(track[start:end] - center))) - tolerance)
                         for track, center, tolerance in zip(
@@ -386,11 +408,15 @@ def classify_foot_contacts(
                 contact = {
                     "jointName": f"{side}_foot", "supportKind": "observed_foot_patch",
                     "contactState": state, "contactMotion": "stationary" if stationary else "unknown",
-                    "verticalOnly": state != "full_sole", "startRatio": start / max(1, count - 1),
+                    "verticalOnly": state == "heel_only", "startRatio": start / max(1, count - 1),
                     "endRatio": (end - 1) / max(1, count - 1), "confidence": 0.8,
                     "source": "observed_heel_and_forefoot", "anchorImageSpread": spread,
                     "minimumLiftRatio": lift_ratio,
                 }
+                if uncalibrated_toe:
+                    contact['surfaceKind'] = ('ground' if answer[f'{side}FootSurface'] == 'ground'
+                                              else 'observed_raised_support_surface')
+                    contact['source'] = 'exact_visual_contact_and_independent_stationary_toe'
                 if state == 'full_sole' and stationary:
                     for candidate_index, candidate in enumerate(contacts):
                         first, last = contact_frame_bounds(candidate, count)
@@ -406,7 +432,8 @@ def classify_foot_contacts(
         assign_stationary_anchor_groups(result["contacts"], side=side, valid=valid,
                                         toe_points=toe_points, foot_sizes=foot_sizes, states=states)
         result["feet"][side] = {"states": states, "validObservationCount": int(valid.sum()),
-                                "pitchReferenceSource": "observed_ground_plane" if ground_referenced else "relative_stance",
+                                "pitchReferenceSource": ("heel_unobserved" if uncalibrated_toe else
+                                                         "observed_ground_plane" if ground_referenced else "relative_stance"),
                                 "imagePitchReference": references[0], "worldPitchReference": references[1],
                                 "pitchTolerances": tolerances}
     return result

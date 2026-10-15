@@ -1,21 +1,46 @@
 """Equipment relationships, independent of exercise-name exceptions."""
 import numpy as np
 
+from .contract_authority import contract_field_authority
+
 
 HAND_RELATIONSHIPS = {'rigid_pair', 'independent', 'single', 'none', 'unknown'}
 
 
+def normalized_equipment_relationships(contract):
+    """Resolve only explicit equipment facts and structural field dependencies."""
+    context = contract.get('motionContext')
+    primary = context.get('primaryEquipment') if isinstance(context, dict) else None
+    kind = str(primary.get('type') or '').upper() if isinstance(primary, dict) else ''
+    relationship = contract.get('handRelationship')
+    support_mode = contract.get('implementSupportMode')
+    updates = {}
+    # Equipment count and explicitly named acting-arm count outrank model guesses.
+    if kind in {'DUMBBELLS', 'KETTLEBELLS'}:
+        relationship = 'independent'
+        updates['handRelationship'] = relationship
+        updates['implementSupportMode'] = 'none'
+    elif kind in {'DUMBBELL', 'KETTLEBELL'}:
+        authority = contract_field_authority(str(contract.get('exerciseName') or ''), {})
+        if authority.get('actingArmCount', {}).get('value') == 1:
+            relationship = 'single'
+            updates['handRelationship'] = relationship
+            updates['implementSupportMode'] = 'none'
+    if support_mode == 'hands_only' and relationship in {'independent', 'single', 'none'}:
+        updates['implementSupportMode'] = 'none'
+    return updates
+
+
 def declared_hand_relationship(contract):
     contract = contract if isinstance(contract, dict) else {}
-    relationship = contract.get('handRelationship')
+    relationship = normalized_equipment_relationships(contract).get('handRelationship', contract.get('handRelationship'))
     if isinstance(relationship, str) and relationship in HAND_RELATIONSHIPS and relationship != 'unknown':
         return relationship
     context = contract.get('motionContext') or {}
     primary = context.get('primaryEquipment') or {}
     kind = str(primary.get('type') or '').upper()
-    required = ' '.join(str(value).lower() for value in contract.get('requiredEquipment', []))
-    if kind in {'DUMBBELL', 'DUMBBELLS', 'KETTLEBELL', 'KETTLEBELLS'} or 'dumbbell' in required:
-        # Independent implements do not imply symmetric hand trajectories.
+    if kind in {'DUMBBELLS', 'KETTLEBELLS'}:
+        # Separate implements do not imply symmetric hand trajectories.
         return 'independent'
     return 'unknown'
 

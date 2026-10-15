@@ -7,19 +7,17 @@ from __future__ import annotations
 
 import numpy as np
 
-POLICY_VERSION = 3
+POLICY_VERSION = 4
 TOLERANCE_METERS = .005
 
 
 def declare_support_requirements(payload, contract):
-    """Require evidence for a supported reference torso, never invent its plane."""
-    from .body_support_observation import requires_body_support
-    if requires_body_support(contract):
-        if not isinstance(payload.get('sourceFootSupportEvidence'), dict):
-            payload['sourceFootSupportEvidence'] = {}
-        evidence = payload['sourceFootSupportEvidence']
-        evidence.setdefault('bodySupport', {'required': True, 'status': 'unknown',
-            'reason': 'supported_reference_body_requires_observed_surface_geometry'})
+    """Recheck observed contact authority; contracts do not establish contact."""
+    from .body_support_observation import remove_unobserved_torso_support
+    for key in ('sourceFootSupportEvidence', 'motionSpaceSupportEvidence'):
+        evidence = payload.get(key)
+        if isinstance(evidence, dict):
+            remove_unobserved_torso_support(evidence)
 
 
 def support_evidence(payload):
@@ -28,6 +26,42 @@ def support_evidence(payload):
     # same view for downstream geometry checks so cached full-clip foot anchors
     # cannot outlive contradictory or incomplete contact observations.
     return materialize_stationary_sole_support(payload).get('bodySupport', {})
+
+
+def support_contact_readiness(payload, *, evidence=None):
+    """A visible stationary-support claim needs independently usable contacts."""
+    from .body_support_observation import materialize_stationary_sole_support
+    from .contact_constraints import (
+        is_stationary_contact, motion_support_contacts, source_support_mapping_unresolved,
+    )
+    if source_support_mapping_unresolved(payload):
+        return {'required': True, 'available': False, 'evaluated': False, 'passed': False,
+                'rejectionReasons': ['source_support_mapping_unavailable']}
+    evidence = materialize_stationary_sole_support(payload) if evidence is None else evidence
+    observed = evidence.get('bodySupportObservation') or {}
+    answer = observed.get('observation') or {}
+    required = {side for side in ('left', 'right')
+                if observed.get('status') == 'observed'
+                and answer.get(f'{side}Foot') in {'stationary_full_sole', 'stationary_forefoot'}}
+    support = evidence.get('bodySupport') or {}
+    supported = {name.split('_', 1)[0] for name in support.get('stationaryJoints') or []
+                 if support.get('status') == 'confirmed' and name.endswith(('_ankle', '_foot'))}
+    patch_available = (evidence.get('footPatchEvidence') or {}).get('available') is True
+    for contact in motion_support_contacts(evidence):
+        name = str(contact.get('jointName') or '')
+        if not name.endswith(('_ankle', '_foot')) or not is_stationary_contact(contact):
+            continue
+        # A reconstruction-compatible track is not independent contact evidence.
+        if contact.get('reconstructed3dSupport') or contact.get('continuousSupportSource'):
+            continue
+        if patch_available and contact.get('contactState') not in {'full_sole', 'toe_only', 'heel_only'}:
+            continue
+        supported.add(name.split('_', 1)[0])
+    unresolved = sorted(required - supported)
+    return {'required': bool(required), 'available': not unresolved, 'evaluated': not unresolved,
+            'passed': not unresolved, 'requiredSides': sorted(required),
+            'resolvedSides': sorted(required & supported), 'unresolvedSides': unresolved,
+            'rejectionReasons': ['source_support_contact_evidence_unavailable'] if unresolved else []}
 
 
 # Distal plants owned by contact pins / plant projection. Torso/back support still
@@ -135,9 +169,15 @@ def geometry_errors(points, names, evidence):
 
 
 def validate_support_geometry(payload, points=None, names=None):
-    evidence = support_evidence(payload)
+    from .body_support_observation import materialize_stationary_sole_support
+    materialized = materialize_stationary_sole_support(payload)
+    readiness = support_contact_readiness(payload, evidence=materialized)
+    if not readiness['passed']:
+        return {**readiness, 'policyVersion': POLICY_VERSION}
+    evidence = materialized.get('bodySupport', {})
     if not evidence.get('required'):
-        return {'required': False, 'passed': True, 'policyVersion': POLICY_VERSION}
+        return {'required': False, 'passed': True, 'policyVersion': POLICY_VERSION,
+                'sourceContactReadiness': readiness}
     if evidence.get('status') != 'confirmed':
         return {'required': True, 'passed': False, 'policyVersion': POLICY_VERSION,
                 'rejectionReasons': ['supported_body_evidence_unresolved']}
