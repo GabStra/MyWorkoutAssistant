@@ -16,6 +16,7 @@ import com.openai.models.chat.completions.ChatCompletionFunctionTool
 import com.openai.models.chat.completions.ChatCompletionMessageFunctionToolCall
 import com.openai.models.chat.completions.ChatCompletionMessageParam
 import com.openai.models.chat.completions.ChatCompletionMessageToolCall
+import com.openai.models.chat.completions.ChatCompletionSystemMessageParam
 import com.openai.models.chat.completions.ChatCompletionToolMessageParam
 import com.openai.models.chat.completions.ChatCompletionUserMessageParam
 import kotlinx.coroutines.Dispatchers
@@ -64,7 +65,7 @@ class OpenAiInsightsRepository(
     private fun createClient(config: RemoteOpenAiConfig): OpenAIClient {
         return OpenAIOkHttpClient.builder()
             .apiKey(config.apiKey.trim().ifBlank { REMOTE_OPENAI_KEY_PLACEHOLDER })
-            .baseUrl(normalizeBaseUrl(config.baseUrl))
+            .baseUrl(normalizeOpenAiBaseUrl(config.baseUrl))
             .build()
     }
 
@@ -174,30 +175,8 @@ class OpenAiInsightsRepository(
                 requireNotNull(transportRequest.imagePngBytes),
                 Base64.NO_WRAP
             )
-        messages.addAll(
-            ChatCompletionCreateParams.builder()
-                .addSystemMessage(transportRequest.systemPrompt)
-                .addUserMessageOfArrayOfContentParts(
-                    listOf(
-                        ChatCompletionContentPart.ofText(
-                            ChatCompletionContentPartText.builder()
-                                .text(transportRequest.prompt)
-                                .build()
-                        ),
-                        ChatCompletionContentPart.ofImageUrl(
-                            ChatCompletionContentPartImage.builder()
-                                .imageUrl(
-                                    ChatCompletionContentPartImage.ImageUrl.builder()
-                                        .url(imageDataUrl)
-                                        .build()
-                                )
-                                .build()
-                        ),
-                    )
-                )
-                .build()
-                .messages()
-        )
+        messages.add(systemMessage(transportRequest.systemPrompt))
+        messages.add(userMessageOfTextAndImageParts(transportRequest.prompt, imageDataUrl))
 
         onProgress(WorkoutInsightsPhase.CHART_ANALYSIS, "Analyzing heart-rate chart (timeline tools)...")
         transportRequest.debugRecorder?.recordTransportRequest(
@@ -318,39 +297,18 @@ class OpenAiInsightsRepository(
         val toolExecutor = WorkoutInsightsToolExecutor(requireNotNull(transportRequest.toolContext))
         val messages = mutableListOf<ChatCompletionMessageParam>()
 
-        messages.addAll(
-            ChatCompletionCreateParams.builder()
-                .addSystemMessage(transportRequest.systemPrompt)
-                .build()
-                .messages()
-        )
+        messages.add(systemMessage(transportRequest.systemPrompt))
         if (transportRequest.conversationMessages.isNotEmpty()) {
             messages.addAll(
                 transportRequest.conversationMessages.map { message ->
                     when (message.role) {
-                        HistoryChatMessageRole.User ->
-                            ChatCompletionMessageParam.ofUser(
-                                ChatCompletionUserMessageParam.builder()
-                                    .content(message.content.trim())
-                                    .build()
-                            )
-                        HistoryChatMessageRole.Assistant ->
-                            ChatCompletionMessageParam.ofAssistant(
-                                ChatCompletionAssistantMessageParam.builder()
-                                    .content(message.content.trim())
-                                    .build()
-                            )
+                        HistoryChatMessageRole.User -> userMessage(message.content)
+                        HistoryChatMessageRole.Assistant -> assistantMessage(message.content)
                     }
                 }
             )
         } else {
-            messages.add(
-                ChatCompletionCreateParams.builder()
-                    .addUserMessage(transportRequest.prompt)
-                    .build()
-                    .messages()
-                    .last()
-            )
+            messages.add(userMessage(transportRequest.prompt))
         }
 
         onProgress(WorkoutInsightsPhase.PREPARING_TOOLS, "Preparing insight tools...")
@@ -474,27 +432,12 @@ class OpenAiInsightsRepository(
 
         if (transportRequest.conversationMessages.isNotEmpty()) {
             val messages = mutableListOf<ChatCompletionMessageParam>()
-            messages.addAll(
-                ChatCompletionCreateParams.builder()
-                    .addSystemMessage(transportRequest.systemPrompt)
-                    .build()
-                    .messages()
-            )
+            messages.add(systemMessage(transportRequest.systemPrompt))
             messages.addAll(
                 transportRequest.conversationMessages.map { message ->
                     when (message.role) {
-                        HistoryChatMessageRole.User ->
-                            ChatCompletionMessageParam.ofUser(
-                                ChatCompletionUserMessageParam.builder()
-                                    .content(message.content.trim())
-                                    .build()
-                            )
-                        HistoryChatMessageRole.Assistant ->
-                            ChatCompletionMessageParam.ofAssistant(
-                                ChatCompletionAssistantMessageParam.builder()
-                                    .content(message.content.trim())
-                                    .build()
-                            )
+                        HistoryChatMessageRole.User -> userMessage(message.content)
+                        HistoryChatMessageRole.Assistant -> assistantMessage(message.content)
                     }
                 }
             )
@@ -536,13 +479,6 @@ class OpenAiInsightsRepository(
         onChunk: suspend (String) -> Unit,
     ) {
         collectChatCompletionContent(streamResponse.stream().iterator(), onChunk)
-    }
-
-    private fun normalizeBaseUrl(
-        baseUrl: String,
-    ): String {
-        val trimmed = baseUrl.trim().trimEnd('/')
-        return if (trimmed.endsWith("/v1", ignoreCase = true)) trimmed else "$trimmed/v1"
     }
 
     private fun applyMaxOutputTokensIfSet(
@@ -610,6 +546,57 @@ class OpenAiInsightsRepository(
 
 /** Sent when the user leaves the API key empty; unauthenticated servers ignore it, hosted ones reject it with a clear 401. */
 private const val REMOTE_OPENAI_KEY_PLACEHOLDER = "none"
+
+/** Accepts base URLs with or without the `/v1` suffix (and a trailing slash) and returns the SDK's expected form. */
+internal fun normalizeOpenAiBaseUrl(baseUrl: String): String {
+    val trimmed = baseUrl.trim().trimEnd('/')
+    return if (trimmed.endsWith("/v1", ignoreCase = true)) trimmed else "$trimmed/v1"
+}
+
+/**
+ * Message-param factories for assembling tool-loop conversation turns directly. Building a
+ * full [ChatCompletionCreateParams] just to read its `.messages()` is not possible: the SDK
+ * validates required fields when the params are used, and these intermediate builders carry
+ * no `model` (only the request that is actually sent does).
+ */
+private fun systemMessage(content: String): ChatCompletionMessageParam =
+    ChatCompletionMessageParam.ofSystem(
+        ChatCompletionSystemMessageParam.builder().content(content.trim()).build()
+    )
+
+private fun userMessage(content: String): ChatCompletionMessageParam =
+    ChatCompletionMessageParam.ofUser(
+        ChatCompletionUserMessageParam.builder().content(content.trim()).build()
+    )
+
+private fun assistantMessage(content: String): ChatCompletionMessageParam =
+    ChatCompletionMessageParam.ofAssistant(
+        ChatCompletionAssistantMessageParam.builder().content(content.trim()).build()
+    )
+
+private fun userMessageOfTextAndImageParts(
+    text: String,
+    imageDataUrl: String,
+): ChatCompletionMessageParam = ChatCompletionMessageParam.ofUser(
+    ChatCompletionUserMessageParam.builder()
+        .contentOfArrayOfContentParts(
+            listOf(
+                ChatCompletionContentPart.ofText(
+                    ChatCompletionContentPartText.builder().text(text).build()
+                ),
+                ChatCompletionContentPart.ofImageUrl(
+                    ChatCompletionContentPartImage.builder()
+                        .imageUrl(
+                            ChatCompletionContentPartImage.ImageUrl.builder()
+                                .url(imageDataUrl)
+                                .build()
+                        )
+                        .build()
+                ),
+            )
+        )
+        .build()
+)
 
 /**
  * Streams content deltas to [onChunk]. Some OpenAI-compatible servers emit one

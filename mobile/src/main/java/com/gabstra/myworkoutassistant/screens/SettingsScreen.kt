@@ -5,6 +5,7 @@ import com.gabstra.myworkoutassistant.composables.BreadcrumbScaffold
 import android.widget.Toast
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -19,6 +20,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -59,6 +62,7 @@ import com.gabstra.myworkoutassistant.getHistoricalRestingHeartRateFromHealthCon
 import com.gabstra.myworkoutassistant.getHistoricalVo2MaxFromHealthConnect
 import com.gabstra.myworkoutassistant.insights.LiteRtLmBackendPreference
 import com.gabstra.myworkoutassistant.insights.RemoteOpenAiConfig
+import com.gabstra.myworkoutassistant.insights.RemoteModelCatalog
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsMode
 import com.gabstra.myworkoutassistant.shared.DeloadConfig
 import com.gabstra.myworkoutassistant.shared.PolarHeartRateConfig
@@ -139,6 +143,38 @@ fun SettingsScreen(
     val remoteApiKeyState = remember { mutableStateOf(remoteInsightsConfig.apiKey) }
     val remoteModelState = remember { mutableStateOf(remoteInsightsConfig.model) }
     val workoutInsightsCustomInstructionsState = remember { mutableStateOf(workoutInsightsCustomInstructions) }
+    var remoteModels by remember { mutableStateOf<List<String>>(emptyList()) }
+    var isFetchingRemoteModels by remember { mutableStateOf(false) }
+    var remoteModelsError by remember { mutableStateOf<String?>(null) }
+    var remoteModelsMenuExpanded by remember { mutableStateOf(false) }
+
+    // The fetched catalog belongs to one endpoint+credential pair; drop it when either changes.
+    LaunchedEffect(remoteBaseUrlState.value, remoteApiKeyState.value) {
+        remoteModels = emptyList()
+        remoteModelsMenuExpanded = false
+    }
+
+    fun loadRemoteModels() {
+        if (isFetchingRemoteModels) return
+        val baseUrl = remoteBaseUrlState.value.trim()
+        if (baseUrl.isBlank()) {
+            remoteModelsError = "Enter the remote base URL first."
+            return
+        }
+        isFetchingRemoteModels = true
+        remoteModelsError = null
+        coroutineScope.launch {
+            RemoteModelCatalog.fetchModelIds(baseUrl, remoteApiKeyState.value)
+                .onSuccess { models ->
+                    remoteModels = models
+                    remoteModelsMenuExpanded = models.isNotEmpty()
+                }
+                .onFailure { error ->
+                    remoteModelsError = error.message ?: "Unable to load the model list."
+                }
+            isFetchingRemoteModels = false
+        }
+    }
 
     var isLoadingRestingHeartRate by remember { mutableStateOf(false) }
     var isLoadingVo2Max by remember { mutableStateOf(false) }
@@ -777,16 +813,6 @@ fun SettingsScreen(
                             )
 
                             OutlinedTextField(
-                                value = remoteModelState.value,
-                                onValueChange = { remoteModelState.value = it },
-                                label = { Text("Remote model") },
-                                placeholder = { Text("gpt-4.1-mini or your hosted model id") },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                            .padding(vertical = Spacing.xs)
-                            )
-
-                            OutlinedTextField(
                                 value = remoteApiKeyState.value,
                                 onValueChange = { remoteApiKeyState.value = it },
                                 label = { Text("Remote API key (optional)") },
@@ -794,6 +820,76 @@ fun SettingsScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                             .padding(vertical = Spacing.xs)
+                            )
+
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = Spacing.xs)
+                            ) {
+                                AppSecondaryButton(
+                                    text = when {
+                                        isFetchingRemoteModels -> "Loading models…"
+                                        remoteModels.isEmpty() -> "Load model list from server"
+                                        else -> "Choose model (${remoteModels.size} available)"
+                                    },
+                                    onClick = {
+                                        if (remoteModels.isEmpty()) {
+                                            loadRemoteModels()
+                                        } else {
+                                            remoteModelsMenuExpanded = true
+                                        }
+                                    },
+                                    enabled = !isFetchingRemoteModels,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                DropdownMenu(
+                                    expanded = remoteModelsMenuExpanded,
+                                    onDismissRequest = { remoteModelsMenuExpanded = false },
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("Reload list") },
+                                        onClick = {
+                                            remoteModelsMenuExpanded = false
+                                            loadRemoteModels()
+                                        },
+                                    )
+                                    remoteModels.forEach { modelId ->
+                                        DropdownMenuItem(
+                                            text = { Text(modelId) },
+                                            onClick = {
+                                                remoteModelState.value = modelId
+                                                remoteModelsMenuExpanded = false
+                                            },
+                                        )
+                                    }
+                                }
+                            }
+
+                            remoteModelsError?.let { error ->
+                                Text(
+                                    text = error,
+                                    color = MaterialTheme.colorScheme.error,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = Spacing.xs)
+                                )
+                            }
+
+                            OutlinedTextField(
+                                value = remoteModelState.value,
+                                onValueChange = { remoteModelState.value = it },
+                                label = { Text("Remote model") },
+                                placeholder = { Text("Pick from the server list or type the model id") },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                            .padding(vertical = Spacing.xs)
+                            )
+
+                            ContentSubtitle(
+                                text = "The list is loaded from the server's /v1/models endpoint. You can also type the model id manually.",
+                                modifier = Modifier.padding(vertical = Spacing.xs)
                             )
                         }
 
