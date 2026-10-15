@@ -55,10 +55,7 @@ fun StandardDialog(
                 .fillMaxWidth()
                 .widthIn(max = maxWidth),
             shape = MaterialTheme.shapes.small,
-            // Pure black read as "no dialog at all"; MediumDarkerGray (#2D2D2D)
-            // read as too light. #141414 keeps the dialog a shade above the
-            // black app background without glowing.
-            color = Color(0xFF141414),
+            color = MaterialTheme.colorScheme.surface,
             // A 1dp edge lighter than the surface so the dialog stays visible
             // against the near-black app background.
             border = BorderStroke(1.dp, Color(0xFF383838)),
@@ -77,7 +74,7 @@ fun StandardDialog(
                     titleContent != null -> titleContent()
                     title != null -> Text(
                         text = title,
-                        style = MaterialTheme.typography.titleMedium,
+                        style = MaterialTheme.typography.titleLarge,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                 }

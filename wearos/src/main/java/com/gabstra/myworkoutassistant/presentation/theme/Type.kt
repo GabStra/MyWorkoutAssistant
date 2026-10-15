@@ -12,8 +12,8 @@ private fun TextStyle.withAppFont(weight: FontWeight? = null): TextStyle =
     copy(fontFamily = AppFontFamily, fontWeight = weight ?: this.fontWeight)
 
 // Material 3 Wear typography on the shared bundled Roboto, matching the mobile
-// app. Tabular numbers apply to all roles; sub-header/label roles are Bold so
-// secondary text differentiates by weight rather than by a dim gray.
+// app. Tabular numbers apply to all roles; small labels use regular weight
+// to keep supporting text readable on the watch.
 val baseline = Typography().let { base ->
     Typography(
         arcLarge = base.arcLarge,
@@ -30,8 +30,8 @@ val baseline = Typography().let { base ->
         bodySmall = base.bodySmall.withAppFont().withTabularNumbers(),
         bodyExtraSmall = base.bodyExtraSmall.withAppFont().withTabularNumbers(),
         labelLarge = base.labelLarge.withAppFont().withTabularNumbers(),
-        labelMedium = base.labelMedium.withAppFont(FontWeight.Bold).withTabularNumbers(),
-        labelSmall = base.labelSmall.withAppFont(FontWeight.Bold).withTabularNumbers(),
+        labelMedium = base.labelMedium.withAppFont(FontWeight.Normal).withTabularNumbers(),
+        labelSmall = base.labelSmall.withAppFont(FontWeight.Normal).withTabularNumbers(),
         numeralExtraLarge = base.numeralExtraLarge.withAppFont().withTabularNumbers(),
         numeralLarge = base.numeralLarge.withAppFont().withTabularNumbers(),
         numeralMedium = base.numeralMedium.withAppFont().withTabularNumbers(),
