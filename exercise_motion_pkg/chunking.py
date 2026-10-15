@@ -10,6 +10,7 @@ import httpx
 
 from exercise_motion_pkg.llama_defaults import DEFAULT_LLAMA_CPP_MODEL
 from exercise_motion_pkg.shared_llama_server import shared_llama_request_scope
+from exercise_motion_pkg.gpu_lock import wait_for_gpu_cooling
 
 DEFAULT_MIN_REP_SECONDS = 3.0
 DEFAULT_MAX_REP_SECONDS = 10.0
@@ -158,6 +159,7 @@ def call_llama_cpp_for_duration_estimate(
         f"Exercise: {exercise_name}\n"
     )
     try:
+        wait_for_gpu_cooling("llama_cpp_duration_estimate")
         with shared_llama_request_scope(timeout_seconds=request_timeout_seconds):
             response = httpx.post(
                 f"{base_url.rstrip('/')}/v1/chat/completions",

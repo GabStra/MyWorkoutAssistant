@@ -2123,7 +2123,8 @@ function Start-SharedLlamaServer {
         "--threads-http", "$threadsHttp",
         "--reasoning", "on", "--reasoning-format", "deepseek", "--reasoning-budget", "$reasoningBudget",
         "--cont-batching",
-        "--gpu-layers", "all"
+        "--gpu-layers", "all",
+        "--split-mode", "layer"
     )
     $launchId = "$(Get-Date -Format 'yyyyMMdd-HHmmss-fff')-$([guid]::NewGuid().ToString('N'))"
     $logPath = Join-Path $SessionDir "server-$launchId.log"

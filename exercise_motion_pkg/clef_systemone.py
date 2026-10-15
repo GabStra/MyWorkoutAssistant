@@ -16,7 +16,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from .gpu_lock import GlobalGpuLock
+from .gpu_lock import GlobalGpuLock, wait_for_gpu_cooling
 
 CLEF_FINAL_REVIEW_POLICY_VERSION = "clef-final-preview-review-v2"
 CLEF_FINAL_REVIEW_FINDING_THRESHOLD = 0.80
@@ -156,6 +156,7 @@ def request_choice_decisions(
         "images": _images_as_data_urls(frame_paths),
     }
     endpoint = f"{base_url.rstrip('/')}/v1/systemone"
+    wait_for_gpu_cooling("clef_choice_decisions")
     with httpx.Client(timeout=max(1.0, float(timeout_seconds))) as client:
         response = client.post(endpoint, json=request_payload)
     if response.status_code >= 400:
@@ -443,6 +444,7 @@ def request_final_preview_review(
         sampled_frame_indices=sampled_frame_indices,
     )
     endpoint = f"{base_url.rstrip('/')}/v1/systemone"
+    wait_for_gpu_cooling("clef_final_preview_review")
     with httpx.Client(timeout=max(1.0, float(timeout_seconds))) as client:
         response = client.post(endpoint, json=request_payload)
     if response.status_code >= 400:

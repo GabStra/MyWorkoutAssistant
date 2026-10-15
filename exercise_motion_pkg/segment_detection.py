@@ -17,6 +17,7 @@ from pathlib import Path
 import httpx
 
 from exercise_motion_pkg.ffmpeg_utils import resolve_ffmpeg_path
+from exercise_motion_pkg.gpu_lock import wait_for_gpu_cooling
 
 from exercise_motion_pkg.contact_sheet_guidance import CONTACT_SHEET_READING_INSTRUCTIONS
 from exercise_motion_pkg.contact_sheet_crop import CONTACT_SHEET_CROP_POLICY_VERSION, persistent_border_crop
@@ -1849,6 +1850,20 @@ class LlamaCppVisionClient:
         raise RuntimeError("llama-cpp vision request failed without a response.")
 
     def _post_chat_completion(self, **kwargs):
+        if self.backend != "cpu":
+            timeout = kwargs.get("timeout")
+            deadline = None if timeout is None else time.perf_counter() + float(timeout)
+            try:
+                waited = wait_for_gpu_cooling(
+                    "llama_cpp_request", deadline=deadline, cancelled=lambda: self._closed,
+                )
+            except (TimeoutError, RuntimeError) as exc:
+                # Restarting the model cannot fix a cooling failure.
+                raise CriticalVlmInteractionError(
+                    str(exc), interaction="GPU cooling admission", cause_type="GpuCooling",
+                ) from exc
+            if timeout is not None:
+                kwargs["timeout"] = max(0.001, float(timeout) - waited)
         with self._request_condition:
             while self._recovery_in_progress and not self._closed:
                 self._request_condition.wait()

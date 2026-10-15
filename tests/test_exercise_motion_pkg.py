@@ -12321,6 +12321,10 @@ def test_llama_cpp_ranker_starts_server_with_safe_vision_profile(
     monkeypatch.setattr(youtube_module.httpx, "post", fake_post)
     monkeypatch.setattr(youtube_module.subprocess, "Popen", fake_popen)
 
+    from exercise_motion_pkg import child_process
+    from types import SimpleNamespace
+    monkeypatch.setattr(child_process, "ChildProcessOwner", lambda process: SimpleNamespace(close=lambda: None))
+
     ranker = youtube_module.LlamaCppVisionRanker(
         YouTubeRankingSettings(
             llama_cpp_server_command=existing_path,
@@ -12354,6 +12358,7 @@ def test_llama_cpp_ranker_starts_server_with_safe_vision_profile(
         assert args[args.index("--spec-type") + 1] == "draft-mtp"
         assert args[args.index("--spec-draft-n-max") + 1] == "4"
         assert args[args.index("--gpu-layers-draft") + 1] == "all"
+        assert args[args.index("--split-mode") + 1] == "layer"
         assert "--ctx-size" in args
         assert args[args.index("--ctx-size") + 1] == "65536"
         assert "--batch-size" in args

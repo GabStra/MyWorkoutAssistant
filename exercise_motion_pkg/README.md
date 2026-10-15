@@ -50,6 +50,16 @@ recomputed after this migration.
 
 ## Repo Runner
 
+GPU work checks the hottest NVIDIA card before starting each reconstruction,
+pose/depth operation, or model request. At 80°C, new GPU work waits until all
+cards reach 74°C or below. Active operations finish normally; models stay loaded
+and CPU preparation/fitting can continue through the existing worker queues.
+Cooling waits are logged and bounded to ten minutes or the remaining candidate
+budget, whichever is shorter. An individual operation can still exceed 80°C;
+this policy only pauses between operations. If temperature telemetry is initially
+unavailable, a warning reports that cooling admission cannot be enforced; losing
+telemetry during an active cooling wait fails that operation.
+
 For the current app-ready movement-generation commands, including single-exercise YouTube search/ranking and workout-plan generation, use the runbook:
 
 ```text

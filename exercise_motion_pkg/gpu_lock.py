@@ -43,6 +43,84 @@ _SMALL_OP_CONTEXT = threading.local()
 _FREE_VRAM_CACHE: tuple[float, int | None] = (0.0, None)
 _FREE_VRAM_CACHE_LOCK = threading.Lock()
 
+GPU_COOLING_PAUSE_C = 80
+GPU_COOLING_RESUME_C = 74
+GPU_COOLING_TIMEOUT_SECONDS = 10 * 60
+GPU_COOLING_POLL_SECONDS = 2.0
+_TEMPERATURE_WARNING_SHOWN = False
+
+
+def query_gpu_temperature_c() -> int | None:
+    """Read the hottest NVIDIA GPU; model layers may span both cards."""
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=temperature.gpu", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5.0,
+        )
+        if result.returncode == 0:
+            return max(int(line.strip()) for line in result.stdout.splitlines())
+    except (OSError, subprocess.SubprocessError, ValueError):
+        pass
+    return None
+
+
+def wait_for_gpu_cooling(
+    stage: str,
+    *,
+    deadline: float | None = None,
+    cancelled: Callable[[], bool] = lambda: False,
+) -> float:
+    """Gate new GPU operations only; active work and CPU workers keep running."""
+    global _TEMPERATURE_WARNING_SHOWN
+    from exercise_motion_pkg.motion_scheduler import current_gpu_stage_deadline
+
+    candidate_deadline = current_gpu_stage_deadline()
+    started = time.perf_counter()
+    cooling_deadline = started + GPU_COOLING_TIMEOUT_SECONDS
+    for budget_deadline in (deadline, candidate_deadline):
+        if budget_deadline is not None:
+            cooling_deadline = min(cooling_deadline, budget_deadline)
+
+    def check_wait() -> None:
+        if cancelled():
+            raise RuntimeError(f"GPU cooling wait cancelled: stage={stage}")
+        if time.perf_counter() >= cooling_deadline:
+            raise TimeoutError(f"GPU cooling wait exceeded its budget: stage={stage}")
+
+    check_wait()
+    # Keep sibling processes from admitting work at 79C while another waits for 74C.
+    cooling_path = gpu_lock_path().with_suffix(".cooling.oslock")
+    with InterProcessFileLock(
+        cooling_path, stage=f"gpu_cooling:{stage}",
+        timeout_seconds=max(0.0, cooling_deadline - time.perf_counter()),
+        stale_after_seconds=GPU_COOLING_TIMEOUT_SECONDS,
+    ):
+        check_wait()
+        temperature = query_gpu_temperature_c()
+        check_wait()
+        if temperature is None:
+            if not _TEMPERATURE_WARNING_SHOWN:
+                _gpu_lock_log("GPU temperature unavailable; cooling admission is not enforced.")
+                _TEMPERATURE_WARNING_SHOWN = True
+            return time.perf_counter() - started
+        if temperature < GPU_COOLING_PAUSE_C:
+            return time.perf_counter() - started
+        _gpu_lock_log(
+            f"cooling before stage={stage}: temperature={temperature}C "
+            f"resumeAt={GPU_COOLING_RESUME_C}C; active GPU work may finish"
+        )
+        while temperature > GPU_COOLING_RESUME_C:
+            check_wait()
+            time.sleep(min(GPU_COOLING_POLL_SECONDS, cooling_deadline - time.perf_counter()))
+            check_wait()
+            temperature = query_gpu_temperature_c()
+            check_wait()
+            if temperature is None:
+                raise RuntimeError(f"GPU temperature became unavailable during cooling: stage={stage}")
+        waited = time.perf_counter() - started
+        _gpu_lock_log(f"cooling finished before stage={stage}: temperature={temperature}C waited={waited:.1f}s")
+        return waited
+
 
 def _probe_free_gpu_memory_mib() -> int | None:
     try:
@@ -98,6 +176,7 @@ def small_gpu_stage_lock(stage: str, *, min_free_mib: int) -> Iterator[SmallGpuL
         yield SmallGpuLease(granted=True, free_mib=query_free_gpu_memory_mib())
         return
     with _SMALL_OP_SERIALIZE:
+        wait_for_gpu_cooling(stage)
         free_mib = query_free_gpu_memory_mib()
         if free_mib is None or free_mib < min_free_mib:
             yield SmallGpuLease(granted=False, free_mib=free_mib)
@@ -274,9 +353,7 @@ class GlobalGpuLock:
                             "createdAt": time.time(),
                         }
                         os.write(self._handle, json.dumps(payload).encode("utf-8"))
-                        self.wait_seconds = time.perf_counter() - started
-                        self._acquired()
-                        return self.wait_seconds
+                        break
                     except OSError as error:
                         if self._handle is not None:
                             handle, self._handle = self._handle, None
@@ -369,6 +446,14 @@ class GlobalGpuLock:
                         max(0.0, self.deadline - time.perf_counter()),
                     )
                 time.sleep(sleep_seconds)
+        try:
+            wait_for_gpu_cooling(self.stage, deadline=self.deadline)
+            self.wait_seconds = time.perf_counter() - started
+            return self._acquired()
+        except BaseException:
+            self._release_lease()
+            raise
+
     def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
         try:
             self._release_lease()
