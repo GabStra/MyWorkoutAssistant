@@ -5,6 +5,7 @@ from exercise_motion_pkg.reconstruction_compat import loads_reconstruction_metad
 import json
 import threading
 import time
+import traceback
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 from contextlib import nullcontext
 from contextvars import copy_context
@@ -75,6 +76,26 @@ ARTIFACT_LIFECYCLE_TRANSITIONS = {
     "manual_review": {"manual_review"},
     "rejected": {"rejected"},
 }
+
+
+def _record_source_attempt_processing_failure(
+    attempt: dict[str, Any],
+    exc: Exception,
+    *,
+    event_prefix: str,
+    attempts: list[dict[str, Any]],
+    source_state: dict[str, Any],
+) -> str:
+    error = f"{type(exc).__name__}: {exc}"
+    formatted_traceback = "".join(traceback.format_exception(exc)).rstrip()
+    attempt.update({
+        "status": "source_processing_failed",
+        "error": error,
+        "traceback": formatted_traceback,
+    })
+    source_state["attempts"] = [dict(source_attempt) for source_attempt in attempts]
+    event = f"{event_prefix} | source_processing_failed: {error}"
+    return f"{event}\n{formatted_traceback}" if formatted_traceback else event
 
 
 def staged_source_portfolio_size(request: BakeAndRankRequest, readiness: dict[str, Any]) -> int:
@@ -1332,14 +1353,21 @@ def _run_staged_bake_wave(
                         elif vlm_error is not None:
                             attempt["status"] = "rejected_vlm_timeout"
                             attempt["error"] = f"{type(vlm_error).__name__}: {vlm_error}"
-                        else:
-                            attempt["status"] = "source_processing_failed"
-                            attempt["error"] = f"{type(exc).__name__}: {exc}"
-                        event = (
+                        event_prefix = (
                             f"Source attempt: {item.exercise_name} | video {candidate.video_id} | "
-                            f"{source_attempt_log_context(candidate, candidate_number, len(candidates))} | "
-                            f"{attempt['status']}: {attempt['error']}"
+                            f"{source_attempt_log_context(candidate, candidate_number, len(candidates))}"
                         )
+                        if vlm_error is None and not isinstance(exc, SourceCandidateRejected):
+                            with checkpoint_lock:
+                                event = _record_source_attempt_processing_failure(
+                                    attempt,
+                                    exc,
+                                    event_prefix=event_prefix,
+                                    attempts=attempts,
+                                    source_state=item_states[item.exercise_id]["source"],
+                                )
+                        else:
+                            event = f"{event_prefix} | {attempt['status']}: {attempt['error']}"
                         source_event(event)
                         continue
                     finally:

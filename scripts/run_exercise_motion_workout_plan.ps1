@@ -984,6 +984,9 @@ function Update-PackagedSelectionArtifactReferences {
             throw "The copied selection manifest has no primary selected artifact."
         }
         $selection.selected = $record
+        if (-not [string]::IsNullOrWhiteSpace($PreviewHtmlPath)) {
+            $selection.selectedPreviewHtmlPath = $PreviewHtmlPath
+        }
     }
     Write-AtomicJsonDocument -Path $SelectionManifestPath -InputObject $selection -Depth 100
 }
@@ -2393,6 +2396,13 @@ function Get-SharedLlamaBakeRestartCounts {
         }
         $checkpointPath = Join-Path $job.WaveWorkspace "staged_wave_checkpoint.json"
         if (-not (Test-Path -LiteralPath $checkpointPath)) {
+            # A request still in the service queue has not acquired the GPU.
+            if ($job.PSObject.Properties.Name -contains "RequestId" -and
+                -not [string]::IsNullOrWhiteSpace([string]$script:StagedWaveServiceQueueRoot) -and
+                (Test-Path -LiteralPath (Join-Path (Join-Path $script:StagedWaveServiceQueueRoot "requests") "$($job.RequestId).json"))) {
+                $safeCount++
+                continue
+            }
             $unsafeCount++
             continue
         }
@@ -5373,6 +5383,7 @@ function Start-StagedBakeWaveJob {
         $resultPath = Join-Path (Join-Path $QueueRoot "results") "$ExpectedRequestId.json"
         $statePath = Join-Path $QueueRoot "worker_state.json"
         $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+        $lastVerifiedWorkerStateSeconds = 0.0
         $reportPath = Join-Path $WaveWorkspace "staged_wave_report.json"
         $report = $null
         $errorMessage = $null
@@ -5381,7 +5392,7 @@ function Start-StagedBakeWaveJob {
         while ($true) {
             if (Test-Path -LiteralPath $resultPath) {
                 try {
-                    $serviceResult = Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json
+                    $serviceResult = Get-Content -LiteralPath $resultPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
                     if ($serviceResult.requestId -ne $ExpectedRequestId -or $serviceResult.waveId -ne $ExpectedWaveId) {
                         $serviceStatus = $using:StagedWaveAmbiguousRecoveryStatus
                         $exitCode = $using:StagedWaveAmbiguousRecoveryExitCode
@@ -5400,7 +5411,7 @@ function Start-StagedBakeWaveJob {
                             $serviceStatus = $using:StagedWaveAmbiguousRecoveryStatus
                     }
                     if ($exitCode -eq 0 -and (Test-Path -LiteralPath $reportPath)) {
-                        $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
+                        $report = Get-Content -LiteralPath $reportPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
                         if ($report.waveId -ne $ExpectedWaveId) {
                             $report = $null
                             $exitCode = $using:StagedWaveAmbiguousRecoveryExitCode
@@ -5437,7 +5448,7 @@ function Start-StagedBakeWaveJob {
             }
             $workerState = $null
             if (Test-Path -LiteralPath $statePath) {
-                try { $workerState = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json } catch {}
+                try { $workerState = Get-Content -LiteralPath $statePath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop } catch {}
             }
             $requestQueued = Test-Path -LiteralPath $requestPath
             $requestProcessing = Test-Path -LiteralPath $processingPath
@@ -5472,7 +5483,9 @@ function Start-StagedBakeWaveJob {
                     $exitCode = $using:StagedWaveAmbiguousRecoveryExitCode
                     $errorMessage = "Staged-wave request has no terminal result and its owning service can no longer be verified. Inspect the retained request, processing record, and wave workspace before retrying."
                     break
-                } elseif ($heartbeatAge -lt -5 -or $heartbeatAge -gt 20) {
+                }
+                $lastVerifiedWorkerStateSeconds = $stopwatch.Elapsed.TotalSeconds
+                if ($heartbeatAge -lt -5 -or $heartbeatAge -gt 20) {
                     # Heartbeat timestamps are liveness hints, not request
                     # completion evidence. A matching live process plus a
                     # queued, claimed, or active request must never enter the
@@ -5490,10 +5503,10 @@ function Start-StagedBakeWaveJob {
                     $errorMessage = "Persistent staged-wave service stopped without publishing a terminal result for this request. Inspect the retained wave workspace before retrying."
                     break
                 }
-            } elseif ($stopwatch.Elapsed.TotalSeconds -gt 45) {
+            } elseif (($stopwatch.Elapsed.TotalSeconds - $lastVerifiedWorkerStateSeconds) -gt 45) {
                 $serviceStatus = $using:StagedWaveAmbiguousRecoveryStatus
                 $exitCode = $using:StagedWaveAmbiguousRecoveryExitCode
-                $errorMessage = "Persistent staged-wave service did not publish a verifiable heartbeat for this published request. Inspect the retained request and wave workspace before retrying."
+                $errorMessage = "Persistent staged-wave service state remained unreadable for 45 seconds. Inspect the retained request and wave workspace before retrying."
                 break
             }
             Start-Sleep -Milliseconds 250
@@ -7876,6 +7889,7 @@ $script:NextIncrementalMobilePackageAttemptAt = [datetime]::MinValue
 function Update-IncrementalMobilePackage {
     param([int]$SuccessfulCount)
 
+    if (Test-MotionRunCancelRequested) { return }
     if ([string]::IsNullOrWhiteSpace($IncrementalMobilePackageOutputJson)) {
         return
     }
@@ -7897,7 +7911,10 @@ function Update-IncrementalMobilePackage {
             -AllowEmpty 2>&1
     )
     $builderExitCode = $LASTEXITCODE
-    if ($builderExitCode -ne 0) {
+    if (Test-MotionRunCancelRequested) { return }
+    $exportConfirmed = @($builderOutput | Where-Object { "$_" -like "wrote $resolvedIncrementalOutputJson with *" }).Count -gt 0
+    if ($builderExitCode -ne 0 -or -not $exportConfirmed -or
+        -not (Test-Path -LiteralPath $resolvedIncrementalOutputJson -PathType Leaf)) {
         $script:NextIncrementalMobilePackageAttemptAt = (Get-Date).AddSeconds(30)
         $builderError = ($builderOutput | ForEach-Object { "$_" }) -join " "
         Write-Warning "Could not refresh the mobile import package; it will be retried. $builderError"
@@ -8574,7 +8591,7 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                                 $waveResult = $received[-1]
                             }
                         } catch {
-                            Write-Warning "Staged movement wave failed; its exercises will continue through the retry lane. $($_.Exception.Message)"
+                            Write-Warning "Staged movement wave waiter failed; checking its retained service response. $($_.Exception.Message)"
                         } finally {
                             Remove-Job -Job $job -Force
                         }
@@ -8588,10 +8605,17 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                             $recoveryResultPath = if ($requestIdForRecovery) {
                                 Join-Path (Join-Path $script:StagedWaveServiceQueueRoot "results") "$requestIdForRecovery.json"
                             } else { $null }
+                            $consumedResultPath = if ($requestIdForRecovery) {
+                                Join-Path (Join-Path $script:StagedWaveServiceQueueRoot "consumed") "$requestIdForRecovery.json"
+                            } else { $null }
+                            if ($recoveryResultPath -and -not (Test-Path -LiteralPath $recoveryResultPath) -and
+                                (Test-Path -LiteralPath $consumedResultPath)) {
+                                $recoveryResultPath = $consumedResultPath
+                            }
                             $recoveryError = "Staged-wave waiter ended without a terminal response. Inspect the retained request and wave workspace before retrying."
                             if ($recoveryResultPath -and (Test-Path -LiteralPath $recoveryResultPath)) {
                                 try {
-                                    $serviceResult = Get-Content -LiteralPath $recoveryResultPath -Raw | ConvertFrom-Json
+                                    $serviceResult = Get-Content -LiteralPath $recoveryResultPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
                                     if ($serviceResult.requestId -eq $requestIdForRecovery -and $serviceResult.waveId -eq $job.WaveId) {
                                         $recoveredReport = $null
                                         $recoveredExitCode = [int]$serviceResult.exitCode
@@ -8599,7 +8623,7 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                                         if ($recoveredExitCode -eq 0) {
                                             $recoveredReportPath = Join-Path $job.WaveWorkspace "staged_wave_report.json"
                                             if (Test-Path -LiteralPath $recoveredReportPath) {
-                                                $recoveredReport = Get-Content -LiteralPath $recoveredReportPath -Raw | ConvertFrom-ReconstructionJson
+                                                $recoveredReport = Get-Content -LiteralPath $recoveredReportPath -Raw -ErrorAction Stop | ConvertFrom-ReconstructionJson -ErrorAction Stop
                                                 if ($recoveredReport.waveId -ne $job.WaveId) {
                                                     $recoveredReport = $null
                                                     $recoveredStatus = $StagedWaveAmbiguousRecoveryStatus
@@ -8625,9 +8649,11 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                                             error = if ($serviceResult.error) { [string]$serviceResult.error } else { $recoveryError }
                                         }
                                         try {
-                                            $consumedDirectory = Join-Path $script:StagedWaveServiceQueueRoot "consumed"
-                                            New-Item -ItemType Directory -Force -Path $consumedDirectory | Out-Null
-                                            Move-Item -LiteralPath $recoveryResultPath -Destination (Join-Path $consumedDirectory "$requestIdForRecovery.json") -ErrorAction Stop
+                                            if ($recoveryResultPath -ne $consumedResultPath) {
+                                                $consumedDirectory = Join-Path $script:StagedWaveServiceQueueRoot "consumed"
+                                                New-Item -ItemType Directory -Force -Path $consumedDirectory | Out-Null
+                                                Move-Item -LiteralPath $recoveryResultPath -Destination $consumedResultPath -ErrorAction Stop
+                                            }
                                         } catch {}
                                     }
                                 } catch {

@@ -75,6 +75,96 @@ def test_cancellation_stops_idle_staged_worker(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+@pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None, reason="Windows PowerShell file sharing")
+def test_staged_wave_waiter_survives_locked_worker_heartbeat(tmp_path: Path) -> None:
+    wrapper = Path(__file__).resolve().parents[1] / "scripts/run_exercise_motion_workout_plan.ps1"
+    command = r"""
+    $ErrorActionPreference = 'Stop'
+    $tokens = $null; $parseErrors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($env:MOTION_WRAPPER_PATH, [ref]$tokens, [ref]$parseErrors)
+    if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
+    $function = $ast.Find({ param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Start-StagedBakeWaveJob'
+    }, $true)
+    $startJob = $function.Find({ param($node)
+        $node -is [System.Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Start-Job'
+    }, $true)
+    $waiterText = ($startJob.CommandElements | Where-Object {
+        $_ -is [System.Management.Automation.Language.ScriptBlockExpressionAst]
+    } | Select-Object -First 1).ScriptBlock.Extent.Text
+    if (-not $waiterText) { throw 'Could not find the staged-wave waiter.' }
+    $waiterText = $waiterText.Trim()
+    $waiter = [scriptblock]::Create($waiterText.Substring(1, $waiterText.Length - 2))
+    $StagedWaveAmbiguousRecoveryStatus = 'ambiguous_recovery'
+    $StagedWaveAmbiguousRecoveryExitCode = 76
+    $queueRoot = $env:MOTION_TEST_ROOT
+    $waveWorkspace = Join-Path $queueRoot 'wave'
+    New-Item -ItemType Directory -Force -Path $waveWorkspace, (Join-Path $queueRoot 'results') | Out-Null
+    $statePath = Join-Path $queueRoot 'worker_state.json'
+    '{}' | Set-Content -LiteralPath $statePath
+    $lockedState = [IO.File]::Open($statePath, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    try {
+        $job = Start-Job -ScriptBlock $waiter -ArgumentList '', $waveWorkspace, 'test-wave', 'test-request', $queueRoot
+        Start-Sleep -Milliseconds 1500
+        @{requestId='test-request'; waveId='test-wave'; exitCode=0; status='completed'} |
+            ConvertTo-Json | Set-Content -LiteralPath (Join-Path $queueRoot 'results/test-request.json')
+        @{waveId='test-wave'} | ConvertTo-Json |
+            Set-Content -LiteralPath (Join-Path $waveWorkspace 'staged_wave_report.json')
+        if (-not (Wait-Job -Job $job -Timeout 15)) { throw 'Staged-wave waiter did not finish.' }
+        $result = Receive-Job -Job $job -Wait -ErrorAction Stop
+        if ($result.exitCode -ne 0 -or $result.serviceStatus -ne 'completed') {
+            throw "Waiter lost the completed result: $($result | ConvertTo-Json -Compress)"
+        }
+    } finally {
+        $lockedState.Dispose()
+        if ($job) { Remove-Job -Job $job -Force }
+    }
+    """
+    environment = dict(os.environ, MOTION_WRAPPER_PATH=str(wrapper), MOTION_TEST_ROOT=str(tmp_path))
+    result = subprocess.run(["pwsh", "-NoProfile", "-Command", command], env=environment, capture_output=True, text=True, timeout=25)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell wrapper test")
+def test_staged_wave_recovers_response_already_acknowledged_by_waiter(tmp_path: Path) -> None:
+    wrapper = Path(__file__).resolve().parents[1] / "scripts/run_exercise_motion_workout_plan.ps1"
+    command = r"""
+    $ErrorActionPreference = 'Stop'
+    $tokens = $null; $parseErrors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($env:MOTION_WRAPPER_PATH, [ref]$tokens, [ref]$parseErrors)
+    if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
+    $recovery = $ast.Find({ param($node)
+        $node -is [System.Management.Automation.Language.IfStatementAst] -and
+        $node.Clauses[0].Item1.Extent.Text -eq '-not $waveResult' -and
+        $node.Extent.Text.Contains('Staged-wave waiter ended without a terminal response')
+    }, $true)
+    if (-not $recovery) { throw 'Could not find the staged-wave response recovery.' }
+    function Get-ObjectProperty { param($Object, $Name) $Object.$Name }
+    function ConvertFrom-ReconstructionJson { process { $_ | ConvertFrom-Json } }
+    $StagedWaveAmbiguousRecoveryStatus = 'ambiguous_recovery'
+    $StagedWaveAmbiguousRecoveryExitCode = 76
+    $script:StagedWaveServiceQueueRoot = $env:MOTION_TEST_ROOT
+    $waveWorkspace = Join-Path $env:MOTION_TEST_ROOT 'wave'
+    $consumedDirectory = Join-Path $env:MOTION_TEST_ROOT 'consumed'
+    New-Item -ItemType Directory -Force -Path $waveWorkspace, $consumedDirectory | Out-Null
+    $job = [pscustomobject]@{RequestId='test-request'; WaveId='test-wave'; WaveWorkspace=$waveWorkspace}
+    $waveResult = $null
+    @{requestId='test-request'; waveId='test-wave'; exitCode=0; status='completed'} |
+        ConvertTo-Json | Set-Content -LiteralPath (Join-Path $consumedDirectory 'test-request.json')
+    @{waveId='test-wave'; items=@()} | ConvertTo-Json |
+        Set-Content -LiteralPath (Join-Path $waveWorkspace 'staged_wave_report.json')
+    Invoke-Expression $recovery.Extent.Text
+    if ($waveResult.exitCode -ne 0 -or $waveResult.serviceStatus -ne 'completed' -or
+        $waveResult.report.waveId -ne 'test-wave' -or
+        -not (Test-Path -LiteralPath (Join-Path $consumedDirectory 'test-request.json'))) {
+        throw "Acknowledged response was not recovered: $($waveResult | ConvertTo-Json -Compress)"
+    }
+    """
+    environment = dict(os.environ, MOTION_WRAPPER_PATH=str(wrapper), MOTION_TEST_ROOT=str(tmp_path))
+    result = subprocess.run(["pwsh", "-NoProfile", "-Command", command], env=environment, capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_workout_plan_bake_flags_are_supported_by_cli() -> None:
     from exercise_motion_pkg.cli import build_parser
 
