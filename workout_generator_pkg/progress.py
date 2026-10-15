@@ -158,6 +158,7 @@ def list_available_progress(script_dir: Optional[str] = None) -> List[Dict[str, 
             session_id = progress_data.get("session_id", "unknown")
             current_step = progress_data.get("current_step", -1)
             timestamp = progress_data.get("timestamp", "")
+            final_step = 8 if "auditTargets" in progress_data.get("step_data", {}).get("step_1_plan_index", {}) else 7
 
             progress_list.append(
                 {
@@ -166,7 +167,7 @@ def list_available_progress(script_dir: Optional[str] = None) -> List[Dict[str, 
                     "timestamp": timestamp,
                     "current_step": current_step,
                     "filepath": filepath,
-                    "status": "complete" if current_step >= 7 else "incomplete",
+                    "status": "complete" if current_step >= final_step else "incomplete",
                 }
             )
         except Exception:

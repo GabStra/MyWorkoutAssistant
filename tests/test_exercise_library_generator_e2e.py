@@ -9,6 +9,8 @@ from workout_generator_pkg.domain_ops import build_exercise_definition_id
 
 from exercise_library_generator_pkg.generator import (
     _confirm_capability_suggestions,
+    _call_inventory,
+    _completed_futures,
     _apply_requirement_verification_patch,
     _capabilities_for_equipment_ids,
     _emit_definition,
@@ -814,7 +816,7 @@ def test_inventory_rejects_hallucinated_equipment_without_losing_valid_candidate
     assert [candidate["name"] for candidate in parsed] == ["Barbell Row"]
 
 
-def test_inventory_repairs_field_errors_but_still_rejects_infeasible_names() -> None:
+def test_inventory_repairs_field_errors_without_inventing_name_requirements() -> None:
     from exercise_library_generator_pkg.generator import _parse_inventory
 
     equipment = {
@@ -899,6 +901,7 @@ def test_inventory_repairs_field_errors_but_still_rejects_infeasible_names() -> 
     assert {candidate["name"] for candidate in parsed} == {
         "Weighted Push-Up",
         "Seated Cycling with Weight Vest",
+        "Decline Push-Up",
     }
     by_name = {candidate["name"]: candidate for candidate in parsed}
     assert by_name["Weighted Push-Up"]["bodyWeightPercentage"] == 70
@@ -974,6 +977,7 @@ def test_scoped_inventory_batches_use_worker_concurrency() -> None:
             active_calls -= 1
         prompt = messages[-1]["content"]
         if "barbell-id" in prompt and "exact equipmentId barbell-id" in prompt:
+            assert "cable-id" not in prompt
             candidate = {
                 "name": "Barbell Row",
                 "exerciseType": "WEIGHT",
@@ -983,6 +987,7 @@ def test_scoped_inventory_batches_use_worker_concurrency() -> None:
             }
             return json.dumps({"exercises": [candidate]})
         if "cable-id" in prompt and "exact equipmentId cable-id" in prompt:
+            assert "barbell-id" not in prompt
             candidate = {
                 "name": "Cable Row",
                 "exerciseType": "WEIGHT",
@@ -1021,6 +1026,46 @@ def test_scoped_inventory_batches_use_worker_concurrency() -> None:
         "Barbell Row",
         "Cable Row",
     }
+
+
+def test_inventory_logs_scope_and_uses_timed_example_for_cardio(capsys):
+    equipment = {
+        "equipments": [{"id": "bike", "type": "CARDIO_MACHINE", "name": "Spin Bike"}],
+        "accessoryEquipments": [],
+    }
+
+    def inventory_call(_client, messages, _loading_message, show_loading=False):
+        assert "\"exerciseType\": \"COUNTUP\"" in messages[-1]["content"]
+        assert "\"executionMode\": \"OPEN_DURATION\"" in messages[-1]["content"]
+        return '{"exercises": []}'
+
+    _call_inventory(None, equipment, "", allowed_equipment_ids={"bike"},
+                    call_json=inventory_call, show_loading=False, log_prefix="Inventory batch 7/7 (Spin Bike)")
+    output = capsys.readouterr().out
+    assert "Inventory batch 7/7 (Spin Bike) / Enumerating exercises: request started" in output
+    assert "received 0 valid distinct candidate(s)" in output
+    assert "\r" not in output
+
+
+def test_future_wait_reports_progress_without_cancelling_work(monkeypatch, capsys):
+    from concurrent.futures import Future
+    from exercise_library_generator_pkg import generator
+
+    future = Future()
+    waits = []
+
+    def wait_once(pending, **kwargs):
+        waits.append(kwargs)
+        if len(waits) == 1:
+            return set(), pending
+        future.set_result("complete")
+        return pending, set()
+
+    monkeypatch.setattr(generator, "wait", wait_once)
+    assert list(_completed_futures([future], "Inventory")) == [future]
+    assert future.result() == "complete"
+    assert "Inventory: waiting; 0/1 complete, 1 remaining" in capsys.readouterr().out
+    assert waits[0]["timeout"] == 30.0
 
 
 def test_generator_rejects_a_severely_incomplete_library() -> None:
@@ -2096,255 +2141,30 @@ def test_capability_implications_satisfy_more_specific_requirements() -> None:
     assert "DECLINE_BENCH" not in capabilities
 
 
-def test_name_implied_requirements_reject_infeasible_inventory_candidates() -> None:
-    def candidate(
-        name: str,
-        *,
-        equipment_id: str | None,
-        accessories: list[str],
-        required_capabilities: list[str],
-        exercise_type: str = "WEIGHT",
-        body_weight_percentage: float | None = None,
-    ) -> dict:
-        linked_ids = [item for item in [equipment_id, *accessories] if item is not None]
-        return {
-            "name": name,
-            "exerciseType": exercise_type,
-            "equipmentId": equipment_id,
-            "bodyWeightPercentage": body_weight_percentage,
-            "requiredAccessoryEquipmentIds": accessories,
-            "executionMode": "REPETITIONS",
-            "resistanceMode": "BODY_WEIGHT" if exercise_type == "BODY_WEIGHT" else "EXTERNAL_LOAD",
-            "movementKey": name.casefold(),
-            "exerciseCategory": "MODERATE_COMPOUND",
-            "requiredCapabilities": required_capabilities,
-            "implementUsage": [
-                {"equipmentId": item_id, "quantity": 2 if item_id == "db-id" else 1}
-                for item_id in linked_ids
-            ],
-            "jointDemand": "MULTI_JOINT",
-            "loadingDemand": "MODERATE",
-            "warmupDemand": "MODERATE",
-        }
-
-    decline_equipment = {
-        "equipments": [{
-            "id": "db-id",
-            "type": "DUMBBELLS",
-            "name": "Dumbbell Pair",
-            "capabilities": ["ADJUSTABLE_WEIGHT"],
-        }],
-        "accessoryEquipments": [{
-            "id": "bench-id",
-            "type": "ACCESSORY",
-            "name": "Adjustable Bench",
-            "capabilities": ["ADJUSTABLE_BENCH", "BENCH", "FLAT_BENCH", "INCLINE_BENCH"],
-        }],
-    }
-    decline = candidate(
-        "Dumbbell Decline Bench Press",
-        equipment_id="db-id",
-        accessories=["bench-id"],
-        required_capabilities=["USE_EQUIPMENT:db-id", "USE_EQUIPMENT:bench-id"],
-    )
-    with pytest.raises(ValueError, match="decline bench"):
-        _validate_candidate(decline, decline_equipment)
-    decline_equipment["accessoryEquipments"][0]["capabilities"].append("DECLINE_BENCH")
-    assert _validate_candidate(decline, decline_equipment)["name"] == "Dumbbell Decline Bench Press"
-
-    box_equipment = {
+@pytest.mark.parametrize("name", ["Decline Push-Up", "Incline Push-Up", "Ring Decline Plank", "Unfamiliar Movement"])
+def test_candidate_validates_declared_requirements_independently_of_name(name):
+    equipment = {
         "equipments": [],
         "accessoryEquipments": [{
-            "id": "bench-id",
-            "type": "ACCESSORY",
-            "name": "Adjustable Bench",
-            "capabilities": ["ADJUSTABLE_BENCH", "BENCH", "FLAT_BENCH"],
+            "id": "support-id", "type": "ACCESSORY", "name": "Flat Bench",
+            "capabilities": ["BENCH", "FLAT_BENCH"],
         }],
     }
-    box_jump = candidate(
-        "Box Jump",
-        equipment_id=None,
-        accessories=["bench-id"],
-        required_capabilities=["USE_EQUIPMENT:bench-id"],
-        exercise_type="BODY_WEIGHT",
-        body_weight_percentage=90.0,
-    )
-    with pytest.raises(ValueError, match="box"):
-        _validate_candidate(box_jump, box_equipment)
-    box_equipment["accessoryEquipments"][0]["name"] = "Plyo Box"
-    assert _validate_candidate(box_jump, box_equipment)["name"] == "Box Jump"
-
-    cable_equipment = {
-        "equipments": [{
-            "id": "cable-id",
-            "type": "PLATELOADEDCABLE",
-            "name": "Cable",
-            "capabilities": ["HIGH_PULLEY", "ROPE_ATTACHMENT"],
-        }],
-        "accessoryEquipments": [],
+    candidate = {
+        "name": name, "exerciseType": "BODY_WEIGHT", "equipmentId": None,
+        "bodyWeightPercentage": 80.0, "requiredAccessoryEquipmentIds": ["support-id"],
+        "executionMode": "REPETITIONS", "resistanceMode": "BODY_WEIGHT",
+        "movementKey": "supported_movement", "exerciseCategory": "MODERATE_COMPOUND",
+        "requiredCapabilities": ["USE_EQUIPMENT:support-id", "BENCH"],
+        "implementUsage": [{"equipmentId": "support-id", "quantity": 1}],
+        "jointDemand": "MULTI_JOINT", "loadingDemand": "MODERATE", "warmupDemand": "MODERATE",
     }
-    overhead = candidate(
-        "Cable Overhead Triceps Extension",
-        equipment_id="cable-id",
-        accessories=[],
-        required_capabilities=["USE_EQUIPMENT:cable-id", "HIGH_PULLEY", "ROPE_ATTACHMENT"],
-    )
-    with pytest.raises(ValueError, match="low pulley"):
-        _validate_candidate(overhead, cable_equipment)
-    undeclared_pulley = candidate(
-        "Cable Overhead Triceps Extension",
-        equipment_id="cable-id",
-        accessories=[],
-        required_capabilities=["USE_EQUIPMENT:cable-id", "ROPE_ATTACHMENT"],
-    )
-    with pytest.raises(ValueError, match="low pulley"):
-        _validate_candidate(undeclared_pulley, cable_equipment)
-    undeclared_row = candidate(
-        "Single-Arm Cable Row",
-        equipment_id="cable-id",
-        accessories=[],
-        required_capabilities=["USE_EQUIPMENT:cable-id", "ROPE_ATTACHMENT"],
-    )
-    with pytest.raises(ValueError, match="low pulley"):
-        _validate_candidate(undeclared_row, cable_equipment)
-    cable_equipment["equipments"][0]["capabilities"].append("LOW_PULLEY")
-    assert _validate_candidate(overhead, cable_equipment)["name"] == "Cable Overhead Triceps Extension"
-
-    high_only = {
-        "equipments": [{
-            "id": "cable-id",
-            "type": "PLATELOADEDCABLE",
-            "name": "Cable",
-            "capabilities": ["HIGH_PULLEY", "ROPE_ATTACHMENT", "SINGLE_HANDLE_ATTACHMENT"],
-        }],
-        "accessoryEquipments": [],
-    }
-    high_caps = [
-        "USE_EQUIPMENT:cable-id",
-        "HIGH_PULLEY",
-        "SINGLE_HANDLE_ATTACHMENT",
-    ]
-    assert _validate_candidate(
-        candidate("One-Arm Cable High Row", equipment_id="cable-id", accessories=[], required_capabilities=high_caps),
-        high_only,
-    )["name"] == "One-Arm Cable High Row"
-    assert _validate_candidate(
-        candidate("One-Arm High Cable Curl", equipment_id="cable-id", accessories=[], required_capabilities=high_caps),
-        high_only,
-    )["name"] == "One-Arm High Cable Curl"
-    assert _validate_candidate(
-        candidate(
-            "One-Arm Cable Lat Pulldown",
-            equipment_id="cable-id",
-            accessories=[],
-            required_capabilities=high_caps,
-        ),
-        high_only,
-    )["name"] == "One-Arm Cable Lat Pulldown"
-    with pytest.raises(ValueError, match="low pulley"):
-        _validate_candidate(
-            candidate("Seated Cable Row", equipment_id="cable-id", accessories=[], required_capabilities=high_caps),
-            high_only,
-        )
-    with pytest.raises(ValueError, match="lat-pulldown bar"):
-        _validate_candidate(
-            candidate("Cable Lat Pulldown", equipment_id="cable-id", accessories=[], required_capabilities=high_caps),
-            high_only,
-        )
-
-    rollout_equipment = {
-        "equipments": [{
-            "id": "bar-id",
-            "type": "BARBELL",
-            "name": "Barbell",
-            "capabilities": ["LOADABLE_PLATES"],
-        }],
-        "accessoryEquipments": [{
-            "id": "wheel-id",
-            "type": "ACCESSORY",
-            "name": "Ab Wheel",
-            "capabilities": ["CORE_ROLLER"],
-        }],
-    }
-    assert _validate_candidate(
-        candidate("Barbell Rollout", equipment_id="bar-id", accessories=[], required_capabilities=["USE_EQUIPMENT:bar-id"]),
-        rollout_equipment,
-    )["name"] == "Barbell Rollout"
-    with pytest.raises(ValueError, match="ab wheel"):
-        _validate_candidate(
-            candidate(
-                "Standing Rollout",
-                equipment_id=None,
-                accessories=[],
-                required_capabilities=[],
-                exercise_type="BODY_WEIGHT",
-                body_weight_percentage=80.0,
-            ),
-            rollout_equipment,
-        )
-    assert _validate_candidate(
-        candidate(
-            "Standing Rollout",
-            equipment_id=None,
-            accessories=["wheel-id"],
-            required_capabilities=["USE_EQUIPMENT:wheel-id"],
-            exercise_type="BODY_WEIGHT",
-            body_weight_percentage=80.0,
-        ),
-        rollout_equipment,
-    )["name"] == "Standing Rollout"
-
-    vest_equipment = {
-        "equipments": [
-            {"id": "bike-id", "type": "CARDIO_MACHINE", "name": "Spin Bike"},
-            {"id": "vest-id", "type": "WEIGHTVEST", "name": "Weight Vest"},
-        ],
-        "accessoryEquipments": [],
-    }
-    cycling = candidate(
-        "Seated Cycling with Weight Vest",
-        equipment_id="bike-id",
-        accessories=["vest-id"],
-        required_capabilities=["USE_EQUIPMENT:bike-id", "USE_EQUIPMENT:vest-id"],
-        exercise_type="COUNTUP",
-    )
-    cycling["executionMode"] = "OPEN_DURATION"
-    cycling["exerciseCategory"] = None
-    assert _validate_candidate(cycling, vest_equipment)["requiredAccessoryEquipmentIds"] == ["vest-id"]
-
-    ring_equipment = {
-        "equipments": [],
-        "accessoryEquipments": [{
-            "id": "rings-id",
-            "type": "ACCESSORY",
-            "name": "Rings",
-            "capabilities": ["GYMNASTIC_RINGS"],
-        }],
-    }
-    skin_the_cat = candidate(
-        "Skin the Cat",
-        equipment_id=None,
-        accessories=["rings-id"],
-        required_capabilities=["USE_EQUIPMENT:rings-id", "GYMNASTIC_RINGS"],
-        exercise_type="BODY_WEIGHT",
-        body_weight_percentage=100.0,
-    )
-    with pytest.raises(ValueError, match="transition clearance"):
-        _validate_candidate(skin_the_cat, ring_equipment)
-    errors = _structured_definition_errors(
-        {
-            "name": "Skin the Cat",
-            "exerciseType": "BODY_WEIGHT",
-            "equipmentId": None,
-            "bodyWeightPercentage": 100.0,
-            "requiredAccessoryEquipmentIds": ["rings-id"],
-            "muscleGroups": ["BACK_UPPER_BACK"],
-            "secondaryMuscleGroups": [],
-            "exerciseCategory": "HEAVY_COMPOUND",
-        },
-        ring_equipment,
-    )
-    assert any(error["code"] == "INFEASIBLE_NAMED_REQUIREMENT" for error in errors)
+    assert _validate_candidate(candidate, equipment)["name"] == name
+    candidate["requiredCapabilities"].append("DECLINE_BENCH")
+    with pytest.raises(ValueError, match="unavailable capabilities"):
+        _validate_candidate(candidate, equipment)
+    equipment["accessoryEquipments"][0]["capabilities"].append("DECLINE_BENCH")
+    assert _validate_candidate(candidate, equipment)["name"] == name
 
 
 def test_review_checkpoint_normalizes_none_and_preserves_source_on_mass_rejection() -> None:

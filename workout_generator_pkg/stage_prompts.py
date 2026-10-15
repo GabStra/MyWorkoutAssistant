@@ -1,6 +1,7 @@
 """Workflow-stage prompt and example definitions for workout generation."""
 
 import json
+from .muscle_roles import MUSCLE_ROLE_GUIDANCE
 
 from .constants import (
     EXERCISE_CATEGORY_ENUM_VALUES,
@@ -212,7 +213,7 @@ EXERCISE_EXAMPLE = {
             "showCountDownTimer": False,
             "intraSetRestInSeconds": None,
             "muscleGroups": ["FRONT_QUADRICEPS", "BACK_GLUTEAL"],
-            "secondaryMuscleGroups": ["BACK_HAMSTRING"],
+            "secondaryMuscleGroups": [],
             "requiredAccessoryEquipmentIds": [],
             "requiresLoadCalibration": False,
             "exerciseCategory": "HEAVY_COMPOUND",
@@ -256,8 +257,8 @@ EXERCISE_EXAMPLE = {
             "keepScreenOn": False,
             "showCountDownTimer": False,
             "intraSetRestInSeconds": None,
-            "muscleGroups": ["BACK_UPPER_BACK", "FRONT_BICEPS"],
-            "secondaryMuscleGroups": ["BACK_DELTOIDS", "BACK_TRAPEZIUS"],
+            "muscleGroups": ["BACK_UPPER_BACK"],
+            "secondaryMuscleGroups": ["FRONT_BICEPS", "BACK_DELTOIDS"],
             "requiredAccessoryEquipmentIds": ["ACCESSORY_0"],
             "requiresLoadCalibration": False,
             "exerciseCategory": "MODERATE_COMPOUND",
@@ -266,6 +267,7 @@ EXERCISE_EXAMPLE = {
 }
 
 EXERCISE_SYSTEM_PROMPT = (
+    MUSCLE_ROLE_GUIDANCE + "\nWhen a supplied library definition exists, preserve its roles exactly; never reclassify it to fit the workout.\n" +
     "Output JSON only (no markdown/explanations).\n"
     "Generate only the exercise list with placeholder IDs (EXERCISE_X, SET_X). Do not use UUIDs.\n"
     "Use only provided equipment/accessory placeholder IDs.\n\n"
@@ -404,6 +406,7 @@ WORKOUT_STRUCTURE_SYSTEM_PROMPT = (
 
 PLAN_INDEX_EXAMPLE = {
     "planName": "Example Strength Plan",
+    "auditTargets": {"weeklyEffectiveSets": {}, "perSessionEffectiveSets": {}, "maximumSessionSeconds": None},
     "equipments": [
         {
             "id": "EQUIPMENT_0",
@@ -420,15 +423,6 @@ PLAN_INDEX_EXAMPLE = {
     ],
     "exercises": [
         {
-            "id": "EXERCISE_WARMUP",
-            "equipmentId": None,
-            "exerciseType": "COUNTDOWN",
-            "name": "Warm Up",
-            "bodyWeightPercentage": None,
-            "requiredAccessoryEquipmentIds": [],
-            "muscleGroups": ["FRONT_QUADRICEPS"],
-        },
-        {
             "id": "EXERCISE_0",
             "equipmentId": "EQUIPMENT_0",
             "name": "Back Squat",
@@ -439,6 +433,7 @@ PLAN_INDEX_EXAMPLE = {
             "requiredAccessoryEquipmentIds": [],
             "exerciseCategory": "HEAVY_COMPOUND",
             "numWorkSets": 2,
+            "generateWarmUpSets": True,
             "minReps": 6,
             "maxReps": 10,
             "restBetweenSetsSeconds": 120,
@@ -454,10 +449,12 @@ PLAN_INDEX_EXAMPLE = {
             "exerciseType": "BODY_WEIGHT",
             "bodyWeightPercentage": 65.0,
             "intraSetRestInSeconds": None,
-            "muscleGroups": ["BACK_UPPER_BACK", "FRONT_BICEPS"],
+            "muscleGroups": ["BACK_UPPER_BACK"],
+            "secondaryMuscleGroups": ["FRONT_BICEPS", "BACK_DELTOIDS"],
             "requiredAccessoryEquipmentIds": ["ACCESSORY_0"],
             "exerciseCategory": "MODERATE_COMPOUND",
             "numWorkSets": 2,
+            "generateWarmUpSets": False,
             "minReps": 8,
             "maxReps": 12,
             "restBetweenSetsSeconds": 90,
@@ -481,10 +478,12 @@ PLAN_INDEX_EXAMPLE = {
 }
 
 PLAN_INDEX_SYSTEM_PROMPT = (
+    MUSCLE_ROLE_GUIDANCE + "\nWhen a supplied library definition exists, preserve its roles exactly; never reclassify it to fit the workout.\n" +
     "Output JSON only (no markdown/explanations).\n"
     "Exercise entries in the PlanIndex are workout-specific prescriptions, not reusable identity records.\n"
     "When an exercise-library catalog is supplied, every exercise must include a listed libraryDefinitionId.\n"
     "Never create a movement outside that catalog. nameOverride may provide a workout-local alias.\n"
+    "Warm-up mobility and ramp-up instructions belong in placementNotes and generateWarmUpSets. Do not invent a standalone generic Warm Up or EXERCISE_WARMUP. An explicitly selected library warm-up exercise still needs a unique numeric EXERCISE_X prescription per occurrence.\n"
     "For periodized or versioned programming, emit a separate EXERCISE_X prescription for each "
     "independently programmed occurrence, even when multiple occurrences share the same movement.\n"
     "Shared movement identity fields (name, exerciseType, equipmentId, body-weight semantics, muscles, "
@@ -517,6 +516,7 @@ PLAN_INDEX_SYSTEM_PROMPT = (
     "- For accessory-dependent exercises, use requiredAccessoryEquipmentIds with ACCESSORY_X IDs; use [] when none.\n"
     f"- Use valid MuscleGroup enum values only: {MUSCLE_GROUP_ENUM_VALUES}.\n"
     "- If user provided sets/reps/rest structure, copy exact work-set counts and exact rest values into numWorkSets and restBetweenSetsSeconds for any exercise type when they are known.\n"
+    "- Carry workout-specific execution, RIR, progression and warm-up guidance in exercise.placementNotes (max 500 chars). Preserve generateWarmUpSets and progressionMode when specified. Do not discard these instructions during emission.\n"
     "- Unilateral intent must be encoded explicitly via intraSetRestInSeconds.\n"
     "- intraSetRestInSeconds means the exact rest in whole seconds between the two sides of one logical unilateral set, for example left side, then rest, then right side.\n"
     "- CRITICAL: Every unilateral or single-side exercise (for example single-arm row, split squat, lunge, step-up, single-leg calf raise) MUST include an LLM-chosen exact positive integer intraSetRestInSeconds. null, 0, and omission are invalid; never rely on a generator default.\n"
@@ -554,6 +554,12 @@ PLAN_INDEX_SYSTEM_PROMPT = (
     "- For BODY_WEIGHT exercises, each item must be {workSetIndex, reps, additionalWeight}.\n"
     "- Preserve exact load targets when they are provided.\n\n"
     "Workout plan constraints:\n"
+    "- Include auditTargets: {weeklyEffectiveSets: {muscle: {minimum: number, maximum: number}}, perSessionEffectiveSets: {muscle: {minimum: number, maximum: number}}, maximumSessionSeconds: integer|null}.\n"
+    "- Supported audit muscles: chest, back, quads, hamstrings, glutes, shoulders, biceps, triceps, calves. Keep arms and hamstrings/glutes separate; never combine their sets to satisfy a target.\n"
+    "- Copy the user's AGREED numeric targets, including explicitly accepted tradeoffs, into auditTargets. Never replace targets with the model's claimed achieved totals or lower them to fit a failing plan. Use empty maps/null for unspecified goals. Do not assign weekly targets across unrelated periodized phases.\n"
+    "- For the programming audit, encode numWorkSets and generateWarmUpSets explicitly for every exercise, and maxReps for strength exercises.\n"
+    "- The deterministic audit credits each primary muscle group once per logical set and secondary groups at 0.5 only for compound lifts, with no primary/secondary double-counting.\n"
+    "- Duration audit assumptions: 3 seconds per rep (both sides for unilateral sets), all executed rests, 5 minutes general warm-up, 2 minutes per exercise with generated warm-ups, and 60 seconds per exercise/setup transition. Fit the agreed time limit under these assumptions.\n"
     "- Preserve exact workout names from user plan (including day labels/prefixes such as 'A -', 'Day A:', etc.).\n"
     "- workout.exerciseIds defines exact order.\n"
     "- If provided, restToNextSeconds must match exerciseIds length and values exactly.\n"
@@ -562,9 +568,10 @@ PLAN_INDEX_SYSTEM_PROMPT = (
     "- Each supersetGroups item must be an object with exerciseIds containing the exact grouped exercises in order.\n"
     "- Superset exerciseIds must be a contiguous subsequence of workout.exerciseIds.\n"
     "- Do not rely on hasSupersets alone; when any exercises are supersetted, supersetGroups must encode the exact grouping.\n"
-    "- When the plan uses supersets, restToNextSeconds is required and supplies the future restSecondsByExercise value for each grouped exercise.\n"
-    "- Inside an ordered superset [A, B, C], A's value is rest before B, B's value is rest before C, and C's value is rest before A in the next round.\n"
+    "- Every supersetGroups item must include restSecondsByExercise with exactly one non-negative integer value per grouped exercise ID. These are the rests inside each round.\n"
+    "- Inside an ordered superset [A, B, C], A's map value is rest before B, B's value is rest before C, and C's value is rest before A in the next round.\n"
     "- The last grouped exercise therefore carries the between-round rest even when it is the final exercise in the workout; it is not an outer Rest component after the completed superset.\n"
+    "- restToNextSeconds remains required and represents standalone transitions: use 0 for non-final members of a superset and the desired outer transition rest after its last member. A final block may have outer rest 0 while retaining its between-round recovery in the group map.\n"
     "- Unless the user requested otherwise, use 0 between grouped exercises and choose one exact recovery duration after the final grouped exercise.\n"
     "- MANDATORY time caps: every AMRAP, rounds-for-time, or block the request bounds with a time window ('time cap 25\\'', \"In 12' time cap\", \"From 8'-12'\") MUST be a superset whose supersetGroups item carries timeCapSeconds set to that window in seconds (a block running from minute 8 to minute 12 gets timeCapSeconds=240).\n"
     "- MANDATORY AMRAP mode: an AMRAP ('Amrap 12' of: ...') MUST be one superset whose supersetGroups item carries amrap=true and timeCapSeconds set to the window in seconds; its members carry EXACTLY ONE work set each (the watch repeats the round until the cap expires). Never estimate AMRAP rounds by duplicating sets.\n"

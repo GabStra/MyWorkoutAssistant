@@ -23,6 +23,8 @@ from workout_generator_pkg.api_client import (
     json_call_reasoner_only_with_loading,
 )
 from workout_generator_pkg.cli import load_equipment_from_file, test_connection
+from workout_generator_pkg.constants import DEEPSEEK_MODEL
+from workout_generator_pkg.muscle_roles import MUSCLE_ROLE_GUIDANCE
 from workout_generator_pkg.domain_ops import (
     build_exercise_definition_id,
     fix_muscle_groups,
@@ -36,6 +38,20 @@ from workout_generator_pkg.json_patching import (
     validate_patch_operations_scope,
 )
 
+
+def _completed_futures(futures, stage: str):
+    pending = set(futures)
+    total = len(pending)
+    started = time.monotonic()
+    while pending:
+        completed, pending = wait(pending, timeout=30.0, return_when=FIRST_COMPLETED)
+        if not completed:
+            print(
+                f"{stage}: waiting; {total - len(pending)}/{total} complete, "
+                f"{len(pending)} remaining, elapsed {time.monotonic() - started:.0f}s.",
+                flush=True,
+            )
+        yield from completed
 
 EXERCISE_TYPES = {"WEIGHT", "BODY_WEIGHT", "COUNTDOWN", "COUNTUP"}
 LIBRARY_REVIEW_BATCH_SIZE = 20
@@ -138,7 +154,10 @@ means exactly one; never use the ambiguous equipment label `Dumbbells`. Also ret
 (REPETITIONS, TARGET_DURATION, or OPEN_DURATION),
 resistanceMode (BODY_WEIGHT, EXTERNAL_LOAD, or BODY_WEIGHT_PLUS_LOAD), a stable descriptive
 movementKey shared only by biomechanically equivalent movements, and exerciseCategory using the
-allowed app enum or null for timed activities. Also declare requiredCapabilities, implementUsage
+allowed app enum or null for timed activities. Derive physical requirements from the actual
+execution setup, support contacts, and resistance path, not individual words in the name.
+Declare every mandatory requiredCapability even when unavailable; never omit a requirement
+to make a candidate fit the inventory. Also declare requiredCapabilities, implementUsage
 with exact equipment/accessory IDs and physical quantity, jointDemand, loadingDemand, and
 warmupDemand using the supplied closed enums. Every physical implement or special capability
 needed for safe execution must be declared. Omit an exercise if any requirement is unavailable.
@@ -157,19 +176,18 @@ cosmetic variations, programming variants, or exercises requiring unavailable eq
 DEFINITION_SYSTEM_PROMPT = """Emit one canonical MyWorkoutAssistant ExerciseDefinition as JSON.
 Preserve name, exerciseType, equipmentId, bodyWeightPercentage, and
 requiredAccessoryEquipmentIds exactly from the candidate. Add a non-empty muscleGroups array.
-Most exercises have one or two primary regions; use three only when three distinct prime movers
-are genuinely central to producing the movement. Add at most three secondaryMuscleGroups, and use
+Include all directly trained target regions and meaningfully loaded secondaryMuscleGroups; use
 an empty array when no additional region is materially trained. Core bracing, posture, grip, and
 balance alone do not make a region primary or secondary. Do not list joints, hands, feet, or
 generic contact points as muscles. FRONT_ and BACK_ identify regions on the app's front/back
-anatomical maps; select only regions genuinely trained by the movement and never fill an array to
-its maximum merely because space is available. Add
+anatomical maps; select only regions genuinely trained by the movement and never pad an array
+with incidental regions. Add
 exerciseCategory. exerciseCategory must be exactly HEAVY_COMPOUND,
 MODERATE_COMPOUND, or ISOLATION for WEIGHT/BODY_WEIGHT and null for COUNTUP/COUNTDOWN. The exact
 primary-muscle property name is muscleGroups, not primaryMuscleGroups. Do not include instructions,
 notes, sets, reps, loads, rests, progression, placement notes, or workout programming. Use only
 valid muscle enum values supplied by the user. Return the definition object directly, without an
-exerciseDefinition or exerciseDefinitions wrapper."""
+exerciseDefinition or exerciseDefinitions wrapper.""" + "\n" + MUSCLE_ROLE_GUIDANCE
 
 MUSCLE_PATCH_PATHS = {"/muscleGroups", "/secondaryMuscleGroups"}
 CONTENT_AUTHORITY_PATCH_PATHS = {
@@ -219,95 +237,7 @@ CABLE_ATTACHMENT_CAPABILITIES = {
     "WIDE_BAR_ATTACHMENT",
     "ANKLE_STRAP_ATTACHMENT",
 }
-NAME_REQUIREMENT_CLAUSES = (
-    (re.compile(r"\bdecline\b", re.I), {"DECLINE_BENCH"}, None, "decline bench"),
-    (
-        re.compile(r"\bincline\b", re.I),
-        {"INCLINE_BENCH", "ADJUSTABLE_BENCH"},
-        re.compile(r"\b(?:incline|adjustable)\b", re.I),
-        "incline bench",
-    ),
-    (
-        re.compile(r"\b(?:muscle[-\s]?up)s?\b", re.I),
-        {"MUSCLE_UP_CLEARANCE"},
-        None,
-        "muscle-up clearance",
-    ),
-    (
-        re.compile(r"\bskin the cat\b", re.I),
-        {"MUSCLE_UP_CLEARANCE", "OVER_IMPLEMENT_TRANSITION_CLEARANCE"},
-        None,
-        "transition clearance",
-    ),
-    (
-        re.compile(r"\bnordic\b", re.I),
-        {"NORDIC_CURL_SUPPORT"},
-        re.compile(r"\bnordic\b", re.I),
-        "nordic curl support",
-    ),
-    (
-        re.compile(r"\b(?:ab[- ]?wheel|wheel rollouts?)\b", re.I),
-        {"CORE_ROLLER"},
-        re.compile(r"\b(?:ab[- ]?wheel|wheel)\b", re.I),
-        "ab wheel",
-    ),
-    (
-        re.compile(r"\brings?\b", re.I),
-        {"GYMNASTIC_RINGS"},
-        re.compile(r"\brings?\b", re.I),
-        "rings",
-    ),
-    (
-        re.compile(
-            r"\b(?:pull[-\s]?ups?|chin[-\s]?ups?|toes[-\s]?to[-\s]?bar|dead hang|hanging)\b",
-            re.I,
-        ),
-        {"PULL_UP_BAR", "GYMNASTIC_RINGS"},
-        re.compile(r"\b(?:pull[-\s]?up|chin[-\s]?up|rings?)\b", re.I),
-        "pull-up support",
-    ),
-    (
-        re.compile(r"\bdips?\b", re.I),
-        {"DIP_HANDLES", "GYMNASTIC_RINGS", "BENCH", "FLAT_BENCH", "ADJUSTABLE_BENCH"},
-        re.compile(r"\b(?:dips?|rings?|bench)\b", re.I),
-        "dip support",
-    ),
-)
-NAME_CABLE_CAPABILITY_REQUIREMENTS = (
-    (
-        re.compile(r"\b(?:crossover|cable fly|cable flies)\b", re.I),
-        {"SECOND_CABLE_STATION", "DUAL_HANDLE_SUPPLY"},
-        "second cable station",
-    ),
-    (
-        re.compile(r"\b(?:lat pulldown|wide[-\s]?grip pulldown)\b", re.I),
-        {"WIDE_BAR_ATTACHMENT", "STRAIGHT_BAR_ATTACHMENT"},
-        "lat-pulldown bar",
-    ),
-    (
-        re.compile(r"\b(?:leg curl|ankle|glute kickback|cable kickback)\b", re.I),
-        {"ANKLE_STRAP_ATTACHMENT"},
-        "ankle attachment",
-    ),
-)
-NAME_CABLE_EXPLICIT_LOW_PULLEY = re.compile(
-    r"\b(?:low\b|overhead (?:tricep|triceps) extensions?|kickbacks?|"
-    r"hip abduction|glute kickbacks?|cable kickbacks?|upright rows?)\b",
-    re.I,
-)
-NAME_CABLE_HIGH_PULLEY_MARKER = re.compile(
-    r"\bhigh\b|\bface[- ]?pulls?\b|\bpushdowns?\b|\bpressdowns?\b",
-    re.I,
-)
-NAME_CABLE_DEFAULT_LOW_PULLEY = re.compile(r"\b(?:rows?|curls?)\b", re.I)
-NAME_ONE_ARM = re.compile(r"\b(?:one|single)[- ]?arm\b", re.I)
-NAME_ROLLOUT = re.compile(r"\brollouts?\b", re.I)
-BAR_LOADED_EQUIPMENT_TYPES = {"BARBELL", "DUMBBELL", "DUMBBELLS"}
 ADDITIONAL_LOAD_EQUIPMENT_TYPES = {"WEIGHTVEST"}
-NAME_ACCESSORY_CLASS_REQUIREMENTS = (
-    (re.compile(r"\bbox jumps?\b", re.I), re.compile(r"\bbox\b", re.I), "box"),
-)
-
 CAPABILITY_IMPLICATIONS = {
     "LOADABLE_BAR": {"ADJUSTABLE_WEIGHT"},
     "SUPPORTS_PLATES": {"ADJUSTABLE_WEIGHT"},
@@ -976,7 +906,8 @@ def _review_definition_batch(
             "role": "system",
             "content": (
                 "You are an independent semantic verifier for ExerciseDefinitions. Do not trust "
-                "the generator's equipment claims. Read each name literally, "
+                "the generator's equipment claims. Interpret the complete movement and its "
+                "execution setup, support contacts, and resistance path, not isolated name tokens. "
                 "identify every physical implement and capability required to execute it, and "
                 "report those requirements; application code decides feasibility. Infer the "
                 "minimum conventional setup implied by the movement's name. requiredEquipmentIds "
@@ -1368,84 +1299,6 @@ def _linked_equipment_ids(definition: dict[str, Any]) -> set[str]:
     }
 
 
-def _name_implied_requirement_issues(
-    definition: dict[str, Any],
-    equipment: dict[str, Any],
-) -> list[str]:
-    name = str(definition.get("name") or "")
-    if not name.strip():
-        return []
-    linked_ids = _linked_equipment_ids(definition)
-    linked_capabilities = _capabilities_for_equipment_ids(equipment, linked_ids)
-    items = _all_equipment_items(equipment)
-    linked_names = [
-        str(items[item_id].get("name") or "")
-        for item_id in linked_ids
-        if item_id in items
-    ]
-    issues: list[str] = []
-    for pattern, alternatives, accessory_pattern, label in NAME_REQUIREMENT_CLAUSES:
-        if not pattern.search(name):
-            continue
-        capability_ok = bool(linked_capabilities.intersection(alternatives))
-        accessory_ok = bool(
-            accessory_pattern is not None
-            and any(accessory_pattern.search(value) for value in linked_names)
-        )
-        if not capability_ok and not accessory_ok:
-            issues.append(label)
-    primary = items.get(definition.get("equipmentId"), {})
-    if NAME_ROLLOUT.search(name) and not re.search(
-        r"\b(?:ab[- ]?wheel|wheel rollouts?)\b", name, re.I
-    ):
-        primary_type = str(primary.get("type") or "")
-        if primary_type not in BAR_LOADED_EQUIPMENT_TYPES:
-            wheel_ok = "CORE_ROLLER" in linked_capabilities or any(
-                re.search(r"\b(?:ab[- ]?wheel|wheel)\b", value, re.I) for value in linked_names
-            )
-            if not wheel_ok:
-                issues.append("ab wheel")
-    if primary.get("type") == "PLATELOADEDCABLE":
-        pulley_needed: set[str] | None = None
-        pulley_label = None
-        if NAME_CABLE_EXPLICIT_LOW_PULLEY.search(name):
-            pulley_needed = {"LOW_PULLEY", "ADJUSTABLE_PULLEY"}
-            pulley_label = "low pulley"
-        elif NAME_CABLE_HIGH_PULLEY_MARKER.search(name):
-            pulley_needed = {"HIGH_PULLEY", "ADJUSTABLE_PULLEY"}
-            pulley_label = "high pulley"
-        elif NAME_CABLE_DEFAULT_LOW_PULLEY.search(name):
-            pulley_needed = {"LOW_PULLEY", "ADJUSTABLE_PULLEY"}
-            pulley_label = "low pulley"
-        if pulley_needed and pulley_label and not linked_capabilities.intersection(pulley_needed):
-            issues.append(pulley_label)
-        for pattern, alternatives, label in NAME_CABLE_CAPABILITY_REQUIREMENTS:
-            if not pattern.search(name):
-                continue
-            if label == "lat-pulldown bar" and NAME_ONE_ARM.search(name):
-                continue
-            if not linked_capabilities.intersection(alternatives):
-                issues.append(label)
-    for name_pattern, accessory_pattern, label in NAME_ACCESSORY_CLASS_REQUIREMENTS:
-        if name_pattern.search(name) and not any(
-            accessory_pattern.search(value) for value in linked_names
-        ):
-            issues.append(label)
-    return list(dict.fromkeys(issues))
-
-
-def _validate_name_implied_requirements(
-    definition: dict[str, Any],
-    equipment: dict[str, Any],
-) -> None:
-    issues = _name_implied_requirement_issues(definition, equipment)
-    if issues:
-        raise ValueError(
-            f"{definition.get('name', 'Unknown')}: name implies unavailable requirements: "
-            + ", ".join(issues)
-        )
-
-
 def _validate_equipment_family_capabilities(
     candidate: dict[str, Any], equipment: dict[str, Any]
 ) -> None:
@@ -1830,18 +1683,10 @@ def _validate_candidate(
             "UNAVAILABLE_CAPABILITY",
             f"{name}: requires unavailable capabilities {sorted(unavailable_capabilities)}",
         )
-    implied_issues = _name_implied_requirement_issues(candidate, equipment)
-    if implied_issues:
-        add(
-            None,
-            "INFEASIBLE_NAMED_REQUIREMENT",
-            f"{name}: name implies unavailable requirements: " + ", ".join(implied_issues),
-        )
-    else:
-        try:
-            _validate_equipment_family_capabilities(candidate, equipment)
-        except ValueError as error:
-            add("/requiredCapabilities", "CABLE_FAMILY", str(error))
+    try:
+        _validate_equipment_family_capabilities(candidate, equipment)
+    except ValueError as error:
+        add("/requiredCapabilities", "CABLE_FAMILY", str(error))
     all_items = _all_equipment_items(equipment)
     usage_ids = [usage["equipmentId"] for usage in candidate["implementUsage"]]
     declared_ids = {
@@ -2072,6 +1917,7 @@ def _parse_inventory(
     require_any_accessory: bool = False,
     repair_client: Any | None = None,
     repair_caller: Callable[..., str | None] | None = None,
+    log_prefix: str = "Inventory",
 ) -> list[dict[str, Any]]:
     payload = _json_object(content, "exercise inventory")
     raw_exercises = payload.get("exercises")
@@ -2131,21 +1977,21 @@ def _parse_inventory(
             repair_rejected.append(str(error))
         if repaired:
             print(
-                f"Inventory validation repaired {len(repaired)} candidate(s).",
+                f"{log_prefix}: validation repaired {len(repaired)} candidate(s).\n"
+                + "\n".join(f"  - {candidate['name']}" for candidate in repaired[:5])
+                + (f"\n  ... {len(repaired) - 5} more repaired." if len(repaired) > 5 else ""),
                 flush=True,
             )
-            for candidate in repaired[:5]:
-                print(f"  - {candidate['name']}", flush=True)
             for candidate in repaired:
                 retain(candidate)
         rejected.extend(repair_rejected)
     if rejected:
         print(
-            f"Inventory validation recovered by rejecting {len(rejected)} invalid candidate(s).",
+            f"{log_prefix}: validation rejected {len(rejected)} candidate(s).\n"
+            + "\n".join(f"  - {error}" for error in rejected[:5])
+            + (f"\n  ... {len(rejected) - 5} more rejected." if len(rejected) > 5 else ""),
             flush=True,
         )
-        for error in rejected[:5]:
-            print(f"  - {error}", flush=True)
     if raw_exercises and not exercises and not recover_all_invalid:
         raise ValueError(
             "Every inventory candidate was invalid. First errors: " + "; ".join(rejected[:3])
@@ -2176,7 +2022,17 @@ def _call_inventory(
     require_any_accessory: bool = False,
     show_loading: bool = True,
     call_json: Callable[..., str | None] = json_call_reasoner_only_with_loading,
+    log_prefix: str = "Inventory",
 ) -> list[dict[str, Any]]:
+    if allowed_equipment_ids is not None:
+        equipment = {
+            **equipment,
+            "equipments": [
+                item for item in equipment.get("equipments", [])
+                if item.get("id") in allowed_equipment_ids
+                or item.get("type") in ADDITIONAL_LOAD_EQUIPMENT_TYPES
+            ],
+        }
     equipment_context = _format_equipment_context(equipment)
     system_prompt = AUDIT_SYSTEM_PROMPT if audit_existing is not None else INVENTORY_SYSTEM_PROMPT
     user_parts = [equipment_context, f"User scope request:\n{request.strip() or 'No additional restrictions.'}"]
@@ -2189,6 +2045,7 @@ def _call_inventory(
         if allowed_equipment_ids is not None
         else None
     )
+    example_timed = _all_equipment_items(equipment).get(example_primary_id, {}).get("type") == "CARDIO_MACHINE"
     example_accessory_ids = (
         [next(iter(sorted(_equipment_ids(equipment)[1])))]
         if require_any_accessory and _equipment_ids(equipment)[1]
@@ -2207,6 +2064,7 @@ def _call_inventory(
                     {
                         "name": "Example Exercise",
                         "exerciseType": (
+                            "COUNTUP" if example_timed else
                             "BODY_WEIGHT" if allowed_equipment_ids == set() else "WEIGHT"
                         ),
                         "equipmentId": example_primary_id,
@@ -2214,12 +2072,12 @@ def _call_inventory(
                             100.0 if allowed_equipment_ids == set() else None
                         ),
                         "requiredAccessoryEquipmentIds": example_accessory_ids,
-                        "executionMode": "REPETITIONS",
+                        "executionMode": "OPEN_DURATION" if example_timed else "REPETITIONS",
                         "resistanceMode": (
                             "BODY_WEIGHT" if allowed_equipment_ids == set() else "EXTERNAL_LOAD"
                         ),
                         "movementKey": "example-exercise",
-                        "exerciseCategory": "MODERATE_COMPOUND",
+                        "exerciseCategory": None if example_timed else "MODERATE_COMPOUND",
                         "requiredCapabilities": [
                             f"USE_EQUIPMENT:{item_id}" for item_id in example_usage_ids
                         ],
@@ -2263,10 +2121,10 @@ def _call_inventory(
     loading_message = (
         "Auditing exercise coverage" if audit_existing is not None else "Enumerating exercises"
     )
+    loading_message = f"{log_prefix} / {loading_message}"
     last_error = None
     for attempt in range(1, 4):
-        if attempt > 1:
-            print(f"{loading_message}: retrying ({attempt}/3).", flush=True)
+        print(f"{loading_message}: request started (attempt {attempt}/3).", flush=True)
         content = call_json(
             client,
             messages,
@@ -2282,6 +2140,7 @@ def _call_inventory(
                 require_any_accessory=require_any_accessory,
                 repair_client=client,
                 repair_caller=call_json,
+                log_prefix=loading_message,
             )
             print(
                 f"{loading_message}: received {len(parsed)} valid distinct candidate(s).",
@@ -2412,16 +2271,6 @@ def _validate_definition(
         raise DefinitionValidationError(
             f"Definition primary muscles contain joints or contact regions: {invalid_primary_regions}",
             {"/muscleGroups"},
-        )
-    if len(primary_muscles) > 3:
-        raise DefinitionValidationError(
-            "Definition has more than three primary muscle regions; keep only actual prime movers",
-            {"/muscleGroups"},
-        )
-    if len(secondary_muscles) > 3:
-        raise DefinitionValidationError(
-            "Definition has more than three secondary muscle regions; remove incidental regions",
-            {"/secondaryMuscleGroups"},
         )
 
     if candidate["exerciseType"] in {"COUNTUP", "COUNTDOWN"}:
@@ -2687,6 +2536,7 @@ def _emit_definition_batch(
     use_reasoner: bool,
     call_reasoner: Callable[..., str | None],
     call_chat: Callable[..., str | None],
+    log_prefix: str = "Definition batch",
 ) -> tuple[list[dict[str, Any] | None], list[str]]:
     caller = call_reasoner if use_reasoner else call_chat
     fallback_reason: str | None = None
@@ -2705,6 +2555,7 @@ def _emit_definition_batch(
     emitted: list[dict[str, Any] | None] = []
     errors: list[str] = []
     fallback_count = 0
+    fallback_details: list[str] = []
     for index, candidate in enumerate(candidates):
         raw_definition = raw_definitions[index]
         try:
@@ -2714,8 +2565,10 @@ def _emit_definition_batch(
                         _validate_definition(raw_definition, candidate, equipment)
                     )
                     continue
-                except ValueError:
-                    pass
+                except ValueError as error:
+                    fallback_details.append(f"{candidate['name']}: {error}")
+            else:
+                fallback_details.append(f"{candidate['name']}: missing or invalid batch row")
             fallback_count += 1
             emitted.append(
                 _emit_definition(
@@ -2733,8 +2586,9 @@ def _emit_definition_batch(
     if fallback_count:
         reason = f" after batch response issue ({fallback_reason})" if fallback_reason else ""
         print(
-            f"Definition batch fell back to individual emission for "
-            f"{fallback_count}/{len(candidates)} candidate(s){reason}.",
+            f"{log_prefix}: individual emission fallback for "
+            f"{fallback_count}/{len(candidates)} candidate(s){reason}.\n"
+            + "\n".join(f"  - {detail}" for detail in fallback_details[:5]),
             flush=True,
         )
     return emitted, errors
@@ -3438,6 +3292,11 @@ def generate_exercise_library(
         show_loading: bool,
     ) -> tuple[dict[CandidateKey, dict[str, Any]], list[str]]:
         scope_failures: list[str] = []
+        scope_name = ", ".join(
+            _canonical_equipment_name(item) for item in equipment.get("equipments", [])
+            if allowed_equipment_ids and item.get("id") in allowed_equipment_ids
+        ) or ("accessory movements" if require_any_accessory else "all equipment")
+        log_prefix = f"Inventory batch {scope_index}/{len(inventory_scopes)} ({scope_name})"
         try:
             scoped_candidates = _call_inventory(
                 inventory_client,
@@ -3448,6 +3307,7 @@ def generate_exercise_library(
                 require_any_accessory=require_any_accessory,
                 show_loading=show_loading,
                 call_json=inventory_call,
+                log_prefix=log_prefix,
             )
         except Exception as error:
             failure = f"Inventory batch {scope_index} failed: {error}"
@@ -3467,6 +3327,7 @@ def generate_exercise_library(
                     require_any_accessory=require_any_accessory,
                     show_loading=show_loading,
                     call_json=inventory_call,
+                    log_prefix=log_prefix,
                 )
             except Exception as error:
                 failure = f"Inventory batch {scope_index} audit {audit_index + 1} failed: {error}"
@@ -3495,7 +3356,7 @@ def generate_exercise_library(
                 executor.submit(generate_scope, scope_index, *scope, False): scope_index
                 for scope_index, scope in enumerate(inventory_scopes, start=1)
             }
-            for future in as_completed(future_to_scope):
+            for future in _completed_futures(future_to_scope, "Inventory"):
                 scope_index = future_to_scope[future]
                 try:
                     result = future.result()
@@ -3561,10 +3422,11 @@ def generate_exercise_library(
                 use_reasoner=use_reasoner_for_emitters,
                 call_reasoner=reasoner_call,
                 call_chat=chat_call,
+                log_prefix=f"Definition batch {batch_index + 1}/{len(definition_batches)}",
             ): batch_index
             for batch_index, batch in enumerate(definition_batches)
         }
-        for completed_count, future in enumerate(as_completed(future_to_index), start=1):
+        for completed_count, future in enumerate(_completed_futures(future_to_index, "Definition emission"), start=1):
             batch_index = future_to_index[future]
             try:
                 emitted, batch_errors = future.result()
@@ -3576,11 +3438,10 @@ def generate_exercise_library(
             except Exception as error:
                 errors.append(str(error))
             print(
-                f"\rEmitting definition batches: {completed_count}/{len(definition_batches)}",
-                end="",
+                f"Definition batch {batch_index + 1}/{len(definition_batches)} finished; "
+                f"{completed_count}/{len(definition_batches)} complete.",
                 flush=True,
             )
-    print()
     if errors:
         generation_failures.extend(errors)
         print(
@@ -3675,7 +3536,7 @@ def generate_exercise_library(
                 max_workers=feasibility_workers,
                 progress_callback=feasibility_progress_snapshots.append,
             )
-            for future in as_completed((muscle_future, feasibility_future)):
+            for future in _completed_futures((muscle_future, feasibility_future), "Muscle/feasibility review stages"):
                 try:
                     result = future.result()
                 except Exception as error:
@@ -4163,8 +4024,6 @@ def _structured_definition_errors(
             add("/muscleGroups", "UNKNOWN_PRIMARY_MUSCLE", f"unknown primary muscle values: {invalid}")
         if joint_values:
             add("/muscleGroups", "NON_MUSCLE_PRIMARY", f"joints/extremities cannot be primary muscles: {joint_values}")
-        if len(primary_muscles) > 3:
-            add("/muscleGroups", "TOO_MANY_PRIMARY_MUSCLES", "keep at most three actual prime-mover regions")
     if not isinstance(secondary_muscles, list):
         add("/secondaryMuscleGroups", "INVALID_SECONDARY_MUSCLES", "secondaryMuscleGroups must be an array")
     else:
@@ -4174,8 +4033,6 @@ def _structured_definition_errors(
             add("/secondaryMuscleGroups", "UNKNOWN_SECONDARY_MUSCLE", f"unknown secondary muscle values: {invalid}")
         if duplicates:
             add("/secondaryMuscleGroups", "DUPLICATE_MUSCLE_ROLE", f"muscles cannot be both primary and secondary: {duplicates}")
-        if len(secondary_muscles) > 3:
-            add("/secondaryMuscleGroups", "TOO_MANY_SECONDARY_MUSCLES", "keep at most three materially trained assistant regions")
     category = definition.get("exerciseCategory")
     if definition.get("exerciseType") in {"COUNTUP", "COUNTDOWN"}:
         if category is not None:
@@ -4184,12 +4041,6 @@ def _structured_definition_errors(
         add("/exerciseCategory", "INVALID_CATEGORY", "exerciseCategory is outside the closed enum")
     if "instructions" in definition or "instructionEquipmentIds" in definition:
         add(None, "OBSOLETE_INSTRUCTION_FIELD", "definition contains removed instruction fields")
-    for issue in _name_implied_requirement_issues(definition, equipment):
-        add(
-            None,
-            "INFEASIBLE_NAMED_REQUIREMENT",
-            f"name implies unavailable requirements: {issue}",
-        )
     return errors
 
 
@@ -4291,9 +4142,9 @@ def _content_authority_prompt(
                 "not describe the named movement or the movement needs undeclared equipment, "
                 "DISCARD it so a new definition can be created. Judge the complete contract: "
                 "the name must describe a single coherent movement and variation; "
-                "muscleGroups contains only actual primary movers, never joints or mere "
+                "muscleGroups contains only directly trained target regions, never joints or mere "
                 "stabilizers; secondaryMuscleGroups contains meaningful assistants and "
-                "stabilizers without duplicating primary muscles; exerciseCategory must match "
+                "loaded assistants without duplicating primary muscles; exerciseCategory must match "
                 "the movement and must be null for COUNTUP or COUNTDOWN definitions. Optional "
                 "equipment is valid only when the movement remains the "
                 "same without it. Correct every "
@@ -4307,6 +4158,7 @@ def _content_authority_prompt(
                 "unrelated body segment. "
                 "Do not make stylistic edits when the contract is already correct. Use only the "
                 "allowed muscle and category enums."
+                + MUSCLE_ROLE_GUIDANCE
                 + (
                     " This is an independent adversarial verification of another review. Assume "
                     "it may have overlooked a subtle contradiction. Re-derive the movement and "
@@ -4613,11 +4465,11 @@ def _review_muscle_semantics_batch(
                 "only as {\"reviews\":[...]}, exactly one review for every supplied reference. Each "
                 "review contains exactly reference, muscleGroups, and secondaryMuscleGroups. Do not "
                 "rubber-stamp or merely truncate the current arrays. muscleGroups contains only the "
-                "prime movers that dynamically produce the defining action: normally one or two, "
-                "and at most three only for a genuinely complex movement. secondaryMuscleGroups "
-                "contains zero to three regions materially trained as assistants. Exclude regions "
+                "directly trained targets of the defining loaded action. secondaryMuscleGroups "
+                "contains all regions materially trained as assistants. Exclude regions "
                 "used only for posture, bracing, balance, grip, or contact. Never include joints, "
-                "hands, feet, or incidental stabilizers. Use only the supplied enum values."
+                "hands, feet, or incidental stabilizers. Use only the supplied enum values. "
+                + MUSCLE_ROLE_GUIDANCE
             ),
         },
         {
@@ -4648,10 +4500,10 @@ def _review_muscle_semantics_batch(
                     raise ValueError(f"{reference} review has invalid fields")
                 primary = review["muscleGroups"]
                 secondary = review["secondaryMuscleGroups"]
-                if not isinstance(primary, list) or not 1 <= len(primary) <= 3:
-                    raise ValueError(f"{reference} needs one to three primary regions")
-                if not isinstance(secondary, list) or len(secondary) > 3:
-                    raise ValueError(f"{reference} needs zero to three secondary regions")
+                if not isinstance(primary, list) or not primary:
+                    raise ValueError(f"{reference} needs a non-empty primary array")
+                if not isinstance(secondary, list):
+                    raise ValueError(f"{reference} needs a secondary array")
                 if len(set(primary)) != len(primary) or len(set(secondary)) != len(secondary):
                     raise ValueError(f"{reference} contains duplicate muscle regions")
                 if set(primary) & set(secondary):
@@ -5220,10 +5072,18 @@ def main() -> None:
             "(rack, bench positions, cable attachments, etc.)"
         ),
     )
-    parser.add_argument(
+    capability_group = parser.add_mutually_exclusive_group()
+    capability_group.add_argument(
         "--generate-capabilities",
         action="store_true",
-        help="Ask the LLM for equipment capabilities and approve each suggestion interactively",
+        default=None,
+        help="Ask for capabilities interactively (default when none are declared and no capability file is supplied)",
+    )
+    capability_group.add_argument(
+        "--skip-capabilities",
+        dest="generate_capabilities",
+        action="store_false",
+        help="Skip interactive capability generation",
     )
     parser.add_argument(
         "--capabilities-output-file",
@@ -5256,13 +5116,13 @@ def main() -> None:
         "--request-timeout-seconds",
         type=float,
         default=180.0,
-        help="Maximum wait for one definition-emitter request (default: 180)",
+        help="Network inactivity timeout for definition-emitter requests (default: 180 seconds; not a total deadline)",
     )
     parser.add_argument(
         "--inventory-timeout-seconds",
         type=float,
         default=900.0,
-        help="Maximum wait for an inventory/audit reasoner request (default: 900)",
+        help="Network inactivity timeout for inventory/audit requests (default: 900 seconds; not a total deadline)",
     )
     model_group = parser.add_mutually_exclusive_group()
     model_group.add_argument("--use-reasoner", action="store_true", help="Use reasoner for inventory and definitions")
@@ -5271,8 +5131,6 @@ def main() -> None:
 
     if args.capabilities_file and args.generate_capabilities:
         parser.error("--capabilities-file and --generate-capabilities cannot be used together")
-    if args.capabilities_output_file and not args.generate_capabilities:
-        parser.error("--capabilities-output-file requires --generate-capabilities")
 
     try:
         equipment = _apply_capability_file(
@@ -5291,9 +5149,14 @@ def main() -> None:
         for item in _all_equipment_items(equipment).values()
         if isinstance(item.get("capabilities", []), list)
     )
+    if args.generate_capabilities is None:
+        args.generate_capabilities = not args.capabilities_file and explicit_capability_count == 0
+    if args.capabilities_output_file and not args.generate_capabilities:
+        parser.error("--capabilities-output-file requires capability generation")
     print(
         f"Loaded {explicit_capability_count} explicit equipment capability declaration(s)."
     )
+    print(f"DeepSeek model: {DEEPSEEK_MODEL} (thinking inventory/audits; non-thinking chat emitters).")
     print("The reasoner will enumerate practical distinct exercises and audit for omissions.")
 
     if args.request_timeout_seconds <= 0:
@@ -5317,7 +5180,7 @@ def main() -> None:
             base_url="https://api.deepseek.com",
             http_client=inventory_http_client,
         )
-        success, error_message = test_connection(definition_client, show_message=True)
+        success, error_message = test_connection(definition_client, show_message=True, model=DEEPSEEK_MODEL)
         if not success:
             print(f"Connection test failed: {error_message}", file=sys.stderr)
             raise SystemExit(1)

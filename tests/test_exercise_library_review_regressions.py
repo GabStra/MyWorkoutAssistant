@@ -55,6 +55,39 @@ def generation(monkeypatch, equipment, definition):
     return run
 
 
+def test_training_role_convention_is_shared_and_review_preserves_identity(equipment, definition):
+    original = copy.deepcopy(definition)
+
+    def reviewer(_client, messages, *_args, **_kwargs):
+        assert g.MUSCLE_ROLE_GUIDANCE in messages[0]["content"]
+        assert g.MUSCLE_ROLE_GUIDANCE in g.DEFINITION_SYSTEM_PROMPT
+        assert "not from the current workout" in messages[0]["content"]
+        return json.dumps({"reviews": [{"reference": "DEFINITION_1",
+                                       "muscleGroups": ["FRONT_QUADRICEPS", "BACK_GLUTEAL"],
+                                       "secondaryMuscleGroups": []}]})
+
+    reviewed = g._review_muscle_semantics_batch(None, [definition], equipment, reviewer)[0]
+    assert definition == original
+    assert {k: v for k, v in reviewed.items() if k not in {"muscleGroups", "secondaryMuscleGroups"}} == {
+        k: v for k, v in original.items() if k not in {"muscleGroups", "secondaryMuscleGroups"}
+    }
+
+
+def test_muscle_arrays_are_not_arbitrarily_capped(equipment, definition):
+    primary = ["FRONT_CHEST", "FRONT_QUADRICEPS", "BACK_GLUTEAL", "BACK_UPPER_BACK"]
+    secondary = ["FRONT_BICEPS", "BACK_TRICEPS", "FRONT_DELTOIDS", "BACK_HAMSTRING"]
+
+    def reviewer(_client, messages, *_args, **_kwargs):
+        assert "at most three" not in messages[0]["content"]
+        return json.dumps({"reviews": [{"reference": "DEFINITION_1", "muscleGroups": primary,
+                                       "secondaryMuscleGroups": secondary}]})
+
+    reviewed = g._review_muscle_semantics_batch(None, [definition], equipment, reviewer)[0]
+    assert reviewed["muscleGroups"] == primary
+    assert reviewed["secondaryMuscleGroups"] == secondary
+    assert not g._structured_definition_errors(reviewed, equipment)
+
+
 def test_normalized_bodyweight_requires_an_explicit_percentage(equipment):
     candidate = {
         "name": "Weighted Squat", "exerciseType": "WEIGHT", "equipmentId": "bar",

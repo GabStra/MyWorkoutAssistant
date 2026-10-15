@@ -59,7 +59,11 @@ def test_initial_messages_preserve_compact_library_authority_context():
     assert len(messages) == 2
     assert "strict exercise library with 1 definitions" in messages[1]["content"]
     assert "sole allowed movement source" in messages[1]["content"]
-    assert "unused" not in messages[1]["content"]
+    assert "search_exercise_library" in messages[1]["content"]
+    assert "set_workout_requirements" in messages[1]["content"]
+    assert "audit_workout_plan" in messages[1]["content"]
+    assert "definition-1" not in messages[1]["content"]
+    assert "not included" not in messages[1]["content"]
 
 
 def test_library_selection_hydrates_canonical_identity_and_preserves_alias():
@@ -178,3 +182,28 @@ def test_schema_v2_linking_keeps_workout_alias_on_library_definition():
     assert exercise["exerciseDefinitionId"] == "definition-1"
     assert exercise["name"] == "Stationary Cycling"
     assert exercise["nameOverride"] == "Bike Warm-up"
+
+
+@pytest.mark.parametrize("unexpected_definition_id", ["invented-definition", None])
+def test_selection_mismatch_reports_missing_identity_and_unexpected_workout_location(unexpected_definition_id):
+    provided = {
+        "exerciseDefinitions": [{"id": "bench-definition", "name": "Barbell Bench Press"}],
+        "selectedExerciseDefinitionIds": ["bench-definition"],
+    }
+    plan = {
+        "planName": "Program", "equipments": [], "accessoryEquipments": [],
+        "exercises": [{
+            "id": "EXERCISE_0", "name": "Dumbbell Fly", "exerciseType": "WEIGHT",
+            "libraryDefinitionId": unexpected_definition_id, "equipmentId": None,
+            "minReps": 8, "maxReps": 12,
+        }],
+        "workouts": [{"id": "WORKOUT_0", "name": "DAY A", "exerciseIds": ["EXERCISE_0"]}],
+    }
+    with pytest.raises(ContractValidationError) as failure:
+        validate_plan_index_contract(plan, provided)
+    feedback = str(failure.value)
+    assert "Missing selected exercise: Barbell Bench Press" in feedback
+    assert "libraryDefinitionId='bench-definition'" in feedback
+    assert "Unexpected exercise: 'EXERCISE_0' / Dumbbell Fly" in feedback
+    assert "workouts=['DAY A']" in feedback
+    assert f"libraryDefinitionId={unexpected_definition_id!r}" in feedback

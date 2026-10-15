@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from openai import OpenAI
 import httpx
 from workout_generator_pkg.constants import (
+    DEEPSEEK_MODEL,
     JSON_SCHEMA,
     PARALLEL_LOG_REQUEST_TRUNCATE,
     BASE_SYSTEM_PROMPT,
@@ -19,12 +20,12 @@ from workout_generator_pkg.constants import (
     GENERATE_WORKOUT_TOOL,
 )
 from workout_generator_pkg.exercise_contracts import get_exercise_emission_profile
+from workout_generator_pkg.domain_ops import format_exercise_library_catalog, build_workout_structure
 from workout_generator_pkg.stage_prompts import (
     EQUIPMENT_SYSTEM_PROMPT,
     EXERCISE_SYSTEM_PROMPT,
     JSON_PATCH_REPAIR_SYSTEM_PROMPT,
     PLAN_INDEX_SYSTEM_PROMPT,
-    WORKOUT_STRUCTURE_SYSTEM_PROMPT,
 )
 from workout_generator_pkg.plan_contract import (
     _load_field_for_exercise_type,
@@ -1010,8 +1011,8 @@ def emit_exercise_definition(
 
     calibration_instruction = (
         "The generator, not the model, decides requiresLoadCalibration in educated-guess mode. "
-        "For load-based exercises with explicit work-set loads, the final output will set requiresLoadCalibration=false. "
-        "If explicit work-set loads are missing for a load-based exercise, the final output will set requiresLoadCalibration=true.\n"
+        "Only complete targetSetPrescriptions carrying user-provided loads can bypass calibration. "
+        "Educated starting-load guesses remain provisional and require calibration.\n"
         if allow_educated_load_guesses
         else "Set requiresLoadCalibration to true for WEIGHT exercises and BODY_WEIGHT exercises with equipmentId; otherwise false.\n"
     )
@@ -1187,254 +1188,12 @@ def emit_workout_structure(
     logger=None,
     contract_error_context=None,
 ):
-    """
-    Emit a single workout structure using either deepseek-reasoner @ 64K or deepseek-chat @ 8K.
-    
-    Args:
-        client: OpenAI client
-        workout_id: Placeholder ID (e.g., "WORKOUT_0")
-        context_summary: Summarized conversation context
-        plan_index: PlanIndex dict containing workout entry for this ID
-        exercise_index: Dict mapping exercise_id -> ExerciseDefinition for exercises referenced in this workout
-        use_reasoner: If True, use reasoner model (slower, potentially higher quality).
-                     If False, use chat model (faster, 8K max tokens).
-        logger: Optional ConversationLogger for debug logging
-    
-    Returns:
-        dict: Single WorkoutStructure with placeholder IDs, or None if cancelled
-    """
-    # Find the workout entry in plan_index
-    workout_entry = None
-    for wo in plan_index.get("workouts", []):
-        if wo.get("id") == workout_id:
-            workout_entry = wo
-            break
-    
-    if not workout_entry:
-        raise ValueError(f"Workout ID {workout_id} not found in PlanIndex")
+    """Construct the already planned structure without another model call."""
+    workout_entry = next((workout for workout in plan_index.get("workouts", []) if workout.get("id") == workout_id), None)
+    if workout_entry is None:
+        raise ValueError(f"Unknown planned workout {workout_id}")
+    return build_workout_structure(workout_entry), None
 
-    workout_entry_json = json.dumps(workout_entry, indent=2)
-    
-    # Build minimal exercise reference list (just IDs and names for context)
-    exercise_refs = []
-    for ex_id in workout_entry.get("exerciseIds", []) or []:
-        if ex_id in exercise_index:
-            ex = exercise_index[ex_id]
-            ref = {
-                "id": ex_id,
-                "name": ex.get("name", "Unknown"),
-                "exerciseType": ex.get("exerciseType", "WEIGHT")
-            }
-            for target_field in ("targetDistanceMeters", "targetCalories"):
-                if ex.get(target_field) is not None:
-                    ref[target_field] = ex[target_field]
-            exercise_refs.append(ref)
-
-    exercise_refs_json = json.dumps({"exercises": exercise_refs}, indent=2)
-
-    timed_target_instruction = ""
-    timed_targets = [
-        (ex_id, ex)
-        for ex_id in (workout_entry.get("exerciseIds", []) or [])
-        for ex in [exercise_index.get(ex_id) or {}]
-        if ex.get("targetDistanceMeters") is not None or ex.get("targetCalories") is not None
-    ]
-    running_targets = [
-        (ex_id, ex)
-        for ex_id in (workout_entry.get("exerciseIds", []) or [])
-        for ex in [exercise_index.get(ex_id) or {}]
-        if ex.get("exerciseType") == "RUNNING" and ex.get("targetDistanceMeters") is not None
-    ]
-    if timed_targets:
-        target_parts = []
-        for ex_id, ex in timed_targets:
-            value_parts = []
-            if ex.get("targetDistanceMeters") is not None:
-                value_parts.append(f"targetDistanceMeters={ex['targetDistanceMeters']}")
-            if ex.get("targetCalories") is not None:
-                value_parts.append(f"targetCalories={ex['targetCalories']}")
-            target_parts.append(f"{ex_id}: {', '.join(value_parts)}")
-        timed_target_instruction = (
-            "CRITICAL - Cardio quantity targets: for each exercise below, copy the exact value(s) "
-            "into targetDistanceMeters/targetCalories on EVERY timed work set of that exercise:\n"
-            + "\n".join(f"- {part}" for part in target_parts) + "\n\n"
-        )
-    if running_targets:
-        run_parts = [
-            f"{ex_id}: targetValue={ex['targetDistanceMeters']} meters"
-            for ex_id, ex in running_targets
-        ]
-        timed_target_instruction += (
-            "CRITICAL - Running exercises: for each exercise below emit exerciseType='RUNNING' "
-            "with a runningPrescription {environment: 'OUTDOOR', targetType: 'DISTANCE', targetValue: <meters>} "
-            "and exactly one RunningSet work set:\n"
-            + "\n".join(f"- {part}" for part in run_parts) + "\n\n"
-        )
-    
-    # When plan entry provides restToNextSeconds (same order as exerciseIds), instruct to use those values exactly
-    rest_to_next_instruction = ""
-    rest_to_next_seconds = workout_entry.get("restToNextSeconds")
-    exercise_ids_ordered = workout_entry.get("exerciseIds", []) or []
-    if rest_to_next_seconds is not None and isinstance(rest_to_next_seconds, list) and len(rest_to_next_seconds) == len(exercise_ids_ordered):
-        pairs = [f"after {ex_id}: {sec}s" for ex_id, sec in zip(exercise_ids_ordered, rest_to_next_seconds)]
-        rest_to_next_instruction = (
-            "CRITICAL - Rest between exercises: Use these EXACT rest durations (in seconds) after each exercise, in order: "
-            + ", ".join(pairs) + ". "
-            "Do NOT use 180 or 120 unless listed. A 0 value means no rest after that exercise. "
-            "For standalone exercises, emit a Rest component only when the listed value is positive. "
-            "For grouped exercises, follow the Superset rules below instead.\n\n"
-        )
-    superset_instruction = ""
-    superset_groups = workout_entry.get("supersetGroups")
-    if isinstance(superset_groups, list) and superset_groups:
-        group_descriptions = []
-        for group in superset_groups:
-            if not isinstance(group, dict):
-                continue
-            group_exercise_ids = group.get("exerciseIds", []) or []
-            if len(group_exercise_ids) < 2:
-                continue
-            rest_parts = []
-            if (
-                isinstance(rest_to_next_seconds, list)
-                and len(rest_to_next_seconds) == len(exercise_ids_ordered)
-            ):
-                for ex_id in group_exercise_ids:
-                    try:
-                        idx = exercise_ids_ordered.index(ex_id)
-                    except ValueError:
-                        continue
-                    rest_parts.append(f"{ex_id}->{rest_to_next_seconds[idx]}s")
-            rest_summary = (
-                f" Use these exact per-exercise rest values inside the Superset from restToNextSeconds: {', '.join(rest_parts)}."
-                if rest_parts else ""
-            )
-            container_fields = []
-            if group.get("timeCapSeconds") is not None:
-                container_fields.append(f"timeCapSeconds={group['timeCapSeconds']}")
-            if group.get("roundDurationSeconds") is not None:
-                container_fields.append(f"roundDurationSeconds={group['roundDurationSeconds']}")
-            if group.get("amrap"):
-                container_fields.append("amrap=true")
-            container_summary = (
-                f" The Superset component MUST set exactly: {', '.join(container_fields)} (copy verbatim)."
-                if container_fields else ""
-            )
-            group_descriptions.append(
-                f"- Superset group: {group_exercise_ids}.{rest_summary}{container_summary}"
-            )
-        if group_descriptions:
-            superset_instruction = (
-                "CRITICAL - Superset groups are STRUCTURED contract requirements, not optional formatting:\n"
-                + "\n".join(group_descriptions)
-                + "\n"
-                "- For each listed group, emit exactly one componentType='Superset' containing those exerciseIds in the same order.\n"
-                "- Do NOT emit grouped exercises as standalone Exercise components.\n"
-                "- Do NOT insert Rest components between exercises that belong to the same superset group.\n"
-                "- When a group lists timeCapSeconds, roundDurationSeconds, or amrap, the emitted Superset component MUST carry those exact values at the top level.\n"
-                "- Populate restSecondsByExercise with exactly one entry for every grouped exercise, using its exact restToNextSeconds value.\n"
-                "- Each map value is rest immediately AFTER its keyed exercise during every round. For [A, B, C], A is rest before B, B is rest before C, and C is rest before A in the next round.\n"
-                "- The last grouped exercise's value is the between-round rest even if it is the final exercise in the workout. The runtime omits it after the final round.\n"
-                "- Keep all non-superset exercises as normal Exercise components in the original workout.exerciseIds order.\n\n"
-            )
-    retry_instruction = ""
-    if contract_error_context:
-        retry_instruction = (
-            "CRITICAL - The previous emitted workout structure failed Step 4 contract validation. "
-            "Fix the exact issues below and regenerate the full workout structure. "
-            "Do not repeat the same mismatch:\n"
-            f"{contract_error_context}\n\n"
-        )
-    
-    user_content = (
-        "Base the workout on the plan entry; preserve user-specified day names and exercise order.\n\n"
-        f"{rest_to_next_instruction}"
-        f"{timed_target_instruction}"
-        f"{superset_instruction}"
-        f"{retry_instruction}"
-        f"Plan entry for {workout_id}:\n{workout_entry_json}\n\n"
-        f"Available exercises (references):\n{exercise_refs_json}\n\n"
-        f"Generate ONLY this one workout structure using placeholder IDs. "
-        f"Output format should match WORKOUT_STRUCTURE_EXAMPLE. "
-        f"Use placeholder ID: {workout_id} for the workout, "
-        f"reference exercises using EXERCISE_X placeholders, "
-        f"and use COMPONENT_X for Rest components and Supersets.\n\n"
-        "CRITICAL: For placeholders, use exact canonical numeric forms only: "
-        "WORKOUT_<number>, COMPONENT_<number>, EXERCISE_<number>. "
-        "Do not invent semantic IDs like WORKOUT_A or COMPONENT_DAY1.\n\n"
-        f"IMPORTANT: Generate a specific description for workoutMetadata.description based on the actual exercises provided above. "
-        f"Make it specific to the exercises in this workout (e.g., muscle groups, primary exercises, or training focus), "
-        f"not a generic description. Keep it under 50 characters. Make it a compact training-focus summary, not an exhaustive exercise list. "
-        f"Prefer at most 2 to 4 short focus terms or movement themes. "
-        f"Before finalizing, count the characters; if it exceeds 50, rewrite it until it is within the limit.\n\n"
-        f"Output only the workout structure JSON (workoutMetadata + workoutComponents), not a wrapper."
-    )
-    
-    messages = [
-        {"role": "system", "content": BASE_SYSTEM_PROMPT},
-        {"role": "system", "content": WORKOUT_STRUCTURE_SYSTEM_PROMPT},
-        {"role": "user", "content": user_content}
-    ]
-    
-    if logger:
-        request_truncate = PARALLEL_LOG_REQUEST_TRUNCATE if getattr(logger, "is_parallel", False) else 2000
-        trunc = user_content[:request_truncate] + (f"... [truncated, total {len(user_content)} chars]" if request_truncate and len(user_content) > request_truncate else "")
-        logger.log_request("emit_workout_structure " + workout_id, trunc)
-    use_reasoner_for_this_attempt = use_reasoner or bool(contract_error_context)
-    if use_reasoner_for_this_attempt:
-        content = json_call_reasoner_only_with_loading(client, messages, "", show_loading=False, logger=logger)
-    else:
-        content = json_call_chat_max_with_loading(client, messages, "", show_loading=False, logger=logger)
-    if content is None:
-        return (None, None)
-    
-    if not content:
-        raise ValueError(f"Model returned empty workout structure JSON content for {workout_id}")
-    
-    if logger:
-        logger.log_response("emit_workout_structure " + workout_id, content, truncate_at=8000)
-    log_entry = None
-    if logger:
-        log_entry = {
-            "step": "workout_structure",
-            "item_id": workout_id,
-            "request_messages": messages,
-            "response_content": content,
-        }
-    try:
-        data = json.loads(content)
-        # If it's wrapped, try to extract workoutMetadata and workoutComponents
-        if "workoutMetadata" in data and "workoutComponents" in data:
-            workout_structure = data
-        elif "workouts" in data and isinstance(data["workouts"], list) and len(data["workouts"]) > 0:
-            # Try to extract from a workouts array (unlikely but handle it)
-            wo = data["workouts"][0]
-            workout_structure = {
-                "workoutMetadata": {
-                    "name": wo.get("name", ""),
-                    "description": wo.get("description", ""),
-                    "order": wo.get("order", 0),
-                    "enabled": wo.get("enabled", True),
-                    "usePolarDevice": wo.get("usePolarDevice", False),
-                    "creationDate": wo.get("creationDate", date.today().isoformat()),
-                    "isActive": wo.get("isActive", True),
-                    "timesCompletedInAWeek": wo.get("timesCompletedInAWeek"),
-                    "type": wo.get("type", 0)
-                },
-                "workoutComponents": wo.get("workoutComponents", [])
-            }
-        else:
-            raise ValueError(f"Invalid workout structure JSON format for {workout_id}: expected workoutMetadata and workoutComponents")
-        
-        # Enforce plan contract for workout identity fields regardless of LLM drift.
-        metadata = workout_structure.setdefault("workoutMetadata", {})
-        metadata["id"] = workout_id
-        if workout_entry.get("name"):
-            metadata["name"] = workout_entry.get("name")
-        
-        return (WorkoutStructure(workout_structure), log_entry)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Failed to parse workout structure JSON for {workout_id}: {e}")
 
 def parallel_emit_items(items, emitter_func, loading_message, max_workers=None, logger=None, fail_fast=False):
     """
@@ -1958,7 +1717,7 @@ def summarize_conversation(client, messages, logger=None):
     ]
     if logger:
         trunc = user_content[:2000] + (f"... [truncated, total {len(user_content)} chars]" if len(user_content) > 2000 else "")
-        logger.log_request("summarize_conversation", f"model=deepseek-reasoner messages={len(summarization_messages)}\n{trunc}")
+        logger.log_request("summarize_conversation", f"model={DEEPSEEK_MODEL} thinking=enabled messages={len(summarization_messages)}\n{trunc}")
     content, _ = chat_call_with_loading(client, summarization_messages, logger=logger)
     if content is None:
         return None
@@ -2028,26 +1787,9 @@ def generate_index(
             f"Ensure all equipmentId and requiredAccessoryEquipmentIds values reference valid entries under that gear policy.\n\n"
         )
         if exercise_library:
-            equipment_names_by_id = {
-                item.get("id"): item.get("name", "")
-                for item in (provided_equipment or {}).get("equipments", [])
-            }
-            equipment_names_by_id.update({
-                item.get("id"): item.get("name", "")
-                for item in (provided_equipment or {}).get("accessoryEquipments", [])
-            })
-            compact_library = [[
-                definition.get("id"),
-                definition.get("name"),
-                definition.get("exerciseType"),
-                equipment_names_by_id.get(definition.get("equipmentId"), "none"),
-                definition.get("bodyWeightPercentage"),
-            ] for definition in exercise_library]
             user_content += (
-                "Exercise library compact selection catalog. Each row is "
-                "[libraryDefinitionId,name,exerciseType,equipment,bodyWeightPercentage]:\n"
-                f"{json.dumps(compact_library, separators=(',', ':'))}\n"
-                "For BODY_WEIGHT rows, copy bodyWeightPercentage verbatim into the plan "
+                format_exercise_library_catalog(exercise_library, provided_equipment)
+                + "For BODY_WEIGHT rows, copy bodyWeightPercentage verbatim into the plan "
                 "exercise (it is already in percentage form, e.g. 100.0).\n"
                 "Select catalog entries by matching the WOD context, not just the movement "
                 "pattern: prefer the plain/unqualified variant unless the WOD states or "
@@ -2067,6 +1809,18 @@ def generate_index(
                 "Strict library mode also forbids creating equipment or accessories. Use only gear "
                 "from the supplied file, because every selected definition already declares its setup.\n\n"
             )
+            selected_ids = set(provided_equipment.get("selectedExerciseDefinitionIds") or [])
+            if selected_ids:
+                selected = [
+                    {"libraryDefinitionId": definition["id"], "name": definition.get("name")}
+                    for definition in exercise_library if definition["id"] in selected_ids
+                ]
+                user_content += (
+                    "Confirmed library selections: every entry below must occur in the plan, including warm-ups; "
+                    "do not add, omit or substitute a definition. Repeated movements use separate EXERCISE_X "
+                    "prescriptions referencing the same libraryDefinitionId.\n"
+                    + json.dumps(selected, separators=(",", ":")) + "\n\n"
+                )
     
     user_content += (
         "If workout/day names appear in both Context summary and Additional request with different formatting, "
@@ -2075,7 +1829,8 @@ def generate_index(
     if contract_error_context:
         user_content += (
             "CRITICAL - The previous PlanIndex failed contract validation. "
-            "Fix the exact issues below and regenerate the full PlanIndex. "
+            "Correct only the reported mismatches and return the full corrected PlanIndex. "
+            "Preserve unaffected exercises, prescriptions, workout order and equipment from the previous PlanIndex. "
             "Do not repeat the same mismatch:\n"
             f"{contract_error_context}\n\n"
         )
@@ -2089,7 +1844,7 @@ def generate_index(
     
     if logger:
         trunc = user_content[:2000] + (f"... [truncated, total {len(user_content)} chars]" if len(user_content) > 2000 else "")
-        logger.log_request("generate_index", f"model={'reasoner' if use_reasoner else 'chat'} messages={len(messages)}\n{trunc}")
+        logger.log_request("generate_index", f"model={DEEPSEEK_MODEL} thinking={'enabled' if use_reasoner else 'disabled'} messages={len(messages)}\n{trunc}")
     if use_reasoner:
         content = json_call_reasoner_only_with_loading(client, messages, "Generating plan index", show_loading=True, logger=logger)
     else:
@@ -2492,10 +2247,11 @@ def display_timing_summary(timing_data, is_resume=False, logger=None):
             1: "Generate plan index",
             2: "Emit equipment items",
             3: "Emit exercise definitions",
-            4: "Emit workout structures",
+            4: "Build workout structures",
             5: "Assemble placeholder workout plan package",
             6: "Validate and repair JSON",
-            7: "Convert placeholders to UUIDs"
+            7: "Convert placeholders to UUIDs",
+            8: "Audit actual volume and duration",
         }
         # Sort keys (should be integers after normalization, but handle both for safety)
         sorted_keys = sorted(step_times.keys(), key=lambda k: int(k) if isinstance(k, str) and k.isdigit() else (k if isinstance(k, int) else 0))

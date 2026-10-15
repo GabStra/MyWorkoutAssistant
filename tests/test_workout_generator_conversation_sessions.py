@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import copy
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -167,6 +168,114 @@ def run_shell(monkeypatch: pytest.MonkeyPatch, deps: SimpleNamespace, inputs: li
     monkeypatch.setattr("builtins.input", lambda prompt="": next(values))
     monkeypatch.setattr("sys.argv", ["workout_generator.py"])
     interactive_shell.main(deps=deps)
+
+
+@pytest.mark.parametrize("first_sets", [5, 3, "invalid"])
+def test_canonical_draft_repairs_and_displays_before_confirmation(monkeypatch, tmp_path, capsys, first_sets):
+    from test_workout_generator_planning_tools import planning_case
+    from workout_generator_pkg.planning_tools import confirmed_draft
+
+    equipment, requirements, stored, draft = planning_case()
+    path = tmp_path / "library.json"
+    path.write_text(json.dumps(equipment), encoding="utf-8")
+
+    def tool(name, arguments, call_id):
+        return (None, [FakeToolCall(call_id, "function", FakeFunction(name, json.dumps(arguments)))])
+
+    results = [tool("set_workout_requirements", requirements, "requirements")]
+    if first_sets != 5:
+        failing = copy.deepcopy(draft)
+        failing["workouts"][0]["exercises"][0]["numWorkSets"] = first_sets
+        results.append(tool("audit_workout_plan", failing, "failed"))
+    results.append(tool("audit_workout_plan", draft, "draft"))
+    if first_sets == 5:
+        results.append(("RIR means reps in reserve.", None))
+    results.append(tool("generate_workout", {}, "generate"))
+    calls = []
+    deps = make_shell_deps(tmp_path, chat_results=results,
+        generation_results=[{"success": True, "filepath": "generated.json", "error": None}], generation_calls=calls)
+    inputs = iter(["Plan 5-6 effective chest sets", *(["What is RIR?"] if first_sets == 5 else []), EXACT_GENERATION_CONFIRMATION, "/exit"])
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(inputs))
+    monkeypatch.setattr("sys.argv", ["workout_generator.py", "--exercise-library-file", str(path)])
+    interactive_shell.main(deps=deps)
+    output = capsys.readouterr().out
+    assert "| 1 | Push-Up | 5 | 8–10 | 90s |" in output
+    assert "| 1 | Push-Up | 3 |" not in output
+    assert "Estimated duration: 13.5 min" in output
+    assert len(calls) == 1
+    record = load_active_conversation_record(str(tmp_path))
+    assert sum(bool(message.get("canonicalDraftPreview")) for message in record["messages"]) == 1
+    snapshot = confirmed_draft(record["messages"], equipment)
+    assert snapshot["planIndex"]["exercises"][0]["numWorkSets"] == 5
+    if first_sets != 5:
+        failure = next(json.loads(m["content"]) for m in record["messages"] if m.get("role") == "tool" and m.get("tool_call_id") == "failed")
+        assert not failure["passed"]
+        if first_sets == 3:
+            assert "3 effective sets" in failure["audit"]["issues"][0]
+        else:
+            error = failure["errors"][0]
+            assert error["code"] == "invalid_arguments"
+            assert error["path"] == "/workouts/0/exercises/0/numWorkSets"
+            assert "preserve agreed requirements" in error["repair"]
+
+
+def test_missing_draft_returns_repair_feedback_then_requires_fresh_confirmation(monkeypatch, tmp_path, capsys):
+    from test_workout_generator_planning_tools import planning_case
+
+    equipment, requirements, _, draft = planning_case()
+    path = tmp_path / "library.json"
+    path.write_text(json.dumps(equipment), encoding="utf-8")
+
+    def tool(name, arguments, call_id):
+        return (None, [FakeToolCall(call_id, "function", FakeFunction(name, json.dumps(arguments)))])
+
+    calls = []
+    deps = make_shell_deps(tmp_path, chat_results=[
+        tool("generate_workout", {}, "premature"),
+        tool("set_workout_requirements", requirements, "requirements"),
+        tool("audit_workout_plan", draft, "draft"),
+        tool("generate_workout", {}, "confirmed"),
+    ], generation_results=[{"success": True, "filepath": "generated.json", "error": None}], generation_calls=calls)
+    inputs = iter([EXACT_GENERATION_CONFIRMATION, EXACT_GENERATION_CONFIRMATION, "/exit"])
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(inputs))
+    monkeypatch.setattr("sys.argv", ["workout_generator.py", "--exercise-library-file", str(path)])
+    interactive_shell.main(deps=deps)
+    assert len(calls) == 1
+    messages = load_active_conversation_record(str(tmp_path))["messages"]
+    failed = next(json.loads(m["content"]) for m in messages if m.get("tool_call_id") == "premature")
+    assert failed["requires_plan_revision"] and failed["errors"][0]["repair"]
+    assert "Returning to planning" in capsys.readouterr().out
+
+
+def test_failed_audit_revises_in_chat_and_requires_fresh_confirmation(monkeypatch, tmp_path, capsys):
+    generate = (None, [FakeToolCall("generate", "function", FakeFunction("generate_workout", "{}"))])
+    calls = []
+    deps = make_shell_deps(
+        tmp_path,
+        chat_results=[generate, generate, ("Revised plan: four sets. Reply CONFIRM GENERATE.", None), generate],
+        generation_results=[
+            {"success": False, "filepath": None, "error": "Programming audit requires a revised plan.",
+             "requires_plan_revision": True, "programming_audit": {"issues": ["Weekly chest: 3; required 4"]}},
+            {"success": True, "filepath": "generated.json", "error": None},
+        ],
+        generation_calls=calls,
+    )
+    captured = []
+    original_chat = deps.chat_call_with_loading
+
+    def chat(client, messages, tools, logger):
+        captured.append((copy.deepcopy(messages), tools))
+        return original_chat(client, messages, tools, logger)
+
+    deps.chat_call_with_loading = chat
+    run_shell(monkeypatch, deps, [EXACT_GENERATION_CONFIRMATION, EXACT_GENERATION_CONFIRMATION, "/exit"])
+    assert len(calls) == 2
+    assert captured[1][1] == []
+    assert any("Weekly chest: 3; required 4" in str(message.get("content")) for message in captured[1][0])
+    assert any("fresh CONFIRM GENERATE" in str(message.get("content")) for message in captured[2][0])
+    assert "Revised plan: four sets" in capsys.readouterr().out
 
 
 def test_legacy_history_migrates_into_archived_session(tmp_path: Path) -> None:

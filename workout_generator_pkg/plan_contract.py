@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from .domain_ops import (
     get_selectable_weights_for_exercise,
     pair_implement_total_for,
+    superset_rest_map,
     validate_equipment_exercise_type_compatibility,
     validate_exercise_type_profile,
 )
@@ -58,6 +59,10 @@ def hydrate_plan_index_from_exercise_library(
 
 class ContractValidationError(ValueError):
     """Raised when stage artifacts violate the canonical plan contract."""
+
+    def __init__(self, message, issues=None):
+        super().__init__(message)
+        self.issues = issues or []
 
 
 @dataclass(frozen=True)
@@ -440,6 +445,40 @@ def _collect_contract_issues_plan_index(
 
     exercise_id_set = set(exercise_ids)
 
+    selected_ids = (provided_equipment or {}).get("selectedExerciseDefinitionIds") or []
+    if selected_ids:
+        actual_ids = {exercise.get("libraryDefinitionId") for exercise in exercises if isinstance(exercise, dict)}
+        if actual_ids != set(selected_ids):
+            names_by_id = {
+                definition["id"]: definition.get("name", "Unnamed exercise")
+                for definition in library_definitions if isinstance(definition, dict) and definition.get("id")
+            }
+            corrections = []
+            for definition_id in sorted(set(selected_ids) - actual_ids):
+                corrections.append(
+                    f"Missing selected exercise: {names_by_id.get(definition_id, 'Unknown exercise')} "
+                    f"(libraryDefinitionId={definition_id!r}). Restore its occurrences and prescriptions from the confirmed preview."
+                )
+            unexpected_ids = actual_ids - set(selected_ids)
+            for exercise in exercises:
+                if not isinstance(exercise, dict) or exercise.get("libraryDefinitionId") not in unexpected_ids:
+                    continue
+                exercise_id = exercise.get("id")
+                locations = [
+                    workout.get("name", workout.get("id")) for workout in workouts
+                    if isinstance(workout, dict) and exercise_id in (workout.get("exerciseIds") or [])
+                ]
+                corrections.append(
+                    f"Unexpected exercise: {exercise_id!r} / {exercise.get('name', 'Unnamed exercise')} "
+                    f"(libraryDefinitionId={exercise.get('libraryDefinitionId')!r}, workouts={locations}). "
+                    "Correct this entry to the exercise specified at that position in the confirmed preview, "
+                    "or remove it if the preview has no such occurrence; do not invent a substitution."
+                )
+            issues.append(ContractIssue(
+                "confirmed_library_selection_mismatch",
+                "PlanIndex must use exactly the selected library definitions. " + " ".join(corrections),
+            ))
+
     for ex in exercises:
         if not isinstance(ex, dict):
             issues.append(ContractIssue("invalid_exercise_entry", "PlanIndex contains a non-object exercise entry."))
@@ -753,7 +792,7 @@ def validate_plan_index_contract(
     issues = _collect_contract_issues_plan_index(plan_index, provided_equipment)
     if issues:
         lines = [f"- [{it.code}] {it.message}" for it in issues]
-        raise ContractValidationError("Plan contract validation failed at Step 1:\n" + "\n".join(lines))
+        raise ContractValidationError("Plan contract validation failed at Step 1:\n" + "\n".join(lines), issues=issues)
 
 
 def _count_work_sets(exercise: Dict[str, Any]) -> Tuple[int, List[int]]:
@@ -820,6 +859,17 @@ def _normalize_superset_groups(
                 )
             )
             continue
+
+        if "restSecondsByExercise" in group:
+            rest_map = group["restSecondsByExercise"]
+            if (
+                not isinstance(rest_map, dict) or set(rest_map) != set(exercise_ids)
+                or any(not isinstance(value, int) or isinstance(value, bool) or value < 0 for value in rest_map.values())
+            ):
+                issues.append(ContractIssue(
+                    "invalid_superset_round_rest_map",
+                    f"Workout '{wo_name}' supersetGroups[{idx}] must provide one non-negative integer round rest per exercise ID.",
+                ))
 
         normalized_group: List[str] = []
         for member in exercise_ids:
@@ -1025,6 +1075,12 @@ def _collect_contract_issues_for_exercise(plan_ex: Dict[str, Any], actual: Dict[
             )
 
     plan_equipment_id = plan_ex.get("equipmentId")
+    for field in ("notes", "placementNotes", "generateWarmUpSets", "progressionMode"):
+        if field in plan_ex and actual.get(field) != plan_ex[field]:
+            issues.append(ContractIssue(
+                "exercise_guidance_mismatch",
+                f"Exercise '{ex_id}' {field} must preserve the plan value {plan_ex[field]!r}.",
+            ))
     if "equipmentId" in plan_ex and actual.get("equipmentId") != plan_equipment_id:
         issues.append(
             ContractIssue(
@@ -1303,13 +1359,14 @@ def validate_workout_structures_contract(
         rest_to_next = wo.get("restToNextSeconds")
         if (
             expected_superset_groups
+            and not superset_issues
             and isinstance(rest_to_next, list)
             and len(rest_to_next) == len(expected)
         ):
-            rest_by_exercise = dict(zip(expected, rest_to_next))
             actual_rest_maps = _extract_superset_rest_maps_from_structure(structure)
-            for group in expected_superset_groups:
-                expected_rest_map = {exercise_id: rest_by_exercise[exercise_id] for exercise_id in group}
+            for group_spec in wo.get("supersetGroups", []):
+                group = group_spec["exerciseIds"]
+                expected_rest_map = superset_rest_map(wo, group_spec)
                 actual_rest_map = actual_rest_maps.get(tuple(group))
                 if actual_rest_map != expected_rest_map:
                     issues.append(
@@ -1318,6 +1375,48 @@ def validate_workout_structures_contract(
                             f"Workout '{wo_name}' ({wo_id}) superset {group} rest map mismatch: expected {expected_rest_map}, got {actual_rest_map}.",
                         )
                     )
+
+        if (
+            isinstance(rest_to_next, list) and len(rest_to_next) == len(expected)
+            and all(isinstance(value, int) and not isinstance(value, bool) and value >= 0 for value in rest_to_next)
+            and not superset_issues
+            and all(_find_subsequence(expected, group) is not None for group in expected_superset_groups)
+        ):
+            groups_by_first = {
+                group["exerciseIds"][0]: group
+                for group in wo.get("supersetGroups", []) or []
+                if isinstance(group, dict) and group.get("exerciseIds")
+            }
+            expected_components = []
+            index = 0
+            while index < len(expected):
+                group = groups_by_first.get(expected[index])
+                if group:
+                    members = group["exerciseIds"]
+                    expected_components.append(("Superset", tuple(members)))
+                    index += len(members)
+                    # Legacy plans used this value only for round recovery.
+                    outer_rest = rest_to_next[index - 1] if "restSecondsByExercise" in group else 0
+                else:
+                    expected_components.append(("Exercise", expected[index]))
+                    outer_rest = rest_to_next[index]
+                    index += 1
+                if outer_rest > 0:
+                    expected_components.append(("Rest", outer_rest))
+            actual_components = []
+            for component in structure.get("workoutComponents", []):
+                kind = component.get("componentType")
+                value = (
+                    tuple(component.get("exerciseIds", [])) if kind == "Superset"
+                    else component.get("exerciseId") if kind == "Exercise"
+                    else component.get("timeInSeconds")
+                )
+                actual_components.append((kind, value))
+            if actual_components != expected_components:
+                issues.append(ContractIssue(
+                    "workout_transition_rest_mismatch",
+                    f"Workout '{wo_name}' ({wo_id}) components/rest placement mismatch: expected {expected_components}, got {actual_components}.",
+                ))
 
         for ex_id in refs:
             if ex_id not in known_exercise_ids:
@@ -1331,6 +1430,33 @@ def validate_workout_structures_contract(
     if issues:
         lines = [f"- [{it.code}] {it.message}" for it in issues]
         raise ContractValidationError("Plan contract validation failed at Step 4:\n" + "\n".join(lines))
+
+
+def validate_assembled_workout_contract(plan_index, workout_store):
+    """Recheck prescriptions and component placement after JSON repair."""
+    exercises = {}
+    structures = {}
+    for workout in workout_store.get("workouts", []):
+        components = []
+        for component in workout.get("workoutComponents", []):
+            kind = component.get("type")
+            if kind == "Exercise":
+                exercises[component["id"]] = component
+                components.append({"componentType": kind, "exerciseId": component["id"]})
+            elif kind == "Superset":
+                members = component.get("exercises", [])
+                exercises.update({exercise["id"]: exercise for exercise in members})
+                components.append({
+                    "componentType": kind, "exerciseIds": [exercise["id"] for exercise in members],
+                    "restSecondsByExercise": component.get("restSecondsByExercise"),
+                })
+            else:
+                components.append({"componentType": kind, "timeInSeconds": component.get("timeInSeconds")})
+        structures[workout["id"]] = {
+            "workoutMetadata": {"name": workout.get("name")}, "workoutComponents": components,
+        }
+    validate_exercise_definitions_contract(plan_index, exercises)
+    validate_workout_structures_contract(plan_index, structures, exercises)
 
 
 def _canonicalize_ids_for_parity(value: Any, key: Optional[str] = None) -> Any:

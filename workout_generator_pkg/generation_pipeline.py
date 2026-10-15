@@ -20,7 +20,11 @@ from .plan_contract import (
     validate_plan_index_contract,
     validate_uuid_conversion_parity,
     validate_workout_structures_contract,
+    validate_assembled_workout_contract,
 )
+from .exercise_library_tools import selected_library_ids_from_messages
+from .planning_tools import confirmed_draft
+from .generation_audit import audit_workout_package, plan_audit_package, validate_audit_targets
 from .progress_migration import migrate_progress_schema_v2_layout_step
 
 
@@ -326,6 +330,21 @@ def execute_workout_generation(
     supplied_exercise_movements = copy.deepcopy(
         (provided_equipment or {}).get("exerciseMovements", [])
     )
+    canonical_snapshot = None
+    try:
+        has_draft = any(call.get("function", {}).get("name") == "audit_workout_plan"
+                        for message in messages for call in message.get("tool_calls", []))
+        if has_draft:
+            canonical_snapshot = confirmed_draft(messages, provided_equipment or {}, allow_educated_load_guesses)
+            selected_definition_ids = list(dict.fromkeys(e["libraryDefinitionId"] for e in canonical_snapshot["planIndex"]["exercises"]))
+        else:
+            selected_definition_ids = selected_library_ids_from_messages(messages, supplied_exercise_definitions)
+    except ValueError as error:
+        return {"success": False, "filepath": None, "error": str(error)}
+    if selected_definition_ids:
+        known_ids = {definition["id"] for definition in supplied_exercise_definitions}
+        if set(selected_definition_ids) - known_ids:
+            return {"success": False, "filepath": None, "error": "Selected exercises are absent from the currently loaded library. Select available entries and confirm the preview again."}
     if supplied_exercise_definitions and not provided_equipment:
         provided_equipment = {
             "equipments": [],
@@ -351,7 +370,10 @@ def execute_workout_generation(
             # Also extract any placeholders that might already be in the structure
             id_manager.extract_placeholders_from_json(converted_acc)
 
-        planner_exercise_definitions = copy.deepcopy(supplied_exercise_definitions)
+        planner_exercise_definitions = copy.deepcopy([
+            definition for definition in supplied_exercise_definitions
+            if not selected_definition_ids or definition["id"] in selected_definition_ids
+        ])
         for definition in planner_exercise_definitions:
             equipment_id = definition.get("equipmentId")
             if equipment_id in id_manager.uuid_to_placeholder:
@@ -367,6 +389,7 @@ def execute_workout_generation(
             "accessoryEquipments": converted_accessories,
             "exerciseDefinitions": planner_exercise_definitions,
             "exerciseMovements": supplied_exercise_movements,
+            "selectedExerciseDefinitionIds": selected_definition_ids,
         }
         
         _gen_print(f"Using provided equipment: {len(provided_equipment.get('equipments', []))} equipment(s), "
@@ -493,7 +516,9 @@ def execute_workout_generation(
                 else:
                     _gen_print("Please enter 'y' or 'n' (or press Enter for default)")
 
-        if use_reasoner_for_plan_index and use_reasoner_for_emitting:
+        if canonical_snapshot:
+            _gen_print(f"Approved draft supplies planning; using {'reasoner' if use_reasoner_for_emitting else 'chat'} for exercise emission only")
+        elif use_reasoner_for_plan_index and use_reasoner_for_emitting:
             _gen_print("Using reasoner model for plan index and emitting (slower but potentially higher quality)")
         elif (not use_reasoner_for_plan_index) and (not use_reasoner_for_emitting):
             _gen_print("Using chat model for plan index and emitting (faster)")
@@ -507,14 +532,14 @@ def execute_workout_generation(
         # Step 0: Summarize conversation context (once per session)
         if current_step < 0:
             step_start_time = time.time()
-            _gen_print("Step 0: Summarizing conversation context...")
-            context_summary = summarize_conversation(client, messages, logger)
+            _gen_print("Step 0: Loading approved structured draft..." if canonical_snapshot else "Step 0: Summarizing conversation context...")
+            context_summary = canonical_snapshot["preview"] if canonical_snapshot else summarize_conversation(client, messages, logger)
             if context_summary is None:
                 return {"success": False, "filepath": None, "error": "Summarization cancelled"}
             step_time = time.time() - step_start_time
             timing_data["step_times"][0] = step_time
             timing_data["total_time_seconds"] += step_time
-            _gen_print(f"✓ Conversation summarized ({step_time:.2f}s)")
+            _gen_print(f"✓ {'Approved draft loaded' if canonical_snapshot else 'Conversation summarized'} ({step_time:.2f}s)")
             structured_generation_facts = _extract_structured_generation_facts(custom_prompt)
             step_data["step_0_context_summary"] = context_summary
             step_data["step_0_structured_generation_facts"] = structured_generation_facts
@@ -534,12 +559,12 @@ def execute_workout_generation(
         # Step 1: Generate PlanIndex (planner stage)
         if current_step < 1:
             step_start_time = time.time()
-            _gen_print("Step 1: Generating plan index...")
+            _gen_print("Step 1: Using approved plan index..." if canonical_snapshot else "Step 1: Generating plan index...")
             step_1_retry_budget = 2
             step_1_retry_count = 0
             step_1_contract_error_context = ""
             while True:
-                plan_index = generate_index(
+                plan_index = copy.deepcopy(canonical_snapshot["planIndex"]) if canonical_snapshot else generate_index(
                     client,
                     context_summary,
                     custom_prompt,
@@ -551,25 +576,47 @@ def execute_workout_generation(
                 )
                 if plan_index is None:
                     return {"success": False, "filepath": None, "error": "Plan index generation cancelled"}
+                if canonical_snapshot:
+                    plan_index["equipments"] = copy.deepcopy(provided_equipment.get("equipments", []))
+                    plan_index["accessoryEquipments"] = copy.deepcopy(provided_equipment.get("accessoryEquipments", []))
                 hydrate_plan_index_from_exercise_library(
                     plan_index,
                     provided_equipment.get("exerciseDefinitions", []) if provided_equipment else [],
                 )
-                for rewrite in normalize_dumbbell_pair_prescription_loads(plan_index):
+                for rewrite in ([] if canonical_snapshot else normalize_dumbbell_pair_prescription_loads(plan_index)):
                     _gen_print(f"  {rewrite}")
                 try:
                     validate_plan_index_contract(plan_index, provided_equipment)
+                    validate_audit_targets(plan_index.get("auditTargets"))
+                    for entry in plan_index.get("exercises", []):
+                        if (not isinstance(entry.get("numWorkSets"), int) or isinstance(entry.get("numWorkSets"), bool)
+                                or entry["numWorkSets"] < 1 or not isinstance(entry.get("generateWarmUpSets"), bool)):
+                            raise ContractValidationError(f"Exercise {entry.get('id')} must provide numWorkSets and generateWarmUpSets for the programming audit.")
+                        if entry.get("exerciseType") in ("WEIGHT", "BODY_WEIGHT") and not isinstance(entry.get("maxReps"), int):
+                            raise ContractValidationError(f"Exercise {entry.get('id')} must provide maxReps for the duration audit.")
                     break
                 except ContractValidationError as e:
                     _log_step_error("Step 1", e, prefix="Contract validation failed")
-                    if step_1_retry_count >= step_1_retry_budget:
+                    if canonical_snapshot or step_1_retry_count >= step_1_retry_budget:
                         return {"success": False, "filepath": None, "error": str(e)}
                     step_1_retry_count += 1
-                    step_1_contract_error_context = str(e)
+                    step_1_contract_error_context = (
+                        str(e) + "\n\nPrevious invalid PlanIndex (preserve unaffected entries):\n"
+                        + json.dumps(plan_index, separators=(",", ":"))
+                    )
                     _gen_print(
                         f"  → Contract retry {step_1_retry_count}/{step_1_retry_budget}: "
                         "re-generating Step 1 plan index due to contract mismatches..."
                     )
+            _gen_print("Step 1: Auditing planned volume and duration before emission...")
+            plan_audit = audit_workout_package(plan_audit_package(plan_index, allow_educated_load_guesses), plan_index.get("auditTargets") or {})
+            step_data["step_1_programming_audit"] = plan_audit
+            if plan_audit["issues"]:
+                _gen_print("Programming audit failed: " + " | ".join(plan_audit["issues"]))
+                return {"success": False, "filepath": None, "error": "Programming audit requires a revised plan.",
+                        "requires_plan_revision": True, "programming_audit": plan_audit}
+            _gen_print("✓ Planned volume and duration audit passed")
+
             # Canonicalize provided equipment fields in plan_index by ID.
             # The model sometimes returns equivalent labels (e.g., "Cable machine")
             # for existing provided IDs, which should not fail immutable checks.
@@ -996,10 +1043,10 @@ def execute_workout_generation(
             step_data["step_3_exercise_definitions"] = exercise_definitions
             _gen_print(f"Step 3: Using saved exercise definitions ({len(exercise_definitions)} exercises)")
         
-        # Step 4: Emit workout structures (chunked emitters) - parallelized
+        # Step 4: Construct structures locally from the validated plan.
         if current_step < 4:
             step_start_time = time.time()
-            _gen_print("Step 4: Emitting workout structures...")
+            _gen_print("Step 4: Building workout structures from the plan (no model call)...")
             workout_entries = [wo for wo in plan_index.get("workouts", []) if wo.get("id")]
             workout_items_list = [
                 (wo.get("id"), {
@@ -1016,7 +1063,7 @@ def execute_workout_generation(
                 workout_results, workout_convs = parallel_emit_items(
                     workout_items_list,
                     emit_workout_structure,
-                    "Step 4: Emitting workouts",
+                    "Step 4: Building workouts",
                     logger=logger
                 )
             except Exception as e:
@@ -1099,7 +1146,7 @@ def execute_workout_generation(
             step_time = time.time() - step_start_time
             timing_data["step_times"][4] = step_time
             timing_data["total_time_seconds"] += step_time
-            _gen_print(f"✓ Emitted {len(workout_structures)} workout structure(s) ({step_time:.2f}s)")
+            _gen_print(f"✓ Built {len(workout_structures)} workout structure(s) ({step_time:.2f}s)")
             step_data["step_4_workout_structures"] = workout_structures
             timing_data["last_step_time"] = datetime.now().isoformat()
             _, save_time = save_generation_progress(session_id, 4, step_data, custom_prompt, conversation_hash, id_manager, script_dir, timing_data, use_reasoner_for_emitting)
@@ -1193,6 +1240,8 @@ def execute_workout_generation(
             step_data["step_6_validated_placeholder_store"] = validated_placeholder_store
             _gen_print("Step 6: Using saved validated placeholder store")
         
+        validate_assembled_workout_contract(plan_index, validated_placeholder_store)
+
         # Step 7: Convert placeholders to UUIDs (final step)
         if current_step < 7:
             step_start_time = time.time()
@@ -1228,6 +1277,24 @@ def execute_workout_generation(
             )
             _gen_print("Step 7: Using saved final workout plan package")
         
+        _gen_print("Step 8: Auditing actual generated volume and duration...")
+        audit_start = time.time()
+        final_audit = audit_workout_package(data, plan_index.get("auditTargets") or {})
+        final_audit["prescriptionChanges"] = step_data.get("step_1_programming_audit", {}).get("prescriptionChanges", [])
+        step_data["step_8_programming_audit"] = final_audit
+        timing_data["step_times"][8] = time.time() - audit_start
+        for workout_audit in final_audit["workouts"]:
+            _gen_print(f"  {workout_audit['name']}: {workout_audit['workingSets']} working sets, estimated {workout_audit['estimatedSeconds']/60:.1f} min")
+        for muscle, volume in final_audit["weeklyVolume"].items():
+            _gen_print(f"  Weekly {muscle}: {volume['direct']:g} direct + {volume['indirect']:g} indirect = {volume['effective']:g} effective sets")
+        if final_audit["issues"]:
+            _gen_print("Final programming audit failed: " + " | ".join(final_audit["issues"]))
+            save_validation_error(ValueError(" | ".join(final_audit["issues"])), data, script_dir)
+            return {"success": False, "filepath": None, "error": "Final programming audit failed: " + " | ".join(final_audit["issues"]),
+                    "requires_plan_revision": True, "programming_audit": final_audit}
+        _gen_print("✓ Actual volume and duration audit passed (duration is an estimate under stated assumptions)")
+        _, save_time = save_generation_progress(session_id, 8, step_data, custom_prompt, conversation_hash, id_manager, script_dir, timing_data, use_reasoner_for_emitting)
+
         # Update final total time (including save times)
         save_times_total = sum(timing_data.get("save_times", []))
         step_times_total = sum(timing_data.get("step_times", {}).values())
@@ -1242,6 +1309,11 @@ def execute_workout_generation(
         
         # Save workout to file
         filepath = save_workout_to_file(data, script_dir)
+        if filepath:
+            audit_filepath = os.path.splitext(filepath)[0] + ".audit.json"
+            with open(audit_filepath, "w", encoding="utf-8") as audit_file:
+                json.dump(final_audit, audit_file, indent=2, ensure_ascii=False)
+            _gen_print(f"Programming audit saved to: {audit_filepath}")
         if filepath is None:
             _gen_print("Warning: Failed to save workout to file, but generation was successful.")
             _gen_print("\nGenerated Workout JSON:")

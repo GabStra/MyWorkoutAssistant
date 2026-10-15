@@ -36,6 +36,76 @@ CANONICAL_PLACEHOLDER_PATTERNS = {
 }
 
 
+def format_exercise_library_catalog(definitions, provided_equipment):
+    equipment_names = {
+        item.get("id"): item.get("name", "")
+        for item in (provided_equipment or {}).get("equipments", [])
+    }
+    rows = [[
+        definition.get("id"), definition.get("name"), definition.get("exerciseType"),
+        equipment_names.get(definition.get("equipmentId"), definition.get("equipmentId") or "none"),
+        definition.get("bodyWeightPercentage"),
+    ] for definition in definitions]
+    return (
+        "Exercise library compact selection catalog. Each row is "
+        "[libraryDefinitionId,name,exerciseType,equipment,bodyWeightPercentage]:\n"
+        + json.dumps(rows, separators=(",", ":")) + "\n"
+    )
+
+
+def superset_rest_map(workout_entry, group):
+    """Prefer round rests; retain the legacy plan format for saved generations."""
+    if "restSecondsByExercise" in group:
+        return group["restSecondsByExercise"]
+    rest_by_exercise = dict(zip(
+        workout_entry.get("exerciseIds", []), workout_entry.get("restToNextSeconds") or [],
+    ))
+    return {exercise_id: rest_by_exercise[exercise_id] for exercise_id in group["exerciseIds"]}
+
+
+def build_workout_structure(workout_entry):
+    """Materialize ordered components directly from the validated plan."""
+    exercise_ids = workout_entry.get("exerciseIds", [])
+    rests = workout_entry.get("restToNextSeconds") or [0] * len(exercise_ids)
+    if len(rests) != len(exercise_ids):
+        raise ValueError("Workout transition rests must match its exercise order")
+    groups = {group["exerciseIds"][0]: group for group in workout_entry.get("supersetGroups", []) or []}
+    components = []
+    index = 0
+    while index < len(exercise_ids):
+        group = groups.get(exercise_ids[index])
+        if group:
+            members = group["exerciseIds"]
+            if exercise_ids[index:index + len(members)] != members:
+                raise ValueError("Superset members must be contiguous in workout order")
+            component = {
+                "componentType": "Superset", "enabled": group.get("enabled", True),
+                "exerciseIds": list(members), "restSecondsByExercise": copy.deepcopy(superset_rest_map(workout_entry, group)),
+            }
+            for field in ("timeCapSeconds", "roundDurationSeconds", "amrap"):
+                if field in group:
+                    component[field] = group[field]
+            components.append(component)
+            index += len(members)
+            # Legacy plans store round recovery here, not a separate outer transition.
+            rest = rests[index - 1] if "restSecondsByExercise" in group else 0
+        else:
+            components.append({"componentType": "Exercise", "exerciseId": exercise_ids[index], "enabled": True})
+            rest = rests[index]
+            index += 1
+        if rest:
+            components.append({"componentType": "Rest", "enabled": True, "timeInSeconds": rest})
+    metadata = {
+        "id": workout_entry["id"], "name": workout_entry["name"],
+        "description": workout_entry.get("description", ""), "order": workout_entry.get("order", 0),
+        "enabled": workout_entry.get("enabled", True), "usePolarDevice": workout_entry.get("usePolarDevice", False),
+        "creationDate": date.today().isoformat(), "isActive": workout_entry.get("isActive", True),
+        "timesCompletedInAWeek": workout_entry.get("timesCompletedInAWeek"), "type": workout_entry.get("type", 0),
+        "workoutPlanId": workout_entry.get("workoutPlanId"),
+    }
+    return {"workoutMetadata": metadata, "workoutComponents": components}
+
+
 def _is_loadable_bodyweight_exercise(exercise: Dict[str, Any], accessory_subset=None) -> bool:
     """Detect BODY_WEIGHT exercises that are commonly externally loadable."""
     if not isinstance(exercise, dict):
@@ -552,7 +622,10 @@ def apply_requires_load_calibration_policy(exercise, allow_educated_load_guesses
 
     if allow_educated_load_guesses:
         if exercise_type == "WEIGHT" or (exercise_type == "BODY_WEIGHT" and equipment_id is not None):
-            exercise["requiresLoadCalibration"] = not _has_complete_explicit_work_set_loads(exercise)
+            exercise["requiresLoadCalibration"] = (
+                exercise.get("requiresLoadCalibration") is not False
+                or not _has_complete_explicit_work_set_loads(exercise)
+            )
         else:
             exercise["requiresLoadCalibration"] = False
         return exercise
@@ -760,13 +833,18 @@ def finalize_and_validate_exercise_definition(
     if inferred_equipment_id and not exercise.get("equipmentId") and not plan_explicitly_owns_equipment_id:
         exercise["equipmentId"] = inferred_equipment_id
 
-    # Calibration policy is controlled by the generator setting and the
-    # presence of explicit work-set loads, not by incidental model output.
+    sync_plan_owned_exercise_fields(exercise, plan_entry)
+    # Only plan-prescribed loads can bypass calibration; emitted numbers may be guesses.
+    load_field = "additionalWeight" if exercise.get("exerciseType") == "BODY_WEIGHT" else "weight"
+    targets = (plan_entry or {}).get("targetSetPrescriptions") or []
+    exercise["requiresLoadCalibration"] = not (
+        targets and len(targets) == len([s for s in exercise.get("sets", []) if s.get("type") != "RestSet"])
+        and all(isinstance(t.get(load_field), (int, float)) and not isinstance(t.get(load_field), bool) for t in targets)
+    )
     apply_requires_load_calibration_policy(
         exercise,
         allow_educated_load_guesses=allow_educated_load_guesses,
     )
-    sync_plan_owned_exercise_fields(exercise, plan_entry)
 
     equipment_ids = {eq.get("id") for eq in merged_equipment if eq.get("id")}
     accessory_ids = {acc.get("id") for acc in accessory_subset if isinstance(acc, dict) and acc.get("id")}
@@ -789,6 +867,8 @@ def finalize_and_validate_exercise_definition(
         if not is_valid and error:
             validation_errors.append(error)
 
+    if not validation_errors and allow_educated_load_guesses and not (plan_entry or {}).get("targetSetPrescriptions"):
+        fix_equipment_weights(exercise, equipment_by_id)
     is_valid_weight_combo, weight_combo_error, _ = validate_equipment_weight_combinations(exercise, equipment_by_id)
     if not is_valid_weight_combo and weight_combo_error:
         validation_errors.append(weight_combo_error)
@@ -1216,6 +1296,15 @@ def format_equipment_for_llm(equipment_list, accessory_list=None):
         
         if valid_combinations:
             sorted_combos = sorted(valid_combinations)
+            if eq_type == "DUMBBELLS":
+                lines.append("  - Load meaning: COMBINED weight of TWO dumbbells; per-hand weight = total / 2. Never double these totals.")
+                lines.append(f"  - Maximum load: {sorted_combos[-1]}kg combined = {sorted_combos[-1] / 2}kg per hand.")
+            elif eq_type == "DUMBBELL":
+                lines.append("  - Load meaning: weight of ONE dumbbell (one hand), not a pair.")
+                lines.append(f"  - Maximum load: {sorted_combos[-1]}kg for one dumbbell.")
+            elif eq_type == "BARBELL":
+                lines.append("  - Load meaning: TOTAL barbell weight INCLUDING the bar; do not add bar weight again.")
+                lines.append(f"  - Maximum load: {sorted_combos[-1]}kg including the bar.")
             # Format as comma-separated list (matching ExerciseHistoryExport.kt format)
             combo_str = ", ".join(f"{w}kg" for w in sorted_combos)
             total_count = len(sorted_combos)
@@ -1272,6 +1361,7 @@ def format_equipment_for_conversation(provided_equipment):
         f"{formatted_equipment}\n\n"
         f"CRITICAL: Equipment from the provided file is IMMUTABLE - you CANNOT edit, modify, or change any equipment or accessories from the list above.\n"
         f"Use equipment and accessories from the list above when available (use their exact placeholder IDs).\n"
+        f"During requirements discussion and exercise recommendations, respect these maximum loads. Compare loads on the same total/per-hand basis, and use only listed achievable loads for progression; do not assume uniform increments.\n"
         f"If necessary equipment or accessories are missing from the list above, you MAY create new equipment or accessory entries with new placeholder IDs."
     )
 
@@ -1678,8 +1768,7 @@ def remove_none_from_workout_components(workout_store, logger=None):
 def ensure_requiresLoadCalibration(workout_store, allow_educated_load_guesses=True):
     """
     Ensure all exercises have a boolean requiresLoadCalibration value.
-    By default, complete emitted work-set loads are accepted as educated starting loads and
-    calibration is required only when those loads are unavailable. Pass
+    Preserve the plan-derived calibration decision; missing decisions or loads require calibration. Pass
     allow_educated_load_guesses=False to require strict calibration for every loaded exercise.
     
     Args:
@@ -2220,6 +2309,8 @@ def sync_exercises_from_definitions(workout_store, exercise_definitions):
         return workout_store
 
     fields_to_sync = [
+        "notes",
+        "placementNotes",
         "intraSetRestInSeconds",
         "exerciseCategory",
         "requiredAccessoryEquipmentIds",
@@ -2313,9 +2404,15 @@ def sync_plan_owned_exercise_fields(exercise, plan_entry):
     fields_to_sync = [
         "name",
         "nameOverride",
+        "notes",
+        "placementNotes",
+        "generateWarmUpSets",
+        "progressionMode",
         "exerciseType",
         "equipmentId",
         "bodyWeightPercentage",
+        "muscleGroups",
+        "secondaryMuscleGroups",
         "intraSetRestInSeconds",
         "exerciseCategory",
         "requiredAccessoryEquipmentIds",
@@ -3200,5 +3297,3 @@ def WorkoutStructure(workout_structure_dict):
         raise ValueError("Missing 'workoutComponents' in workout structure")
     
     return workout_structure_dict
-
-

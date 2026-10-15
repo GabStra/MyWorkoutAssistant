@@ -8,6 +8,7 @@ import threading
 import time
 import traceback
 from .constants import (
+    DEEPSEEK_MODEL,
     DEEPSEEK_CHAT_DEFAULT_TOKENS,
     DEEPSEEK_CHAT_MAX_TOKENS,
     DEEPSEEK_REASONER_DEFAULT_TOKENS,
@@ -30,7 +31,7 @@ except ImportError:
 
 def chat_call(client, messages, tools=None):
     """
-    Call deepseek-reasoner model for conversational responses with optional function calling.
+    Call DeepSeek for conversational responses with optional function calling.
     
     Args:
         client: OpenAI client
@@ -42,8 +43,10 @@ def chat_call(client, messages, tools=None):
                tool_calls is a list of tool calls (or None)
     """
     kwargs = {
-        "model": "deepseek-reasoner",
-        "messages": messages
+        "model": DEEPSEEK_MODEL,
+        "messages": messages,
+        # The conversation stores tool calls without reasoning history.
+        "extra_body": {"thinking": {"type": "disabled"}},
     }
     if tools:
         kwargs["tools"] = tools
@@ -157,7 +160,7 @@ def _log_connection_error(exception, attempt, max_retries, script_dir=None):
         return None
 
 
-def test_connection(client, show_message=True, logger=None):
+def test_connection(client, show_message=True, logger=None, *, model=None):
     """
     Test connection to DeepSeek API with a minimal request using streaming mode.
     
@@ -187,11 +190,12 @@ def test_connection(client, show_message=True, logger=None):
         # Use streaming mode for better high-traffic handling
         start_time = time.time()
         stream = client.chat.completions.create(
-            model="deepseek-chat",
+            model=model or DEEPSEEK_MODEL,
             messages=test_messages,
             response_format={"type": "json_object"},
             max_tokens=10,
-            stream=True  # Enable streaming for better high-traffic handling
+            stream=True,  # Enable streaming for better high-traffic handling
+            extra_body={"thinking": {"type": "disabled"}},
         )
         
         content, finish_reason = _collect_streaming_response(stream, start_time)
@@ -334,9 +338,9 @@ def _collect_streaming_response(stream, start_time=None):
     return content, finish_reason
 
 
-def json_call(client, messages, max_tokens=DEEPSEEK_CHAT_DEFAULT_TOKENS):
+def json_call(client, messages, max_tokens=DEEPSEEK_CHAT_DEFAULT_TOKENS, *, model=None):
     """
-    Call deepseek-chat model for JSON generation using streaming mode.
+    Call DeepSeek in non-thinking mode for JSON generation using streaming.
     Streaming mode better handles keep-alive comments during high traffic periods.
     
     Returns:
@@ -345,11 +349,12 @@ def json_call(client, messages, max_tokens=DEEPSEEK_CHAT_DEFAULT_TOKENS):
     def _call():
         start_time = time.time()
         stream = client.chat.completions.create(
-            model="deepseek-chat",
+            model=model or DEEPSEEK_MODEL,
             messages=messages,
             response_format={"type": "json_object"},
             max_tokens=max_tokens,
-            stream=True  # Enable streaming for better high-traffic handling
+            stream=True,  # Enable streaming for better high-traffic handling
+            extra_body={"thinking": {"type": "disabled"}},
         )
         return _collect_streaming_response(stream, start_time)
     
@@ -429,10 +434,10 @@ def json_call_with_retry(client, messages):
     Cascading retry logic for JSON generation.
     
     Strategy:
-    1. Try json_call() with 4K tokens (deepseek-chat)
-    2. If truncated, retry json_call() with 8K tokens (deepseek-chat max)
-    3. If still truncated, fall back to json_call_large() with 32K tokens (deepseek-reasoner)
-    4. If still truncated, retry json_call_large() with 64K tokens (deepseek-reasoner max)
+    1. Try non-thinking JSON generation with 4K tokens.
+    2. If truncated, retry non-thinking generation with 8K tokens.
+    3. If still truncated, use thinking mode with 32K tokens.
+    4. If still truncated, retry thinking mode with 64K tokens.
     
     Returns:
         str: JSON content, or None if cancelled
@@ -526,9 +531,9 @@ def json_call_with_loading(client, messages, max_tokens=None):
     return result[0]
 
 
-def json_call_chat_max_with_loading(client, messages, loading_message="Generating", show_loading=True, logger=None):
+def json_call_chat_max_with_loading(client, messages, loading_message="Generating", show_loading=True, logger=None, *, model=None):
     """
-    Wrapper for json_call that uses deepseek-chat with maximum tokens (8K) from the start.
+    Wrapper for non-thinking JSON generation with an 8K output budget.
     Includes loading indicator and cancellation support. Includes retry logic for connection errors.
     
     Args:
@@ -550,7 +555,10 @@ def json_call_chat_max_with_loading(client, messages, loading_message="Generatin
     
     def api_call():
         try:
-            content, finish_reason = json_call(client, messages, DEEPSEEK_CHAT_MAX_TOKENS)
+            content, finish_reason = json_call(
+                client, messages, DEEPSEEK_CHAT_MAX_TOKENS,
+                **({"model": model} if model else {}),
+            )
             if finish_reason == "length":
                 raise ValueError("Response truncated at 8K max tokens. Consider breaking the request into smaller parts.")
             result[0] = content
@@ -651,7 +659,7 @@ def is_json_complete(json_str):
 
 def json_call_large(client, messages, max_tokens=DEEPSEEK_REASONER_DEFAULT_TOKENS):
     """
-    Use reasoner model for larger outputs (up to 64K max) using streaming mode.
+    Use thinking mode for larger outputs with streaming.
     Streaming mode better handles keep-alive comments during high traffic periods.
     
     Returns:
@@ -660,20 +668,21 @@ def json_call_large(client, messages, max_tokens=DEEPSEEK_REASONER_DEFAULT_TOKEN
     def _call():
         start_time = time.time()
         stream = client.chat.completions.create(
-            model="deepseek-reasoner",  # 64K max output
+            model=DEEPSEEK_MODEL,
             messages=messages,
             response_format={"type": "json_object"},
             max_tokens=max_tokens,
-            stream=True  # Enable streaming for better high-traffic handling
+            stream=True,  # Enable streaming for better high-traffic handling
+            extra_body={"thinking": {"type": "enabled"}},
         )
         return _collect_streaming_response(stream, start_time)
     
     return _retry_on_connection_error(_call, show_message=True)
 
 
-def json_call_reasoner_only(client, messages):
+def json_call_reasoner_only(client, messages, *, model=None):
     """
-    Call deepseek-reasoner model for JSON generation with maximum tokens (64K) using streaming mode.
+    Call DeepSeek in thinking mode for JSON generation with a 64K output budget.
     This is the standard function for all JSON generation in the planner/emitter architecture.
     Streaming mode better handles keep-alive comments during high traffic periods.
     
@@ -683,11 +692,12 @@ def json_call_reasoner_only(client, messages):
     def _call():
         start_time = time.time()
         stream = client.chat.completions.create(
-            model="deepseek-reasoner",
+            model=model or DEEPSEEK_MODEL,
             messages=messages,
             response_format={"type": "json_object"},
             max_tokens=DEEPSEEK_REASONER_MAX_TOKENS,  # Always use max (64K)
-            stream=True  # Enable streaming for better high-traffic handling
+            stream=True,  # Enable streaming for better high-traffic handling
+            extra_body={"thinking": {"type": "enabled"}},
         )
         return _collect_streaming_response(stream, start_time)
     
@@ -780,7 +790,7 @@ def json_call_large_with_loading(client, messages, max_tokens=None):
     return result[0]
 
 
-def json_call_reasoner_only_with_loading(client, messages, loading_message="Generating", show_loading=True, logger=None):
+def json_call_reasoner_only_with_loading(client, messages, loading_message="Generating", show_loading=True, logger=None, *, model=None):
     """
     Wrapper for json_call_reasoner_only that shows loading indicator with timer and supports cancellation.
     This is the standard function for all JSON generation in the planner/emitter architecture.
@@ -802,7 +812,9 @@ def json_call_reasoner_only_with_loading(client, messages, loading_message="Gene
     
     def api_call():
         try:
-            content, finish_reason = json_call_reasoner_only(client, messages)
+            content, finish_reason = json_call_reasoner_only(
+                client, messages, **({"model": model} if model else {}),
+            )
             if finish_reason == "length":
                 raise ValueError("Response truncated at 64K max tokens. Consider breaking the request into smaller parts.")
             result[0] = content

@@ -1,4 +1,5 @@
 import threading
+import json
 from dataclasses import replace
 
 import pytest
@@ -8,6 +9,31 @@ import workout_generator_pkg.generation_pipeline as pipeline
 from workout_generator_pkg.deps import resolve_pipeline_deps
 from workout_generator_pkg.generation_pipeline import execute_workout_generation
 from workout_generator_pkg.plan_contract import ContractValidationError
+
+
+def test_planner_retry_receives_selected_identities_and_preservation_instructions(monkeypatch):
+    requests = []
+
+    def response(_client, messages, *_args, **_kwargs):
+        requests.append(messages[-1]["content"])
+        return json.dumps({"equipments": [], "accessoryEquipments": [], "exercises": [], "workouts": []})
+
+    monkeypatch.setattr(cli, "json_call_chat_max_with_loading", response)
+    feedback = "Missing selected exercise: Bench (libraryDefinitionId='definition-1')."
+    cli.generate_index(
+        None, "confirmed preview", use_reasoner=False,
+        provided_equipment={
+            "equipments": [], "accessoryEquipments": [],
+            "exerciseDefinitions": [{"id": "definition-1", "name": "Bench"}],
+            "selectedExerciseDefinitionIds": ["definition-1"],
+        },
+        contract_error_context=feedback,
+    )
+    assert feedback in requests[0]
+    assert "Confirmed library selections: every entry below must occur" in requests[0]
+    assert '{"libraryDefinitionId":"definition-1","name":"Bench"}' in requests[0]
+    assert "Correct only the reported mismatches" in requests[0]
+    assert "Preserve unaffected exercises, prescriptions, workout order and equipment" in requests[0]
 
 
 def test_exercise_emitter_honors_single_attempt_repair_budget(monkeypatch) -> None:

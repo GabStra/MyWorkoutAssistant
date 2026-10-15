@@ -2,6 +2,8 @@
 
 import json
 
+DEEPSEEK_MODEL = "deepseek-flash"
+
 PLACEHOLDER_OR_UUID_PATTERN = (
     r"^(?:"
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
@@ -662,6 +664,9 @@ BASE_SYSTEM_PROMPT = (
     "- Recommend only exercises supported by available equipment.\n"
     "- Offer feasible alternatives when required equipment is unavailable.\n"
     "- Mark unilateral intent when exercise or user request indicates single-side work.\n\n"
+    "- Audit weekly volume from the actual prescribed working sets, excluding warm-ups. Show direct sets and indirect contributions separately, with the counting rule for each contribution. Never invent extra sets to mark a target met.\n"
+    "- Check per-session coverage as well as weekly totals. Report unmet targets honestly.\n"
+    "- Estimate session duration from work intervals, prescribed rests, unilateral sides, warm-ups and equipment transitions. If volume and time targets conflict, resolve the tradeoff before confirmation.\n\n"
     "4. Preview formatting.\n"
     "- For conversational preview workouts, use a clear plain-text table.\n"
     "- The recap/preview table must show rest between sets and rest between exercises as separate, clearly labeled fields or columns.\n"
@@ -683,6 +688,7 @@ SUMMARIZATION_SYSTEM_PROMPT = (
     "- available equipment (with any technical details)\n"
     "- include/exclude exercises\n"
     "- explicit prescriptions (sets, rep ranges, rest between sets, rest to next exercise, superset pairings)\n"
+    "- workout-specific execution notes, RIR, progression rules and warm-up requirements\n"
     "- exact load semantics for each exercise when provided\n\n"
     "Rules:\n"
     "- Remove fluff and duplicates.\n"
@@ -690,6 +696,7 @@ SUMMARIZATION_SYSTEM_PROMPT = (
     "- Preserve numeric values exactly (do not broaden ranges or replace user values).\n"
     "- Rest values in the summary must be expressed as one exact number, never as a range. If the conversation gave a rest range, preserve the chosen exact rest value that will drive generation.\n"
     "- Preserve explicit superset relationships exactly, including which exercises are grouped together and any stated rest after the pair/group.\n"
+    "- Distinguish rest between superset rounds from rest after the completed block.\n"
     "- For BODY_WEIGHT movements, preserve all load semantics that affect baseline interpretation: added load, total effective load, bodyweight assumptions, explicit percentages, and whether the movement is full-bodyweight or partial-bodyweight.\n"
     "- If both added load and total effective load are given, keep both explicitly. Example: keep 'Weighted Ring Row +10 kg, 52.3 kg total' as both facts, not just '+10 kg vest'.\n"
     "- If the exact baseline percentage is not stated but can be inferred, preserve the raw numbers needed for that inference.\n"

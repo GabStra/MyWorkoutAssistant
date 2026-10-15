@@ -12,9 +12,29 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .constants import EXACT_GENERATION_CONFIRMATION
+from .constants import DEEPSEEK_MODEL, EXACT_GENERATION_CONFIRMATION
+from .muscle_roles import MUSCLE_ROLE_GUIDANCE
+from .planning_tools import (
+    SET_WORKOUT_REQUIREMENTS_TOOL, AUDIT_WORKOUT_PLAN_TOOL,
+    set_workout_requirements, audit_workout_plan, confirmed_draft,
+    planning_tool_failure,
+)
 from .conversation_store import normalize_conversation_messages
 from .deps import resolve_shell_deps
+from .exercise_library_tools import (
+    SEARCH_EXERCISE_LIBRARY_TOOL, execute_library_tool,
+)
+
+CANONICAL_PLANNING_INSTRUCTION = (
+    "For library-backed workout planning, use search_exercise_library, set_workout_requirements and audit_workout_plan. "
+    "The latter replaces the old select_exercises/audit_workout_volume preview workflow. "
+    "Record the user's requirements separately, never relax them during automatic repair, and use the current requirementsId. "
+    "Submit the complete structured draft for volume AND duration audit. Repair failures and resubmit. "
+    "Questions and explanations do not change the draft. Do not repeat requirements or audit calls for them; reuse stored IDs and results. "
+    "For actual requested edits, submit the replacement draft before claiming that a change was applied. "
+    "Python displays the passing preview automatically; do not author a separate workout preview. "
+    "Only generate after a fresh CONFIRM GENERATE; export uses that exact approved draft."
+)
 
 
 def _load_env_file(path: Path) -> None:
@@ -105,8 +125,18 @@ def _build_initial_messages(
             "system",
             content=(
                 f"A strict exercise library with {len(exercise_definitions)} definitions is loaded. "
-                "It is the sole allowed movement source. Its compact selection catalog is supplied "
-                "only to the workout-planning stage to avoid duplicating the full library in chat context."
+                "It is the sole allowed movement source. Use search_exercise_library to retrieve small batches "
+                "of matching entries. Call set_workout_requirements to record the user's goals separately from the draft. "
+                "Then call audit_workout_plan with the complete structured draft and current requirementsId. "
+                "Repair returned issues by editing the draft and calling the tool again. Never relax requirements to make a repair pass. "
+                "Python displays the passing draft automatically; do not write or reproduce a separate workout preview. "
+                "The displayed draft is the one exported after CONFIRM GENERATE; no second planning pass occurs. "
+                "Submit a replacement only for actual draft edits; ordinary questions do not require re-auditing. Only change requirements when the user explicitly requests it. "
+                "Mobility/ramp-up instructions belong in notes and warm-up flags, not invented standalone exercises. "
+                "If a requested exercise is absent, explain the available alternative before confirmation; "
+                "never claim an absent movement is library sourced."
+                " For volume, use the retrieved library's primary/secondary roles exactly. Effective set targets can be met by direct and indirect work; they do not require direct isolation work for every muscle. "
+                + MUSCLE_ROLE_GUIDANCE
             ),
         ))
     return messages
@@ -219,9 +249,13 @@ def _ensure_tool_responses(messages: List[Dict[str, Any]]) -> tuple[List[Dict[st
     return repaired, repaired != messages
 
 
-def _messages_for_api(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _messages_for_api(messages: List[Dict[str, Any]], planning_enabled=False) -> List[Dict[str, Any]]:
     repaired, _ = _ensure_tool_responses(messages)
-    return [message for message in repaired if message.get("role") != "emitter"]
+    result = [{key: value for key, value in message.items() if key != "canonicalDraftPreview"}
+              for message in repaired if message.get("role") != "emitter"]
+    if planning_enabled:
+        result.append({"role": "system", "content": CANONICAL_PLANNING_INSTRUCTION})
+    return result
 
 
 def _show_commands(logger) -> None:
@@ -298,6 +332,16 @@ def handle_function_call(
         return ""
 
     if function_name == "generate_workout":
+        last_user_index = next((i for i in range(len(messages) - 1, -1, -1) if messages[i].get("role") == "user"), -1)
+        for message in messages[last_user_index + 1:]:
+            if message.get("role") == "tool":
+                try:
+                    feedback = json.loads(message.get("content") or "{}")
+                except (TypeError, ValueError):
+                    continue
+                if isinstance(feedback, dict) and feedback.get("requires_plan_revision"):
+                    return {"result": "Generation blocked: show the revised preview and wait for a fresh CONFIRM GENERATE.",
+                            "should_exit": False, "generation_result": None}
         last_user_message = _last_user_message_content()
         if last_user_message != EXACT_GENERATION_CONFIRMATION:
             return {
@@ -309,6 +353,17 @@ def handle_function_call(
                 "should_exit": False,
                 "generation_result": None,
             }
+        library = (provided_equipment or {}).get("exerciseDefinitions")
+        if library:
+            try:
+                confirmed_draft(messages, provided_equipment, allow_educated_load_guesses)
+            except ValueError as error:
+                feedback = planning_tool_failure("generate_workout", error)
+                feedback["requires_plan_revision"] = True
+                return {
+                    "result": json.dumps(feedback, ensure_ascii=False), "continue_planning": True,
+                    "should_exit": False, "generation_result": None,
+                }
         custom_prompt = function_args.get("custom_prompt", "")
         generation_result = execute_workout_generation(
             client,
@@ -341,11 +396,33 @@ def handle_function_call(
                 result_message = "Workout generated successfully (but file save failed - check output above)"
         else:
             result_message = f"Workout generation failed: {generation_result.get('error', 'Unknown error')}"
+            if generation_result.get("requires_plan_revision"):
+                result_message = json.dumps({
+                    "requires_plan_revision": True,
+                    "instruction": "Revise the plan using this deterministic audit. Keep the user's agreed goals and equipment restrictions. You may change exercises, pairings and prescriptions as needed. Validate library selection, show the entire revised preview, and obtain a NEW CONFIRM GENERATE before regenerating. If goals cannot be met, explain the conflict and ask the user to resolve it; never silently relax them.",
+                    "audit": generation_result["programming_audit"],
+                }, ensure_ascii=False)
 
         return {
             "result": result_message,
             "should_exit": False,
             "generation_result": generation_result,
+        }
+
+    if function_name == "set_workout_requirements":
+        result = set_workout_requirements(function_args, messages)
+        return {"result": json.dumps(result, ensure_ascii=False), "requirements_preview": None if result.get("cached") else result["requirementsPreview"],
+                "should_exit": False, "generation_result": None}
+
+    if function_name == "audit_workout_plan":
+        result = audit_workout_plan(function_args, provided_equipment or {}, messages, allow_educated_load_guesses)
+        return {"result": json.dumps(result, ensure_ascii=False), "draft_preview": None if result.get("cached") else result.get("preview"),
+                "draft_id": result.get("draftId", result["requirementsId"]), "should_exit": False, "generation_result": None}
+
+    if function_name in ("search_exercise_library", "select_exercises"):
+        return {
+            "result": json.dumps(execute_library_tool(function_name, function_args, provided_equipment, client=client), ensure_ascii=False),
+            "should_exit": False, "generation_result": None,
         }
 
     return {
@@ -468,6 +545,7 @@ def main(deps=None):
     timeout = httpx.Timeout(1200.0, connect=60.0)
     http_client = httpx.Client(timeout=timeout)
     client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com", http_client=http_client)
+    print(f"DeepSeek model: {DEEPSEEK_MODEL}")
     get_log_dir(script_dir)
 
     conversation_id = str(uuid.uuid4())
@@ -857,100 +935,134 @@ def main(deps=None):
         state["messages"].append(_message("user", content=user_input))
         try:
             tools = [GENERATE_WORKOUT_TOOL]
+            if exercise_definitions:
+                tools.extend([SEARCH_EXERCISE_LIBRARY_TOOL, SET_WORKOUT_REQUIREMENTS_TOOL, AUDIT_WORKOUT_PLAN_TOOL])
             generation_metadata: Optional[Dict[str, Any]] = None
-            api_messages = _messages_for_api(state["messages"])
-            content, tool_calls = chat_call_with_loading(client, api_messages, tools, logger)
+            preview_ready = False
+            requires_plan_revision = False
+            for tool_round in range(8):
+                api_messages = _messages_for_api(state["messages"], bool(exercise_definitions))
+                content, tool_calls = chat_call_with_loading(client, api_messages, tools, logger)
 
-            if content is None and tool_calls is None:
-                state["messages"].pop()
-                logger.log_print("Cancelled. Returning to prompt...")
-                continue
+                if content is None and tool_calls is None:
+                    if tool_round == 0:
+                        state["messages"].pop()
+                    logger.log_print("Cancelled. Returning to prompt...")
+                    break
 
-            has_content = content not in (None, "")
-            has_tool_calls = bool(tool_calls)
+                has_content = content not in (None, "")
+                has_tool_calls = bool(tool_calls)
 
-            if not has_content and not has_tool_calls:
-                state["messages"].pop()
-                logger.log_print(
-                    "The model returned an empty response with no tool call. "
-                    "Nothing was added to the conversation; please retry."
-                )
-                continue
-
-            assistant_message: Dict[str, Any] = _message("assistant")
-            if has_content:
-                assistant_message["content"] = content
-            if has_tool_calls:
-                assistant_message["tool_calls"] = [
-                    {
-                        "id": tool_call.id,
-                        "type": tool_call.type,
-                        "function": {
-                            "name": tool_call.function.name,
-                            "arguments": tool_call.function.arguments,
-                        },
-                    }
-                    for tool_call in tool_calls
-                ]
-            state["messages"].append(assistant_message)
-
-            if has_content:
-                logger.log_print(f"Assistant> {content}")
-
-            if has_tool_calls:
-                for tool_call in tool_calls:
-                    function_name = tool_call.function.name
-                    try:
-                        function_args = json.loads(tool_call.function.arguments)
-                    except json.JSONDecodeError:
-                        function_args = {}
-                    logger.log_section("tool_call " + function_name)
-                    logger.log_request("tool " + function_name, json.dumps(function_args, ensure_ascii=False))
-
-                    tool_message = _message(
-                        "tool",
-                        tool_call_id=tool_call.id,
-                        content=(
-                            "Tool call started but did not complete. "
-                            "Treat this as a failed tool result if execution is interrupted."
-                        ),
+                if not has_content and not has_tool_calls:
+                    if tool_round == 0:
+                        state["messages"].pop()
+                    logger.log_print(
+                        "The model returned an empty response with no tool call. "
+                        "Nothing was added to the conversation; please retry."
                     )
-                    state["messages"].append(tool_message)
+                    break
 
-                    try:
-                        function_result = handle_function_call_dep(
-                            client,
-                            state["messages"],
-                            function_name,
-                            function_args,
-                            provided_equipment,
-                            logger,
-                            script_dir,
-                            force_use_reasoner=force_use_reasoner,
-                            allow_educated_load_guesses=args.allow_educated_load_guesses,
-                        )
-                    except Exception as tool_error:
-                        function_result = {
-                            "result": f"Tool call failed: {tool_error}",
-                            "should_exit": False,
-                            "generation_result": None,
+                assistant_message: Dict[str, Any] = _message("assistant")
+                if has_content:
+                    assistant_message["content"] = content
+                if has_tool_calls:
+                    assistant_message["tool_calls"] = [
+                        {
+                            "id": tool_call.id,
+                            "type": tool_call.type,
+                            "function": {
+                                "name": tool_call.function.name,
+                                "arguments": tool_call.function.arguments,
+                            },
                         }
+                        for tool_call in tool_calls
+                    ]
+                state["messages"].append(assistant_message)
 
-                    logger.log_response("tool result " + function_name, function_result.get("result", ""), truncate_at=8000)
-                    tool_result_text = function_result.get("result", "")
-                    if tool_result_text:
-                        logger.log_print(tool_result_text)
-                    tool_message["content"] = function_result["result"]
-                    tool_message["timestamp"] = _timestamp_now()
+                if has_content:
+                    logger.log_print(f"Assistant> {content}")
 
-                    generation_result = function_result.get("generation_result")
-                    if generation_result is not None:
-                        current_record = load_conversation_record(state["conversation_id"], script_dir) or {}
-                        generation_metadata = _metadata_for_generation_result(
-                            generation_result,
-                            state["log_path"],
-                            current_record.get("metadata", {}).get("generated_output_paths"),
+                if has_tool_calls:
+                    pending_preview = None
+                    for tool_call in tool_calls:
+                        function_name = tool_call.function.name
+                        try:
+                            function_args = json.loads(tool_call.function.arguments)
+                        except json.JSONDecodeError:
+                            function_args = {}
+                        logger.log_section("tool_call " + function_name)
+                        logger.log_request("tool " + function_name, json.dumps(function_args, ensure_ascii=False))
+
+                        tool_message = _message(
+                            "tool",
+                            tool_call_id=tool_call.id,
+                            content=(
+                                "Tool call started but did not complete. "
+                                "Treat this as a failed tool result if execution is interrupted."
+                            ),
                         )
+                        state["messages"].append(tool_message)
+
+                        try:
+                            function_result = handle_function_call_dep(
+                                client,
+                                state["messages"],
+                                function_name,
+                                function_args,
+                                provided_equipment,
+                                logger,
+                                script_dir,
+                                force_use_reasoner=force_use_reasoner,
+                                allow_educated_load_guesses=args.allow_educated_load_guesses,
+                            )
+                        except Exception as tool_error:
+                            function_result = {
+                                "result": json.dumps(planning_tool_failure(function_name, tool_error, function_args), ensure_ascii=False),
+                                "should_exit": False,
+                                "generation_result": None,
+                            }
+
+                        logger.log_response("tool result " + function_name, function_result.get("result", ""), truncate_at=8000)
+                        tool_result_text = function_result.get("result", "")
+                        if tool_result_text and function_name == "generate_workout":
+                            if function_result.get("continue_planning"):
+                                logger.log_print("The current draft needs validation. Returning to planning before asking for fresh confirmation.")
+                            elif (function_result.get("generation_result") or {}).get("requires_plan_revision"):
+                                logger.log_print("The programming audit found issues. Returning them to the conversation to revise the plan before asking for confirmation again.")
+                            else:
+                                logger.log_print(tool_result_text)
+                        tool_message["content"] = function_result["result"]
+                        tool_message["timestamp"] = _timestamp_now()
+                        if function_result.get("continue_planning"):
+                            requires_plan_revision = True
+                            tools = [SEARCH_EXERCISE_LIBRARY_TOOL, SET_WORKOUT_REQUIREMENTS_TOOL, AUDIT_WORKOUT_PLAN_TOOL] if exercise_definitions else []
+
+                        if function_result.get("requirements_preview"):
+                            logger.log_print(function_result["requirements_preview"])
+                        if function_name == "audit_workout_plan":
+                            pending_preview = function_result if function_result.get("draft_preview") else None
+
+                        generation_result = function_result.get("generation_result")
+                        if generation_result is not None:
+                            if generation_result.get("requires_plan_revision"):
+                                requires_plan_revision = True
+                                tools = [SEARCH_EXERCISE_LIBRARY_TOOL, SET_WORKOUT_REQUIREMENTS_TOOL, AUDIT_WORKOUT_PLAN_TOOL] if exercise_definitions else []
+                            current_record = load_conversation_record(state["conversation_id"], script_dir) or {}
+                            generation_metadata = _metadata_for_generation_result(
+                                generation_result,
+                                state["log_path"],
+                                current_record.get("metadata", {}).get("generated_output_paths"),
+                            )
+                    if pending_preview:
+                        preview = pending_preview["draft_preview"]
+                        state["messages"].append(_message("assistant", content=preview,
+                            canonicalDraftPreview=pending_preview["draft_id"]))
+                        logger.log_print(f"Assistant> {preview}")
+                        preview_ready = True
+                if preview_ready or not has_tool_calls or (not requires_plan_revision and any(call.function.name == "generate_workout" for call in tool_calls)):
+                    break
+            else:
+                logger.log_print("Planning reached its tool-call limit. Revise the request to continue; generation still requires a validated preview and fresh confirmation.")
 
             persist_current(generation_metadata)
 
