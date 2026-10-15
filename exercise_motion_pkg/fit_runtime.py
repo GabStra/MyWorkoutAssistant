@@ -313,9 +313,8 @@ class CandidateFitSession:
                 pass
 
     def remaining(self):
-        if self.started is None:
-            self.started = monotonic()
-        return max(0., self.budget_seconds-self.previously_spent-(monotonic()-self.started))
+        active_seconds = max(0., monotonic()-self.started) if self.started is not None else 0.
+        return max(0., self.budget_seconds-self.previously_spent-active_seconds)
 
     def save(self):
         if self.path:
@@ -383,6 +382,7 @@ FIT_CACHE_SOURCE_MODULES = (
     'sequence_stabilization.py',
     'smpl_joint_names.py',
     'source_pose_evidence.py',
+    'source_support_tracking.py',
     'stage_cache.py',
     'structural_refinement.py',
     'support_alignment.py',
@@ -430,7 +430,8 @@ def candidate_fit_session(workspace=None, *, budget_seconds=DEFAULT_CANDIDATE_FI
         try:
             session.save()
         finally:
-            if session.budget_key is not None and session.started is not None:
+            if session.budget_key is not None:
                 with _FIT_GUARD:
-                    _FIT_SPENT_BY_INPUT[session.budget_key] = session.previously_spent + max(0., monotonic()-session.started)
+                    active_seconds = max(0., monotonic()-session.started) if session.started is not None else 0.
+                    _FIT_SPENT_BY_INPUT[session.budget_key] = session.previously_spent + active_seconds
             _CURRENT.reset(token)

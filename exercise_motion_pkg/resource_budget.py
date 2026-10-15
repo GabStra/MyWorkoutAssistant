@@ -1,23 +1,12 @@
-"""Leave interactive coding headroom while motion generation runs."""
+"""Scale motion fitting to the host CPU while bounding shared concurrency."""
 from __future__ import annotations
 
 import os
 
 
-# Keep Cursor/IDE/Chrome usable on the same machine as library generation.
-CODING_HEADROOM_LOGICAL_CORES = 4
-# The checked-in concurrency benchmark compares two synthetic structural
-# refinements, not four production controlled-motion fits. Keep this as a
-# bounded host policy; its production throughput optimum has not been measured.
-DEFAULT_CPU_FIT_SLOTS = 4
+CODING_HEADROOM_LOGICAL_CORES = 0
 MACHINE_FIT_LANES_ENV_VAR = "EXERCISE_MOTION_MACHINE_FIT_LANES"
 RENDER_PREFETCH_ENV_VAR = "EXERCISE_MOTION_RENDER_PREFETCH"
-DEFAULT_BROWSER_WORKER_CAP = 4
-# Overlap RECONSTRUCTION CPU prep while the GPU lock still serializes extraction. Four
-# workers match the measured 4-lane fit pool: with three, one fit slot idles
-# whenever a worker is inside the GPU-serialized RECONSTRUCTION stage, and the fit is
-# the long pole (113-360s vs ~30-60s of RECONSTRUCTION per candidate).
-DEFAULT_STAGED_GENERATION_CPU_WORKERS = 4
 
 
 def logical_core_count() -> int:
@@ -29,9 +18,7 @@ def usable_logical_cores() -> int:
 
 
 def cpu_fit_slot_limit() -> int:
-    # Each fit is Python-heavy; keep spare cores for browser workers + coding.
-    # EXERCISE_MOTION_FIT_LANES overrides for machines with more/less spare
-    # capacity than the defaults assume.
+    # Browser fits run in separate Chromium processes; give each logical CPU a lane.
     override = os.environ.get("EXERCISE_MOTION_FIT_LANES")
     if override:
         try:
@@ -40,7 +27,7 @@ def cpu_fit_slot_limit() -> int:
             value = 0
         if value >= 1:
             return value
-    return max(1, min(DEFAULT_CPU_FIT_SLOTS, usable_logical_cores() // 3))
+    return logical_core_count()
 
 
 def machinewide_cpu_fit_slot_limit() -> int:
@@ -49,9 +36,9 @@ def machinewide_cpu_fit_slot_limit() -> int:
     The host-derived default is stable across separate workspaces. Existing
     per-process overrides may lower it, and the machine-wide override can only
     lower it further; neither setting can create more global lanes than the
-    measured host default.
+    host CPU count.
     """
-    host_default = max(1, min(DEFAULT_CPU_FIT_SLOTS, usable_logical_cores() // 3))
+    host_default = logical_core_count()
     configured_process_limit = max(1, int(cpu_fit_slot_limit()))
     override = os.environ.get(MACHINE_FIT_LANES_ENV_VAR)
     if override:
@@ -64,10 +51,9 @@ def machinewide_cpu_fit_slot_limit() -> int:
     return max(1, min(host_default, configured_process_limit))
 
 
-def final_validation_worker_limit(configured_parallelism: int, ready_count: int) -> int:
-    """Final bake/fit lanes never exceed shared CPU fit slots."""
+def final_validation_worker_limit(ready_count: int) -> int:
+    """CPU fitting is independent of the separately bounded VLM request slots."""
     return min(
-        max(1, int(configured_parallelism)),
         max(1, int(cpu_fit_slot_limit())),
         max(1, int(ready_count)),
     )
@@ -87,10 +73,8 @@ def render_prefetch_enabled() -> bool:
 
 
 def browser_worker_limit() -> int:
-    return max(1, min(DEFAULT_BROWSER_WORKER_CAP, usable_logical_cores() // 2))
+    return min(cpu_fit_slot_limit(), logical_core_count())
 
 
 def staged_generation_cpu_workers() -> int:
-    # Workers exist to feed the CPU fit pool, so they follow any
-    # EXERCISE_MOTION_FIT_LANES override; with the defaults this is unchanged.
-    return max(1, min(cpu_fit_slot_limit(), usable_logical_cores() // 2))
+    return min(cpu_fit_slot_limit(), logical_core_count())

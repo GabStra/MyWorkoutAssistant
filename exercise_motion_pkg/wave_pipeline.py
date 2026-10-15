@@ -1679,7 +1679,7 @@ def _run_staged_bake_wave(
         # Do not oversubscribe the shared CPU fit: each final needs a real shot at
         # the candidate budget. Extra ready exercises wait in the executor queue.
         from .resource_budget import cpu_fit_slot_limit, final_validation_worker_limit
-        final_worker_count = final_validation_worker_limit(configured_parallelism, len(prepared))
+        final_worker_count = final_validation_worker_limit(len(prepared))
         metrics["finalValidationWorkers"] = final_worker_count
         metrics["finalValidationFitSlots"] = max(1, int(cpu_fit_slot_limit()))
         validation_start_times: dict[str, float] = {}
