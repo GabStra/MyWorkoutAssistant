@@ -6146,7 +6146,7 @@ def test_preview_grid_uses_authoritative_render_ground_plane(tmp_path: Path) -> 
     assert "const pelvisUp = wearUnit(waist.clone().sub(hipCenter), torsoUp);" in html
     assert "const pelvisTop = hipCenter.clone().lerp(waist, .76);" in html
     assert "const pelvisBottom = hipCenter.clone().lerp(waist, .06);" in html
-    assert "hipWidth * .50, hipWidth * .34" in html
+    assert "hipWidth * .50, hipWidth * .36" in html
     assert "wearCap(mesh, pelvisRings[2], primary);" in html
     assert "const pelvisBase = hipCenter.clone();" not in html
     assert "wearStrip(mesh, pelvisRings[3], pelvisRings[2], primary);" not in html

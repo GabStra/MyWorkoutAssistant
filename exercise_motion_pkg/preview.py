@@ -3904,10 +3904,10 @@ def _wear_humanoid_geometry() -> dict[str, object]:
             "primaryFill": "#fe6a07",
             "jointFill": "#5a5a5a",
             "material": "unlit_vertex_color",
-            "ambientLightLevel": 0.38,
-            "keyLightStrength": 0.48,
-            "fillLightStrength": 0.14,
-            "hemisphereLightStrength": 0.10,
+            "ambientLightLevel": 0.48,
+            "keyLightStrength": 0.32,
+            "fillLightStrength": 0.15,
+            "hemisphereLightStrength": 0.05,
             "keyLightYawOffsetDegrees": -25.0,
             "keyLightElevationDegrees": 50.0,
         },
@@ -5306,10 +5306,10 @@ def _build_html(
         renderer.setClearColor(appearance.background ?? "#000000", 1);
         renderer.toneMapping = THREE.NoToneMapping;
         renderer.toneMappingExposure = 1.0;
-        const ambientLightLevel = Number(appearance.ambientLightLevel ?? 0.38);
-        const keyLightStrength = Number(appearance.keyLightStrength ?? 0.48);
-        const fillLightStrength = Number(appearance.fillLightStrength ?? 0.14);
-        const hemisphereLightStrength = Number(appearance.hemisphereLightStrength ?? 0.10);
+        const ambientLightLevel = Number(appearance.ambientLightLevel ?? 0.48);
+        const keyLightStrength = Number(appearance.keyLightStrength ?? 0.32);
+        const fillLightStrength = Number(appearance.fillLightStrength ?? 0.15);
+        const hemisphereLightStrength = Number(appearance.hemisphereLightStrength ?? 0.05);
         ambientLight.color.setHex(0xffffff);
         ambientLight.intensity = ambientLightLevel;
         hemiLight.intensity = hemisphereLightStrength;
@@ -11380,25 +11380,18 @@ def _build_html(
         const torsoHeadAxis = neckSourceJoint && upperSpineJoint
           ? neckSourceJoint.clone().sub(upperSpineJoint)
           : measuredHeadAxis;
-        // SMPL regressors put the head joint ~30 degrees forward of the neck
-        // axis as a rest offset, which reads as a permanent bow. Re-ground the
-        // pitch on the upper-spine axis and keep only the deviation from that
-        // neutral as genuine head motion.
+        // Remove the same fixed SMPL rest offset as the exact browser/app mesh.
         const rawHeadAxis = measuredHeadAxis.lengthSq() > 1e-8 ? measuredHeadAxis : torsoHeadAxis;
         let headAxis = rawHeadAxis;
-        if (neckSourceJoint && upperSpineJoint
+        const leftHeadShoulder = getFrameJointWorld(frame, frameTranslation, "left_shoulder");
+        const rightHeadShoulder = getFrameJointWorld(frame, frameTranslation, "right_shoulder");
+        if (neckSourceJoint && upperSpineJoint && leftHeadShoulder && rightHeadShoulder
             && rawHeadAxis.lengthSq() > 1e-8 && torsoHeadAxis.lengthSq() > 1e-8) {{
-          const headDirection = rawHeadAxis.clone().normalize();
           const torsoDirection = torsoHeadAxis.clone().normalize();
-          const measuredPitch = headDirection.angleTo(torsoDirection);
-          const deviation = Math.max(-0.44, Math.min(0.44, measuredPitch - Math.PI / 6));
-          if (Math.abs(deviation) > 0.03) {{
-            const rotationAxis = new THREE.Vector3().crossVectors(headDirection, torsoDirection);
-            if (rotationAxis.lengthSq() > 1e-8) {{
-              headAxis = headDirection
-                .applyAxisAngle(rotationAxis.normalize(), deviation)
-                .multiplyScalar(rawHeadAxis.length());
-            }}
+          const pitchAxis = leftHeadShoulder.clone().sub(rightHeadShoulder);
+          pitchAxis.addScaledVector(torsoDirection, -pitchAxis.dot(torsoDirection));
+          if (pitchAxis.lengthSq() > 1e-12) {{
+            headAxis = rawHeadAxis.clone().applyAxisAngle(pitchAxis.normalize(), -Math.PI / 6);
           }}
         }}
         const headDistance = neckSourceJoint ? headJoint.distanceTo(neckSourceJoint) : 0.135;

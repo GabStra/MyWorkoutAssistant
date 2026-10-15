@@ -14,13 +14,13 @@
     const wearStableSegmentLengths = new Map();
 
     const wearLimbs = [
-      ["left_hip", "left_knee", .27, .215, .46, 1.24, .42],
+      ["left_hip", "left_knee", .27, .215, .46, 1.38, .34],
       ["left_knee", "left_ankle", .225, .165, .44, 1.18, .46],
-      ["right_hip", "right_knee", .27, .215, .46, 1.24, .42],
+      ["right_hip", "right_knee", .27, .215, .46, 1.38, .34],
       ["right_knee", "right_ankle", .225, .165, .44, 1.18, .46],
-      ["left_shoulder", "left_elbow", .30, .225, .44, 1.26, .48],
+      ["left_shoulder", "left_elbow", .30, .225, .44, 1.42, .30],
       ["left_elbow", "left_wrist", .235, .175, .42, 1.16, .40],
-      ["right_shoulder", "right_elbow", .30, .225, .44, 1.26, .48],
+      ["right_shoulder", "right_elbow", .30, .225, .44, 1.42, .30],
       ["right_elbow", "right_wrist", .235, .175, .42, 1.16, .40],
     ];
     const wearCapNames = new Set([
@@ -85,18 +85,6 @@
         up: tangent,
         forward: wearUnit(side.clone().cross(tangent), bodyAxes.forward),
       };
-    }
-
-    function wearSpineProgress(hipCenter, neck, point) {
-      const axis = neck.clone().sub(hipCenter);
-      const lengthSq = axis.lengthSq();
-      if (lengthSq <= 1e-6) return 0.5;
-      return Math.max(0, Math.min(1, point.clone().sub(hipCenter).dot(axis) / lengthSq));
-    }
-
-    function wearTorsoBodyWidth(hipWidth, shoulderWidth, progress) {
-      const t = Math.max(0, Math.min(1, progress));
-      return hipWidth + (shoulderWidth - hipWidth) * t;
     }
 
     function wearAlignRingAxes(reference, candidate) {
@@ -316,20 +304,12 @@
       mesh.faces.push({ indices, fill });
     }
 
-    function wearBoxRing(mesh, center, side, depth, halfWidth, halfDepth) {
-      return [
-        center.clone().addScaledVector(side, halfWidth).addScaledVector(depth, halfDepth),
-        center.clone().addScaledVector(side, -halfWidth).addScaledVector(depth, halfDepth),
-        center.clone().addScaledVector(side, -halfWidth).addScaledVector(depth, -halfDepth),
-        center.clone().addScaledVector(side, halfWidth).addScaledVector(depth, -halfDepth),
-      ].map((point) => wearVertex(mesh, point));
-    }
-
     function wearTorsoRing(
       mesh, center, side, depth, halfWidth, halfDepth,
       latWidthScale, latDepthScale, erectorWidthScale, erectorDepthScale,
       grooveWidthScale, grooveDepthScale, backDepthTracker = null,
-      backDepthBoost = 1.0, backCenterBias = null, minBackDepth = null
+      backDepthBoost = 1.0, backCenterBias = null, minBackDepth = null,
+      cornerBevel = 0
     ) {
       const latScale = Math.max(1.0, Math.min(1.18, latWidthScale));
       const frontDepth = Math.max(
@@ -351,19 +331,29 @@
       }
       const width = halfWidth * latScale;
       return wearDirectionalRing(
-        mesh, center, side, depth, width, frontDepth, backDepth, backCenterBias
+        mesh, center, side, depth, width, frontDepth, backDepth, backCenterBias, cornerBevel
       );
     }
 
     function wearDirectionalRing(
-      mesh, center, side, depth, halfWidth, frontDepth, backDepth, backCenterBias = null, cornerBevel = 0
+      mesh, center, side, depth, halfWidth, frontDepth, backDepth,
+      backCenterBias = null, cornerBevel = 0, backWidthScale = 1, roundedProfile = false
     ) {
       const backCenter = backCenterBias ? center.clone().add(backCenterBias) : center;
+      const backHalfWidth = halfWidth * Math.max(1, backWidthScale);
+      if (roundedProfile) {
+        // Eight elliptical facets keep volume without the beveled box's broad flat front.
+        return [[.94,.34],[.15,.99],[-.15,.99],[-.94,.34],
+          [-.94,-.34],[-.15,-.99],[.15,-.99],[.94,-.34]].map(([x,z]) =>
+          wearVertex(mesh, (z < 0 ? backCenter : center).clone()
+            .addScaledVector(side, x * (z < 0 ? backHalfWidth : halfWidth))
+            .addScaledVector(depth, z * (z < 0 ? backDepth : frontDepth))));
+      }
       const corners = [
         center.clone().addScaledVector(side, halfWidth).addScaledVector(depth, frontDepth),
         center.clone().addScaledVector(side, -halfWidth).addScaledVector(depth, frontDepth),
-        backCenter.clone().addScaledVector(side, -halfWidth).addScaledVector(depth, -backDepth),
-        backCenter.clone().addScaledVector(side, halfWidth).addScaledVector(depth, -backDepth),
+        backCenter.clone().addScaledVector(side, -backHalfWidth).addScaledVector(depth, -backDepth),
+        backCenter.clone().addScaledVector(side, backHalfWidth).addScaledVector(depth, -backDepth),
       ];
       const bevel = Math.max(0, Math.min(.45, cornerBevel));
       const outline = bevel > 0 ? corners.flatMap((corner, index) => [
@@ -383,6 +373,31 @@
             .addScaledVector(depth, Math.sin(angle) * halfDepth)
         );
       });
+    }
+
+    function wearSmoothTorsoTube(mesh, rings, fill, jointStart) {
+      // Corner cutting rounds the longitudinal surface without overshooting the observed tube.
+      const rounded = [rings[0]], progress = [0];
+      for (let index = 0; index < rings.length - 1; index += 1) {
+        const lower = rings[index], upper = rings[index + 1];
+        for (const t of [.5]) {
+          rounded.push(lower.map((vertex, corner) => wearVertex(
+            mesh, mesh.vertices[vertex].clone().lerp(mesh.vertices[upper[corner]], t)
+          )));
+          progress.push(index + t);
+        }
+        // Keep the shoulder socket ring from shrinking away from its joint caps.
+        if (index + 1 === jointStart - 2) {
+          rounded.push(upper);
+          progress.push(index + 1);
+        }
+      }
+      rounded.push(rings[rings.length - 1]);
+      progress.push(rings.length - 1);
+      for (let index = 0; index < rounded.length - 1; index += 1) {
+        wearStrip(mesh, rounded[index], rounded[index + 1],
+          (progress[index] + progress[index + 1]) * .5 >= jointStart ? "joint" : fill);
+      }
     }
 
     function wearStrip(mesh, lower, upper, fill) {
@@ -425,6 +440,18 @@
       }
     }
 
+    function wearNeutralHeadPitchJoint(neck, head, upperSpine, side) {
+      if (!upperSpine) return head.clone();
+      const torso = neck.clone().sub(upperSpine);
+      const delta = head.clone().sub(neck);
+      if (torso.length() < 1e-4 || delta.length() < 1e-4) return head.clone();
+      torso.normalize();
+      const pitchAxis = side.clone().addScaledVector(torso, -side.dot(torso));
+      if (pitchAxis.length() < 1e-6) return head.clone();
+      // Remove the SMPL rest offset, preserving measured nods and lateral head motion.
+      return neck.clone().add(delta.applyAxisAngle(pitchAxis.normalize(), -Math.PI / 6));
+    }
+
     function wearSphere(mesh, center, axes, radius, fill) {
       const bottom = wearVertex(mesh, center.clone().addScaledVector(axes.up, -radius));
       const top = wearVertex(mesh, center.clone().addScaledVector(axes.up, radius));
@@ -432,17 +459,12 @@
         mesh, center.clone().addScaledVector(axes.up, -radius * .50),
         axes.side, axes.forward, radius * .866, radius * .866, 8
       );
-      const middle = wearRing(
-        mesh, center,
-        axes.side, axes.forward, radius, radius, 8
-      );
       const upper = wearRing(
         mesh, center.clone().addScaledVector(axes.up, radius * .50),
         axes.side, axes.forward, radius * .866, radius * .866, 8
       );
       wearFan(mesh, bottom, lower, fill);
-      wearStrip(mesh, lower, middle, fill);
-      wearStrip(mesh, middle, upper, fill);
+      wearStrip(mesh, lower, upper, fill);
       wearFan(mesh, top, [...upper].reverse(), fill);
     }
 
@@ -457,7 +479,7 @@
     function wearSegment(
       mesh, start, end, axes, startWidth, endWidth, depthScale, fill,
       startInset = 0, endInset = 0, preferredSide = null,
-      muscleBulgeScale = 1, muscleBulgePosition = .5
+      muscleBulgeScale = 1, muscleBulgePosition = .5, roundEnd = false
     ) {
       const segment = end.clone().sub(start);
       const length = segment.length();
@@ -473,7 +495,8 @@
       const side = wearUnit(projected, wearStableSide(direction, axes));
       const depth = wearUnit(side.clone().cross(direction), axes.forward);
       const limbRing = (center, width) =>
-        wearBoxRing(mesh, center, side, depth, width * .5, width * depthScale);
+        wearDirectionalRing(mesh, center, side, depth, width * .5,
+          width * depthScale, width * depthScale, null, .30);
       const lower = limbRing(safeStart, startWidth);
       const upper = limbRing(safeEnd, endWidth);
       if (muscleBulgeScale > 1) {
@@ -489,7 +512,12 @@
         wearStrip(mesh, lower, upper, fill);
       }
       wearCap(mesh, lower, fill);
-      wearCap(mesh, [...upper].reverse(), fill);
+      if (roundEnd) {
+        const tip = wearVertex(mesh, safeEnd.clone().addScaledVector(direction, endWidth * .25));
+        wearFan(mesh, tip, [...upper].reverse(), fill);
+      } else {
+        wearCap(mesh, [...upper].reverse(), fill);
+      }
     }
 
     function wearShoe(mesh, ankle, foot, axes, footScale, fill, knee = null, preferredSide = null) {
@@ -515,32 +543,35 @@
         : wearUnit(footForward.clone().cross(defaultShoeUp), fallbackSide);
       const shoeUp = wearUnit(footSide.clone().cross(footForward), defaultShoeUp);
       const shoeScale = footLength > .0001 ? footLength : footScale * .60;
-      // Shift the shoe backward to enclose the ankle connector.
+      // Put only a short heel behind the ankle; most of the shoe extends toward the toes.
       const length = shoeScale * 1.15;
-      const halfWidth = Math.max(shoeScale * .32, footScale * .18);
+      const halfWidth = Math.max(shoeScale * .26, footScale * .15);
       const height = Math.max(shoeScale * .28, footScale * .15);
       const profile = [
-        [-.10, -.08, .72, .48],
-        [.16, -.02, .82, .58],
-        [.38, -.04, .94, .60],
-        [.76, -.22, 1.06, .42],
-        [1.00, -.30, .90, .30],
+        [0, -.05, .78, .55],
+        [.36, .12, 1.00, .72],
+        [1.00, -.25, .76, .35],
       ];
       const rings = profile.map(([forwardScale, upScale, widthScale, heightScale]) => {
         // Offset only the mesh; keep the animated foot joint unchanged.
-        const center = foot.clone()
-          .addScaledVector(footForward, length * (forwardScale - 1.10))
+        const center = ankle.clone()
+          .addScaledVector(footForward, length * forwardScale - shoeScale * .08)
           .addScaledVector(shoeUp, height * (upScale + .60));
-        return wearBoxRing(
+        return wearDirectionalRing(
           mesh, center, footSide, shoeUp,
-          halfWidth * widthScale, height * heightScale
+          halfWidth * widthScale, height * heightScale, height * heightScale, null, .30
         );
       });
       for (let index = 0; index < rings.length - 1; index += 1) {
         wearStrip(mesh, rings[index], rings[index + 1], fill);
       }
-      wearCap(mesh, rings[0], fill);
-      wearCap(mesh, [...rings[rings.length - 1]].reverse(), fill);
+      const rearTip = wearVertex(mesh, mesh.vertices[rings[0][0]].clone()
+        .lerp(mesh.vertices[rings[0][4]], .5).addScaledVector(footForward, -height * .20));
+      const toeRing = rings[rings.length - 1];
+      const toeTip = wearVertex(mesh, mesh.vertices[toeRing[0]].clone()
+        .lerp(mesh.vertices[toeRing[4]], .5).addScaledVector(footForward, height * .20));
+      wearFan(mesh, rearTip, rings[0], fill);
+      wearFan(mesh, toeTip, [...toeRing].reverse(), fill);
       // Intersect the shin axis with the shoe's actual upper profile.
       const shinDirection = wearUnit(shinUp.clone(), shoeUp);
       const axisForward = shinDirection.dot(footForward);
@@ -548,8 +579,8 @@
       let surfaceDistance = null;
       for (let i = 0; i < profile.length - 1; i++) {
         const rear = profile[i], front = profile[i + 1];
-        const rearForward = footLength + length * (rear[0] - 1.10);
-        const frontForward = footLength + length * (front[0] - 1.10);
+        const rearForward = length * rear[0] - shoeScale * .08;
+        const frontForward = length * front[0] - shoeScale * .08;
         const rearTop = height * (rear[1] + .60 + rear[3]);
         const frontTop = height * (front[1] + .60 + front[3]);
         const slope = (frontTop - rearTop) / (frontForward - rearForward);
@@ -596,109 +627,156 @@
         }
         return wearStableSegmentLengths.get(key);
       };
-      const pelvisWidth = Math.max(hipWidth * 1.08, shoulderWidth * .64);
+      // Widen the display rig without stretching the arm bones or changing saved joints.
+      const shoulderOffset = wearUnit(
+        joints.left_shoulder.clone().sub(joints.right_shoulder), axes.side.clone().negate()
+      ).multiplyScalar(shoulderWidth * .075);
+      joints = { ...joints };
+      for (const [side, sign] of [["left", 1], ["right", -1]]) {
+        for (const jointName of ["shoulder", "elbow", "wrist", "hand"]) {
+          const name = `${side}_${jointName}`;
+          if (joints[name]) joints[name] = joints[name].clone().addScaledVector(shoulderOffset, sign);
+        }
+      }
+      const displayShoulderWidth = shoulderWidth * 1.15;
+      const displayHipWidth = Math.max(hipWidth * 1.25, displayShoulderWidth * .56);
+      const pelvisDepth = Math.max(hipWidth * .36, shoulderWidth * .18);
+      const pelvisWidth = Math.max(displayHipWidth * 1.08, shoulderWidth * .64);
       const footScale = Math.max(hipWidth * .98, shoulderWidth * .58);
       const torsoVector = joints.neck.clone().sub(hipCenter);
       const torsoLength = torsoVector.length();
       const torsoUp = wearUnit(torsoVector, axes.up);
-      const waist = joints.spine1
+      const sourceWaist = joints.spine1
         ?? hipCenter.clone().addScaledVector(torsoUp, torsoLength * .40);
+      const sourceChest = joints.spine2 ?? sourceWaist.clone().lerp(joints.neck, .45);
+      const sourceUpperSpine = joints.spine3 ?? sourceChest.clone().lerp(joints.neck, .35);
+      // Fair the surface centerline once; keep saved joints and its hip/neck endpoints intact.
+      const waist = sourceWaist.clone().lerp(hipCenter.clone().lerp(sourceChest, .5), .5);
+      const chest = sourceChest.clone().lerp(sourceWaist.clone().lerp(sourceUpperSpine, .5), .5);
+      const upperSpine = sourceUpperSpine.clone().lerp(sourceChest.clone().lerp(joints.neck, .5), .5);
       const shoulderCenter = joints.left_shoulder.clone().lerp(joints.right_shoulder, .5);
-      const shoulderSpan = joints.right_shoulder.clone().sub(joints.left_shoulder);
-      const shoulderSide = wearUnit(shoulderSpan, axes.side);
+      // Anatomical left minus right makes side x up point anterior on the SMPL rig.
+      const shoulderSpan = joints.left_shoulder.clone().sub(joints.right_shoulder);
+      const shoulderSide = wearUnit(shoulderSpan, axes.side.clone().negate());
       const shoulderUp = wearUnit(
-        torsoUp.clone().addScaledVector(shoulderSide, -torsoUp.dot(shoulderSide)), axes.up
+        joints.neck.clone().sub(sourceUpperSpine).addScaledVector(
+          shoulderSide, -joints.neck.clone().sub(sourceUpperSpine).dot(shoulderSide)
+        ), torsoUp
       );
       const shoulderAxes = {
         side: shoulderSide,
         up: shoulderUp,
-        forward: wearUnit(shoulderSide.clone().cross(shoulderUp), axes.forward),
+        forward: wearUnit(shoulderSide.clone().cross(shoulderUp), axes.forward.clone().negate()),
       };
-      // Fit each cap inside the upper arm's narrower (depth) dimension.
-      const shoulderCapRadius = side => stableSegmentLength(`${side}_shoulder`, `${side}_elbow`) * .30 * .40;
+      // The cap must fit inside the upper arm's smaller cross-section dimension.
+      const shoulderCapRadius = side =>
+        stableSegmentLength(`${side}_shoulder`, `${side}_elbow`) * .30 * .44 * .90;
       // Keep the torso socket height independent of the visible joint cap size.
       const shoulderRadius = (stableSegmentLength("left_shoulder", "left_elbow")
         + stableSegmentLength("right_shoulder", "right_elbow")) * .5 * .30 * .44;
       // Enclose the inner shoulder cap up to its upper hemisphere, as limb
       // segments enclose their joint caps. This is the start of the neck taper.
       const upperChest = shoulderCenter.clone().addScaledVector(shoulderUp, shoulderRadius * .35);
-      // Leave room for the traps even when the reconstructed neck is short.
-      const neckRise = Math.max(joints.neck.clone().sub(shoulderCenter).dot(shoulderUp), 0);
-      const chest = waist.clone().lerp(joints.neck, .45);
-      const upperTransitionCenter = joints.neck.clone().addScaledVector(
-        shoulderUp, -Math.min(shoulderWidth * .06, neckRise * .20)
-      );
+      // Shoulder centers are offset from the spine; they must not set the neck's direction.
+      const neckLength = Math.min(shoulderWidth * .10,
+        Math.max(joints.neck.clone().sub(upperChest).dot(shoulderUp) * .55, shoulderWidth * .05));
+      const upperTransitionCenter = joints.neck.clone().addScaledVector(shoulderUp, -neckLength);
       const pelvisUp = wearUnit(waist.clone().sub(hipCenter), torsoUp);
-      const hipSide = joints.right_hip.clone().sub(joints.left_hip);
+      const hipSide = joints.left_hip.clone().sub(joints.right_hip);
       const pelvisSide = wearUnit(
         hipSide.addScaledVector(pelvisUp, -hipSide.dot(pelvisUp)),
-        axes.side
+        axes.side.clone().negate()
       );
       const pelvisAxes = {
         side: pelvisSide,
         up: pelvisUp,
-        forward: wearUnit(pelvisSide.clone().cross(pelvisUp), axes.forward),
+        forward: wearUnit(pelvisSide.clone().cross(pelvisUp), axes.forward.clone().negate()),
       };
       let previousRingAxes = pelvisAxes;
       const waistAxes = wearAlignRingAxes(
         previousRingAxes,
-        wearSpineRingAxes(hipCenter, waist, chest, axes)
+        wearSpineRingAxes(hipCenter, waist, chest, previousRingAxes)
       );
       previousRingAxes = waistAxes;
       const chestAxes = wearAlignRingAxes(
         previousRingAxes,
-        wearSpineRingAxes(waist, chest, upperChest, axes)
+        wearSpineRingAxes(waist, chest, upperSpine, previousRingAxes)
       );
       previousRingAxes = chestAxes;
+      const upperSpineAxes = wearAlignRingAxes(
+        previousRingAxes,
+        wearSpineRingAxes(chest, upperSpine, upperChest, previousRingAxes)
+      );
       const upperChestAxes = wearAlignRingAxes(previousRingAxes, shoulderAxes);
       previousRingAxes = upperChestAxes;
       const upperTransitionAxes = upperChestAxes;
-      const waistResolvedBackDepth = shoulderWidth * .18;
+      // Ribcage fullness peaks at spine3 (upper back), not spine2 (lower ribs).
+      const scapularBackDepth = shoulderWidth * .255;
+      const chestBackDepth = scapularBackDepth * .88;
+      const upperChestBackDepth = scapularBackDepth * .86;
+      const waistBackDepth = shoulderWidth * .1752;
+      const waistResolvedBackDepth = waistBackDepth;
+      // Lumbar lordosis: the waist center rides slightly forward of the spine
+      // line while the chest carries the deep pec shelf in front.
       const waistRing = wearDirectionalRing(
-        mesh, waist, waistAxes.side, waistAxes.forward,
-        shoulderWidth * .30, shoulderWidth * .16, waistResolvedBackDepth
+        mesh,
+        waist.clone().addScaledVector(waistAxes.forward, shoulderWidth * .012),
+        waistAxes.side, waistAxes.forward,
+        displayShoulderWidth * .295, shoulderWidth * .165, waistResolvedBackDepth, null, .38, 1, true
       );
+      // Center the upper torso envelope beneath the neck, independent of shoulder joint depth.
+      const upperChestSurfaceCenter = upperChest.clone().addScaledVector(upperChestAxes.forward,
+        joints.neck.clone().sub(upperChest).dot(upperChestAxes.forward)
+        - (shoulderWidth * .24 - upperChestBackDepth) * .495);
       const chestRings = [
         waistRing,
         wearDirectionalRing(
-          mesh, chest, chestAxes.side, chestAxes.forward,
-          shoulderWidth * .37, shoulderWidth * .18, shoulderWidth * .24, null, .38
+          mesh,
+          chest.clone().addScaledVector(chestAxes.forward, shoulderWidth * .02),
+          chestAxes.side, chestAxes.forward,
+          displayShoulderWidth * .38, shoulderWidth * .21, chestBackDepth, null, .38, 1.07, true
         ),
         wearDirectionalRing(
-          mesh, upperChest, upperChestAxes.side, upperChestAxes.forward,
-          Math.max(joints.left_shoulder.distanceTo(joints.right_shoulder) * .5 - shoulderRadius * .35, .001),
-          shoulderWidth * .18, shoulderWidth * .24, null, .38
+          mesh, upperChestSurfaceCenter, upperChestAxes.side, upperChestAxes.forward,
+          Math.max(joints.left_shoulder.distanceTo(joints.right_shoulder) * .5
+            - (shoulderCapRadius("left") + shoulderCapRadius("right")) * .30, .001),
+          shoulderWidth * .24, upperChestBackDepth, null, .38, 1, true
         ),
       ];
-      // Blend corresponding surface vertices toward the socket, with an upright
-      // tangent at the join. The transition cannot bulge past either endpoint.
-      const upperBackRing = chestRings[1].map((lowerIndex, index) => {
-        const lower = mesh.vertices[lowerIndex];
-        const upper = mesh.vertices[chestRings[2][index]];
-        const rise = Math.max(upper.clone().sub(lower).dot(upperChestAxes.up), 0);
-        const control = upper.clone().addScaledVector(upperChestAxes.up, -rise * .5);
-        return wearVertex(mesh, lower.clone().lerp(control, .6).lerp(control.clone().lerp(upper, .6), .6));
-      });
+      // Follow the upper spine instead of bridging its curvature with surface interpolation.
+      const upperBackRing = wearDirectionalRing(
+        mesh, upperSpine, upperSpineAxes.side, upperSpineAxes.forward,
+        displayShoulderWidth * .44, shoulderWidth * .26,
+        scapularBackDepth, null, .38, 1, true
+      );
       chestRings.splice(2, 0, upperBackRing);
-      for (let index = 0; index < chestRings.length - 1; index += 1) {
-        wearStrip(mesh, chestRings[index], chestRings[index + 1], primary);
-      }
       const upperTransitionRing = wearDirectionalRing(
         mesh, upperTransitionCenter, upperTransitionAxes.side, upperTransitionAxes.forward,
-        shoulderWidth * .14, shoulderWidth * .105, shoulderWidth * .09, null, .18
+        shoulderWidth * .12, shoulderWidth * .09, shoulderWidth * .09, null, .38
       );
       // Continue the upper chest directly into the neck. A second full-width
       // shoulder rim would create a flat shelf beneath the trapezius surface.
       const shoulderRing = chestRings[chestRings.length - 1];
+      // Socket edges follow the actual shoulder centers, including asymmetric poses.
+      for (const corner of [0, 3, 4, 7]) {
+        const positiveSide = corner === 0 || corner === 7;
+        const side = positiveSide ? "left" : "right";
+        const radius = shoulderCapRadius(side);
+        mesh.vertices[shoulderRing[corner]] = joints[`${side}_shoulder`].clone()
+          .addScaledVector(upperChestAxes.side, (positiveSide ? -1 : 1) * radius * .45)
+          .addScaledVector(upperChestAxes.forward, (corner < 4 ? 1 : -1) * radius * .40)
+          .addScaledVector(upperChestAxes.up, radius * .25);
+      }
+      // Raise the medial traps and add posterior fullness in the local shoulder frame.
       const trapeziusRing = shoulderRing.map((lowerIndex, index) => {
         const lower = mesh.vertices[lowerIndex];
         const upper = mesh.vertices[upperTransitionRing[index]];
         const rise = Math.max(upper.clone().sub(lower).dot(shoulderUp), 0);
-        const control = lower.clone().lerp(upper, .5).addScaledVector(shoulderUp, rise * .25);
+        const control = lower.clone().lerp(upper, .5)
+          .addScaledVector(shoulderUp, Math.max(rise * .35, shoulderWidth * .05))
+          .addScaledVector(upperChestAxes.forward, index >= 4 ? -shoulderWidth * .025 : 0);
         return wearVertex(mesh, lower.clone().lerp(control, .5).lerp(control.clone().lerp(upper, .5), .5));
       });
-      wearStrip(mesh, shoulderRing, trapeziusRing, primary);
-      wearStrip(mesh, trapeziusRing, upperTransitionRing, primary);
       const neckLowerCenter = upperTransitionCenter;
       const neckLowerRing = upperTransitionRing;
       const neckMidLerp = .55;
@@ -709,64 +787,77 @@
       );
       previousRingAxes = neckMidAxes;
       const neckUpperCenter = joints.neck.clone();
-      const neckMidHalfWidth = shoulderWidth * .14;
-      const neckUpperHalfWidth = shoulderWidth * .115;
+      const neckMidHalfWidth = shoulderWidth * .115;
+      const neckUpperHalfWidth = shoulderWidth * .10;
       const neckMidRing = wearDirectionalRing(
         mesh, neckMid, neckMidAxes.side, neckMidAxes.forward,
-        neckMidHalfWidth, shoulderWidth * .105,
-        shoulderWidth * .09
+        neckMidHalfWidth, shoulderWidth * .085,
+        shoulderWidth * .085, null, .38
       );
       const neckUpperRing = wearDirectionalRing(
         mesh, neckUpperCenter, neckMidAxes.side, neckMidAxes.forward,
-        neckUpperHalfWidth, shoulderWidth * .085,
-        shoulderWidth * .075
+        neckUpperHalfWidth, shoulderWidth * .075,
+        shoulderWidth * .075, null, .38
       );
-      wearStrip(mesh, neckLowerRing, neckMidRing, joint);
-      wearStrip(mesh, neckMidRing, neckUpperRing, joint);
-      const neckMidPoint = joints.neck.clone().lerp(joints.head, .5);
+      const displayHead = wearNeutralHeadPitchJoint(joints.neck, joints.head,
+        joints.spine3 ?? joints.spine2, shoulderSide);
+      const neckMidPoint = joints.neck.clone().lerp(displayHead, .5);
       const headAxes = wearAlignRingAxes(
         previousRingAxes,
-        wearSpineRingAxes(joints.neck, neckMidPoint, joints.head, shoulderAxes)
+        wearSpineRingAxes(joints.neck, neckMidPoint, displayHead, shoulderAxes)
       );
 
-      const pelvisTop = hipCenter.clone().lerp(waist, .76);
+      const hipCapRadius = Math.max(
+        stableSegmentLength("left_hip", "left_knee"),
+        stableSegmentLength("right_hip", "right_knee")
+      ) * .27 * .46 * .90;
+      const socketHalfWidth = Math.max(displayHipWidth * .50, joints.left_hip.distanceTo(joints.right_hip) * .50 + hipCapRadius * .95);
+      const pelvisTop = hipCenter.clone().lerp(waist, .52);
       const pelvisMid = hipCenter.clone().lerp(waist, .38);
-      const pelvisBottom = hipCenter.clone().lerp(waist, .06);
+      const pelvisBottom = hipCenter.clone().addScaledVector(pelvisAxes.up, -hipCapRadius * .50);
       const pelvisJunction = pelvisTop.clone().addScaledVector(pelvisAxes.forward, pelvisWidth * .03);
-      const pelvisJunctionWidth = wearTorsoBodyWidth(
-        hipWidth,
-        shoulderWidth,
-        wearSpineProgress(hipCenter, joints.neck, pelvisJunction)
-      );
-      const pelvisMidWidth = wearTorsoBodyWidth(
-        hipWidth,
-        shoulderWidth,
-        wearSpineProgress(hipCenter, joints.neck, pelvisMid)
-      );
       const pelvisBackDepth = { value: 0 };
       const pelvisBottomRing = wearTorsoRing(
-        mesh, pelvisBottom, pelvisAxes.side, pelvisAxes.forward, hipWidth * .50, hipWidth * .34,
-        1.06, .42, .44, 1.08, .14, .56, pelvisBackDepth
+        mesh,
+        pelvisBottom.clone().addScaledVector(pelvisAxes.forward, -pelvisWidth * .015),
+        pelvisAxes.side, pelvisAxes.forward, socketHalfWidth * .40, pelvisDepth * .65,
+        1.0, .42, .44, 1.08, .14, .56, pelvisBackDepth, 1.0, null, null, .44
       );
+      // Extend the triangular rim over the sockets instead of adding separate hip domes.
+      for (const corner of [0, 3, 4, 7]) {
+        const index = pelvisBottomRing[corner];
+        const point = mesh.vertices[index];
+        const offset = point.clone().sub(hipCenter);
+        const socketExtent = joints.left_hip.distanceTo(joints.right_hip) * .5 + hipCapRadius * .65;
+        point.addScaledVector(pelvisAxes.side,
+          Math.sign(offset.dot(pelvisAxes.side)) * socketExtent - offset.dot(pelvisAxes.side));
+        point.addScaledVector(pelvisAxes.up, hipCapRadius * .25 - offset.dot(pelvisAxes.up));
+      }
       const pelvisMidRing = wearTorsoRing(
-        mesh, pelvisMid, pelvisAxes.side, pelvisAxes.forward, pelvisMidWidth * .52, pelvisMidWidth * .36,
-        1.08, .40, .48, 1.14, .12, .54, pelvisBackDepth
+        mesh,
+        pelvisMid.clone().addScaledVector(pelvisAxes.forward, -pelvisWidth * .025),
+        pelvisAxes.side, pelvisAxes.forward, socketHalfWidth, Math.max(pelvisDepth * 1.25, hipCapRadius * 1.4),
+        1.0, .40, .48, 1.14, .12, .54, pelvisBackDepth, 1.0, null, null, .38
       );
-      pelvisBackDepth.value = Math.max(pelvisBackDepth.value, waistResolvedBackDepth * 0.96);
-      const pelvisJunctionRing = wearTorsoRing(
-        mesh, pelvisJunction, pelvisAxes.side, pelvisAxes.forward, pelvisJunctionWidth * .50, pelvisJunctionWidth * .30,
-        1.10, .36, .42, 1.10, .14, .62, pelvisBackDepth
+      const pelvisJunctionRing = wearDirectionalRing(
+        mesh, pelvisJunction, pelvisAxes.side, pelvisAxes.forward,
+        displayShoulderWidth * .297, shoulderWidth * .155, waistBackDepth * .95, null, .38
       );
       const pelvisRings = [pelvisJunctionRing, pelvisMidRing, pelvisBottomRing];
-      wearStrip(mesh, pelvisRings[2], pelvisRings[1], primary);
-      wearStrip(mesh, pelvisRings[1], pelvisRings[0], primary);
-      wearCap(mesh, pelvisRings[2], primary);
-      wearStrip(mesh, pelvisRings[0], chestRings[0], primary);
+      // A convex basin rounds the underside and leaves the hip caps exposed below the sockets.
+      const underside = wearVertex(mesh, pelvisBottom.clone()
+        .addScaledVector(pelvisAxes.up, -hipCapRadius * .30)
+        .addScaledVector(pelvisAxes.forward, -pelvisWidth * .015));
+      wearFan(mesh, underside, pelvisBottomRing, primary);
+      wearSmoothTorsoTube(mesh, [
+        pelvisRings[2], pelvisRings[1], pelvisRings[0], ...chestRings,
+        trapeziusRing, upperTransitionRing, neckMidRing, neckUpperRing,
+      ], primary, 8);
 
       const segmentWidth = (startName, endName, scale) =>
         stableSegmentLength(startName, endName) * scale;
-      wearSphere(mesh, joints.left_hip, axes, segmentWidth("left_hip", "left_knee", .27) * .48, joint);
-      wearSphere(mesh, joints.right_hip, axes, segmentWidth("right_hip", "right_knee", .27) * .48, joint);
+      wearSphere(mesh, joints.left_hip, pelvisAxes, segmentWidth("left_hip", "left_knee", .27) * .46 * .90, joint);
+      wearSphere(mesh, joints.right_hip, pelvisAxes, segmentWidth("right_hip", "right_knee", .27) * .46 * .90, joint);
       for (const side of ["left", "right"]) {
         wearSphere(mesh, joints[`${side}_shoulder`], upperChestAxes, shoulderCapRadius(side), joint);
       }
@@ -777,19 +868,20 @@
         const headWidth = Math.max(headHeightAtJoint * 1.08, shoulderWidth * .37);
         const headDepth = headWidth * .82;
         const base = joints.neck.clone().addScaledVector(headAxes.up, headHeight * .02);
-        const center = base.clone().addScaledVector(headAxes.up, headHeight * .44);
-        const rings = [
-          wearBoxRing(
-            mesh, base, headAxes.side, headAxes.forward,
-            shoulderWidth * .12, shoulderWidth * .08
-          ),
-          wearBoxRing(mesh, center, headAxes.side, headAxes.forward, headWidth * .52, headDepth * .52),
-          wearBoxRing(mesh, base.clone().addScaledVector(headAxes.up, headHeight), headAxes.side, headAxes.forward, headWidth * .44, headDepth * .44),
-        ];
-        wearStrip(mesh, neckUpperRing, rings[0], primary);
-        wearStrip(mesh, rings[0], rings[1], primary);
-        wearStrip(mesh, rings[1], rings[2], primary);
-        wearCap(mesh, [...rings[2]].reverse(), primary);
+        const rings = [neckUpperRing];
+        for (const [height, width, depth] of [
+          [.20, .40, .42], [.52, .52, .52], [.82, .44, .44], [1, .22, .22],
+        ]) {
+          rings.push(wearDirectionalRing(
+            mesh, base.clone().addScaledVector(headAxes.up, headHeight * height),
+            headAxes.side, headAxes.forward, headWidth * width,
+            headDepth * depth, headDepth * depth, null, .30
+          ));
+        }
+        for (let index = 0; index < rings.length - 1; index += 1) {
+          wearStrip(mesh, rings[index], rings[index + 1], primary);
+        }
+        wearCap(mesh, [...rings[rings.length - 1]].reverse(), primary);
       }
 
       for (const [
@@ -822,9 +914,9 @@
         const palmWidth = Math.max(wristWidth * 1.10, handLength * .50);
         wearSegment(
           mesh, wrist, hand, axes,
-          wristWidth, palmWidth * .90, .36, primary,
+          wristWidth, palmWidth * .65, .36, primary,
           wearClearance(wristName, wristWidth), 0, null,
-          1.12, .58
+          1.12, .58, true
         );
       };
       addHand("left_wrist", "left_hand", "left_elbow");
@@ -875,14 +967,14 @@
         mesh,
         ankleCapCenter("left_knee", "left_ankle", leftFootSurface),
         axes,
-        segmentWidth("left_knee", "left_ankle", .165) * .50,
+        segmentWidth("left_knee", "left_ankle", .165) * .44 * .90,
         joint
       );
       if (joints.right_ankle) wearSphere(
         mesh,
         ankleCapCenter("right_knee", "right_ankle", rightFootSurface),
         axes,
-        segmentWidth("right_knee", "right_ankle", .165) * .50,
+        segmentWidth("right_knee", "right_ankle", .165) * .44 * .90,
         joint
       );
       return mesh;
@@ -891,11 +983,11 @@
     function wearColor(hex, lightLevel) {
       const value = Number.parseInt(hex.replace("#", ""), 16);
       return new THREE.Color().setRGB(
-        ((value >> 16) & 255) / 255 * lightLevel,
-        ((value >> 8) & 255) / 255 * lightLevel,
-        (value & 255) / 255 * lightLevel,
+        ((value >> 16) & 255) / 255,
+        ((value >> 8) & 255) / 255,
+        (value & 255) / 255,
         THREE.SRGBColorSpace
-      );
+      ).multiplyScalar(lightLevel);
     }
 
     function wearApplyExportedSoleSides(frame, sides) {
@@ -946,10 +1038,10 @@
         return;
       }
       const appearance = wearHumanoidGeometry.appearance ?? {};
-      const ambientLight = Number(appearance.ambientLightLevel ?? .38);
-      const keyLightStrength = Number(appearance.keyLightStrength ?? .48);
-      const fillLightStrength = Number(appearance.fillLightStrength ?? .14);
-      const hemisphereLightStrength = Number(appearance.hemisphereLightStrength ?? .10);
+      const ambientLight = Number(appearance.ambientLightLevel ?? .48);
+      const keyLightStrength = Number(appearance.keyLightStrength ?? .32);
+      const fillLightStrength = Number(appearance.fillLightStrength ?? .15);
+      const hemisphereLightStrength = Number(appearance.hemisphereLightStrength ?? .05);
       const yaw = (
         Number(wearHumanoidGeometry.view?.yawDegrees ?? -28)
         + Number(appearance.keyLightYawOffsetDegrees ?? -25)
