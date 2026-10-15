@@ -15,10 +15,8 @@ import kotlin.math.roundToInt
 internal data class WorkoutSessionFacts(
     val lines: List<String>,
     /**
-     * App-composed, imperative next-session-target bullet. The insight pipeline renders
-     * this verbatim instead of trusting the model to transcribe the target numbers —
-     * a corrupted target becomes the grading bar for the next session, so the app owns
-     * the sentence. Null when no next-session target fact exists.
+     * Grounded fallback when the model omits next-session advice or its advice is
+     * removed by validation. Null when no next-session target fact exists.
      */
     val nextSessionTargetBullet: String? = null,
 )
@@ -34,7 +32,6 @@ internal fun WorkoutSessionFacts.asPromptBlock(): String =
 internal object WorkoutSessionFactsBuilder {
     internal const val MAX_PREVIOUS_SESSIONS = 3
     private const val MIN_SAMPLES_FOR_DRIFT = 8
-    private const val TARGET_MINUTE_STEP = 5
 
     /**
      * @param previousSessionsNewestFirst completed sessions of the same workout,
@@ -59,6 +56,7 @@ internal object WorkoutSessionFactsBuilder {
         val heartRates = workoutHistory.heartBeatRecords.filter { it > 0 }
         var currentAverageBpm: Double? = null
         var currentDriftBpm: Int? = null
+        var targetZoneBpm: String? = null
         if (heartRates.isNotEmpty()) {
             val average = heartRates.average()
             currentAverageBpm = average
@@ -92,6 +90,7 @@ internal object WorkoutSessionFactsBuilder {
                         measuredMaxHeartRate,
                         restingHeartRate,
                     )
+                    targetZoneBpm = "$lowBpm-$highBpm bpm"
                     val inZone = heartRates.count { sample ->
                         val percentage = getMaxHearthRatePercentage(
                             heartRate = sample,
@@ -120,15 +119,15 @@ internal object WorkoutSessionFactsBuilder {
             if (previousAverages.isNotEmpty()) {
                 val recentAverage = previousAverages.average()
                 val deltaBpm = (currentAverageBpm - recentAverage).roundToInt()
-                val direction = when {
+                val comparison = when {
                     deltaBpm <= -2 ->
-                        "improving — average HR is ${abs(deltaBpm)} bpm below the recent ${recentAverage.roundToInt()} bpm average"
+                        "average HR is ${abs(deltaBpm)} bpm below the recent ${recentAverage.roundToInt()} bpm average"
                     deltaBpm >= 2 ->
-                        "regressing — average HR is $deltaBpm bpm above the recent ${recentAverage.roundToInt()} bpm average"
+                        "average HR is $deltaBpm bpm above the recent ${recentAverage.roundToInt()} bpm average"
                     else ->
-                        "steady — average HR within 1 bpm of the recent ${recentAverage.roundToInt()} bpm average"
+                        "average HR is within 1 bpm of the recent ${recentAverage.roundToInt()} bpm average"
                 }
-                lines += "FACT Trend over the last ${previousAverages.size} sessions of this workout: $direction; at a similar duration, a lower average HR means better aerobic efficiency"
+                lines += "FACT Trend over the last ${previousAverages.size} sessions of this workout: $comparison"
             }
         }
         if (currentDriftBpm != null) {
@@ -148,37 +147,12 @@ internal object WorkoutSessionFactsBuilder {
             }
         }
 
-        val immediatePrevious = previous.firstOrNull()
-        var unmetPreviousTargetBpm: Int? = null
-        if (currentAverageBpm != null && immediatePrevious != null) {
-            val previousHeartRates = immediatePrevious.heartBeatRecords.filter { it > 0 }
-            if (previousHeartRates.isNotEmpty()) {
-                val targetBpm = previousHeartRates.average().roundToInt()
-                val targetMinutes = targetMinutesBucket(immediatePrevious.duration)
-                val met = currentAverageBpm <= targetBpm + 2 &&
-                    durationSeconds >= immediatePrevious.duration - 300
-                val verdict = if (met) "target met" else "target not met"
-                if (!met) {
-                    unmetPreviousTargetBpm = targetBpm
-                }
-                lines += "FACT Previous-session target check: the target was average HR at or under $targetBpm bpm for about $targetMinutes minutes; this session averaged ${currentAverageBpm.roundToInt()} bpm across ${durationMinutes.roundToInt()} minutes — $verdict"
-            }
-        }
         var nextSessionTargetBullet: String? = null
-        if (currentAverageBpm != null) {
-            val targetMinutes = targetMinutesBucket(durationSeconds)
-            // When the previous target was missed, hold that bar instead of ratcheting it up to
-            // the current average — raising the bar after a harder session would reward the miss
-            // and contradict the regressing trend fact.
-            val nextTargetBpm = unmetPreviousTargetBpm ?: currentAverageBpm.roundToInt()
-            lines += "FACT Next-session target: average heart rate at or under $nextTargetBpm bpm for about $targetMinutes minutes"
-            nextSessionTargetBullet =
-                "Keep average heart rate at or under $nextTargetBpm bpm for about $targetMinutes minutes."
+        if (targetZoneBpm != null) {
+            lines += "FACT Next-session target: stay within the configured $targetZoneBpm zone during the targeted exercise"
+            nextSessionTargetBullet = "Repeat the planned work in the configured $targetZoneBpm zone; compare heart rate only at a similar workload."
         }
 
         return WorkoutSessionFacts(lines, nextSessionTargetBullet)
     }
-
-    private fun targetMinutesBucket(durationSeconds: Int): Int =
-        maxOf(TARGET_MINUTE_STEP, durationSeconds / 60 / TARGET_MINUTE_STEP * TARGET_MINUTE_STEP)
 }

@@ -130,7 +130,10 @@ internal fun appendExerciseContextMarkdown(
         markdown.append("- Rep range: ${exercise.minReps}-${exercise.maxReps}\n")
     }
 
-    markdown.append("- Progression mode: ${exercise.progressionMode.name}\n")
+    markdown.append("- Progression mode: ${if (exercise.durationProgression != null) "DURATION" else exercise.progressionMode.name}\n")
+    exercise.durationProgression?.let { config ->
+        markdown.append("- Duration progression: +${config.incrementMinutes} minutes, maximum ${config.maximumMinutes} minutes, ${config.successfulSessionsRequired} consecutive qualifying sessions, work HR coverage >=${config.minimumCoveragePercent}%, valid work samples in zone >=${config.minimumZonePercent}%\n")
+    }
 
     if (exercise.lowerBoundMaxHRPercent != null && exercise.upperBoundMaxHRPercent != null) {
         val zoneBpm = targetZoneBpmBounds(exercise, workoutStore)

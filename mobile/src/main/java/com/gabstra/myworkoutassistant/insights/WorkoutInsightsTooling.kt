@@ -180,6 +180,10 @@ sealed class WorkoutInsightsToolContext {
         override val markdown: String,
         /** Compact per-session summaries of previous completed sessions of the same workout, oldest-first. */
         val previousSessionsMarkdown: String = "",
+        /** All prior sessions across versions of this workout, newest first. */
+        val historySessionSummaries: List<String> = emptyList(),
+        val loadHistorySession: ((String) -> String)? = null,
+        val retrievedHistorySessionDetails: MutableMap<String, String> = mutableMapOf(),
         /**
          * App-composed next-session-target bullet (see WorkoutSessionFacts); when set, the
          * insight pipeline renders this section deterministically instead of model text.
@@ -320,7 +324,7 @@ Workflow:
 5. For lifting-dominant sessions, do not use modest session HR or 0% high-intensity exposure as the main risk by itself.
 6. Before writing final synthesis, verify the clearest lagging or improving exercise with a narrower retrieval when available.
 7. Before writing ANY claim about previous sessions or trends — including "no previous sessions" — call get_previous_sessions; per-exercise PREV lines are not workout history.
-8. Stop tool use and write the final answer once you can explain what went well, what drifted, and any important constraint.
+8. Stop tool use and write the final answer once you can explain execution against the plan, meaningful comparisons, and any important constraint.
 """.trimIndent()
 
 internal class InsightsOpenApiTool(
@@ -551,20 +555,69 @@ private fun buildWorkoutSessionSpecs(
         ),
         WorkoutInsightsToolSpec(
             name = "get_previous_sessions",
-            description = "Get compact summaries of the previous completed sessions of this same workout (date, duration, average and peak heart rate). Use this when the user asks about past sessions or progress across sessions.",
-            parametersSchema = maxCharsParametersSchema(defaultMaxChars = 1600),
+            description = "Get a page of prior sessions of this same workout across all versions, newest first. Required for progress/readiness questions. Use offset and nextOffset to explore older history; summaries contain total session HR, not work-set HR. Fetch session details to compare prescribed work and execution.",
+            parametersSchema = mapOf(
+                "type" to "object",
+                "properties" to mapOf(
+                    "offset" to mapOf("type" to "integer", "description" to "Zero-based starting position, default 0."),
+                    "page_size" to mapOf("type" to "integer", "description" to "Sessions per page, default 6, maximum 20."),
+                    "max_chars" to mapOf("type" to "integer", "description" to "Text budget, default 12000."),
+                ),
+            ),
             handler = { args ->
-                val maxChars = args.maxCharsOrDefault(1600)
+                val summaries = toolContext.historySessionSummaries.ifEmpty {
+                    toolContext.previousSessionsMarkdown.lines().filter(String::isNotBlank)
+                }
+                val offset = args.intOrDefault("offset", 0).coerceIn(0, summaries.size)
+                val pageSize = args.intOrDefault("page_size", 6).coerceIn(1, 20)
+                val maxChars = args.maxCharsOrDefault(12000).coerceAtLeast(1000)
+                val page = mutableListOf<String>()
+                var usedChars = 0
+                for (summary in summaries.drop(offset).take(pageSize)) {
+                    if (usedChars + summary.length + 1 > maxChars) break
+                    page += summary
+                    usedChars += summary.length + 1
+                }
+                val nextOffset = (offset + page.size).takeIf { it < summaries.size }
                 mapOf(
                     "ok" to true,
                     "target" to toolContext.workoutLabel,
-                    "truncated" to (toolContext.previousSessionsMarkdown.length > maxChars),
-                    "previousSessions" to if (toolContext.previousSessionsMarkdown.isBlank()) {
-                        "No previous completed sessions of this workout were found."
-                    } else {
-                        toolContext.previousSessionsMarkdown.takeWithinBudget(maxChars)
-                    }
+                    "totalSessions" to summaries.size,
+                    "offset" to offset,
+                    "nextOffset" to nextOffset,
+                    "hasMore" to (nextOffset != null),
+                    "truncated" to false,
+                    "previousSessions" to page.joinToString("\n").ifBlank { "No sessions in this history page." },
                 )
+            }
+        ),
+        WorkoutInsightsToolSpec(
+            name = "get_history_session",
+            description = "Get prescribed work and recorded exercise execution for a session id returned by get_previous_sessions. Use comparable sessions to assess progress, not total-session HR alone.",
+            parametersSchema = mapOf(
+                "type" to "object",
+                "properties" to mapOf(
+                    "session_id" to mapOf("type" to "string", "description" to "Session id from a history page."),
+                    "section_title" to mapOf("type" to "string", "description" to "Optional exercise section title; omit for full compact session."),
+                    "max_chars" to mapOf("type" to "integer", "description" to "Text budget, default 12000."),
+                ),
+                "required" to listOf("session_id"),
+            ),
+            handler = { args ->
+                val sessionId = args["session_id"] as? String ?: error("session_id is required")
+                val markdown = toolContext.loadHistorySession?.invoke(sessionId)
+                    ?: error("Historical session details are unavailable")
+                val sectionTitle = (args["section_title"] as? String)?.trim().orEmpty()
+                val content = if (sectionTitle.isBlank()) markdown else {
+                    splitWorkoutSessionOverviewAndSections(markdown).second.entries
+                        .firstOrNull { it.key.equals(sectionTitle, ignoreCase = true) }?.value
+                        ?: error("No section found for $sectionTitle")
+                }
+                val maxChars = args.maxCharsOrDefault(12000)
+                toolContext.retrievedHistorySessionDetails[sessionId] = content.takeWithinBudget(maxChars)
+                mapOf("ok" to true, "sessionId" to sessionId,
+                    "truncated" to (content.length > maxChars),
+                    "session" to content.takeWithinBudget(maxChars))
             }
         ),
         WorkoutInsightsToolSpec(
@@ -648,10 +701,12 @@ internal fun buildWorkoutSectionOverviewLine(
     val summaryParts = buildList {
         add("EXERCISE $title")
         lines.firstOrNull { it.startsWith("EXEC ") }?.let(::add)
+        lines.firstOrNull { it.startsWith("CONTEXT ") && it.contains("Target zone") }?.let(::add)
+        lines.firstOrNull { it.startsWith("RECOVERY ") && it.contains("Work samples in target zone") }?.let(::add)
         lines.firstOrNull { it.startsWith("PREV ") }?.let(::add)
         lines.firstOrNull { it.startsWith("SIGNALS ") }?.let(::add)
     }
-    return summaryParts.joinToString(" | ").takeWithinBudget(320)
+    return summaryParts.joinToString(" | ").takeWithinBudget(480)
 }
 
 private fun maxCharsParametersSchema(

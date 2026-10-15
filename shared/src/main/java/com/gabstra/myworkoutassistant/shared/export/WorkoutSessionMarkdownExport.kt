@@ -1,5 +1,8 @@
 package com.gabstra.myworkoutassistant.shared.export
 
+import com.gabstra.myworkoutassistant.shared.workout.progression.durationProgressionDecisionsForSession
+import com.gabstra.myworkoutassistant.shared.workout.progression.withRecordedDurationPrescription
+
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
 import com.gabstra.myworkoutassistant.shared.RestHistoryDao
 import com.gabstra.myworkoutassistant.shared.SetHistory
@@ -19,7 +22,10 @@ import java.util.Calendar
 import java.util.UUID
 
 sealed class WorkoutSessionMarkdownResult {
-    data class Success(val markdown: String) : WorkoutSessionMarkdownResult()
+    data class Success(
+        val markdown: String,
+        val durationProgressionDecisions: List<com.gabstra.myworkoutassistant.shared.workout.progression.DurationProgressionDecision> = emptyList(),
+    ) : WorkoutSessionMarkdownResult()
     data class Failure(val message: String) : WorkoutSessionMarkdownResult()
 }
 
@@ -124,11 +130,19 @@ suspend fun buildWorkoutSessionMarkdown(
         exerciseForTargetBand = null
     )
 
+    val durationDecisions = durationProgressionDecisionsForSession(
+        workout, workoutHistory, workoutStore, workoutHistoryDao, setHistoryDao
+    )
+    durationDecisions.forEach { decision ->
+        markdown.append(decision.asFactBlock()).append("\n\n")
+    }
+
     for (item in layout) {
         when (item) {
             is WorkoutHistoryLayoutItem.ExerciseSection -> {
-                val exercise = exercisesById[item.exerciseId] ?: continue
+                val templateExercise = exercisesById[item.exerciseId] ?: continue
                 val allSets = sectionMap[item.exerciseId].orEmpty()
+                val exercise = templateExercise.withRecordedDurationPrescription(allSets)
                 val active = allSets.filterForInsightComparisonSets()
                 if (active.isEmpty()) continue
                 markdown.append("### ${exercise.name}\n")
@@ -368,5 +382,5 @@ suspend fun buildWorkoutSessionMarkdown(
             }
         }
     }
-    return WorkoutSessionMarkdownResult.Success(markdown.toString())
+    return WorkoutSessionMarkdownResult.Success(markdown.toString(), durationDecisions)
 }

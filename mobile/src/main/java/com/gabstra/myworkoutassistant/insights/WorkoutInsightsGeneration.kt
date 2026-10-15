@@ -212,8 +212,9 @@ internal suspend fun runWorkoutInsightsGeneration(
             markdown = rawReply,
             toolContext = request.toolContext,
             evidencePrompt = request.prompt,
-            applySessionTargetSection = !isHistoryChat,
+            applySessionTargetSection = false,
             enforceNumericContract = !isHistoryChat,
+            preserveMarkdown = isHistoryChat,
         )
         var normalizedReply = outcome.markdown
         if (!isHistoryChat && outcome.misquotedDrops.isNotEmpty()) {
@@ -224,6 +225,11 @@ internal suspend fun runWorkoutInsightsGeneration(
                 transportLabel = transportLabel,
                 generateText = generateText,
             )
+        }
+        if (!isHistoryChat) {
+            (request.toolContext as? WorkoutInsightsToolContext.WorkoutSession)?.nextSessionTargetBullet?.let { fallback ->
+                normalizedReply = ensureNextSessionTargetSection(normalizedReply, fallback)
+            }
         }
         if (normalizedReply != rawReply) {
             logWorkoutInsightsBlock(
@@ -367,6 +373,7 @@ internal suspend fun runWorkoutInsightsGeneration(
         toolContext = request.toolContext,
         evidencePrompt = finalPrompt,
         applySessionTargetSection = request.conversationMessages.isEmpty(),
+        preserveMarkdown = request.conversationMessages.isNotEmpty(),
     )
     if (normalizedInsight != rawInsight) {
         logWorkoutInsightsBlock(

@@ -92,7 +92,7 @@ internal object HistoryChatLimits {
 
     /**
      * Upper bound on **new** tokens generated per assistant reply (local LiteRT decode and remote
-     * `max_completion_tokens`). Lower than a typical insight to keep chat replies shorter.
+     * `max_completion_tokens`). Allows complete explanations and practical follow-up guidance.
      */
-    const val MAX_OUTPUT_TOKENS = 384
+    const val MAX_OUTPUT_TOKENS = 1536
 }

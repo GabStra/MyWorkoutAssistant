@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.insights
 
+
 import com.gabstra.myworkoutassistant.WorkoutTypes
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
 import com.gabstra.myworkoutassistant.shared.RestHistoryDao
@@ -58,6 +59,7 @@ You are a workout insights assistant.
 
 Goal:
 Explain the workout in plain, useful coaching language.
+Help the user decide what to keep or change next time. Connect each important observation to its practical meaning; omit metrics that do not affect that decision.
 
 Rules:
 - Use only the evidence returned by tools.
@@ -73,7 +75,7 @@ Rules:
   3. session state and status labels
   4. HR cues from text metrics only
 - If a status label conflicts with explicit numeric values, trust the numeric values.
-- Never describe a metric as improved if the numeric value is lower than the previous value.
+- Interpret metric changes by their meaning; a lower value is not automatically better or worse.
 - If one exercise improved and another regressed or lagged versus previous, say that explicitly.
 - For lifting-dominant sessions, prioritize load, reps, completed work, and exercise-by-exercise comparison; use HR only as supporting context.
 - Do not call recovery inadequate from elevated HR alone.
@@ -104,7 +106,8 @@ Requirements:
 - If session status is not completed normally, mention that status early in `## What stood out`.
 - When a previous-session target check fact is supplied, state its verdict in `## What stood out`.
 - HR target zones are percent of heart-rate reserve (Karvonen: (HR − resting) / (max − resting)), NOT percent of max HR. When you mention a zone, say "X-Y% of heart-rate reserve" and include the bpm bounds from the evidence.
-- `## Next session target` is exactly one bullet: quote the next-session target fact numbers and say why that target is the right next step; if no next-session target fact exists, state that plainly.
+- A previous session's average HR is comparison data, not a configured zone target. Do not claim zone success or failure without a defined adherence threshold.
+- `## Next session target` is one concrete action with a short reason, grounded in the plan, progression, or recorded execution. Respect any supplied target fact. Keeping the existing plan is valid when no adjustment is supported; do not invent a harder goal or report that advice is unavailable merely because there is no HR target fact.
 - start every bullet with "- "
 - no introduction or conclusion outside the required sections
 - include HR when it changes or supports the interpretation, but do not let HR override clearer lifting evidence
@@ -113,15 +116,22 @@ Requirements:
 
 Before finalizing, silently verify:
 - every claim is supported by the supplied evidence
-- no bullet says something improved if the number is lower
+- no bullet calls a change an improvement without supporting performance evidence
 - mixed outcomes across exercises are stated explicitly when present
 - double progression and auto-regulation are interpreted as progression systems, not as generic static targets
 - the next-session target quotes the fact numbers exactly
 - the wording is natural and user-friendly
 """
 
+internal const val WORKOUT_COACHING_PROGRESSION_GUIDANCE = """
+When FACT Duration progression is supplied, use its exact next duration and decision reason. It is the app-calculated prescription; do not substitute a generic progression rule or override its hold/increase decision.
+Base coaching conclusions on the recorded facts. Clearly distinguish interpretation from measurement; do not assume comfort, recovery, adaptation, or readiness. When giving next-session advice, say what to repeat or adjust, cite the evidence behind that action, and state what evidence would justify progressing later. For lifting, use the configured progression, prescribed sets and rep ranges. For endurance, preserve the intended intensity: progress only when the prescribed work is repeatably manageable and effort/recovery support it; when that evidence is missing, keep the plan and ask the user to track effort and recovery before increasing work. Do not invent an increment or claim adaptation from heart rate alone.
+Distinguish planned exercise work from total session elapsed time, and exercise-level HR from whole-session averages. Compare equivalent scopes and use the stated history window. A whole-session average below a work target does not establish insufficient work intensity; higher HR does not establish improvement. Never describe a value as the top of a zone unless it is its upper bound.
+"""
+
 internal val WORKOUT_INSIGHTS_SYSTEM_PROMPT = listOf(
     WORKOUT_INSIGHTS_SYSTEM_PROMPT_BASE.trimIndent(),
+    WORKOUT_COACHING_PROGRESSION_GUIDANCE.trimIndent(),
     FINAL_RESPONSE_NUMERIC_POLICY.trimIndent()
 ).joinToString("\n\n")
 
@@ -134,24 +144,31 @@ internal val WORKOUT_INSIGHTS_SYSTEM_PROMPT = listOf(
  */
 internal val WORKOUT_INSIGHTS_TOOL_SYSTEM_PROMPT = """
 You are a workout insights assistant. Write the insight a good coach would send after this session.
+Help the user decide what to keep or change next time; this is a coaching takeaway, not a list of recorded metrics.
 
 Content:
-- Lead with trajectory vs recent sessions of the same workout (precomputed trend facts + get_previous_sessions). Do not restate status, duration, or plan structure.
-- Name one mechanism for the result; state plan adherence plainly; mixed outcomes explicitly.
+- Lead with exercise-level execution against the planned work and target. Mention whole-session zone coverage or recent comparisons only if they add a distinct takeaway.
+- Explain a mechanism only when the retrieved data supports it; state plan adherence plainly and mixed outcomes explicitly.
+- Connect the main result to the workout's intended purpose, using the plan and recorded execution. For steady zone-guided work, emphasize completing the prescribed work at the prescribed intensity; for intervals or lifting, use their actual work structure and progression.
+- Every observation needs a practical consequence. Omit unchanged drift, redundant zone percentages, and historical differences that do not support a decision. If evidence cannot establish progress, explain that briefly only when needed to justify the next action.
 - PREV lines are per-exercise progression and may say "No previous session" after a workout edit — that is not workout history; trust FACT lines and get_previous_sessions.
-- Numbers only verbatim from evidence or facts; never transform, round, or invent. Never call something improved if the number is lower.
+- Numbers only verbatim from evidence or facts; never transform, round, or invent. Interpret each metric by its meaning, not by whether its number rose or fell.
 - HR target zones are % of heart-rate reserve (Karvonen), NOT % of max HR; when quoting a zone, include its bpm bounds from the evidence.
+- A percentage of HR samples in zone is a sample count, not necessarily a percentage of time. Heart-rate drift is not cycling pace. Higher HR alone does not prove higher workload or effort.
+- A previous session's average HR is comparison data, not a configured target. Do not call a zone target met or missed without an explicit adherence threshold.
 - Ignore structural noise unless explanatory. No medical advice or diagnoses.
 - If evidence is sparse or the session incomplete, say so plainly.
 
-Format — exactly three sections, no other headings, bullets only, no empty bullets, no paragraphs:
+$WORKOUT_COACHING_PROGRESSION_GUIDANCE
+
+Format — use these headings as needed, bullets only, no empty bullets, no paragraphs:
 ## What stood out
 ## Exercise highlights
 ## Next session target
 
-- What stood out: 2-3 bullets, max ~20 words each; the FIRST bullet must quote a number from the trend fact or the previous-session target check fact (if the check says "target not met", lead with that); fold the target-check verdict into a bullet.
-- Exercise highlights: 1-2 exercise-specific bullets; if none apply, one short bullet saying so.
-- Next session target: exactly one bullet written as a short instruction starting with a verb (e.g. "Keep average HR at or under 140 bpm for about 55 minutes"), quoting the target fact numbers; if no such fact exists, say so in one sentence.
+- What stood out: 1-2 bullets, max ~20 words each; lead with the clearest result against the planned target. Quote any supplied target-check verdict accurately.
+- Exercise highlights: add only distinct exercise-specific evidence; omit the section when there is just one main exercise and its result is already stated above.
+- Next session target: one concrete action starting with a verb and a short reason. Ground it in the plan, progression, or execution, respecting any supplied target fact. Say what to repeat, change, or monitor and briefly give the condition for future progression; keep the existing plan when no adjustment is supported. Do not invent progression or say no advice exists just because there is no HR target fact.
 Whole answer under ~110 words.
 """.trimIndent()
 
@@ -314,8 +331,6 @@ suspend fun buildExerciseInsightsPrompt(
     }
 }
 
-private const val PREVIOUS_SESSIONS_TOOL_LIMIT = 6
-
 /** One compact line per previous completed session, oldest-first, for the chat retrieval tool. */
 private fun buildPreviousSessionsToolMarkdown(
     previousSessionsNewestFirst: List<com.gabstra.myworkoutassistant.shared.WorkoutHistory>,
@@ -402,7 +417,8 @@ suspend fun buildWorkoutSessionInsightsPrompt(
                         null
                     }
                 }
-                ?.firstOrNull()
+                ?.distinct()
+                ?.singleOrNull()
             // Workouts are versioned copy-on-write: every edit creates a new id with the
             // same globalId, and each session is recorded against the version that ran it.
             // "Same workout" therefore means same globalId — matching by the current
@@ -420,9 +436,14 @@ suspend fun buildWorkoutSessionInsightsPrompt(
                 }.sortedByDescending { it.startTime }.take(limit)
 
             val previousSessions = recentEquivalentPreviousSessions(WorkoutSessionFactsBuilder.MAX_PREVIOUS_SESSIONS)
-            val previousSessionsMarkdown = buildPreviousSessionsToolMarkdown(
-                recentEquivalentPreviousSessions(PREVIOUS_SESSIONS_TOOL_LIMIT),
-            )
+            val historySessions = equivalentWorkoutIds.flatMap { equivalentId ->
+                workoutHistoryDao.getWorkoutsByWorkoutId(equivalentId)
+            }.distinctBy { it.id }
+                .filter { it.id != workoutHistory.id && it.startTime <= workoutHistory.startTime }
+                .sortedByDescending { it.startTime }
+            val historySummaries = historySessions.map { history ->
+                "Session id: ${history.id} | ${buildPreviousSessionsToolMarkdown(listOf(history))}"
+            }
             val sessionFacts = WorkoutSessionFactsBuilder.build(
                 workoutHistory = workoutHistory,
                 previousSessionsNewestFirst = previousSessions,
@@ -431,7 +452,9 @@ suspend fun buildWorkoutSessionInsightsPrompt(
                 measuredMaxHeartRate = workoutStore.measuredMaxHeartRate,
                 restingHeartRate = workoutStore.restingHeartRate,
             )
-            val sessionFactsBlock = sessionFacts.asPromptBlock()
+            val durationDecisions = markdownResult.durationProgressionDecisions
+            val sessionFactsBlock = (listOf(sessionFacts.asPromptBlock()) +
+                durationDecisions.map { it.asFactBlock() }).joinToString("\n\n")
 
             WorkoutInsightsPromptResult.Success(
                 title = "Workout session insights",
@@ -452,8 +475,30 @@ suspend fun buildWorkoutSessionInsightsPrompt(
                 toolContext = WorkoutInsightsToolContext.WorkoutSession(
                     title = "Workout session insights",
                     workoutLabel = workoutLabel,
-                    previousSessionsMarkdown = previousSessionsMarkdown,
-                    nextSessionTargetBullet = sessionFacts.nextSessionTargetBullet,
+                    previousSessionsMarkdown = historySummaries.take(6).joinToString("\n"),
+                    historySessionSummaries = historySummaries,
+                    loadHistorySession = { sessionId ->
+                        require(historySessions.any { it.id.toString() == sessionId }) {
+                            "Session is outside this workout's available history"
+                        }
+                        // Tool interfaces are synchronous; Room/export work stays on the IO dispatcher.
+                        kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+                            when (val result = buildWorkoutSessionMarkdown(
+                                workoutHistoryId = UUID.fromString(sessionId),
+                                workoutHistoryDao = workoutHistoryDao,
+                                setHistoryDao = setHistoryDao,
+                                restHistoryDao = restHistoryDao,
+                                exerciseSessionProgressionDao = exerciseSessionProgressionDao,
+                                workoutStore = workoutStore,
+                            )) {
+                                is WorkoutSessionMarkdownResult.Success -> compactWorkoutSessionMarkdown(result.markdown)
+                                is WorkoutSessionMarkdownResult.Failure -> error(result.message)
+                            }
+                        }
+                    },
+                    nextSessionTargetBullet = durationDecisions.firstOrNull()?.let { decision ->
+                        "Complete ${decision.nextSeconds} seconds of ${decision.exerciseName} in the prescribed HR zone; ${decision.reason}."
+                    } ?: sessionFacts.nextSessionTargetBullet,
                     markdown = buildString {
                         append(sessionStatusLine)
                         if (workoutCategoryGuidance.isNotBlank()) {
@@ -2887,7 +2932,7 @@ private fun buildWorkoutCategoryPromptGuidance(
         WorkoutPromptCategory.STRENGTH ->
             "Category guidance: judge success mainly from lift performance, progression, and recovery, with HR as supporting context only."
         WorkoutPromptCategory.CONDITIONING ->
-            "Category guidance: judge success mainly from interval execution, intensity distribution, and repeatability, with HR as a primary effort signal."
+            "Category guidance: judge success against the planned work structure and target intensity; use HR as a response signal, not proof of workload."
         WorkoutPromptCategory.ENDURANCE ->
             "Category guidance: judge success mainly from sustained effort, pacing consistency, and aerobic load, with HR as a primary effort signal."
         WorkoutPromptCategory.MOBILITY ->
@@ -2974,7 +3019,6 @@ private fun compactLabelLine(
         .replace("- Executed:", "- Executed:")
         .replace("- Vs expected:", "- Vs expected:")
         .replace("- Vs previous baseline:", "- Vs success baseline:")
-        .replace("- Work samples in target zone:", "- In target zone:")
         .replace("- High-intensity exposure:", "- High-intensity exposure:")
         .replace("- Avg % max HR:", "- Avg % max HR:")
         .replace("- Peak % max HR:", "- Peak % max HR:")

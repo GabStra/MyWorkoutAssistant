@@ -83,12 +83,14 @@ import com.gabstra.myworkoutassistant.shared.ExerciseCategory
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.equipments.isCompatibleWith
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
+import com.gabstra.myworkoutassistant.shared.workout.progression.DurationProgressionConfig
 import com.gabstra.myworkoutassistant.shared.ProgressionMode
 import com.gabstra.myworkoutassistant.shared.resolveDeloadConfig
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RunningSet
+import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.running.DistanceUnit
@@ -221,6 +223,12 @@ fun ExerciseForm(
     val generateWarmupSets = rememberSaveable { mutableStateOf(exercise?.generateWarmUpSets ?: false) }
     val selectedExerciseCategory = rememberSaveable { mutableStateOf(exercise?.exerciseCategory) }
     val progressionMode = rememberSaveable { mutableStateOf(exercise?.progressionMode ?: ProgressionMode.OFF) }
+    val durationProgressionEnabled = rememberSaveable { mutableStateOf(exercise?.durationProgression != null) }
+    val durationIncrement = rememberSaveable { mutableIntStateOf(exercise?.durationProgression?.incrementMinutes ?: 5) }
+    val durationMaximum = rememberSaveable { mutableIntStateOf(exercise?.durationProgression?.maximumMinutes ?: 60) }
+    val durationSuccesses = rememberSaveable { mutableIntStateOf(exercise?.durationProgression?.successfulSessionsRequired ?: 3) }
+    val durationZonePercent = rememberSaveable { mutableIntStateOf(exercise?.durationProgression?.minimumZonePercent ?: 90) }
+    val durationCoveragePercent = rememberSaveable { mutableIntStateOf(exercise?.durationProgression?.minimumCoveragePercent ?: 90) }
     val keepScreenOn = rememberSaveable { mutableStateOf(exercise?.keepScreenOn ?: false) }
     val showCountDownTimer = rememberSaveable { mutableStateOf(exercise?.showCountDownTimer ?: false) }
     val requiresLoadCalibration = rememberSaveable { mutableStateOf(exercise?.requiresLoadCalibration ?: false) }
@@ -601,6 +609,29 @@ fun ExerciseForm(
                             modifier = Modifier.padding(Spacing.md),
                             verticalArrangement = Arrangement.spacedBy(Spacing.md)
                         ) {
+                            if (selectedExerciseType.value == ExerciseType.COUNTDOWN) {
+                                SwitchSettingRow(
+                                    title = "Duration progression",
+                                    checked = durationProgressionEnabled.value,
+                                    onCheckedChange = { durationProgressionEnabled.value = it }
+                                )
+                                if (durationProgressionEnabled.value) {
+                                    Text("For one unweighted steady timed work set with a heart-rate target. Rest is excluded. Qualifying sessions start after enabling; changing the duration, target zone or rule starts a new qualifying period.", style = MaterialTheme.typography.bodySmall)
+                                    Text("Increase: ${durationIncrement.intValue} minutes")
+                                    SingleValueStepperRow(value = durationIncrement.intValue, onValueChange = { durationIncrement.intValue = it }, minBound = 1, maxBound = 60, step = 1)
+                                    Text("Maximum duration: ${durationMaximum.intValue} minutes")
+                                    SingleValueStepperRow(value = durationMaximum.intValue, onValueChange = { durationMaximum.intValue = it }, minBound = 1, maxBound = 1440, step = 5)
+                                    Text("Consecutive qualifying sessions: ${durationSuccesses.intValue}")
+                                    SingleValueStepperRow(value = durationSuccesses.intValue, onValueChange = { durationSuccesses.intValue = it }, minBound = 1, maxBound = 20, step = 1)
+                                    Text("Minimum work samples in target zone: ${durationZonePercent.intValue}%")
+                                    SingleValueStepperRow(value = durationZonePercent.intValue, onValueChange = { durationZonePercent.intValue = it }, minBound = 1, maxBound = 100, step = 5)
+                                    Text("Minimum work HR coverage: ${durationCoveragePercent.intValue}%")
+                                    SingleValueStepperRow(value = durationCoveragePercent.intValue, onValueChange = { durationCoveragePercent.intValue = it }, minBound = 1, maxBound = 100, step = 5)
+                                    if (selectedLowerBoundMaxHRPercent.value == null || selectedUpperBoundMaxHRPercent.value == null) {
+                                        Text("Set a heart-rate target below to enable automatic increases.", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
+                                    }
+                                }
+                            }
                             SwitchSettingRow(
                                 title = "Show countdown timer",
                                 checked = showCountDownTimer.value,
@@ -1304,6 +1335,10 @@ fun ExerciseForm(
                                 }
                             }
                         }
+                        val durationProgressionConfig = if (durationProgressionEnabled.value && selectedExerciseType.value == ExerciseType.COUNTDOWN) {
+                            DurationProgressionConfig(durationIncrement.intValue, durationMaximum.intValue,
+                                durationSuccesses.intValue, durationZonePercent.intValue, durationCoveragePercent.intValue)
+                        } else null
                         val equipmentAdjustedSets = reconcileSetsForEquipmentChange(
                             sets = exercise?.sets ?: emptyList(),
                             previousEquipmentId = exercise?.equipmentId,
@@ -1318,6 +1353,9 @@ fun ExerciseForm(
                                     subCategory = normalizeSetSubCategory(set.subCategory)
                                 )
 
+                                is TimedDurationSet -> if (exercise?.durationProgression != durationProgressionConfig) {
+                                    set.copy(durationProgressionSnapshot = null)
+                                } else set
                                 else -> set
                             }
                         }.ifEmpty {
@@ -1380,6 +1418,7 @@ fun ExerciseForm(
                             bodyWeightPercentage = bodyWeightPercentageValue ?: 0.0,
                             generateWarmUpSets = generateWarmupSets.value,
                             progressionMode = progressionMode.value,
+                            durationProgression = durationProgressionConfig,
                             keepScreenOn = keepScreenOn.value,
                             showCountDownTimer = showCountDownTimer.value,
                             intraSetRestInSeconds = if (isUnilateral.value && intraSetRestSeconds > 0) {

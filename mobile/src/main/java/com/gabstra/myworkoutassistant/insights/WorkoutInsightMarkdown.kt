@@ -234,12 +234,14 @@ internal fun postProcessInsightMarkdown(
     evidencePrompt: String? = null,
     applySessionTargetSection: Boolean = false,
     enforceNumericContract: Boolean = false,
+    preserveMarkdown: Boolean = false,
 ): String = postProcessInsightMarkdownWithDropReport(
     markdown = markdown,
     toolContext = toolContext,
     evidencePrompt = evidencePrompt,
     applySessionTargetSection = applySessionTargetSection,
     enforceNumericContract = enforceNumericContract,
+    preserveMarkdown = preserveMarkdown,
 ).markdown
 
 internal fun postProcessInsightMarkdownWithDropReport(
@@ -248,14 +250,14 @@ internal fun postProcessInsightMarkdownWithDropReport(
     evidencePrompt: String? = null,
     applySessionTargetSection: Boolean = false,
     enforceNumericContract: Boolean = false,
+    preserveMarkdown: Boolean = false,
 ): PostProcessOutcome {
-    var processed = removeEmptyExerciseHighlightsSection(sanitizeInsightMarkdown(markdown))
-    val sessionContext = toolContext as? WorkoutInsightsToolContext.WorkoutSession
-    if (applySessionTargetSection && sessionContext?.nextSessionTargetBullet != null) {
-        // The next-session target is the grading bar for the next session, so the app renders
-        // it verbatim instead of trusting the model's transcription.
-        processed = composeNextSessionTargetSection(processed, sessionContext.nextSessionTargetBullet)
+    var processed = if (preserveMarkdown) {
+        markdown.replace("\r\n", "\n").replace('\r', '\n').trim()
+    } else {
+        removeEmptyExerciseHighlightsSection(sanitizeInsightMarkdown(markdown))
     }
+    val sessionContext = toolContext as? WorkoutInsightsToolContext.WorkoutSession
     var misquotedDrops: List<MisquotedLineDrop> = emptyList()
     if (toolContext != null) {
         processed = replaceUnsupportedExactMetricMentions(
@@ -274,7 +276,11 @@ internal fun postProcessInsightMarkdownWithDropReport(
         }
         processed = removeEmptyMarkdownSections(processed)
     }
+    if (applySessionTargetSection && sessionContext?.nextSessionTargetBullet != null) {
+        processed = ensureNextSessionTargetSection(processed, sessionContext.nextSessionTargetBullet)
+    }
 
+    if (preserveMarkdown) return PostProcessOutcome(processed, misquotedDrops)
     val workoutSessionContext = sessionContext ?: return PostProcessOutcome(processed, misquotedDrops)
     if (!isLiftingDominantLowIntensitySession(workoutSessionContext.markdown)) {
         return PostProcessOutcome(processed, misquotedDrops)
@@ -389,6 +395,13 @@ internal fun composeNextSessionTargetSection(markdown: String, bullet: String): 
         .trim() + "\n"
 }
 
+internal fun ensureNextSessionTargetSection(markdown: String, fallbackBullet: String): String =
+    if (nextSessionTargetSectionRegex.find(markdown) == null) {
+        composeNextSessionTargetSection(markdown, fallbackBullet)
+    } else {
+        markdown
+    }
+
 /**
  * Removes `##` section headings whose body holds no content at all. Redaction drops can
  * empty a section (e.g. the only "Exercise highlights" bullet carried unsupported numbers),
@@ -419,7 +432,7 @@ internal fun removeEmptyMarkdownSections(markdown: String): String {
 }
 
 private val exactMetricMentionRegex = Regex(
-    """(?<![A-Za-z0-9.])\d+(?:\.\d+)?(?:\s*(?:-|to)\s*\d+(?:\.\d+)?)?\s*(?:k\s*)?(?:kg|bpm|%|reps?|sets?|seconds?|minutes?|mins?|km|mi|m|rir)(?=$|[^A-Za-z0-9])""",
+    """(?<![A-Za-z0-9.])\d+(?:\.\d+)?(?:\s*(?:[-–—]|to)\s*\d+(?:\.\d+)?)?\s*(?:k\s*)?(?:kg|bpm|%|reps?|sets?|seconds?|minutes?|mins?|km|mi|m|rir)(?=$|[^A-Za-z0-9])""",
     RegexOption.IGNORE_CASE
 )
 
@@ -586,6 +599,12 @@ private fun buildMetricAllowListEvidence(
             append('\n')
         }
     append(toolContext.markdown)
+    if (toolContext is WorkoutInsightsToolContext.WorkoutSession) {
+        append('\n')
+        append(toolContext.historySessionSummaries.joinToString("\n"))
+        append('\n')
+        append(toolContext.retrievedHistorySessionDetails.values.joinToString("\n"))
+    }
 }
 
 private fun String.evidenceSectionForMetricAllowList(): String {
@@ -601,6 +620,7 @@ private fun String.evidenceSectionForMetricAllowList(): String {
 
 private fun String.normalizeExactMetricMention(): String {
     return lowercase()
+        .replace(Regex("[–—]"), "-")
         .replace(Regex("\\s+"), " ")
         .replace(Regex("\\s+(?=%)"), "")
         .replace("k kg", "kkg")

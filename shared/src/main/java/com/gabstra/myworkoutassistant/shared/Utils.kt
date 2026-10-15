@@ -585,7 +585,7 @@ private fun <T> applyListDelta(
 fun initializeSetData(set: Set): SetData = when (set) {
     is WeightSet -> WeightSetData(set.reps, set.weight,0.0,set.subCategory)
     is BodyWeightSet -> BodyWeightSetData(set.reps,set.additionalWeight,0.0,0.0,set.subCategory)
-    is TimedDurationSet -> TimedDurationSetData(set.timeInMillis,set.timeInMillis,set.autoStart,set.autoStop, actualWeight = set.targetWeight)
+    is TimedDurationSet -> TimedDurationSetData(set.timeInMillis,set.timeInMillis,set.autoStart,set.autoStop, actualWeight = set.targetWeight, durationProgressionSnapshot = set.durationProgressionSnapshot)
     is EnduranceSet -> EnduranceSetData(set.timeInMillis,0,set.autoStart,set.autoStop, actualWeight = set.targetWeight)
     is RestSet -> RestSetData(set.timeInSeconds,set.timeInSeconds,set.subCategory)
     is RunningSet -> RunningSetData()
@@ -667,7 +667,8 @@ fun getNewSetFromSetHistory(
                 autoStart = setData.autoStart,
                 autoStop = setData.autoStop,
                 shouldReapplyHistoryToSet = shouldReapplyHistoryToSet ?: true,
-                targetWeight = setData.actualWeight
+                targetWeight = setData.actualWeight,
+                durationProgressionSnapshot = setData.durationProgressionSnapshot
             )
         }
 

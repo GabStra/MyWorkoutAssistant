@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.shared.viewmodels
 
+import com.gabstra.myworkoutassistant.shared.workout.progression.calculateDurationProgression
+
 import android.content.Context
 import android.util.Log
 import androidx.compose.runtime.mutableDoubleStateOf
@@ -2359,10 +2361,26 @@ open class WorkoutViewModel(
     }
 
     private suspend fun hydrateSelectedWorkoutTemplateForSession() {
+        val template = selectedWorkout.value
         loadWorkoutHistory()
         preProcessExercises()
         generateProgressions()
         applyProgressions()
+        for (exercise in template.workoutComponents.filterIsInstance<Exercise>().filter { it.enabled }) {
+            val decision = calculateDurationProgression(
+                template, exercise, workoutStore, workoutHistoryDao, setHistoryDao
+            ) ?: continue
+            val preparedExercise = selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>()
+                .firstOrNull { it.id == exercise.id } ?: continue
+            updateWorkout(preparedExercise, preparedExercise.copy(sets = preparedExercise.sets.map { set ->
+                if (set is com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet) {
+                    set.copy(timeInMillis = decision.nextSeconds * 1000, shouldReapplyHistoryToSet = false,
+                        durationProgressionSnapshot = decision.prescription)
+                } else set
+            }))
+            Log.d(TAG, decision.asFactBlock())
+        }
+        initializeExercisesMaps(selectedWorkout.value)
     }
 
     open fun registerHeartBeat(heartBeat: Int) {

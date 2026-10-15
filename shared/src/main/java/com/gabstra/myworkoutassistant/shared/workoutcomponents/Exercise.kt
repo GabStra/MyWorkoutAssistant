@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.shared.workoutcomponents
 
+import com.gabstra.myworkoutassistant.shared.workout.progression.DurationProgressionConfig
+
 import com.gabstra.myworkoutassistant.shared.ExerciseCategory
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
@@ -51,6 +53,7 @@ data class Exercise (
     val nameOverride: String? = null,
     /** Present for a running step; prescription belongs to this workout occurrence. */
     val runningPrescription: RunningPrescription? = null,
+    val durationProgression: DurationProgressionConfig? = null,
     ): WorkoutComponent(id,enabled) {
     
     // Custom hashCode and equals to safely handle null requiredAccessoryEquipmentIds
@@ -88,6 +91,7 @@ data class Exercise (
         result = 31 * result + (deloadCutSetsTo?.hashCode() ?: 0)
         result = 31 * result + (movementRef?.hashCode() ?: 0)
         result = 31 * result + (runningPrescription?.hashCode() ?: 0)
+        result = 31 * result + (durationProgression?.hashCode() ?: 0)
         return result
     }
     
@@ -127,6 +131,7 @@ data class Exercise (
         if (deloadCutSetsTo != other.deloadCutSetsTo) return false
         if (movementRef != other.movementRef) return false
         if (runningPrescription != other.runningPrescription) return false
+        if (durationProgression != other.durationProgression) return false
         
         return true
     }

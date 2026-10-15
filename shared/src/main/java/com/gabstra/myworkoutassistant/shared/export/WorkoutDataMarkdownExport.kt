@@ -1,5 +1,8 @@
 package com.gabstra.myworkoutassistant.shared.export
 
+import com.gabstra.myworkoutassistant.shared.workout.progression.durationProgressionDecisionsForSession
+import com.gabstra.myworkoutassistant.shared.workout.progression.withRecordedDurationPrescription
+
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgression
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
 import com.gabstra.myworkoutassistant.shared.ExerciseType
@@ -459,6 +462,10 @@ private suspend fun buildCompactSessionMarkdown(
         .associateBy { it.exerciseId }
     val markdown = StringBuilder()
 
+    durationProgressionDecisionsForSession(
+        workout, history, workoutStore, workoutHistoryDao, setHistoryDao
+    ).forEach { decision -> markdown.append(decision.asFactBlock()).append("\n\n") }
+
     markdown.append("- Workout: ${workout.name}\n")
     markdown.append("- Duration: ${formatDurationForExport(history.duration)}\n")
     compactSessionHeartRateLine(history, workoutStore, userAge)?.let { line ->
@@ -560,7 +567,7 @@ private fun buildExerciseSessionSections(
                     consumedSetIds += exerciseSets.map { it.id }
                     sections += ExerciseSessionExportSection(
                         label = component.name,
-                        exercise = component,
+                        exercise = component.withRecordedDurationPrescription(exerciseSets),
                         setHistories = exerciseSets,
                         rests = restHistories.filter { it.exerciseId == component.id }
                     )

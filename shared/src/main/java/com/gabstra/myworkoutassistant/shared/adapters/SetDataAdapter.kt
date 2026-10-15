@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.shared.adapters
 
+import com.gabstra.myworkoutassistant.shared.workout.progression.DurationProgressionSnapshot
+
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
@@ -46,6 +48,7 @@ class SetDataAdapter: JsonSerializer<SetData>, JsonDeserializer<SetData> {
                 src.bodyWeightPercentageSnapshot?.let { jsonObject.addProperty("bodyWeightPercentageSnapshot", it) }
             }
             is TimedDurationSetData ->{
+                src.durationProgressionSnapshot?.let { jsonObject.add("durationProgressionSnapshot", context.serialize(it)) }
                 jsonObject.addProperty("startTimer", src.startTimer)
                 jsonObject.addProperty("endTimer", src.endTimer)
                 jsonObject.addProperty("autoStart",src.autoStart)
@@ -130,7 +133,10 @@ class SetDataAdapter: JsonSerializer<SetData>, JsonDeserializer<SetData> {
                 val autoStop = if(jsonObject.has("autoStop")) jsonObject.get("autoStop").asBoolean else false
                 val hasBeenExecuted = if(jsonObject.has("hasBeenExecuted")) jsonObject.get("hasBeenExecuted").asBoolean else false
                 val actualWeight = if (jsonObject.has("actualWeight")) jsonObject.get("actualWeight").asDouble else null
-                TimedDurationSetData(startTimer,endTimer,autoStart,autoStop,hasBeenExecuted,actualWeight)
+                TimedDurationSetData(startTimer,endTimer,autoStart,autoStop,hasBeenExecuted,actualWeight,
+                    jsonObject.get("durationProgressionSnapshot")?.takeUnless { it.isJsonNull }?.let {
+                        context.deserialize(it, DurationProgressionSnapshot::class.java)
+                    })
             }
             "EnduranceSetData" -> {
                 val startTimer = jsonObject.get("startTimer").asInt

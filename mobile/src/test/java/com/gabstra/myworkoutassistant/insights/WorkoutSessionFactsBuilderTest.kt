@@ -29,7 +29,7 @@ class WorkoutSessionFactsBuilderTest {
     )
 
     @Test
-    fun `builds duration average peak drift zone and next-session target`() {
+    fun `builds duration average peak drift zone and next-session zone target`() {
         val heartRates = List(20) { sample -> if (sample < 10) 120 else 130 }
         val facts = WorkoutSessionFactsBuilder.build(
             workoutHistory = history(heartRates, durationSeconds = 3150),
@@ -45,14 +45,14 @@ class WorkoutSessionFactsBuilderTest {
         assertTrue(text.contains("FACT Average heart rate: 125 bpm; peak 130 bpm"))
         assertTrue(text.contains("FACT Heart-rate drift: the second half averaged +10 bpm versus the first half"))
         assertTrue(Regex("""FACT Whole-session time in target zone: \d+% of HR samples inside 60-70% of heart-rate reserve \(\d+-\d+ bpm\)""").containsMatchIn(text))
-        assertTrue(text.contains("FACT Next-session target: average heart rate at or under 125 bpm for about 50 minutes"))
-        assertEquals("Keep average heart rate at or under 125 bpm for about 50 minutes.", facts.nextSessionTargetBullet)
+        assertTrue(text.contains("FACT Next-session target: stay within the configured"))
+        assertTrue(facts.nextSessionTargetBullet.orEmpty().contains("zone; compare heart rate only at a similar workload."))
         assertFalse(text.contains("target check"))
         assertFalse(text.contains("versus recent sessions"))
     }
 
     @Test
-    fun `builds trend drift-comparison and target-check facts against recent sessions`() {
+    fun `builds trend and drift comparison against recent sessions`() {
         val sameWorkoutId = UUID.randomUUID()
         val facts = WorkoutSessionFactsBuilder.build(
             workoutHistory = history(List(20) { sample -> if (sample < 10) 125 else 135 }, durationSeconds = 3150, workoutId = sameWorkoutId),
@@ -68,14 +68,14 @@ class WorkoutSessionFactsBuilderTest {
 
         val text = facts.lines.joinToString("\n")
         assertTrue(text.contains("FACT Session duration versus recent sessions of this workout: 53 minutes versus 51 minutes typical"))
-        assertTrue(text.contains("FACT Trend over the last 2 sessions of this workout: improving — average HR is 10 bpm below the recent 140 bpm average; at a similar duration, a lower average HR means better aerobic efficiency"))
+        assertTrue(text.contains("FACT Trend over the last 2 sessions of this workout: average HR is 10 bpm below the recent 140 bpm average"))
         assertTrue(text.contains("FACT HR drift this session: +10 bpm versus your typical +0 bpm on this workout"))
-        assertTrue(text.contains("FACT Previous-session target check: the target was average HR at or under 140 bpm for about 50 minutes; this session averaged 130 bpm across 53 minutes — target met"))
-        assertTrue(text.contains("FACT Next-session target: average heart rate at or under 130 bpm for about 50 minutes"))
+        assertFalse(text.contains("Previous-session target check"))
+        assertFalse(text.contains("Next-session target"))
     }
 
     @Test
-    fun `reports regressing trend and unmet target when HR is higher`() {
+    fun `reports higher HR without inventing a target verdict`() {
         val sameWorkoutId = UUID.randomUUID()
         val facts = WorkoutSessionFactsBuilder.build(
             workoutHistory = history(List(10) { 150 }, durationSeconds = 2400, workoutId = sameWorkoutId),
@@ -89,11 +89,10 @@ class WorkoutSessionFactsBuilderTest {
         )
 
         val text = facts.lines.joinToString("\n")
-        assertTrue(text.contains("regressing — average HR is 20 bpm above the recent 130 bpm average"))
-        assertTrue(text.contains("this session averaged 150 bpm across 40 minutes — target not met"))
-        // A missed target holds its bar; the next-session target must not ratchet up to the current average.
-        assertTrue(text.contains("FACT Next-session target: average heart rate at or under 130 bpm for about 40 minutes"))
-        assertEquals("Keep average heart rate at or under 130 bpm for about 40 minutes.", facts.nextSessionTargetBullet)
+        assertTrue(text.contains("average HR is 20 bpm above the recent 130 bpm average"))
+        assertFalse(text.contains("target not met"))
+        assertFalse(text.contains("Next-session target"))
+        assertEquals(null, facts.nextSessionTargetBullet)
     }
 
     @Test

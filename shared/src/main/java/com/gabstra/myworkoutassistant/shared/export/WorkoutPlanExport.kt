@@ -286,6 +286,10 @@ private fun appendExerciseDetails(
         )
     }
     
+    exercise.durationProgression?.let { config ->
+        markdown.append("  - **Duration progression**: +${config.incrementMinutes} minutes; ceiling ${config.maximumMinutes} minutes; ${config.successfulSessionsRequired} consecutive qualifying sessions; minimum work HR coverage ${config.minimumCoveragePercent}%; minimum work samples in zone ${config.minimumZonePercent}%\n")
+    }
+
     if (exercise.generateWarmUpSets) {
         markdown.append("  - **Warm-up Sets**: ")
         

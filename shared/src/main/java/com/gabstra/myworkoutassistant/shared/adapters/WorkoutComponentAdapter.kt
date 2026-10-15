@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.shared.adapters
 
+import com.gabstra.myworkoutassistant.shared.workout.progression.DurationProgressionConfig
+
 import com.gabstra.myworkoutassistant.shared.ExerciseCategory
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
@@ -120,6 +122,7 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     jsonObject.add("movementRef", context.serialize(src.movementRef))
                 }
                 src.runningPrescription?.let { jsonObject.add("runningPrescription", context.serialize(it)) }
+                src.durationProgression?.let { jsonObject.add("durationProgression", context.serialize(it)) }
             }
 
             is Rest -> {
@@ -408,6 +411,11 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     placementNotes,
                     nameOverride,
                     runningPrescription,
+                    jsonObject.get("durationProgression")?.takeUnless { it.isJsonNull }?.let {
+                        context.deserialize<DurationProgressionConfig>(
+                            it, DurationProgressionConfig::class.java
+                        ).takeIf { config -> config.isValid() }
+                    },
                 )
             }
 
