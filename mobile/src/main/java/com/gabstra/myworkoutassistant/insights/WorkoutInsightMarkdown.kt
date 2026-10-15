@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.insights
 
+import android.text.util.Linkify
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -29,15 +30,27 @@ internal fun WorkoutInsightMarkdown(
     )
 
     MarkdownText(
-        markdown = compactTopLevelHeadingLevelsForDisplay(sanitizeInsightMarkdown(markdown)),
+        markdown = compactTopLevelHeadingLevelsForDisplay(markdown),
         modifier = modifier,
         isTextSelectable = true,
         style = insightTextStyle,
         linkColor = scheme.primary,
-        enableSoftBreakAddsNewLine = true,
+        linkifyMask = Linkify.WEB_URLS or Linkify.EMAIL_ADDRESSES,
+        enableSoftBreakAddsNewLine = false,
         syntaxHighlightColor = scheme.secondaryContainer,
         syntaxHighlightTextColor = scheme.onSecondaryContainer,
     )
+}
+
+/**
+ * Prefix of a streamed markdown response containing only complete (newline-terminated) lines —
+ * the part that cannot change shape as more text arrives, so it is safe to render while the
+ * generation is still running. The in-flight trailing line stays hidden behind the progress
+ * status instead of showing half-written markdown. Returns "" before the first line completes.
+ */
+internal fun settledMarkdownPrefix(partial: String): String {
+    val lastLineEnd = partial.lastIndexOf('\n')
+    return if (lastLineEnd < 0) "" else partial.substring(0, lastLineEnd + 1)
 }
 
 /**

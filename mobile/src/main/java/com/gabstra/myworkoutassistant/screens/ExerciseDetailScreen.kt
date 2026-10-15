@@ -86,6 +86,7 @@ import com.gabstra.myworkoutassistant.insights.WorkoutInsightsDialog
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsPromptResult
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsUiState
 import com.gabstra.myworkoutassistant.insights.buildExerciseInsightsPrompt
+import com.gabstra.myworkoutassistant.insights.settledMarkdownPrefix
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.Red
@@ -297,6 +298,9 @@ fun ExerciseDetailScreen(
                         INSIGHTS_LOG_TAG,
                         "exercise_prompt_start\n${promptResult.prompt}\nexercise_prompt_end"
                     )
+                    // Holds the full final chunk text (post-processed); Generating.partialText
+                    // carries only settled markdown blocks for the streaming reveal.
+                    var finalText = ""
                     runCatching {
                         insightsRepository.generateInsights(
                             WorkoutInsightsRequest(
@@ -307,15 +311,14 @@ fun ExerciseDetailScreen(
                                 useTransportToolCalling = true,
                             )
                         ).collectLatest { chunk ->
+                            finalText = chunk.text
                             insightsState = WorkoutInsightsUiState.Generating(
-                                partialText = chunk.text,
+                                partialText = settledMarkdownPrefix(chunk.text),
                                 phase = chunk.phase,
                                 statusText = chunk.statusText
                             )
                         }
                     }.onSuccess {
-                        val finalText =
-                            (insightsState as? WorkoutInsightsUiState.Generating)?.partialText.orEmpty()
                         Log.d(
                             INSIGHTS_LOG_TAG,
                             "exercise_raw_response_start\n${finalText.ifBlank { "No insights were generated." }}\nexercise_raw_response_end"

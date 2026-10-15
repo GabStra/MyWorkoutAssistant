@@ -94,12 +94,27 @@ fun WorkoutInsightsDialog(
                     }
 
                     state is WorkoutInsightsUiState.Generating -> {
-                        CenteredInsightBody {
-                            LoadingText(
-                                label = state.statusText.ifBlank {
-                                    defaultProgressLabel(state.phase)
-                                }
-                            )
+                        val statusLabel = state.statusText.ifBlank {
+                            defaultProgressLabel(state.phase)
+                        }
+                        // Streaming reveal: `partialText` already holds only settled markdown
+                        // blocks (see settledMarkdownPrefix), so it renders without ever
+                        // showing a half-written line. Until the first block completes (and
+                        // during tool phases) only the status row is shown.
+                        if (state.partialText.isBlank()) {
+                            CenteredInsightBody {
+                                LoadingText(label = statusLabel)
+                            }
+                        } else {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 200.dp),
+                                verticalArrangement = Arrangement.spacedBy(Spacing.md)
+                            ) {
+                                WorkoutInsightMarkdown(markdown = state.partialText)
+                                GeneratingStatusRow(statusLabel)
+                            }
                         }
                     }
 
@@ -207,6 +222,27 @@ private fun LoadingText(label: String) {
         Text(
             text = label,
             style = MaterialTheme.typography.bodyMedium
+        )
+    }
+}
+
+/** Compact inline progress row shown under the streamed markdown blocks while generating. */
+@Composable
+private fun GeneratingStatusRow(label: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+    ) {
+        CircularProgressIndicator(
+            strokeWidth = 2.dp,
+            modifier = Modifier.size(16.dp),
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }

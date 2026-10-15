@@ -109,6 +109,7 @@ import com.gabstra.myworkoutassistant.insights.WorkoutInsightsRequest
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsSettingsStore
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsUiState
 import com.gabstra.myworkoutassistant.insights.buildWorkoutSessionInsightsPrompt
+import com.gabstra.myworkoutassistant.insights.settledMarkdownPrefix
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
@@ -510,6 +511,9 @@ fun WorkoutDetailScreen(
                     insightsState = WorkoutInsightsUiState.Error(promptResult.message)
                 }
                 is WorkoutInsightsPromptResult.Success -> {
+                    // Holds the full final chunk text (post-processed); Generating.partialText
+                    // carries only settled markdown blocks for the streaming reveal.
+                    var finalText = ""
                     runCatching {
                         insightsRepository.generateInsights(
                             WorkoutInsightsRequest(
@@ -520,15 +524,14 @@ fun WorkoutDetailScreen(
                                 useTransportToolCalling = true,
                             )
                         ).collectLatest { chunk ->
+                            finalText = chunk.text
                             insightsState = WorkoutInsightsUiState.Generating(
-                                partialText = chunk.text,
+                                partialText = settledMarkdownPrefix(chunk.text),
                                 phase = chunk.phase,
                                 statusText = chunk.statusText
                             )
                         }
                     }.onSuccess {
-                        val finalText =
-                            (insightsState as? WorkoutInsightsUiState.Generating)?.partialText.orEmpty()
                         insightsState = WorkoutInsightsUiState.Success(
                             title = promptResult.title,
                             text = finalText.ifBlank { "No insights were generated." }

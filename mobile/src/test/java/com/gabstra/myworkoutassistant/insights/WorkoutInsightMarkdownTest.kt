@@ -18,6 +18,28 @@ class WorkoutInsightMarkdownTest {
         #### Recovery Context
         - Work samples in target zone: 96% (135-150 bpm)
     """.trimIndent()
+
+    @Test
+    fun settledMarkdownPrefix_emptyUntilFirstLineCompletes() {
+        assertEquals("", settledMarkdownPrefix(""))
+        assertEquals("", settledMarkdownPrefix("## What st"))
+    }
+
+    @Test
+    fun settledMarkdownPrefix_keepsOnlyCompleteLines() {
+        val partial = "## What stood out\n- Avg HR was 140 bpm\n- Peak HR was"
+        assertEquals(
+            "## What stood out\n- Avg HR was 140 bpm\n",
+            settledMarkdownPrefix(partial),
+        )
+    }
+
+    @Test
+    fun settledMarkdownPrefix_returnsWholeTextWhenNewlineTerminated() {
+        val complete = "## Next session target\n- Hold average HR under 131 bpm.\n"
+        assertEquals(complete, settledMarkdownPrefix(complete))
+    }
+
     @Test
     fun sanitizeInsightMarkdown_normalizes_triple_star_exercise_headings() {
         val raw =

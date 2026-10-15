@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.util.Log
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -43,6 +45,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
@@ -62,7 +65,7 @@ import com.gabstra.myworkoutassistant.insights.prepareExerciseHistoryChatContext
 import com.gabstra.myworkoutassistant.insights.prepareWorkoutSessionHistoryChatContext
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightMarkdown
 import com.gabstra.myworkoutassistant.insights.selectConversationWindowMessages
-import com.gabstra.myworkoutassistant.insights.sanitizeInsightMarkdown
+import com.gabstra.myworkoutassistant.insights.settledMarkdownPrefix
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
 import com.gabstra.myworkoutassistant.shared.RestHistoryDao
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
@@ -131,14 +134,11 @@ private object HistoryChatScreenLog {
         rawMarkdown: String,
     ) {
         if (!isDebuggable(appContext)) return
-        val sanitized = sanitizeInsightMarkdown(rawMarkdown)
         Log.d(
             TAG,
-            "assistant_markdown id=$interactionId turn=$turn mode=$mode rawLen=${rawMarkdown.length} " +
-                "sanitizedLen=${sanitized.length}",
+            "assistant_markdown id=$interactionId turn=$turn mode=$mode length=${rawMarkdown.length}",
         )
         logChunked("assistant_markdown_raw", interactionId, rawMarkdown)
-        logChunked("assistant_markdown_sanitized", interactionId, sanitized)
     }
 
     private fun logChunked(label: String, interactionId: String, text: String) {
@@ -213,6 +213,35 @@ fun HistoryChatScreen(
     var sendError by remember(mode) { mutableStateOf<String?>(null) }
     var isSending by remember(mode) { mutableStateOf(false) }
     var generationJob by remember { mutableStateOf<Job?>(null) }
+    // Settled markdown blocks of the in-flight assistant reply (see settledMarkdownPrefix);
+    // null when no reply is streaming.
+    var streamedReply by remember(mode) { mutableStateOf<String?>(null) }
+    val listState = rememberLazyListState()
+    // Keeps the viewport on the newest content while the user is already at the bottom so the
+    // streaming reply stays visible; scrolling up releases the pin until they return to it.
+    val pinnedToBottom = remember { mutableStateOf(true) }
+
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.canScrollForward to listState.isScrollInProgress }
+            .collect { (canScrollForward, isScrolling) ->
+                when {
+                    isScrolling && canScrollForward -> pinnedToBottom.value = false
+                    !canScrollForward -> pinnedToBottom.value = true
+                }
+            }
+    }
+
+    LaunchedEffect(streamedReply, messages.size) {
+        if (pinnedToBottom.value) {
+            val lastIndex = listState.layoutInfo.totalItemsCount - 1
+            if (lastIndex >= 0) {
+                // Anchor the last item, then jump to the true end so a reply taller than the
+                // viewport shows its newest lines instead of its first ones.
+                listState.scrollToItem(lastIndex)
+                listState.scrollBy(listState.layoutInfo.viewportEndOffset.toFloat())
+            }
+        }
+    }
 
     LaunchedEffect(mode) {
         generationJob?.cancel()
@@ -315,6 +344,9 @@ fun HistoryChatScreen(
             try {
                 insightsEngine.generateInsights(request).collect { chunk ->
                     lastText = chunk.text
+                    // Reveal only complete markdown lines while streaming; the finished
+                    // reply below replaces this with the full post-processed text.
+                    streamedReply = settledMarkdownPrefix(chunk.text)
                 }
                 val reply = lastText.ifBlank { "No reply was generated." }
                 HistoryChatScreenLog.assistantMarkdown(
@@ -354,6 +386,7 @@ fun HistoryChatScreen(
             } finally {
                 isSending = false
                 generationJob = null
+                streamedReply = null
             }
         }
     }
@@ -424,11 +457,23 @@ fun HistoryChatScreen(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth(),
+                        state = listState,
                         contentPadding = PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         items(messages, key = { it.id }) { message ->
                             HistoryChatBubble(message = message)
+                        }
+                        val streaming = streamedReply
+                        if (!streaming.isNullOrBlank()) {
+                            item(key = "streaming-reply") {
+                                HistoryChatBubble(
+                                    message = HistoryChatMessage(
+                                        role = HistoryChatMessageRole.Assistant,
+                                        content = streaming,
+                                    )
+                                )
+                            }
                         }
                     }
                     if (isSending) {
