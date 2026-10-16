@@ -38,6 +38,35 @@ def test_library_connection_probe_uses_same_model_without_thinking():
     assert requests[0]["extra_body"] == {"thinking": {"type": "disabled"}}
 
 
+@pytest.mark.parametrize("outcome", ["success", "error", "cancel", "quiet"])
+def test_connection_loading_covers_network_and_cleans_up(monkeypatch, outcome):
+    events = []
+    monkeypatch.setattr(api_client.LoadingIndicator, "start", lambda self: events.append("start"))
+    monkeypatch.setattr(api_client.LoadingIndicator, "stop", lambda self: events.append("stop"))
+
+    def create(**kwargs):
+        assert events == ([] if outcome == "quiet" else ["start"])
+        if outcome == "cancel":
+            raise KeyboardInterrupt
+        if outcome == "error":
+            raise RuntimeError("offline")
+        return iter([SimpleNamespace(choices=[SimpleNamespace(
+            delta=SimpleNamespace(content='{"status":"ok"}'), finish_reason="stop",
+        )])])
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    client.with_options = lambda **kwargs: client
+    if outcome == "cancel":
+        with pytest.raises(KeyboardInterrupt):
+            api_client.test_connection(client)
+    else:
+        success, error = api_client.test_connection(client, show_message=outcome != "quiet")
+        assert success == (outcome != "error")
+        if outcome == "error":
+            assert "offline" in error
+    assert events == ([] if outcome == "quiet" else ["start", "stop"])
+
+
 def test_shared_calls_use_latest_model_with_explicit_thinking_modes():
     requests = []
     client = recording_client(requests)
@@ -48,19 +77,37 @@ def test_shared_calls_use_latest_model_with_explicit_thinking_modes():
     assert [request["extra_body"]["thinking"]["type"] for request in requests] == ["disabled", "enabled", "enabled"]
 
 
-def test_conversation_tool_call_uses_latest_model_without_reasoning_history_requirement():
+def test_conversation_tool_call_enables_thinking_and_replays_reasoning():
     requests = []
     tool_call = SimpleNamespace(id="call-id", type="function", function=SimpleNamespace(name="generate_workout", arguments="{}"))
 
     def create(**kwargs):
         requests.append(kwargs)
-        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="Preview", tool_calls=[tool_call]))])
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+            content="Preview", tool_calls=[tool_call], reasoning_content="plan reasoning",
+        ))])
 
     client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
-    assert api_client.chat_call(client, [{"role": "user", "content": "Plan a workout"}], tools=[{"type": "function"}]) == ("Preview", [tool_call])
+    client.with_options = lambda **kwargs: client
+    messages = [
+        {"role": "assistant", "content": "Earlier preview"},
+        {"role": "user", "content": "Plan a workout"},
+    ]
+    content, calls, reasoning = api_client.chat_call(client, messages, tools=[{"type": "function"}])
+    assert (content, calls, reasoning) == ("Preview", [tool_call], "plan reasoning")
     assert requests[0]["model"] == "deepseek-flash"
-    assert requests[0]["extra_body"] == {"thinking": {"type": "disabled"}}
+    assert requests[0]["extra_body"] == {"thinking": {"type": "enabled"}}
     assert requests[0]["tools"] == [{"type": "function"}]
+    assert requests[0]["messages"][0]["reasoning_content"] == ""
+    assert "reasoning_content" not in messages[0]
+    messages.extend([
+        {"role": "assistant", "content": content, "reasoning_content": reasoning,
+         "tool_calls": [{"id": tool_call.id, "type": "function",
+                         "function": {"name": "generate_workout", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": tool_call.id, "content": "Audit failed"},
+    ])
+    api_client.chat_call(client, messages, tools=[{"type": "function"}])
+    assert requests[1]["messages"][-2]["reasoning_content"] == "plan reasoning"
 
 
 @pytest.mark.parametrize("flags, capabilities, expected_stage", [

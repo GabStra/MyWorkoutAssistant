@@ -130,6 +130,9 @@ def test_exercise_prompt_includes_generate_warmup_sets_guidance():
     assert "Set generateWarmUpSets explicitly to true or false" in EXERCISE_SYSTEM_PROMPT
     assert "heavy or technically demanding compound lifts" in EXERCISE_SYSTEM_PROMPT
     assert "dedicated warm-up entry" in EXERCISE_SYSTEM_PROMPT
+    for prompt in (EXERCISE_SYSTEM_PROMPT, PLAN_INDEX_SYSTEM_PROMPT, WORKOUT_STRUCTURE_SYSTEM_PROMPT):
+        assert 'reserved exception' not in prompt
+    assert 'infer sensible schema-valid values' not in EXERCISE_SYSTEM_PROMPT
 
 
 def test_sync_exercises_from_definitions_preserves_generate_warmup_sets():
@@ -946,6 +949,7 @@ def test_emit_exercise_definition_prompt_makes_unilateral_mapping_explicit(monke
     )
 
     prompt = captured_messages[0][-1]["content"]
+    assert [message['content'] for message in captured_messages[0] if message['role'] == 'system'] == [EXERCISE_SYSTEM_PROMPT]
     assert "Set intraSetRestInSeconds to a positive integer only for unilateral side-to-side work" in prompt
     assert "otherwise set it to null" in prompt
 

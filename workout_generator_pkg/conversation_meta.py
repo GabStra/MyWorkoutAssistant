@@ -7,6 +7,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from .paths import conversation_meta_path
+from .json_io import write_json_atomic
 
 
 def load_conversation_meta(script_dir: Optional[str] = None) -> Dict[str, Any]:
@@ -25,11 +26,7 @@ def load_conversation_meta(script_dir: Optional[str] = None) -> Dict[str, Any]:
 def save_conversation_meta(active_conversation_id: str, script_dir: Optional[str] = None) -> None:
     """Persist active conversation metadata."""
     meta_path = conversation_meta_path(script_dir)
-    try:
-        with open(meta_path, "w", encoding="utf-8") as f:
-            json.dump({"active_conversation_id": active_conversation_id}, f, indent=2)
-    except Exception:
-        pass
+    write_json_atomic(meta_path, {"active_conversation_id": active_conversation_id})
 
 
 def get_active_conversation_id(script_dir: Optional[str] = None) -> Optional[str]:

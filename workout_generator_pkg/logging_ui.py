@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import atexit
 import os
+import shutil
 import sys
 import threading
 import time
@@ -12,6 +13,33 @@ from datetime import datetime
 from typing import Optional
 
 from .paths import get_log_dir
+from rich.cells import set_cell_size
+
+
+def write_progress_line(text=""):
+    """Erase the previous status and leave the last column free to avoid wrapping."""
+    width = max(0, shutil.get_terminal_size().columns - 1)
+    text = text.replace("\n", " ").replace("\r", " ")
+    sys.stdout.write("\r" + set_cell_size(text, width) + "\r")
+    sys.stdout.flush()
+
+
+def print_markdown(text, logger, paged=False):
+    """Render terminal output while preserving raw Markdown in logs and pipes."""
+    from rich.console import Console
+    from rich.markdown import Markdown
+
+    console = Console()
+    if not console.is_terminal:
+        logger.log_print(f"Assistant> {text}")
+        return
+    logger.log(f"Assistant> {text}")
+    if paged:
+        with console.pager(styles=True):
+            console.print(Markdown(text))
+    else:
+        console.print("Assistant>", style="bold cyan")
+        console.print(Markdown(text))
 
 
 class ConversationLogger:
@@ -78,6 +106,16 @@ class PrefixLogger:
 class LoadingIndicator:
     """Terminal spinner."""
 
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, *_):
+        self.stop()
+
+    def update(self, message):
+        self.message = message
+
     def __init__(self, message: str = "Thinking"):
         self.message = message
         self.running = False
@@ -91,8 +129,8 @@ class LoadingIndicator:
         i = 0
         while self.running:
             elapsed = int(time.time() - self.start_time) if self.start_time else 0
-            sys.stdout.write(f"\r{self.message} {spinner[i % len(spinner)]} ({elapsed}s)")
-            sys.stdout.flush()
+            waiting = " — still waiting; Ctrl+C to cancel" if elapsed >= 60 else ""
+            write_progress_line(f"{self.message} {spinner[i % len(spinner)]} ({elapsed}s){waiting}")
             time.sleep(0.1)
             i += 1
 
@@ -114,8 +152,7 @@ class LoadingIndicator:
             self.running = False
             if self.thread:
                 self.thread.join(timeout=0.5)
-            sys.stdout.write("\r" + " " * 80 + "\r")
-            sys.stdout.flush()
+            write_progress_line()
             self._stop_printed = True
 
 
@@ -143,10 +180,7 @@ class ParallelLoadingIndicator:
             with self._lock:
                 completed = self.completed
             elapsed = int(time.time() - self.start_time) if self.start_time else 0
-            sys.stdout.write(
-                f"\r{self.message} {spinner[i % len(spinner)]} ({completed}/{self.total}, {elapsed}s)"
-            )
-            sys.stdout.flush()
+            write_progress_line(f"{self.message} {spinner[i % len(spinner)]} ({completed}/{self.total}, {elapsed}s)")
             time.sleep(0.1)
             i += 1
 
@@ -168,8 +202,7 @@ class ParallelLoadingIndicator:
             self.running = False
         if self.thread:
             self.thread.join(timeout=0.5)
-        sys.stdout.write("\r" + " " * 120 + "\r")
-        sys.stdout.flush()
+        write_progress_line()
         with self._lock:
             self._stop_printed = True
 

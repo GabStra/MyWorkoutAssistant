@@ -11,6 +11,7 @@ import copy
 from datetime import datetime
 
 from .deps import resolve_pipeline_deps
+from .logging_ui import LoadingIndicator
 from .domain_ops import strip_rep_range_fields_for_timed_exercises_in_workout_store
 from .plan_contract import (
     ContractValidationError,
@@ -24,6 +25,7 @@ from .plan_contract import (
 )
 from .exercise_library_tools import selected_library_ids_from_messages
 from .planning_tools import confirmed_draft
+from .plan_review import require_current_review
 from .generation_audit import audit_workout_package, plan_audit_package, validate_audit_targets
 from .progress_migration import migrate_progress_schema_v2_layout_step
 
@@ -335,7 +337,9 @@ def execute_workout_generation(
         has_draft = any(call.get("function", {}).get("name") == "audit_workout_plan"
                         for message in messages for call in message.get("tool_calls", []))
         if has_draft:
-            canonical_snapshot = confirmed_draft(messages, provided_equipment or {}, allow_educated_load_guesses)
+            canonical_snapshot = confirmed_draft(messages, provided_equipment or {}, allow_educated_load_guesses, require_confirmation=True)
+            # The shell validates the live backup; resumed pipelines verify the saved evidence snapshot.
+            require_current_review(canonical_snapshot, messages, provided_equipment or {}, canonical_snapshot.get('historyFingerprint'))
             selected_definition_ids = list(dict.fromkeys(e["libraryDefinitionId"] for e in canonical_snapshot["planIndex"]["exercises"]))
         else:
             selected_definition_ids = selected_library_ids_from_messages(messages, supplied_exercise_definitions)
@@ -609,7 +613,8 @@ def execute_workout_generation(
                         "re-generating Step 1 plan index due to contract mismatches..."
                     )
             _gen_print("Step 1: Auditing planned volume and duration before emission...")
-            plan_audit = audit_workout_package(plan_audit_package(plan_index, allow_educated_load_guesses), plan_index.get("auditTargets") or {})
+            with LoadingIndicator("Auditing planned volume and duration"):
+                plan_audit = audit_workout_package(plan_audit_package(plan_index, allow_educated_load_guesses), plan_index.get("auditTargets") or {})
             step_data["step_1_programming_audit"] = plan_audit
             if plan_audit["issues"]:
                 _gen_print("Programming audit failed: " + " | ".join(plan_audit["issues"]))
@@ -1279,7 +1284,8 @@ def execute_workout_generation(
         
         _gen_print("Step 8: Auditing actual generated volume and duration...")
         audit_start = time.time()
-        final_audit = audit_workout_package(data, plan_index.get("auditTargets") or {})
+        with LoadingIndicator("Auditing generated volume and duration"):
+            final_audit = audit_workout_package(data, plan_index.get("auditTargets") or {})
         final_audit["prescriptionChanges"] = step_data.get("step_1_programming_audit", {}).get("prescriptionChanges", [])
         step_data["step_8_programming_audit"] = final_audit
         timing_data["step_times"][8] = time.time() - audit_start

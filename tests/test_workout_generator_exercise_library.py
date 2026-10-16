@@ -61,6 +61,7 @@ def test_initial_messages_preserve_compact_library_authority_context():
     assert "sole allowed movement source" in messages[1]["content"]
     assert "search_exercise_library" in messages[1]["content"]
     assert "set_workout_requirements" in messages[1]["content"]
+    assert "Clarify material ambiguity with the user before recording requirements" in messages[1]["content"]
     assert "audit_workout_plan" in messages[1]["content"]
     assert "definition-1" not in messages[1]["content"]
     assert "not included" not in messages[1]["content"]

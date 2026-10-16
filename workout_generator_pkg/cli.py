@@ -7,7 +7,9 @@ import uuid
 import copy
 import re
 from datetime import date, datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
+from .cancellation import run_cancellable
+from .logging_ui import write_progress_line
 from openai import OpenAI
 import httpx
 from workout_generator_pkg.constants import (
@@ -467,7 +469,7 @@ class ConversationLogger:
 
     def __init__(self, log_path):
         self._path = log_path
-        self._file = open(log_path, 'a', encoding='utf-8')
+        self._closed = False
         self._lock = threading.Lock()
 
     def _timestamp(self):
@@ -476,10 +478,12 @@ class ConversationLogger:
     def _write(self, msg):
         with self._lock:
             try:
-                self._file.write(self._timestamp() + msg + "\n")
-                self._file.flush()
+                if self._closed:
+                    raise RuntimeError('Logger is closed')
+                with open(self._path, 'a', encoding='utf-8') as log_file:
+                    log_file.write(self._timestamp() + msg + "\n")
             except Exception as e:
-                print(f"Warning: Failed to write to debug log: {e}", file=sys.stderr)
+                raise RuntimeError(f"Cannot write conversation log {self._path}: {e}") from e
 
     def log(self, msg):
         """Write timestamped line to log file only."""
@@ -509,22 +513,13 @@ class ConversationLogger:
         self._write("[response] " + label + ": " + s)
 
     def flush(self):
-        with self._lock:
-            try:
-                if self._file:
-                    self._file.flush()
-            except Exception as e:
-                print(f"Warning: Failed to flush debug log: {e}", file=sys.stderr)
+        # Each entry is already flushed and closed before returning.
+        pass
 
     def close(self):
         with self._lock:
-            try:
-                if self._file:
-                    self._file.flush()
-                    self._file.close()
-                    self._file = None
-            except Exception as e:
-                print(f"Warning: Failed to close debug log: {e}", file=sys.stderr)
+            self._closed = True
+
 
 
 # When using PrefixLogger (parallel item emission), log more of the request in the log file
@@ -659,10 +654,9 @@ class LoadingIndicator:
         while not self.stop_event.is_set():
             elapsed = int(time.time() - self.start_time)
             text = f"{self.message}{dots[dot_index]:<3} ({elapsed}s)\r"
-            sys.stdout.write(text)
-            sys.stdout.flush()
+            write_progress_line(text)
             dot_index = (dot_index + 1) % len(dots)
-            time.sleep(0.5)
+            self.stop_event.wait(0.5)
     
     def start(self):
         """Start the loading indicator."""
@@ -675,10 +669,8 @@ class LoadingIndicator:
         """Stop the loading indicator and clear the line."""
         self.stop_event.set()
         if self.thread:
-            self.thread.join(timeout=0.1)
-        # Clear the line
-        sys.stdout.write("\r" + " " * 80 + "\r")
-        sys.stdout.flush()
+            self.thread.join()
+        write_progress_line()
 
 class ParallelLoadingIndicator:
     """Loading indicator for parallel execution showing aggregate progress."""
@@ -705,10 +697,9 @@ class ParallelLoadingIndicator:
                 text = f"{self.base_message} ({completed}/{total}){dots[dot_index]:<3} ({elapsed}s)\r"
             else:
                 text = f"{self.base_message}{dots[dot_index]:<3} ({elapsed}s)\r"
-            sys.stdout.write(text)
-            sys.stdout.flush()
+            write_progress_line(text)
             dot_index = (dot_index + 1) % len(dots)
-            time.sleep(0.5)
+            self.stop_event.wait(0.5)
     
     def start(self):
         """Start the loading indicator."""
@@ -726,10 +717,8 @@ class ParallelLoadingIndicator:
         """Stop the loading indicator and clear the line."""
         self.stop_event.set()
         if self.thread:
-            self.thread.join(timeout=0.1)
-        # Clear the line
-        sys.stdout.write("\r" + " " * 80 + "\r")
-        sys.stdout.flush()
+            self.thread.join()
+        write_progress_line()
 
 
 
@@ -1097,7 +1086,6 @@ def emit_exercise_definition(
 
         retry_user_content = base_user_content + retry_context
         messages = [
-            {"role": "system", "content": BASE_SYSTEM_PROMPT},
             {"role": "system", "content": EXERCISE_SYSTEM_PROMPT},
             {"role": "user", "content": retry_user_content},
         ]
@@ -1251,7 +1239,7 @@ def parallel_emit_items(items, emitter_func, loading_message, max_workers=None, 
             args_copy["logger"] = PrefixLogger(logger, f"[{item_id}] ")
 
         try:
-            result = emitter_func(item_id, **args_copy)
+            result = run_cancellable(emitter_func, item_id, cancel_event=cancelled, **args_copy)
             loading.increment()
             # Emitters return (parsed_result, log_entry)
             if isinstance(result, tuple) and len(result) == 2:
@@ -1273,41 +1261,53 @@ def parallel_emit_items(items, emitter_func, loading_message, max_workers=None, 
 
     loading.start()
 
+    executor = None
     try:
         if max_workers is None:
             max_workers = min(32, len(items) + 4)
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        executor = ThreadPoolExecutor(max_workers=max_workers)
+        try:
             future_to_item = {executor.submit(emit_wrapper, item): item for item in items}
 
-            for future in as_completed(future_to_item):
+            pending = set(future_to_item)
+            while pending:
                 if cancelled.is_set():
                     for f in future_to_item:
                         f.cancel()
                     break
+                completed, pending = wait(pending, timeout=0.1, return_when=FIRST_COMPLETED)
+                for future in completed:
+                    try:
+                        item_id, result = future.result()
+                        if item_id:
+                            results[item_id] = result
+                    except Exception as e:
+                        item_data = future_to_item[future]
+                        if isinstance(item_data, tuple):
+                            item_id = item_data[0]
+                        else:
+                            item_id = item_data.get("id") if isinstance(item_data, dict) else str(item_data)
+                        errors.append((item_id, str(e)))
+                        results[item_id] = None
 
-                try:
-                    item_id, result = future.result()
-                    if item_id:
-                        results[item_id] = result
-                except Exception as e:
-                    item_data = future_to_item[future]
-                    if isinstance(item_data, tuple):
-                        item_id = item_data[0]
-                    else:
-                        item_id = item_data.get("id") if isinstance(item_data, dict) else str(item_data)
-                    errors.append((item_id, str(e)))
-                    results[item_id] = None
-
+        except BaseException:
+            cancelled.set()
+            raise
     except KeyboardInterrupt:
         cancelled.set()
         _out("\nCancelled. Stopping parallel execution...")
+        raise
     finally:
+        if executor is not None:
+            executor.shutdown(wait=False, cancel_futures=True)
         loading.stop()
         if logger:
             logger.log_section(f"End parallel: {loading_message}")
             logger.log("Loading finished: " + loading_message)
 
+    if cancelled.is_set() and not errors:
+        raise KeyboardInterrupt
     if errors:
         _out(f"  Warning: {len(errors)} item(s) failed:")
         for item_id, error_msg in errors[:5]:
@@ -1718,7 +1718,7 @@ def summarize_conversation(client, messages, logger=None):
     if logger:
         trunc = user_content[:2000] + (f"... [truncated, total {len(user_content)} chars]" if len(user_content) > 2000 else "")
         logger.log_request("summarize_conversation", f"model={DEEPSEEK_MODEL} thinking=enabled messages={len(summarization_messages)}\n{trunc}")
-    content, _ = chat_call_with_loading(client, summarization_messages, logger=logger)
+    content, _, _ = chat_call_with_loading(client, summarization_messages, logger=logger)
     if content is None:
         return None
     if logger:

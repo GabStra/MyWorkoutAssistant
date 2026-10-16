@@ -307,11 +307,11 @@ def _normalize_target_set_prescriptions(
         else:
             seen_indexes.add(work_set_index)
 
-        if not isinstance(reps, int):
+        if not isinstance(reps, int) or isinstance(reps, bool) or reps <= 0:
             issues.append(
                 ContractIssue(
                     "invalid_target_set_prescription_reps",
-                    f"Exercise '{ex_name}' targetSetPrescriptions[{idx}] is missing integer reps.",
+                    f"Exercise '{ex_name}' targetSetPrescriptions[{idx}] requires positive integer reps.",
                 )
             )
             item_is_valid = False
@@ -635,6 +635,14 @@ def _collect_contract_issues_plan_index(
                     expected_load_field,
                 )
                 issues.extend(target_issues)
+                for item in normalized_targets:
+                    reps = item['reps']
+                    lower, upper = ex.get('minReps'), ex.get('maxReps')
+                    if ((isinstance(lower, int) and reps < lower) or (isinstance(upper, int) and reps > upper)):
+                        issues.append(ContractIssue('target_set_prescription_outside_rep_range',
+                            f"Exercise '{ex_id}' ({ex_name}) targetSetPrescriptions workSetIndex={item['workSetIndex']} "
+                            f"prescribes {reps} reps outside minReps={lower}, maxReps={upper}. "
+                            'Keep each target inside the prescribed range; do not fabricate rep drop-off or silently change an agreed range.'))
 
                 expected_work_sets = ex.get("numWorkSets")
                 if isinstance(expected_work_sets, int) and len(target_set_prescriptions) != expected_work_sets:

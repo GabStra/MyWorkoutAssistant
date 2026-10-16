@@ -4,17 +4,19 @@ from __future__ import annotations
 
 import json
 import random
-import threading
 import time
 import traceback
+from contextlib import nullcontext
 from .constants import (
     DEEPSEEK_MODEL,
     DEEPSEEK_CHAT_DEFAULT_TOKENS,
     DEEPSEEK_CHAT_MAX_TOKENS,
     DEEPSEEK_REASONER_DEFAULT_TOKENS,
     DEEPSEEK_REASONER_MAX_TOKENS,
+    DEEPSEEK_PLANNING_TIMEOUT_SECONDS,
 )
 from .logging_ui import LoadingIndicator
+from .cancellation import check_cancelled, run_cancellable
 
 try:
     from openai import APIConnectionError
@@ -29,7 +31,33 @@ except ImportError:
     except ImportError:
         RemoteProtocolError = None
 
-def chat_call(client, messages, tools=None):
+
+class TruncatedResponseError(ValueError):
+    """Keep rejected output for diagnostics without accepting it as a plan or tool call."""
+
+    def __init__(self, response, max_tokens, reasoning_effort):
+        message = getattr(response.choices[0], 'message', None)
+        usage = getattr(response, 'usage', None)
+        usage = usage.model_dump() if hasattr(usage, 'model_dump') else None
+        reasoning_tokens = ((usage or {}).get('completion_tokens_details') or {}).get('reasoning_tokens')
+        completion_tokens = (usage or {}).get('completion_tokens')
+        has_output = bool(getattr(message, 'content', None) or getattr(message, 'tool_calls', None))
+        reasoning_exhausted = (not has_output and isinstance(reasoning_tokens, int)
+                              and reasoning_tokens > 0 and reasoning_tokens == completion_tokens)
+        cause = 'reasoning_budget_exhausted' if reasoning_exhausted else 'completion_length_limit'
+        explanation = ('The model exhausted the budget in reasoning before emitting an answer or tool call. '
+                       if reasoning_exhausted else '')
+        super().__init__(f"Response truncated at the {max_tokens}-token {reasoning_effort}-effort budget. {explanation}No truncated output was accepted. Your saved draft and completed lookups are preserved; resume the next bounded task instead of repeating a whole-plan rewrite.")
+        self.diagnostics = {
+            'finishReason': 'length', 'maxTokens': max_tokens, 'reasoningEffort': reasoning_effort,
+            'cause': cause, 'usage': usage,
+            'content': getattr(message, 'content', None),
+            'reasoningContent': getattr(message, 'reasoning_content', None),
+            'toolCalls': [call.model_dump() for call in (getattr(message, 'tool_calls', None) or [])],
+        }
+
+
+def chat_call(client, messages, tools=None, *, reasoning_effort="high", max_tokens=DEEPSEEK_REASONER_MAX_TOKENS, timeout=DEEPSEEK_PLANNING_TIMEOUT_SECONDS, response_format=None):
     """
     Call DeepSeek for conversational responses with optional function calling.
     
@@ -39,23 +67,31 @@ def chat_call(client, messages, tools=None):
         tools: Optional list of tool definitions for function calling
     
     Returns:
-        tuple: (content, tool_calls) where content is the message content (or None) and 
-               tool_calls is a list of tool calls (or None)
+        tuple: (content, tool_calls, reasoning_content). Preserve reasoning in conversation history.
     """
     kwargs = {
         "model": DEEPSEEK_MODEL,
-        "messages": messages,
-        # The conversation stores tool calls without reasoning history.
-        "extra_body": {"thinking": {"type": "disabled"}},
+        "messages": [
+            {"reasoning_content": "", **message} if message.get("role") == "assistant" else message
+            for message in messages
+        ],
+        "extra_body": {"thinking": {"type": "enabled"}},
+        "reasoning_effort": reasoning_effort,
+        "max_tokens": max_tokens,
+        "timeout": timeout,
     }
     if tools:
         kwargs["tools"] = tools
+    if response_format is not None:
+        kwargs['response_format'] = response_format
     
-    resp = client.chat.completions.create(**kwargs)
+    resp = run_cancellable(client.with_options(max_retries=0).chat.completions.create, deadline_seconds=timeout, **kwargs)
+    if getattr(resp.choices[0], "finish_reason", None) == "length":
+        raise TruncatedResponseError(resp, max_tokens, reasoning_effort)
     message = resp.choices[0].message
     content = message.content
     tool_calls = message.tool_calls if hasattr(message, 'tool_calls') and message.tool_calls else None
-    return content, tool_calls
+    return content, tool_calls, getattr(message, "reasoning_content", None)
 
 
 def _log_connection_error(exception, attempt, max_retries, script_dir=None):
@@ -189,16 +225,16 @@ def test_connection(client, show_message=True, logger=None, *, model=None):
         
         # Use streaming mode for better high-traffic handling
         start_time = time.time()
-        stream = client.chat.completions.create(
-            model=model or DEEPSEEK_MODEL,
-            messages=test_messages,
-            response_format={"type": "json_object"},
-            max_tokens=10,
-            stream=True,  # Enable streaming for better high-traffic handling
-            extra_body={"thinking": {"type": "disabled"}},
-        )
-        
-        content, finish_reason = _collect_streaming_response(stream, start_time)
+        with LoadingIndicator("Testing API connection") if show_message or logger else nullcontext():
+            stream = run_cancellable(client.chat.completions.create,
+                model=model or DEEPSEEK_MODEL,
+                messages=test_messages,
+                response_format={"type": "json_object"},
+                max_tokens=10,
+                stream=True,  # Enable streaming for better high-traffic handling
+                extra_body={"thinking": {"type": "disabled"}},
+            )
+            content, finish_reason = run_cancellable(_collect_streaming_response, stream, start_time)
         
         if content:
             if show_message or logger:
@@ -234,8 +270,9 @@ def _retry_on_connection_error(func, max_retries=5, base_delay=2, show_message=F
         Original exception if not a connection error or if retries exhausted
     """
     for attempt in range(max_retries):
+        check_cancelled()
         try:
-            return func()
+            return run_cancellable(func)
         except Exception as e:
             # Check if it's a connection error that we should retry
             # Check the exception type and its chain (for wrapped exceptions)
@@ -322,6 +359,7 @@ def _collect_streaming_response(stream, start_time=None):
     finish_reason = None
 
     for chunk in stream:
+        check_cancelled()
         if chunk.choices and len(chunk.choices) > 0:
             choice = chunk.choices[0]
             # Check for finish_reason first (may be in choice, not delta)
@@ -361,7 +399,7 @@ def json_call(client, messages, max_tokens=DEEPSEEK_CHAT_DEFAULT_TOKENS, *, mode
     return _retry_on_connection_error(_call, show_message=True)
 
 
-def chat_call_with_loading(client, messages, tools=None, logger=None):
+def chat_call_with_loading(client, messages, tools=None, logger=None, *, reasoning_effort='high', activity='Thinking'):
     """
     Wrapper for chat_call that shows loading indicator with timer and supports cancellation.
     
@@ -372,17 +410,17 @@ def chat_call_with_loading(client, messages, tools=None, logger=None):
         logger: Optional ConversationLogger for debug logging (loading start/stop)
     
     Returns:
-        tuple: (content, tool_calls) where content is the message content (or None) and 
-               tool_calls is a list of tool calls (or None)
+        tuple: (content, tool_calls, reasoning_content), or three None values on cancellation.
     """
-    loading = LoadingIndicator("Thinking")
+    loading = LoadingIndicator(activity)
+    started = time.monotonic()
     result = [None]
     exception = [None]
     cancelled = [False]
     
     def api_call():
         try:
-            result[0] = chat_call(client, messages, tools)
+            result[0] = chat_call(client, messages, tools, reasoning_effort=reasoning_effort)
         except KeyboardInterrupt:
             cancelled[0] = True
             exception[0] = KeyboardInterrupt()
@@ -390,13 +428,10 @@ def chat_call_with_loading(client, messages, tools=None, logger=None):
             exception[0] = e
     
     if logger:
-        logger.log("Loading started: Thinking")
+        logger.log(f"Loading started: {activity} (effort={reasoning_effort}, max_tokens={DEEPSEEK_REASONER_MAX_TOKENS}, deadline=none)")
     loading.start()
-    api_thread = threading.Thread(target=api_call, daemon=False)
-    api_thread.start()
-    
     try:
-        api_thread.join()
+        run_cancellable(api_call)
     except KeyboardInterrupt:
         cancelled[0] = True
         loading.stop()
@@ -404,18 +439,18 @@ def chat_call_with_loading(client, messages, tools=None, logger=None):
             logger.log_print("\nCancelled. Returning to prompt...")
         else:
             print("\nCancelled. Returning to prompt...")
-        return None, None
+        return None, None, None
     
     loading.stop()
     if logger:
-        logger.log("Loading finished: Thinking")
+        logger.log(f"Loading finished: {activity} ({time.monotonic() - started:.2f}s)")
     
     if cancelled[0]:
         if logger:
             logger.log_print("Cancelled. Returning to prompt...")
         else:
             print("Cancelled. Returning to prompt...")
-        return None, None
+        return None, None, None
     
     if exception[0]:
         if isinstance(exception[0], KeyboardInterrupt):
@@ -423,9 +458,14 @@ def chat_call_with_loading(client, messages, tools=None, logger=None):
                 logger.log_print("Cancelled. Returning to prompt...")
             else:
                 print("Cancelled. Returning to prompt...")
-            return None, None
+            return None, None, None
+        if logger and isinstance(exception[0], TruncatedResponseError):
+            logger.log_response('rejected truncated planning response',
+                                json.dumps(exception[0].diagnostics, ensure_ascii=False), truncate_at=0)
         raise exception[0]
     
+    if logger:
+        logger.log_print(f"{'Repair' if activity == 'Repairing draft' else 'Planning'} response ready ({time.monotonic() - started:.1f}s).")
     return result[0]
 
 
@@ -505,11 +545,8 @@ def json_call_with_loading(client, messages, max_tokens=None):
             exception[0] = e
     
     loading.start()
-    api_thread = threading.Thread(target=api_call, daemon=False)
-    api_thread.start()
-    
     try:
-        api_thread.join()
+        run_cancellable(api_call)
     except KeyboardInterrupt:
         cancelled[0] = True
         loading.stop()
@@ -572,11 +609,8 @@ def json_call_chat_max_with_loading(client, messages, loading_message="Generatin
         if logger:
             logger.log("Loading started: " + loading_message)
         loading.start()
-    api_thread = threading.Thread(target=api_call, daemon=False)
-    api_thread.start()
-    
     try:
-        api_thread.join()
+        run_cancellable(api_call)
     except KeyboardInterrupt:
         cancelled[0] = True
         if loading:
@@ -673,6 +707,7 @@ def json_call_large(client, messages, max_tokens=DEEPSEEK_REASONER_DEFAULT_TOKEN
             response_format={"type": "json_object"},
             max_tokens=max_tokens,
             stream=True,  # Enable streaming for better high-traffic handling
+            reasoning_effort="high",
             extra_body={"thinking": {"type": "enabled"}},
         )
         return _collect_streaming_response(stream, start_time)
@@ -697,6 +732,7 @@ def json_call_reasoner_only(client, messages, *, model=None):
             response_format={"type": "json_object"},
             max_tokens=DEEPSEEK_REASONER_MAX_TOKENS,  # Always use max (64K)
             stream=True,  # Enable streaming for better high-traffic handling
+            reasoning_effort="high",
             extra_body={"thinking": {"type": "enabled"}},
         )
         return _collect_streaming_response(stream, start_time)
@@ -764,11 +800,8 @@ def json_call_large_with_loading(client, messages, max_tokens=None):
             exception[0] = e
     
     loading.start()
-    api_thread = threading.Thread(target=api_call, daemon=False)
-    api_thread.start()
-    
     try:
-        api_thread.join()
+        run_cancellable(api_call)
     except KeyboardInterrupt:
         cancelled[0] = True
         loading.stop()
@@ -831,11 +864,8 @@ def json_call_reasoner_only_with_loading(client, messages, loading_message="Gene
             logger.log("Loading started: " + loading_message)
         loading.start()
     
-    api_thread = threading.Thread(target=api_call, daemon=False)
-    api_thread.start()
-    
     try:
-        api_thread.join()
+        run_cancellable(api_call)
     except KeyboardInterrupt:
         cancelled[0] = True
         if loading:

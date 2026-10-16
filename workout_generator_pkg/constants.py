@@ -3,6 +3,7 @@
 import json
 
 DEEPSEEK_MODEL = "deepseek-flash"
+DEEPSEEK_PLANNING_TIMEOUT_SECONDS = None
 
 PLACEHOLDER_OR_UUID_PATTERN = (
     r"^(?:"
@@ -668,14 +669,15 @@ BASE_SYSTEM_PROMPT = (
     "- Check per-session coverage as well as weekly totals. Report unmet targets honestly.\n"
     "- Estimate session duration from work intervals, prescribed rests, unilateral sides, warm-ups and equipment transitions. If volume and time targets conflict, resolve the tradeoff before confirmation.\n\n"
     "4. Preview formatting.\n"
-    "- For conversational preview workouts, use a clear plain-text table.\n"
+    "- When library-backed planning tools are available, submit the structured draft to audit_workout_plan; Python displays its passing preview. Do not write a separate workout preview.\n"
+    "- Without library-backed planning tools, use a clear workout table.\n"
     "- The recap/preview table must show rest between sets and rest between exercises as separate, clearly labeled fields or columns.\n"
     "- Do not collapse those two rest concepts into one generic 'Rest' column when both are relevant.\n"
     "- When showing or proposing rest values, always give one exact value. Never present rest as a range such as '2:00-2:30' or '120-150s'.\n"
     "- If the source conversation gives a rest range, choose one exact value within that range and use that exact value consistently.\n"
     "- Keep notes concise and practical.\n\n"
     "5. Generation confirmation gate.\n"
-    f"- Before final generation, show the workout preview/summary and tell the user to reply with exactly {EXACT_GENERATION_CONFIRMATION!r} to start generation.\n"
+    f"- Before final generation, ensure the current preview has been displayed (by Python for library-backed planning) and tell the user to reply with exactly {EXACT_GENERATION_CONFIRMATION!r} to start generation.\n"
     f"- Call generate_workout only when the user's most recent message is exactly {EXACT_GENERATION_CONFIRMATION!r}.\n"
     "- Treat every other wording as not confirmed yet, including 'yes', 'looks good', 'go ahead', 'generate it', or paraphrases.\n"
     "- Optionally pass custom_prompt with extra constraints."

@@ -31,9 +31,17 @@ def planning_case():
 
 
 def requirement_messages(stored):
-    return [{"role": "user", "content": "Plan 5-6 chest sets"},
+    # These unit fixtures represent an already source-reviewed requirement set.
+    from workout_generator_pkg.plan_review import REQUIREMENTS_REVIEW_VERSION, _requirements_context, _hash
+    stored = copy.deepcopy(stored)
+    from workout_generator_pkg.generation_audit import ASSUMPTIONS
+    stored['sourceReview'] = {'version': REQUIREMENTS_REVIEW_VERSION, 'passed': True, 'findings': [], 'auditPolicy': copy.deepcopy(ASSUMPTIONS),
+                            'inputHash': _hash(_requirements_context(stored))}
+    return [{key: m[key] for key in ('role', 'content')} for m in stored.get('sourceMessages', [])] + [
             {"role": "assistant", "tool_calls": [{"id": "requirements", "function": {"name": "set_workout_requirements"}}]},
-            {"role": "tool", "tool_call_id": "requirements", "content": json.dumps(stored)}]
+            {"role": "tool", "tool_call_id": "requirements", "content": json.dumps(stored)},
+            {"role": "assistant", "content": stored["requirementsPreview"], "canonicalRequirementsPreview": stored["requirementsId"]},
+            {"role": "user", "content": "CONFIRM REQUIREMENTS"}]
 
 
 def approved_messages(stored, result):
@@ -55,7 +63,42 @@ def test_requirements_are_separate_and_frozen_during_repair():
     messages.append({"role": "user", "content": "Remove weekly volume target"})
     updated = set_workout_requirements(changed, messages)
     assert updated["requirementsId"] != stored["requirementsId"]
-    assert "Weekly effective sets: unspecified" in updated["requirementsPreview"]
+    assert '| Chest | — | 5–6 |' in updated['requirementsPreview']
+
+
+@pytest.mark.parametrize('scope, claims, code', [
+    ('weekly', [], 'required_coverage_missing'),
+    ('weekly', ['unknown'], 'unknown_coverage_key'),
+    ('weekly', ['requested'], None),
+])
+def test_coverage_scope_and_unknown_assignments(scope, claims, code):
+    equipment, requirements, _, draft = planning_case()
+    requirements['requiredCoverage'] = [{'key': 'requested', 'description': 'Requested work', 'scope': scope}]
+    stored = set_workout_requirements(requirements, [{'role': 'user', 'content': 'Include requested work weekly.'}], equipment)
+    draft['requirementsId'] = stored['requirementsId']
+    draft['workouts'][0]['exercises'][0]['satisfiesCoverage'] = claims
+    result = audit_workout_plan(draft, equipment, requirement_messages(stored))
+    assert result['passed'] is (code is None)
+    if code:
+        assert result['errors'][0]['code'] == code
+    assert 'Requested work' in stored['requirementsPreview']
+    assert 'satisfiesCoverage' not in result['planIndex']['exercises'][0]
+
+
+def test_legacy_requirements_can_extract_coverage_without_unfreezing_targets():
+    from workout_generator_pkg.planning_tools import REQUIREMENTS_VERSION, requirements_approved
+    equipment, requirements, stored, _ = planning_case()
+    stored['requirementsVersion'] = REQUIREMENTS_VERSION - 1
+    messages = requirement_messages(stored)
+    messages.append({'role': 'user', 'content': '/continue'})
+    extracted = copy.deepcopy(requirements)
+    extracted['requiredCoverage'] = [{'key': 'requested', 'description': 'Original requested work', 'scope': 'eachSession'}]
+    result = set_workout_requirements(extracted, messages, equipment)
+    assert result['requirementsVersion'] == REQUIREMENTS_VERSION and result['requirementsId'] != stored['requirementsId']
+    assert not requirements_approved(messages, result)
+    extracted['auditTargets']['weeklyEffectiveSets']['chest']['minimum'] = 1
+    with pytest.raises(ValueError, match='frozen'):
+        set_workout_requirements(extracted, messages, equipment)
 
 
 def test_single_draft_audits_real_reps_rests_and_roles_then_renders():
@@ -117,7 +160,7 @@ def test_prescriptions_have_unique_occurrence_ids_and_superset_rounds():
     stored = set_workout_requirements(requirements, [])
     draft["requirementsId"] = stored["requirementsId"]
     first = draft["workouts"][0]["exercises"][0]
-    first.update(superset="A", restAfterSupersetExerciseSeconds=40)
+    first.update(superset="A", restBetweenSetsSeconds=0, restAfterSupersetExerciseSeconds=40)
     second = copy.deepcopy(first)
     second["restAfterSupersetExerciseSeconds"] = 75
     draft["workouts"][0]["exercises"].append(second)
@@ -130,12 +173,15 @@ def test_prescriptions_have_unique_occurrence_ids_and_superset_rounds():
     assert not failed["passed"] and "shortest member" in failed["audit"]["issues"][0]
 
 
-def test_pipeline_uses_approved_draft_without_summarizing_or_replanning(tmp_path):
+def test_pipeline_uses_approved_draft_without_summarizing_or_replanning(tmp_path, monkeypatch):
     from workout_generator_pkg.deps import resolve_pipeline_deps
     from workout_generator_pkg.generation_pipeline import execute_workout_generation
 
     equipment, _, stored, draft = planning_case()
     result = audit_workout_plan(draft, equipment, requirement_messages(stored))
+    from workout_generator_pkg.plan_review import review_draft
+    monkeypatch.setattr('workout_generator_pkg.plan_review.chat_call', lambda *a, **k: ('{"findings":[]}', None, None))
+    result = review_draft(None, result, requirement_messages(stored), equipment)
     messages = approved_messages(stored, result)
     emitted = []
 
@@ -189,19 +235,39 @@ def test_timed_draft_uses_real_interval_duration():
     assert "| 2 | 30s | 60s |" in result["preview"]
 
 
+def test_timed_search_and_audit_share_the_same_volume_policy():
+    from workout_generator_pkg.exercise_library_tools import execute_library_tool
+    equipment, requirements, _, draft = planning_case()
+    definition = equipment['exerciseDefinitions'][0]
+    definition.update(name='Wall Sit', exerciseType='COUNTDOWN', muscleGroups=['FRONT_QUADRICEPS'],
+                      secondaryMuscleGroups=[], exerciseCategory=None, bodyWeightPercentage=None)
+    requirements['auditTargets'].update(weeklyEffectiveSets={'quads': {'minimum': 2, 'maximum': 3}},
+        perSessionEffectiveSets={'quads': {'minimum': 2, 'maximum': 3}})
+    stored = set_workout_requirements(requirements, [])
+    draft['requirementsId'] = stored['requirementsId']
+    draft['workouts'][0]['exercises'][0].update(numWorkSets=2, minReps=None, maxReps=None,
+        durationSeconds=45, restBetweenSetsSeconds=30)
+    search = execute_library_tool('search_exercise_library', {'queries': ['Wall Sit']}, equipment)
+    entry = search['results'][0]['exercises'][0]
+    assert entry['creditsPerWorkingSet'] == {} and 'volumeAuditNote' in entry
+    result = audit_workout_plan(draft, equipment, requirement_messages(stored))
+    assert not result['passed'] and result['audit']['weeklyVolume']['quads']['effective'] == 0
+    assert result['audit']['workouts'][0]['timing']['workSeconds'] == 90
+
+
 def test_status_question_and_identical_submission_reuse_audited_draft(monkeypatch):
     from workout_generator_pkg import planning_tools
 
     equipment, requirements, stored, draft = planning_case()
     result = audit_workout_plan(draft, equipment, requirement_messages(stored))
     messages = approved_messages(stored, result)
+    unchanged = set_workout_requirements(requirements, messages)
+    assert unchanged["cached"] and unchanged["requirementsId"] == stored["requirementsId"]
     messages.append({"role": "user", "content": "What does RIR mean?"})
     assert confirmed_draft(messages, equipment)["draftId"] == result["draftId"]
     monkeypatch.setattr(planning_tools, "audit_workout_package", lambda *_: pytest.fail("Identical draft should not be re-audited"))
     cached = audit_workout_plan(draft, equipment, messages)
     assert cached["cached"] and cached["draftId"] == result["draftId"]
-    unchanged = set_workout_requirements(requirements, messages)
-    assert unchanged["cached"] and unchanged["requirementsId"] == stored["requirementsId"]
     messages.extend([
         {"role": "assistant", "tool_calls": [{"id": "cached", "function": {"name": "audit_workout_plan"}}]},
         {"role": "tool", "tool_call_id": "cached", "content": json.dumps(cached)},
@@ -220,7 +286,7 @@ def test_changed_requirements_invalidate_previous_successful_draft():
         {"role": "assistant", "tool_calls": [{"id": "new-goals", "function": {"name": "set_workout_requirements"}}]},
         {"role": "tool", "tool_call_id": "new-goals", "content": json.dumps(updated)},
     ])
-    with pytest.raises(ValueError, match="Requirements changed"):
+    with pytest.raises(ValueError, match="requirements need user approval"):
         confirmed_draft(messages, equipment)
 
 
@@ -256,3 +322,51 @@ def test_contract_and_execution_failures_use_same_error_envelope():
     execution = planning_tool_failure("audit_workout_plan", RuntimeError("unexpected failure"), arguments)
     assert execution["errors"][0]["code"] == "tool_execution_failed"
     assert "do not change the draft" in execution["errors"][0]["repair"]
+
+
+def test_conflicting_superset_rests_and_unilateral_contract_errors_are_returned_together():
+    equipment, _, stored, draft = planning_case()
+    equipment['exerciseDefinitions'][0]['name'] = 'Single-Arm Push-Up'
+    first = draft['workouts'][0]['exercises'][0]
+    first.update(superset='A', restBetweenSetsSeconds=40, restAfterSupersetExerciseSeconds=0, restAfterExerciseSeconds=60)
+    second = copy.deepcopy(first)
+    second.update(restBetweenSetsSeconds=0, restAfterSupersetExerciseSeconds=75, restAfterExerciseSeconds=0)
+    draft['workouts'][0]['exercises'].append(second)
+    with pytest.raises(ValueError) as error:
+        audit_workout_plan(draft, equipment, requirement_messages(stored))
+    feedback = planning_tool_failure('audit_workout_plan', error.value, draft)
+    codes = {e['code'] for e in feedback['errors']}
+    assert {'conflicting_superset_rest', 'superset_outer_rest', 'missing_unilateral_intra_set_rest'} <= codes
+    assert not feedback['passed'] and 'preview' not in feedback
+
+
+def test_saved_audit_from_previous_validator_cannot_be_confirmed():
+    equipment, _, stored, draft = planning_case()
+    result = audit_workout_plan(draft, equipment, requirement_messages(stored))
+    result.pop('auditVersion')
+    with pytest.raises(ValueError, match='validation changed'):
+        confirmed_draft(approved_messages(stored, result), equipment)
+
+
+@pytest.mark.parametrize('reps,expected_code', [(11, 'target_set_prescription_outside_rep_range'),
+    (16, 'target_set_prescription_outside_rep_range'), (0, 'invalid_target_set_prescription_reps'),
+    (True, 'invalid_target_set_prescription_reps')])
+def test_shared_contract_rejects_exact_targets_outside_rep_range(reps, expected_code):
+    from workout_generator_pkg.plan_contract import validate_plan_index_contract, ContractValidationError
+    equipment, _, stored, draft = planning_case()
+    plan = audit_workout_plan(draft, equipment, requirement_messages(stored))['planIndex']
+    exercise = plan['exercises'][0]
+    exercise.update(minReps=12, maxReps=15, targetSetPrescriptions=[
+        {'workSetIndex': i, 'reps': reps if i == 1 else 12, 'additionalWeight': 0} for i in range(5)])
+    with pytest.raises(ContractValidationError) as error:
+        validate_plan_index_contract(plan, equipment)
+    assert expected_code in {issue.code for issue in error.value.issues}
+
+
+def test_shared_contract_accepts_exact_rep_range_boundaries():
+    from workout_generator_pkg.plan_contract import validate_plan_index_contract
+    equipment, _, stored, draft = planning_case()
+    plan = audit_workout_plan(draft, equipment, requirement_messages(stored))['planIndex']
+    plan['exercises'][0].update(minReps=12, maxReps=15, targetSetPrescriptions=[
+        {'workSetIndex': i, 'reps': 12 if i % 2 else 15, 'additionalWeight': 0} for i in range(5)])
+    validate_plan_index_contract(plan, equipment)

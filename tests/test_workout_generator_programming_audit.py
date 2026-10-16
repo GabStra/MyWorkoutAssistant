@@ -50,6 +50,23 @@ def test_unilateral_timing_counts_both_sides_but_volume_once():
     assert workout["estimatedSeconds"] == 670
 
 
+@pytest.mark.parametrize('set_type', ['EnduranceSet', 'TimedDurationSet'])
+@pytest.mark.parametrize('superset', [False, True])
+def test_timed_unilateral_rest_can_make_a_session_exceed_its_limit(set_type, superset):
+    hold = {'id': 'hold', 'type': 'Exercise', 'name': 'Unilateral hold',
+            'exerciseType': 'COUNTUP' if set_type == 'EnduranceSet' else 'COUNTDOWN',
+            'intraSetRestInSeconds': 20,
+            'sets': [{'type': set_type, 'timeInMillis': 30000} for _ in range(2)]}
+    component = {'type': 'Superset', 'exercises': [hold, _exercise('partner', 10, 2)],
+                 'restSecondsByExercise': {'hold': 30, 'partner': 60}} if superset else hold
+    limit = 680 if superset else 430
+    report = audit.audit_workout_package(_package(component), {'maximumSessionSeconds': limit})
+    workout = report['workouts'][0]
+    assert workout['timing']['restSeconds'] == (160 if superset else 40)
+    assert workout['estimatedSeconds'] == (700 if superset else 460)
+    assert any(error['code'] == 'duration_exceeded' for error in report['errors'])
+
+
 def test_pending_calibration_slots_remain_working_sets_with_separate_calibration_time():
     exercise = _exercise("press", 10, 3)
     exercise["requiresLoadCalibration"] = True

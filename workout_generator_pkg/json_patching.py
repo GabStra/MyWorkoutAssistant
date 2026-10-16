@@ -8,136 +8,93 @@ from typing import Any, Dict, Iterable, List, Set, Tuple
 
 
 def apply_json_patch(json_obj: Dict[str, Any], patch: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Apply a JSON Patch (RFC 6902) to a JSON object."""
+    """Apply RFC 6902 operations atomically; invalid paths never create implicit containers."""
     result = copy.deepcopy(json_obj)
 
-    def get_path(obj: Any, path_str: str) -> Any:
-        if path_str == "":
-            return obj
-        parts = path_str.lstrip("/").split("/")
-        current = obj
+    def tokens(path):
+        if not isinstance(path, str) or (path and not path.startswith("/")) or re.search(r"~(?![01])", path):
+            raise ValueError(f"Invalid JSON Pointer: {path!r}")
+        return [p.replace("~1", "/").replace("~0", "~") for p in path[1:].split("/")] if path else []
+
+    def index(part, length, adding=False):
+        if adding and part == "-":
+            return length
+        if not re.fullmatch(r"0|[1-9][0-9]*", part):
+            raise ValueError(f"Invalid array index: {part!r}")
+        value = int(part)
+        if value >= length + int(adding):
+            raise ValueError(f"Array index out of range: {part}")
+        return value
+
+    def get(parts):
+        current = result
         for part in parts:
-            part = part.replace("~1", "/").replace("~0", "~")
-            if isinstance(current, dict):
-                current = current.get(part)
-            elif isinstance(current, list):
-                try:
-                    idx = int(part)
-                    current = current[idx] if 0 <= idx < len(current) else None
-                except ValueError:
-                    return None
+            if isinstance(current, list):
+                current = current[index(part, len(current))]
+            elif isinstance(current, dict) and part in current:
+                current = current[part]
             else:
-                return None
-            if current is None:
-                return None
+                raise ValueError(f"Patch path does not exist: {parts}")
         return current
 
-    def set_path(obj: Any, path_str: str, value: Any) -> Any:
-        if path_str == "":
-            return value
-        parts = path_str.lstrip("/").split("/")
-        current = obj
-        for i, part in enumerate(parts[:-1]):
-            part = part.replace("~1", "/").replace("~0", "~")
-            if isinstance(current, dict):
-                if part not in current:
-                    next_part = parts[i + 1].replace("~1", "/").replace("~0", "~")
-                    try:
-                        int(next_part)
-                        current[part] = []
-                    except ValueError:
-                        current[part] = {}
-                current = current[part]
-            elif isinstance(current, list):
-                try:
-                    idx = int(part)
-                    if idx >= len(current):
-                        current.extend([None] * (idx - len(current) + 1))
-                    current = current[idx]
-                except ValueError:
-                    return obj
+    def edit(parts, operation, value=None):
+        nonlocal result
+        if not parts:
+            result = None if operation == "remove" else copy.deepcopy(value)
+            return
+        parent, key = get(parts[:-1]), parts[-1]
+        if isinstance(parent, list):
+            position = index(key, len(parent), adding=operation == "add")
+            if operation == "add":
+                parent.insert(position, copy.deepcopy(value))
+            elif operation == "remove":
+                parent.pop(position)
             else:
-                return obj
+                parent[position] = copy.deepcopy(value)
+        elif isinstance(parent, dict):
+            if operation != "add" and key not in parent:
+                raise ValueError(f"Patch path does not exist: {parts}")
+            if operation == "remove":
+                del parent[key]
+            else:
+                parent[key] = copy.deepcopy(value)
+        else:
+            raise ValueError(f"Patch parent is not a container: {parts}")
 
-        final_part = parts[-1].replace("~1", "/").replace("~0", "~")
-        if isinstance(current, dict):
-            current[final_part] = value
-        elif isinstance(current, list):
-            try:
-                idx = int(final_part)
-                if idx >= len(current):
-                    current.extend([None] * (idx - len(current) + 1))
-                current[idx] = value
-            except ValueError:
-                return obj
-        return obj
+    def equal(left, right):
+        if isinstance(left, bool) or isinstance(right, bool):
+            return type(left) is type(right) and left == right
+        if isinstance(left, dict) and isinstance(right, dict):
+            return left.keys() == right.keys() and all(equal(left[k], right[k]) for k in left)
+        if isinstance(left, list) and isinstance(right, list):
+            return len(left) == len(right) and all(equal(a, b) for a, b in zip(left, right))
+        return left == right
 
+    if not isinstance(patch, list):
+        raise ValueError("Patch must be a list of RFC 6902 operations")
     for operation in patch:
-        op = operation.get("op")
-        path = operation.get("path", "")
-
-        if op == "add":
-            value = operation.get("value")
-            if path.endswith("/-") or (
-                isinstance(get_path(result, path.rsplit("/", 1)[0]), list) if "/" in path else isinstance(result, list)
-            ):
-                parent_path = path.rsplit("/", 1)[0] if "/" in path else ""
-                parent = get_path(result, parent_path) if parent_path else result
-                if isinstance(parent, list):
-                    parent.append(value)
-                else:
-                    set_path(result, path, value)
-            else:
-                set_path(result, path, value)
-
-        elif op == "remove":
-            if "/" in path:
-                parent_path = "/".join(path.split("/")[:-1])
-                key = path.split("/")[-1].replace("~1", "/").replace("~0", "~")
-                parent = get_path(result, parent_path)
-                if isinstance(parent, dict):
-                    parent.pop(key, None)
-                elif isinstance(parent, list):
-                    try:
-                        idx = int(key)
-                        if 0 <= idx < len(parent):
-                            parent.pop(idx)
-                    except ValueError:
-                        pass
-            else:
-                result.pop(path, None)
-
-        elif op == "replace":
-            value = operation.get("value")
-            set_path(result, path, value)
-
-        elif op == "move":
-            from_path = operation.get("from", "")
-            value = get_path(result, from_path)
-            if value is not None:
-                if "/" in from_path:
-                    parent_path = "/".join(from_path.split("/")[:-1])
-                    key = from_path.split("/")[-1].replace("~1", "/").replace("~0", "~")
-                    parent = get_path(result, parent_path)
-                    if isinstance(parent, dict):
-                        parent.pop(key, None)
-                    elif isinstance(parent, list):
-                        try:
-                            idx = int(key)
-                            if 0 <= idx < len(parent):
-                                parent.pop(idx)
-                        except ValueError:
-                            pass
-                else:
-                    result.pop(from_path, None)
-                set_path(result, path, value)
-
-        elif op == "copy":
-            from_path = operation.get("from", "")
-            value = get_path(result, from_path)
-            if value is not None:
-                set_path(result, path, copy.deepcopy(value))
-
+        if not isinstance(operation, dict) or operation.get("op") not in {"add", "remove", "replace", "move", "copy", "test"}:
+            raise ValueError(f"Invalid patch operation: {operation!r}")
+        op, path = operation["op"], tokens(operation.get("path"))
+        if op in {"add", "replace", "test"} and "value" not in operation:
+            raise ValueError(f"Patch {op} requires value")
+        if op == "test":
+            if not equal(get(path), operation["value"]):
+                raise ValueError(f"Patch test failed at {operation['path']}")
+        elif op in {"move", "copy"}:
+            source = tokens(operation.get("from"))
+            value = copy.deepcopy(get(source))
+            if op == "move":
+                if source == path:
+                    continue
+                if path[:len(source)] == source:
+                    raise ValueError("Cannot move a value into its own child")
+                edit(source, "remove")
+            edit(path, "add", value)
+        else:
+            if op == "replace":
+                get(path)
+            edit(path, op, operation.get("value"))
     return result
 
 

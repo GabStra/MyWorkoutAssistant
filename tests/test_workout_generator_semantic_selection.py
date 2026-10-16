@@ -1,5 +1,7 @@
 import copy
 import json
+import threading
+import time
 
 import pytest
 
@@ -19,19 +21,20 @@ def test_semantic_search_uses_bounded_batches_and_returns_real_entries(monkeypat
     definitions[0]["name"] = "Barbell Bench Press"
     batch_sizes = []
 
-    def rank(_client, messages):
+    def rank(_client, messages, **kwargs):
+        assert kwargs == {"reasoning_effort": "low", "max_tokens": 8192, "timeout": 90}
         request = json.loads(messages[-1]["content"])
         batch_sizes.append(len(request["catalog"]))
         matches = ([{"index": i, "score": 0.99 - i * 0.01} for i in range(10)]
                    if request["catalog"][0][0] == 0 else [])
-        return json.dumps({"matches": [matches]}), None
+        return json.dumps({"matches": [matches]}), None, None
 
     monkeypatch.setattr(library_tools, "chat_call", rank)
     result = library_tools.execute_library_tool(
         "search_exercise_library", {"queries": ["horizontal chest push"]},
         {"exerciseDefinitions": definitions}, client=object(),
     )
-    assert sorted(batch_sizes) == [4, 128, 128]
+    assert sorted(batch_sizes) == [4, 64, 64, 64, 64]
     assert len(result["results"][0]["exercises"]) == 6
     assert result["results"][0]["exercises"][0]["id"] == "LIBRARY_0"
     assert result["results"][0]["exercises"][0]["name"] == "Barbell Bench Press"
@@ -39,13 +42,64 @@ def test_semantic_search_uses_bounded_batches_and_returns_real_entries(monkeypat
     assert selection["selectedExerciseDefinitionIds"] == ["definition-0"]
 
 
+def test_semantic_search_jobs_bound_queries_catalog_and_parallelism(monkeypatch):
+    active = 0
+    max_active = 0
+    lock = threading.Lock()
+    job_sizes = []
+
+    def rank(_client, messages, **kwargs):
+        nonlocal active, max_active
+        request = json.loads(messages[-1]["content"])
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        job_sizes.append((len(request["queries"]), len(request["catalog"])))
+        time.sleep(0.01)
+        with lock:
+            active -= 1
+        return json.dumps({"matches": [[] for _ in request["queries"]]}), None, None
+
+    monkeypatch.setattr(library_tools, "chat_call", rank)
+    progress = []
+    result = library_tools._semantic_matches(
+        object(), [f"query {i}" for i in range(7)], [{"name": f"Exercise {i}"} for i in range(130)],
+        progress=lambda done, total: progress.append((done, total)),
+    )
+    assert result == [{} for _ in range(7)]
+    assert progress == [(done, 9) for done in range(10)]
+    assert len(job_sizes) == 9
+    assert all(query_count <= 3 and catalog_count <= 64 for query_count, catalog_count in job_sizes)
+    assert max_active <= 3
+
+
 def test_semantic_search_and_selection_reject_invented_candidates(monkeypatch):
     gear = {"exerciseDefinitions": [{"id": "definition-0", "name": "Bench Press"}]}
-    monkeypatch.setattr(library_tools, "chat_call", lambda *_: ('{"matches":[[{"index":99,"score":1}]]}', None))
-    with pytest.raises(ValueError, match="unknown index"):
-        library_tools.execute_library_tool("search_exercise_library", {"queries": ["press"]}, gear, client=object())
+    monkeypatch.setattr(library_tools, "chat_call", lambda *_, **kw: ('{"matches":[[{"index":99,"score":1}]]}', None, None))
+    failed_search = library_tools.execute_library_tool("search_exercise_library", {"queries": ["press"]}, gear, client=object())
+    assert "unknown index" in failed_search["results"][0]["error"]
+    assert failed_search["instruction"]
     with pytest.raises(ValueError, match="Unknown library definition IDs"):
         library_tools.execute_library_tool("select_exercises", {"definition_ids": ["invented"]}, gear)
+
+
+def test_truncated_semantic_search_preserves_exact_hits_and_reports_failed_queries(monkeypatch):
+    gear = {"exerciseDefinitions": [
+        {"id": "bench", "name": "Bench Press"},
+        {"id": "row", "name": "Cable Row"},
+    ]}
+
+    def truncated(*_args, **_kwargs):
+        raise ValueError("Response truncated at the 4096-token low-effort budget")
+
+    monkeypatch.setattr(library_tools, "chat_call", truncated)
+    result = library_tools.execute_library_tool(
+        "search_exercise_library", {"queries": ["bench press", "horizontal pull"]}, gear, client=object(),
+    )
+    assert result["results"][0]["exercises"][0]["id"] == "LIBRARY_0"
+    assert result["results"][1]["error"].startswith("Semantic search failed:")
+    assert "exercises" not in result["results"][1]
+    assert "do not repeat the same failed query unchanged" in result["instruction"]
 
 
 def test_selection_must_precede_confirmation_and_survives_saved_messages():

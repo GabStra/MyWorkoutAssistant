@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from .conversation_meta import get_active_conversation_id, save_conversation_meta
+from .json_io import write_json_atomic
 from .paths import (
     get_conversations_dir,
     legacy_conversation_history_path,
@@ -152,8 +153,7 @@ def _save_metadata(
     if not merged.get("updated_at"):
         merged["updated_at"] = _timestamp_now()
     _ensure_conversation_dir(conversation_id, script_dir)
-    with open(_metadata_path(conversation_id, script_dir), "w", encoding="utf-8") as f:
-        json.dump(merged, f, indent=2, ensure_ascii=False)
+    write_json_atomic(_metadata_path(conversation_id, script_dir), merged)
     return merged
 
 
@@ -214,8 +214,7 @@ def save_conversation(
     normalized = _normalize_messages(messages)
     now = _timestamp_now()
     _ensure_conversation_dir(conversation_id, script_dir)
-    with open(_messages_path(conversation_id, script_dir), "w", encoding="utf-8") as f:
-        json.dump(normalized, f, indent=2, ensure_ascii=False)
+    write_json_atomic(_messages_path(conversation_id, script_dir), normalized)
 
     saved_metadata = _load_metadata(conversation_id, script_dir)
     if not saved_metadata.get("created_at"):
