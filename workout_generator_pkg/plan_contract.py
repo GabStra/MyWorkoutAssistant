@@ -23,6 +23,7 @@ LIBRARY_DEFINITION_OWNED_FIELDS = (
     "bodyWeightPercentage",
     "muscleGroups",
     "secondaryMuscleGroups",
+    "trainingMuscles",
     "requiredAccessoryEquipmentIds",
     "exerciseCategory",
     "movementRef",

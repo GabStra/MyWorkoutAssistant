@@ -33,7 +33,7 @@ def generation(monkeypatch, equipment, definition):
         "id", "muscleGroups", "secondaryMuscleGroups",
     }}
     monkeypatch.setattr(g, "_call_inventory", lambda *a, **k: [candidate])
-    monkeypatch.setattr(g, "_emit_definition", lambda *a, **k: copy.deepcopy(definition))
+    monkeypatch.setattr(g, "_emit_definition_batch", lambda *a, **k: ([copy.deepcopy(definition)], []))
     monkeypatch.setattr(g, "review_library_muscle_semantics", lambda *a, **k: {
         "exerciseDefinitions": [copy.deepcopy(definition)],
     })
@@ -64,11 +64,12 @@ def test_training_role_convention_is_shared_and_review_preserves_identity(equipm
         assert "not from the current workout" in messages[0]["content"]
         return json.dumps({"reviews": [{"reference": "DEFINITION_1",
                                        "muscleGroups": ["FRONT_QUADRICEPS", "BACK_GLUTEAL"],
-                                       "secondaryMuscleGroups": []}]})
+                                       "secondaryMuscleGroups": [], 'trainingMuscles': {'primary': ['quads', 'glutes'], 'secondary': []}}]})
 
     reviewed = g._review_muscle_semantics_batch(None, [definition], equipment, reviewer)[0]
     assert definition == original
-    assert {k: v for k, v in reviewed.items() if k not in {"muscleGroups", "secondaryMuscleGroups"}} == {
+    assert reviewed['trainingMuscles'] == {'primary': ['quads', 'glutes'], 'secondary': []}
+    assert {k: v for k, v in reviewed.items() if k not in {"muscleGroups", "secondaryMuscleGroups", 'trainingMuscles'}} == {
         k: v for k, v in original.items() if k not in {"muscleGroups", "secondaryMuscleGroups"}
     }
 
@@ -80,7 +81,7 @@ def test_muscle_arrays_are_not_arbitrarily_capped(equipment, definition):
     def reviewer(_client, messages, *_args, **_kwargs):
         assert "at most three" not in messages[0]["content"]
         return json.dumps({"reviews": [{"reference": "DEFINITION_1", "muscleGroups": primary,
-                                       "secondaryMuscleGroups": secondary}]})
+                                       "secondaryMuscleGroups": secondary, 'trainingMuscles': {'primary': ['chest', 'quads', 'glutes', 'upperBack'], 'secondary': ['biceps', 'triceps', 'anteriorDelts', 'hamstrings']}}]})
 
     reviewed = g._review_muscle_semantics_batch(None, [definition], equipment, reviewer)[0]
     assert reviewed["muscleGroups"] == primary
@@ -211,7 +212,7 @@ def test_generation_runs_real_review_pipeline_with_fake_model_responses(equipmen
         if "anatomical map regions" in messages[0]["content"]:
             stages.append("muscles")
             review = {"reference": "DEFINITION_1", "muscleGroups": ["FRONT_QUADRICEPS"],
-                      "secondaryMuscleGroups": []}
+                      "secondaryMuscleGroups": [], 'trainingMuscles': {'primary': ['quads'], 'secondary': ['glutes']}}
         else:
             stages.append("feasibility")
             review = {"reference": "DEFINITION_1", "decision": "KEEP",

@@ -97,6 +97,7 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                 if (src.secondaryMuscleGroups != null && src.secondaryMuscleGroups.isNotEmpty()) {
                     jsonObject.add("secondaryMuscleGroups", context.serialize(src.secondaryMuscleGroups))
                 }
+                src.trainingMuscles?.let { jsonObject.add("trainingMuscles", context.serialize(it)) }
                 if (src.requiredAccessoryEquipmentIds != null && src.requiredAccessoryEquipmentIds.isNotEmpty()) {
                     jsonObject.add("requiredAccessoryEquipmentIds", context.serialize(src.requiredAccessoryEquipmentIds))
                 }
@@ -415,6 +416,11 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                         context.deserialize<DurationProgressionConfig>(
                             it, DurationProgressionConfig::class.java
                         ).takeIf { config -> config.isValid() }
+                    },
+                    trainingMuscles = jsonObject.get("trainingMuscles")?.takeUnless { it.isJsonNull }?.let {
+                        context.deserialize<Map<String, List<String>>>(
+                            it, object : TypeToken<Map<String, List<String>>>() {}.type
+                        )
                     },
                 )
             }

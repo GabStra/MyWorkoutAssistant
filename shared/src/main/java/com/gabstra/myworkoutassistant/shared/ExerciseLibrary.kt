@@ -89,7 +89,7 @@ fun WorkoutStore.updateExerciseDefinition(updated: ExerciseDefinition): WorkoutS
     )) { "Exercise type and equipment cannot change while a definition is referenced" }
 
     val familyId = current.effectiveFamilyId()
-    val normalizedUpdated = updated.copy(exerciseFamilyId = familyId)
+    val normalizedUpdated = updated.copy(exerciseFamilyId = familyId).invalidateInheritedTrainingMuscles(current)
     val updatedDefinitions = exerciseDefinitions.map { definition ->
         when {
             definition.id == updated.id -> normalizedUpdated
@@ -97,7 +97,7 @@ fun WorkoutStore.updateExerciseDefinition(updated: ExerciseDefinition): WorkoutS
                 exerciseFamilyId = familyId,
                 name = normalizedUpdated.name,
                 movementRef = normalizedUpdated.movementRef,
-            )
+            ).invalidateInheritedTrainingMuscles(definition)
             else -> definition
         }
     }
@@ -112,6 +112,7 @@ fun WorkoutStore.updateExerciseDefinition(updated: ExerciseDefinition): WorkoutS
             bodyWeightPercentage = definition.bodyWeightPercentage,
             muscleGroups = definition.muscleGroups,
             secondaryMuscleGroups = definition.secondaryMuscleGroups,
+            trainingMuscles = definition.trainingMuscles,
             requiredAccessoryEquipmentIds = definition.requiredAccessoryEquipmentIds,
             exerciseCategory = definition.exerciseCategory, movementRef = definition.movementRef,
         )
@@ -180,12 +181,13 @@ fun WorkoutStore.resolveExerciseVariation(
         bodyWeightPercentage = candidate.bodyWeightPercentage,
         muscleGroups = candidate.muscleGroups,
         secondaryMuscleGroups = candidate.secondaryMuscleGroups,
+        trainingMuscles = candidate.trainingMuscles,
         requiredAccessoryEquipmentIds = candidate.requiredAccessoryEquipmentIds,
         exerciseCategory = candidate.exerciseCategory,
         movementRef = exerciseDefinitions
             .filter { it.effectiveFamilyId() == familyId }
             .firstNotNullOfOrNull { it.movementRef },
-    )
+    ).invalidateInheritedTrainingMuscles(sourceDefinition)
     val matchingDefinition = exerciseDefinitions.firstOrNull { definition ->
         definition.effectiveFamilyId() == familyId &&
             definition.variationFingerprint() == candidateDefinition.variationFingerprint()
@@ -224,6 +226,7 @@ fun Exercise.materializeDefinition(definition: ExerciseDefinition): Exercise {
         bodyWeightPercentage = definition.bodyWeightPercentage,
         muscleGroups = definition.muscleGroups,
         secondaryMuscleGroups = definition.secondaryMuscleGroups,
+        trainingMuscles = definition.trainingMuscles,
         requiredAccessoryEquipmentIds = definition.requiredAccessoryEquipmentIds,
         exerciseCategory = definition.exerciseCategory,
         movementRef = definition.movementRef,
@@ -281,6 +284,7 @@ fun WorkoutStore.migrateExerciseLibrary(): WorkoutStore {
             bodyWeightPercentage = definition.bodyWeightPercentage,
             muscleGroups = definition.muscleGroups,
             secondaryMuscleGroups = definition.secondaryMuscleGroups,
+            trainingMuscles = definition.trainingMuscles,
             requiredAccessoryEquipmentIds = definition.requiredAccessoryEquipmentIds,
             exerciseCategory = definition.exerciseCategory,
             movementRef = definition.movementRef,
@@ -315,6 +319,11 @@ fun WorkoutStore.allExercisePrescriptions(): List<Exercise> = buildList {
     }
 }
 
+private fun ExerciseDefinition.invalidateInheritedTrainingMuscles(previous: ExerciseDefinition): ExerciseDefinition =
+    if (trainingMuscles == previous.trainingMuscles &&
+        copy(id = previous.id, exerciseFamilyId = previous.exerciseFamilyId) != previous
+    ) copy(trainingMuscles = null) else this
+
 private fun Exercise.toDefinition(exerciseFamilyId: UUID) = ExerciseDefinition(
     id = UUID(0L, 0L),
     exerciseFamilyId = exerciseFamilyId,
@@ -324,6 +333,7 @@ private fun Exercise.toDefinition(exerciseFamilyId: UUID) = ExerciseDefinition(
     bodyWeightPercentage = bodyWeightPercentage,
     muscleGroups = muscleGroups,
     secondaryMuscleGroups = secondaryMuscleGroups,
+    trainingMuscles = trainingMuscles,
     requiredAccessoryEquipmentIds = requiredAccessoryEquipmentIds,
     exerciseCategory = exerciseCategory,
     movementRef = movementRef,

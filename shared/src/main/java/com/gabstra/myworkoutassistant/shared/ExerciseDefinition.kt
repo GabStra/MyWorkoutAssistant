@@ -16,4 +16,5 @@ data class ExerciseDefinition(
     val requiredAccessoryEquipmentIds: List<UUID>? = null,
     val exerciseCategory: ExerciseCategory? = null,
     val movementRef: ExerciseMovementRef? = null,
+    val trainingMuscles: Map<String, List<String>>? = null,
 )

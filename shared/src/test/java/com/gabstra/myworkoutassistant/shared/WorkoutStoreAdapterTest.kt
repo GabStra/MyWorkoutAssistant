@@ -16,6 +16,71 @@ import java.util.UUID
 class WorkoutStoreAdapterTest {
 
     @Test
+    fun trainingMuscles_surviveSerializationAndDefinitionUpdates() {
+        val roles = mapOf("primary" to listOf("lats"), "secondary" to listOf("biceps", "upperBack"))
+        val definition = ExerciseDefinition(
+            id = UUID.randomUUID(), name = "Pull-up", exerciseType = ExerciseType.BODY_WEIGHT,
+            trainingMuscles = roles,
+        )
+        val prescription = legacyExercise(UUID.randomUUID(), UUID.randomUUID()).copy(
+            name = definition.name, exerciseDefinitionId = definition.id, trainingMuscles = roles,
+        )
+        val restored = fromJSONToWorkoutStore(fromWorkoutStoreToJSON(storeWith(definition, prescription)))
+        assertEquals(roles, restored.exerciseDefinitions.single().trainingMuscles)
+        assertEquals(roles, restored.allExercisePrescriptions().single().trainingMuscles)
+        val changed = mapOf("primary" to listOf("upperBack"), "secondary" to listOf("lats", "biceps"))
+        val updated = restored.updateExerciseDefinition(definition.copy(trainingMuscles = changed))
+        assertEquals(definition.id, updated.exerciseDefinitions.single().id)
+        assertEquals(prescription.id, updated.allExercisePrescriptions().single().id)
+        assertEquals(changed, updated.allExercisePrescriptions().single().trainingMuscles)
+    }
+
+    @Test
+    fun trainingMuscles_areInvalidatedWhenDefinitionMechanicsChange() {
+        val roles = mapOf("primary" to listOf("chest"), "secondary" to listOf("triceps"))
+        val definition = ExerciseDefinition(
+            id = UUID.randomUUID(), name = "Press", exerciseType = ExerciseType.WEIGHT,
+            muscleGroups = setOf(MuscleGroup.FRONT_CHEST), trainingMuscles = roles,
+        )
+        val prescription = legacyExercise(UUID.randomUUID(), UUID.randomUUID()).copy(
+            exerciseDefinitionId = definition.id, trainingMuscles = roles,
+        )
+        val store = storeWith(definition, prescription)
+        val changed = definition.copy(name = "Row", muscleGroups = setOf(MuscleGroup.BACK_UPPER_BACK))
+        val updated = store.updateExerciseDefinition(changed)
+        assertEquals(definition.id, updated.exerciseDefinitions.single().id)
+        assertEquals(prescription.id, updated.allExercisePrescriptions().single().id)
+        assertNull(updated.exerciseDefinitions.single().trainingMuscles)
+        assertNull(updated.allExercisePrescriptions().single().trainingMuscles)
+        assertEquals(prescription.sets, updated.allExercisePrescriptions().single().sets)
+        val reviewedRoles = mapOf("primary" to listOf("upperBack"), "secondary" to listOf("biceps"))
+        assertEquals(reviewedRoles, store.updateExerciseDefinition(changed.copy(trainingMuscles = reviewedRoles))
+            .exerciseDefinitions.single().trainingMuscles)
+    }
+
+    @Test
+    fun trainingMuscles_areInvalidatedForInheritedVariationAndFamilyEdits() {
+        val family = UUID.randomUUID()
+        val roles = mapOf("primary" to listOf("chest"), "secondary" to emptyList<String>())
+        val definition = ExerciseDefinition(
+            id = UUID.randomUUID(), exerciseFamilyId = family, name = "Press", exerciseType = ExerciseType.WEIGHT,
+            muscleGroups = setOf(MuscleGroup.FRONT_CHEST), trainingMuscles = roles,
+        )
+        val sibling = definition.copy(id = UUID.randomUUID(), exerciseType = ExerciseType.BODY_WEIGHT)
+        val prescription = legacyExercise(UUID.randomUUID(), UUID.randomUUID()).copy(
+            exerciseDefinitionId = definition.id, muscleGroups = definition.muscleGroups, trainingMuscles = roles,
+            equipmentId = definition.equipmentId,
+        )
+        val store = storeWith(definition, prescription).copy(exerciseDefinitions = listOf(definition, sibling))
+        val variation = store.resolveExerciseVariation(definition.id,
+            prescription.copy(muscleGroups = setOf(MuscleGroup.BACK_UPPER_BACK)))
+        assertNull(variation.definition.trainingMuscles)
+        assertEquals(roles, store.resolveExerciseVariation(definition.id, prescription).definition.trainingMuscles)
+        val renamed = store.updateExerciseDefinition(definition.copy(name = "Row"))
+        assertTrue(renamed.exerciseDefinitions.all { it.trainingMuscles == null })
+    }
+
+    @Test
     fun linkedExerciseNameOverride_roundTripsAndSurvivesDefinitionRename() {
         val definition = ExerciseDefinition(
             id = UUID.randomUUID(),

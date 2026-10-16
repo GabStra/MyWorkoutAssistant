@@ -24,7 +24,7 @@ from workout_generator_pkg.api_client import (
 )
 from workout_generator_pkg.cli import load_equipment_from_file, test_connection
 from workout_generator_pkg.constants import DEEPSEEK_MODEL
-from workout_generator_pkg.muscle_roles import MUSCLE_ROLE_GUIDANCE
+from workout_generator_pkg.muscle_roles import MUSCLE_ROLE_GUIDANCE, TRAINING_MUSCLES, validate_training_muscles
 from workout_generator_pkg.domain_ops import (
     build_exercise_definition_id,
     fix_muscle_groups,
@@ -3583,12 +3583,9 @@ def generate_exercise_library(
         for definition in definitions:
             muscle_reviewed = muscle_definitions_by_id.get(definition["id"])
             if muscle_reviewed is not None:
-                definition["muscleGroups"] = copy.deepcopy(
-                    muscle_reviewed["muscleGroups"]
-                )
-                definition["secondaryMuscleGroups"] = copy.deepcopy(
-                    muscle_reviewed["secondaryMuscleGroups"]
-                )
+                for field in ('muscleGroups', 'secondaryMuscleGroups', 'trainingMuscles'):
+                    if field in muscle_reviewed:
+                        definition[field] = copy.deepcopy(muscle_reviewed[field])
                 # Identity is content-derived; the merged muscles changed the
                 # content, so the ID must be re-derived or it goes stale.
                 definition["id"] = build_exercise_definition_id(definition)
@@ -4463,7 +4460,12 @@ def _review_muscle_semantics_batch(
             "content": (
                 "Independently assign anatomical map regions for exercise definitions. Return JSON "
                 "only as {\"reviews\":[...]}, exactly one review for every supplied reference. Each "
-                "review contains exactly reference, muscleGroups, and secondaryMuscleGroups. Do not "
+                "review contains exactly reference, muscleGroups, secondaryMuscleGroups, and trainingMuscles. "
+                "trainingMuscles is {primary:[canonical identities],secondary:[canonical identities]} from allowedTrainingMuscles. "
+                "Assign these training identities from movement mechanics independently of the coarse body-map tags. "
+                "Distinguish lat vs upper-back work and anterior, lateral and rear deltoid loading when justified. "
+                "Do not copy broad back/shoulder labels into trainingMuscles or infer all regions from a coarse tag. "
+                "Empty training arrays are allowed when no region is materially trained under the counting convention. Do not "
                 "rubber-stamp or merely truncate the current arrays. muscleGroups contains only the "
                 "directly trained targets of the defining loaded action. secondaryMuscleGroups "
                 "contains all regions materially trained as assistants. Exclude regions "
@@ -4475,7 +4477,7 @@ def _review_muscle_semantics_batch(
         {
             "role": "user",
             "content": json.dumps(
-                {"allowedMuscleGroups": sorted(MUSCLE_GROUPS), "definitions": review_input},
+                {"allowedMuscleGroups": sorted(MUSCLE_GROUPS), "allowedTrainingMuscles": TRAINING_MUSCLES, "definitions": review_input},
                 ensure_ascii=False,
             ),
         },
@@ -4496,7 +4498,7 @@ def _review_muscle_semantics_batch(
             reviewed: list[dict[str, Any]] = []
             for reference, definition in references.items():
                 review = by_reference[reference]
-                if set(review) != {"reference", "muscleGroups", "secondaryMuscleGroups"}:
+                if set(review) != {"reference", "muscleGroups", "secondaryMuscleGroups", "trainingMuscles"}:
                     raise ValueError(f"{reference} review has invalid fields")
                 primary = review["muscleGroups"]
                 secondary = review["secondaryMuscleGroups"]
@@ -4517,6 +4519,10 @@ def _review_muscle_semantics_batch(
                 updated = copy.deepcopy(definition)
                 updated["muscleGroups"] = primary
                 updated["secondaryMuscleGroups"] = secondary
+                updated['trainingMuscles'] = review['trainingMuscles']
+                if not isinstance(updated['trainingMuscles'], dict):
+                    raise ValueError(f'{reference} needs explicit training-muscle roles.')
+                validate_training_muscles(updated)
                 reviewed.append(updated)
             return reviewed
         except (KeyError, TypeError, ValueError) as error:

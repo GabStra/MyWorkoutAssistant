@@ -54,6 +54,7 @@ data class Exercise (
     /** Present for a running step; prescription belongs to this workout occurrence. */
     val runningPrescription: RunningPrescription? = null,
     val durationProgression: DurationProgressionConfig? = null,
+    val trainingMuscles: Map<String, List<String>>? = null,
     ): WorkoutComponent(id,enabled) {
     
     // Custom hashCode and equals to safely handle null requiredAccessoryEquipmentIds
@@ -81,6 +82,7 @@ data class Exercise (
         result = 31 * result + (loadJumpOvercapUntil?.hashCode() ?: 0)
         result = 31 * result + (muscleGroups?.hashCode() ?: 0)
         result = 31 * result + (secondaryMuscleGroups?.hashCode() ?: 0)
+        result = 31 * result + (trainingMuscles?.hashCode() ?: 0)
         result = 31 * result + (requiredAccessoryEquipmentIds?.hashCode() ?: 0)
         result = 31 * result + requiresLoadCalibration.hashCode()
         result = 31 * result + (exerciseCategory?.hashCode() ?: 0)
@@ -121,6 +123,7 @@ data class Exercise (
         if (loadJumpOvercapUntil != other.loadJumpOvercapUntil) return false
         if (muscleGroups != other.muscleGroups) return false
         if (secondaryMuscleGroups != other.secondaryMuscleGroups) return false
+        if (trainingMuscles != other.trainingMuscles) return false
         if ((requiredAccessoryEquipmentIds ?: emptyList<UUID>()) != (other.requiredAccessoryEquipmentIds ?: emptyList<UUID>())) return false
         if (requiresLoadCalibration != other.requiresLoadCalibration) return false
         if (exerciseCategory != other.exerciseCategory) return false

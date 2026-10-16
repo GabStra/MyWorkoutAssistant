@@ -773,6 +773,12 @@ GENERATE_WORKOUT_TOOL = {
         }
     }
 }
+JSON_SCHEMA['$defs']['Exercise']['properties']['trainingMuscles'] = {
+    'type': ['object', 'null'], 'properties': {
+        key: {'type': 'array', 'uniqueItems': True, 'items': {'type': 'string'}} for key in ('primary', 'secondary')
+    }, 'required': ['primary', 'secondary'], 'additionalProperties': False,
+}
+
 MUSCLE_GROUP_FIXES = {
     "BACK_QUADRICEPS": "FRONT_QUADRICEPS",
     "BACK_LATISSIMUS": "BACK_UPPER_BACK",
