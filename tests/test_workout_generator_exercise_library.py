@@ -59,10 +59,7 @@ def test_initial_messages_preserve_compact_library_authority_context():
     assert len(messages) == 2
     assert "strict exercise library with 1 definitions" in messages[1]["content"]
     assert "sole allowed movement source" in messages[1]["content"]
-    assert "search_exercise_library" in messages[1]["content"]
-    assert "set_workout_requirements" in messages[1]["content"]
-    assert "Clarify material ambiguity with the user before recording requirements" in messages[1]["content"]
-    assert "audit_workout_plan" in messages[1]["content"]
+    assert "metadata is available through the planning tools" in messages[1]["content"]
     assert "definition-1" not in messages[1]["content"]
     assert "not included" not in messages[1]["content"]
 
