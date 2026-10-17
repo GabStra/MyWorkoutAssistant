@@ -2,6 +2,7 @@
 
 import threading
 import time
+from contextvars import copy_context
 
 
 _local = threading.local()
@@ -32,7 +33,8 @@ def run_cancellable(function, *args, cancel_event=None, deadline_seconds=None, *
     if event.is_set():
         raise KeyboardInterrupt
     # An abandoned socket request must not keep the CLI alive at exit.
-    threading.Thread(target=run, daemon=True).start()
+    context = copy_context()
+    threading.Thread(target=context.run, args=(run,), daemon=True).start()
     try:
         while not finished.wait(0.1):
             if deadline_seconds is not None and time.monotonic() - started >= deadline_seconds:

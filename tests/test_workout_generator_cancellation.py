@@ -40,7 +40,7 @@ def test_cancelled_network_wait_returns_before_request_finishes():
 
 
 @pytest.mark.parametrize("operation", ["emission", "search"])
-def test_parallel_interrupt_does_not_wait_for_active_requests(monkeypatch, operation):
+def test_parallel_interrupt_does_not_wait_for_active_requests(monkeypatch, operation, tmp_path):
     started, release = threading.Event(), threading.Event()
     requests = []
 
@@ -57,7 +57,9 @@ def test_parallel_interrupt_does_not_wait_for_active_requests(monkeypatch, opera
     module = cli if operation == "emission" else exercise_library_tools
     monkeypatch.setattr(module, "wait", interrupt)
     if operation == "search":
+        monkeypatch.setattr(exercise_library_tools, "CACHE_DIRECTORY", tmp_path)
         monkeypatch.setattr(module, "chat_call", blocked)
+        monkeypatch.setattr(module, "_local_semantic_rank", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("local model unavailable")))
     before = time.monotonic()
     try:
         with pytest.raises(KeyboardInterrupt):
