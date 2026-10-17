@@ -1,8 +1,10 @@
 import copy
 import json
+import threading
 import pytest
 
 from workout_generator_pkg.training_history import TrainingHistory
+from workout_generator_pkg.cancellation import run_cancellable
 from workout_generator_pkg.interactive_shell import handle_function_call, _messages_for_api
 from test_workout_generator_planning_tools import planning_case, requirement_messages
 
@@ -24,6 +26,82 @@ def history_case():
                          'setData': {'type': 'BodyWeightSetData', 'actualReps': 12, 'additionalWeight': 0,
                                      'relativeBodyWeightInKg': 49}}]}
     return equipment, stored, draft, backup
+
+
+def test_cancelled_matching_does_not_block_new_turns_or_publish_late_cache_results(monkeypatch):
+    equipment, _, _, backup = history_case()
+    equipment['exerciseDefinitions'].append({**equipment['exerciseDefinitions'][0], 'id': 'new', 'name': 'Related variant'})
+    history = TrainingHistory(backup)
+    entered, release, cancelled, returned, turn_ready = (threading.Event() for _ in range(5))
+    calls = []
+    def slow_rank(*args):
+        calls.append(1)
+        entered.set()
+        assert release.wait(3)
+        return [{0: .9}]
+    monkeypatch.setattr('workout_generator_pkg.exercise_library_tools._semantic_matches', slow_rank)
+    arguments = {'definition_ids': ['LIBRARY_0']}
+    failures = []
+    def lookup():
+        try:
+            run_cancellable(history.evidence, arguments, equipment, object(), cancel_event=cancelled)
+        except KeyboardInterrupt:
+            returned.set()
+        except Exception as error:
+            failures.append(error)
+    worker = threading.Thread(target=lookup, daemon=True)
+    worker.start()
+    try:
+        assert entered.wait(1)
+        cancelled.set()
+        assert returned.wait(1)
+        next_turn = threading.Thread(target=lambda: (history.begin_turn(), turn_ready.set()), daemon=True)
+        next_turn.start()
+        assert turn_ready.wait(1), 'A cancelled matcher must not hold the cache lock needed by the next turn.'
+    finally:
+        release.set()
+        worker.join(1)
+    assert history._related_matching_lock.acquire(timeout=1)
+    history._related_matching_lock.release()
+    assert not failures and not history._related_cache
+    # A fresh request can retry; subsequent identical requests reuse the completed match.
+    first = history.evidence(arguments, equipment, client=object())
+    assert first['exercises'][0]['relatedMovementHistory']
+    assert history.evidence(arguments, equipment, client=object()) == first
+    assert len(calls) == 2
+
+
+def test_waiting_for_a_running_match_is_cancellable_and_does_not_schedule_more_work(monkeypatch):
+    equipment, _, _, backup = history_case()
+    history = TrainingHistory(backup)
+    started, cancelled, finished = (threading.Event() for _ in range(3))
+    def exact(*args):
+        started.set()
+        return {'exercises': []}
+    calls = []
+    monkeypatch.setattr(history, '_exact_evidence', exact)
+    monkeypatch.setattr(history, '_add_related_history', lambda *a: calls.append(1))
+    failures = []
+    def lookup():
+        try:
+            run_cancellable(history.evidence, {}, equipment, object(), cancel_event=cancelled)
+        except KeyboardInterrupt:
+            finished.set()
+        except Exception as error:
+            failures.append(error)
+    history._related_matching_lock.acquire()
+    worker = threading.Thread(target=lookup, daemon=True)
+    worker.start()
+    try:
+        assert started.wait(1)
+        cancelled.set()
+        assert finished.wait(1)
+    finally:
+        history._related_matching_lock.release()
+        worker.join(1)
+    assert history._related_matching_lock.acquire(timeout=1)
+    history._related_matching_lock.release()
+    assert not failures and not calls
 
 
 def test_actual_records_exclude_warmups_skips_and_calibration():
@@ -143,6 +221,73 @@ def test_related_history_is_separate_cached_and_required_for_unrecorded_variant(
     assert history.load_suitability_errors(plan, messages, equipment)[0]['concerns'][0]['code'] == 'related_history_only'
     plan['exercises'][0]['requiresEffortCalibration'] = True
     assert history.load_suitability_errors(plan, messages, equipment) == []
+
+
+def test_failed_history_matching_retries_on_a_new_turn_and_keeps_successful_cache(monkeypatch):
+    from workout_generator_pkg.exercise_library_tools import _SemanticMatchResults
+    equipment, _, _, backup = history_case()
+    equipment['exerciseDefinitions'].append({**equipment['exerciseDefinitions'][0],
+        'id': 'zzz-new', 'name': 'Unrecorded variant'})
+    calls = []
+
+    def rank(*args, **kwargs):
+        calls.append(1)
+        result = _SemanticMatchResults([{0: 0.2 if len(calls) == 1 else 0.95}])
+        if len(calls) == 1:
+            result.rerank_failures = {0: 'temporary outage'}
+        return result
+
+    monkeypatch.setattr('workout_generator_pkg.exercise_library_tools._semantic_matches', rank)
+    history = TrainingHistory(backup)
+    arguments = {'definition_ids': ['LIBRARY_1']}
+    first = history.evidence(arguments, equipment, client=object())
+    assert first['exercises'][0]['relatedHistoryStatus'] == 'checked_local_unconfirmed'
+    history.evidence(arguments, equipment, client=object())
+    assert len(calls) == 1
+    history.begin_turn()
+    recovered = history.evidence(arguments, equipment, client=object())
+    assert recovered['exercises'][0]['relatedHistoryStatus'] == 'checked'
+    assert recovered['exercises'][0]['relatedMovementHistory']
+    history.begin_turn()
+    history.evidence(arguments, equipment, client=object())
+    assert len(calls) == 2
+
+
+def test_failed_weak_history_rerank_keeps_load_uncertainty_for_unrecorded_variant(monkeypatch):
+    equipment, _, _, backup = history_case()
+    historical = backup['WorkoutStore']['exerciseDefinitions'][0]
+    historical.update(name='Old Press Variant', exerciseType='WEIGHT', equipmentId='bar', bodyWeightPercentage=None)
+    equipment['exerciseDefinitions'] = [{**copy.deepcopy(historical), 'id': 'current', 'name': 'New Press Variant', 'equipmentId': None}]
+
+    class UncertainMatches(list):
+        rerank_failures = {0: 'rerank service unavailable'}
+
+    monkeypatch.setattr('workout_generator_pkg.exercise_library_tools._semantic_matches',
+                        lambda *_args, **_kwargs: UncertainMatches([{0: 0.2}]))
+    history = TrainingHistory(backup)
+    result = history.evidence({'definition_ids': ['LIBRARY_0']}, equipment, client=object())
+    item = result['exercises'][0]
+
+    assert item['relatedHistoryStatus'] == 'checked_local_unconfirmed'
+    assert item['relatedMovementHistory'] == []
+    assert 'adjudication failed' in item['relatedHistoryWarning']
+    plan = {'exercises': [{'id': 'EXERCISE_0', 'libraryDefinitionId': 'current', 'name': 'New Press Variant'}]}
+    messages = [{'role': 'assistant', 'tool_calls': [{'id': 'evidence', 'function': {'name': 'get_training_evidence'}}]},
+                {'role': 'tool', 'tool_call_id': 'evidence', 'content': json.dumps(result)}]
+    errors = history.load_suitability_errors(plan, messages, equipment)
+    assert errors[0]['concerns'][0]['code'] == 'related_history_unconfirmed'
+    plan['exercises'][0]['requiresEffortCalibration'] = True
+    assert history.load_suitability_errors(plan, messages, equipment) == []
+    assert history.unreviewed(plan, messages, equipment) == []
+
+
+def test_uncertain_related_lookup_does_not_flag_exact_own_history():
+    assert TrainingHistory._load_concerns({
+        'totalSessions': 2,
+        'loadHeadroom': {'maximumSelectableLoadKg': 100, 'latestSessionHeaviestLoadKg': 80},
+        'relatedMovementHistory': [],
+        'relatedHistoryStatus': 'checked_local_unconfirmed',
+    }) == []
 
 
 def test_history_only_movement_survives_compaction_for_planning_and_independent_review(monkeypatch):

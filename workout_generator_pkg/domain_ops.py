@@ -7,11 +7,14 @@ import json
 import os
 import re
 import uuid
+from decimal import Decimal, InvalidOperation
+from itertools import zip_longest
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
 from .constants import JSON_SCHEMA, MUSCLE_GROUP_FIXES
 from .exercise_contracts import get_exercise_emission_profile
+from .json_patching import build_allowed_patch_scope, collect_changed_json_paths, validate_changed_paths_scope
 
 try:
     from jsonschema import validate
@@ -1384,35 +1387,8 @@ def has_equipment_in_messages(messages):
 
 
 def fix_timed_sets(exercise):
-    """
-    Fix TimedDurationSet and EnduranceSet to have correct fields.
-    These sets require: timeInMillis (not timeInSeconds), autoStart, autoStop
-    They do NOT have subCategory.
-    
-    Args:
-        exercise: Exercise dictionary (modified in place)
-    """
-    sets = exercise.get("sets", [])
-    for set_item in sets:
-        set_type = set_item.get("type")
-        if set_type in ["TimedDurationSet", "EnduranceSet"]:
-            # Convert timeInSeconds to timeInMillis if present
-            if "timeInSeconds" in set_item:
-                time_seconds = set_item.pop("timeInSeconds")
-                set_item["timeInMillis"] = int(time_seconds * 1000)
-            # Ensure timeInMillis exists (default to 60 seconds if not)
-            if "timeInMillis" not in set_item:
-                set_item["timeInMillis"] = 60000  # 60 seconds default
-            
-            # Add required autoStart and autoStop if missing
-            if "autoStart" not in set_item:
-                set_item["autoStart"] = False  # Default to manual start
-            if "autoStop" not in set_item:
-                set_item["autoStop"] = False  # Default to manual stop
-            
-            # Remove subCategory if present (not allowed for these set types)
-            if "subCategory" in set_item:
-                set_item.pop("subCategory")
+    """Use the shared value-preserving set normalization."""
+    exercise['sets'] = fix_set_errors(exercise.get('sets', []))
 
 
 def create_placeholder_schema():
@@ -2192,49 +2168,32 @@ def fix_set_errors(sets):
             # Shared deserialization falls back to WorkSet for legacy RestSets.
             s_copy["subCategory"] = "WorkSet"
         
-        # Fix TimedDurationSet and EnduranceSet
-        if set_type in ["TimedDurationSet", "EnduranceSet"]:
-            # Convert timeInSeconds to timeInMillis if present
-            if "timeInSeconds" in s_copy:
-                time_seconds = s_copy.pop("timeInSeconds")
-                s_copy["timeInMillis"] = int(time_seconds * 1000)
-            # Ensure timeInMillis exists (default to 60 seconds if not)
-            if "timeInMillis" not in s_copy:
-                s_copy["timeInMillis"] = 60000  # 60 seconds default
-            
-            # Add required autoStart and autoStop if missing
-            if "autoStart" not in s_copy:
-                s_copy["autoStart"] = False  # Default to manual start
-            if "autoStop" not in s_copy:
-                s_copy["autoStop"] = False  # Default to manual stop
+        if set_type in ('TimedDurationSet', 'EnduranceSet'):
+            seconds = s_copy.get('timeInSeconds')
+            if isinstance(seconds, (int, float)) and not isinstance(seconds, bool):
+                milliseconds = Decimal(str(seconds)) * 1000
+                if milliseconds.is_finite() and milliseconds == milliseconds.to_integral_value():
+                    value = int(milliseconds)
+                    if 'timeInMillis' not in s_copy or (type(s_copy['timeInMillis']) in (int, float)
+                                                       and s_copy['timeInMillis'] == value):
+                        s_copy['timeInMillis'] = value
+                        s_copy.pop('timeInSeconds')
+            # Manual tracking is the app default; no duration or effort target is inferred.
+            s_copy.setdefault('autoStart', False)
+            s_copy.setdefault('autoStop', False)
 
-            # autoStop=true means the runtime ends the set at timeInMillis; with no
-            # duration that would auto-complete instantly. Goal-based sets (a
-            # targetDistanceMeters/targetCalories the athlete works toward) stay
-            # open and are finished manually.
-            if s_copy.get("autoStop") and s_copy.get("timeInMillis", 0) <= 0:
-                s_copy["autoStop"] = False
-            
-            # Remove subCategory if present (not allowed for these set types)
-            if "subCategory" in s_copy:
-                s_copy.pop("subCategory")
-        
-        # Fix invalid set types
-        if set_type == "DistanceSet":
-            # Convert DistanceSet to the goal-based encoding: the watch counts
-            # up while showing the distance target and the athlete finishes it.
-            # A fabricated time estimate with autoStop would end the set at an
-            # arbitrary moment and drop the stated distance entirely.
-            distance = s_copy.get("distance", 50.0)
-            s_copy = {
-                "id": s_copy.get("id"),
-                "type": "EnduranceSet",
-                "timeInMillis": 0,
-                "autoStart": True,
-                "autoStop": False,
-                "targetDistanceMeters": float(distance),
-            }
-        
+        if set_type == 'DistanceSet':
+            distance = s_copy.get('distance')
+            if (isinstance(distance, (int, float)) and not isinstance(distance, bool)
+                    and Decimal(str(distance)).is_finite() and distance > 0
+                    and not s_copy.get('autoStop')
+                    and s_copy.get('targetDistanceMeters', distance) == distance):
+                s_copy.pop('distance')
+                s_copy.update(type='EnduranceSet', targetDistanceMeters=float(distance))
+                s_copy.setdefault('timeInMillis', 0)
+                s_copy.setdefault('autoStart', True)
+                s_copy.setdefault('autoStop', False)
+
         fixed.append(s_copy)
     return fixed
 
@@ -2433,123 +2392,97 @@ def sync_plan_owned_exercise_fields(exercise, plan_entry):
 
 
 def fix_equipment_errors(equipments):
-    """
-    Fix common equipment type errors and structure issues.
-    
-    Args:
-        equipments: List of equipment dictionaries
-    
-    Returns:
-        List of fixed equipment dictionaries
-    """
+    """Normalize known representations without inventing specifications or removing equipment."""
     fixed = []
-    for eq in equipments:
-        eq_copy = eq.copy()
-        eq_type = eq_copy.get("type", "").upper()
-        
-        # Fix common type name errors
-        if eq_type == "WEIGHTED_VEST":
-            eq_copy["type"] = "WEIGHTVEST"
-        elif eq_type in ["BENCH", "PULL_UP_BAR", "PULLUP_BAR", "PULLUPBAR", "GENERIC"]:
-            # Remove unsupported types (including GENERIC which is no longer supported)
-            continue
-        elif eq_type == "DUMBBELL":
-            # Fix incorrect DUMBBELL structure - ensure all required fields
-            if "dumbbellWeight" in eq_copy:
-                weight = eq_copy.pop("dumbbellWeight", 5.0)
-                if "dumbbells" not in eq_copy:
-                    eq_copy["dumbbells"] = [{"weight": weight}]
-            # Ensure required fields exist
-            if "dumbbells" not in eq_copy:
-                eq_copy["dumbbells"] = [{"weight": 5.0}]
-            if "maxExtraWeightsPerLoadingPoint" not in eq_copy:
-                eq_copy["maxExtraWeightsPerLoadingPoint"] = 0
-            if "extraWeights" not in eq_copy:
-                eq_copy["extraWeights"] = []
-        
-        # Fix WEIGHTVEST structure - convert maxWeight to availableWeights if needed
-        if eq_copy.get("type") == "WEIGHTVEST":
-            if "maxWeight" in eq_copy and "availableWeights" not in eq_copy:
-                max_weight = eq_copy.pop("maxWeight")
-                # Create available weights array (e.g., 5, 10, 15, 20 if maxWeight is 20)
-                available_weights = []
-                if max_weight > 0:
-                    # Generate common weight increments
-                    for w in [5.0, 10.0, 15.0, 20.0, 25.0]:
-                        if w <= max_weight:
-                            available_weights.append({"weight": w})
-                    if not available_weights:
-                        available_weights.append({"weight": max_weight})
-                eq_copy["availableWeights"] = available_weights
-        
-        # Fix number arrays to object arrays for all equipment types
-        # Helper function to convert number array to object array
-        def fix_number_array_to_objects(arr, default_thickness=None):
-            """Convert array of numbers to array of objects with weight property."""
-            if not isinstance(arr, list) or len(arr) == 0:
-                return arr
-            # Check if first element is a number (not already an object)
-            if len(arr) > 0 and isinstance(arr[0], (int, float)) and not isinstance(arr[0], dict):
-                fixed_arr = []
-                for item in arr:
-                    if isinstance(item, (int, float)):
-                        obj = {"weight": float(item)}
-                        if default_thickness is not None:
-                            obj["thickness"] = default_thickness
-                        fixed_arr.append(obj)
-                    else:
-                        fixed_arr.append(item)
-                return fixed_arr
-            return arr
-        
-        # Fix arrays based on equipment type
-        if eq_type == "WEIGHTVEST":
-            if "availableWeights" in eq_copy:
-                eq_copy["availableWeights"] = fix_number_array_to_objects(eq_copy["availableWeights"])
-        elif eq_type == "MACHINE":
-            if "availableWeights" in eq_copy:
-                eq_copy["availableWeights"] = fix_number_array_to_objects(eq_copy["availableWeights"])
-            if "extraWeights" in eq_copy:
-                eq_copy["extraWeights"] = fix_number_array_to_objects(eq_copy["extraWeights"])
-        elif eq_type in ["DUMBBELLS", "DUMBBELL"]:
-            if "dumbbells" in eq_copy:
-                eq_copy["dumbbells"] = fix_number_array_to_objects(eq_copy["dumbbells"])
-            if "extraWeights" in eq_copy:
-                eq_copy["extraWeights"] = fix_number_array_to_objects(eq_copy["extraWeights"])
-        elif eq_type in ["BARBELL", "PLATELOADEDCABLE"]:
-            if "availablePlates" in eq_copy:
-                # For plates, we need weight and thickness, so use a default thickness if converting
-                arr = eq_copy["availablePlates"]
-                if isinstance(arr, list) and len(arr) > 0:
-                    # Check if first element is just a number (needs both weight and thickness)
-                    if isinstance(arr[0], (int, float)) and not isinstance(arr[0], dict):
-                        fixed_arr = []
-                        for item in arr:
-                            if isinstance(item, (int, float)):
-                                # Default thickness: 20mm for plates (reasonable default)
-                                fixed_arr.append({"weight": float(item), "thickness": 20.0})
-                            else:
-                                fixed_arr.append(item)
-                        eq_copy["availablePlates"] = fixed_arr
-                    # Also check if objects are missing thickness
-                    elif isinstance(arr[0], dict):
-                        fixed_arr = []
-                        for item in arr:
-                            if isinstance(item, dict):
-                                if "weight" in item and "thickness" not in item:
-                                    # Add default thickness if missing
-                                    item_copy = item.copy()
-                                    item_copy["thickness"] = 20.0
-                                    fixed_arr.append(item_copy)
-                                else:
-                                    fixed_arr.append(item)
-                            else:
-                                fixed_arr.append(item)
-                        eq_copy["availablePlates"] = fixed_arr
-        
-        fixed.append(eq_copy)
-    
+    weight_arrays = {
+        'WEIGHTVEST': ('availableWeights',),
+        'MACHINE': ('availableWeights', 'extraWeights'),
+        'DUMBBELL': ('dumbbells', 'extraWeights'),
+        'DUMBBELLS': ('dumbbells', 'extraWeights'),
+        'BARBELL': ('availablePlates',),
+        'PLATELOADEDCABLE': ('availablePlates',),
+    }
+    for equipment in equipments:
+        item = copy.deepcopy(equipment)
+        if item.get('type') == 'WEIGHTED_VEST':
+            item['type'] = 'WEIGHTVEST'
+        if item.get('type') == 'DUMBBELL' and 'dumbbellWeight' in item and 'dumbbells' not in item:
+            item['dumbbells'] = [{'weight': item.pop('dumbbellWeight')}]
+        for field in weight_arrays.get(item.get('type'), ()):
+            if isinstance(item.get(field), list):
+                item[field] = [{'weight': value} if isinstance(value, (int, float)) and not isinstance(value, bool)
+                               else value for value in item[field]]
+        fixed.append(item)
     return fixed
+
+
+class SchemaRepairError(ValueError):
+    """A repair exceeded its permissions or requires authoritative information."""
+
+
+def validate_schema_repair(original, repaired, validation_errors):
+    """Schema repair can change failing representations, never authoritative training facts."""
+    if original == repaired:
+        raise SchemaRepairError('Schema repair made no change. Required facts remain unresolved; no automatic retry was started.')
+    if not isinstance(original, dict):
+        raise SchemaRepairError('The source document cannot establish a permitted repair scope. Restore its structure from an authoritative source first.')
+    for field in ('equipments', 'accessoryEquipments'):
+        before = original.get(field, [])
+        after = repaired.get(field, []) if isinstance(repaired, dict) else None
+        before = fix_equipment_errors(before) if isinstance(before, list) else before
+        after = fix_equipment_errors(after) if isinstance(after, list) else after
+        if before != after:
+            raise SchemaRepairError(f'Schema repair changed supplied equipment data at /{field}. Only value-preserving normalization is allowed; restore authoritative equipment specifications first.')
+    allowed, descendants = build_allowed_patch_scope(validation_errors)
+    try:
+        validate_changed_paths_scope(collect_changed_json_paths(original, repaired), allowed, descendants)
+    except ValueError as error:
+        raise SchemaRepairError(str(error)) from error
+    # Imported here because plan_contract also uses the domain operations.
+    from .plan_contract import LIBRARY_DEFINITION_OWNED_FIELDS
+    protected = set(LIBRARY_DEFINITION_OWNED_FIELDS) | {
+        'id', 'globalId', 'type', 'libraryDefinitionId', 'exerciseDefinitionId', 'definition_id', 'superset',
+        'previousVersionId', 'nextVersionId', 'exerciseIds', 'workoutIds',
+        'requirements', 'requirementsId', 'auditTargets', 'workingSetRIR',
+        'targetSetPrescriptions', 'allocationBounds',
+    }
+    ordered = {'workouts', 'workoutComponents', 'exercises', 'sets', 'exerciseDefinitions'}
+    missing = object()
+
+    def check(before, after, path='', field=None):
+        if field in ('equipments', 'accessoryEquipments'):
+            return  # Compared above using value-preserving equipment normalization.
+        if field in protected and before != after:
+            raise SchemaRepairError(f'Schema repair cannot change authoritative field {path}. Repair its source instead.')
+        if field in ordered and (not isinstance(before, list) or not isinstance(after, list) or len(before) != len(after)):
+            raise SchemaRepairError(f'Schema repair cannot add, remove or replace prescribed structure at {path}.')
+        if isinstance(before, dict) or isinstance(after, dict):
+            old = before if isinstance(before, dict) else {}
+            new = after if isinstance(after, dict) else {}
+            if (before is not missing and not isinstance(before, dict)) or (after is not missing and not isinstance(after, dict)):
+                raise SchemaRepairError(f'Schema repair cannot replace source structure at {path}.')
+            for key in old.keys() | new.keys():
+                token = key.replace('~', '~0').replace('/', '~1')
+                check(old.get(key, missing), new.get(key, missing), path + '/' + token, key)
+        elif isinstance(before, list) or isinstance(after, list):
+            old = before if isinstance(before, list) else []
+            new = after if isinstance(after, list) else []
+            if (before is not missing and not isinstance(before, list)) or (after is not missing and not isinstance(after, list)):
+                raise SchemaRepairError(f'Schema repair cannot replace source structure at {path}.')
+            for index, (old_item, new_item) in enumerate(zip_longest(old, new, fillvalue=missing)):
+                check(old_item, new_item, path + '/' + str(index))
+        elif isinstance(before, (int, float)) or isinstance(after, (int, float)):
+            if type(before) is bool or type(after) is bool:
+                same = type(before) is type(after) and before == after
+            else:
+                try:
+                    old, new = Decimal(str(before)), Decimal(str(after))
+                    same = old.is_finite() and new.is_finite() and old == new
+                except InvalidOperation:
+                    same = False
+            if not same:
+                raise SchemaRepairError(f'Schema repair cannot invent or change a prescribed value at {path}.')
+    check(original, repaired)
 
 
 def save_validation_error(error, workout_json, script_dir=None):
@@ -3099,10 +3032,14 @@ def extract_item_by_path(workout_json, path_info):
         # Default: extract the item we found after navigation
         extracted_item = current_item if nested_path else base_item
     
+    repair_path = dict(path_info)
+    if extracted_item is base_item:
+        repair_path['nested_path'] = []
+        repair_path['full_path_parts'] = [top_level, array_index]
     return {
         "item": extracted_item,
         "context": context,
-        "path_info": path_info,
+        "path_info": repair_path,
         "item_type": item_type,
         "base_item": base_item if item_type in ["workout", "workout_component"] else None
     }

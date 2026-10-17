@@ -11,7 +11,8 @@ from test_workout_generator_planning_tools import planning_case, requirement_mes
 
 
 def _finding(severity='blocking'):
-    return {'severity': severity, 'path': '/exercises/0/placementNotes',
+    return {'severity': severity, 'basis': 'established_violation' if severity == 'blocking' else 'uncertainty', 'muscleTargets': [],
+            'path': '/exercises/0/placementNotes',
             'message': 'Execution instructions conflict with approved effort.',
             'evidencePaths': ['/sourceMessages/SOURCE_0/content', '/draft/exercises/0/placementNotes'],
             'repair': 'Match the prescribed effort to the approved requirement and re-audit.'}
@@ -20,6 +21,14 @@ def _finding(severity='blocking'):
 def _store(messages, result, call_id='audit'):
     messages.extend([{'role': 'assistant', 'tool_calls': [{'id': call_id, 'function': {'name': 'audit_workout_plan'}}]},
                      {'role': 'tool', 'tool_call_id': call_id, 'content': result['result']}])
+
+
+def _without_review_refs(value):
+    if isinstance(value, dict):
+        return {key: _without_review_refs(child) for key, child in value.items() if key != '_reviewRef'}
+    if isinstance(value, list):
+        return [_without_review_refs(child) for child in value]
+    return value
 
 
 @pytest.mark.parametrize('stage, code', [
@@ -85,6 +94,21 @@ def test_malformed_blocker_cannot_be_downgraded_by_reference_repair(monkeypatch)
     assert 'cannot downgrade' in result['review']['failure']
 
 
+@pytest.mark.parametrize('basis, expected_severity, passed', [
+    ('established_violation', 'blocking', False),
+    ('uncertainty', 'warning', True),
+])
+def test_backend_classifies_findings_from_structured_basis(monkeypatch, basis, expected_severity, passed):
+    equipment, _, stored, draft = planning_case()
+    finding = {**_finding('warning'), 'basis': basis}
+    monkeypatch.setattr(review, 'chat_call', lambda *a, **k: (json.dumps({'findings': [finding]}), None, None))
+
+    result = json.loads(handle_function_call(None, requirement_messages(stored), 'audit_workout_plan', draft, equipment)['result'])
+
+    assert result['passed'] is passed
+    assert result['review']['findings'][0]['severity'] == expected_severity
+
+
 def test_required_coverage_is_checked_before_review_and_claims_are_verified(monkeypatch):
     from workout_generator_pkg.planning_tools import set_workout_requirements
     equipment, requirements, _, draft = planning_case()
@@ -101,12 +125,12 @@ def test_required_coverage_is_checked_before_review_and_claims_are_verified(monk
     def reject_false_assignment(client, request, **options):
         context = json.loads(request[-1]['content'])
         assert context['coverageAssignments'] == {'EXERCISE_0': ['requested_pattern']}
-        assert context['requirements']['requiredCoverage'] == requirements['requiredCoverage']
+        assert _without_review_refs(context['requirements']['requiredCoverage']) == requirements['requiredCoverage']
         return json.dumps({'findings': [{**_finding(), 'path': '/coverageAssignments/EXERCISE_0/0',
             'message': 'Assigned exercise does not satisfy the requested movement pattern.'}]}), None, None
     monkeypatch.setattr(review, 'chat_call', reject_false_assignment)
     result = json.loads(handle_function_call(None, messages, 'audit_workout_plan', draft, equipment)['result'])
-    assert not result['passed'] and result['errors'][0]['code'] == 'independent_review_finding'
+    assert not result['passed'] and result['errors'][0]['code'] == 'independent_review_finding', result['errors']
     assert result['errors'][0]['draftPath'] == '/workouts/0/exercises/0/satisfiesCoverage'
 
 
@@ -371,8 +395,12 @@ def test_original_user_constraints_reach_the_reviewer(monkeypatch):
     review.review_draft(None, result, messages, equipment)
     assert messages[0]['content'] == inputs[0]['sourceMessages']['SOURCE_0']['content']
     assert 'CONFIRM REQUIREMENTS' not in [m['content'] for m in inputs[0]['sourceMessages'].values()]
-    assert inputs[0]['audit']['workouts'][0]['volume'] == result['audit']['workouts'][0]['volume']
-    assert inputs[0]['audit']['workouts'][0]['contributions'] == result['audit']['workouts'][0]['contributions']
+    from workout_generator_pkg.generation_audit import available_muscle_targets
+    supported = available_muscle_targets(equipment)
+    assert _without_review_refs(inputs[0]['audit']['workouts'][0]['volume']) == {
+        key: value for key, value in result['audit']['workouts'][0]['volume'].items() if key in supported}
+    assert 'lats' not in inputs[0]['audit']['weeklyVolume']
+    assert _without_review_refs(inputs[0]['audit']['workouts'][0]['contributions']) == result['audit']['workouts'][0]['contributions']
 
 
 def test_export_requires_confirmation_after_the_repaired_preview(monkeypatch):
@@ -475,9 +503,9 @@ def test_review_preserves_questions_and_answers_in_order_without_requiring_copie
     def check(client, request, **kwargs):
         context = json.loads(request[-1]['content'])
         requests.append(context)
-        assert list(context['sourceMessages'].values())[-4:] == clarification
+        assert _without_review_refs(list(context['sourceMessages'].values())[-4:]) == clarification
         assert 'notes' not in context['requirements']
-        assert context['restrictionPolicy'] == {'excludedExerciseNames': [], 'exceptExerciseNames': []}
+        assert _without_review_refs(context['restrictionPolicy']) == {'excludedExerciseNames': [], 'exceptExerciseNames': []}
         assert 'Do not request notes or a rewritten recap' in request[0]['content']
         assert 'When the user explicitly delegates a decision' in request[0]['content']
         finding = {**_finding(), 'path': '/audit/restrictionPolicy/excludedExerciseNames',

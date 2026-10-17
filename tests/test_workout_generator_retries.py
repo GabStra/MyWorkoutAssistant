@@ -11,7 +11,7 @@ from workout_generator_pkg.generation_pipeline import execute_workout_generation
 from workout_generator_pkg.plan_contract import ContractValidationError
 
 
-def test_planner_retry_receives_selected_identities_and_preservation_instructions(monkeypatch):
+def test_unscoped_plan_index_repair_is_rejected_before_a_model_call(monkeypatch):
     requests = []
 
     def response(_client, messages, *_args, **_kwargs):
@@ -20,20 +20,35 @@ def test_planner_retry_receives_selected_identities_and_preservation_instruction
 
     monkeypatch.setattr(cli, "json_call_chat_max_with_loading", response)
     feedback = "Missing selected exercise: Bench (libraryDefinitionId='definition-1')."
-    cli.generate_index(
-        None, "confirmed preview", use_reasoner=False,
-        provided_equipment={
-            "equipments": [], "accessoryEquipments": [],
-            "exerciseDefinitions": [{"id": "definition-1", "name": "Bench"}],
-            "selectedExerciseDefinitionIds": ["definition-1"],
-        },
-        contract_error_context=feedback,
-    )
-    assert feedback in requests[0]
-    assert "Confirmed library selections: every entry below must occur" in requests[0]
-    assert '{"libraryDefinitionId":"definition-1","name":"Bench"}' in requests[0]
-    assert "Correct only the reported mismatches" in requests[0]
-    assert "Preserve unaffected exercises, prescriptions, workout order and equipment" in requests[0]
+    with pytest.raises(cli.SchemaRepairError, match='does not authorize a full-index repair'):
+        cli.generate_index(
+            None, "confirmed preview", use_reasoner=False,
+            provided_equipment={
+                "equipments": [], "accessoryEquipments": [],
+                "exerciseDefinitions": [{"id": "definition-1", "name": "Bench"}],
+                "selectedExerciseDefinitionIds": ["definition-1"],
+            },
+            contract_error_context=feedback,
+        )
+    assert not requests
+
+
+def test_pipeline_returns_unscoped_contract_failure_to_planning_without_rewriting(monkeypatch, tmp_path):
+    calls = []
+    plan = {'planName': 'Draft', 'equipments': [], 'accessoryEquipments': [], 'exercises': [], 'workouts': []}
+    def generate(*args, **kwargs):
+        calls.append(1)
+        return plan
+    def reject(*args, **kwargs):
+        raise ContractValidationError('The submitted contract is invalid.')
+    monkeypatch.setattr(pipeline, 'validate_plan_index_contract', reject)
+    deps = replace(resolve_pipeline_deps(), test_connection=lambda *a, **k: (True, None),
+        hash_conversation=lambda *a: 'hash', summarize_conversation=lambda *a: 'summary', generate_index=generate,
+        save_generation_progress=lambda *a, **k: ('progress.json', 0))
+    result = execute_workout_generation(None, [{'role': 'user', 'content': 'CONFIRM GENERATE'}],
+        script_dir=str(tmp_path), force_use_reasoner=False, deps=deps)
+    assert calls == [1] and not result['success'] and result['requires_plan_revision']
+    assert result['programming_audit']['errors'][0]['code'] == 'plan_contract_requires_revision'
 
 
 def test_exercise_emitter_honors_single_attempt_repair_budget(monkeypatch) -> None:

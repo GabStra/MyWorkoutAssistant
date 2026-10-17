@@ -10,6 +10,7 @@ from datetime import date, datetime
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from .cancellation import run_cancellable
 from .logging_ui import write_progress_line
+from .image_attachments import image_message
 from openai import OpenAI
 import httpx
 from workout_generator_pkg.constants import (
@@ -22,7 +23,7 @@ from workout_generator_pkg.constants import (
     GENERATE_WORKOUT_TOOL,
 )
 from workout_generator_pkg.exercise_contracts import get_exercise_emission_profile
-from workout_generator_pkg.domain_ops import format_exercise_library_catalog, build_workout_structure
+from workout_generator_pkg.domain_ops import format_exercise_library_catalog, build_workout_structure, SchemaRepairError, validate_schema_repair
 from workout_generator_pkg.stage_prompts import (
     EQUIPMENT_SYSTEM_PROMPT,
     EXERCISE_SYSTEM_PROMPT,
@@ -780,7 +781,6 @@ def emit_equipment_item(equipment_id, client, context_summary, plan_index, use_r
     )
     
     messages = [
-        {"role": "system", "content": BASE_SYSTEM_PROMPT},
         {"role": "system", "content": EQUIPMENT_SYSTEM_PROMPT},
         {"role": "user", "content": user_content}
     ]
@@ -871,7 +871,6 @@ def emit_accessory_equipment_item(accessory_id, client, context_summary, plan_in
     )
     
     messages = [
-        {"role": "system", "content": BASE_SYSTEM_PROMPT},
         {"role": "system", "content": EQUIPMENT_SYSTEM_PROMPT},
         {"role": "user", "content": user_content}
     ]
@@ -927,6 +926,159 @@ def emit_accessory_equipment_item(accessory_id, client, context_summary, plan_in
     except json.JSONDecodeError as e:
         raise ValueError(f"Failed to parse accessory equipment JSON for {accessory_id}: {e}")
 
+def _materialize_exercise_definition(exercise_entry):
+    """Build an exercise object when its approved PlanIndex has enough data."""
+    exercise_id = exercise_entry.get("id")
+    exercise_type = exercise_entry.get("exerciseType")
+    if exercise_type not in {"WEIGHT", "BODY_WEIGHT", "COUNTDOWN", "COUNTUP", "RUNNING"}:
+        raise ValueError(f"Deterministic exercise materialization does not support {exercise_type!r}.")
+    if not isinstance(exercise_id, str) or not re.fullmatch(r"EXERCISE_\d+", exercise_id):
+        raise ValueError(f"Deterministic exercise materialization requires a canonical EXERCISE_N id; got {exercise_id!r}.")
+
+    required_fields = (
+        "name", "equipmentId", "bodyWeightPercentage", "requiredAccessoryEquipmentIds",
+        "muscleGroups", "secondaryMuscleGroups", "generateWarmUpSets", "intraSetRestInSeconds",
+        "exerciseCategory", "numWorkSets", "restBetweenSetsSeconds",
+    )
+    missing = [field for field in required_fields if field not in exercise_entry]
+    if missing:
+        raise ValueError(f"Deterministic exercise materialization for {exercise_id} is missing plan fields: {', '.join(missing)}.")
+    count = exercise_entry["numWorkSets"]
+    if not isinstance(count, int) or isinstance(count, bool) or count < 1:
+        raise ValueError(f"Deterministic exercise materialization for {exercise_id} requires positive numWorkSets.")
+    rest = exercise_entry["restBetweenSetsSeconds"]
+    if not isinstance(rest, int) or isinstance(rest, bool) or rest < 0:
+        raise ValueError(f"Deterministic exercise materialization for {exercise_id} requires non-negative restBetweenSetsSeconds.")
+    if not isinstance(exercise_entry["generateWarmUpSets"], bool):
+        raise ValueError(f"Deterministic exercise materialization for {exercise_id} requires boolean generateWarmUpSets.")
+    if not isinstance(exercise_entry["requiredAccessoryEquipmentIds"], list):
+        raise ValueError(f"Deterministic exercise materialization for {exercise_id} requires an accessory ID list.")
+    if not isinstance(exercise_entry["muscleGroups"], list) or not exercise_entry["muscleGroups"]:
+        raise ValueError(f"Deterministic exercise materialization for {exercise_id} requires non-empty library muscle groups.")
+    if not isinstance(exercise_entry["secondaryMuscleGroups"], list):
+        raise ValueError(f"Deterministic exercise materialization for {exercise_id} requires a secondary muscle group list.")
+
+    set_number = int(exercise_id.removeprefix("EXERCISE_")) * 50
+    sets = []
+
+    def append_work_set(work_set):
+        sets.append({"id": f"SET_{set_number + len(sets)}", **work_set})
+
+    def append_rest_set():
+        sets.append({"id": f"SET_{set_number + len(sets)}", "type": "RestSet", "timeInSeconds": rest, "subCategory": "WorkSet"})
+
+    running_prescription = None
+    if exercise_type in {"WEIGHT", "BODY_WEIGHT"}:
+        min_reps, max_reps = exercise_entry.get("minReps"), exercise_entry.get("maxReps")
+        if not isinstance(min_reps, int) or isinstance(min_reps, bool) or min_reps < 1:
+            raise ValueError(f"Deterministic exercise materialization for {exercise_id} requires positive minReps.")
+        if not isinstance(max_reps, int) or isinstance(max_reps, bool) or max_reps < min_reps:
+            raise ValueError(f"Deterministic exercise materialization for {exercise_id} requires maxReps >= minReps.")
+        load_field = "weight" if exercise_type == "WEIGHT" else "additionalWeight"
+        prescriptions = exercise_entry.get("targetSetPrescriptions") or None
+        if prescriptions is not None:
+            if not isinstance(prescriptions, list) or len(prescriptions) != count:
+                raise ValueError(f"Deterministic exercise materialization for {exercise_id} requires one targetSetPrescriptions entry per work set.")
+            prescriptions = sorted(prescriptions, key=lambda item: item.get("workSetIndex", -1) if isinstance(item, dict) else -1)
+            for index, target in enumerate(prescriptions):
+                load = target.get(load_field) if isinstance(target, dict) else None
+                reps = target.get("reps") if isinstance(target, dict) else None
+                if (not isinstance(target, dict) or set(target) - {"workSetIndex", "reps", load_field}
+                        or target.get("workSetIndex") != index
+                        or not isinstance(reps, int) or isinstance(reps, bool) or not min_reps <= reps <= max_reps
+                        or not isinstance(load, (int, float)) or isinstance(load, bool) or load < 0):
+                    raise ValueError(f"Deterministic exercise materialization for {exercise_id} has an invalid exact target at work set {index}.")
+                append_work_set({"type": "WeightSet" if exercise_type == "WEIGHT" else "BodyWeightSet", "reps": reps, load_field: load, "subCategory": "WorkSet"})
+                if index < count - 1:
+                    append_rest_set()
+        else:
+            # A zero load is the app's explicit calibration placeholder, not a starting-load guess.
+            for index in range(count):
+                work_set = {"type": "WeightSet" if exercise_type == "WEIGHT" else "BodyWeightSet", "reps": min_reps, load_field: 0, "subCategory": "WorkSet"}
+                append_work_set(work_set)
+                if index < count - 1:
+                    append_rest_set()
+    elif exercise_type in {"COUNTDOWN", "COUNTUP"}:
+        timed_targets = exercise_entry.get("timedSetPrescriptions")
+        if timed_targets is None:
+            duration = exercise_entry.get("timeInMillis")
+            if duration is None and isinstance(exercise_entry.get("durationSeconds"), int):
+                duration = exercise_entry["durationSeconds"] * 1000
+            if not isinstance(duration, int) or isinstance(duration, bool) or duration < 0:
+                raise ValueError(f"Deterministic exercise materialization for {exercise_id} requires timeInMillis or durationSeconds.")
+            auto_start = exercise_entry.get("autoStart", True)
+            auto_stop = exercise_entry.get("autoStop", duration > 0)
+            timed_targets = [{"timeInMillis": duration, "autoStart": auto_start, "autoStop": auto_stop} for _ in range(count)]
+        if not isinstance(timed_targets, list) or len(timed_targets) != count:
+            raise ValueError(f"Deterministic exercise materialization for {exercise_id} requires one timed prescription per work set.")
+        for index, target in enumerate(timed_targets):
+            if (not isinstance(target, dict) or not isinstance(target.get("timeInMillis"), int)
+                    or set(target) - {"timeInMillis", "autoStart", "autoStop", "targetWeight", "targetDistanceMeters", "targetCalories"}
+                    or isinstance(target.get("timeInMillis"), bool) or target["timeInMillis"] < 0
+                    or not isinstance(target.get("autoStart"), bool) or not isinstance(target.get("autoStop"), bool)):
+                raise ValueError(f"Deterministic exercise materialization for {exercise_id} has an invalid timed target at work set {index}.")
+            if target["autoStop"] and target["timeInMillis"] <= 0:
+                raise ValueError(f"Deterministic exercise materialization for {exercise_id} cannot auto-stop a zero-duration set.")
+            target_weight_fields = ("targetWeight", "targetDistanceMeters", "targetCalories")
+            append_work_set({
+                "type": "TimedDurationSet" if exercise_type == "COUNTDOWN" else "EnduranceSet",
+                **{field: target[field] for field in target_weight_fields if field in target},
+                "timeInMillis": target["timeInMillis"],
+                "autoStart": target["autoStart"],
+                "autoStop": target["autoStop"],
+            })
+            if index < count - 1:
+                append_rest_set()
+    else:
+        running_prescription = exercise_entry.get("runningPrescription")
+        if running_prescription is None and isinstance(exercise_entry.get("targetDistanceMeters"), (int, float)):
+            running_prescription = {
+                "environment": exercise_entry.get("environment", "OUTDOOR"),
+                "targetType": "DISTANCE",
+                "targetValue": exercise_entry["targetDistanceMeters"],
+            }
+        if count != 1 or not isinstance(running_prescription, dict):
+            raise ValueError(f"Deterministic exercise materialization for {exercise_id} requires one explicit runningPrescription.")
+        append_work_set({"type": "RunningSet"})
+
+    if exercise_entry.get("progressionMode") is not None:
+        progression_mode = exercise_entry["progressionMode"]
+    else:
+        progression_mode = "AUTO_REGULATION" if exercise_type in {"WEIGHT", "BODY_WEIGHT"} else "OFF"
+    notes = exercise_entry.get("notes", "")
+    if exercise_type in {"WEIGHT", "BODY_WEIGHT"} and not exercise_entry.get("targetSetPrescriptions"):
+        calibration_note = "Uncalibrated start: use the lower bound of the approved rep range and calibrate resistance before progressing."
+        notes = f"{notes} {calibration_note}".strip()
+    item = {
+        "id": exercise_id,
+        "type": "Exercise",
+        "enabled": True,
+        "name": exercise_entry["name"],
+        "notes": notes,
+        "placementNotes": exercise_entry.get("placementNotes", ""),
+        "sets": sets,
+        "exerciseType": exercise_type,
+        "equipmentId": exercise_entry["equipmentId"],
+        "bodyWeightPercentage": exercise_entry["bodyWeightPercentage"],
+        "generateWarmUpSets": exercise_entry["generateWarmUpSets"],
+        "progressionMode": progression_mode,
+        "keepScreenOn": False,
+        "showCountDownTimer": exercise_type == "COUNTDOWN",
+        "intraSetRestInSeconds": exercise_entry["intraSetRestInSeconds"],
+        "muscleGroups": copy.deepcopy(exercise_entry["muscleGroups"]),
+        "secondaryMuscleGroups": copy.deepcopy(exercise_entry["secondaryMuscleGroups"]),
+        "requiredAccessoryEquipmentIds": copy.deepcopy(exercise_entry["requiredAccessoryEquipmentIds"]),
+        "requiresLoadCalibration": exercise_type in {"WEIGHT", "BODY_WEIGHT"} and not exercise_entry.get("targetSetPrescriptions"),
+        "exerciseCategory": exercise_entry["exerciseCategory"],
+    }
+    if exercise_type == "RUNNING":
+        item["runningPrescription"] = copy.deepcopy(running_prescription)
+    if exercise_type in {"WEIGHT", "BODY_WEIGHT"}:
+        item["minReps"] = exercise_entry["minReps"]
+        item["maxReps"] = exercise_entry["maxReps"]
+    return item
+
+
 def emit_exercise_definition(
     exercise_id,
     client,
@@ -940,6 +1092,7 @@ def emit_exercise_definition(
     contract_error_context=None,
     allow_educated_load_guesses=True,
     max_attempts=4,
+    deterministic=False,
 ):
     """
     Emit a single exercise definition using either deepseek-reasoner @ 64K or deepseek-chat @ 8K.
@@ -971,6 +1124,21 @@ def emit_exercise_definition(
 
     if not exercise_entry:
         raise ValueError(f"Exercise ID {exercise_id} not found in PlanIndex")
+
+    if deterministic:
+        item = _materialize_exercise_definition(exercise_entry)
+        normalized_item = finalize_and_validate_exercise_definition(
+            item,
+            plan_entry=exercise_entry,
+            equipment_subset=equipment_subset,
+            accessory_subset=accessory_subset,
+            all_equipment_candidates=(provided_equipment or {}).get("equipments", []) if isinstance(provided_equipment, dict) else None,
+            allow_educated_load_guesses=allow_educated_load_guesses,
+        )
+        validate_single_exercise_definition_contract(exercise_entry, normalized_item)
+        if logger:
+            logger.log_print(f"Materialized {exercise_id} deterministically")
+        return (ExerciseDefinition(normalized_item), None)
 
     valid_muscle_groups = (
         JSON_SCHEMA.get("$defs", {})
@@ -1410,19 +1578,19 @@ def validate_and_repair_placeholder_json(client, context_summary, placeholder_js
             if equipments_before != equipments_after:
                 _out(f"  Auto-fixed equipment structure issues (removed {equipments_before - equipments_after} invalid equipment item(s))")
         
-        # Custom validation: leave invalid equipment weight combinations intact so
-        # the model must repair them explicitly based on validation feedback.
-        equipment_by_id = {eq.get("id"): eq for eq in current_json.get("equipments", [])}
-
         # Pre-validation normalization: Fix TimedDurationSet/EnduranceSet to use timeInMillis instead of timeInSeconds
         for workout in current_json.get("workouts", []):
+            if not isinstance(workout, dict):
+                continue
             for component in workout.get("workoutComponents", []):
+                if not isinstance(component, dict):
+                    continue
                 if component.get("type") == "Exercise":
                     if "sets" in component:
                         component["sets"] = fix_set_errors(component["sets"])
                 elif component.get("type") == "Superset":
                     for ex in component.get("exercises", []):
-                        if "sets" in ex:
+                        if isinstance(ex, dict) and "sets" in ex:
                             ex["sets"] = fix_set_errors(ex["sets"])
 
         strip_rep_range_fields_for_timed_exercises_in_workout_store(current_json)
@@ -1525,9 +1693,10 @@ def validate_and_repair_placeholder_json(client, context_summary, placeholder_js
                 repaired_json = repair_with_json_patch(client, context_summary, current_json, errors_to_fix, logger=logger)
                 if repaired_json is None:
                     raise Exception("Repair was cancelled")
-                # Remove any None values that might have been introduced by JSON patch operations
-                current_json = remove_none_from_workout_components(repaired_json, logger=logger)
-                strip_rep_range_fields_for_timed_exercises_in_workout_store(current_json)
+                current_json = repaired_json
+            except SchemaRepairError as repair_err:
+                detail = getattr(validation_err, 'message', str(validation_err))
+                raise SchemaRepairError(f'{repair_err} Unresolved validation: {detail}') from repair_err
             except Exception as repair_err:
                 _out(f"  Warning: Repair failed: {repair_err}")
                 # Continue to next attempt with original error
@@ -1602,11 +1771,16 @@ def repair_with_json_patch(client, context_summary, placeholder_json, validation
     placeholder_json_str = json.dumps(placeholder_json, indent=2)
     repair_targets = _build_repair_targets(validation_errors, placeholder_json)
     repair_targets_str = json.dumps(repair_targets, indent=2, ensure_ascii=False, default=str)
+    allowed_paths, allowed_descendant_paths = build_allowed_patch_scope(validation_errors)
+    if not (allowed_paths or allowed_descendant_paths):
+        raise SchemaRepairError('Validation did not establish any permitted repair paths. Restore the authoritative input first.')
+    permissions = json.dumps({'exact': sorted(allowed_paths), 'descendants': sorted(allowed_descendant_paths)})
 
     user_content = (
         f"Context summary:\n{context_summary}\n\n"
         f"Validation errors:\n{errors_text}\n\n"
         f"Structured repair targets:\n{repair_targets_str}\n\n"
+        f"Permitted document paths (all other fields stay unchanged):\n{permissions}\n\n"
         f"Placeholder JSON (with errors):\n{placeholder_json_str}\n\n"
         f"Generate a JSON Patch (RFC 6902) array that fixes ONLY these validation errors. "
         f"Use Structured repair targets as the primary source of truth for the exact failing objects, their paths, and the schema fragments they must satisfy. "
@@ -1616,7 +1790,6 @@ def repair_with_json_patch(client, context_summary, placeholder_json, validation
     )
 
     messages = [
-        {"role": "system", "content": BASE_SYSTEM_PROMPT},
         {"role": "system", "content": JSON_PATCH_REPAIR_SYSTEM_PROMPT},
         {"role": "user", "content": user_content}
     ]
@@ -1634,7 +1807,6 @@ def repair_with_json_patch(client, context_summary, placeholder_json, validation
         raise ValueError("Model returned empty JSON Patch content")
 
     try:
-        allowed_paths, allowed_descendant_paths = build_allowed_patch_scope(validation_errors)
         patch = json.loads(content)
         # If it's wrapped, try to extract the patch array
         if isinstance(patch, list):
@@ -1644,13 +1816,19 @@ def repair_with_json_patch(client, context_summary, placeholder_json, validation
         else:
             raise ValueError("Invalid JSON Patch format: expected array of patch operations")
 
-        validate_patch_operations_scope(patch_array, allowed_paths, allowed_descendant_paths)
+        try:
+            validate_patch_operations_scope(patch_array, allowed_paths, allowed_descendant_paths)
+        except ValueError as error:
+            raise SchemaRepairError(str(error)) from error
 
         # Apply the patch
         repaired_json = apply_json_patch(placeholder_json, patch_array)
         changed_paths = collect_changed_json_paths(placeholder_json, repaired_json)
         validate_changed_paths_scope(changed_paths, allowed_paths, allowed_descendant_paths)
+        validate_schema_repair(placeholder_json, repaired_json, validation_errors)
         return repaired_json
+    except SchemaRepairError:
+        raise
     except json.JSONDecodeError as e:
         raise ValueError(f"Failed to parse JSON Patch: {e}")
     except Exception as e:
@@ -1700,7 +1878,7 @@ def summarize_conversation(client, messages, logger=None):
     conversation_messages = [msg for msg in messages if msg.get("role") in ["user", "assistant"]]
     
     # If conversation is very short, return a simple summary
-    if len(conversation_messages) <= 2:
+    if len(conversation_messages) <= 2 and not any(m.get('imageAttachments') for m in conversation_messages):
         # Just extract user messages
         user_messages = [msg.get("content", "") for msg in conversation_messages if msg.get("role") == "user"]
         return "\n".join(user_messages) if user_messages else "No specific requirements mentioned."
@@ -1715,6 +1893,7 @@ def summarize_conversation(client, messages, logger=None):
         {"role": "system", "content": SUMMARIZATION_SYSTEM_PROMPT},
         {"role": "user", "content": user_content}
     ]
+    summarization_messages[1:1] = image_message(conversation_messages, label='TURN')
     if logger:
         trunc = user_content[:2000] + (f"... [truncated, total {len(user_content)} chars]" if len(user_content) > 2000 else "")
         logger.log_request("summarize_conversation", f"model={DEEPSEEK_MODEL} thinking=enabled messages={len(summarization_messages)}\n{trunc}")
@@ -1748,11 +1927,13 @@ def generate_index(
         provided_equipment: Optional dict with 'equipments' and 'accessoryEquipments' keys
         logger: Optional ConversationLogger for debug logging
         structured_generation_facts: Deterministic numeric/bodyweight facts extracted from the raw generation request
-        contract_error_context: Optional validation failure feedback from a previous Step 1 attempt
+        contract_error_context: Legacy argument; textual contract feedback cannot authorize a full-index repair
         
     Returns:
         dict: PlanIndex with equipments, exercises, and workouts entries, all using placeholder IDs, or None if cancelled
     """
+    if contract_error_context:
+        raise SchemaRepairError('Plan-index contract errors require a planning revision and fresh confirmation; a textual error does not authorize a full-index repair.')
     user_content = f"Context summary:\n{context_summary}\n\n"
     if structured_generation_facts:
         user_content += (
@@ -1826,18 +2007,9 @@ def generate_index(
         "If workout/day names appear in both Context summary and Additional request with different formatting, "
         "prefer the exact names from Context summary.\n\n"
     )
-    if contract_error_context:
-        user_content += (
-            "CRITICAL - The previous PlanIndex failed contract validation. "
-            "Correct only the reported mismatches and return the full corrected PlanIndex. "
-            "Preserve unaffected exercises, prescriptions, workout order and equipment from the previous PlanIndex. "
-            "Do not repeat the same mismatch:\n"
-            f"{contract_error_context}\n\n"
-        )
     user_content += "Generate the PlanIndex based on this context. Output only the PlanIndex JSON."
     
     messages = [
-        {"role": "system", "content": BASE_SYSTEM_PROMPT},
         {"role": "system", "content": PLAN_INDEX_SYSTEM_PROMPT},
         {"role": "user", "content": user_content}
     ]
@@ -1959,6 +2131,10 @@ def self_heal_validation_error(client, workout_json, validation_error, context_s
         )}
     ]
     
+    allowed, descendants = build_allowed_patch_scope([validation_error])
+    if not (allowed or descendants):
+        raise SchemaRepairError('Validation did not establish any permitted repair paths. Restore the authoritative input first.')
+    heal_messages[-1]['content'] += '\nPermitted document paths: ' + json.dumps({'exact': sorted(allowed), 'descendants': sorted(descendants)})
     # Call LLM to get fixed item
     try:
         print(f"    Calling LLM for targeted fix...")
@@ -1979,7 +2155,8 @@ def self_heal_validation_error(client, workout_json, validation_error, context_s
             raise Exception(f"LLM returned invalid JSON: {e}")
         
         # Reassemble the fixed item back into the full structure
-        fixed_json = reassemble_item(workout_json, path_info, fixed_item)
+        fixed_json = reassemble_item(workout_json, extracted_data['path_info'], fixed_item)
+        validate_schema_repair(workout_json, fixed_json, [validation_error])
         
         # Validate the reassembled JSON
         if validate is not None:
@@ -2006,6 +2183,8 @@ def self_heal_validation_error(client, workout_json, validation_error, context_s
             print(f"  ✓ Self-healing completed (validation disabled)")
             return fixed_json
             
+    except SchemaRepairError:
+        raise
     except Exception as e:
         if attempt < max_attempts:
             print(f"    Error during healing, retrying... ({str(e)})")
@@ -2060,6 +2239,10 @@ def self_heal_validation_error_full_json(client, workout_json, validation_error,
         )}
     ]
     
+    allowed, descendants = build_allowed_patch_scope([validation_error])
+    if not (allowed or descendants):
+        raise SchemaRepairError('Validation did not establish any permitted repair paths. Restore the authoritative input first.')
+    heal_messages[-1]['content'] += '\nPermitted document paths: ' + json.dumps({'exact': sorted(allowed), 'descendants': sorted(descendants)})
     # Call LLM to get fixed JSON
     try:
         print(f"    Calling LLM for fix...")
@@ -2074,6 +2257,7 @@ def self_heal_validation_error_full_json(client, workout_json, validation_error,
         except json.JSONDecodeError as e:
             raise Exception(f"LLM returned invalid JSON: {e}")
         
+        validate_schema_repair(workout_json, fixed_json, [validation_error])
         # Validate the fixed JSON
         if validate is not None:
             try:
@@ -2099,6 +2283,8 @@ def self_heal_validation_error_full_json(client, workout_json, validation_error,
             print(f"  ✓ Self-healing completed (validation disabled)")
             return fixed_json
             
+    except SchemaRepairError:
+        raise
     except Exception as e:
         if attempt < max_attempts:
             print(f"    Error during healing, retrying... ({str(e)})")

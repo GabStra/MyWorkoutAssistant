@@ -21,6 +21,14 @@ def choice():
                           'sourceReferences': ['SOURCE_1']}]}
 
 
+def _without_review_refs(value):
+    if isinstance(value, dict):
+        return {key: _without_review_refs(child) for key, child in value.items() if key != '_reviewRef'}
+    if isinstance(value, list):
+        return [_without_review_refs(child) for child in value]
+    return value
+
+
 def record(monkeypatch, messages, equipment):
     monkeypatch.setattr(review, 'chat_call', lambda *a, **k: ('{"findings":[]}', None, None))
     arguments = choice()
@@ -45,7 +53,7 @@ def test_legacy_choice_is_rechecked_against_capabilities_and_rejection_is_cached
     def reject(client, request, **kwargs):
         context = json.loads(request[-1]['content'])
         calls.append(context)
-        assert context['auditPolicy'] == audit_policy(available_muscle_targets(equipment))
+        assert _without_review_refs(context['auditPolicy']) == audit_policy(available_muscle_targets(equipment))
         assert context['newDecisionIds'] == ['DECISION_0']
         return json.dumps({'findings': [{'severity': 'blocking', 'action': 'clarify',
             'path': '/decisions/DECISION_0', 'message': 'This choice promises unsupported numerical verification.',
@@ -54,7 +62,7 @@ def test_legacy_choice_is_rechecked_against_capabilities_and_rejection_is_cached
     monkeypatch.setattr(review, 'chat_call', reject)
     rejected = json.loads(handle_function_call(None, messages, 'record_planning_decisions', choice(), equipment)['result'])
     assert not rejected['passed'] and rejected['decisions'] == original['decisions']
-    assert rejected['errors'][0]['code'] == 'decision_source_finding'
+    assert rejected['errors'][0]['code'] == 'decision_source_finding', rejected['errors']
     store(messages, 'record_planning_decisions', choice(), rejected, 'capability-recheck')
     assert json.loads(handle_function_call(None, messages, 'record_planning_decisions', choice(), equipment)['result']) == rejected
     assert len(calls) == 1
@@ -76,16 +84,16 @@ def test_checked_choice_survives_resume_and_reviewer_must_cite_a_new_conflict(mo
     state = json.loads(next(m['content'].split('\n', 1)[1] for m in _messages_for_api(messages, True, provided_equipment=equipment)
                             if m.get('content', '').startswith('Current planning state')))
     assert state['resolvedDecisions'] == decisions
-    finding = {'severity': 'blocking', 'action': 'clarify', 'decisionId': 'DECISION_0',
+    finding = {'severity': 'blocking', 'basis': 'established_violation', 'muscleTargets': [], 'action': 'clarify', 'decisionId': 'DECISION_0',
                'path': '/resolvedDecisions/DECISION_0', 'message': 'Ask the user to choose a balance convention again.',
                'evidencePaths': ['/sourceMessages/SOURCE_1/content'], 'repair': 'Ask again.',
                'newConflictEvidencePaths': (['/auditPolicy/supportedMuscleTargets'] if new_conflict == 'capability' else
                    ['/audit/workouts/0/estimatedSeconds'] if new_conflict else ['/sourceMessages/SOURCE_0/content'])}
     def check(client, request, **kwargs):
         context = json.loads(request[-1]['content'])
-        assert context['resolvedDecisions'] == decisions
+        assert _without_review_refs(context['resolvedDecisions']) == decisions
         from workout_generator_pkg.generation_audit import audit_policy, available_muscle_targets
-        assert context['auditPolicy'] == audit_policy(available_muscle_targets(equipment))
+        assert _without_review_refs(context['auditPolicy']) == audit_policy(available_muscle_targets(equipment))
         return json.dumps({'findings': [finding]}), None, None
     monkeypatch.setattr(review, 'chat_call', check)
     result = json.loads(handle_function_call(None, messages, 'audit_workout_plan', draft, equipment)['result'])
@@ -111,7 +119,7 @@ def test_missing_conflict_metadata_cannot_approve_a_real_prescription_violation(
     assert receipt['passed']
     store(messages, 'record_planning_decisions', arguments, receipt, 'effort')
     draft['workouts'][0]['exercises'][0]['placementNotes'] = 'Take every working set to failure.'
-    finding = {'severity': 'blocking', 'action': 'clarify', 'decisionId': 'DECISION_0',
+    finding = {'severity': 'blocking', 'basis': 'established_violation', 'muscleTargets': [], 'action': 'clarify', 'decisionId': 'DECISION_0',
                'path': '/draft/exercises/0/placementNotes',
                'message': 'Working sets to failure contradict the required 1-2 RIR.',
                'evidencePaths': ['/sourceMessages/SOURCE_0/content', '/draft/exercises/0/placementNotes'],

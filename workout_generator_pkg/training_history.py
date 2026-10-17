@@ -3,6 +3,7 @@ import copy
 import hashlib
 import json
 import math
+import threading
 from collections import defaultdict
 from datetime import date
 
@@ -10,6 +11,7 @@ from jsonschema import validate
 from workout_history_mcp.loader import WorkoutHistoryStore, load_backup, _is_active_set
 from .domain_ops import get_selectable_weights_for_exercise
 from .planning_tools import library_fingerprint
+from .cancellation import check_cancelled
 
 RELATED_LOAD_TRANSFER_CAUTION = 'Do not convert or transfer loads automatically. Execution, laterality, reps, effort and equipment affect comparability.'
 
@@ -17,7 +19,7 @@ GET_TRAINING_EVIDENCE_TOOL = {'type': 'function', 'function': {
     'name': 'get_training_evidence',
     'description': 'Retrieve exact working-set history, semantically related movement history, and equipment progression headroom for candidate LIBRARY_n exercises. Batch candidates. Defaults to the latest comparable session; request more or page older sessions only for a specific evidence gap. Related loads are separate evidence, never strength conversions.',
     'parameters': {'type': 'object', 'properties': {
-        'definition_ids': {'type': 'array', 'items': {'type': 'string', 'pattern': '^LIBRARY_[0-9]+$'}, 'minItems': 1, 'maxItems': 12},
+        'definition_ids': {'type': 'array', 'items': {'type': 'string', 'pattern': '^LIBRARY_[0-9]+$'}, 'minItems': 1, 'maxItems': 100},
         'session_offset': {'type': 'integer', 'minimum': 0},
         'session_limit': {'type': 'integer', 'minimum': 1, 'maximum': 10},
     }, 'required': ['definition_ids'], 'additionalProperties': False},
@@ -38,18 +40,18 @@ HISTORY_PLANNING_INSTRUCTION = (
     'When history does not justify a load, leave exact prescriptions unset so load calibration is required. '
     'Compare relatedMovementHistory with the candidate equipment ceiling before choosing an unrecorded variant. '
     'Related movement loads are not directly interchangeable: inspect equipment, execution and load conventions. '
+    'relatedHistoryStatus=checked_local_unconfirmed means weak local matches could not be adjudicated; no related records were accepted. Do not treat that as strength or suitability evidence. '
     'HISTORY_n references identify evidence-only historical movements; only LIBRARY_n references are selectable exercises. '
     'If related performance suggests a candidate may be too lightly loaded at the requested reps/RIR, justify its use, '
     'choose a supported alternative, or ask for calibration; do not count it as a hard set merely to fill a volume gap. '
     'Resolve loadSuitabilityConcerns before submitting a draft. Prefer an available loadable variant. If suitability remains uncertain, '
     'set requiresEffortCalibration=true for that occurrence and omit targetSetPrescriptions; the preview must show conditional volume. '
     'Extra sets or slower tempo do not by themselves resolve an equipment-capacity concern. '
-    'A zero added-load ceiling applies to that library entry, not to all variants of the movement. Before declaring a movement unloadable '
-    'or requesting changed targets, use available candidate results or search for a loadable variant for this specific gap. '
+    'Keep capability conclusions scoped to the supplied movement and setup. Consider supported alternatives for a demonstrated suitability gap before requesting changed targets. '
     'An empty loadSuitabilityConcerns list only means these deterministic checks found no flag; it does not verify current RIR, '
     'prescribed reps, or performance with shorter rests. Treat history-based loads as provisional starting points. '
     'Dumbbell-pair loads are app totals across both implements; bodyweight additional load is separate from recorded relative bodyweight. '
-    'Generic legacy labels such as Test do not establish a movement identity; do not prescribe them without clarification. '
+    'Use only established movement identities; unresolved identity requires clarification before prescription. '
     'An equipment limit is not evidence that an exercise is ineffective or that the athlete cannot progress.'
 )
 
@@ -85,6 +87,31 @@ def compact_training_evidence(items):
     for item in items:
         collect(item)
     return catalog
+
+
+def pool_execution_contexts(catalog):
+    """Factor repeated bulky execution contexts without dropping any performance facts."""
+    catalog = copy.deepcopy(catalog)
+    groups, contexts = {}, {}
+    for entry in catalog.values():
+        for session in entry.get('sessions', []):
+            for performance in session.get('performances', []):
+                context = performance.get('executionContext')
+                if isinstance(context, dict):
+                    key = json.dumps(context, sort_keys=True, separators=(',', ':'))
+                    groups.setdefault(key, []).append(performance)
+    for key, performances in groups.items():
+        reference = f'CONTEXT_{len(contexts)}'
+        replacement = {'executionContextRef': reference}
+        new_size = len(json.dumps({reference: performances[0]['executionContext']})) + len(performances) * len(json.dumps(replacement))
+        old_size = len(performances) * len(json.dumps({'executionContext': performances[0]['executionContext']}))
+        if new_size >= old_size:
+            continue
+        contexts[reference] = performances[0]['executionContext']
+        for performance in performances:
+            performance.pop('executionContext')
+            performance.update(replacement)
+    return catalog, contexts
 
 
 def number(value):
@@ -158,6 +185,9 @@ class TrainingHistory:
         self._loads = {}
         self._cache = {}
         self._related_cache = {}
+        self._related_lock = threading.RLock()
+        self._related_matching_lock = threading.Lock()
+        self._related_status_cache = {}
         self._history_equipment = store.workout_store
 
     @classmethod
@@ -205,10 +235,25 @@ class TrainingHistory:
     def evidence(self, arguments, equipment, client=None):
         result = self._exact_evidence(arguments, equipment)
         if client is not None:
-            self._add_related_history(result, equipment, client)
+            # Serialize related matching without holding the cache lock needed by new turns.
+            while not self._related_matching_lock.acquire(timeout=0.1):
+                check_cancelled()
+            try:
+                check_cancelled()
+                self._add_related_history(result, equipment, client)
+            finally:
+                self._related_matching_lock.release()
         for item in result['exercises']:
             item['loadSuitabilityConcerns'] = self._load_concerns(item)
         return result
+
+    def begin_turn(self):
+        """Allow failed related matching to retry; successful evidence stays cached."""
+        with self._related_lock:
+            for key, status in list(self._related_status_cache.items()):
+                if status == 'checked_local_unconfirmed':
+                    self._related_cache.pop(key, None)
+                    self._related_status_cache.pop(key, None)
 
     @staticmethod
     def _load_concerns(item):
@@ -222,6 +267,9 @@ class TrainingHistory:
         if not item['totalSessions'] and any(e.get('sessions') for e in item.get('relatedMovementHistory', [])):
             concerns.append({'code': 'related_history_only',
                 'message': 'Only related movement performance is available. Verify the candidate resistance/effort; do not transfer loads or infer suitability from another implement ceiling.'})
+        if not item['totalSessions'] and item.get('relatedHistoryStatus') == 'checked_local_unconfirmed':
+            concerns.append({'code': 'related_history_unconfirmed',
+                'message': 'No exact exercise sessions are recorded, and related-history matching could not be confirmed. Calibrate effort before treating this movement as load-suitable; do not infer a match or transfer loads.'})
         return concerns
 
     def load_suitability_errors(self, plan, messages, equipment):
@@ -243,6 +291,15 @@ class TrainingHistory:
         for exercise in plan.get('exercises', []):
             item = evidence.get(exercise.get('libraryDefinitionId'))
             concerns = self._load_concerns(item) if item else []
+            maximum_rir = plan.get('workingSetRIR', {}).get('maximum')
+            if item and exercise.get('maxReps') and number(maximum_rir):
+                records = [p['record'] for session in item.get('sessions', [])[:1] for p in session.get('performances', [])
+                           if p.get('record', {}).get('actualReps', 0) > exercise['maxReps'] + maximum_rir]
+                loads = [p.get('weight', p.get('additionalWeight')) for p in exercise.get('targetSetPrescriptions', [])]
+                if records and (not loads or any(number(load) and load <= record['loadKg']
+                        for load in loads for record in records)):
+                    concerns.append({'code': 'historical_reps_exceed_prescription',
+                        'message': 'The latest exact-movement history exceeded the prescribed rep ceiling at an equal/higher load, or no starting load is declared. This is an effort-calibration concern, not proof of current strength. Verify effort instead of silently counting easier sets as hard work.'})
             if concerns and not exercise.get('requiresEffortCalibration'):
                 errors.append({'code': 'training_load_suitability_unresolved', 'path': positions.get(exercise['id'], '/exercises'),
                     'exerciseId': exercise['id'], 'exercise': exercise['name'], 'concerns': concerns,
@@ -258,10 +315,17 @@ class TrainingHistory:
         historical = sorted((self.definitions[key] for key in self.sessions), key=lambda d: d['id'])
         gear = {item['id']: item.get('name') for source in (self._history_equipment, equipment)
                 for field in ('equipments', 'accessoryEquipments') for item in source.get(field, [])}
-        for item in result['exercises']:
-            if not any(d['id'] != item['definitionId'] for d in historical):
-                self._related_cache[fingerprint, item['definitionId']] = []
-        pending = [item for item in result['exercises'] if (fingerprint, item['definitionId']) not in self._related_cache]
+        with self._related_lock:
+            check_cancelled()
+            for item in result['exercises']:
+                if not any(d['id'] != item['definitionId'] for d in historical):
+                    self._related_cache[fingerprint, item['definitionId']] = []
+                    self._related_status_cache[fingerprint, item['definitionId']] = 'checked'
+            pending = [item for item in result['exercises'] if (fingerprint, item['definitionId']) not in self._related_cache]
+            cached = {item['definitionId']: (list(self._related_cache[fingerprint, item['definitionId']]),
+                self._related_status_cache.get((fingerprint, item['definitionId']), 'checked'))
+                for item in result['exercises'] if (fingerprint, item['definitionId']) in self._related_cache}
+        updates = {}
         if pending:
             entries = [_selection_entry(d, gear, f'HISTORY_{i}') for i, d in enumerate(historical)]
             queries = [json.dumps({'candidate': _selection_entry(definitions[item['definitionId']], gear, item['reference']),
@@ -269,18 +333,32 @@ class TrainingHistory:
                            'Do not restrict to the same implement or muscle overlap alone. Generic Test labels establish no movement identity.'})
                        for item in pending]
             matches = _semantic_matches(client, queries, entries) if historical else [{} for _ in pending]
-            for item, candidates in zip(pending, matches):
+            check_cancelled()
+            rerank_failures = getattr(matches, 'rerank_failures', {})
+            for query_index, (item, candidates) in enumerate(zip(pending, matches)):
+                cache_key = (fingerprint, item['definitionId'])
+                if query_index in rerank_failures:
+                    updates[cache_key] = ([], 'checked_local_unconfirmed')
+                    continue
                 ranked = sorted(candidates, key=lambda index: (-candidates[index], historical[index]['id']))
-                self._related_cache[fingerprint, item['definitionId']] = [
+                updates[cache_key] = ([
                     (index, candidates[index]) for index in ranked
-                    if historical[index]['id'] != item['definitionId'] and candidates[index] > 0][:3]
+                    if historical[index]['id'] != item['definitionId'] and candidates[index] >= 0.45][:3], 'checked')
+        with self._related_lock:
+            check_cancelled()
+            for cache_key, (candidates, status) in updates.items():
+                self._related_cache[cache_key] = candidates
+                self._related_status_cache[cache_key] = status
+                cached[cache_key[1]] = (list(candidates), status)
         history_equipment = {**equipment, 'exerciseDefinitions': historical}
         current_refs = {d['id']: f'LIBRARY_{i}' for i, d in enumerate(sorted(definitions.values(), key=lambda d: d['id']))}
         for item in result['exercises']:
             item['relatedMovementHistory'] = []
-            item['relatedHistoryStatus'] = 'checked'
+            candidates, item['relatedHistoryStatus'] = cached[item['definitionId']]
+            if item['relatedHistoryStatus'] == 'checked_local_unconfirmed':
+                item['relatedHistoryWarning'] = 'Semantic relevance was weak and model adjudication failed; no related history was accepted.'
             candidate = definitions[item['definitionId']]
-            for index, score in self._related_cache[fingerprint, item['definitionId']]:
+            for index, score in candidates:
                 related = historical[index]
                 evidence = self._exact_evidence({'definition_ids': [f'LIBRARY_{index}'], 'session_limit': 1}, history_equipment)['exercises'][0]
                 differences = {field: {'candidate': candidate.get(field), 'historical': related.get(field)}
@@ -377,5 +455,5 @@ class TrainingHistory:
                 continue
             if isinstance(result, dict) and result.get('historyFingerprint') == self.fingerprint and result.get('libraryFingerprint') == library_fingerprint(equipment):
                 required.difference_update(item['reference'] for item in result.get('exercises', [])
-                                           if item.get('sessions') or item.get('relatedHistoryStatus') == 'checked')
+                                           if item.get('sessions') or item.get('relatedHistoryStatus') in ('checked', 'checked_local_unconfirmed'))
         return sorted(required)

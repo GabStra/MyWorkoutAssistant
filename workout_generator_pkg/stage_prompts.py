@@ -1,7 +1,6 @@
 """Workflow-stage prompt and example definitions for workout generation."""
 
 import json
-from .muscle_roles import MUSCLE_ROLE_GUIDANCE
 
 from .constants import (
     EXERCISE_CATEGORY_ENUM_VALUES,
@@ -10,6 +9,7 @@ from .constants import (
     MUSCLE_GROUP_ENUM_VALUES,
     SET_SUBCATEGORY_ENUM_VALUES,
     WORKOUT_COMPONENT_TYPE_VALUES,
+    SCHEMA_REPAIR_INSTRUCTION,
 )
 
 # Simplified equipment schema for incremental generation
@@ -267,7 +267,7 @@ EXERCISE_EXAMPLE = {
 }
 
 EXERCISE_SYSTEM_PROMPT = (
-    MUSCLE_ROLE_GUIDANCE + "\nWhen a supplied library definition exists, preserve its roles exactly; never reclassify it to fit the workout.\n" +
+    "Preserve supplied library movement fields and muscle roles exactly; never reclassify them to fit a workout.\n"
     "Output JSON only (no markdown/explanations).\n"
     "Generate only the exercise list with placeholder IDs (EXERCISE_X, SET_X). Do not use UUIDs.\n"
     "Use only provided equipment/accessory placeholder IDs.\n\n"
@@ -476,7 +476,7 @@ PLAN_INDEX_EXAMPLE = {
 }
 
 PLAN_INDEX_SYSTEM_PROMPT = (
-    MUSCLE_ROLE_GUIDANCE + "\nWhen a supplied library definition exists, preserve its roles exactly; never reclassify it to fit the workout.\n" +
+    "Preserve supplied library movement fields and muscle roles exactly; never reclassify them to fit a workout.\n"
     "Output JSON only (no markdown/explanations).\n"
     "Exercise entries in the PlanIndex are workout-specific prescriptions, not reusable identity records.\n"
     "When an exercise-library catalog is supplied, every exercise must include a listed libraryDefinitionId.\n"
@@ -552,7 +552,7 @@ PLAN_INDEX_SYSTEM_PROMPT = (
     "- Preserve exact load targets when they are provided.\n\n"
     "Workout plan constraints:\n"
     "- Include auditTargets: {weeklyEffectiveSets: {muscle: {minimum: number, maximum: number}}, perSessionEffectiveSets: {muscle: {minimum: number, maximum: number}}, maximumSessionSeconds: integer|null}.\n"
-    "- Supported audit muscles: chest, back, quads, hamstrings, glutes, shoulders, biceps, triceps, calves. Keep arms and hamstrings/glutes separate; never combine their sets to satisfy a target.\n"
+    "- Preserve the approved audit target keys exactly; do not introduce, split or merge target groups.\n"
     "- Copy the user's AGREED numeric targets, including explicitly accepted tradeoffs, into auditTargets. Never replace targets with the model's claimed achieved totals or lower them to fit a failing plan. Use empty maps/null for unspecified goals. Do not assign weekly targets across unrelated periodized phases.\n"
     "- For the programming audit, encode numWorkSets and generateWarmUpSets explicitly for every exercise, and maxReps for strength exercises.\n"
     "- The deterministic audit credits each primary muscle group once per logical set and secondary groups at 0.5 only for compound lifts, with no primary/secondary double-counting.\n"
@@ -581,47 +581,10 @@ PLAN_INDEX_SYSTEM_PROMPT = (
 
 JSON_PATCH_REPAIR_SYSTEM_PROMPT = (
     "You are a JSON schema validation error fixer using JSON Patch (RFC 6902).\n\n"
-    "CRITICAL INSTRUCTIONS:\n"
-    "1. You will receive a JSON document with validation errors and a list of error messages\n"
-    "2. You must output a JSON Patch array (RFC 6902) that fixes ONLY the validation errors\n"
-    "3. Do NOT introduce new UUIDs - the document uses placeholder IDs (EQUIPMENT_X, EXERCISE_X, etc.)\n"
-    "4. Do NOT modify fields that are already valid - only fix the specific errors mentioned\n"
-    "5. Preserve all placeholder IDs and relationships\n"
-    "5b. If you must create or replace a placeholder ID, use exact canonical numeric forms only: EQUIPMENT_<number>, ACCESSORY_<number>, EXERCISE_<number>, WORKOUT_<number>, COMPONENT_<number>, SET_<number>. Reserved exceptions: EXERCISE_WARMUP, SET_WARMUP.\n"
-    "6. Use contextually appropriate values when fixing errors (e.g., infer muscle groups from exercise names)\n"
-    "7. NEVER set values to null in workoutComponents arrays - if a component is invalid, use \"remove\" operation instead\n"
-    "8. When fixing workoutComponents, ensure each element is a complete, valid component object (Exercise, Rest, or Superset)\n"
-    "9. If a component cannot be fixed, remove it rather than setting it to null\n\n"
-    "EQUIPMENT ARRAY FORMAT REQUIREMENTS:\n"
-    "All equipment arrays must contain objects, NOT numbers:\n"
-    "- BARBELL/PLATELOADEDCABLE: availablePlates must be array of objects with {weight: number, thickness: number}\n"
-    "  Example: [{\"weight\": 20.0, \"thickness\": 30.0}, {\"weight\": 15.0, \"thickness\": 25.0}]\n"
-    "- DUMBBELLS/DUMBBELL: dumbbells and extraWeights must be arrays of objects with {weight: number}\n"
-    "  Example: [{\"weight\": 10.0}, {\"weight\": 15.0}, {\"weight\": 20.0}]\n"
-    "- WEIGHTVEST/MACHINE: availableWeights and extraWeights must be arrays of objects with {weight: number}\n"
-    "  Example: [{\"weight\": 5.0}, {\"weight\": 10.0}, {\"weight\": 15.0}]\n"
-    "If you see arrays with numbers like [1.0, 2.0, 3.0], convert them to objects: [{\"weight\": 1.0}, {\"weight\": 2.0}, {\"weight\": 3.0}]\n"
-    "For plates missing thickness, add a default thickness of 20.0 (mm).\n\n"
-    "ENUM CONSTRAINTS (use exact values):\n"
-    f"- ExerciseType: {EXERCISE_TYPE_ENUM_VALUES}\n"
-    f"- ExerciseCategory: {EXERCISE_CATEGORY_ENUM_VALUES}\n"
-    f"- MuscleGroup: {MUSCLE_GROUP_ENUM_VALUES}\n"
-    f"- SetSubCategory: {SET_SUBCATEGORY_ENUM_VALUES}\n"
-    f"- workoutComponents.componentType: {WORKOUT_COMPONENT_TYPE_VALUES}\n\n"
-    "JSON PATCH FORMAT:\n"
-    "Output an array of patch operations, each with:\n"
-    "- op: The operation (\"add\", \"remove\", \"replace\", \"move\", \"copy\")\n"
-    "- path: JSON Pointer to the field (e.g., \"/workouts/0/workoutComponents/2/muscleGroups/0\")\n"
-    "- value: The new value (for \"add\" and \"replace\") - NEVER use null for workoutComponents items\n\n"
-    "EXAMPLE:\n"
-    "If error says 'muscleGroups array is empty' for exercise at /workouts/0/workoutComponents/0:\n"
-    "[{\"op\": \"add\", \"path\": \"/workouts/0/workoutComponents/0/muscleGroups\", \"value\": [\"FRONT_QUADRICEPS\", \"BACK_GLUTEAL\"]}]\n"
-    "For compound exercises, use 2+ primary groups (e.g. bench -> [\"FRONT_CHEST\", \"FRONT_DELTOIDS\", \"FRONT_TRICEPS\"]).\n\n"
-    "If error says 'availableWeights[0] is not of type object' for equipment at /equipments/2:\n"
-    "[{\"op\": \"replace\", \"path\": \"/equipments/2/availableWeights\", \"value\": [{\"weight\": 1.0}, {\"weight\": 2.0}, {\"weight\": 3.0}]}]\n\n"
-    "If error says 'None is not valid' for workoutComponents item at /workouts/0/workoutComponents/10:\n"
-    "[{\"op\": \"remove\", \"path\": \"/workouts/0/workoutComponents/10\"}]\n\n"
-    "OUTPUT REQUIREMENTS:\n"
-    "Output JSON only (no markdown/explanations) as a JSON Patch array.\n"
-    "Return only the JSON Patch array that fixes the validation errors."
+    + SCHEMA_REPAIR_INSTRUCTION + "\n\n"
+    "Fix only the reported failing fields, using Structured repair targets and their schema fragments. "
+    "Preserve existing placeholders; never invent UUIDs or movements. "
+    "Return only a JSON Patch array, without markdown or a wrapper. Each operation needs op/path and value or from where required by RFC 6902. "
+    "For example, a supplied numeric weight of 5 may become {\"weight\":5} when the schema requires an object. "
+    "Do not substitute null for a required component. If no evidence-backed repair is possible, return []."
 )

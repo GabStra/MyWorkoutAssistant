@@ -4,7 +4,7 @@ import json
 
 from jsonschema import validate
 
-from .planning_tools import PlanningInputError, requirement_sources, source_message_context, _fingerprint
+from .planning_tools import PlanningInputError, requirement_sources, source_message_context, _fingerprint, _latest_result
 
 
 RECORD_PLANNING_DECISIONS_TOOL = {'type': 'function', 'function': {
@@ -23,19 +23,30 @@ RECORD_PLANNING_DECISIONS_TOOL = {'type': 'function', 'function': {
         'required': ['decisions'], 'additionalProperties': False}}}
 
 
-def saved_decisions(messages):
-    calls = {call['id'] for m in messages for call in m.get('tool_calls', [])
-             if call['function']['name'] == 'record_planning_decisions'}
-    for message in reversed(messages):
+def latest_decision_receipt(messages):
+    calls = {call['id']: call['function']['name'] for m in messages for call in m.get('tool_calls', [])
+             if call['function']['name'] in ('record_planning_decisions', 'set_workout_requirements')}
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
         if message.get('role') != 'tool' or message.get('tool_call_id') not in calls:
             continue
         try:
             payload = json.loads(message.get('content') or '{}')
         except (ValueError, TypeError):
             continue
-        if isinstance(payload, dict) and payload.get('passed') and payload.get('decisionReview', {}).get('passed'):
-            return copy.deepcopy(payload['decisions'])
-    return {}
+        if not isinstance(payload, dict) or not payload.get('passed'):
+            continue
+        if calls[message['tool_call_id']] == 'record_planning_decisions':
+            if payload.get('decisionReview', {}).get('passed'):
+                return index, copy.deepcopy(payload)
+        elif (payload.get('sourceReview', {}).get('passed')
+              and payload.get('jointDecisionReview', {}).get('passed')):
+            return index, copy.deepcopy(payload)
+    return -1, {}
+
+
+def saved_decisions(messages):
+    return latest_decision_receipt(messages)[1].get('decisions', {})
 
 
 def resolved_decisions(messages):
@@ -45,7 +56,8 @@ def resolved_decisions(messages):
 def propose_decisions(arguments, messages):
     validate(arguments, RECORD_PLANNING_DECISIONS_TOOL['function']['parameters'])
     sources = source_message_context(requirement_sources(messages))
-    source_hash = _fingerprint([source['content'] for source in sources.values() if source['role'] == 'user'])
+    source_hash = _fingerprint([{key: source[key] for key in ('content', 'images') if key in source} if source.get('images') else source['content']
+                                for source in sources.values() if source['role'] == 'user'])
     decisions = saved_decisions(messages)
     proposed = []
     for item in arguments['decisions']:
@@ -55,7 +67,14 @@ def propose_decisions(arguments, messages):
                 '/decisions', 'Copy actual SOURCE_n references. Cite the user choice or delegation, with its question if needed; do not invent authorization.')
         active = {key: value for key, value in decisions.items() if not value.get('supersededBy')}
         same = next((key for key, value in active.items() if value['topic'].strip().casefold() == item['topic'].strip().casefold()), None)
-        if same and active[same]['choice'] == item['choice'] and set(active[same]['sourceReferences']) == set(refs):
+        normalize = lambda text: ' '.join(text.split()).casefold()
+        identical = next((key for key, value in active.items()
+                          if normalize(value['choice']) == normalize(item['choice'])
+                          and set(value['sourceReferences']) == set(refs)
+                          and (normalize(value['topic']) == normalize(item['topic']) or item.get('supersedes') == key)
+                          and item.get('supersedes') in (None, key)), None)
+        if identical:
+            same = identical
             if active[same].get('authorizationSourceHash') != source_hash:
                 decisions[same]['authorizationSourceHash'] = source_hash
                 proposed.append(same)
@@ -64,6 +83,16 @@ def propose_decisions(arguments, messages):
         if (same and previous != same) or (previous and (previous not in active or not item.get('reason'))):
             raise PlanningInputError('settled_decision', 'The existing choice cannot be silently replaced.', '/decisions',
                 'Reuse the settled choice. To replace it, copy its DECISION_n into supersedes and explain the new instruction or concrete conflict in reason.')
+        if previous and active[previous].get('authorizationSourceHash') == source_hash:
+            decision_index, _ = latest_decision_receipt(messages)
+            audit_index, audit = _latest_result(messages, 'audit_workout_plan')
+            conflict = audit_index > decision_index and any(
+                finding.get('decisionId') == previous and finding.get('action') == 'clarify'
+                and finding.get('newConflictEvidencePaths')
+                for finding in audit.get('review', {}).get('findings', []))
+            if not conflict:
+                raise PlanningInputError('decision_already_recorded', 'This choice already has current user authorization; no new reviewed conflict permits replacing it.', '/decisions',
+                    f'Reuse {previous}. Refresh an audit that predates this decision, then repair the workout. A changed topic, paraphrase or stale review does not create new authorization.')
         identifier = f'DECISION_{len(decisions)}'
         decisions[identifier] = copy.deepcopy(item)
         decisions[identifier]['sourceCountAtResolution'] = len(sources)

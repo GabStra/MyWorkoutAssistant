@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import copy
 import io
+import threading
 from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
@@ -283,11 +284,14 @@ def test_ctrl_c_returns_to_prompt_without_losing_tool_history(monkeypatch, tmp_p
 
 def test_shell_combines_independent_search_calls_and_preserves_tool_responses(monkeypatch, tmp_path):
     calls = []
-    def search_group(searches, equipment, client, messages, progress=None):
+    def search_group(searches, equipment, client, messages, progress=None, on_result=None):
         calls.append(searches)
         progress(0, 2)
         progress(2, 2)
-        return {call_id: {"results": []} for call_id, _ in searches}
+        results = {call_id: {"results": []} for call_id, _ in searches}
+        for call_id, payload in results.items():
+            on_result(call_id, payload)
+        return results
     monkeypatch.setattr(interactive_shell, "execute_library_searches", search_group)
     tools = [FakeToolCall(name, "function", FakeFunction("search_exercise_library", json.dumps({"queries": [name]})))
              for name in ("push", "pull")]
@@ -302,6 +306,65 @@ def test_shell_combines_independent_search_calls_and_preserves_tool_responses(mo
     results = [m for m in record["messages"] if m.get("role") == "tool" and m.get("tool_call_id") != "requirements"]
     assert [m["tool_call_id"] for m in results] == ["push", "pull"]
     assert all(json.loads(m["content"]) == {"results": []} for m in results)
+
+
+@pytest.mark.parametrize('batch_kind', ['mixed', 'combined_search'])
+def test_completed_lookup_is_saved_before_another_lookup_is_cancelled(monkeypatch, tmp_path, batch_kind):
+    from test_workout_generator_planning_tools import planning_case
+    equipment, requirements, _, _ = planning_case()
+    path = tmp_path / 'library.json'
+    path.write_text(json.dumps(equipment), encoding='utf-8')
+    checkpointed = threading.Event()
+    payload = {'results': []}
+    # Isolate batch cancellation; construction-stage permissions have separate coverage.
+    monkeypatch.setattr(interactive_shell, 'construction_tool_failure', lambda *args: None)
+
+    def search(searches, equipment, client, messages, progress=None, on_result=None):
+        if batch_kind == 'combined_search':
+            on_result('finished', payload)
+            assert checkpointed.is_set()
+            raise KeyboardInterrupt
+        return {'finished': payload}
+
+    def cancelled_metadata(*args):
+        assert checkpointed.wait(3), 'A finished lookup must be persisted while the batch is still running.'
+        raise KeyboardInterrupt
+
+    target = interactive_shell if batch_kind == 'combined_search' else 'workout_generator_pkg.lookup_batch'
+    if isinstance(target, str):
+        monkeypatch.setattr(target + '.execute_library_searches', search)
+    else:
+        monkeypatch.setattr(target, 'execute_library_searches', search)
+    monkeypatch.setattr('workout_generator_pkg.lookup_batch.get_exercise_candidates', cancelled_metadata)
+    first = FakeToolCall('finished', 'function', FakeFunction('search_exercise_library', json.dumps({'queries': ['push']})))
+    second_name = 'search_exercise_library' if batch_kind == 'combined_search' else 'get_exercise_candidates'
+    second_args = {'queries': ['pull']} if batch_kind == 'combined_search' else {'definition_ids': ['LIBRARY_0']}
+    second = FakeToolCall('unfinished', 'function', FakeFunction(second_name, json.dumps(second_args)))
+    initial = FakeToolCall('requirements', 'function', FakeFunction('set_workout_requirements', json.dumps(requirements)))
+    deps = make_shell_deps(tmp_path, chat_results=[(None, [initial]), (None, [first, second])],
+                           generation_results=[], generation_calls=[])
+    save = deps.save_conversation
+
+    def save_and_check(messages, *args, **kwargs):
+        result = save(messages, *args, **kwargs)
+        if any(m.get('tool_call_id') == 'finished' and m.get('content') == json.dumps(payload)
+               for m in messages):
+            checkpointed.set()
+        return result
+
+    deps.save_conversation = save_and_check
+    inputs = iter(['Plan a workout', 'CONFIRM REQUIREMENTS', '/exit'])
+    monkeypatch.setenv('DEEPSEEK_API_KEY', 'test-key')
+    monkeypatch.setattr('builtins.input', lambda prompt='': next(inputs))
+    monkeypatch.setattr('sys.argv', ['workout_generator.py', '--exercise-library-file', str(path)])
+    interactive_shell.main(deps=deps)
+    saved = load_active_conversation_record(str(tmp_path))['messages']
+    finished = [m for m in saved if m.get('tool_call_id') == 'finished']
+    unfinished = [m for m in saved if m.get('tool_call_id') == 'unfinished']
+    assert len(finished) == len(unfinished) == 1
+    assert json.loads(finished[0]['content']) == payload
+    assert 'cancelled by the user' in unfinished[0]['content']
+    assert [m['tool_call_id'] for m in saved if m.get('tool_call_id') in ('finished', 'unfinished')] == ['finished', 'unfinished']
 
 
 def test_tool_results_are_checkpointed_before_the_next_tool_without_mutating_pending_calls(monkeypatch, tmp_path):
@@ -323,6 +386,43 @@ def test_tool_results_are_checkpointed_before_the_next_tool_without_mutating_pen
     for key in calls:
         responses = [m for m in saved if m.get('tool_call_id') == key]
         assert len(responses) == 1 and json.loads(responses[0]['content']) == {'completed': key}
+
+
+def test_internal_lookup_failure_pauses_once_and_keeps_completed_parallel_search(monkeypatch, tmp_path, capsys):
+    from test_workout_generator_planning_tools import planning_case
+    from workout_generator_pkg.planning_tools import planning_tool_failure
+    requirements = planning_case()[1]
+    failure = planning_tool_failure('get_training_evidence', RuntimeError('Invalid backend similarity score'))
+    success = {'results': [{'query': 'quad isolation', 'exercises': []}], 'errors': []}
+    batch = [FakeToolCall('history', 'function', FakeFunction('get_training_evidence', '{"definition_ids":["LIBRARY_0"]}')),
+             FakeToolCall('search', 'function', FakeFunction('search_exercise_library', '{"queries":["quad isolation"]}'))]
+    initial = FakeToolCall('requirements', 'function', FakeFunction('set_workout_requirements', json.dumps(requirements)))
+    deps = make_shell_deps(tmp_path, chat_results=[(None, [initial]), (None, batch)],
+                           generation_results=[], generation_calls=[])
+    requests = []
+    chat = deps.chat_call_with_loading
+
+    def track_chat(*args, **kwargs):
+        requests.append(1)
+        return chat(*args, **kwargs)
+
+    def completed_batch(*args, on_result=None, **kwargs):
+        on_result('history', failure)
+        on_result('search', success)
+        return {'history': failure, 'search': success}
+
+    deps.chat_call_with_loading = track_chat
+    monkeypatch.setattr(interactive_shell, 'execute_lookup_batch', completed_batch)
+    run_shell(monkeypatch, deps, ['Plan a workout', 'CONFIRM REQUIREMENTS', '/exit'])
+    output = capsys.readouterr().out
+    assert len(requests) == 2
+    assert 'get_training_evidence failed internally: Invalid backend similarity score' in output
+    assert 'Skipped search_exercise_library' not in output
+    messages = load_active_conversation_record(str(tmp_path))['messages']
+    results = [m for m in messages if m.get('tool_call_id') == 'search']
+    assert len(results) == 1 and json.loads(results[0]['content']) == success
+    assert failure['executionFailure'] and failure['errors'][0]['code'] == 'tool_execution_failed'
+    assert 'Do not edit the workout' in failure['instruction']
 
 
 @pytest.mark.parametrize('failure', ['serialization', 'replace'])
@@ -433,14 +533,57 @@ def test_shell_repairs_one_rep_with_patch_then_previews_and_exports(monkeypatch,
     schema = next(t['function']['parameters'] for t in repair_tools if t.get('function', {}).get('name') == 'audit_workout_plan')
     assert 'patch' in schema['required'] and 'workouts' not in schema['properties']
     assert requests[1][1] == {'reasoning_effort': 'low', 'activity': 'Drafting session'}
-    assert requests[-1][1] == {}
+    assert requests[-1][1] == {'reasoning_effort': 'low', 'activity': 'Repairing draft'}
     if attempt_full_rewrite:
         failure = next(json.loads(m['content']) for m in messages if m.get('tool_call_id') == 'rewrite')
         assert failure['errors'][0]['code'] == 'repair_patch_required'
         assert 'submittedDraft' not in failure
     output = capsys.readouterr().out
     assert 'outside minReps' not in output
-    assert 'Repair task: REVISION_0' in output
+
+
+@pytest.mark.parametrize('stale_review', [False, True])
+@pytest.mark.parametrize('numbered_choice', [False, True])
+def test_exact_confirmation_routes_directly_to_guarded_export(monkeypatch, tmp_path, stale_review, numbered_choice):
+    from test_workout_generator_planning_tools import planning_case
+    from workout_generator_pkg.plan_review import REVIEW_VERSION
+    equipment, requirements, _, draft = planning_case()
+    path = tmp_path / 'library.json'
+    path.write_text(json.dumps(equipment), encoding='utf-8')
+    calls = [FakeToolCall('requirements', 'function', FakeFunction('set_workout_requirements', json.dumps(requirements))),
+             FakeToolCall('draft', 'function', FakeFunction('audit_workout_plan', json.dumps(draft)))]
+    generated, model_calls = [], []
+    deps = make_shell_deps(tmp_path, chat_results=[(None, [calls[0]]), (None, [calls[1]]), ('The saved review needs refreshing.', None)],
+        generation_results=[{'success': True, 'filepath': 'generated.json', 'error': None}], generation_calls=generated)
+    chat, handle = deps.chat_call_with_loading, deps.handle_function_call
+
+    def count_chat(*args, **kwargs):
+        model_calls.append(1)
+        return chat(*args, **kwargs)
+
+    def handle_with_review_change(client, messages, name, *args, **kwargs):
+        if stale_review and name == 'generate_workout':
+            result = next(m for m in reversed(messages) if m.get('tool_call_id') == 'draft')
+            snapshot = json.loads(result['content'])
+            snapshot['review']['version'] = REVIEW_VERSION - 1
+            result['content'] = json.dumps(snapshot)
+        return handle(client, messages, name, *args, **kwargs)
+
+    deps.chat_call_with_loading, deps.handle_function_call = count_chat, handle_with_review_change
+    inputs = iter(['Plan 5-6 chest sets', '1' if numbered_choice else 'CONFIRM REQUIREMENTS',
+                   '1' if numbered_choice else 'CONFIRM GENERATE', '/exit'])
+    monkeypatch.setenv('DEEPSEEK_API_KEY', 'test-key')
+    monkeypatch.setattr('builtins.input', lambda prompt='': next(inputs))
+    monkeypatch.setattr('sys.argv', ['workout_generator.py', '--exercise-library-file', str(path)])
+    interactive_shell.main(deps=deps)
+    assert len(generated) == (0 if stale_review else 1)
+    assert len(model_calls) == 2
+    saved = load_active_conversation_record(str(tmp_path))['messages']
+    confirmations = [c for m in saved for c in m.get('tool_calls', []) if c['id'].startswith('confirm_')]
+    assert len(confirmations) == 1 and confirmations[0]['function']['name'] == 'generate_workout'
+    if stale_review:
+        assert any(c['id'].startswith('reaudit_') for m in saved for c in m.get('tool_calls', []))
+        assert sum(bool(m.get('canonicalDraftPreview')) for m in saved) == 2
 
 
 def test_generate_with_instructions_enters_planning_instead_of_exporting(monkeypatch, tmp_path):
@@ -501,7 +644,7 @@ def test_requirements_reapproval_reaudits_saved_draft_before_another_planner_cal
     resumed = json.loads(next(m['content'].split('\n', 1)[1] for m in calls[4][0]
                              if m.get('content', '').startswith('Current planning state')))
     assert resumed['currentDraftId'] == 'REVISION_1' and resumed['repairTask']
-    assert calls[4][1]['reasoning_effort'] == 'low' and len(calls) == 6
+    assert calls[4][1]['reasoning_effort'] == 'low' and len(calls) == 5
     assert confirmed_draft(messages, equipment)['currentDraftId'] == 'REVISION_2' and len(generated) == 1
     assert 'Re-auditing saved draft' in capsys.readouterr().out
 
@@ -543,7 +686,8 @@ def test_canonical_draft_repairs_and_displays_before_confirmation(monkeypatch, t
     calls = []
     deps = make_shell_deps(tmp_path, chat_results=results,
         generation_results=[{"success": True, "filepath": "generated.json", "error": None}], generation_calls=calls)
-    inputs = iter(["Plan 5-6 effective chest sets", "CONFIRM REQUIREMENTS", *(["What is RIR?"] if first_sets == 5 else []), EXACT_GENERATION_CONFIRMATION, "/exit"])
+    inputs = iter(["Plan 5-6 effective chest sets", "CONFIRM REQUIREMENTS", *(["What is RIR?"] if first_sets == 5 else []),
+                   '1' if first_sets == 5 else EXACT_GENERATION_CONFIRMATION, "/exit"])
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
     monkeypatch.setattr("builtins.input", lambda prompt="": next(inputs))
     monkeypatch.setattr("sys.argv", ["workout_generator.py", "--exercise-library-file", str(path)])
@@ -555,11 +699,12 @@ def test_canonical_draft_repairs_and_displays_before_confirmation(monkeypatch, t
     assert len(calls) == 1
     record = load_active_conversation_record(str(tmp_path))
     assert sum(bool(message.get("canonicalDraftPreview")) for message in record["messages"]) == 1
-    tool_turns = [message for message in record["messages"] if message.get("tool_calls")]
+    tool_turns = [message for message in record["messages"] if message.get("tool_calls")
+                  and not message['tool_calls'][0]['id'].startswith('confirm_')]
     assert tool_turns and all(message["reasoning_content"] == "test reasoning" for message in tool_turns)
     assert all(message["reasoning_content"] == "test reasoning"
                for message in interactive_shell._messages_for_api(record["messages"])
-               if message.get("tool_calls"))
+               if message.get("tool_calls") and not message['tool_calls'][0]['id'].startswith('confirm_'))
     snapshot = confirmed_draft(record["messages"], equipment)
     assert snapshot["planIndex"]["exercises"][0]["numWorkSets"] == 5
     if first_sets != 5:
@@ -587,10 +732,8 @@ def test_missing_draft_returns_repair_feedback_then_requires_fresh_confirmation(
     calls = []
     deps = make_shell_deps(tmp_path, chat_results=[
         ("I will validate the plan before generation.", None),
-        tool("generate_workout", {}, "premature"),
         tool("set_workout_requirements", requirements, "requirements"),
         tool("audit_workout_plan", draft, "draft"),
-        tool("generate_workout", {}, "confirmed"),
     ], generation_results=[{"success": True, "filepath": "generated.json", "error": None}], generation_calls=calls)
     inputs = iter(["Plan 5-6 chest sets", EXACT_GENERATION_CONFIRMATION, "CONFIRM REQUIREMENTS", EXACT_GENERATION_CONFIRMATION, "/exit"])
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
@@ -599,7 +742,8 @@ def test_missing_draft_returns_repair_feedback_then_requires_fresh_confirmation(
     interactive_shell.main(deps=deps)
     assert len(calls) == 1
     messages = load_active_conversation_record(str(tmp_path))["messages"]
-    failed = next(json.loads(m["content"]) for m in messages if m.get("tool_call_id") == "premature")
+    failed = next(json.loads(m["content"]) for m in messages if m.get("role") == 'tool'
+                  and m.get("tool_call_id", '').startswith('confirm_'))
     assert failed["requires_plan_revision"] and failed["errors"][0]["repair"]
     assert "Returning to planning" in capsys.readouterr().out
 
@@ -627,7 +771,7 @@ def test_failed_audit_revises_in_chat_and_requires_fresh_confirmation(monkeypatc
     deps.chat_call_with_loading = chat
     run_shell(monkeypatch, deps, [EXACT_GENERATION_CONFIRMATION, EXACT_GENERATION_CONFIRMATION, "/exit"])
     assert len(calls) == 2
-    assert captured[1][1] == []
+    assert captured[1][1] == [interactive_shell.ASK_USER_TOOL]
     assert any("Weekly chest: 3; required 4" in str(message.get("content")) for message in captured[1][0])
     assert any("fresh CONFIRM GENERATE" in str(message.get("content")) for message in captured[2][0])
     assert "Revised plan: four sets" in capsys.readouterr().out
@@ -727,19 +871,7 @@ def test_successful_generation_keeps_shell_alive_and_preserves_active_conversati
     generation_calls: list[dict[str, object]] = []
     deps = make_shell_deps(
         tmp_path,
-        chat_results=[
-            (
-                None,
-                [
-                    FakeToolCall(
-                        id="tool-1",
-                        type="function",
-                        function=FakeFunction("generate_workout", json.dumps({"custom_prompt": ""})),
-                    )
-                ],
-            ),
-            ("You can keep refining this conversation.", None),
-        ],
+        chat_results=[("You can keep refining this conversation.", None)],
         generation_results=[
             {
                 "success": True,
@@ -1091,7 +1223,7 @@ def test_interrupted_tool_call_still_persists_matching_tool_response(
     active_record = load_active_conversation_record(str(tmp_path))
     assert active_record is not None
     assert any(
-        message.get("role") == "tool" and message.get("tool_call_id") == "tool-1"
+        message.get("role") == "tool" and message.get("tool_call_id", '').startswith('confirm_')
         for message in active_record["messages"]
     )
 
@@ -1132,7 +1264,7 @@ def test_failed_generation_still_records_tool_response(
     active_record = load_active_conversation_record(str(tmp_path))
     assert active_record is not None
     tool_messages = [message for message in active_record["messages"] if message.get("role") == "tool"]
-    assert [message.get("tool_call_id") for message in tool_messages] == ["tool-1"]
+    assert len(tool_messages) == 1 and tool_messages[0]['tool_call_id'].startswith('confirm_')
     assert len(generation_calls) == 1
     output = capsys.readouterr().out
     assert "Workout generation failed: first failure" in output
@@ -1214,7 +1346,7 @@ def test_shell_builds_sessions_incrementally_and_reviews_only_the_complete_progr
     assert all(options == {'reasoning_effort': 'low', 'activity': 'Drafting session'} for _, options in requests[1:-1])
 
 
-def test_combined_search_failure_keeps_tool_responses_and_records_requirements(monkeypatch, tmp_path):
+def test_combined_search_failure_keeps_tool_responses_and_preserves_approved_requirements(monkeypatch, tmp_path):
     from test_workout_generator_planning_tools import planning_case
     equipment, requirements, _, _ = planning_case()
     path = tmp_path / 'library.json'
@@ -1237,7 +1369,10 @@ def test_combined_search_failure_keeps_tool_responses_and_records_requirements(m
     messages = load_active_conversation_record(str(tmp_path))['messages']
     results = {message['tool_call_id']: json.loads(message['content']) for message in messages if message.get('role') == 'tool'}
     assert set(results) == {'one', 'two', 'requirements', 'requirements-initial'}
-    assert results['requirements']['requirementsId']
+    assert results['requirements-initial']['requirementsId']
+    assert results['requirements']['errors'][0]['code'] == 'construction_stage_required'
+    from workout_generator_pkg.planning_tools import _latest_result
+    assert _latest_result(messages, 'set_workout_requirements')[1] == results['requirements-initial']
     for identifier in ('one', 'two'):
         assert results[identifier]['errors'][0]['code'] == 'library_search_failed'
         assert 'truncated' in results[identifier]['errors'][0]['message']

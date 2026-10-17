@@ -52,8 +52,9 @@ def audit_policy(muscle_targets=None):
         'muscleLabels': {key: value for key, value in {**TRAINING_MUSCLES, 'back': 'Back (combined lats and upper back)',
             'shoulders': 'Shoulders (combined deltoids)'}.items() if key in supported},
         'aggregateTargets': {key: sorted(values) for key, values in TRAINING_MUSCLE_GROUPS.items()},
-        'capabilityLimits': 'Only supportedMuscleTargets keys from the loaded library can have numerical volume targets. trainingMuscles supplies canonical primary/secondary identities; older definitions fall back to coarse body-map tags and cannot establish missing regional credits. Aggregate targets are optional groups, never evidence that every member met its own target; do not sum aggregate and member totals. Source text, choices and aliases cannot add missing muscle data. For unsupported granularity disclose the limitation and ask whether the user accepts supported targets or needs library enrichment first. Never invent finer credits.',
+        'capabilityLimits': 'supportedMuscleTargets is the authoritative list of numerical volume targets for the loaded library. Use supplied muscle credits and aggregateTargets as defined; overlapping credits are not additive or evidence of a particular distribution. Do not invent targets or missing credits. Use the user\'s requested targets at supported granularity without introducing extra subdivisions or decisions. Ask only when an explicit request cannot be represented or a material ambiguity remains outside existing answers or delegation; do not silently change the request.',
         'prescribedRests': 'Explicit between-set rests, workout rest components and per-member superset rests are counted separately from setup transitions. The final superset recovery is omitted after the last round.',
+        'setupTiming': 'setupSeconds itemizes each exercise transition and replaces the default allowance; it is not added twice. The final audit reuses these assumptions by converted occurrence ID. Estimates are not measured changeover times or guarantees of session duration.',
         'unilateralWork': 'Both sides of each set plus the prescribed between-side rest count for time; the working set counts once for muscle volume.',
         'volumeAccounting': 'Credits follow library primary/secondary roles. A working set may credit multiple muscles; summing muscle credits does not count distinct sets.',
         'precision': 'Duration is an estimate using the defaults above, plus prescribed work and rests; it is not a second-precise prediction.'}
@@ -108,7 +109,7 @@ def add_audit_issue(report, code, message, repair, path="/workouts", **details):
     report["errors"].append({"code": code, "path": path, "message": message, "repair": repair, **details})
 
 
-def audit_workout_package(package, targets):
+def audit_workout_package(package, targets, *, setup_seconds_by_exercise=None):
     validate_audit_targets(targets)
     weekly = _empty_volume()
     requested_muscles = set(targets.get('weeklyEffectiveSets', {})) | set(targets.get('perSessionEffectiveSets', {}))
@@ -123,6 +124,7 @@ def audit_workout_package(package, targets):
         unverified_session = set()
         logical_sets = 0
         exercises_seen = 0
+        setup_estimates = []
 
         def add_exercise(exercise, selected_sets=None, standalone=True):
             nonlocal logical_sets, exercises_seen
@@ -131,6 +133,15 @@ def audit_workout_package(package, targets):
             count = len(work_sets)
             logical_sets += count
             exercises_seen += 1
+            if exercises_seen > 1:
+                seconds = (setup_seconds_by_exercise or {}).get(exercise['id'], exercise.get('setupSeconds'))
+                if seconds is not None and (type(seconds) is not int or not 0 <= seconds <= 1800):
+                    add_audit_issue(report, 'invalid_setup_time', 'Setup time must be an integer from 0 to 1800 seconds.',
+                        'Correct the declared setup estimate and re-audit; negative or invalid values cannot reduce session duration.',
+                        path=f'/workouts/{workout_index}/exercises/{exercises_seen - 1}/setupSeconds', exerciseId=exercise['id'])
+                    seconds = None
+                setup_estimates.append({'exerciseId': exercise['id'], 'seconds': ASSUMPTIONS['transitionSeconds'] if seconds is None else seconds,
+                                        'basis': 'default_allowance' if seconds is None else 'declared_estimate'})
             credits = {}
             per_set_credits = muscle_credits_per_set(exercise)
             unknown = set()
@@ -226,9 +237,10 @@ def audit_workout_package(package, targets):
                 if component.get("roundDurationSeconds"):
                     elapsed = timing["workSeconds"] + timing["restSeconds"] - before
                     timing["restSeconds"] += max(0, rounds * component["roundDurationSeconds"] - elapsed)
-        timing["transitionSeconds"] = max(0, exercises_seen - 1) * ASSUMPTIONS["transitionSeconds"]
+        timing["transitionSeconds"] = sum(item['seconds'] for item in setup_estimates)
         seconds = sum(timing.values())
         result = {"name": workout["name"], "workingSets": logical_sets, "volume": volume, "contributions": contributions, "timing": timing, "estimatedSeconds": seconds}
+        result['setupEstimates'] = setup_estimates
         report["workouts"].append(result)
         # shortcut: each enabled workout runs once weekly unless frequency is supplied; audit phases separately for periodized packages.
         frequency = workout.get("timesCompletedInAWeek") or 1

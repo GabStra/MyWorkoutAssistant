@@ -654,7 +654,7 @@ BASE_SYSTEM_PROMPT = (
     "CONVERSATION RULES:\n"
     "1. Detect completeness first.\n"
     "- If the user already provided a structured plan (exercise names + sets/reps + rest, often as table/day split) and asks to generate, do not ask extra discovery questions.\n"
-    "- Ask clarifying questions only when essential inputs are missing.\n\n"
+    "- Ask clarifying questions only when essential inputs are missing; use ask_user when available to display a separate question and wait for the answer.\n\n"
     "2. Equipment handling.\n"
     "- Ask about equipment only when it is not already provided.\n"
     "- If provided equipment file exists, it is immutable: never edit/remove existing items.\n"
@@ -670,6 +670,7 @@ BASE_SYSTEM_PROMPT = (
     "- Estimate session duration from work intervals, prescribed rests, unilateral sides, warm-ups and equipment transitions. If volume and time targets conflict, resolve the tradeoff before confirmation.\n\n"
     "4. Preview formatting.\n"
     "- When library-backed planning tools are available, submit the structured draft to audit_workout_plan; Python displays its passing preview. Do not write a separate workout preview.\n"
+    "- Follow programmingGuidelines when supplied: align order, fatigue, recovery, preparation, supersets and progression with the user's goals. Record explicit order/straight-set/warm-up/rest constraints as executionRules using source-backed coverage roles; recommendations alone do not create mandatory rules. Audit findings require targeted JSON patches and a fresh audit.\n"
     "- Without library-backed planning tools, use a clear workout table.\n"
     "- The recap/preview table must show rest between sets and rest between exercises as separate, clearly labeled fields or columns.\n"
     "- Do not collapse those two rest concepts into one generic 'Rest' column when both are relevant.\n"
@@ -677,7 +678,9 @@ BASE_SYSTEM_PROMPT = (
     "- If the source conversation gives a rest range, choose one exact value within that range and use that exact value consistently.\n"
     "- Keep notes concise and practical.\n\n"
     "5. Generation confirmation gate.\n"
-    f"- Before final generation, ensure the current preview has been displayed (by Python for library-backed planning) and tell the user to reply with exactly {EXACT_GENERATION_CONFIRMATION!r} to start generation.\n"
+    "- For library-backed planning, Python displays separate approval choices after reviewed requirements and passing workout previews. Do not bury approval requests in the response or ask the user to type a magic phrase.\n"
+    f"- Python records an explicit approval selection as {EXACT_GENERATION_CONFIRMATION!r} (or 'CONFIRM REQUIREMENTS') and routes generation through validation. Never fabricate that user message.\n"
+    f"- Without library-backed planning tools, display a preview and request {EXACT_GENERATION_CONFIRMATION!r} before generation.\n"
     f"- Call generate_workout only when the user's most recent message is exactly {EXACT_GENERATION_CONFIRMATION!r}.\n"
     "- Treat every other wording as not confirmed yet, including 'yes', 'looks good', 'go ahead', 'generate it', or paraphrases.\n"
     "- Optionally pass custom_prompt with extra constraints."
@@ -736,8 +739,19 @@ JSON_SYSTEM_PROMPT = (
     f"{json.dumps(EXAMPLE_JSON, indent=2)}"
 )
 
+SCHEMA_REPAIR_INSTRUCTION = (
+    "Repair representation using only authoritative source values and supplied schema constraints. "
+    "Preserve IDs, relationships, component order, prescribed work and rest, exact loads, library muscle roles and equipment specifications. "
+    "Do not delete prescribed components or sets, reclassify movements, change loads to fit equipment, or invent missing measurements. "
+    "A schema describes valid structure, not evidence for a missing fact. Names alone do not establish muscle roles, equipment or load semantics. "
+    "Only supplied permitted document paths may change. A failing prescription must be restored from its owning plan, not redesigned during schema repair. "
+    "Safe conversions may preserve a known value in the required representation; restore missing facts only when explicitly supplied in context. "
+    "Leave unsupported repairs unresolved for validation to report instead of guessing. "
+)
+
 SELF_HEAL_SYSTEM_PROMPT = (
     "Fix JSON schema validation errors with minimal, context-aware changes.\n\n"
+    + SCHEMA_REPAIR_INSTRUCTION + "\n\n"
     "Core rules:\n"
     "- Fix only failing fields; keep valid data unchanged.\n"
     "- Preserve IDs and relationships.\n"
@@ -746,16 +760,10 @@ SELF_HEAL_SYSTEM_PROMPT = (
     f"- ExerciseCategory enum: {EXERCISE_CATEGORY_ENUM_VALUES}.\n"
     f"- MuscleGroup enum: {MUSCLE_GROUP_ENUM_VALUES}.\n"
     f"- SetSubCategory enum: {SET_SUBCATEGORY_ENUM_VALUES}.\n"
-    "- Prefer semantically correct fixes (infer from exercise/workout context).\n\n"
     "Input modes:\n"
     "- Full mode: complete workout plan package JSON -> return complete corrected JSON.\n"
     "- Targeted mode: {item, itemType, context} -> return only fixed item (no wrapper).\n\n"
-    "Heuristics:\n"
-    "- Empty/invalid muscle groups: infer from exercise name and type.\n"
-    "- Missing equipmentId: null for bodyweight, otherwise map to available equipment in context.\n"
-    "- Invalid exerciseType: infer from set types.\n"
-    "- Invalid load/weight values: adjust to valid ranges/combinations from equipment context.\n"
-    "- Adjust advanced optional fields only when already present.\n\n"
+    "If a required fact is unavailable, return the item/document unchanged; unresolved validation must remain visible.\n\n"
     "Output JSON only (no markdown/explanations)."
 )
 # Function tool schema for OpenAI function calling

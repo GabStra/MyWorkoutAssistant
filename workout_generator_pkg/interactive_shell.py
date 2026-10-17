@@ -15,72 +15,55 @@ from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 from .constants import DEEPSEEK_MODEL, EXACT_GENERATION_CONFIRMATION
-from .muscle_roles import MUSCLE_ROLE_GUIDANCE
 from .planning_tools import (
     SET_WORKOUT_REQUIREMENTS_TOOL, AUDIT_WORKOUT_PLAN_TOOL, REPAIR_WORKOUT_PLAN_TOOL,
     workout_requirements_tool, construction_workout_tool,
     set_workout_requirements, audit_workout_plan, confirmed_draft,
     planning_tool_failure, requirements_approved, require_approved_requirements, PlanningInputError,
-    _latest_result,
+    _latest_result, requirement_sources,
+    GET_WORKOUT_DRAFT_TOOL, get_workout_draft,
+    PREPARE_WORKOUT_SESSION_TOOL, prepare_workout_session,
+    validate_repair_scope,
 )
+from .session_drafting import PREPARE_WORKOUT_SESSIONS_TOOL, prepare_workout_sessions, draft_workout_sessions
 from .conversation_store import normalize_conversation_messages
-from .logging_ui import LoadingIndicator, print_markdown
+from .logging_ui import LoadingIndicator, print_markdown, print_question, format_question
+from .user_interaction import ASK_USER_TOOL, clarification_question, pending_question, answer_question
+from .image_attachments import save_image, image_message
 from .training_history import TrainingHistory, GET_TRAINING_EVIDENCE_TOOL, HISTORY_PLANNING_INSTRUCTION
 from .plan_review import review_draft, review_followup_instructions, review_requirements, record_planning_decisions
 from .planning_decisions import RECORD_PLANNING_DECISIONS_TOOL, render_decisions
 from .generation_audit import audit_policy, available_muscle_targets
-from .planner_context import focus_planner_context, request_planning_state, pending_reaudit, planner_response_profile
+from .planner_context import focus_planner_context, request_planning_state, pending_reaudit, planner_response_profile, pending_evidence, discovery_tool_failure, construction_tool_failure
+from .lookup_batch import execute_lookup_batch, LOOKUP_TOOLS
 from .deps import resolve_shell_deps
+from .allocation import ALLOCATE_WORKOUT_SETS_TOOL, allocate_workout_sets, auto_allocate_workout
+from .api_metrics import api_metrics_scope
 from .exercise_library_tools import (
     SEARCH_EXERCISE_LIBRARY_TOOL, execute_library_tool, execute_library_searches,
+    GET_EXERCISE_CANDIDATES_TOOL, get_exercise_candidates,
 )
 
 CANONICAL_PLANNING_INSTRUCTION = (
-    "For library-backed workout planning, use search_exercise_library, set_workout_requirements and audit_workout_plan. "
-    "The latter replaces the old select_exercises/audit_workout_volume preview workflow. "
-    "Record the user's requirements separately, never relax them during automatic repair, and use the current requirementsId. "
-    "Clarify material ambiguity before calling set_workout_requirements; otherwise record the original targets before searching. "
-    "Stop for CONFIRM REQUIREMENTS; do not resolve tradeoffs without user approval. "
-    "Restriction wording is resolved to library IDs by set_workout_requirements. Only for restriction_policy_unresolved (missing or stale policy), "
-    "re-record unchanged requirements and display the resolved policy for approval. "
-    "Preserve all movement/equipment qualifiers when extracting restrictions. A load limitation on one named exercise does not imply a family-wide ban. "
-    "Do not shorten a specific restriction to a broader category; ask for clarification if its scope is ambiguous. "
-    "Material ambiguity includes targets, grouped muscle names, balance counting rules and exception scope. Ask and wait unless the user already delegated that choice; then record a supported choice within the delegated scope. "
-    "Do not pick an interpretation and label it unchanged. Preserve full exception qualifiers (movement and equipment). "
-    "Extract targets, restrictions and explicitly requested exercise coverage; original instructions and clarification answers are retained without rewritten notes. "
-    "When the user chooses an interpretation or delegates a choice, use record_planning_decisions to record and disclose it before extracting requirements or auditing a draft. "
-    "Reserve that tool for requirement interpretations or explicit user decisions. Ordinary exercise substitutions and prescriptions within approved requirements go directly into the draft patch and audit, without a separate planning-choice review. "
-    "Assign each explicit requiredCoverage key to qualifying draft exercises using satisfiesCoverage. Missing assignments fail before execution review; the reviewer verifies the actual movements. "
-    "Use the resolvedDecisions already supplied; do not re-ask settled choices without a concrete new contradiction. "
-    "Application auditPolicy owns credit and timing estimates. Do not invent user requirements to match it; ask about material conflicts. "
-    "For unresolved or ambiguous restriction errors, ask the stated clarification and wait for the user's answer; "
-    "do not remove, narrow, broaden or replace the term merely to make resolution pass. "
-    "Start discovery with at most six queries across all calls, covering required movement patterns, not a catalog of every possible exercise. "
-    "Respect equipment and explicit exclusions in every query. Once candidates are returned, retrieve relevant history and submit a draft. "
-    "Search again only for a specific gap found by the audit or a new user request; do not exhaustively explore alternatives. "
-    "The user command /continue means resume the saved draft and pending tool feedback without changing approved requirements or restarting discovery. "
-    "Do not declare targets infeasible by adding muscle-set credits as if they were separate working sets; compound overlap matters. Attempt an audited draft before proposing a tradeoff. "
-    "Follow constructionTask when present: build and audit one workout session at a time. Intermediate numerical failures are expected; Python owns arithmetic. Do not try to solve the entire allocation before calling the audit. For repairs, prefer targeted RFC 6902 patches "
-    "through audit_workout_plan with requirementsId, baseDraftId=currentDraftId and patch. Copy the backend revision placeholder; do not invent it. "
-    "Patch only changed values, sets, movements or ordering; Python preserves untouched fields and validates the full result. "
-    "Use a full replacement only for an initial draft or a necessary whole-structure redesign. "
-    "Python runs an independent execution/requirements review after structural, evidence and numerical checks pass. "
-    "During intermediate numerical repairs, earlier review findings are guidance pending fresh review; they are not approval. "
-    "Its blocking findings must be repaired before a preview is approved. Follow their specific repair instructions; "
-    "do not change requirements, relabel exercises, or submit the unchanged draft to get a different review. "
-    "Questions and explanations do not change the draft. Do not repeat requirements or audit calls for them; reuse stored IDs and results. "
-    "For actual requested edits, submit the patch before claiming that a change was applied. "
-    "Submit proposed repairs to the audit before presenting them as workable solutions. Never fabricate rep drop-off or cross-variant starting loads to satisfy a reviewer; "
-    "preserve rep ranges and retrieve current evidence for changed variants, using calibration where exact loads are unsupported. "
-    "Batch independent exercise queries in one search call, reuse previously returned library references, and search only missing movements. "
-    "Use creditsPerWorkingSet from search results to balance every session and weekly totals before submitting the first draft. "
-    "On repair, preserve the whole allocation's constraints and all original requirements. Follow the backend repairTask when supplied. Redistribute sets across existing movements before searching; "
-    "a muscle at its ceiling does not prove another isolation exercise is required. "
-    "Make the smallest coordinated repair and submit it promptly; intermediate drafts may still fail. "
-    "Use the audit tools for calculations and feedback instead of solving every constraint in one long internal response. "
-    "If a model lookup times out or exhausts its budget, do not repeat the same expensive request automatically; explain the limit and ask the user how to proceed. "
-    "Python displays the passing preview automatically; do not author a separate workout preview. "
-    "Only generate after a fresh CONFIRM GENERATE; export uses that exact approved draft."
+    "You are a workout assistant using a strict exercise library, the sole allowed movement source. "
+    "Preserve supplied movement identities, equipment data and muscle roles; choose another library entry rather than reclassifying one. "
+    "Follow the current backend work order and supplied constructionTask, repairTask and discoveryPaused instructions. Tool schemas define the permitted arguments. "
+    "Record source-backed requirements before planning. Preserve quantities, units, scope, exceptions and qualifiers; never relax them to pass validation. "
+    "Use resolvedDecisions and existing delegation. Ask only about material ambiguity or a concrete new conflict, using ask_user and waiting for an answer. "
+    "Record requirement interpretations with planningDecisions in set_workout_requirements, or record_planning_decisions when they must be resolved first. "
+    "Ordinary exercise choices and prescriptions within approved requirements go directly through the draft audit. "
+    "Reuse current candidates, completed searches and retrieved evidence. Batch independent lookups and search only for missing information needed by the current task. "
+    "When available, prepare_workout_sessions commits the shared movement allocation so Python can draft independent sessions concurrently. "
+    "Apply auditPolicy and programmingGuidelines; Python owns arithmetic, selectable loads and validation. Use the audit and allocation tools instead of solving totals in reasoning. "
+    "Submit provisional sessions promptly; intermediate numerical failures are expected while the week is incomplete. "
+    "Repair through targeted RFC 6902 patches against currentDraftId, preserving untouched fields and interacting constraints. "
+    "Mobility and ramp-up instructions belong in notes and warm-up flags, not invented movements. "
+    "Treat unresolved findings as open until rechecked. Never fabricate evidence, alter library data or resubmit unchanged failures to obtain a different verdict. "
+    "Questions do not mutate the draft; audit actual edits before claiming they were applied. "
+    "Python displays reviewed requirements, passing previews and separate approval questions. Do not reproduce previews, request approval through ask_user, or invent consent. "
+    "Export requires fresh confirmation and uses the exact approved draft. "
+    "The command /continue resumes saved work and pending feedback without changing requirements or restarting discovery. "
+    "Report execution failures; do not hide them with draft changes or repeat failed expensive requests without an explicit retry."
 )
 
 
@@ -172,18 +155,7 @@ def _build_initial_messages(
             "system",
             content=(
                 f"A strict exercise library with {len(exercise_definitions)} definitions is loaded. "
-                "It is the sole allowed movement source. Clarify material ambiguity with the user before recording requirements. "
-                "Otherwise call set_workout_requirements, then wait for CONFIRM REQUIREMENTS. After approval, use search_exercise_library for a small batch of matching entries. "
-                "Then call audit_workout_plan with the complete structured draft and current requirementsId. "
-                "Repair returned issues with targeted JSON patches against currentDraftId, then call the tool again. Never relax requirements to make a repair pass. "
-                "Python displays the passing draft automatically; do not write or reproduce a separate workout preview. "
-                "The displayed draft is the one exported after CONFIRM GENERATE; no second planning pass occurs. "
-                "Submit a replacement only for actual draft edits; ordinary questions do not require re-auditing. Only change requirements when the user explicitly requests it. "
-                "Mobility/ramp-up instructions belong in notes and warm-up flags, not invented standalone exercises. "
-                "If a requested exercise is absent, explain the available alternative before confirmation; "
-                "never claim an absent movement is library sourced."
-                " For volume, use the retrieved library's primary/secondary roles exactly. Effective set targets can be met by direct and indirect work; they do not require direct isolation work for every muscle. "
-                + MUSCLE_ROLE_GUIDANCE
+                "It is the sole allowed movement source. Its metadata is available through the planning tools."
             ),
         ))
     return messages
@@ -305,6 +277,8 @@ def _render_turns(messages: List[Dict[str, Any]], logger) -> None:
                 logger.log_print(_format_json(content))
         if role == "assistant" and message.get("tool_calls"):
             logger.log_print("[Tool call triggered]")
+        for attachment in message.get('imageAttachments', []):
+            logger.log_print(f'[Attached image: {attachment["name"]}]')
 
         logger.log_print("-" * 70)
 
@@ -316,7 +290,7 @@ def _ensure_tool_responses(messages: List[Dict[str, Any]]) -> tuple[List[Dict[st
 
 def _messages_for_api(messages: List[Dict[str, Any]], planning_enabled=False, training_history=None, provided_equipment=None) -> List[Dict[str, Any]]:
     repaired, _ = _ensure_tool_responses(messages)
-    result = [{key: value for key, value in message.items() if key not in ("canonicalDraftPreview", "canonicalRequirementsPreview", "unvalidatedProposal")}
+    result = [{key: value for key, value in message.items() if key not in ("canonicalDraftPreview", "canonicalRequirementsPreview", "unvalidatedProposal", "userInteraction")}
               for message in repaired if message.get("role") != "emitter"]
     tool_names = {call["id"]: call["function"]["name"] for message in result
                   for call in message.get("tool_calls", [])}
@@ -340,7 +314,7 @@ def _messages_for_api(messages: List[Dict[str, Any]], planning_enabled=False, tr
             continue
         if name == "audit_workout_plan" and "audit" in payload:
             audit = payload["audit"]
-            compact = {key: payload[key] for key in ("passed", "requirementsId", "draftId", "currentDraftId", "instruction", "historyFingerprint") if key in payload}
+            compact = {key: payload[key] for key in ("passed", "requirementsId", "draftId", "currentDraftId", "instruction", "historyFingerprint", "resolvedDecisions") if key in payload}
             compact["errors"] = payload.get("errors", [])
             compact['reviewVersion'] = payload.get('review', {}).get('version')
             if payload.get('review', {}).get('followupReview'):
@@ -368,16 +342,28 @@ def _messages_for_api(messages: List[Dict[str, Any]], planning_enabled=False, tr
             payload.pop('submittedDraft', None)
         message["content"] = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
     if planning_enabled:
-        result = focus_planner_context(result, repaired, provided_equipment)
+        # Saved conversations may still contain superseded application prompts.
+        result = [message for message in result if not (message.get('role') == 'system'
+            and (message.get('content') or '').startswith(('You are a workout assistant.', 'A strict exercise library with ')))]
+        result = focus_planner_context(result, repaired, provided_equipment, history_enabled=training_history is not None)
         result.append({"role": "system", "content": CANONICAL_PLANNING_INSTRUCTION})
         result.append({'role': 'system', 'content': 'Application auditPolicy (estimates and counting conventions, not user requirements): '
             + json.dumps(audit_policy(available_muscle_targets(provided_equipment))) + '. Muscle credits use the selected library roles. Omit unspecified muscle targets; 0-0 is a prohibition. '
-            'Apply capabilityLimits when extracting targets or proposing choices. Unsupported granularity is a software/library limitation; do not offer an aggregate field as a way to verify its regions separately. '
+            'Apply auditPolicy.capabilityLimits when extracting targets or proposing choices. '
             'Explicit timing instructions must be reflected in estimates; ask about a conflict the current estimator cannot represent.'})
         if not requirements_approved(messages):
-            result.append({'role': 'system', 'content': 'Current stage: extract requirements only. Reuse resolvedDecisions and record any relevant user-delegated choices with record_planning_decisions. Ask and wait only for remaining material ambiguity outside that authority. Otherwise call set_workout_requirements, display the result and wait for CONFIRM REQUIREMENTS. Do not design a workout or change goals to solve tradeoffs.'})
+            result.append({'role': 'system', 'content': 'Current stage: extract requirements only. Submit set_workout_requirements for independent review; Python displays the approval question. Planning starts after approval.'})
     if training_history:
         result.append({'role': 'system', 'content': HISTORY_PLANNING_INSTRUCTION + '\nCurrent history snapshot: ' + json.dumps(training_history.context())})
+    if planning_enabled and any((m.get('content') or '').startswith('Current planning state') for m in result):
+        # Keep invariant policy ahead of changing state so provider prefix caches can be reused.
+        changing = [m for m in result if (m.get('content') or '').startswith('Current planning state')]
+        fixed = [m for m in result if m.get('role') == 'system' and m not in changing]
+        result = fixed + changing + [m for m in result if m.get('role') != 'system']
+    images = image_message(requirement_sources(messages))
+    if images:
+        result = [{key: value for key, value in message.items() if key != 'imageAttachments'} for message in result]
+        result.extend(images)
     return result
 
 
@@ -393,6 +379,7 @@ def _show_commands(logger) -> None:
     logger.log_print("  • Type /resume-conversation <conversation_id> to reopen a conversation and show all stored turns")
     logger.log_print("  • Type /show-turns [conversation_id] to print exact stored turns")
     logger.log_print("  • Type /view to view the latest workout preview in a Markdown pager")
+    logger.log_print('  • Type /image <path> (also inside /ml) to attach a JPEG/PNG/GIF/WebP; /image clear to discard queued images')
     logger.log_print("  • Type /continue to resume a paused draft using saved lookups and audit feedback")
     logger.log_print("  • Type /clear-progress <session_id> to delete a progress file")
     logger.log_print("  • Type /exit to quit")
@@ -455,8 +442,13 @@ def handle_function_call(
     def _last_user_message_content():
         for message in reversed(messages):
             if message.get("role") == "user":
-                return (message.get("content") or "").strip()
+                return '' if message.get('imageAttachments') else (message.get("content") or "").strip()
         return ""
+
+    if function_name == 'ask_user':
+        question = clarification_question(function_args)
+        return {'result': json.dumps({'userQuestion': question}), 'waiting_for_user': True,
+                'should_exit': False, 'generation_result': None}
 
     if function_name == "generate_workout":
         last_user_index = next((i for i in range(len(messages) - 1, -1, -1) if messages[i].get("role") == "user"), -1)
@@ -547,8 +539,11 @@ def handle_function_call(
                 'decision_preview': ('Recorded planning choices:\n' + render_decisions(result['decisions'])) if result['passed'] and not result.get('cached') else None}
 
     if function_name == "set_workout_requirements":
-        result = set_workout_requirements(function_args, messages, provided_equipment or {}, client, progress)
-        result = review_requirements(client, result, messages, logger, progress)
+        arguments = dict(function_args)
+        decisions = arguments.pop('planningDecisions', None)
+        result = set_workout_requirements(arguments, messages, provided_equipment or {}, client, progress)
+        review_options = {'planning_decisions': decisions} if decisions is not None else {}
+        result = review_requirements(client, result, messages, logger, progress, **review_options)
         if not result['passed']:
             return {'result': json.dumps(result, ensure_ascii=False), 'should_exit': False, 'generation_result': None}
         pending = not requirements_approved(messages, result)
@@ -558,6 +553,8 @@ def handle_function_call(
 
     if function_name == "audit_workout_plan":
         result = audit_workout_plan(function_args, provided_equipment or {}, messages, allow_educated_load_guesses, training_history)
+        result = auto_allocate_workout(result, provided_equipment or {}, messages, allow_educated_load_guesses,
+                                        training_history, logger, progress)
         if training_history:
             if result.get('historyFingerprint') != training_history.fingerprint:
                 result['cached'] = False
@@ -575,8 +572,32 @@ def handle_function_call(
         require_approved_requirements(messages)
         if training_history is None:
             raise ValueError('No history backup loaded; start with --history-backup-file')
-        return {'result': json.dumps(training_history.evidence(function_args, provided_equipment or {}, client=client)),
+        result = execute_lookup_batch([('history', function_name, function_args)], provided_equipment or {}, client,
+                                      messages, training_history, logger)['history']
+        return {'result': json.dumps(result),
                 'should_exit': False, 'generation_result': None}
+
+    if function_name == 'prepare_workout_sessions':
+        return {'result': json.dumps(prepare_workout_sessions(function_args, messages, provided_equipment or {})),
+                'should_exit': False, 'generation_result': None}
+
+    if function_name == 'prepare_workout_session':
+        return {'result': json.dumps(prepare_workout_session(function_args, messages, provided_equipment or {})),
+                'should_exit': False, 'generation_result': None}
+
+    if function_name == 'get_workout_draft':
+        result = get_workout_draft(function_args, messages, provided_equipment or {})
+        return {'result': json.dumps(result), 'should_exit': False, 'generation_result': None}
+
+    if function_name == 'get_exercise_candidates':
+        require_approved_requirements(messages)
+        return {'result': json.dumps(get_exercise_candidates(function_args, provided_equipment or {}, messages)),
+                'should_exit': False, 'generation_result': None}
+
+    if function_name == 'allocate_workout_sets':
+        result = allocate_workout_sets(function_args, provided_equipment or {}, messages,
+                                      allow_educated_load_guesses=allow_educated_load_guesses, training_history=training_history)
+        return {'result': json.dumps(result, ensure_ascii=False), 'should_exit': False, 'generation_result': None}
 
     if function_name in ("search_exercise_library", "select_exercises"):
         if (provided_equipment or {}).get('exerciseDefinitions'):
@@ -737,6 +758,7 @@ def main(deps=None):
         "messages": messages,
         "logger": logger,
         "log_path": log_path,
+        'pending_images': [],
     }
 
     def persist_current(metadata_update: Optional[Dict[str, Any]] = None) -> None:
@@ -786,6 +808,7 @@ def main(deps=None):
         next_messages, _ = _ensure_tool_responses(next_messages)
         state["conversation_id"] = next_conversation_id
         state["messages"] = next_messages
+        state['pending_images'] = []
         state["logger"] = next_logger
         state["log_path"] = next_log_path
         state["logger"].log_print(announce)
@@ -889,8 +912,37 @@ def main(deps=None):
         _render_turns(state["messages"], state["logger"])
         return True
 
+    def handle_image_command(text, text_offset=None):
+        command = text.lower()
+        if command == '/image' or command.startswith('/image '):
+            logger = state['logger']
+            path = text[len('/image'):].strip()
+            if path.casefold() == 'clear':
+                state['pending_images'].clear()
+                logger.log_print('Queued images cleared.')
+            elif not path:
+                logger.log_print('Usage: /image "C:\\path to\\image.png". Then type your message, or use /ml.')
+            else:
+                if len(path) >= 2 and path[0] == path[-1] and path[0] in ('"', "'"):
+                    path = path[1:-1]
+                try:
+                    attachment = save_image(path, script_dir)
+                    if text_offset is not None:
+                        attachment['textOffset'] = text_offset
+                    if not any(image['sha256'] == attachment['sha256'] and image.get('textOffset') == text_offset
+                               for image in state['pending_images']):
+                        state['pending_images'].append(attachment)
+                    logger.log_print(f'Image queued: {attachment["name"]}. Type your message to send it, or /image clear to discard.')
+                except (OSError, ValueError) as error:
+                    logger.log_print(f'Cannot attach image: {error}')
+            return True
+        return False
+
     while True:
         try:
+            question = pending_question(state['messages']) if not state['pending_images'] else None
+            if question:
+                print_question(question, state['logger'])
             user_input = input("You> ").strip()
         except KeyboardInterrupt:
             state["logger"].log_print("\nCancelled. Use /exit to quit.")
@@ -899,6 +951,10 @@ def main(deps=None):
             continue
         command = user_input.lower()
         logger = state["logger"]
+        user_interaction = None
+
+        if handle_image_command(user_input):
+            continue
 
         if command == "/exit":
             persist_current()
@@ -934,28 +990,53 @@ def main(deps=None):
 
         if command in ("/ml", "/multiline"):
             logger.log_print("Entering multi-line mode. Paste your message; type '/end' on a new line to finish.")
-            logger.log_print("(Lines are sent as a single message.)")
+            logger.log_print("(Lines are sent as a single message. Use /image <path> to attach an image; /image clear to discard queued images.)")
             lines = []
+            initial_images = list(state['pending_images'])
             while True:
                 try:
                     line = input("ML> ")
                 except KeyboardInterrupt:
                     logger.log_print("\nCancelled multi-line input. Returning to prompt...")
                     lines.clear()
+                    state['pending_images'] = initial_images
                     break
                 except EOFError:
                     break
                 if line.strip() == "/end":
                     break
+                if handle_image_command(line.strip(), text_offset=len('\n'.join(lines)) + bool(lines)):
+                    continue
                 lines.append(line)
             user_input = "\n".join(lines).rstrip("\n")
+            state['pending_images'] = [{**image, **({'textOffset': min(image['textOffset'], len(user_input))}
+                if 'textOffset' in image else {})} for image in state['pending_images']]
             if not user_input:
                 continue
             command = user_input.lower()
 
         if exercise_definitions and user_input.startswith('/generate '):
             # Export instructions must enter the conversation before any approval gate.
-            user_input = user_input[len('/generate'):].strip()
+            trimmed = user_input[len('/generate'):].lstrip()
+            prefix_length = len(user_input) - len(trimmed)
+            user_input = trimmed.rstrip()
+            state['pending_images'] = [{**image, **({'textOffset': min(max(0, image['textOffset'] - prefix_length), len(user_input))}
+                if 'textOffset' in image else {})} for image in state['pending_images']]
+            command = user_input.lower()
+
+        if state['pending_images'] and (user_input in ('CONFIRM REQUIREMENTS', EXACT_GENERATION_CONFIRMATION, '/continue')
+                                       or user_input.startswith('/generate')):
+            logger.log_print('Images are queued. Send a message about them first, or /image clear before approving a preview.')
+            continue
+
+        if question and not user_input.startswith('/') and not state['pending_images']:
+            try:
+                answer = answer_question(question, user_input)
+            except ValueError as error:
+                logger.log_print(str(error))
+                continue
+            user_interaction = {'question': question, 'input': user_input}
+            user_input = answer
             command = user_input.lower()
 
         if user_input.startswith("/generate"):
@@ -1154,18 +1235,25 @@ def main(deps=None):
             continue
 
         logger.log("You> " + user_input)
-        state["messages"].append(_message("user", content=user_input))
+        state["messages"].append(_message("user", content=user_input,
+            **({'userInteraction': user_interaction} if user_interaction else {}),
+            **({'imageAttachments': list(state['pending_images'])} if state['pending_images'] else {})))
+        state['pending_images'].clear()
         try:
+            if training_history:
+                training_history.begin_turn()
             requirements_tool = workout_requirements_tool(provided_equipment)
             tools = [GENERATE_WORKOUT_TOOL]
             if exercise_definitions:
                 tools = [requirements_tool, RECORD_PLANNING_DECISIONS_TOOL]
                 if requirements_approved(state['messages']):
-                    tools.extend([GENERATE_WORKOUT_TOOL, SEARCH_EXERCISE_LIBRARY_TOOL, AUDIT_WORKOUT_PLAN_TOOL])
+                    tools.extend([GENERATE_WORKOUT_TOOL, SEARCH_EXERCISE_LIBRARY_TOOL, GET_EXERCISE_CANDIDATES_TOOL,
+                                  AUDIT_WORKOUT_PLAN_TOOL, ALLOCATE_WORKOUT_SETS_TOOL, GET_WORKOUT_DRAFT_TOOL])
             if training_history and requirements_approved(state['messages']):
                 tools.append(GET_TRAINING_EVIDENCE_TOOL)
             generation_metadata: Optional[Dict[str, Any]] = None
             preview_ready = False
+            pending_user_question = None
             requires_plan_revision = False
             failed_draft_signatures = set()
             failed_tool_signatures = set()
@@ -1177,33 +1265,76 @@ def main(deps=None):
                 planning_state = request_planning_state(api_messages)
                 repair_task = planning_state.get('repairTask')
                 construction_task = planning_state.get('constructionTask')
+                parallel_submission = planning_state.get('parallelSubmission')
+                if planning_state.get('parallelSubmissionHistoryFingerprint') != (training_history.fingerprint if training_history else None):
+                    parallel_submission = None
                 saved_reaudit = pending_reaudit(planning_state, user_input)
-                request_tools = tools
+                evidence_needed = pending_evidence(planning_state, user_input) if training_history else []
+                request_tools = tools + [ASK_USER_TOOL]
+                if construction_task:
+                    request_tools.append(PREPARE_WORKOUT_SESSION_TOOL)
+                    if (construction_task.get('remainingWeeklySessions') or 0) >= 2:
+                        request_tools.append(PREPARE_WORKOUT_SESSIONS_TOOL)
+                    request_tools = [tool for tool in request_tools if not construction_tool_failure(
+                        tool.get('function', {}).get('name'), {}, planning_state)]
+                blocked_discovery = set((planning_state.get('discoveryPaused') or {}).get('blockedTools', []))
+                if blocked_discovery:
+                    request_tools = [tool for tool in request_tools if tool.get('function', {}).get('name') not in blocked_discovery]
+                    logger.log('Discovery returned no new information; reusing saved results for the pending draft task.')
                 if planning_state.get('requirementsApproved') and not planning_state.get('planningDecisionNeeded'):
                     request_tools = [tool for tool in request_tools if tool.get('function', {}).get('name') != 'record_planning_decisions']
+                numerical_codes = {'duration_exceeded', 'volume_below_target', 'volume_above_target', 'superset_set_count_mismatch'}
+                numerical_repair = repair_task and repair_task.get('findingCode') in numerical_codes
+                if not numerical_repair:
+                    request_tools = [tool for tool in request_tools if tool.get('function', {}).get('name') != 'allocate_workout_sets']
                 request_options = planner_response_profile(planning_state)
                 if construction_task:
                     request_tools = [construction_workout_tool(construction_task) if tool.get('function', {}).get('name') == 'audit_workout_plan' else tool
                                      for tool in request_tools]
-                    logger.log_print(f"Construction task: {construction_task['action']}; one session, effort=low")
+                    logger.log(f"Construction task: {construction_task['action']}; stage={construction_task['stage']}; one session, effort=low")
                 if repair_task and not saved_reaudit:
                     request_tools = [REPAIR_WORKOUT_PLAN_TOOL if tool.get('function', {}).get('name') == 'audit_workout_plan' else tool
                                      for tool in request_tools]
-                    logger.log_print(f"Repair task: {repair_task['baseDraftId']}, finding {repair_task['findingIndex'] + 1} "
+                    logger.log(f"Repair task: {repair_task['baseDraftId']}, {len(repair_task.get('findingIndexes', [0]))} related finding(s) "
                                      f"({repair_task['findingCode']}); targeted patch, effort=low")
-                if saved_reaudit:
-                    logger.log_print(f"Re-auditing saved draft {saved_reaudit['baseDraftId']} against the current requirements and validators.")
+                if tool_round == 0 and user_input == EXACT_GENERATION_CONFIRMATION:
+                    logger.log_print('Checking the confirmed draft for export...')
+                    content, reasoning_content = None, None
+                    tool_calls = [SimpleNamespace(id='confirm_' + uuid.uuid4().hex[:12], type='function', function=SimpleNamespace(
+                        name='generate_workout', arguments='{}'))]
+                elif parallel_submission:
+                    logger.log_print('Auditing the combined session proposals...')
+                    content, reasoning_content = None, None
+                    tool_calls = [SimpleNamespace(id='combined_' + uuid.uuid4().hex[:12], type='function', function=SimpleNamespace(
+                        name='audit_workout_plan', arguments=json.dumps(parallel_submission)))]
+                elif evidence_needed:
+                    logger.log_print(f'Retrieving missing evidence for {len(evidence_needed)} selected movements before further planning.')
+                    content, reasoning_content = None, None
+                    tool_calls = [SimpleNamespace(id='evidence_' + uuid.uuid4().hex[:12], type='function', function=SimpleNamespace(
+                        name='get_training_evidence', arguments=json.dumps({'definition_ids': evidence_needed[start:start + 12]})))
+                        for start in range(0, len(evidence_needed), 12)]
+                elif saved_reaudit:
+                    logger.log_print(f"Re-auditing saved draft {saved_reaudit['baseDraftId']} against the current requirements, decisions and validators.")
                     content, reasoning_content = None, None
                     tool_calls = [SimpleNamespace(id='reaudit_' + uuid.uuid4().hex[:12], type='function', function=SimpleNamespace(
                         name='audit_workout_plan', arguments=json.dumps(saved_reaudit)))]
+                elif construction_task and construction_task.get('stage') == 'draft_sessions':
+                    logger.log_print('Drafting prepared sessions concurrently...')
+                    content, reasoning_content = None, None
+                    tool_calls = [SimpleNamespace(id='sessions_' + uuid.uuid4().hex[:12], type='function', function=SimpleNamespace(
+                        name='draft_workout_sessions', arguments=json.dumps({'preparationId': planning_state['parallelPreparation']['preparationId']})))]
+                elif construction_task and construction_task.get('stage') == 'retrieve_evidence':
+                    planning_pause = 'Required session evidence could not be retrieved. Completed lookups are saved; use /continue to retry the missing records.'
+                    break
                 else:
                     if exercise_definitions:
                         logger.log(f"Planner context: {len(state['messages'])} saved messages -> {len(api_messages)} request messages; "
                                    f"{len(json.dumps(api_messages, ensure_ascii=False))} serialized characters")
-                    content, tool_calls, reasoning_content = chat_call_with_loading(client, api_messages, request_tools, logger, **request_options)
+                    with api_metrics_scope(logger, request_options.get('activity', 'Planning')):
+                        content, tool_calls, reasoning_content = chat_call_with_loading(client, api_messages, request_tools, logger, **request_options)
 
                 if content is None and tool_calls is None:
-                    if tool_round == 0:
+                    if tool_round == 0 and not state['messages'][-1].get('imageAttachments'):
                         state["messages"].pop()
                     logger.log_print("Cancelled. Returning to prompt...")
                     break
@@ -1212,7 +1343,7 @@ def main(deps=None):
                 has_tool_calls = bool(tool_calls)
 
                 if not has_content and not has_tool_calls:
-                    if tool_round == 0:
+                    if tool_round == 0 and not state['messages'][-1].get('imageAttachments'):
                         state["messages"].pop()
                     logger.log_print(
                         "The model returned an empty response with no tool call. "
@@ -1240,7 +1371,7 @@ def main(deps=None):
                 state["messages"].append(assistant_message)
 
                 pending_audit = _latest_result(state['messages'], 'audit_workout_plan')[1]
-                proposing = any(call.function.name in ('audit_workout_plan', 'record_planning_decisions') for call in (tool_calls or []))
+                proposing = any(call.function.name in ('audit_workout_plan', 'allocate_workout_sets', 'record_planning_decisions') for call in (tool_calls or []))
                 if has_content and (proposing or pending_audit.get('passed') is False):
                     assistant_message['unvalidatedProposal'] = True
                 if has_content and not proposing:
@@ -1254,7 +1385,8 @@ def main(deps=None):
                     batch_blocked = None
                     search_calls = []
                     for call in tool_calls:
-                        if call.function.name == "search_exercise_library":
+                        if (call.function.name == "search_exercise_library" and call.function.name not in blocked_discovery
+                                and not construction_tool_failure(call.function.name, {}, planning_state)):
                             try:
                                 arguments = json.loads(call.function.arguments)
                                 queries = arguments.get("queries")
@@ -1263,16 +1395,35 @@ def main(deps=None):
                             except (ValueError, AttributeError):
                                 pass
                     grouped_searches = {}
+                    lookup_messages = {}
+
+                    def prepare_lookup_messages(call_ids):
+                        for call in tool_calls:
+                            if call.id in call_ids:
+                                message = _message('tool', tool_call_id=call.id,
+                                    content='Tool call started but did not complete. Treat this as a failed tool result if execution is interrupted.')
+                                lookup_messages[call.id] = message
+                                state['messages'].append(message)
+                        persist_current()
+
+                    def checkpoint_lookup(call_id, payload):
+                        message = lookup_messages[call_id]
+                        message.update(content=json.dumps(payload, ensure_ascii=False), timestamp=_timestamp_now())
+                        persist_current()
+
                     if len(search_calls) > 1 and all(call.function.name == 'search_exercise_library'
                                                      for call in tool_calls[:len(search_calls)]):
+                        prepare_lookup_messages({key for key, _ in search_calls})
                         started = time.monotonic()
                         logger.log(f"Combined library search started: {len(search_calls)} calls")
                         logger.log_request("combined library queries", json.dumps(search_calls))
                         try:
                             require_approved_requirements(state['messages'])
                             with LoadingIndicator("Searching exercise library (combined queries)") as search_loading:
-                                grouped_searches = execute_library_searches(search_calls, provided_equipment, client, state["messages"],
-                                    progress=lambda done, total: search_loading.update(f"Exercise search: {done}/{total} batches, up to 3 workers"))
+                                with api_metrics_scope(logger, 'search_exercise_library'):
+                                    grouped_searches = execute_library_searches(search_calls, provided_equipment, client, state["messages"],
+                                        progress=lambda done, total: search_loading.update(f"Exercise search: {done}/{total} batches, up to 3 workers"),
+                                        on_result=checkpoint_lookup)
                         except Exception as search_error:
                             grouped_searches = {call_id: (planning_tool_failure('search_exercise_library', search_error) if isinstance(search_error, PlanningInputError) else {
                                 'passed': False, 'errors': [{'code': 'library_search_failed', 'message': str(search_error)}],
@@ -1281,6 +1432,22 @@ def main(deps=None):
                         finally:
                             logger.log(f"Combined library search finished ({time.monotonic() - started:.2f}s)")
                         logger.log_print(f"Exercise search finished ({len(search_calls)} grouped calls, {time.monotonic() - started:.1f}s).")
+                    elif (len(tool_calls) > 1 and requirements_approved(state['messages'])
+                          and all(call.function.name in LOOKUP_TOOLS and call.function.name not in blocked_discovery
+                                  and not construction_tool_failure(call.function.name, call.function.arguments, planning_state)
+                                  for call in tool_calls)):
+                        try:
+                            independent = [(call.id, call.function.name, json.loads(call.function.arguments)) for call in tool_calls]
+                        except (ValueError, TypeError):
+                            independent = []
+                        if independent:
+                            prepare_lookup_messages({key for key, _, _ in independent})
+                            batch_started = time.monotonic()
+                            logger.log(f'Independent lookup batch started: {len(independent)} calls')
+                            with LoadingIndicator(f'Retrieving {len(independent)} independent lookups'):
+                                grouped_searches = execute_lookup_batch(independent, provided_equipment, client,
+                                    state['messages'], training_history, logger, on_result=checkpoint_lookup)
+                            logger.log_print(f'Independent lookups finished ({len(independent)} calls, {time.monotonic() - batch_started:.1f}s).')
                     for tool_call in tool_calls:
                         function_name = tool_call.function.name
                         try:
@@ -1290,25 +1457,28 @@ def main(deps=None):
                         logger.log_section("tool_call " + function_name)
                         logger.log_request("tool " + function_name, json.dumps(function_args, ensure_ascii=False))
 
-                        if planning_pause or batch_blocked:
+                        completed_lookup = function_name in LOOKUP_TOOLS and tool_call.id in grouped_searches
+                        if (planning_pause or batch_blocked) and not completed_lookup:
                             reason = planning_pause or batch_blocked
-                            state['messages'].append(_message('tool', tool_call_id=tool_call.id, content=json.dumps({
+                            skipped = _message('tool', tool_call_id=tool_call.id, content=json.dumps({
                                 'passed': False, 'skipped': True, 'tool': function_name,
                                 'errors': [{'code': 'tool_batch_blocked', 'message': reason}],
-                                'instruction': 'This tool was not executed. Resolve the preceding result before submitting dependent work again.'})))
+                                'instruction': 'This tool was not executed. Resolve the preceding result before submitting dependent work again.'}))
+                            if tool_call.id in lookup_messages:
+                                lookup_messages[tool_call.id].update(skipped)
+                            else:
+                                state['messages'].append(skipped)
                             logger.log_print(f'Skipped {function_name}: a preceding step needs attention.')
                             persist_current()
                             continue
 
-                        tool_message = _message(
-                            "tool",
-                            tool_call_id=tool_call.id,
-                            content=(
-                                "Tool call started but did not complete. "
-                                "Treat this as a failed tool result if execution is interrupted."
-                            ),
-                        )
-                        state["messages"].append(tool_message)
+                        tool_message = lookup_messages.get(tool_call.id)
+                        if tool_message is None:
+                            tool_message = _message(
+                                "tool", tool_call_id=tool_call.id,
+                                content="Tool call started but did not complete. Treat this as a failed tool result if execution is interrupted.",
+                            )
+                            state["messages"].append(tool_message)
 
                         loading_label = {
                             'set_workout_requirements': 'Resolving workout requirements',
@@ -1316,13 +1486,18 @@ def main(deps=None):
                             "search_exercise_library": "Searching exercise library",
                             "audit_workout_plan": "Auditing workout volume and duration",
                             'get_training_evidence': 'Retrieving training evidence',
+                            'get_exercise_candidates': 'Retrieving exercise details',
+                            'prepare_workout_session': 'Preparing next session',
+                            'prepare_workout_sessions': 'Preparing shared weekly allocation',
+                            'draft_workout_sessions': 'Drafting sessions in parallel',
+                            'allocate_workout_sets': 'Allocating workout sets',
                         }.get(function_name)
                         loading = LoadingIndicator(loading_label) if loading_label and tool_call.id not in grouped_searches else None
                         if loading:
                             loading.start()
                         tool_started = time.monotonic()
                         try:
-                            if construction_task and function_name == 'audit_workout_plan' and not saved_reaudit:
+                            if construction_task and function_name == 'audit_workout_plan' and not saved_reaudit and not parallel_submission:
                                 from .planning_tools import validate_construction_submission
                                 validate_construction_submission(function_args, construction_task)
                             if (function_name == 'record_planning_decisions' and planning_state.get('requirementsApproved')
@@ -1333,23 +1508,40 @@ def main(deps=None):
                                     not isinstance(function_args, dict) or 'patch' not in function_args):
                                 raise PlanningInputError('repair_patch_required', 'A saved repair task requires a JSON Patch.', '/patch',
                                     'Use repairTask.baseDraftId with requirementsId and patch against currentDraft. Leave untouched fields out; Python audits the complete result.')
-                            if tool_call.id in grouped_searches:
+                            if repair_task and function_name == 'audit_workout_plan':
+                                validate_repair_scope(function_args, repair_task)
+                            discovery_failure = (construction_tool_failure(function_name, function_args, planning_state)
+                                                 or discovery_tool_failure(function_name, planning_state)) if not saved_reaudit else None
+                            if discovery_failure:
+                                function_result = {'result': json.dumps(discovery_failure), 'should_exit': False, 'generation_result': None}
+                            elif function_name == 'draft_workout_sessions':
+                                def checkpoint_sessions(payload):
+                                    tool_message['content'] = json.dumps(payload, ensure_ascii=False)
+                                    persist_current()
+                                payload = draft_workout_sessions(client, function_args, state['messages'], provided_equipment,
+                                    {**planning_state, 'historyFingerprint': training_history.fingerprint if training_history else None},
+                                    logger=logger, progress=(lambda text: loading.update(text)) if loading else None,
+                                    checkpoint=checkpoint_sessions)
+                                function_result = {'result': json.dumps(payload, ensure_ascii=False),
+                                                   'should_exit': False, 'generation_result': None}
+                            elif tool_call.id in grouped_searches:
                                 function_result = {"result": json.dumps(grouped_searches[tool_call.id]), "should_exit": False, "generation_result": None}
                             else:
-                                function_result = handle_function_call_dep(
-                                    client,
-                                    state["messages"],
-                                    function_name,
-                                    function_args,
-                                    provided_equipment,
-                                    logger,
-                                    script_dir,
-                                    force_use_reasoner=force_use_reasoner,
-                                    allow_educated_load_guesses=args.allow_educated_load_guesses,
-                                    training_history=training_history,
-                                    progress=((lambda done, total: loading.update(f"Exercise search: {done}/{total} batches, up to 3 workers"))
-                                              if function_name == 'search_exercise_library' else (lambda stage: loading.update(stage))) if loading else None,
-                                )
+                                with api_metrics_scope(logger, function_name):
+                                    function_result = handle_function_call_dep(
+                                        client,
+                                        state["messages"],
+                                        function_name,
+                                        function_args,
+                                        provided_equipment,
+                                        logger,
+                                        script_dir,
+                                        force_use_reasoner=force_use_reasoner,
+                                        allow_educated_load_guesses=args.allow_educated_load_guesses,
+                                        training_history=training_history,
+                                        progress=((lambda done, total: loading.update(f"Exercise search: {done}/{total} batches, up to 3 workers"))
+                                                  if function_name == 'search_exercise_library' else (lambda stage: loading.update(stage))) if loading else None,
+                                    )
                         except Exception as tool_error:
                             function_result = {
                                 "result": json.dumps(planning_tool_failure(function_name, tool_error, function_args), ensure_ascii=False),
@@ -1369,10 +1561,13 @@ def main(deps=None):
                             payload = json.loads(function_result.get('result', '{}'))
                             needs_attention = payload.get('passed') is False or payload.get('errors') or any(item.get('error') for item in payload.get('results', []))
                             stage = {'set_workout_requirements': 'Requirements', 'record_planning_decisions': 'Planning choices', 'search_exercise_library': 'Exercise search', 'get_training_evidence': 'Training history',
-                                     'audit_workout_plan': 'Programming audit'}[function_name]
+                                     'audit_workout_plan': 'Programming audit', 'get_exercise_candidates': 'Exercise details',
+                                     'prepare_workout_session': 'Session preparation',
+                                     'prepare_workout_sessions': 'Week preparation', 'draft_workout_sessions': 'Parallel drafting',
+                                     'allocate_workout_sets': 'Set allocation'}[function_name]
                             logger.log_print(f"{stage}: {'needs attention' if needs_attention else 'complete'} ({time.monotonic() - tool_started:.1f}s).")
                             if function_name == 'audit_workout_plan' and payload.get('reviewPending'):
-                                logger.log_print('Full execution review deferred until numerical and evidence checks pass.')
+                                logger.log_print('Full execution review deferred until programming and evidence checks pass.')
                         logger.log_response("tool result " + function_name, function_result.get("result", ""), truncate_at=8000)
                         tool_result_text = function_result.get("result", "")
                         if tool_result_text and function_name == "generate_workout":
@@ -1385,6 +1580,11 @@ def main(deps=None):
                         tool_message["content"] = function_result["result"]
                         tool_message["timestamp"] = _timestamp_now()
                         persist_current()
+                        if function_result.get('waiting_for_user'):
+                            preview_ready = True
+                            pending_preview = None
+                            pending_user_question = json.loads(function_result['result'])['userQuestion']
+                            batch_blocked = 'Waiting for the user to answer the displayed question.'
                         if function_result.get('decision_preview'):
                             print_markdown(function_result['decision_preview'], logger)
                         try:
@@ -1399,11 +1599,15 @@ def main(deps=None):
                             if failures:
                                 review_failure = next((error for error in failures if isinstance(error, dict)
                                     and error.get('code') in ('review_execution_failed', 'requirements_review_failed', 'decision_review_failed')), None)
-                                if review_failure:
+                                if review_failure and not planning_pause:
                                     review_stage = {'review_execution_failed': 'Independent review',
                                                     'requirements_review_failed': 'Requirements review',
                                                     'decision_review_failed': 'Planning choice review'}[review_failure['code']]
                                     planning_pause = review_stage + ' failed: ' + review_failure.get('message', review_failure['code'])
+                                execution_failure = next((error for error in failures if isinstance(error, dict)
+                                    and error.get('code') == 'tool_execution_failed'), None)
+                                if execution_failure and not planning_pause:
+                                    planning_pause = function_name + ' failed internally: ' + execution_failure.get('message', 'Tool execution failed.')
                                 signature = json.dumps([function_name, function_args, failures], sort_keys=True)
                                 discovery_blocked = any(isinstance(error, dict) and error.get('code') == 'discovery_complete' for error in failures)
                                 if discovery_blocked:
@@ -1411,13 +1615,14 @@ def main(deps=None):
                                     signature = json.dumps([function_name, 'discovery_complete', audit_index])
                                     tools = [tool for tool in tools if tool.get('function', {}).get('name') != 'search_exercise_library']
                                     logger.log('Search unavailable until the draft is revised and audited; rephrasing cannot reopen discovery.')
-                                if signature in failed_tool_signatures:
+                                if signature in failed_tool_signatures and not planning_pause:
                                     planning_pause = ('Search is still blocked for the same draft; rewording queries made no progress.' if discovery_blocked
                                                       else 'The same tool request failed again without a change.')
                                 failed_tool_signatures.add(signature)
                         if function_result.get("continue_planning"):
                             requires_plan_revision = True
-                            tools = [SEARCH_EXERCISE_LIBRARY_TOOL, requirements_tool, RECORD_PLANNING_DECISIONS_TOOL, AUDIT_WORKOUT_PLAN_TOOL] if exercise_definitions else []
+                            tools = [SEARCH_EXERCISE_LIBRARY_TOOL, GET_EXERCISE_CANDIDATES_TOOL, requirements_tool,
+                                     RECORD_PLANNING_DECISIONS_TOOL, AUDIT_WORKOUT_PLAN_TOOL, ALLOCATE_WORKOUT_SETS_TOOL, GET_WORKOUT_DRAFT_TOOL] if exercise_definitions else []
                             if training_history:
                                 tools.append(GET_TRAINING_EVIDENCE_TOOL)
 
@@ -1446,7 +1651,8 @@ def main(deps=None):
                         if generation_result is not None:
                             if generation_result.get("requires_plan_revision"):
                                 requires_plan_revision = True
-                                tools = [SEARCH_EXERCISE_LIBRARY_TOOL, requirements_tool, RECORD_PLANNING_DECISIONS_TOOL, AUDIT_WORKOUT_PLAN_TOOL] if exercise_definitions else []
+                                tools = [SEARCH_EXERCISE_LIBRARY_TOOL, GET_EXERCISE_CANDIDATES_TOOL, requirements_tool,
+                                         RECORD_PLANNING_DECISIONS_TOOL, AUDIT_WORKOUT_PLAN_TOOL, ALLOCATE_WORKOUT_SETS_TOOL, GET_WORKOUT_DRAFT_TOOL] if exercise_definitions else []
                                 if training_history:
                                     tools.append(GET_TRAINING_EVIDENCE_TOOL)
                             current_record = load_conversation_record(state["conversation_id"], script_dir) or {}
@@ -1455,6 +1661,9 @@ def main(deps=None):
                                 state["log_path"],
                                 current_record.get("metadata", {}).get("generated_output_paths"),
                             )
+                    if pending_user_question:
+                        state['messages'].append(_message('assistant', content=format_question(pending_user_question)))
+                        persist_current()
                     if pending_preview:
                         preview = pending_preview["draft_preview"]
                         state["messages"].append(_message("assistant", content=preview,

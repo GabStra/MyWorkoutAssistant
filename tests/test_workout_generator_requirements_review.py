@@ -9,6 +9,7 @@ from workout_generator_pkg.planning_tools import (
     SET_WORKOUT_REQUIREMENTS_TOOL, requirement_sources, requirements_approved, set_workout_requirements,
 )
 from test_workout_generator_planning_tools import planning_case
+from test_workout_generator_planning_decisions import _without_review_refs
 
 
 def _record(messages, result):
@@ -35,7 +36,7 @@ def test_planner_and_requirements_reviewer_share_actual_numerical_capabilities(m
     assert any(json.dumps(policy) in m.get('content', '') for m in outgoing)
     def reject(client, request, **kwargs):
         context = json.loads(request[-1]['content'])
-        assert context['auditPolicy'] == policy
+        assert _without_review_refs(context['auditPolicy']) == policy
         return json.dumps({'findings': [{'severity': 'blocking', 'action': 'clarify',
             'path': '/auditPolicy/supportedMuscleTargets',
             'message': 'Separate regional numerical targets are not supported.',
@@ -45,6 +46,32 @@ def test_planner_and_requirements_reviewer_share_actual_numerical_capabilities(m
     payload = json.loads(handle_function_call(None, messages, 'set_workout_requirements', arguments, equipment)['result'])
     assert not payload['passed'] and 'requirementsPreview' not in payload
     assert payload['errors'][0]['action'] == 'clarify'
+
+
+@pytest.mark.parametrize('muscle', ['abs', 'lats', 'lateralDelts', 'abductors'])
+def test_supported_target_flows_through_without_extra_muscle_choices(monkeypatch, muscle):
+    from workout_generator_pkg.generation_audit import audit_policy, available_muscle_targets
+    from workout_generator_pkg.planning_tools import workout_requirements_tool
+    equipment, arguments, _, _ = planning_case()
+    equipment['exerciseDefinitions'][0]['trainingMuscles'] = {'primary': [muscle], 'secondary': []}
+    arguments['auditTargets']['weeklyEffectiveSets'] = {muscle: {'minimum': 5, 'maximum': 6}}
+    arguments['auditTargets']['perSessionEffectiveSets'] = {}
+    messages = [{'role': 'user', 'content': f'Plan 5-6 weekly effective sets for {muscle}.'}]
+    policy = audit_policy(available_muscle_targets(equipment))
+    schema = workout_requirements_tool(equipment)['function']['parameters']['properties']['auditTargets']
+    assert set(schema['properties']['weeklyEffectiveSets']['properties']) == set(policy['supportedMuscleTargets'])
+    outgoing = _messages_for_api(messages, True, provided_equipment=equipment)
+    assert any(json.dumps(policy) in item.get('content', '') for item in outgoing)
+    def approve(client, request, **options):
+        context = json.loads(request[-1]['content'])
+        assert _without_review_refs(context['auditPolicy']) == policy
+        assert _without_review_refs(context['requirements']['auditTargets']) == arguments['auditTargets']
+        return '{"findings":[]}', None, None
+    monkeypatch.setattr(review, 'chat_call', approve)
+    payload = json.loads(handle_function_call(None, messages, 'set_workout_requirements', arguments, equipment)['result'])
+    assert payload['passed'] and payload['requirementsPreview']
+    assert payload['requirements']['auditTargets'] == arguments['auditTargets']
+    assert not payload.get('resolvedDecisions')
 
 
 def test_extraction_preserves_originals_and_never_promotes_model_notes():
@@ -221,8 +248,8 @@ def test_missing_optional_restrictions_have_a_valid_review_target_without_mutati
     before = copy.deepcopy(arguments)
     def check(client, request, **kwargs):
         context = json.loads(request[-1]['content'])
-        assert context['requirements']['exerciseRestrictions'] == {'excludeNameTerms': [], 'exceptNameTerms': []}
-        assert 'For a missing field, cite its existing containing object' in request[0]['content']
+        assert _without_review_refs(context['requirements']['exerciseRestrictions']) == {'excludeNameTerms': [], 'exceptNameTerms': []}
+        assert 'A missing field is cited by its containing object FACT_n' in request[0]['content']
         assert 'When the user explicitly delegates a decision' in request[0]['content']
         finding = {'severity': 'blocking', 'path': '/requirements/exerciseRestrictions/excludeNameTerms',
                    'message': 'The conventional deadlift exclusion is missing.',
@@ -231,5 +258,5 @@ def test_missing_optional_restrictions_have_a_valid_review_target_without_mutati
     monkeypatch.setattr(review, 'chat_call', check)
     payload = json.loads(handle_function_call(None, messages, 'set_workout_requirements', arguments, equipment)['result'])
     assert payload['errors'][0]['code'] == 'requirements_source_finding'
-    assert 'restrictionPolicy is derived by Python, not editable' in payload['instruction']
+    assert payload['errors'][0]['repair'] == 'Restore the exclusion.'
     assert 'exerciseRestrictions' not in payload['requirements'] and arguments == before

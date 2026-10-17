@@ -61,7 +61,7 @@ def test_unknown_alias_is_semantically_resolved_then_shown_for_approval(monkeypa
     stored = set_workout_requirements(requirements, [], equipment, client=object())
     assert len(calls) == 1 and stored['restrictionPolicy']['exceptDefinitionIds'] == ['a']
     assert '### Permitted library exceptions\n\n- Cable Tricep Pushdown' in stored['requirementsPreview']
-    assert 'CONFIRM REQUIREMENTS' in stored['requirementsPreview']
+    assert 'separate approval question' in stored['requirementsPreview']
 
 
 def test_unresolved_or_stale_policy_cannot_silently_allow_or_substitute_exercises():

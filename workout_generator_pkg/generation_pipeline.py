@@ -564,54 +564,46 @@ def execute_workout_generation(
         if current_step < 1:
             step_start_time = time.time()
             _gen_print("Step 1: Using approved plan index..." if canonical_snapshot else "Step 1: Generating plan index...")
-            step_1_retry_budget = 2
-            step_1_retry_count = 0
-            step_1_contract_error_context = ""
-            while True:
-                plan_index = copy.deepcopy(canonical_snapshot["planIndex"]) if canonical_snapshot else generate_index(
-                    client,
-                    context_summary,
-                    custom_prompt,
-                    use_reasoner_for_plan_index,
-                    provided_equipment,
-                    logger,
-                    structured_generation_facts=structured_generation_facts,
-                    contract_error_context=step_1_contract_error_context,
-                )
-                if plan_index is None:
-                    return {"success": False, "filepath": None, "error": "Plan index generation cancelled"}
-                if canonical_snapshot:
-                    plan_index["equipments"] = copy.deepcopy(provided_equipment.get("equipments", []))
-                    plan_index["accessoryEquipments"] = copy.deepcopy(provided_equipment.get("accessoryEquipments", []))
-                hydrate_plan_index_from_exercise_library(
-                    plan_index,
-                    provided_equipment.get("exerciseDefinitions", []) if provided_equipment else [],
-                )
-                for rewrite in ([] if canonical_snapshot else normalize_dumbbell_pair_prescription_loads(plan_index)):
-                    _gen_print(f"  {rewrite}")
-                try:
-                    validate_plan_index_contract(plan_index, provided_equipment)
-                    validate_audit_targets(plan_index.get("auditTargets"))
-                    for entry in plan_index.get("exercises", []):
-                        if (not isinstance(entry.get("numWorkSets"), int) or isinstance(entry.get("numWorkSets"), bool)
-                                or entry["numWorkSets"] < 1 or not isinstance(entry.get("generateWarmUpSets"), bool)):
-                            raise ContractValidationError(f"Exercise {entry.get('id')} must provide numWorkSets and generateWarmUpSets for the programming audit.")
-                        if entry.get("exerciseType") in ("WEIGHT", "BODY_WEIGHT") and not isinstance(entry.get("maxReps"), int):
-                            raise ContractValidationError(f"Exercise {entry.get('id')} must provide maxReps for the duration audit.")
-                    break
-                except ContractValidationError as e:
-                    _log_step_error("Step 1", e, prefix="Contract validation failed")
-                    if canonical_snapshot or step_1_retry_count >= step_1_retry_budget:
-                        return {"success": False, "filepath": None, "error": str(e)}
-                    step_1_retry_count += 1
-                    step_1_contract_error_context = (
-                        str(e) + "\n\nPrevious invalid PlanIndex (preserve unaffected entries):\n"
-                        + json.dumps(plan_index, separators=(",", ":"))
-                    )
-                    _gen_print(
-                        f"  → Contract retry {step_1_retry_count}/{step_1_retry_budget}: "
-                        "re-generating Step 1 plan index due to contract mismatches..."
-                    )
+            plan_index = copy.deepcopy(canonical_snapshot["planIndex"]) if canonical_snapshot else generate_index(
+                client,
+                context_summary,
+                custom_prompt,
+                use_reasoner_for_plan_index,
+                provided_equipment,
+                logger,
+                structured_generation_facts=structured_generation_facts,
+            )
+            if plan_index is None:
+                return {"success": False, "filepath": None, "error": "Plan index generation cancelled"}
+            if canonical_snapshot:
+                plan_index["equipments"] = copy.deepcopy(provided_equipment.get("equipments", []))
+                plan_index["accessoryEquipments"] = copy.deepcopy(provided_equipment.get("accessoryEquipments", []))
+            hydrate_plan_index_from_exercise_library(
+                plan_index,
+                provided_equipment.get("exerciseDefinitions", []) if provided_equipment else [],
+            )
+            for rewrite in ([] if canonical_snapshot else normalize_dumbbell_pair_prescription_loads(plan_index)):
+                _gen_print(f"  {rewrite}")
+            try:
+                validate_plan_index_contract(plan_index, provided_equipment)
+                validate_audit_targets(plan_index.get("auditTargets"))
+                for entry in plan_index.get("exercises", []):
+                    if (not isinstance(entry.get("numWorkSets"), int) or isinstance(entry.get("numWorkSets"), bool)
+                            or entry["numWorkSets"] < 1 or not isinstance(entry.get("generateWarmUpSets"), bool)):
+                        raise ContractValidationError(f"Exercise {entry.get('id')} must provide numWorkSets and generateWarmUpSets for the programming audit.")
+                    if entry.get("exerciseType") in ("WEIGHT", "BODY_WEIGHT") and not isinstance(entry.get("maxReps"), int):
+                        raise ContractValidationError(f"Exercise {entry.get('id')} must provide maxReps for the duration audit.")
+            except ContractValidationError as error:
+                _log_step_error("Step 1", error, prefix="Contract validation failed")
+                failure = {"success": False, "filepath": None, "error": str(error)}
+                if not canonical_snapshot:
+                    failure.update(requires_plan_revision=True, programming_audit={
+                        "issues": [str(error)], "errors": [{
+                            "code": "plan_contract_requires_revision", "path": "/",
+                            "message": str(error),
+                            "repair": "Revise the plan through the planning workflow and obtain fresh confirmation. This contract error supplies no permitted schema-repair paths; do not regenerate the entire index as an automatic repair.",
+                        }]})
+                return failure
             _gen_print("Step 1: Auditing planned volume and duration before emission...")
             with LoadingIndicator("Auditing planned volume and duration"):
                 plan_audit = audit_workout_package(plan_audit_package(plan_index, allow_educated_load_guesses), plan_index.get("auditTargets") or {})
@@ -935,6 +927,8 @@ def execute_workout_generation(
                     "allow_educated_load_guesses": allow_educated_load_guesses,
                     "logger": logger,
                 }
+                if canonical_snapshot:
+                    args['deterministic'] = True
                 if contract_error_context is not None:
                     args["contract_error_context"] = contract_error_context
                 if max_attempts is not None:
@@ -969,7 +963,7 @@ def execute_workout_generation(
                     break
                 except ContractValidationError as e:
                     _log_step_error("Step 3", e, prefix="Contract validation failed")
-                    if contract_retry_count >= contract_retry_budget:
+                    if canonical_snapshot or contract_retry_count >= contract_retry_budget:
                         return {"success": False, "filepath": None, "error": str(e)}
 
                     err_text = str(e)
@@ -1210,7 +1204,7 @@ def execute_workout_generation(
                         _gen_print(f"  Resuming step 6 with best saved state (error count: {resume_best_error_count if resume_best_error_count is not None else 'N/A'})")
                 
                 validated_placeholder_store = validate_and_repair_placeholder_json(
-                    client, context_summary, placeholder_workout_store, max_attempts=5,
+                    client, context_summary, placeholder_workout_store, max_attempts=1 if canonical_snapshot else 5,
                     session_id=session_id, step_data=step_data, custom_prompt=custom_prompt,
                     conversation_hash=conversation_hash, id_manager=id_manager, script_dir=script_dir,
                     resume_best_json=resume_best_json, resume_best_error_count=resume_best_error_count,
@@ -1285,7 +1279,9 @@ def execute_workout_generation(
         _gen_print("Step 8: Auditing actual generated volume and duration...")
         audit_start = time.time()
         with LoadingIndicator("Auditing generated volume and duration"):
-            final_audit = audit_workout_package(data, plan_index.get("auditTargets") or {})
+            setup_seconds = {id_manager.placeholder_to_uuid.get(e['id'], e['id']): e['setupSeconds']
+                             for e in plan_index['exercises'] if 'setupSeconds' in e}
+            final_audit = audit_workout_package(data, plan_index.get("auditTargets") or {}, setup_seconds_by_exercise=setup_seconds)
         final_audit["prescriptionChanges"] = step_data.get("step_1_programming_audit", {}).get("prescriptionChanges", [])
         step_data["step_8_programming_audit"] = final_audit
         timing_data["step_times"][8] = time.time() - audit_start

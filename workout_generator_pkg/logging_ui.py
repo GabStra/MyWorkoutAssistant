@@ -42,6 +42,28 @@ def print_markdown(text, logger, paged=False):
         console.print(Markdown(text))
 
 
+def format_question(question):
+    lines = [question['question'], '']
+    lines.extend(f"{index}. {option}" for index, option in enumerate(question['options'], 1))
+    hint = 'Choose a listed number, or type your own response.' if question['options'] else 'Type your own response.'
+    lines.extend(['', hint, 'You can ask a question, suggest changes or give another answer. Use /ml for multiple lines; commands remain available.'])
+    return '\n'.join(lines)
+
+
+def print_question(question, logger):
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.text import Text
+
+    text = format_question(question)
+    console = Console()
+    if console.is_terminal:
+        logger.log('Question> ' + text)
+        console.print(Panel(Text(text), title='Your choice', border_style='cyan'))
+    else:
+        logger.log_print('Question> ' + text)
+
+
 class ConversationLogger:
     """Simple conversation and debug logger."""
 

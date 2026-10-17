@@ -7,15 +7,17 @@ import re
 
 from jsonschema import validate, ValidationError
 
-from .constants import EXACT_GENERATION_CONFIRMATION
+from .constants import EXACT_GENERATION_CONFIRMATION, JSON_SCHEMA
 from .generation_audit import MUSCLES, ASSUMPTIONS, audit_workout_package, plan_audit_package, add_audit_issue, available_muscle_targets
 from .plan_contract import LIBRARY_DEFINITION_OWNED_FIELDS, validate_plan_index_contract, hydrate_plan_index_from_exercise_library, ContractValidationError
 from .json_patching import apply_json_patch, validate_patch_operations_scope
 from .muscle_roles import TRAINING_MUSCLES, TRAINING_MUSCLE_GROUPS
+from .programming_guidelines import EXECUTION_RULES_SCHEMA, execution_rule_errors, render_execution_rule, audit_execution_rules, audit_execution_details
 
 REQUIREMENTS_CONFIRMATION = "CONFIRM REQUIREMENTS"
-AUDIT_VERSION = 8
-REQUIREMENTS_VERSION = 3
+AUDIT_VERSION = 10
+REQUIREMENTS_VERSION = 5
+_NOTES_SCHEMA = JSON_SCHEMA['$defs']['Exercise']['properties']['placementNotes']
 
 
 class PlanningInputError(ValueError):
@@ -31,6 +33,8 @@ def planning_tool_failure(tool_name, error, arguments=None):
               if tool_name == 'record_planning_decisions' else
               "Correct the extracted argument using the original user statements, then call set_workout_requirements. Ask and wait if meaning is ambiguous; do not invent a requirement."
               if tool_name == 'set_workout_requirements' else
+              f"Correct the lookup arguments and use returned library references, then call {tool_name} again. Do not change the workout or its requirements to repair a lookup."
+              if tool_name in ('get_training_evidence', 'get_exercise_candidates', 'search_exercise_library', 'get_workout_draft', 'prepare_workout_session') else
               "Correct the indicated tool argument using a targeted patch against currentDraftId; preserve agreed requirements and library-owned fields, then call audit_workout_plan.")
     if isinstance(error, PlanningInputError):
         errors = error.errors or [{"code": error.code, "path": error.path, "message": str(error), "repair": error.repair}]
@@ -56,6 +60,8 @@ def planning_tool_failure(tool_name, error, arguments=None):
                    "message": str(error), "repair": repair if editable else "Report this execution failure; do not change the draft or relax goals to hide it."}]
     result = {"passed": False, "tool": tool_name, "errors": errors,
             "instruction": "Follow errors[].repair. Re-audit actual draft changes. If constraints conflict, explain the conflict and ask the user; do not silently change requirements or repeatedly submit an unchanged failing draft."}
+    if any(item['code'] == 'tool_execution_failed' for item in errors):
+        result.update(executionFailure=True, instruction='Report this internal tool failure and pause. Do not edit the workout, rephrase lookups or retry automatically to hide it. Completed independent results remain valid; retry only after an explicit user request or a code fix.')
     if hasattr(error, 'submitted_draft'):
         result.update(submittedDraft=copy.deepcopy(error.submitted_draft), currentDraftId=error.draft_revision_id,
                       libraryFingerprint=error.draft_library_fingerprint)
@@ -73,6 +79,7 @@ _TARGETS = {"type": "object", "properties": {
     "maximumSessionSeconds": {"type": ["integer", "null"], "minimum": 1},
 }, "required": ["weeklyEffectiveSets", "perSessionEffectiveSets", "maximumSessionSeconds"], "additionalProperties": False}
 _REQUIREMENTS = {"type": "object", "properties": {
+    "executionRules": EXECUTION_RULES_SCHEMA,
     "requiredCoverage": {"type": "array", "maxItems": 30, "description": "Only explicit user-required movement patterns, muscle work or exercise slots. No invented balance rules. The source reviewer verifies extraction; exercise suitability is checked during execution review.", "items": {
         "type": "object", "properties": {
             "key": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$", "maxLength": 60},
@@ -85,18 +92,31 @@ _REQUIREMENTS = {"type": "object", "properties": {
     }, "required": ["excludeNameTerms", "exceptNameTerms"], "additionalProperties": False},
     "auditTargets": _TARGETS,
     "sessionsPerWeek": {"type": ["integer", "null"], "minimum": 1, "maximum": 21},
+    "minimumRestDaysBetweenSessions": {"type": "integer", "minimum": 0, "maximum": 6,
+        "description": "Only an explicitly requested minimum of full rest days between sessions, including the weekly wraparound."},
+    "workingSetRIR": {"type": "object", "properties": {
+        "minimum": {"type": "number", "minimum": 0, "maximum": 10},
+        "maximum": {"type": "number", "minimum": 0, "maximum": 10}},
+        "required": ["minimum", "maximum"], "additionalProperties": False,
+        "description": "Only an explicit user-requested working-set reps-in-reserve range. Used to flag history/prescription uncertainty; history does not prove current effort."},
     "notes": {"type": "string", "description": "Legacy field; ignored. Original user instructions are retained by the backend, not rewritten into notes."},
 }, "required": ["auditTargets", "sessionsPerWeek"], "additionalProperties": False}
 
 SET_WORKOUT_REQUIREMENTS_TOOL = {"type": "function", "function": {
     "name": "set_workout_requirements",
-    "description": "After clarifying material ambiguity, extract the user's exact numerical targets, restrictions and requiredCoverage for explicitly requested movement patterns, muscle work or exercise slots. Each submission replaces the extraction: include all still-applicable targets, restrictions, exceptions and coverage from the conversation, not only the latest answer. Omit unspecified muscle targets; zero is a prohibition. Preserve full restriction qualifiers. Original instructions and clarification answers remain authoritative without a rewritten recap. Python checks extraction against that source before showing CONFIRM REQUIREMENTS. Never lower targets to resolve conflicts. For stale policy refresh, resubmit unchanged extracted fields. For ambiguity or unsupported extraction, follow the returned repair: correct the extraction or ask and wait. Every new approved extraction needs confirmation.",
+    "description": "After clarifying material ambiguity, extract the user's exact numerical targets, restrictions and requiredCoverage for explicitly requested movement patterns, muscle work or exercise slots. Extract explicit order, straight-set, ramp-up and rest constraints into executionRules; use source-backed requiredCoverage keys for execution roles. Each submission replaces the extraction: include all still-applicable fields, not only the latest answer. Omit unspecified muscle targets; zero is a prohibition. Preserve full restriction qualifiers. Original instructions and clarification answers remain authoritative without a rewritten recap. Python checks extraction against that source before showing CONFIRM REQUIREMENTS. Never lower targets to resolve conflicts or promote general training advice to a binding rule. For stale policy refresh, preserve extracted fields and add missing source-backed rules. For ambiguity or unsupported extraction, correct the extraction or ask and wait. Every new approved extraction needs confirmation.",
     "parameters": {**_REQUIREMENTS, "properties": {key: value for key, value in _REQUIREMENTS['properties'].items() if key != 'notes'}},
 }}
 
 
 def workout_requirements_tool(equipment):
     tool = copy.deepcopy(SET_WORKOUT_REQUIREMENTS_TOOL)
+    from .planning_decisions import RECORD_PLANNING_DECISIONS_TOOL
+    tool['function']['parameters']['properties']['planningDecisions'] = copy.deepcopy(
+        RECORD_PLANNING_DECISIONS_TOOL['function']['parameters'])
+    tool['function']['description'] += (' When choices and extraction are ready together, include planningDecisions '
+        'with decisions/sourceReferences for one independent authorization and requirements review. '
+        'Do not invent user authorization; unresolved ambiguity still requires asking the user.')
     supported = available_muscle_targets(equipment)
     for field in ('weeklyEffectiveSets', 'perSessionEffectiveSets'):
         bounds = tool['function']['parameters']['properties']['auditTargets']['properties'][field]
@@ -105,6 +125,11 @@ def workout_requirements_tool(equipment):
 
 
 _EXERCISE = {"type": "object", "properties": {
+    "allocationBounds": {"type": "object", "properties": {
+        "minimum": {"type": "integer", "minimum": 1, "maximum": 20},
+        "maximum": {"type": "integer", "minimum": 1, "maximum": 20}},
+        "required": ["minimum", "maximum"], "additionalProperties": False,
+        "description": "Permissible set-count range for automatic numerical allocation. Include for adjustable counts only, within source constraints; omitted means locked. Exact targetSetPrescriptions remain locked. Never widen an explicit user limit."},
     "satisfiesCoverage": {"type": "array", "uniqueItems": True, "items": {"type": "string"}, "description": "requiredCoverage keys this occurrence satisfies. The independent reviewer verifies these claims against the actual library movement; assignment alone is not proof."},
     "definition_id": {"type": "string", "pattern": "^LIBRARY_[0-9]+$"},
     "numWorkSets": {"type": "integer", "minimum": 1, "maximum": 20},
@@ -117,8 +142,10 @@ _EXERCISE = {"type": "object", "properties": {
     "restAfterSupersetExerciseSeconds": {"type": "integer", "minimum": 0, "maximum": 1800, "description": "Rest after this member every superset round: A-to-B on A, round recovery on the final member (omitted after the last round). Must be 0 for straight sets. Zero transition is allowed only when intended."},
     "intraSetRestInSeconds": {"type": ["integer", "null"], "minimum": 1, "maximum": 300, "description": "Positive seconds between sides of a unilateral set; null for bilateral work. Both sides count for duration, once for muscle volume."},
     "generateWarmUpSets": {"type": "boolean"},
+    "setupSeconds": {"type": "integer", "minimum": 0, "maximum": 1800,
+        "description": "Estimated setup time before this exercise, separate from prescribed rest. Itemize each transition in time-limited plans, including plate/rack/bench/attachment changes. Zero needs a genuinely unchanged or pre-staged setup. This is an estimate, not a measurement."},
     "requiresEffortCalibration": {"type": "boolean", "description": "Explicitly mark uncertain resistance suitability. Required when current training evidence flags unresolved capacity or related-history concerns. No fixed load prescriptions; volume remains conditional on verifying the prescribed effort. Prefer a supported, loadable variant when available."},
-    "placementNotes": {"type": "string", "maxLength": 1000},
+    "placementNotes": _NOTES_SCHEMA,
     "targetSetPrescriptions": {"type": "array", "maxItems": 20, "items": {
         "type": "object", "properties": {
             "workSetIndex": {"type": "integer", "minimum": 0}, "reps": {"type": "integer", "minimum": 1},
@@ -131,7 +158,7 @@ _EXERCISE = {"type": "object", "properties": {
     "additionalProperties": False}
 AUDIT_WORKOUT_PLAN_TOOL = {"type": "function", "function": {
     "name": "audit_workout_plan",
-    "description": "Call only when creating or changing the structured draft; questions and explanations do not require another audit. Python audits volume and estimated duration, then displays a passing preview. On failure, follow errors[].repair, change the draft and resubmit without changing requirements. If constraints conflict, explain and ask the user; never silently relax goals or loop on an unchanged failing draft. Export uses this exact draft after CONFIRM GENERATE. Superset members must be contiguous with equal sets; only the final member may have outer rest. Exact loads use app totals (dumbbell pair = combined total).",
+    "description": "Call only when creating or changing the structured draft; questions and explanations do not require another audit. Python audits volume, estimated duration and approved executionRules; a passing preview requires the independent execution review too. On failure, follow errors[].repair, change the draft and resubmit without changing requirements. If constraints conflict, explain and ask the user; never silently relax goals or loop on an unchanged failing draft. Export uses this exact draft after CONFIRM GENERATE. Superset members must be contiguous with equal sets; only the final member may have outer rest. Exact loads use app totals (dumbbell pair = combined total).",
     "parameters": {"type": "object", "properties": {
         "requirementsId": {"type": "string"}, "name": {"type": "string", "minLength": 1, "maxLength": 200},
         "workouts": {"type": "array", "minItems": 1, "maxItems": 30, "items": {
@@ -139,6 +166,9 @@ AUDIT_WORKOUT_PLAN_TOOL = {"type": "function", "function": {
                 "name": {"type": "string", "minLength": 1, "maxLength": 200},
                 "description": {"type": "string", "maxLength": 1000},
                 "timesCompletedInAWeek": {"type": "integer", "minimum": 1, "maximum": 7},
+                "trainingDays": {"type": "array", "uniqueItems": True, "minItems": 1, "maxItems": 7,
+                    "items": {"type": "integer", "minimum": 0, "maximum": 6},
+                    "description": "Weekdays: Monday=0 through Sunday=6. Required when rest-day spacing is constrained; one day per weekly occurrence."},
                 "exercises": {"type": "array", "minItems": 1, "maxItems": 100, "items": _EXERCISE},
             }, "required": ["name", "description", "timesCompletedInAWeek", "exercises"], "additionalProperties": False,
         }},
@@ -164,9 +194,86 @@ AUDIT_WORKOUT_PLAN_TOOL['function']['description'] += (
 REPAIR_WORKOUT_PLAN_TOOL = {'type': 'function', 'function': {
     **AUDIT_WORKOUT_PLAN_TOOL['function'], 'parameters': _PATCH_SCHEMA,
     'description': 'Repair the saved currentDraft using requirementsId, baseDraftId and a targeted JSON Patch. '
-                   'Address repairTask first and include necessary connected changes. Other findings may remain. '
+                   'Address repairTask.findingIndexes together with necessary connected changes. Other findings may remain. '
                    'Python reconstructs and validates the entire workout before any preview is approved. '
                    'Use [] only after an explicit retry or new evidence. Unchanged failures are cached.'}}
+
+GET_WORKOUT_DRAFT_TOOL = {'type': 'function', 'function': {
+    'name': 'get_workout_draft',
+    'description': 'Read omitted session details from the saved draft before changing them. Returns exact fields and original patch paths, without mutating the draft or requiring another audit.',
+    'parameters': {'type': 'object', 'properties': {
+        'baseDraftId': {'type': 'string', 'pattern': '^REVISION_[0-9]+$'},
+        'workoutReferences': {'type': 'array', 'minItems': 1, 'uniqueItems': True,
+            'items': {'type': 'string', 'pattern': '^WORKOUT_[0-9]+$'}}},
+        'required': ['baseDraftId', 'workoutReferences'], 'additionalProperties': False}}}
+
+
+PREPARE_WORKOUT_SESSION_TOOL = {'type': 'function', 'function': {
+    'name': 'prepare_workout_session',
+    'description': 'Commit the exact movements for the next session, not a list of alternatives. Python returns current metadata and retrieves missing history before session submission. This does not approve or export a workout.',
+    'parameters': {'type': 'object', 'properties': {
+        'requirementsId': {'type': 'string'},
+        'baseDraftId': {'type': ['string', 'null'], 'pattern': '^REVISION_[0-9]+$'},
+        'definition_ids': {'type': 'array', 'minItems': 1, 'maxItems': 100, 'uniqueItems': True,
+                           'items': {'type': 'string', 'pattern': '^LIBRARY_[0-9]+$'}}},
+        'required': ['requirementsId', 'baseDraftId', 'definition_ids'], 'additionalProperties': False}}}
+
+
+def prepare_workout_session(arguments, messages, equipment):
+    from .exercise_library_tools import get_exercise_candidates
+    validate(arguments, PREPARE_WORKOUT_SESSION_TOOL['function']['parameters'])
+    require_approved_requirements(messages)
+    _, requirements = _latest_result(messages, 'set_workout_requirements')
+    _, revision = latest_draft_submission(messages, equipment)
+    if arguments['requirementsId'] != requirements['requirementsId'] or arguments['baseDraftId'] != revision:
+        raise ValueError('Session preparation is stale; use the current requirementsId and currentDraftId (null before the first draft).')
+    index, prepared = _latest_result(messages, 'prepare_workout_session')
+    new_instruction = any(message.get('role') == 'user' and message.get('content', '').strip()
+                          not in ('/continue', 'CONFIRM REQUIREMENTS', 'CONFIRM GENERATE') for message in messages[index + 1:])
+    if (prepared.get('requirementsId') == arguments['requirementsId'] and prepared.get('baseDraftId') == revision
+            and prepared.get('libraryFingerprint') == library_fingerprint(equipment) and not new_instruction):
+        raise PlanningInputError('session_selection_locked', 'The next-session selection is already committed.', '/',
+            'Use the prepared metadata and history to submit the session. Repair any unsuitable choice through the normal audit before starting another selection.')
+    return {**get_exercise_candidates({'definition_ids': arguments['definition_ids']}, equipment, messages),
+            'requirementsId': arguments['requirementsId'], 'baseDraftId': revision,
+            'definition_ids': arguments['definition_ids'], 'instruction': 'Use these movements for the next session. Python retrieves missing history; then submit the session to audit_workout_plan. Resolve audit findings through patches after submission.'}
+
+
+def get_workout_draft(arguments, messages, equipment):
+    validate(arguments, GET_WORKOUT_DRAFT_TOOL['function']['parameters'])
+    require_approved_requirements(messages)
+    draft, revision = latest_draft_submission(messages, equipment)
+    if draft is None or arguments['baseDraftId'] != revision:
+        raise ValueError('Draft reference is stale; use currentDraftId from the current planning state.')
+    selected = {}
+    for reference in arguments['workoutReferences']:
+        index = int(reference.removeprefix('WORKOUT_'))
+        if index >= len(draft['workouts']):
+            raise ValueError(f'Unknown workout reference: {reference}')
+        selected[reference] = copy.deepcopy(draft['workouts'][index])
+    references = {item['definition_id'] for day in selected.values() for item in day['exercises']}
+    definitions = {f'LIBRARY_{i}': definition['name'] for i, definition in enumerate(sorted(
+        equipment.get('exerciseDefinitions', []), key=lambda item: item['id'])) if f'LIBRARY_{i}' in references}
+    return {'baseDraftId': revision, 'workouts': selected, 'exerciseNames': definitions}
+
+
+def validate_repair_scope(arguments, task):
+    """Do not let a compact request silently edit a session it has not read."""
+    omitted = set(task.get('omittedWorkoutReferences', []))
+    if not omitted or 'patch' not in arguments:
+        return
+    validate(arguments['patch'], _PATCH_SCHEMA['properties']['patch'])
+    for operation in arguments['patch']:
+        for field in ('path', 'from'):
+            path = operation.get(field, '')
+            if path == '/workouts/-' and operation.get('op') == 'add' and field == 'path':
+                continue
+            match = re.match(r'^/workouts/(\d+)(/.*)?$', path)
+            hidden = match and f'WORKOUT_{int(match[1])}' in omitted
+            shifts = path == '/workouts' or (match and not match[2] and operation.get('op') in ('add', 'remove', 'move', 'copy'))
+            if hidden or shifts:
+                raise PlanningInputError('draft_details_required', 'Read omitted sessions before editing them or changing their indices.', path,
+                    'Call get_workout_draft with currentDraftId as baseDraftId and the needed WORKOUT_n references, then retry a targeted patch. Read all omitted sessions before restructuring workout order.')
 
 
 def construction_workout_tool(task):
@@ -174,6 +281,12 @@ def construction_workout_tool(task):
     schema = copy.deepcopy(_DRAFT_SCHEMA if task['action'] == 'create_first_session' else _PATCH_SCHEMA)
     if task['action'] == 'create_first_session':
         schema['properties']['workouts']['maxItems'] = 1
+    else:
+        schema['properties']['patch'].update(minItems=1, maxItems=1, items={
+            'type': 'object', 'properties': {
+                'op': {'const': 'add'}, 'path': {'const': '/workouts/-'},
+                'value': copy.deepcopy(_DRAFT_SCHEMA['properties']['workouts']['items']),
+            }, 'required': ['op', 'path', 'value'], 'additionalProperties': False})
     tool['function'].update(parameters=schema, description=task['instruction'])
     return tool
 
@@ -190,6 +303,13 @@ def validate_construction_submission(arguments, task):
     if not valid:
         raise PlanningInputError('construction_scope_exceeded', 'Construct one workout session per submission.', '/',
             task['instruction'])
+    # Append patches have arbitrary values in the general repair schema.
+    validate(arguments, construction_workout_tool(task)['function']['parameters'])
+    if task.get('definition_ids'):
+        day = arguments['workouts'][0] if task['action'] == 'create_first_session' else arguments['patch'][0]['value']
+        if {item['definition_id'] for item in day['exercises']} != set(task['definition_ids']):
+            raise PlanningInputError('session_selection_mismatch', 'The next session must use the committed movement selection.', '/workouts',
+                'Submit the prepared session using constructionTask.definition_ids. The normal audit identifies any unsuitable choice for a subsequent targeted repair; do not restart discovery before submitting it.')
 
 
 def _latest_result(messages, tool_name):
@@ -272,7 +392,8 @@ def _resolve_draft_submission(arguments, messages, equipment):
 
 def _revision_index(messages):
     return next((i for i in range(len(messages) - 1, -1, -1) if messages[i].get("role") == "user"
-                 and (messages[i].get("content") or "").strip() not in (EXACT_GENERATION_CONFIRMATION, REQUIREMENTS_CONFIRMATION, '/continue')), -1)
+                 and (messages[i].get('imageAttachments') or (messages[i].get("content") or "").strip()
+                      not in (EXACT_GENERATION_CONFIRMATION, REQUIREMENTS_CONFIRMATION, '/continue'))), -1)
 
 
 def _fingerprint(value):
@@ -284,14 +405,18 @@ def library_fingerprint(equipment):
 
 
 def requirement_sources(messages):
-    return [{'messageIndex': i, 'role': m['role'], 'content': m['content']}
+    return [{'messageIndex': i, 'role': m['role'], 'content': m['content'],
+             **({'imageAttachments': copy.deepcopy(m['imageAttachments'])} if m.get('imageAttachments') else {})}
             for i, m in enumerate(messages) if m.get('role') in ('user', 'assistant') and m.get('content')
             and not m.get('tool_calls') and not m.get('canonicalRequirementsPreview') and not m.get('canonicalDraftPreview')
-            and m['content'].strip() not in (REQUIREMENTS_CONFIRMATION, EXACT_GENERATION_CONFIRMATION, '/continue')]
+            and (m.get('imageAttachments') or m['content'].strip() not in (REQUIREMENTS_CONFIRMATION, EXACT_GENERATION_CONFIRMATION, '/continue'))]
 
 
 def source_message_context(sources):
-    return {f'SOURCE_{i}': {'role': m['role'], 'content': m['content']} for i, m in enumerate(sources)}
+    return {f'SOURCE_{i}': {'role': m['role'], 'content': m['content'],
+            **({'images': [{'name': image['name'], 'sha256': image['sha256'],
+                           **({'textOffset': image['textOffset']} if 'textOffset' in image else {})} for image in m['imageAttachments']]}
+               if m.get('imageAttachments') else {})} for i, m in enumerate(sources)}
 
 
 def render_requirements(requirements, restriction_policy=None, confirmation=False):
@@ -317,6 +442,13 @@ def render_requirements(requirements, restriction_policy=None, confirmation=Fals
         for rule in requirements['requiredCoverage']:
             scope = 'each session' if rule['scope'] == 'eachSession' else 'across the week'
             lines.append(f"- {rule['description']} ({scope}; `{rule['key']}`)")
+    if requirements.get('executionRules'):
+        lines.extend(['', '### Execution rules', ''])
+        lines.extend('- ' + render_execution_rule(rule) for rule in requirements['executionRules'])
+    if 'minimumRestDaysBetweenSessions' in requirements:
+        lines.append(f"- At least {requirements['minimumRestDaysBetweenSessions']} full rest days between sessions, including across weeks.")
+    if 'workingSetRIR' in requirements:
+        lines.append(f"- Working sets: {requirements['workingSetRIR']['minimum']:g}–{requirements['workingSetRIR']['maximum']:g} RIR.")
     lines.extend(['', 'Your original instructions and clarification answers also apply.'])
     restrictions = requirements.get('exerciseRestrictions', {})
     sections = [('Excluded exercise / equipment terms', restrictions.get('excludeNameTerms', []))]
@@ -338,8 +470,7 @@ def render_requirements(requirements, restriction_policy=None, confirmation=Fals
         f"| Each setup transition | {ASSUMPTIONS['transitionSeconds']} seconds |", '',
         'Any conflict with your explicit instructions needs clarification.'])
     if confirmation:
-        lines.extend(['', '### Approval', '',
-            f"Reply with exactly **`{REQUIREMENTS_CONFIRMATION}`** to approve, or describe corrections."])
+        lines.extend(['', 'Choose an answer in the separate approval question, or describe corrections.'])
     return "\n".join(lines)
 
 
@@ -352,6 +483,10 @@ def set_workout_requirements(arguments, messages, equipment=None, client=None, p
     if len(set(keys)) != len(keys):
         raise PlanningInputError('duplicate_coverage_key', 'Coverage keys must be unique.', '/requiredCoverage',
                                  'Give each source-backed coverage requirement a distinct key.')
+    rule_errors = execution_rule_errors(arguments)
+    if rule_errors:
+        first = rule_errors[0]
+        raise PlanningInputError(first['code'], first['message'], first['path'], first['repair'], errors=rule_errors)
     # Use the shared target validator even before a draft exists.
     from .generation_audit import validate_audit_targets
     validate_audit_targets(arguments["auditTargets"])
@@ -360,7 +495,7 @@ def set_workout_requirements(arguments, messages, equipment=None, client=None, p
                  for muscle, bounds in arguments['auditTargets'][field].items() if bounds['maximum'] > 0}
     if requested - supported.keys():
         raise PlanningInputError('unsupported_muscle_targets', f'The loaded library has no auditable credit for: {sorted(requested - supported.keys())}.',
-            '/auditTargets', 'Use the supportedMuscleTargets in auditPolicy. Do not alias missing regions to an aggregate. Preserve the original request and ask whether to enrich the library or explicitly change the targets.')
+            '/auditTargets', 'Use only auditPolicy.supportedMuscleTargets. Preserve the original request and follow auditPolicy.capabilityLimits to resolve an unsupported target.')
     prior_index, prior = _latest_result(messages, "set_workout_requirements")
     sources = requirement_sources(messages)
     decisions = resolved_decisions(messages)
@@ -370,8 +505,8 @@ def set_workout_requirements(arguments, messages, equipment=None, client=None, p
              and prior.get('restrictionPolicy', {}).get('resolutionVersion') == RESTRICTION_POLICY_VERSION)):
         return {**copy.deepcopy(prior), "cached": True}
     coverage_refresh = (prior.get('requirementsVersion') != REQUIREMENTS_VERSION
-        and {key: value for key, value in prior.get('requirements', {}).items() if key != 'requiredCoverage'}
-            == {key: value for key, value in arguments.items() if key != 'requiredCoverage'})
+        and {key: value for key, value in prior.get('requirements', {}).items() if key not in ('requiredCoverage', 'executionRules', 'minimumRestDaysBetweenSessions', 'workingSetRIR')}
+            == {key: value for key, value in arguments.items() if key not in ('requiredCoverage', 'executionRules', 'minimumRestDaysBetweenSessions', 'workingSetRIR')})
     if (prior.get('sourceReview', {}).get('passed') and prior.get("requirements") != arguments
             and prior_index > _revision_index(messages) and not coverage_refresh):
         raise PlanningInputError("requirements_frozen", "Requirements are frozen during automatic repair.", "/",
@@ -404,7 +539,7 @@ def requirements_approved(messages, result=None):
     shown = next((i for i in range(len(messages) - 1, -1, -1)
                   if messages[i].get('role') == 'assistant' and messages[i].get('canonicalRequirementsPreview') == result['requirementsId']
                   and messages[i].get('content') == result['requirementsPreview']), None)
-    return shown is not None and any(message.get('role') == 'user' and
+    return shown is not None and any(message.get('role') == 'user' and not message.get('imageAttachments') and
         (message.get('content') or '').strip() == REQUIREMENTS_CONFIRMATION for message in messages[shown + 1:])
 
 
@@ -423,10 +558,16 @@ def build_draft_plan(arguments, equipment, requirements, restriction_policy=None
     plan = {"planName": arguments["name"], "auditTargets": copy.deepcopy(requirements["auditTargets"]),
             "equipments": copy.deepcopy(equipment.get("equipments", [])),
             "accessoryEquipments": copy.deepcopy(equipment.get("accessoryEquipments", [])), "exercises": [], "workouts": []}
+    if 'workingSetRIR' in requirements:
+        plan['workingSetRIR'] = copy.deepcopy(requirements['workingSetRIR'])
     input_errors = []
     for day_index, day in enumerate(arguments["workouts"]):
         workout = {"id": f"WORKOUT_{day_index}", "name": day["name"], "description": day["description"],
                    "timesCompletedInAWeek": int(day["timesCompletedInAWeek"]), "exerciseIds": [], "restToNextSeconds": [], "supersetGroups": []}
+        if 'trainingDays' in day:
+            workout['trainingDays'] = list(day['trainingDays'])
+            names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+            workout['description'] += ' Schedule: ' + ', '.join(names[d] for d in sorted(day['trainingDays'])) + '.'
         groups = {}
         for exercise_index, item in enumerate(day["exercises"]):
             path = f"/workouts/{day_index}/exercises/{exercise_index}"
@@ -457,6 +598,10 @@ def build_draft_plan(arguments, equipment, requirements, restriction_policy=None
             exercise = {key: copy.deepcopy(definition[key]) for key in LIBRARY_DEFINITION_OWNED_FIELDS if key in definition}
             exercise.update({key: copy.deepcopy(item[key]) for key in ("numWorkSets", "minReps", "maxReps", "restBetweenSetsSeconds", "intraSetRestInSeconds", "generateWarmUpSets", "placementNotes")})
             exercise.update(id=f"EXERCISE_{len(plan['exercises'])}", libraryDefinitionId=definition["id"])
+            if 'setupSeconds' in item:
+                exercise['setupSeconds'] = item['setupSeconds']
+            if 'allocationBounds' in item:
+                exercise['allocationBounds'] = copy.deepcopy(item['allocationBounds'])
             if item.get("targetSetPrescriptions"):
                 exercise["targetSetPrescriptions"] = copy.deepcopy(item["targetSetPrescriptions"])
             if item.get('requiresEffortCalibration'):
@@ -464,9 +609,12 @@ def build_draft_plan(arguments, equipment, requirements, restriction_policy=None
                     raise PlanningInputError('effort_calibration_with_fixed_load', 'Effort calibration cannot also assert fixed work-set loads.', path,
                                              'Remove targetSetPrescriptions or select an exercise supported by current evidence.')
                 exercise['requiresEffortCalibration'] = True
-                exercise['placementNotes'] += (' Effort calibration required before counting these as hard working sets: verify the prescribed reps/RIR. '
-                    'Calibration attempts are additional to working sets. If available resistance is too easy, select a loadable variant and re-audit; '
-                    'do not substitute extra sets or tempo without revalidation.')
+                exercise['placementNotes'] += (' Effort calibration required: verify prescribed reps/RIR before counting hard sets. '
+                    'Calibration attempts are additional to working sets. If resistance is too easy, select a loadable variant and re-audit.')
+            if len(exercise['placementNotes']) > _NOTES_SCHEMA['maxLength']:
+                reserve = len(exercise['placementNotes']) - len(item['placementNotes'])
+                raise PlanningInputError('export_notes_too_long', 'Exercise notes exceed the export schema after generated guidance.',
+                    path + '/placementNotes', f"Shorten this note to at most {_NOTES_SCHEMA['maxLength'] - reserve} characters while preserving execution instructions. Calibration guidance is added by Python; do not repeat it.")
             if item["durationSeconds"] is not None:
                 exercise["timeInMillis"] = int(item["durationSeconds"] * 1000)
             plan["exercises"].append(exercise)
@@ -538,6 +686,8 @@ def render_draft(plan, requirements, report, restriction_policy=None):
             between = "—" if pair else f"{e['restBetweenSetsSeconds']}s"
             round_rest = f"Group {pair[0]}: {pair[1]['restSecondsByExercise'][reference]}s" if pair else "—"
             notes = e["placementNotes"]
+            if i:
+                notes += f" Setup estimate: {e.get('setupSeconds', ASSUMPTIONS['transitionSeconds'])}s before this exercise."
             if e["generateWarmUpSets"]:
                 notes += " Ramp-up sets before work."
             if e.get("targetSetPrescriptions"):
@@ -553,7 +703,7 @@ def render_draft(plan, requirements, report, restriction_policy=None):
             lines.append(f"| {TRAINING_MUSCLES.get(muscle, muscle.capitalize())} | {values['direct']:g} | {values['indirect']:g} | {values['effective']:g} |")
     lines.extend(["", "Superset rests apply after each listed member; omit the final member's recovery after the last round. Outer exercise rests are separate.",
                   f"Duration estimate: {ASSUMPTIONS['secondsPerRep']}s/rep, both sides when unilateral, {ASSUMPTIONS['generalWarmupSeconds']//60} min general warm-up, {ASSUMPTIONS['generatedRampUpSecondsPerExercise']//60} min per generated ramp-up, {ASSUMPTIONS['transitionSeconds']}s per setup transition, plus prescribed rests and minimum calibration time.",
-                  "", "Reply with exactly CONFIRM GENERATE to export this plan, or describe a revision."])
+                 "", "Choose an answer in the separate approval question, or describe a revision."])
     return "\n".join(lines)
 
 
@@ -611,6 +761,8 @@ def audit_workout_plan(arguments, equipment, messages, allow_educated_load_guess
         raise
     report = audit_workout_package(plan_audit_package(plan, allow_educated_load_guesses), requirements["auditTargets"])
     _audit_coverage(arguments, requirements, report)
+    audit_execution_rules(arguments, requirements, report, plan)
+    audit_execution_details(arguments, requirements, report)
     frequency = sum(w["timesCompletedInAWeek"] for w in plan["workouts"])
     if requirements["sessionsPerWeek"] is not None and frequency != requirements["sessionsPerWeek"]:
         add_audit_issue(report, "weekly_session_count_mismatch", f"Weekly sessions: {frequency}; required {requirements['sessionsPerWeek']}.",
@@ -671,6 +823,7 @@ def confirmed_draft(messages, equipment, allow_educated_load_guesses=True, *, re
     if not preview_indexes:
         raise ValueError("The audited draft must be displayed before confirmation.")
     if require_confirmation and not any(m.get('role') == 'user'
+            and not m.get('imageAttachments')
             and (m.get('content') or '').strip() == EXACT_GENERATION_CONFIRMATION
             for m in messages[min(preview_indexes) + 1:]):
         raise ValueError('The current draft needs a fresh CONFIRM GENERATE after its preview is displayed.')

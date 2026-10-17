@@ -25,7 +25,7 @@ def planning_case():
         "exercises": [{"definition_id": "LIBRARY_0", "numWorkSets": 5, "minReps": 8, "maxReps": 10,
                        "durationSeconds": None, "restBetweenSetsSeconds": 90, "restAfterExerciseSeconds": 0,
                        "superset": None, "restAfterSupersetExerciseSeconds": 0,
-                       "intraSetRestInSeconds": None, "generateWarmUpSets": False, "placementNotes": "Controlled reps."}],
+                       "intraSetRestInSeconds": None, "generateWarmUpSets": False, "setupSeconds": 60, "placementNotes": "Controlled reps."}],
     }]}
     return equipment, requirements, stored, draft
 

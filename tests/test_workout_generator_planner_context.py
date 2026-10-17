@@ -36,6 +36,7 @@ def test_new_selected_evidence_is_reaudited_before_another_planner_response():
     assert pending_reaudit(state, 'Create my plan') == {
         'requirementsId': stored['requirementsId'], 'baseDraftId': 'REVISION_0', 'patch': []}
     assert not {'submittedDraft', 'planIndex', 'preview'} & state['lastAudit'].keys()
+    assert state['allocationSlots']['SLOT_0']['path'] == '/workouts/0/exercises/0'
     assert messages == before
     _tool(messages, 'audit_workout_plan', {'requirementsId': stored['requirementsId'], 'baseDraftId': 'REVISION_0', 'patch': []},
           {**failure, 'errors': [{'code': 'volume_below_target'}]}, 'refreshed')
@@ -143,8 +144,54 @@ def test_snapshot_preserves_literal_confirmation_and_does_not_invent_approval():
     assert pending['requirementsApproved'] is False
     messages.append({'role': 'user', 'content': 'CONFIRM REQUIREMENTS'})
     outgoing = shell._messages_for_api(messages, True, provided_equipment=equipment)
-    assert _state(outgoing)['requirementsApproved'] is True
-    assert any(m['role'] == 'user' and m['content'] == 'CONFIRM REQUIREMENTS' for m in outgoing)
+    state = _state(outgoing)
+    assert state['requirementsApproved'] is True
+    assert not any(m.get('role') == 'user' and m.get('content') == 'CONFIRM REQUIREMENTS' for m in outgoing)
+
+
+def test_new_user_instruction_survives_work_order_compaction():
+    equipment, _, stored, draft = planning_case()
+    messages = requirement_messages(stored)
+    result = audit_workout_plan(draft, equipment, messages)
+    _tool(messages, 'audit_workout_plan', draft, result, 'audit')
+    messages.append({'role': 'user', 'content': 'Keep the exact selected movement; do not substitute it.'})
+    outgoing = shell._messages_for_api(messages, True, provided_equipment=equipment)
+    assert messages[-1] in outgoing
+    state = _state(outgoing)
+    assert state['planningDecisionNeeded']
+    assert state['weeklyTargetBudget']['chest'] == {
+        'alreadyCredited': 5, 'remainingMinimum': 0, 'remainingMaximum': 1}
+
+
+def test_local_session_duration_error_is_repaired_before_appending_next_session():
+    from workout_generator_pkg.planning_tools import set_workout_requirements
+    equipment, requirements, _, draft = planning_case()
+    requirements['sessionsPerWeek'] = 3
+    requirements['auditTargets']['maximumSessionSeconds'] = 1
+    stored = set_workout_requirements(requirements, [{'role': 'user', 'content': 'Three sessions under one second each.'}], equipment)
+    messages = requirement_messages(stored)
+    draft['requirementsId'] = stored['requirementsId']
+    result = audit_workout_plan(draft, equipment, messages)
+    _tool(messages, 'audit_workout_plan', draft, result, 'slow-day')
+    state = _state(shell._messages_for_api(messages, True, provided_equipment=equipment))
+    assert any(error['code'] == 'duration_exceeded' for error in state['lastAudit']['errors'])
+    assert not state.get('constructionTask')
+    assert state['repairTask']['findingCode'] == 'duration_exceeded'
+
+
+def test_pending_evidence_is_scheduled_only_once_for_audit_requested_references():
+    from workout_generator_pkg.planner_context import pending_evidence
+    state = {'requirementsApproved': True, 'lastAudit': {'errors': [
+        {'code': 'training_evidence_required', 'definition_ids': ['LIBRARY_1']},
+        {'code': 'training_load_suitability_unresolved', 'path': '/workouts/0/exercises/0'}]},
+        'currentDraft': {'workouts': [{'exercises': [{'definition_id': 'LIBRARY_2'}]}]},
+        'trainingEvidence': {'LIBRARY_1': {'status': 'checked'}}}
+    assert pending_evidence(state) == ['LIBRARY_2']
+    state['attemptedEvidence'] = ['LIBRARY_2']
+    assert pending_evidence(state) == []
+    state['retryableEvidence'] = ['LIBRARY_2']
+    assert pending_evidence(state) == []
+    assert pending_evidence(state, '/continue') == ['LIBRARY_2']
 
 
 @pytest.mark.parametrize('approved', [False, True])
@@ -222,7 +269,7 @@ def test_requirements_refresh_omits_workout_data_until_approval_without_deleting
     pending = _state(outgoing)
     assert not pending['requirementsApproved'] and pending['savedDraftAvailable']
     assert pending['requirements'] == stored['requirements'] and pending['sourceMessages']['SOURCE_0']['content'] == messages[0]['content']
-    assert not {'currentDraft', 'lastAudit', 'trainingEvidence', 'exerciseCandidates'} & pending.keys()
+    assert not {'currentDraft', 'lastAudit', 'trainingEvidence', 'exerciseCandidates', 'allocationSlots'} & pending.keys()
     assert 'SAVED-DRAFT-ONLY' not in json.dumps(outgoing) and 'SAVED-HISTORY-ONLY' not in json.dumps(outgoing)
     assert messages == before
     messages.append({'role': 'user', 'content': 'CONFIRM REQUIREMENTS'})
@@ -403,13 +450,37 @@ def test_draft_snapshot_focuses_candidates_and_history_but_keeps_a_cached_altern
     assert set(state['cachedCandidateIndex']) == {'LIBRARY_1', 'LIBRARY_2'}
     assert set(state['trainingEvidence']) == {'LIBRARY_0'}
     assert 'lastAssistantMessage' not in state and 'HISTORY-MARKER-1' not in json.dumps(state)
-    assert state['cachedCandidateIndex']['LIBRARY_2']['creditsPerWorkingSet']
+    assert set(state['cachedCandidateIndex']['LIBRARY_2']) <= {
+        'name', 'exerciseType', 'equipmentName', 'accessoryNames'}
+    assert state['cachedCandidateIndex']['LIBRARY_2']['name'] == 'Movement 2'
     assert messages == before
     _tool(messages, 'search_exercise_library', {'queries': ['Movement 2']},
           {'results': [{'query': 'Movement 2', 'exercises': [entries[2]]}]}, 'targeted')
     active = _state(shell._messages_for_api(messages, True, provided_equipment=equipment))
     assert set(active['exerciseCandidates']) == {'LIBRARY_0', 'LIBRARY_2'}
     assert set(active['trainingEvidence']) == {'LIBRARY_0', 'LIBRARY_2'}
+
+
+@pytest.mark.parametrize('change', ['insert', 'edit'])
+def test_cached_candidate_details_are_rejected_after_library_changes(change):
+    from workout_generator_pkg.exercise_library_tools import get_exercise_candidates
+    equipment, _, stored, _ = planning_case()
+    messages = requirement_messages(stored)
+    result = get_exercise_candidates({'definition_ids': ['LIBRARY_0']}, equipment, messages)
+    _tool(messages, 'get_exercise_candidates', {'definition_ids': ['LIBRARY_0']}, result, 'details')
+    fresh = _state(shell._messages_for_api(messages, True, provided_equipment=equipment))
+    assert fresh['exerciseCandidates']['LIBRARY_0']['name'] == result['exercises'][0]['name']
+    changed = copy.deepcopy(equipment)
+    if change == 'insert':
+        changed['exerciseDefinitions'].insert(0, {**changed['exerciseDefinitions'][0],
+            'id': 'aaa-new', 'name': 'New unrelated movement'})
+    else:
+        changed['exerciseDefinitions'][0]['bodyWeightPercentage'] = 80
+    before = copy.deepcopy(messages)
+    state = _state(shell._messages_for_api(messages, True, provided_equipment=changed))
+    assert state['staleLibraryResults']
+    assert 'LIBRARY_0' not in state['exerciseCandidates']
+    assert messages == before
 
 
 def test_old_search_coefficients_are_refreshed_using_current_audit_policy():
@@ -454,10 +525,13 @@ def test_failed_draft_uses_focused_evidence_and_keeps_all_constraints_and_saved_
     state = _state(outgoing)
     assert request_repair_task(outgoing) == state['repairTask']
     assert state['repairTask']['findingIndex'] == 0 and state['repairTask']['baseDraftId'] == 'REVISION_0'
-    assert len(state['lastAudit']['errors']) == 2 and state['currentDraft'] == draft
+    assert len(state['lastAudit']['errors']) == 2
+    assert state['currentDraft']['workouts'][0] == draft['workouts'][0]
+    assert state['currentDraft']['workouts'][1]['detailsOmitted']
+    assert len(state['allocationSlots']) == 2
     assert state['requirements'] == stored['requirements'] and state['sourceMessages']['SOURCE_1']['content'] == messages[-1]['content']
-    assert set(state['exerciseCandidates']) == {'LIBRARY_0', 'LIBRARY_1'}
-    assert set(state['cachedCandidateIndex']) == {'LIBRARY_2'}
+    assert set(state['exerciseCandidates']) == {'LIBRARY_0'}
+    assert set(state['cachedCandidateIndex']) == {'LIBRARY_1', 'LIBRARY_2'}
     assert set(state['trainingEvidence']) == {'LIBRARY_0'}
     assert state['trainingEvidenceSummary']['LIBRARY_1']['status'] == 'comparable_records'
     assert 'SAVED-DETAILS-1' not in json.dumps(outgoing) and 'SAVED-DETAILS-2' not in json.dumps(outgoing)
@@ -467,6 +541,50 @@ def test_failed_draft_uses_focused_evidence_and_keeps_all_constraints_and_saved_
     requested = _state(shell._messages_for_api(messages, True, provided_equipment=equipment))
     assert 'SAVED-DETAILS-2' in json.dumps(requested['trainingEvidence']['LIBRARY_2'])
     assert 'LIBRARY_2' in requested['exerciseCandidates']
+
+
+def test_failed_or_missing_evidence_retries_only_after_a_new_user_turn():
+    from workout_generator_pkg.planning_tools import library_fingerprint
+    from workout_generator_pkg.planner_context import pending_evidence
+    equipment, _, stored, draft = planning_case()
+    messages = requirement_messages(stored)
+    _tool(messages, 'audit_workout_plan', draft, {'passed': False, 'errors': [
+        {'code': 'training_evidence_required', 'definition_ids': ['LIBRARY_0']}]}, 'audit')
+    _tool(messages, 'get_training_evidence', {'definition_ids': ['LIBRARY_0']},
+          {'errors': ['history store unavailable']}, 'failed-history')
+    state = _state(shell._messages_for_api(messages, True, provided_equipment=equipment))
+    assert pending_evidence(state) == []
+    messages.append({'role': 'user', 'content': '/continue'})
+    state = _state(shell._messages_for_api(messages, True, provided_equipment=equipment))
+    assert pending_evidence(state, '/continue') == ['LIBRARY_0']
+    _tool(messages, 'get_training_evidence', {'definition_ids': ['LIBRARY_0']},
+          {'libraryFingerprint': library_fingerprint(equipment), 'exercises': []}, 'missing-history')
+    state = _state(shell._messages_for_api(messages, True, provided_equipment=equipment))
+    assert pending_evidence(state) == []
+    assert pending_evidence(state, '/continue') == []
+
+
+def test_repair_snapshot_omits_duplicate_audit_errors_and_carries_allocator_work_order():
+    from workout_generator_pkg.exercise_library_tools import _selection_entry
+    equipment, _, stored, draft = planning_case()
+    base = equipment['exerciseDefinitions'][0]
+    equipment['exerciseDefinitions'] = [
+        {**base, 'id': 'd0'}, {**base, 'id': 'd1'},
+        {**base, 'id': 'd2', 'trainingMuscles': {'primary': ['quads'], 'secondary': []}}]
+    messages = requirement_messages(stored)
+    entries = [_selection_entry(d, {}, f'LIBRARY_{i}') for i, d in enumerate(equipment['exerciseDefinitions'])]
+    _tool(messages, 'search_exercise_library', {'queries': ['alternatives']},
+          {'results': [{'query': 'alternatives', 'exercises': entries}]}, 'search')
+    _tool(messages, 'audit_workout_plan', draft, {'passed': False, 'errors': [
+        {'code': 'volume_below_target', 'scope': 'weekly', 'muscle': 'chest'}],
+        'currentDraftId': 'REVISION_0', 'submittedDraft': draft}, 'audit')
+    outgoing = shell._messages_for_api(messages, True, provided_equipment=equipment)
+    state = _state(outgoing)
+    assert 'currentDraftAuditErrors' not in state
+    assert state['lastAudit']['errors'][0]['muscle'] == 'chest'
+    assert set(state['cachedCandidateIndex']) == {'LIBRARY_1'}
+    assert state['availableAlternativeCountByMuscle']['chest'] == 1
+    assert 'supply complete allowed minimum and maximum bounds' in state['repairTask']['instruction']
 
 
 @pytest.mark.parametrize('approved, passed, code', [
