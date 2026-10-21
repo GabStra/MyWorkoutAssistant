@@ -48,12 +48,14 @@ def plan_missing_equipment(client, workout_text: str, equipment_catalog: dict, c
 
 
 def _default_llm_call(client, system_prompt: str, user_prompt: str) -> str:
-    """DeepSeek chat call with JSON response format and one retry."""
+    """LLM chat call with JSON response format and one retry."""
+    from workout_generator_pkg.llm_config import resolve_llm_endpoint
+
     last_error: Exception | None = None
     for _ in range(2):
         try:
             response = client.chat.completions.create(
-                model="deepseek-chat",
+                model=resolve_llm_endpoint().model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},

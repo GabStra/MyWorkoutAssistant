@@ -24,13 +24,14 @@ from workout_generator_pkg.api_client import (
 )
 from workout_generator_pkg.cli import load_equipment_from_file, test_connection
 from workout_generator_pkg.constants import DEEPSEEK_MODEL
-from workout_generator_pkg.muscle_roles import MUSCLE_ROLE_GUIDANCE, TRAINING_MUSCLES, validate_training_muscles
+from workout_generator_pkg.muscle_roles import MUSCLE_ROLE_GUIDANCE
 from workout_generator_pkg.domain_ops import (
     build_exercise_definition_id,
     fix_muscle_groups,
     format_equipment_for_llm,
 )
 from workout_generator_pkg.interactive_shell import _resolve_api_key
+from workout_generator_pkg.llm_config import resolve_llm_endpoint
 from workout_generator_pkg.json_patching import (
     apply_json_patch,
     collect_changed_json_paths,
@@ -3583,7 +3584,7 @@ def generate_exercise_library(
         for definition in definitions:
             muscle_reviewed = muscle_definitions_by_id.get(definition["id"])
             if muscle_reviewed is not None:
-                for field in ('muscleGroups', 'secondaryMuscleGroups', 'trainingMuscles'):
+                for field in ('muscleGroups', 'secondaryMuscleGroups'):
                     if field in muscle_reviewed:
                         definition[field] = copy.deepcopy(muscle_reviewed[field])
                 # Identity is content-derived; the merged muscles changed the
@@ -4460,12 +4461,7 @@ def _review_muscle_semantics_batch(
             "content": (
                 "Independently assign anatomical map regions for exercise definitions. Return JSON "
                 "only as {\"reviews\":[...]}, exactly one review for every supplied reference. Each "
-                "review contains exactly reference, muscleGroups, secondaryMuscleGroups, and trainingMuscles. "
-                "trainingMuscles is {primary:[canonical identities],secondary:[canonical identities]} from allowedTrainingMuscles. "
-                "Assign these training identities from movement mechanics independently of the coarse body-map tags. "
-                "Distinguish lat vs upper-back work and anterior, lateral and rear deltoid loading when justified. "
-                "Do not copy broad back/shoulder labels into trainingMuscles or infer all regions from a coarse tag. "
-                "Empty training arrays are allowed when no region is materially trained under the counting convention. Do not "
+                "review contains exactly reference, muscleGroups, and secondaryMuscleGroups. Do not "
                 "rubber-stamp or merely truncate the current arrays. muscleGroups contains only the "
                 "directly trained targets of the defining loaded action. secondaryMuscleGroups "
                 "contains all regions materially trained as assistants. Exclude regions "
@@ -4477,7 +4473,7 @@ def _review_muscle_semantics_batch(
         {
             "role": "user",
             "content": json.dumps(
-                {"allowedMuscleGroups": sorted(MUSCLE_GROUPS), "allowedTrainingMuscles": TRAINING_MUSCLES, "definitions": review_input},
+                {"allowedMuscleGroups": sorted(MUSCLE_GROUPS), "definitions": review_input},
                 ensure_ascii=False,
             ),
         },
@@ -4498,7 +4494,7 @@ def _review_muscle_semantics_batch(
             reviewed: list[dict[str, Any]] = []
             for reference, definition in references.items():
                 review = by_reference[reference]
-                if set(review) != {"reference", "muscleGroups", "secondaryMuscleGroups", "trainingMuscles"}:
+                if set(review) != {"reference", "muscleGroups", "secondaryMuscleGroups"}:
                     raise ValueError(f"{reference} review has invalid fields")
                 primary = review["muscleGroups"]
                 secondary = review["secondaryMuscleGroups"]
@@ -4519,10 +4515,6 @@ def _review_muscle_semantics_batch(
                 updated = copy.deepcopy(definition)
                 updated["muscleGroups"] = primary
                 updated["secondaryMuscleGroups"] = secondary
-                updated['trainingMuscles'] = review['trainingMuscles']
-                if not isinstance(updated['trainingMuscles'], dict):
-                    raise ValueError(f'{reference} needs explicit training-muscle roles.')
-                validate_training_muscles(updated)
                 reviewed.append(updated)
             return reviewed
         except (KeyError, TypeError, ValueError) as error:
@@ -5162,7 +5154,7 @@ def main() -> None:
     print(
         f"Loaded {explicit_capability_count} explicit equipment capability declaration(s)."
     )
-    print(f"DeepSeek model: {DEEPSEEK_MODEL} (thinking inventory/audits; non-thinking chat emitters).")
+    print(f"LLM model: {resolve_llm_endpoint().model} (thinking inventory/audits; non-thinking chat emitters).")
     print("The reasoner will enumerate practical distinct exercises and audit for omissions.")
 
     if args.request_timeout_seconds <= 0:
@@ -5173,20 +5165,21 @@ def main() -> None:
         parser.error("--definition-batch-size must be greater than zero")
     definition_timeout = httpx.Timeout(args.request_timeout_seconds, connect=60.0)
     inventory_timeout = httpx.Timeout(args.inventory_timeout_seconds, connect=60.0)
+    endpoint = resolve_llm_endpoint()
     with httpx.Client(timeout=definition_timeout) as definition_http_client, httpx.Client(
         timeout=inventory_timeout
     ) as inventory_http_client:
         definition_client = OpenAI(
             api_key=api_key,
-            base_url="https://api.deepseek.com",
+            base_url=endpoint.base_url,
             http_client=definition_http_client,
         )
         inventory_client = OpenAI(
             api_key=api_key,
-            base_url="https://api.deepseek.com",
+            base_url=endpoint.base_url,
             http_client=inventory_http_client,
         )
-        success, error_message = test_connection(definition_client, show_message=True, model=DEEPSEEK_MODEL)
+        success, error_message = test_connection(definition_client, show_message=True, model=endpoint.model)
         if not success:
             print(f"Connection test failed: {error_message}", file=sys.stderr)
             raise SystemExit(1)

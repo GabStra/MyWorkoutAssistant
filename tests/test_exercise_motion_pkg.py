@@ -12693,6 +12693,46 @@ def test_deepseek_query_planner_calls_chat_completion_with_json_response() -> No
     assert str(requests[0].url) == "https://api.deepseek.com/chat/completions"
 
 
+def test_query_planner_targets_generic_openai_endpoint() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        payload = json.loads(request.content.decode("utf-8"))
+        assert payload["model"] == "local-model"
+        assert payload["response_format"] == {"type": "json_object"}
+        assert "thinking" not in payload
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {"message": {"content": json.dumps({"queries": ["Plank hold tutorial"]})}}
+                ]
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    settings = YouTubeRankingSettings(
+        deepseek_api_key="local-key",
+        deepseek_base_url="http://127.0.0.1:8090",
+        deepseek_model="local-model",
+    )
+    planner = DeepSeekYouTubeQueryPlanner(settings, client=client)
+
+    try:
+        queries = planner(
+            ExerciseEntry(exercise_id="plank", name="Plank", slug="plank"),
+            build_youtube_queries("Plank"),
+            settings,
+        )
+    finally:
+        planner.close()
+        client.close()
+
+    assert queries == ["Plank hold tutorial"]
+    assert str(requests[0].url) == "http://127.0.0.1:8090/v1/chat/completions"
+
+
 def test_candidate_vision_prompt_rejects_shaky_step_breakdown_videos() -> None:
     prompt = build_candidate_vision_prompt(
         "Bench Press",

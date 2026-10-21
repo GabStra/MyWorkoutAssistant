@@ -300,14 +300,11 @@ def generate_workout_package(
     """Runs the workout generator in strict library mode; returns the package JSON."""
     from workout_generator_pkg.constants import BASE_SYSTEM_PROMPT
     from workout_generator_pkg.generation_pipeline import execute_workout_generation
-    from workout_generator_pkg.interactive_shell import _resolve_api_key
+    from workout_generator_pkg.llm_config import build_llm_client
 
     import httpx
-    from openai import OpenAI
 
-    client = OpenAI(
-        api_key=_resolve_api_key(),
-        base_url="https://api.deepseek.com",
+    client = build_llm_client(
         http_client=httpx.Client(timeout=httpx.Timeout(1200.0, connect=60.0)),
     )
     messages = [
@@ -484,15 +481,12 @@ def scoped_library_generation(client, equipment_file: Path, request: str, max_de
     return library
 
 
-def make_deepseek_client():
-    from workout_generator_pkg.interactive_shell import _resolve_api_key
+def make_llm_client():
+    from workout_generator_pkg.llm_config import build_llm_client
 
     import httpx
-    from openai import OpenAI
 
-    return OpenAI(
-        api_key=_resolve_api_key(),
-        base_url="https://api.deepseek.com",
+    return build_llm_client(
         http_client=httpx.Client(timeout=httpx.Timeout(900.0, connect=60.0)),
     )
 

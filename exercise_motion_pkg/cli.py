@@ -7,6 +7,7 @@ initialize_cli_runtime()
 import argparse
 from dataclasses import fields, replace
 import json
+import os
 from pathlib import Path
 
 from exercise_motion_pkg.bake_and_rank import (
@@ -396,8 +397,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Disable the LLM-backed exercise-name rewrite step before YouTube search.",
     )
     youtube_search.add_argument("--deepseek-api-key")
-    youtube_search.add_argument("--deepseek-base-url", default="https://api.deepseek.com")
-    youtube_search.add_argument("--deepseek-model", default="deepseek-v4-flash")
+    youtube_search.add_argument("--deepseek-base-url",
+                                default=os.getenv("LLM_BASE_URL", "https://api.deepseek.com"))
+    youtube_search.add_argument("--deepseek-model",
+                                default=os.getenv("LLM_MODEL", "deepseek-v4-flash"))
     youtube_search.add_argument("--deepseek-max-queries", type=int, default=4)
     youtube_search.add_argument("--deepseek-timeout-seconds", type=float, default=60.0)
     youtube_search.add_argument("--rank-with-vision", action="store_true")

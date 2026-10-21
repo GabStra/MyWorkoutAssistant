@@ -7,7 +7,6 @@ from datetime import datetime
 from pathlib import Path
 
 import httpx
-from openai import OpenAI
 
 from exercise_library_generator_pkg.generator import (
     _save_library_atomic,
@@ -22,7 +21,7 @@ from workout_generator_pkg.api_client import (
     json_call_reasoner_only_with_loading,
 )
 from workout_generator_pkg.cli import test_connection
-from workout_generator_pkg.interactive_shell import _resolve_api_key
+from workout_generator_pkg.llm_config import build_llm_client
 
 
 def _default_output_path() -> Path:
@@ -103,9 +102,7 @@ def main() -> None:
                 http_client = httpx.Client(
                     timeout=httpx.Timeout(args.request_timeout_seconds, connect=60.0)
                 )
-                client = OpenAI(
-                    api_key=_resolve_api_key(),
-                    base_url="https://api.deepseek.com",
+                client = build_llm_client(
                     http_client=http_client,
                 )
                 success, error_message = test_connection(client, show_message=True)
@@ -137,9 +134,7 @@ def main() -> None:
     else:
         timeout = httpx.Timeout(args.request_timeout_seconds, connect=60.0)
         with httpx.Client(timeout=timeout) as http_client:
-            client = OpenAI(
-                api_key=_resolve_api_key(),
-                base_url="https://api.deepseek.com",
+            client = build_llm_client(
                 http_client=http_client,
             )
             success, error_message = test_connection(client, show_message=True)

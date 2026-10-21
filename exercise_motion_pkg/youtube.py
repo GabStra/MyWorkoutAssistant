@@ -22,6 +22,12 @@ from urllib.parse import parse_qs, urlparse
 from typing import Any, Callable, Iterable
 
 import httpx
+from workout_generator_pkg.llm_config import (
+    chat_completions_url,
+    is_deepseek_base_url,
+    require_api_key,
+    resolve_llm_endpoint,
+)
 from exercise_motion_pkg.discovery_budget import DiscoveryBudget
 from exercise_motion_pkg.chunking import estimate_chunking, frames_for_chunk_seconds
 from exercise_motion_pkg.ffmpeg_utils import ffmpeg_location_for_ytdlp, resolve_ffmpeg_path
@@ -2560,11 +2566,8 @@ class DeepSeekYouTubeQueryPlanner:
         *,
         client: httpx.Client | None = None,
     ) -> None:
-        api_key = settings.deepseek_api_key or os.environ.get("DEEPSEEK_API_KEY")
-        if not api_key:
-            raise ValueError("DeepSeek query planning requires --deepseek-api-key or DEEPSEEK_API_KEY.")
         self.settings = settings
-        self.api_key = api_key
+        self.api_key = settings.deepseek_api_key or require_api_key(resolve_llm_endpoint())
         self.base_url = settings.deepseek_base_url.rstrip("/")
         self.client = client or httpx.Client(timeout=settings.deepseek_timeout_seconds)
         self._owns_client = client is None
@@ -2602,10 +2605,11 @@ class DeepSeekYouTubeQueryPlanner:
             ],
             "temperature": 0.2,
             "response_format": {"type": "json_object"},
-            "thinking": {"type": "disabled"},
         }
+        if is_deepseek_base_url(self.base_url):
+            payload["thinking"] = {"type": "disabled"}
         response = self.client.post(
-            f"{self.base_url}/chat/completions",
+            chat_completions_url(self.base_url),
             headers={"Authorization": f"Bearer {self.api_key}"},
             json=payload,
         )

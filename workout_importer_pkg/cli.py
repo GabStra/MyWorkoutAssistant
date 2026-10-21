@@ -42,7 +42,7 @@ def run(date_iso: str, workout_text: str, output: Path, base_library: Path, accu
         generate_workout_package,
         guidance_for_style,
         load_working_library,
-        make_deepseek_client,
+        make_llm_client,
         review_crossfit_mode_compliance,
         sanitize_package_name,
     )
@@ -51,7 +51,7 @@ def run(date_iso: str, workout_text: str, output: Path, base_library: Path, accu
     library, library_path = load_working_library(base_library, accumulated_library)
     with open(equipment_file, encoding="utf-8") as handle:
         catalog = json.load(handle)
-    client = make_deepseek_client()
+    client = make_llm_client()
 
     # 0) running support: the library has no RUNNING definitions and the exercise
     #    generator cannot create them; guarantee the canonical 'Run' entry so

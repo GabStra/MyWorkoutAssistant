@@ -83,7 +83,6 @@ def _generator_review_response(_client, messages, _loading_message, show_loading
                     "reference": definition["reference"],
                     "muscleGroups": definition["currentMuscleGroups"] or ["FRONT_CHEST"],
                     "secondaryMuscleGroups": definition["currentSecondaryMuscleGroups"],
-                    'trainingMuscles': {'primary': ['chest'], 'secondary': []},
                 }
                 for definition in review_input["definitions"]
             ]
@@ -202,7 +201,6 @@ def test_generator_overlaps_independent_reviews_within_worker_budget(
                             "reference": definition["reference"],
                             "muscleGroups": ["BACK_UPPER_BACK"],
                             "secondaryMuscleGroups": ["FRONT_BICEPS"],
-                            'trainingMuscles': {'primary': ['upperBack'], 'secondary': ['lats', 'biceps', 'rearDelts']},
                         }
                         for definition in review_input["definitions"]
                     ]
@@ -259,7 +257,7 @@ def test_generator_overlaps_independent_reviews_within_worker_budget(
         # The muscle/feasibility merge rewrites content; the content-derived ID
         # must be re-derived or it goes stale.
         merged = generated["exerciseDefinitions"][0]
-        assert merged['trainingMuscles'] == {'primary': ['upperBack'], 'secondary': ['lats', 'biceps', 'rearDelts']}
+        assert 'trainingMuscles' not in merged
         assert merged["id"] == build_exercise_definition_id(merged)
         assert any(
             snapshot["exerciseDefinitions"][0]["muscleGroups"] == ["BACK_UPPER_BACK"]
