@@ -114,6 +114,24 @@ def test_one_set_does_not_require_an_unexecuted_recovery(context, grouped):
     assert audit_workout_plan(draft, equipment, requirement_messages(stored))['passed']
 
 
+def test_unexecuted_one_set_rest_is_not_normalized_or_described_as_applicable():
+    from workout_generator_pkg.joint_planning import _rest_options
+    from workout_generator_pkg.programming_guidelines import render_execution_rule
+
+    equipment, _, stored, draft = case([
+        {'kind': 'rest', 'coverageKey': None, 'context': 'straightSets', 'minimumSeconds': 120, 'maximumSeconds': 180}])
+    item = draft['workouts'][0]['exercises'][0]
+    item.update(numWorkSets=1, restBetweenSetsSeconds=105)
+    definitions = {f'LIBRARY_{index}': value for index, value in enumerate(
+        sorted(equipment['exerciseDefinitions'], key=lambda value: value['id']))}
+    rule = stored['requirements']['executionRules'][0]
+    variants = list(_rest_options([item], stored['requirements'], definitions, 1))
+    assert variants == [[item]]
+    variants = list(_rest_options([item], stored['requirements'], definitions, 2))
+    assert len(variants) == 2 and variants[-1][0]['restBetweenSetsSeconds'] == 120
+    assert 'only when at least two working sets are prescribed' in render_execution_rule(rule)
+
+
 @pytest.mark.parametrize('rule', [
     {'kind': 'straightSets', 'coverageKey': 'invented'},
     {'kind': 'order', 'before': 'priority', 'after': 'priority'},
@@ -137,40 +155,27 @@ def test_reviewer_and_planner_share_policy_without_extra_calls(monkeypatch):
         context = json.loads(request[-1]['content'])
         calls.append(context)
         assert context['programmingGuidelines']['version'] == GUIDELINE_POLICY['version']
-        return json.dumps({'findings': [{
-            'severity': 'blocking', 'basis': 'uncertainty', 'muscleTargets': [],
-            'path': context['draft']['exercises'][0]['_reviewRef'],
-            'message': 'The priority may be affected by the preceding work.',
-            'evidencePaths': [context['programmingGuidelines']['_reviewRef']],
-            'repair': 'Consider placing the priority first if performance suffers.',
-        }]}), None, None
+        return json.dumps({'findings': []}), None, None
 
     monkeypatch.setattr(plan_review, 'chat_call', respond)
     result = plan_review.review_draft(None, audit_workout_plan(draft, equipment, messages), messages, equipment)
     assert len(calls) == 1 and result['passed']
-    assert result['review']['findings'][0]['severity'] == 'warning'
-    assert 'Independent review notes:' in result['preview']
     request = _messages_for_api(store_audit(messages, result), True, provided_equipment=equipment)
     state = next(json.loads(m['content'].split('\n', 1)[1]) for m in request if m['content'].startswith('Current planning state'))
     assert state['programmingGuidelines'] == GUIDELINE_POLICY
 
 
-def test_export_note_limit_includes_python_calibration_guidance():
-    from workout_generator_pkg.planning_tools import build_draft_plan, _NOTES_SCHEMA
+def test_export_preserves_local_notes_without_adding_calibration_protocol():
+    from workout_generator_pkg.planning_tools import build_draft_plan, placement_notes_limit
     from workout_generator_pkg.cli import _materialize_exercise_definition
     equipment, requirements, _, draft = case([])
     item = draft['workouts'][0]['exercises'][0]
-    item.update(requiresEffortCalibration=True, placementNotes='x' * 280)
+    item.update(placementNotes='x' * placement_notes_limit({}))
     plan = build_draft_plan(draft, equipment, requirements)
     emitted = _materialize_exercise_definition(plan['exercises'][0])
-    assert len(emitted['placementNotes']) <= _NOTES_SCHEMA['maxLength'] == 500
     assert emitted['placementNotes'].startswith(item['placementNotes'])
-    assert 'Calibration attempts are additional to working sets' in emitted['placementNotes']
-    item['placementNotes'] = 'x' * 490
-    with pytest.raises(PlanningInputError) as error:
-        build_draft_plan(draft, equipment, requirements)
-    assert error.value.code == 'export_notes_too_long'
-    assert error.value.path.endswith('/placementNotes')
+    assert 'calibration' not in emitted['placementNotes'].lower()
+    assert 'trial' not in emitted['placementNotes'].lower()
 
 
 def test_explicit_setup_replaces_default_and_reaches_final_uuid_audit():
@@ -225,7 +230,7 @@ def test_weekly_schedule_checks_full_rest_days_including_wraparound():
     assert 'Schedule: Friday.' in passing['planIndex']['workouts'][2]['description']
 
 
-def test_no_reconfiguration_rule_checks_common_load_or_explicit_calibration():
+def test_no_reconfiguration_rule_requires_a_verified_common_load():
     from workout_generator_pkg.programming_guidelines import audit_execution_rules
     equipment, requirements, _, draft = case([{'kind': 'supersetNoReconfiguration', 'coverageKey': None}])
     entries = draft['workouts'][0]['exercises']
@@ -235,17 +240,36 @@ def test_no_reconfiguration_rule_checks_common_load_or_explicit_calibration():
         report = {'issues': [], 'errors': []}
         audit_execution_rules(draft, requirements, report, plan)
         return report
-    for item, load in zip(entries, (10, 14)):
-        item.update(superset='pair', targetSetPrescriptions=[{'workSetIndex': 0, 'reps': 10, 'weight': load}])
-    assert check()['errors'][0]['code'] == 'execution_supersetNoReconfiguration'
-    entries[1]['targetSetPrescriptions'][0]['weight'] = 10
-    assert not check()['errors']
     for item in entries:
+        item.update(superset='pair')
+    for item, load in zip(plan['exercises'], (10, 14)):
+        item['targetSetPrescriptions'] = [{'workSetIndex': 0, 'reps': 10, 'weight': load}]
+    assert check()['errors'][0]['code'] == 'execution_supersetNoReconfiguration'
+    plan['exercises'][1]['targetSetPrescriptions'][0]['weight'] = 10
+    assert not check()['errors']
+    for item in plan['exercises']:
         del item['targetSetPrescriptions']
     assert check()['errors']
-    for item in entries:
-        item['requiresEffortCalibration'] = True
-    assert not check()['errors']
+    for item in plan['exercises']:
+        item['requiresLoadCalibration'] = True
+    assert check()['errors']  # Native calibration chooses each exercise's load independently.
+
+
+@pytest.mark.parametrize('kind, field, load', [('WEIGHT', 'weight', 10), ('BODY_WEIGHT', 'additionalWeight', 0)])
+def test_same_shared_load_templates_pass_after_real_plan_expansion(kind, field, load):
+    equipment, requirements, _, draft = case([{'kind': 'supersetNoReconfiguration', 'coverageKey': None}])
+    equipment['equipments'] = [{'id': 'EQUIPMENT_0', 'name': 'Barbell', 'type': 'BARBELL', 'barWeight': 10.0, 'plates': []}]
+    definition = equipment['exerciseDefinitions'][0]
+    definition.update(exerciseType=kind, equipmentId='EQUIPMENT_0', bodyWeightPercentage=65 if kind == 'BODY_WEIGHT' else None)
+    stored = set_workout_requirements(requirements, [{'role': 'user', 'content': 'Superset partners keep the same shared load.'}], equipment)
+    draft['requirementsId'] = stored['requirementsId']
+    for index, item in enumerate(draft['workouts'][0]['exercises']):
+        item.update(superset='pair', restBetweenSetsSeconds=0, restAfterExerciseSeconds=0, restAfterSupersetExerciseSeconds=90 if index else 30,
+                    workSetTemplate={'reps': 9, field: load})
+    result = audit_workout_plan(draft, equipment, requirement_messages(stored))
+    assert result['passed'], result['errors']
+    assert all(entry['targetSetPrescriptions'] == [{'workSetIndex': i, 'reps': 9, field: load} for i in range(3)]
+               for entry in result['planIndex']['exercises'])
 
 
 def test_history_rep_conflict_uses_requested_rir_instead_of_assuming_equal_reps():
@@ -255,6 +279,9 @@ def test_history_rep_conflict_uses_requested_rir_instead_of_assuming_equal_reps(
     equipment, stored, draft, backup = history_case()
     requirements = stored['requirements']
     requirements['workingSetRIR'] = {'minimum': 1, 'maximum': 2}
+    for day in draft['workouts']:
+        for exercise in day['exercises']:
+            exercise.pop('effortAcceptance', None)
     plan = build_draft_plan(draft, equipment, requirements)
     def concerns():
         history = TrainingHistory(backup)
@@ -265,11 +292,19 @@ def test_history_rep_conflict_uses_requested_rir_instead_of_assuming_equal_reps(
     assert concerns() == []  # Historical 12 reps vs 10 prescribed can fit the requested 2 RIR.
     backup['SetHistories'][0]['setData']['actualReps'] = 27
     assert concerns()[0]['concerns'][0]['code'] == 'historical_reps_exceed_prescription'
-    plan['exercises'][0]['requiresEffortCalibration'] = True
-    assert concerns() == []
+    plan['exercises'][0]['requiresLoadCalibration'] = True
+    assert concerns()  # This fixture is unequipped bodyweight, which has no native load mode.
 
 
-def test_canonical_export_preserves_setup_timing_without_model_repairs(tmp_path, monkeypatch):
+@pytest.mark.parametrize(('program_guidance', 'emitter_guidance', 'fail_guidance_write'), [
+    (None, None, False),
+    ('Use a lighter week after the next hard block.', None, False),
+    ('Use a lighter week after the next hard block.', 'Emitter guess; ignore recovery signals.', False),
+    ('Use a lighter week after the next hard block.', None, True),
+])
+def test_canonical_export_preserves_setup_timing_without_model_repairs(
+    tmp_path, monkeypatch, program_guidance, emitter_guidance, fail_guidance_write
+):
     from dataclasses import replace
     from workout_generator_pkg import cli
     from workout_generator_pkg.deps import resolve_pipeline_deps
@@ -279,6 +314,8 @@ def test_canonical_export_preserves_setup_timing_without_model_repairs(tmp_path,
     equipment['exerciseDefinitions'][0]['id'] = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
     stored = set_workout_requirements(requirements, [], equipment)
     draft['requirementsId'] = stored['requirementsId']
+    if program_guidance:
+        draft['programGuidance'] = program_guidance
     draft['workouts'][0]['exercises'][1]['setupSeconds'] = 120
     messages = requirement_messages(stored)
     monkeypatch.setattr(plan_review, 'chat_call', lambda *a, **k: ('{"findings":[]}', None, None))
@@ -290,16 +327,49 @@ def test_canonical_export_preserves_setup_timing_without_model_repairs(tmp_path,
     monkeypatch.setattr(cli, 'json_call_chat_max_with_loading', forbidden)
     monkeypatch.setattr(cli, 'json_call_reasoner_only_with_loading', forbidden)
     deps = resolve_pipeline_deps()
+    emit_workout_structure = deps.emit_workout_structure
+    if emitter_guidance:
+        def emit_with_unapproved_guidance(*args, **kwargs):
+            structure, conversation = emit_workout_structure(*args, **kwargs)
+            structure['programGuidance'] = emitter_guidance
+            return structure, conversation
+        deps = replace(deps, emit_workout_structure=emit_with_unapproved_guidance)
     validation_attempts = []
     def validate(*args, **kwargs):
         validation_attempts.append(kwargs['max_attempts'])
         return deps.validate_and_repair_placeholder_json(*args, **kwargs)
+    if fail_guidance_write:
+        import builtins
+        open_file = builtins.open
+        def fail_sidecar(path, *args, **kwargs):
+            if str(path).endswith('.guidance.md'):
+                raise OSError('sidecar write failed')
+            return open_file(path, *args, **kwargs)
+        monkeypatch.setattr(builtins, 'open', fail_sidecar)
     exported = execute_workout_generation(None, messages, provided_equipment=equipment, script_dir=str(tmp_path),
         force_use_reasoner=False, deps=replace(deps, test_connection=lambda *a, **k: (True, None),
             validate_and_repair_placeholder_json=validate))
+    if fail_guidance_write:
+        assert not exported['success'] and 'sidecar write failed' in exported['error']
+        return
     assert exported['success'], exported['error']
     assert validation_attempts == [1]
     from pathlib import Path
+    saved_workout = json.loads(Path(exported['filepath']).read_text(encoding='utf-8'))
+    assert 'programGuidance' not in saved_workout
+    if program_guidance:
+        assert exported['guidance_filepath'] == str(Path(exported['filepath']).with_suffix('.guidance.md'))
+        guidance = Path(exported['guidance_filepath']).read_text(encoding='utf-8')
+        assert program_guidance in guidance
+        if emitter_guidance:
+            assert emitter_guidance not in guidance
+        assert 'not included in the phone or watch workout data' in guidance
+    else:
+        assert exported['guidance_filepath'] is None
+    from workout_generator_pkg.interactive_shell import _metadata_for_generation_result
+    metadata = _metadata_for_generation_result(exported, None)
+    if program_guidance:
+        assert exported['guidance_filepath'] in metadata['generated_output_paths']
     reports = list(Path(tmp_path).rglob('*.audit.json')) + list(Path(tmp_path).rglob('*audit*.json'))
     report = next(json.loads(path.read_text(encoding='utf-8')) for path in reports
                   if 'setupEstimates' in path.read_text(encoding='utf-8'))

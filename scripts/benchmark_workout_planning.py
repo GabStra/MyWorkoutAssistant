@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import argparse
-import json
 import re
+import sys
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
+if __package__ in (None, ''):
+    sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+from workout_generator_pkg.usage_reporting import usage_events, summarize_usage
 
 
 TIMESTAMP = re.compile(r'^\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\]')
-API_METRIC = re.compile(r'\[api_metric\]\s+(\{.*\})\s*$')
 REQUEST = re.compile(r'\[request\]\s+[^:]+:\s?(.*)$')
 PLANNER_TIME = re.compile(r'Planning response ready \(([\d.]+)s\)')
 TOOL_TIME = re.compile(r'Tool ([^ ]+) finished \(([\d.]+)s\)')
@@ -21,7 +23,8 @@ def analyze_log(path):
     """Summarize visible runtime and request metadata; never return prompt text."""
     path = Path(path)
     lines = path.read_text(encoding='utf-8', errors='replace').splitlines()
-    times, metrics, planner_seconds, tools = [], [], [], Counter()
+    usage = summarize_usage(usage_events(lines))
+    times, metrics, planner_seconds, tools = [], usage['requestsDetail'], [], Counter()
     request_chars, truncations = [], 0
     audit_rounds = review_rounds = repair_rounds = 0
     for line in lines:
@@ -30,12 +33,6 @@ def analyze_log(path):
             try:
                 times.append(datetime.strptime(timestamp.group(1), '%Y-%m-%d %H:%M:%S'))
             except ValueError:
-                pass
-        metric_match = API_METRIC.search(line)
-        if metric_match:
-            try:
-                metrics.append(json.loads(metric_match.group(1)))
-            except json.JSONDecodeError:
                 pass
         request_match = REQUEST.search(line)
         if request_match:
@@ -68,8 +65,9 @@ def analyze_log(path):
     elapsed = max(0.0, (times[-1] - times[0]).total_seconds()) if len(times) > 1 else None
     return {
         'file': str(path), 'status': status, 'wallSeconds': elapsed,
+        'usage':usage,
         'planningRounds': len(planner_seconds), 'plannerResponseSeconds': round(sum(planner_seconds), 1),
-        'numericalAuditRounds': audit_rounds, 'independentReviewRequests': review_rounds,
+        'numericalAuditRounds': audit_rounds, 'independentReviewRequests':sum(str(m.get('stage','')).startswith(('independent_plan_review', 'independent_structure_review')) for m in metrics),
         'repairRounds': repair_rounds,
         'toolCalls': sum(tools.values()), 'toolCounts': dict(sorted(tools.items())),
         'truncations': truncations, 'loggedRequestCount': len(request_chars),
@@ -103,6 +101,7 @@ def render_comparison(summaries):
         ('API requests', 'apiRequests'), ('API successes / failures', None),
         ('API request seconds summed (may overlap)', 'apiRequestSecondsSum'),
         ('Prompt / completion / reasoning tokens', None), ('Cache-hit tokens', 'cacheHitTokens'),
+        ('Known model-token cost estimate (USD)', None),
         ('Largest logged request (chars, approximate)', 'largestLoggedRequestChars'),
         ('API stage counts', None),
         ('Tool counts', None),
@@ -118,6 +117,11 @@ def render_comparison(summaries):
                 value = ', '.join(f'{name}:{count}' for name, count in summary['stages'].items()) or '?'
             elif key is None and label == 'Tool counts':
                 value = ', '.join(f'{name}:{count}' for name, count in summary['toolCounts'].items()) or '?'
+            elif key is None and label == 'Known model-token cost estimate (USD)':
+                cost = summary['usage']['costEstimateUSD']
+                amount = (f"{cost['knownRequestsMinimum']}–{cost['knownRequestsMaximum']}"
+                          if cost['knownRequestsMinimum'] is not None else 'unavailable')
+                value = f"{amount} ({cost['requestsUnpriced']} unpriced)"
             elif key is None:
                 value = '/'.join(str(summary[field] if summary[field] is not None else '?')
                                  for field in ('promptTokens', 'completionTokens', 'reasoningTokens'))

@@ -1,5 +1,6 @@
 """Bounded library lookup for conversational workout planning."""
 
+import copy
 import json
 import re
 import hashlib
@@ -9,11 +10,12 @@ from concurrent.futures import ThreadPoolExecutor, wait
 import os
 import threading
 from .cancellation import run_cancellable
+from .parallel_work import parallel_proposals
 from .semantic_retrieval import CACHE_DIRECTORY, _query_text, rank as _local_semantic_rank
 
 from .api_client import chat_call
 from .constants import EXACT_GENERATION_CONFIRMATION
-from .generation_audit import MUSCLES, muscle_credits_per_set
+from .generation_audit import MUSCLES, muscle_credits_per_set, available_muscle_targets
 
 
 _SEARCH_MUSCLE_TARGETS = sorted(MUSCLES)
@@ -23,7 +25,7 @@ SEARCH_EXERCISE_LIBRARY_TOOL = {
     "type": "function",
     "function": {
         "name": "search_exercise_library",
-        "description": "Search the loaded exercise library by meaning before proposing exercises. Use muscleTargets and muscleRole when the request names a target muscle or role. Returns real entries satisfying supplied filters; semantic similarity alone does not establish suitability or authorize substitutions.",
+        "description": "Search the loaded exercise library by meaning before proposing exercises. Every candidate must match ALL muscleTargets (AND), with primary role by default. Use separate calls for alternative muscle groups; omit muscle filters for queries spanning different movement patterns. Returns real entries satisfying supplied filters; semantic similarity alone does not establish suitability or authorize substitutions.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -38,6 +40,18 @@ SEARCH_EXERCISE_LIBRARY_TOOL = {
         },
     },
 }
+
+def exercise_library_search_tool(equipment):
+    tool = copy.deepcopy(SEARCH_EXERCISE_LIBRARY_TOOL)
+    supported = sorted(available_muscle_targets(equipment))
+    properties = tool['function']['parameters']['properties']
+    for field in ('muscleTargets', 'excludedMuscleTargets'):
+        if supported:
+            properties[field]['items']['enum'] = supported
+        else:
+            properties.pop(field)
+    return tool
+
 
 GET_EXERCISE_CANDIDATES_TOOL = {
     "type": "function",
@@ -88,7 +102,7 @@ def _selection_entry(definition, gear_names, reference):
     from .generation_audit import muscle_credits_per_set
     fields = (
         "name", "exerciseType", "bodyWeightPercentage",
-        "muscleGroups", "secondaryMuscleGroups", "trainingMuscles", "exerciseCategory",
+        "muscleGroups", "secondaryMuscleGroups", "exerciseCategory",
         "movementRef",
     )
     entry = {field: definition[field] for field in fields if field in definition}
@@ -160,8 +174,8 @@ _RERANK_CACHE_LOCK = threading.Lock()
 
 
 def _rank_cache_key(kind, payload):
-    from .api_client import DEEPSEEK_MODEL
-    value = json.dumps({"kind": kind, "model": DEEPSEEK_MODEL, "promptVersion": _RERANK_PROMPT_VERSION,
+    from .llm_config import resolve_llm_endpoint
+    value = json.dumps({"kind": kind, "model": resolve_llm_endpoint().model, "promptVersion": _RERANK_PROMPT_VERSION,
                         "effort": "low", "maxTokens": 8192, "payload": payload},
                        ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
@@ -223,7 +237,7 @@ def _legacy_semantic_matches(client, queries, entries, progress=None):
                 "Use only the supplied numeric catalog indices."
             )},
             {"role": "user", "content": json.dumps({"queries": query_batch, "catalog": catalog_batch}, separators=(",", ":"))},
-        ], reasoning_effort="low", max_tokens=8192, timeout=90)
+        ], reasoning_effort="low", max_tokens=8192, timeout=None)
         try:
             matches = json.loads(content)["matches"]
         except (ValueError, TypeError, KeyError) as error:
@@ -247,7 +261,7 @@ def _legacy_semantic_matches(client, queries, entries, progress=None):
         return matches
 
     catalog = [[index, entry.get("name"), entry.get("equipmentName"),
-                entry.get("trainingMuscles", entry.get("muscleGroups", [])), entry.get("accessoryNames", [])]
+                entry.get("muscleGroups", []), entry.get("accessoryNames", [])]
                for index, entry in enumerate(entries)]
     query_batches = [(start, queries[start:start + 3]) for start in range(0, len(queries), 3)]
     catalog_batches = [catalog[start:start + 64] for start in range(0, len(catalog), 64)]
@@ -361,7 +375,7 @@ def _semantic_matches(client, queries, entries, progress=None):
             ranked[query_index].items(), key=lambda item: item[1], reverse=True
         )[:24]]
         own_catalog = [[index, entries[index].get("name"), entries[index].get("equipmentName"),
-                        entries[index].get("trainingMuscles", entries[index].get("muscleGroups", [])),
+                        entries[index].get("muscleGroups", []),
                         entries[index].get("accessoryNames", [])] for index in own_indices]
         catalogs_by_query[query_index] = own_catalog
         cache_key = _rank_cache_key("uncertain_query", {
@@ -384,7 +398,7 @@ def _semantic_matches(client, queries, entries, progress=None):
         if not candidate_indices:
             continue
         catalog = [[index, entries[index].get("name"), entries[index].get("equipmentName"),
-                    entries[index].get("trainingMuscles", entries[index].get("muscleGroups", [])),
+                    entries[index].get("muscleGroups", []),
                     entries[index].get("accessoryNames", [])] for index in candidate_indices]
         query_group = [_query_text(queries[index]) for index in group]
         try:
@@ -397,7 +411,7 @@ def _semantic_matches(client, queries, entries, progress=None):
                     "matches has one list per query in order; use only supplied numeric indices and scores from 0 to 1."
                 )},
                 {"role": "user", "content": json.dumps({"queries": query_group, "catalog": catalog}, separators=(",", ":"))},
-            ], reasoning_effort="low", max_tokens=8192, timeout=90)
+            ], reasoning_effort="low", max_tokens=8192, timeout=None)
         except KeyboardInterrupt:
             raise
         except Exception as error:
@@ -471,11 +485,17 @@ def execute_library_tool(function_name, arguments, provided_equipment, client=No
     excluded_targets = arguments.get("excludedMuscleTargets", [])
     categories = arguments.get("exerciseCategories", [])
     role = arguments.get("muscleRole", "primary")
+    supported = available_muscle_targets(provided_equipment)
     for field, values in (("muscleTargets", targets), ("excludedMuscleTargets", excluded_targets)):
         if field in arguments and (not isinstance(values, list) or not 1 <= len(values) <= len(_SEARCH_MUSCLE_TARGETS)):
             raise ValueError(f"{field} must contain supported muscle targets")
         if any(not isinstance(target, str) or target not in MUSCLES for target in values):
             raise ValueError(f"{field} must contain supported muscle targets")
+        unsupported = set(values) - supported.keys()
+        if unsupported:
+            raise ValueError(f"{field} has no auditable credit in the loaded library: {sorted(unsupported)}. "
+                             f"Supported muscle targets: {sorted(supported)}. Omit the filter for movement-name searches; "
+                             "unavailable muscle credits do not mean the movements are absent.")
     if "exerciseCategories" in arguments and (not isinstance(categories, list) or not categories):
         raise ValueError("exerciseCategories must contain supported categories")
     if any(item not in ("HEAVY_COMPOUND", "MODERATE_COMPOUND", "ISOLATION") for item in categories):
@@ -552,7 +572,7 @@ def execute_library_tool(function_name, arguments, provided_equipment, client=No
         for query in unresolved:
             cached[normalize(query)] = {"query": query, "matchMethod": "no_suitable_matches", "exercises": [],
                                         "searchFilters": filters,
-                                        "reason": "No library entries satisfy these structured filters and the current equipment and restrictions. Changing query wording cannot change this filtered catalog."}
+                                        "reason": "No library entries satisfy these structured filters and the current equipment and restrictions. All muscleTargets must match each candidate, with primary role by default. Split alternative muscle groups into separate calls or omit muscle filters for multi-pattern queries. Changing query wording alone cannot change this filtered catalog."}
     elif unresolved:
         if requirements:
             require_approved_requirements(messages)
@@ -641,20 +661,26 @@ def execute_library_searches(calls, equipment, client, messages, progress=None, 
                    if any(item.get("error") for item in call_results) else {})}
 
     reported = set()
+    jobs = []
     for group_key, group in groups.items():
         queries = list(dict.fromkeys(group["queries"]))
         for start in range(0, len(queries), 6):
             arguments = {"queries": queries[start:start + 6], **group["filters"]}
-            result = execute_library_tool("search_exercise_library", arguments, equipment, client, history, progress=progress)
-            metadata[group_key] = {key: result[key] for key in ("libraryFingerprint", "searchFingerprint") if key in result}
-            results[group_key].update({item["query"]: item for item in result["results"]})
-            history.append({"role": "tool", "content": json.dumps(result)})
-            if on_result is not None:
-                for call_id, call_arguments in calls:
-                    key = call_groups[call_id]
-                    if call_id not in reported and all(query in results[key] for query in call_arguments["queries"]):
-                        reported.add(call_id)
-                        on_result(call_id, payload(call_id, call_arguments))
+            jobs.append(((group_key, start), lambda arguments=arguments: execute_library_tool(
+                "search_exercise_library", arguments, equipment, client, history, progress=progress)))
+
+    def publish(key, result):
+        group_key, _ = key
+        metadata[group_key] = {field: result[field] for field in ("libraryFingerprint", "searchFingerprint") if field in result}
+        results[group_key].update({item["query"]: item for item in result["results"]})
+        if on_result is not None:
+            for call_id, call_arguments in calls:
+                key = call_groups[call_id]
+                if call_id not in reported and all(query in results[key] for query in call_arguments["queries"]):
+                    reported.add(call_id)
+                    on_result(call_id, payload(call_id, call_arguments))
+
+    parallel_proposals(jobs, on_result=publish)
     return {call_id: payload(call_id, arguments) for call_id, arguments in calls}
 
 

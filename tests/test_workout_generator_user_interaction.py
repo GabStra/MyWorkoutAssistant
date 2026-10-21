@@ -7,6 +7,7 @@ from test_workout_generator_conversation_sessions import FakeFunction, FakeToolC
 from workout_generator_pkg import interactive_shell as shell
 from workout_generator_pkg.conversation_store import load_active_conversation_record
 from workout_generator_pkg.user_interaction import answer_question, clarification_question, pending_question
+from workout_generator_pkg.logging_ui import format_question
 
 
 @pytest.mark.parametrize('options, answer, expected', [
@@ -61,6 +62,37 @@ def test_unanswered_question_survives_saved_history_and_commands(monkeypatch, tm
     assert not any(m.get('userInteraction') for m in messages)
 
 
+def test_recommendation_is_rendered_saved_and_never_selects_an_answer(monkeypatch, tmp_path, capsys):
+    question = {'question': 'Which scheduling option do you prefer?',
+                'options': ['Keep the current days', 'Move the demanding session'],
+                'recommendation': {'option': 2, 'reason': 'More recovery before your priority session; it changes your training days.'}}
+    ask = FakeToolCall('question', 'function', FakeFunction('ask_user', json.dumps(question)))
+    deps = make_shell_deps(tmp_path, chat_results=[(None, [ask])], generation_results=[], generation_calls=[])
+    run_shell(monkeypatch, deps, ['Plan a workout', '', '/exit'])
+    messages = load_active_conversation_record(str(tmp_path))['messages']
+    pending = pending_question(json.loads(json.dumps(messages)))
+    assert pending['recommendation'] == question['recommendation']
+    assert '2. Move the demanding session (Recommended)' in capsys.readouterr().out
+    assert 'Why: ' + question['recommendation']['reason'] in format_question(pending)
+    assert 'type your own response' in format_question(pending)
+    assert not any(m.get('userInteraction') for m in messages)
+    assert answer_question(pending, '') == 'My answer: '
+    assert answer_question(pending, '1') == 'My answer: Keep the current days'
+    assert answer_question(pending, 'Neither; keep Monday free.') == 'My answer: Neither; keep Monday free.'
+
+
+@pytest.mark.parametrize('options, recommendation', [
+    ([], {'option': 1, 'reason': 'Preferred.'}),
+    (['A'], {'option': 2, 'reason': 'Preferred.'}),
+    (['A'], {'option': 0, 'reason': 'Preferred.'}),
+    (['A'], {'option': True, 'reason': 'Preferred.'}),
+    (['A'], {'option': 1, 'reason': '   '}),
+])
+def test_recommendations_require_a_real_option_and_reason(options, recommendation):
+    with pytest.raises((ValueError, ValidationError)):
+        clarification_question({'question': 'Choose?', 'options': options, 'recommendation': recommendation})
+
+
 @pytest.mark.parametrize('kind', ['requirements', 'generation'])
 def test_approval_requires_explicit_valid_choice_and_supports_revisions(kind):
     question = {'kind': kind, 'question': 'Approve?', 'options': ['Approve', 'Revise']}
@@ -99,3 +131,27 @@ def test_approval_survives_explanations_but_not_approval_or_decline(kind, reply)
         'userInteraction': {'question': question, 'input': reply}},
         {'role': 'assistant', 'content': 'Understood.'}])
     assert pending_question(json.loads(json.dumps(messages))) is None
+
+
+@pytest.mark.parametrize('omitted', [[], [0, 1]])
+def test_shell_advertises_draft_lookup_only_for_omitted_sessions(monkeypatch, tmp_path, omitted):
+    from test_workout_generator_planning_tools import planning_case
+    equipment, _, _, _ = planning_case()
+    path = tmp_path / 'library.json'
+    path.write_text(json.dumps(equipment), encoding='utf-8')
+    state = {'currentDraft': {'workouts': [{'detailsOmitted': index in omitted} for index in range(3)]}}
+    monkeypatch.setattr(shell, '_messages_for_api', lambda *args: [
+        {'role': 'system', 'content': 'Current planning state\n' + json.dumps(state)}])
+    deps = make_shell_deps(tmp_path, chat_results=[('Ready.', None)], generation_results=[], generation_calls=[])
+    capture = deps.chat_call_with_loading
+    def chat(client, messages, tools, logger, **options):
+        lookup = [tool for tool in tools if tool.get('function', {}).get('name') == 'get_workout_draft']
+        assert bool(lookup) == bool(omitted)
+        if lookup:
+            assert lookup[0]['function']['parameters']['properties']['workoutReferences']['items']['enum'] == [
+                f'WORKOUT_{index}' for index in omitted]
+        return capture(client, messages, tools, logger, **options)
+    deps.chat_call_with_loading = chat
+    monkeypatch.setattr('sys.argv', ['workout_generator.py', '--exercise-library-file', str(path)])
+    run_shell(monkeypatch, deps, ['Plan a workout', '/exit'])
+    assert 'enum' not in shell.GET_WORKOUT_DRAFT_TOOL['function']['parameters']['properties']['workoutReferences']['items']

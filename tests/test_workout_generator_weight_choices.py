@@ -254,6 +254,29 @@ def test_bodyweight_selectable_weights_include_zero_additional_load():
     assert selectable == {0.0, 5.0, 10.0}
 
 
+def test_load_combination_cache_tracks_inventory_content_and_returns_independent_sets(monkeypatch):
+    from workout_generator_pkg import domain_ops
+    domain_ops._cached_equipment_weight_combinations.cache_clear()
+    compute = domain_ops._calculate_equipment_weight_combinations
+    calls = []
+    def counted(equipment):
+        calls.append(equipment)
+        return compute(equipment)
+    monkeypatch.setattr(domain_ops, '_calculate_equipment_weight_combinations', counted)
+    equipment = {'type': 'WEIGHTVEST', 'availableWeights': [{'weight': 5}, {'weight': 10}]}
+    first = domain_ops.calculate_equipment_weight_combinations(equipment)
+    first.add(999)
+    assert domain_ops.get_selectable_weights_for_exercise('BODY_WEIGHT', equipment) == {0, 5, 10}
+    assert domain_ops.calculate_equipment_weight_combinations(equipment) == {5, 10}
+    assert len(calls) == 1
+    equipment['availableWeights'][0]['weight'] = 7
+    assert domain_ops.calculate_equipment_weight_combinations(equipment) == {7, 10}
+    assert len(calls) == 2
+    equipment['ignoredMetadata'] = object()
+    assert domain_ops.calculate_equipment_weight_combinations(equipment) == {7, 10}
+    assert len(calls) == 3
+
+
 def test_planner_context_explains_dumbbell_pair_total_semantics():
     formatted = format_planner_equipment_context([
         {

@@ -164,6 +164,22 @@ def write_progress_file(script_dir: Path, session_id: str, step: int = 3) -> Non
     )
 
 
+def test_malformed_tool_arguments_are_reported_without_executing_empty_arguments(tmp_path, monkeypatch):
+    invalid = FakeToolCall('malformed', 'function', FakeFunction('set_workout_requirements', '{"sessionsPerWeek":3}}'))
+    deps = make_shell_deps(tmp_path, chat_results=[(None, [invalid]), ('Please retry the corrected request.', None)],
+                           generation_results=[], generation_calls=[])
+    monkeypatch.setenv('DEEPSEEK_API_KEY', 'test-key')
+    monkeypatch.setattr('sys.argv', ['workout_generator.py'])
+    inputs = iter(['Create a workout', '/exit'])
+    monkeypatch.setattr('builtins.input', lambda prompt='': next(inputs))
+    interactive_shell.main(deps=deps)
+    messages = load_active_conversation_record(str(tmp_path))['messages']
+    feedback = next(json.loads(m['content']) for m in messages if m.get('tool_call_id') == 'malformed')
+    assert feedback['errors'][0]['code'] == 'invalid_tool_json'
+    assert 'Extra data' in feedback['errors'][0]['message']
+    assert 'no arguments were executed' in feedback['errors'][0]['repair']
+
+
 def make_shell_deps(tmp_path: Path, *, chat_results, generation_results, generation_calls) -> SimpleNamespace:
     chat_iter = iter(chat_results)
     generation_iter = iter(generation_results)
@@ -193,6 +209,7 @@ def make_shell_deps(tmp_path: Path, *, chat_results, generation_results, generat
         deps=None,
         force_use_reasoner=None,
         allow_educated_load_guesses=False,
+        training_history=None,
     ):
         generation_calls.append(
             {
@@ -230,7 +247,8 @@ def make_shell_deps(tmp_path: Path, *, chat_results, generation_results, generat
         get_log_dir=lambda script_dir=None: str(tmp_path / "logs"),
         ConversationLogger=FakeLogger,
         chat_call_with_loading=chat_call_with_loading,
-        generate_workout_tool={"name": "generate_workout"},
+        generate_workout_tool={"type": "function", "function": {"name": "generate_workout",
+            "parameters": {"type": "object", "properties": {}}}},
         handle_function_call=handle_function_call,
         execute_workout_generation=execute_workout_generation,
         save_conversation=save_conversation,
@@ -388,6 +406,118 @@ def test_tool_results_are_checkpointed_before_the_next_tool_without_mutating_pen
         assert len(responses) == 1 and json.loads(responses[0]['content']) == {'completed': key}
 
 
+def test_internal_failure_receipt_keeps_completed_audit_checkpoint_without_approving_it():
+    from workout_generator_pkg.planning_tools import planning_tool_failure
+    checkpoint = {'passed': False, 'reviewPending': True,
+        'submittedDraft': {'requirementsId': 'REQ_1', 'workouts': [{'name': 'Saved session'}]},
+        'currentDraftId': 'REVISION_50', 'libraryFingerprint': 'library-hash',
+        'recipeQualification': {'inputHash': 'qualified', 'contracts': [{'definition_id': 'LIBRARY_1'}]},
+        'coordinatedCandidatePending': True, 'preview': 'Must not be shown.', 'planIndex': {'hidden': True},
+        'errors': [{'code': 'independent_review_pending'}]}
+
+    failure = interactive_shell._merge_completed_tool_checkpoint(
+        planning_tool_failure('audit_workout_plan', RuntimeError('solver receipt UnboundLocalError')),
+        checkpoint)
+
+    assert failure['submittedDraft'] == checkpoint['submittedDraft']
+    assert failure['recipeQualification'] == checkpoint['recipeQualification']
+    assert failure['coordinatedCandidatePending'] and failure['checkpointPreserved']
+    assert failure['passed'] is False and failure['errors'][0]['code'] == 'tool_execution_failed'
+    assert failure['errors'][0]['owner'] == 'generator'
+    assert 'preview' not in failure and 'planIndex' not in failure
+
+
+def test_draft_bound_tool_schemas_advertise_only_the_exact_current_revision():
+    from workout_generator_pkg.planning_tools import AUDIT_WORKOUT_PLAN_TOOL, PREPARE_WORKOUT_SESSION_TOOL, REPAIR_WORKOUT_PLAN_TOOL
+    from workout_generator_pkg.session_drafting import PREPARE_WORKOUT_SESSIONS_TOOL
+
+    for original in (AUDIT_WORKOUT_PLAN_TOOL, PREPARE_WORKOUT_SESSION_TOOL,
+                    PREPARE_WORKOUT_SESSIONS_TOOL, REPAIR_WORKOUT_PLAN_TOOL):
+        bound = interactive_shell._bind_current_draft_id(original, 'REVISION_1')
+        def find_base(schema):
+            if isinstance(schema, dict):
+                for name, value in schema.get('properties', {}).items():
+                    if name == 'baseDraftId':
+                        return value
+                    result = find_base(value)
+                    if result:
+                        return result
+                for key in ('oneOf', 'anyOf', 'allOf'):
+                    for value in schema.get(key, []):
+                        result = find_base(value)
+                        if result:
+                            return result
+                if isinstance(schema.get('items'), dict):
+                    return find_base(schema['items'])
+            return None
+        base_schema = find_base(bound['function']['parameters'])
+        assert base_schema and base_schema['enum'] == ['REVISION_1']
+        assert 'exactly REVISION_1' in bound['function']['description']
+
+    initial = interactive_shell._bind_current_draft_id(PREPARE_WORKOUT_SESSIONS_TOOL, None)
+    assert initial['function']['parameters']['properties']['baseDraftId']['enum'] == [None]
+    assert 'use null exactly' in initial['function']['parameters']['properties']['baseDraftId']['description']
+
+
+def test_candidate_menu_expansion_receipt_requires_materialized_audited_candidate():
+    task = {'sourceBaseDraftId': 'REVISION_4', 'sourceProblemFingerprint': 'source-problem',
+        'sourceMenuFingerprint': 'source-menu', 'requirementsId': 'REQ', 'libraryFingerprint': 'LIB',
+        'historyFingerprint': 'HIST', 'resolvedDecisions': {}, 'blockers': [{'coverageKey': 'horizontal_pull_weekly'}]}
+    rejected = {'passed': False, 'currentDraftId': 'REVISION_4',
+        'errors': [{'code': 'invalid_arguments'}]}
+    assert interactive_shell._candidate_menu_expansion_audit_marker(task, rejected) is None
+    terminal_without_candidate = interactive_shell._candidate_menu_expansion_attempt(task)
+    assert terminal_without_candidate['attempted'] and not terminal_without_candidate['auditedCandidate']
+    assert terminal_without_candidate['blockers'] == task['blockers']
+    assert 'resultingProblemFingerprint' not in terminal_without_candidate
+
+    candidate = {'requirementsId': 'REQ', 'workouts': [{'exercises': [{'definition_id': 'row'}]}]}
+    audited = {'passed': False, 'currentDraftId': 'REVISION_5', 'submittedDraft': candidate,
+        'coordinatedJointPlanning': {'status': 'infeasible', 'problemFingerprint': 'result-problem'}}
+    assert interactive_shell._candidate_menu_expansion_audit_marker(
+        task, audited, {'patch': []}) is None
+    marker = interactive_shell._candidate_menu_expansion_audit_marker(task, audited)
+    assert marker['attempted'] and marker['auditedCandidate']
+    assert marker['sourceProblemFingerprint'] == 'source-problem'
+    assert marker['blockers'] == task['blockers']
+    assert marker['resultingProblemFingerprint'] == 'result-problem'
+
+    unproven = {**audited, 'coordinatedJointPlanning': {'status': 'infeasible'}}
+    marker = interactive_shell._candidate_menu_expansion_audit_marker(task, unproven)
+    assert marker['auditedCandidate'] and marker['resultingProblemFingerprint'] is None
+
+
+def test_candidate_menu_expansion_defers_user_tradeoff_and_alternative_tools():
+    tools = [{'function': {'name': name}} for name in (
+        'ask_user', 'propose_workout_alternatives', 'accept_workout_alternative',
+        'search_exercise_library', 'audit_workout_plan')]
+    selected = interactive_shell._candidate_menu_expansion_tools(tools, {'sourceProblemFingerprint': 'p'})
+    assert [tool['function']['name'] for tool in selected] == [
+        'search_exercise_library', 'audit_workout_plan']
+    assert interactive_shell._candidate_menu_expansion_tools(tools, None) == tools
+
+
+def test_messages_for_api_preserves_compact_candidate_menu_expansion_proof():
+    from workout_generator_pkg.joint_planning import candidate_menu_fingerprint
+
+    workouts = [{'day': 'Day 1', 'exercises': [{'definition_id': 'row'}]}]
+    marker = {'attempted': True, 'auditedCandidate': True, 'sourceMenuFingerprint': 'source-menu'}
+    messages = [
+        {'role': 'assistant', 'tool_calls': [{'id': 'audit-1', 'type': 'function',
+            'function': {'name': 'audit_workout_plan', 'arguments': '{}'}}]},
+        {'role': 'tool', 'tool_call_id': 'audit-1', 'content': json.dumps({
+            'passed': False, 'currentDraftId': 'REVISION_2', 'submittedDraft': {'workouts': workouts},
+            'candidateMenuExpansion': marker, 'coordinatedJointPlanning': {'problemFingerprint': 'result-problem'},
+            'audit': {'targets': {}, 'workouts': []}, 'review': {'findings': []}})},
+    ]
+
+    compacted = interactive_shell._messages_for_api(messages)
+    receipt = json.loads(compacted[1]['content'])
+    assert receipt['candidateMenuExpansion'] == marker
+    assert receipt['candidateMenuFingerprint'] == candidate_menu_fingerprint(workouts)
+    assert 'submittedDraft' not in receipt
+
+
 def test_internal_lookup_failure_pauses_once_and_keeps_completed_parallel_search(monkeypatch, tmp_path, capsys):
     from test_workout_generator_planning_tools import planning_case
     from workout_generator_pkg.planning_tools import planning_tool_failure
@@ -446,6 +576,28 @@ def test_failed_checkpoint_preserves_previous_conversation_file(monkeypatch, tmp
     assert not list(path.parent.glob('.messages.json.*.tmp'))
 
 
+def test_checkpoint_retries_transient_permission_failure_without_rewriting_model_work(monkeypatch, tmp_path):
+    from workout_generator_pkg import json_io
+    path = tmp_path / 'messages.json'
+    json_io.write_json_atomic(path, ['old'])
+    replace = json_io.os.replace
+    attempts = []
+    def locked_once(source, destination):
+        attempts.append(source)
+        if len(attempts) == 1:
+            raise PermissionError('Reader briefly holds destination')
+        return replace(source, destination)
+    monkeypatch.setattr(json_io.os, 'replace', locked_once)
+    monkeypatch.setattr(json_io.time, 'sleep', lambda seconds: None)
+    json_io.write_json_atomic(path, ['completed response'])
+    assert json.loads(path.read_text()) == ['completed response']
+    assert len(attempts) == 2 and attempts[0] == attempts[1]
+    monkeypatch.setattr(json_io.os, 'replace', lambda *args: (_ for _ in ()).throw(PermissionError('Persistent denial')))
+    with pytest.raises(PermissionError):
+        json_io.write_json_atomic(path, ['unsaved'])
+    assert json.loads(path.read_text()) == ['completed response']
+
+
 @pytest.mark.parametrize('first_tool, code', [
     ('audit_workout_plan', 'review_execution_failed'),
     ('record_planning_decisions', 'decision_review_failed'),
@@ -495,8 +647,10 @@ def test_shell_repairs_one_rep_with_patch_then_previews_and_exports(monkeypatch,
     path.write_text(json.dumps(equipment), encoding='utf-8')
     draft['workouts'][0]['exercises'][0]['targetSetPrescriptions'] = [
         {'workSetIndex': i, 'reps': reps, 'additionalWeight': 0} for i, reps in enumerate([10, 9, 8, 8, 7])]
-    patch = {'requirementsId': draft['requirementsId'], 'baseDraftId': 'REVISION_0', 'patch': [
-        {'op': 'replace', 'path': '/workouts/0/exercises/0/targetSetPrescriptions/4/reps', 'value': 8}]}
+    prescriptions = copy.deepcopy(draft['workouts'][0]['exercises'][0]['targetSetPrescriptions'])
+    prescriptions[4]['reps'] = 8
+    patch = {'requirementsId': draft['requirementsId'], 'baseDraftId': 'REVISION_0', 'edits': {
+        'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0', 'setFields': {'targetSetPrescriptions': prescriptions}}]}}
     def tool(name, arguments, key):
         return (None, [FakeToolCall(key, 'function', FakeFunction(name, json.dumps(arguments)))])
     generated = []
@@ -529,14 +683,14 @@ def test_shell_repairs_one_rep_with_patch_then_previews_and_exports(monkeypatch,
     stored_patch = next(c['function'] for m in messages for c in m.get('tool_calls', []) if c['id'] == 'repair')
     assert 'workouts' not in json.loads(stored_patch['arguments'])
     repair_tools, repair_options = requests[2]
-    assert repair_options == {'reasoning_effort': 'low', 'activity': 'Repairing draft'}
+    assert repair_options == {'reasoning_effort': 'low', 'activity': 'Repairing draft', 'max_tokens': 16384, 'timeout': None}
     schema = next(t['function']['parameters'] for t in repair_tools if t.get('function', {}).get('name') == 'audit_workout_plan')
-    assert 'patch' in schema['required'] and 'workouts' not in schema['properties']
-    assert requests[1][1] == {'reasoning_effort': 'low', 'activity': 'Drafting session'}
-    assert requests[-1][1] == {'reasoning_effort': 'low', 'activity': 'Repairing draft'}
+    assert 'edits' in schema['required'] and 'workouts' not in schema['properties']
+    assert requests[1][1] == {'reasoning_effort': 'low', 'activity': 'Drafting session', 'max_tokens': 16384, 'timeout': None}
+    assert requests[-1][1] == {'reasoning_effort': 'low', 'activity': 'Repairing draft', 'max_tokens': 16384, 'timeout': None}
     if attempt_full_rewrite:
         failure = next(json.loads(m['content']) for m in messages if m.get('tool_call_id') == 'rewrite')
-        assert failure['errors'][0]['code'] == 'repair_patch_required'
+        assert failure['errors'][0]['code'] == 'repair_edit_contract_required'
         assert 'submittedDraft' not in failure
     output = capsys.readouterr().out
     assert 'outside minReps' not in output
@@ -608,17 +762,55 @@ def test_generate_with_instructions_enters_planning_instead_of_exporting(monkeyp
     assert any(m.get('role') == 'user' and m.get('content') == 'Avoid push-ups' for m in messages)
 
 
-def test_requirements_reapproval_reaudits_saved_draft_before_another_planner_call(monkeypatch, tmp_path, capsys):
+def test_passing_automatic_review_returns_to_pending_followup_before_preview(monkeypatch, tmp_path, capsys):
+    from test_workout_generator_planning_tools import planning_case
+    equipment, requirements, _, draft = planning_case()
+    path = tmp_path / 'library.json'
+    path.write_text(json.dumps(equipment), encoding='utf-8')
+    def tool(name, arguments, key):
+        return (None, [FakeToolCall(key, 'function', FakeFunction(name, json.dumps(arguments)))])
+    deps = make_shell_deps(tmp_path, chat_results=[
+        tool('set_workout_requirements', requirements, 'requirements'),
+        tool('audit_workout_plan', draft, 'initial'),
+        tool('set_workout_requirements', requirements, 'refreshed')], generation_results=[], generation_calls=[])
+    original_chat = deps.chat_call_with_loading
+    requests = []
+    def capture(client, messages, tools, logger, **options):
+        requests.append(copy.deepcopy(messages))
+        if len(requests) == 4:
+            state = interactive_shell.request_planning_state(messages)
+            assert state['lastAudit']['passed']
+            assert state['pendingPreviewFollowup'] == 'Review the saved draft and explain whether repairs are needed.'
+            return (*tool('audit_workout_plan', {'requirementsId': state['requirementsId'],
+                'baseDraftId': state['currentDraftId'], 'patch': []}, 'final-model-audit'), None)
+        return original_chat(client, messages, tools, logger, **options)
+    deps.chat_call_with_loading = capture
+    inputs = iter(['Plan 5-6 chest sets', 'CONFIRM REQUIREMENTS',
+        'Review the saved draft and explain whether repairs are needed.', 'CONFIRM REQUIREMENTS', '/exit'])
+    monkeypatch.setenv('DEEPSEEK_API_KEY', 'test-key')
+    monkeypatch.setattr('builtins.input', lambda prompt='': next(inputs))
+    monkeypatch.setattr('sys.argv', ['workout_generator.py', '--exercise-library-file', str(path)])
+    interactive_shell.main(deps=deps)
+    messages = load_active_conversation_record(str(tmp_path))['messages']
+    assert len(requests) == 4
+    assert any(c['id'].startswith('reaudit_') for m in messages for c in m.get('tool_calls', []))
+    assert any(c['id'] == 'final-model-audit' for m in messages for c in m.get('tool_calls', []))
+    assert sum(bool(m.get('canonicalDraftPreview')) for m in messages) == 2
+    assert 'returning to your pending request' in capsys.readouterr().out
+
+
+def test_requirements_reapproval_repairs_saved_draft_against_current_revision(monkeypatch, tmp_path, capsys):
     from test_workout_generator_planning_tools import planning_case
     from workout_generator_pkg.planning_tools import confirmed_draft
+    monkeypatch.setattr(interactive_shell, 'auto_allocate_workout', lambda result, *args, **kwargs: result)
     equipment, requirements, _, draft = planning_case()
     path = tmp_path / 'library.json'
     path.write_text(json.dumps(equipment), encoding='utf-8')
     draft['workouts'][0]['exercises'][0]['numWorkSets'] = 3
     def tool(name, arguments, key):
         return (None, [FakeToolCall(key, 'function', FakeFunction(name, json.dumps(arguments)))])
-    repair = {'requirementsId': draft['requirementsId'], 'baseDraftId': 'REVISION_1', 'patch': [
-        {'op': 'replace', 'path': '/workouts/0/exercises/0/numWorkSets', 'value': 5}]}
+    repair = {'requirementsId': draft['requirementsId'], 'baseDraftId': 'REVISION_0', 'edits': {
+        'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0', 'setFields': {'numWorkSets': 5}}]}}
     generated = []
     deps = make_shell_deps(tmp_path, chat_results=[
         tool('set_workout_requirements', requirements, 'initial-requirements'),
@@ -639,20 +831,122 @@ def test_requirements_reapproval_reaudits_saved_draft_before_another_planner_cal
     monkeypatch.setattr('sys.argv', ['workout_generator.py', '--exercise-library-file', str(path)])
     interactive_shell.main(deps=deps)
     messages = load_active_conversation_record(str(tmp_path))['messages']
-    automatic = next(c for m in messages for c in m.get('tool_calls', []) if c['id'].startswith('reaudit_'))
-    assert json.loads(automatic['function']['arguments'])['patch'] == []
-    resumed = json.loads(next(m['content'].split('\n', 1)[1] for m in calls[4][0]
-                             if m.get('content', '').startswith('Current planning state')))
-    assert resumed['currentDraftId'] == 'REVISION_1' and resumed['repairTask']
-    assert calls[4][1]['reasoning_effort'] == 'low' and len(calls) == 5
-    assert confirmed_draft(messages, equipment)['currentDraftId'] == 'REVISION_2' and len(generated) == 1
-    assert 'Re-auditing saved draft' in capsys.readouterr().out
+    repair_call = next(c for m in messages for c in m.get('tool_calls', [])
+                       if c['function']['name'] == 'audit_workout_plan'
+                       and json.loads(c['function']['arguments']).get('edits'))
+    repair_args = json.loads(repair_call['function']['arguments'])
+    assert repair_args['baseDraftId'] == 'REVISION_0' and 'patch' not in repair_args
+    assert not any(c['id'].startswith('reaudit_') for m in messages for c in m.get('tool_calls', []))
+    assert confirmed_draft(messages, equipment)['currentDraftId'] == 'REVISION_1' and len(generated) == 1
+    assert 'stale_draft_patch' not in json.dumps(messages)
+    capsys.readouterr()
+
+
+@pytest.mark.parametrize('metadata_retry', [False, True])
+def test_cli_routes_assessed_model_patch_through_coordinated_repair(monkeypatch, tmp_path, metadata_retry):
+    from test_workout_generator_planning_tools import planning_case
+    from workout_generator_pkg.planning_tools import library_fingerprint
+    from workout_generator_pkg.review_assessment import VERSION as ASSESSMENT_VERSION
+
+    equipment, requirements, _, draft = planning_case()
+    path = tmp_path / 'library.json'
+    path.write_text(json.dumps(equipment), encoding='utf-8')
+    def tool(name, arguments, key):
+        return (None, [FakeToolCall(key, 'function', FakeFunction(name, json.dumps(arguments)))])
+
+    assessment = {'version': ASSESSMENT_VERSION, 'inputHash': 'fixture-review-hash',
+        'groups': [{'findingIndexes': [0], 'disposition': 'repair',
+                    'repairDimensions': ['guidance'],
+                    'reason': 'Correct the assessed progression instruction.',
+                    'errorKind': 'none', 'evidencePaths': []}],
+        'repairPlan': 'Repair the assessed issue in the owning structured field.'}
+    finding = {'code': 'independent_review_finding', 'severity': 'warning', 'basis': 'uncertainty',
+        'path': '/workouts/0/exercises/0/placementNotes',
+        'draftPath': '/workouts/0/exercises/0/placementNotes', 'reviewScope': 'evidence',
+        'message': 'The progression route needs a clearer instruction.',
+        'repair': 'Update the exercise guidance.', 'action': 'repair', 'evidencePaths': []}
+    initial_result = {'passed': False, 'requirementsId': draft['requirementsId'],
+        'currentDraftId': 'REVISION_0', 'submittedDraft': copy.deepcopy(draft),
+        'libraryFingerprint': library_fingerprint(equipment), 'historyFingerprint': None,
+        'resolvedDecisions': {}, 'audit': {'errors': []}, 'errors': [finding],
+        'review': {'findings': [finding], 'assessment': assessment}, 'findingsAssessment': assessment}
+    patch = {'requirementsId': draft['requirementsId'], 'baseDraftId': 'REVISION_0',
+        'addressedFindingIndexes': [0], 'edits': {'exerciseUpdates': [
+            {'exerciseRef': 'EXERCISE_0', 'setFields': {'placementNotes': 'Controlled execution and progression cue.'}}]}}
+    metadata_patch = {'requirementsId': draft['requirementsId'], 'baseDraftId': 'REVISION_0',
+        'patch': [{'op': 'replace', 'path': finding['draftPath'], 'value': 'Controlled execution and progression cue.'}]}
+    metadata_edits = {'requirementsId': draft['requirementsId'], 'baseDraftId': 'REVISION_0',
+        'edits': {'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0',
+            'setFields': {'placementNotes': 'Controlled execution and progression cue.'}}]}}
+    if metadata_retry:
+        initial_result['errors'] = [{'code': 'invalid_arguments', 'validator': 'maxLength', 'expected': 500,
+            'path': finding['draftPath'], 'actual': 'x' * 501, 'message': 'The local cue is too long.'}]
+        initial_result['rejectedSubmission'] = {**metadata_patch, 'patch': [
+            {**metadata_patch['patch'][0], 'value': 'x' * 501}]}
+        patch = metadata_edits
+    responses = [tool('set_workout_requirements', requirements, 'requirements'),
+                 tool('audit_workout_plan', draft, 'initial-audit'),
+                 tool('audit_workout_plan', patch, 'coordinated-patch')]
+    deps = make_shell_deps(tmp_path, chat_results=responses, generation_results=[], generation_calls=[])
+    # This test isolates routing of the model's assessed repair; explicit saved-draft
+    # re-audit behavior is covered separately and must not consume this fixture's repair response.
+    monkeypatch.setattr(interactive_shell, 'pending_reaudit', lambda _state, _input: None)
+    deps.load_equipment_from_file = lambda _path: equipment
+    original_chat = deps.chat_call_with_loading
+    planning_snapshots = []
+    def capture_chat(client, api_messages, tools, logger, **options):
+        snapshot = next((message['content'].split('\n', 1)[1] for message in api_messages
+                         if (message.get('content') or '').startswith('Current planning state')), None)
+        if snapshot:
+            planning_snapshots.append(json.loads(snapshot))
+        return original_chat(client, api_messages, tools, logger, **options)
+    deps.chat_call_with_loading = capture_chat
+    calls = []
+    def handle(*args, **kwargs):
+        name = args[2]
+        calls.append({'name': name, 'arguments': copy.deepcopy(args[3]),
+                      'coordinated_repair': kwargs.get('coordinated_repair', False)})
+        if name == 'audit_workout_plan' and len([call for call in calls if call['name'] == name]) == 1:
+            submitted = copy.deepcopy(draft)
+            submitted['requirementsId'] = args[3]['requirementsId']
+            result = {**initial_result, 'requirementsId': args[3]['requirementsId'],
+                      'submittedDraft': submitted}
+            return {'result': json.dumps(result), 'should_exit': False,
+                    'generation_result': None}
+        if name == 'audit_workout_plan':
+            submitted = copy.deepcopy(draft)
+            submitted['requirementsId'] = args[3]['requirementsId']
+            return {'result': json.dumps({'passed': True, 'requirementsId': args[3]['requirementsId'],
+                'currentDraftId': 'REVISION_1', 'submittedDraft': submitted, 'audit': {},
+                'review': {'findings': [], 'assessment': {'version': ASSESSMENT_VERSION,
+                    'inputHash': 'repaired-fixture', 'groups': [], 'repairPlan': ''}}}),
+                'should_exit': False, 'generation_result': None,
+                'draft_preview': 'Reviewed workout preview', 'draft_id': 'REVISION_1'}
+        return deps._original_handle(*args, **kwargs)
+
+    deps._original_handle = deps.handle_function_call
+    deps.handle_function_call = handle
+    monkeypatch.setattr('sys.argv', ['workout_generator.py', '--exercise-library-file', str(path)])
+    inputs = iter(['Plan a workout', 'CONFIRM REQUIREMENTS', '/exit'])
+    monkeypatch.setattr('builtins.input', lambda prompt='': next(inputs))
+    interactive_shell.main(deps=deps)
+
+    audit_calls = [call for call in calls if call['name'] == 'audit_workout_plan']
+    assert len(audit_calls) == 2
+    assert audit_calls[0]['coordinated_repair'] is False
+    assert audit_calls[1]['coordinated_repair'] is False
+    record = load_active_conversation_record(str(tmp_path))
+    model_repair = next(call for message in record['messages'] for call in message.get('tool_calls', [])
+                        if call['id'] == 'coordinated-patch')
+    model_repair_args = json.loads(model_repair['function']['arguments'])
+    assert 'edits' in model_repair_args and 'patch' not in model_repair_args
 
 
 @pytest.mark.parametrize("first_sets", [5, 3, "invalid"])
 def test_canonical_draft_repairs_and_displays_before_confirmation(monkeypatch, tmp_path, capsys, first_sets):
     from test_workout_generator_planning_tools import planning_case
     from workout_generator_pkg.planning_tools import confirmed_draft
+    monkeypatch.setattr(interactive_shell, 'auto_allocate_workout', lambda result, *args, **kwargs: result)
 
     loading_events = []
     class RecordingLoading:
@@ -677,8 +971,8 @@ def test_canonical_draft_repairs_and_displays_before_confirmation(monkeypatch, t
         failing = copy.deepcopy(draft)
         failing["workouts"][0]["exercises"][0]["numWorkSets"] = first_sets
         results.append(tool("audit_workout_plan", failing, "failed"))
-    repair = {'requirementsId': draft['requirementsId'], 'baseDraftId': 'REVISION_0', 'patch': [
-        {'op': 'replace', 'path': '/workouts/0/exercises/0/numWorkSets', 'value': 5}]} if first_sets == 3 else draft
+    repair = {'requirementsId': draft['requirementsId'], 'baseDraftId': 'REVISION_0', 'edits': {
+        'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0', 'setFields': {'numWorkSets': 5}}]}} if first_sets == 3 else draft
     results.append(tool("audit_workout_plan", repair, "draft"))
     if first_sets == 5:
         results.append(("RIR means reps in reserve.", None))
@@ -693,7 +987,7 @@ def test_canonical_draft_repairs_and_displays_before_confirmation(monkeypatch, t
     monkeypatch.setattr("sys.argv", ["workout_generator.py", "--exercise-library-file", str(path)])
     interactive_shell.main(deps=deps)
     output = capsys.readouterr().out
-    assert "| 1 | Push-Up | 5 | 8–10 | 90s |" in output
+    assert "| 1 | Push-Up | 5 | 8–10 |" in output
     assert "| 1 | Push-Up | 3 |" not in output
     assert "Estimated duration: 13.5 min" in output
     assert len(calls) == 1
@@ -1115,6 +1409,54 @@ def test_resume_repairs_orphaned_tool_call_before_next_api_turn(
     )
 
 
+def test_fresh_resume_dispatches_saved_draft_reaudit_before_model_tool_bookkeeping(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from workout_generator_pkg.plan_review import REVIEW_VERSION
+    from workout_generator_pkg.planning_tools import audit_workout_plan
+    from test_workout_generator_planning_tools import planning_case, requirement_messages
+
+    equipment, _, stored, draft = planning_case()
+    messages = requirement_messages(stored)
+    audit = audit_workout_plan(draft, equipment, messages)
+    audit['review'] = {'version': REVIEW_VERSION - 1, 'findings': []}
+    messages.extend([
+        {'role': 'assistant', 'tool_calls': [{
+            'id': 'stale-audit', 'type': 'function',
+            'function': {'name': 'audit_workout_plan', 'arguments': json.dumps(draft)},
+        }]},
+        {'role': 'tool', 'tool_call_id': 'stale-audit', 'content': json.dumps(audit)},
+        {'role': 'user', 'content': '/continue'},
+    ])
+    conversation_id = 'saved-reaudit-dispatch'
+    save_conversation(messages, conversation_id=conversation_id, script_dir=str(tmp_path))
+
+    library_path = tmp_path / 'library.json'
+    library_path.write_text(json.dumps(equipment), encoding='utf-8')
+    dispatched: list[str] = []
+    deps = make_shell_deps(tmp_path, chat_results=[], generation_results=[], generation_calls=[])
+
+    def stop_after_audit(client, messages, function_name, *args, **kwargs):
+        dispatched.append(function_name)
+        return {
+            'result': json.dumps({'passed': False, 'executionFailure': True,
+                'errors': [{'code': 'tool_execution_failed', 'message': 'test stop'}]}),
+            'should_exit': False,
+            'generation_result': None,
+        }
+
+    deps.handle_function_call = stop_after_audit
+    inputs = iter([f'/resume-conversation {conversation_id}', '/continue', '/exit'])
+    monkeypatch.setenv('DEEPSEEK_API_KEY', 'test-key')
+    monkeypatch.setattr('builtins.input', lambda prompt='': next(inputs))
+    monkeypatch.setattr('sys.argv', ['workout_generator.py', '--exercise-library-file', str(library_path)])
+
+    interactive_shell.main(deps=deps)
+
+    assert dispatched == ['audit_workout_plan']
+
+
 def test_messages_for_api_repairs_multiple_orphaned_tool_calls_and_drops_stray_tools() -> None:
     repaired = interactive_shell._messages_for_api(
         [
@@ -1300,9 +1642,9 @@ def test_shell_does_not_resume_previous_conversation_by_default(
 
 
 @pytest.mark.parametrize('interrupt', [False, True])
-def test_shell_builds_sessions_incrementally_and_reviews_only_the_complete_program(monkeypatch, tmp_path, interrupt):
+def test_shell_blocked_submission_never_becomes_a_saved_draft(monkeypatch, tmp_path, interrupt):
     from test_workout_generator_planning_tools import planning_case
-    from workout_generator_pkg.planning_tools import set_workout_requirements, confirmed_draft
+    from workout_generator_pkg.planning_tools import set_workout_requirements, latest_draft_submission
     equipment, requirements, _, draft = planning_case()
     requirements['sessionsPerWeek'] = 3
     requirements['auditTargets']['weeklyEffectiveSets']['chest'] = {'minimum': 15, 'maximum': 18}
@@ -1313,12 +1655,7 @@ def test_shell_builds_sessions_incrementally_and_reviews_only_the_complete_progr
     def tool(name, arguments, identifier):
         return (None, [FakeToolCall(identifier, 'function', FakeFunction(name, json.dumps(arguments)))])
     responses = [tool('set_workout_requirements', requirements, 'requirements'), tool('audit_workout_plan', draft, 'first')]
-    for index in (1, 2):
-        day = {**copy.deepcopy(draft['workouts'][0]), 'name': f'Day {index + 1}'}
-        responses.append(tool('audit_workout_plan', {
-            'requirementsId': stored['requirementsId'], 'baseDraftId': f'REVISION_{index-1}',
-            'patch': [{'op': 'add', 'path': '/workouts/-', 'value': day}]}, f'append-{index}'))
-    responses.append(tool('generate_workout', {}, 'export'))
+    responses.append(('The week still needs shared preparation.', None))
     generated, requests = [], []
     deps = make_shell_deps(tmp_path, chat_results=responses,
         generation_results=[{'success': True, 'filepath': 'generated.json', 'error': None}], generation_calls=generated)
@@ -1329,21 +1666,27 @@ def test_shell_builds_sessions_incrementally_and_reviews_only_the_complete_progr
             from workout_generator_pkg.api_client import TruncatedResponseError
             raise TruncatedResponseError(SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
                 content=None, reasoning_content='rejected unfinished reasoning', tool_calls=None))]), 65536, 'low')
+        from workout_generator_pkg.planner_context import request_planning_state
+        state = request_planning_state(messages)
+        omitted = any(day.get('detailsOmitted') for day in (state.get('currentDraft') or {}).get('workouts', []))
+        if not omitted:
+            assert 'get_workout_draft' not in [tool['function']['name'] for tool in tools]
         return original(client, messages, tools, logger, **options)
     deps.chat_call_with_loading = capture
     inputs = iter(['Three sessions with 5-6 chest sets each.', 'CONFIRM REQUIREMENTS',
-                   *(['/continue'] if interrupt else []), 'CONFIRM GENERATE', '/exit'])
+                   *(['/continue'] if interrupt else []), '/exit'])
     monkeypatch.setenv('DEEPSEEK_API_KEY', 'test-key')
     monkeypatch.setattr('builtins.input', lambda prompt='': next(inputs))
     monkeypatch.setattr('sys.argv', ['workout_generator.py', '--exercise-library-file', str(path)])
     interactive_shell.main(deps=deps)
     messages = load_active_conversation_record(str(tmp_path))['messages']
-    assert len(generated) == 1 and len(confirmed_draft(messages, equipment)['planIndex']['workouts']) == 3
-    results = {m['tool_call_id']: json.loads(m['content']) for m in messages if m.get('tool_call_id') in ('first', 'append-1', 'append-2')}
-    assert results['first']['reviewPending'] and results['append-1']['reviewPending']
-    assert results['append-2']['passed'] and results['append-2']['review']['findings'] == []
-    assert sum(bool(m.get('canonicalDraftPreview')) for m in messages) == 1
-    assert all(options == {'reasoning_effort': 'low', 'activity': 'Drafting session'} for _, options in requests[1:-1])
+    assert not generated and latest_draft_submission(messages, equipment) == (None, None)
+    results = {m['tool_call_id']: json.loads(m['content']) for m in messages if m.get('tool_call_id') == 'first'}
+    assert results['first']['errors'][0]['code'] == 'construction_stage_required'
+    assert not any(m.get('canonicalDraftPreview') for m in messages)
+    for _, options in requests[1:-1]:
+        assert options['reasoning_effort'] is None and options['max_tokens'] == 16384 and options['timeout'] is None
+        assert options['activity'] == 'Selecting weekly movements'
 
 
 def test_combined_search_failure_keeps_tool_responses_and_preserves_approved_requirements(monkeypatch, tmp_path):

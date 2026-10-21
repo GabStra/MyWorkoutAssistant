@@ -13,7 +13,7 @@ def test_structure_keeps_round_recovery_and_outer_transition_without_model_calls
     monkeypatch.setattr(cli, "json_call_chat_max_with_loading", forbidden)
     monkeypatch.setattr(cli, "json_call_reasoner_only_with_loading", forbidden)
     workout = {
-        "id": "WORKOUT_0", "name": "Day C", "description": "Full body",
+        "id": "WORKOUT_0", "name": "Day C", "description": "Full body. Schedule: Monday.",
         "exerciseIds": ["EXERCISE_0", "EXERCISE_1", "EXERCISE_2", "EXERCISE_3"],
         "restToNextSeconds": [90, 0, 75, 0],
         "supersetGroups": [{
@@ -26,6 +26,7 @@ def test_structure_keeps_round_recovery_and_outer_transition_without_model_calls
     definitions = {reference: {"id": reference} for reference in workout["exerciseIds"]}
     structure, conversation = cli.emit_workout_structure("WORKOUT_0", None, "", plan, definitions)
     assert conversation is None
+    assert structure['workoutMetadata']['description'] == workout['description']
     assert [component["componentType"] for component in structure["workoutComponents"]] == ["Exercise", "Rest", "Superset", "Rest", "Exercise"]
     assert structure["workoutComponents"][3]["timeInSeconds"] == 75
     assert structure["workoutComponents"][2]["roundDurationSeconds"] == 120
@@ -45,7 +46,9 @@ def test_legacy_round_rest_does_not_create_an_extra_outer_rest():
 def test_guessed_pair_load_and_library_muscles_are_normalized_before_validation(guess, expected):
     exercise = {
         "id": "EXERCISE_0", "type": "Exercise", "enabled": True, "name": "Dumbbell Raise",
-        "notes": "", "exerciseType": "WEIGHT", "equipmentId": "EQUIPMENT_0", "bodyWeightPercentage": None,
+        "notes": "Preserve controlled motion and the prescribed setup.",
+        "placementNotes": "Stop if the prescribed technique cannot be maintained.",
+        "exerciseType": "WEIGHT", "equipmentId": "EQUIPMENT_0", "bodyWeightPercentage": None,
         "requiredAccessoryEquipmentIds": [], "muscleGroups": ["FRONT_DELTOIDS"], "secondaryMuscleGroups": [],
         "generateWarmUpSets": False, "progressionMode": "OFF", "keepScreenOn": False,
         "showCountDownTimer": False, "requiresLoadCalibration": False, "minReps": 8, "maxReps": 10,
@@ -58,9 +61,17 @@ def test_guessed_pair_load_and_library_muscles_are_normalized_before_validation(
     assert normalized["muscleGroups"] == plan["muscleGroups"]
     assert normalized["secondaryMuscleGroups"] == plan["secondaryMuscleGroups"]
     assert normalized["requiresLoadCalibration"] is True
+    assert normalized['notes'] == exercise['notes']
+    assert normalized['placementNotes'] == exercise['placementNotes']
     plan["targetSetPrescriptions"] = [{"workSetIndex": 0, "reps": 8, "weight": guess}]
     with pytest.raises(ValueError, match="invalid weights"):
         finalize_and_validate_exercise_definition(exercise, plan, equipment_subset=equipment)
+
+    plan.update(requiresLoadCalibration=True,
+        targetSetPrescriptions=[{"workSetIndex": 0, "reps": 8, "weight": expected}])
+    valid_exercise = {**exercise, "sets": [{**exercise["sets"][0], "weight": expected}]}
+    normalized = finalize_and_validate_exercise_definition(valid_exercise, plan, equipment_subset=equipment)
+    assert normalized["requiresLoadCalibration"] is True
 
 
 def test_planner_example_contains_only_referenced_numeric_exercises():

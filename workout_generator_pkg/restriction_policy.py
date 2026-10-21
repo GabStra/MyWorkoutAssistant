@@ -57,7 +57,7 @@ def resolve_restrictions(restrictions, equipment, client=None, progress=None):
              'Exceptions allow only the intended movements, never related alternatives. If the intent is ambiguous or absent, return no references and explain why. '
              'Do not relax restrictions or invent IDs. The resolved names will be shown for user approval.'},
             {'role': 'user', 'content': json.dumps({'terms': pending, 'catalog': catalog}, separators=(',', ':'))},
-        ], reasoning_effort='low', max_tokens=8192, timeout=90, response_format={'type': 'json_object'})
+        ], reasoning_effort='low', max_tokens=8192, timeout=None, response_format={'type': 'json_object'})
         try:
             result = json.loads(content)
             validate(result, {'type': 'object', 'properties': {'matches': {'type': 'array', 'items': {
@@ -94,8 +94,11 @@ def resolve_restrictions(restrictions, equipment, client=None, progress=None):
             raise PlanningInputError('ambiguous_restriction_exception',
                 f"Exception '{item['term']}' does not identify one excluded movement. Matches: {candidates}.",
                 '/exerciseRestrictions/exceptNameTerms',
-                'Ask the user which exact library movement(s) to permit. Do not choose a candidate, '
-                'drop the exception, or broaden its scope. After clarification, use a separate specific name for each movement.')
+                'Check the proposed exception against original user instructions and existing clarifications first. '
+                'Correct an unsupported extraction rather than asking the user to confirm an intent already specified. '
+                'If the source itself is ambiguous, ask which exact library movement(s) to permit. '
+                'Do not choose a candidate, drop a source-backed exception, broaden its scope, or silently change approved restrictions. '
+                'Use a separate source-backed specific name for each permitted movement.')
     exceptions = {key for item in matches if item['kind'] == 'exception' for key in item['definitionIds']}
     return {'resolutionVersion': RESTRICTION_POLICY_VERSION, 'libraryFingerprint': library_fingerprint(equipment), 'matches': matches,
             'excludedDefinitionIds': sorted(excluded - exceptions), 'exceptDefinitionIds': sorted(exceptions),

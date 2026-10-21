@@ -7,18 +7,19 @@ import random
 import time
 import traceback
 from contextlib import nullcontext
+from jsonschema import validate, ValidationError
 from .constants import (
-    DEEPSEEK_MODEL,
     DEEPSEEK_CHAT_DEFAULT_TOKENS,
     DEEPSEEK_CHAT_MAX_TOKENS,
     DEEPSEEK_REASONER_DEFAULT_TOKENS,
     DEEPSEEK_REASONER_MAX_TOKENS,
     DEEPSEEK_PLANNING_TIMEOUT_SECONDS,
 )
+from .llm_config import resolve_llm_endpoint
 from .logging_ui import LoadingIndicator
 from .cancellation import check_cancelled, run_cancellable
 from .image_attachments import prepare_image_messages, validate_image_request
-from .api_metrics import api_metrics_scope, current_api_metrics_scope, record_api_metric
+from .api_metrics import api_metrics_scope, current_api_metrics_scope, record_api_metric, begin_api_request, remaining_request_timeout
 
 try:
     from openai import APIConnectionError
@@ -49,7 +50,8 @@ class TruncatedResponseError(ValueError):
         cause = 'reasoning_budget_exhausted' if reasoning_exhausted else 'completion_length_limit'
         explanation = ('The model exhausted the budget in reasoning before emitting an answer or tool call. '
                        if reasoning_exhausted else '')
-        super().__init__(f"Response truncated at the {max_tokens}-token {reasoning_effort}-effort budget. {explanation}No truncated output was accepted. Your saved draft and completed lookups are preserved; resume the next bounded task instead of repeating a whole-plan rewrite.")
+        mode = f'{reasoning_effort}-effort' if reasoning_effort is not None else 'non-thinking'
+        super().__init__(f"Response truncated at the {max_tokens}-token {mode} budget. {explanation}No truncated output was accepted. Your saved draft and completed lookups are preserved; resume the next bounded task instead of repeating a whole-plan rewrite.")
         self.diagnostics = {
             'finishReason': 'length', 'maxTokens': max_tokens, 'reasoningEffort': reasoning_effort,
             'cause': cause, 'usage': usage,
@@ -59,54 +61,148 @@ class TruncatedResponseError(ValueError):
         }
 
 
-def chat_call(client, messages, tools=None, *, reasoning_effort="high", max_tokens=DEEPSEEK_REASONER_MAX_TOKENS, timeout=DEEPSEEK_PLANNING_TIMEOUT_SECONDS, response_format=None):
+class StructuredResponseError(ValueError):
+    """Keep a complete JSON result available for the caller's bounded schema repair."""
+    def __init__(self, content, error):
+        super().__init__(f'Structured output failed schema validation: {error.message}')
+        self.content = content
+
+
+def _request_messages(messages, response_format=None):
+    prepared = prepare_image_messages(messages)
+    if response_format and response_format.get('type') == 'json_object':
+        text = []
+        for message in prepared:
+            content = message.get('content')
+            if isinstance(content, str):
+                text.append(content)
+            elif isinstance(content, list):
+                text.extend(part['text'] for part in content
+                            if isinstance(part, dict) and isinstance(part.get('text'), str))
+        if not any('json' in value.lower() for value in text):
+            prepared = [{'role': 'system', 'content': 'Return one valid JSON object.'}, *prepared]
+    return prepared
+
+
+def chat_call(client, messages, tools=None, *, reasoning_effort="high", max_tokens=DEEPSEEK_REASONER_MAX_TOKENS, timeout=DEEPSEEK_PLANNING_TIMEOUT_SECONDS, response_format=None, output_schema=None, tool_choice=None):
+    options = dict(max_tokens=max_tokens, timeout=timeout, response_format=response_format,
+                   output_schema=output_schema, tool_choice=tool_choice)
+    def call(effort):
+        return _retry_on_connection_error(
+            lambda: _chat_call_once(client, messages, tools, reasoning_effort=effort, **options),
+            max_retries=2, base_delay=1)
+    try:
+        return call(reasoning_effort)
+    except TruncatedResponseError as error:
+        if reasoning_effort is None or error.diagnostics['cause'] != 'reasoning_budget_exhausted':
+            raise
+        # No answer was emitted; retry the same task once without the exhausted reasoning channel.
+        return call(None)
+
+
+def _chat_call_once(client, messages, tools=None, *, reasoning_effort, max_tokens, timeout, response_format, output_schema, tool_choice=None):
     """
-    Call DeepSeek for conversational responses with optional function calling.
-    
+    Call the configured LLM endpoint for conversational responses with optional function calling.
+
     Args:
         client: OpenAI client
         messages: List of message dicts
         tools: Optional list of tool definitions for function calling
-    
+
     Returns:
         tuple: (content, tool_calls, reasoning_content). Preserve reasoning in conversation history.
     """
-    kwargs = {
-        "model": DEEPSEEK_MODEL,
-        "messages": [
+    endpoint = resolve_llm_endpoint()
+    request_messages = _request_messages(messages, response_format)
+    if endpoint.is_deepseek and reasoning_effort is not None:
+        request_messages = [
             {"reasoning_content": "", **message} if message.get("role") == "assistant" else message
-            for message in prepare_image_messages(messages)
-        ],
-        "extra_body": {"thinking": {"type": "enabled"}},
-        "reasoning_effort": reasoning_effort,
+            for message in request_messages
+        ]
+    else:
+        request_messages = [{key: value for key, value in message.items() if key != 'reasoning_content'}
+                            for message in request_messages]
+    kwargs = {
+        "model": endpoint.model,
+        "messages": request_messages,
         "max_tokens": max_tokens,
         "timeout": timeout,
     }
+    if reasoning_effort is not None:
+        kwargs['reasoning_effort'] = reasoning_effort
+    if endpoint.is_deepseek:
+        kwargs['extra_body'] = {"thinking": {"type": "enabled" if reasoning_effort is not None else "disabled"}}
     if tools:
         kwargs["tools"] = tools
+    if tool_choice is not None:
+        kwargs['tool_choice'] = tool_choice
     if response_format is not None:
         kwargs['response_format'] = response_format
+    if output_schema is not None:
+        if tools:
+            raise ValueError('Structured replies cannot also execute application tools.')
+        kwargs.pop('response_format', None)
+        kwargs['messages'] = [*kwargs['messages'], {'role':'system', 'content':
+            'Submit the final result through emit_result exactly once, following its schema.'}]
+        kwargs['tools'] = [{'type':'function','function':{'name':'emit_result',
+            'description':'Submit the final structured result.','strict':True,'parameters':output_schema}}]
     validate_image_request(kwargs)
     
     started = time.monotonic()
+    request = begin_api_request(endpoint.model, messages=kwargs['messages'], tools=kwargs.get('tools'))
+    resp = None
     try:
-        resp = run_cancellable(client.with_options(max_retries=0).chat.completions.create, deadline_seconds=timeout, **kwargs)
+        options = {'max_retries':0}
+        if output_schema is not None and endpoint.is_deepseek:
+            options['base_url'] = 'https://api.deepseek.com/beta'
+        resp = run_cancellable(client.with_options(**options).chat.completions.create, deadline_seconds=remaining_request_timeout(timeout), **kwargs)
         if getattr(resp.choices[0], "finish_reason", None) == "length":
             error = TruncatedResponseError(resp, max_tokens, reasoning_effort)
-            _record_chat_metric(resp, started, model=DEEPSEEK_MODEL, reasoning_effort=reasoning_effort,
-                                max_tokens=max_tokens, timeout=timeout, outcome='truncated')
+            _record_chat_metric(resp, started, model=endpoint.model, reasoning_effort=reasoning_effort,
+                                max_tokens=max_tokens, timeout=timeout, outcome='truncated', request=request)
             raise error
         message = resp.choices[0].message
         content = message.content
         tool_calls = message.tool_calls if hasattr(message, 'tool_calls') and message.tool_calls else None
-        _record_chat_metric(resp, started, model=DEEPSEEK_MODEL, reasoning_effort=reasoning_effort,
-                            max_tokens=max_tokens, timeout=timeout, outcome='success')
+        if output_schema is not None:
+            if tool_calls and (len(tool_calls) != 1 or tool_calls[0].function.name != 'emit_result'):
+                raise ValueError('Structured response did not submit exactly one emit_result call.')
+            request['structuredOutputDelivery'] = 'strict_tool' if tool_calls else 'validated_json'
+            if tool_calls:
+                content = tool_calls[0].function.arguments
+            try:
+                try:
+                    payload = json.loads(content)
+                except json.JSONDecodeError as error:
+                    if error.msg != 'Extra data':
+                        raise
+                    payload, end = json.JSONDecoder().raw_decode(content, len(content) - len(content.lstrip()))
+                    # Ignore only redundant outer closers after one complete object, never additional data.
+                    if not isinstance(payload, dict) or set(content[end:].strip()) != {'}'}:
+                        raise error
+                    content = content[:end]
+                    request['structuredOutputSyntaxRepair'] = 'redundant_terminal_closers'
+                validate(payload, output_schema)
+            except ValidationError as error:
+                raise StructuredResponseError(content,error) from error
+            tool_calls = None
+        _record_chat_metric(resp, started, model=endpoint.model, reasoning_effort=reasoning_effort,
+                            max_tokens=max_tokens, timeout=timeout, outcome='success', request=request)
         return content, tool_calls, getattr(message, "reasoning_content", None)
     except BaseException as error:
+        if output_schema is not None and resp is not None and not hasattr(error, 'diagnostics'):
+            choice = next(iter(getattr(resp, 'choices', None) or []), None)
+            message = getattr(choice, 'message', None)
+            error.diagnostics = {'finishReason':getattr(choice, 'finish_reason', None),
+                'content':getattr(message, 'content', None),
+                'toolCalls':[{'name':getattr(getattr(call, 'function', None), 'name', None),
+                              'arguments':getattr(getattr(call, 'function', None), 'arguments', None)}
+                             for call in (getattr(message, 'tool_calls', None) or [])]}
         if not isinstance(error, TruncatedResponseError):
-            _record_chat_metric(None, started, model=DEEPSEEK_MODEL, reasoning_effort=reasoning_effort,
-                                max_tokens=max_tokens, timeout=timeout, outcome='failure',
-                                error_type=type(error).__name__)
+            _record_chat_metric(resp, started, model=endpoint.model, reasoning_effort=reasoning_effort,
+                                max_tokens=max_tokens, timeout=timeout,
+                                outcome='cancelled' if isinstance(error, KeyboardInterrupt) else 'failure',
+                                error_type=type(error).__name__, request=request)
         raise
 
 
@@ -118,14 +214,15 @@ def _usage_dict(response):
 
 
 def _record_chat_metric(response, started, *, model, reasoning_effort, max_tokens, timeout,
-                        outcome, error_type=None):
+                        outcome, error_type=None, request=None):
     usage = _usage_dict(response) if response is not None else {}
     details = usage.get('completion_tokens_details') or {}
     prompt_details = usage.get('prompt_tokens_details') or usage.get('input_tokens_details') or {}
     metric = {
-        'event': 'api_request', 'outcome': outcome,
+        'event': 'api_request', 'outcome': outcome, **(request or {}),
+        'providerRequestId':getattr(response,'id',None),
         'model': getattr(response, 'model', None) or model,
-        'reasoningEffort': reasoning_effort, 'thinking': 'enabled',
+        'reasoningEffort': reasoning_effort, 'thinking': 'enabled' if reasoning_effort is not None else 'disabled',
         'maxTokens': max_tokens, 'timeoutSeconds': timeout,
         'elapsedSeconds': round(time.monotonic() - started, 3),
         'promptTokens': usage.get('prompt_tokens', usage.get('input_tokens')),
@@ -260,25 +357,26 @@ def test_connection(client, show_message=True, logger=None, *, model=None):
             logger.log_print(msg)
         elif show_message:
             print(msg)
+    endpoint = resolve_llm_endpoint()
     if show_message or logger:
-        _out("Testing connection to DeepSeek API...")
-    
+        _out(f"Testing connection to {endpoint.base_url}...")
+
     try:
         # Make a minimal API call - just ask for a simple JSON response
         test_messages = [
             {"role": "system", "content": "You are a helpful assistant. Respond with valid JSON only."},
             {"role": "user", "content": 'Respond with {"status": "ok"} as JSON.'}
         ]
-        
+
         # Use streaming mode for better high-traffic handling
         with LoadingIndicator("Testing API connection") if show_message or logger else nullcontext():
             with api_metrics_scope(logger, 'connection_test'):
                 content, finish_reason = run_cancellable(_measured_stream_request,
                     client.chat.completions.create,
-                    model=model or DEEPSEEK_MODEL, reasoning_effort=None, thinking='disabled',
+                    model=model or endpoint.model, reasoning_effort=None, thinking='disabled',
                     max_tokens=10, messages=test_messages,
                     response_format={"type": "json_object"}, stream=True,
-                    extra_body={"thinking": {"type": "disabled"}},
+                    **({'extra_body': {"thinking": {"type": "disabled"}}} if endpoint.is_deepseek else {}),
                 )
         
         if content:
@@ -434,35 +532,36 @@ def _measured_stream_request(create, *, model, reasoning_effort, thinking, max_t
     usage = {}
     request_kwargs = dict(kwargs)
     if 'messages' in request_kwargs:
-        request_kwargs['messages'] = prepare_image_messages(request_kwargs['messages'])
+        request_kwargs['messages'] = _request_messages(request_kwargs['messages'], request_kwargs.get('response_format'))
     request_kwargs['stream_options'] = {'include_usage': True}
     if reasoning_effort is not None:
         request_kwargs['reasoning_effort'] = reasoning_effort
     validate_image_request({'model': model, 'max_tokens': max_tokens, **request_kwargs})
+    request = begin_api_request(model, messages=request_kwargs.get('messages'), tools=request_kwargs.get('tools'))
     try:
         stream = create(model=model, max_tokens=max_tokens, **request_kwargs)
         result = _collect_streaming_response(stream, usage_collector=usage)
         outcome = 'truncated' if result[1] == 'length' else 'success'
         _record_stream_metric(usage, started, model=model, reasoning_effort=reasoning_effort,
-                              thinking=thinking, max_tokens=max_tokens, timeout=timeout, outcome=outcome)
+                              thinking=thinking, max_tokens=max_tokens, timeout=timeout, outcome=outcome, request=request)
         return result
     except BaseException as error:
         _record_stream_metric(usage, started, model=model, reasoning_effort=reasoning_effort,
                               thinking=thinking, max_tokens=max_tokens, timeout=timeout,
                               outcome='cancelled' if isinstance(error, KeyboardInterrupt) else 'failure',
-                              error_type=type(error).__name__)
+                              error_type=type(error).__name__, request=request)
         raise
 
 
 def _record_stream_metric(collected, started, *, model, reasoning_effort, thinking,
-                          max_tokens, timeout, outcome, error_type=None):
+                          max_tokens, timeout, outcome, error_type=None, request=None):
     usage = collected.get('usage') or {}
     if hasattr(usage, 'model_dump'):
         usage = usage.model_dump()
     details = usage.get('completion_tokens_details') or {}
     prompt_details = usage.get('prompt_tokens_details') or usage.get('input_tokens_details') or {}
     metric = {
-        'event': 'api_request', 'outcome': outcome,
+        'event': 'api_request', 'outcome': outcome, **(request or {}),
         'model': collected.get('model') or model,
         'reasoningEffort': reasoning_effort, 'thinking': thinking,
         'maxTokens': max_tokens, 'timeoutSeconds': timeout,
@@ -482,38 +581,44 @@ def _record_stream_metric(collected, started, *, model, reasoning_effort, thinki
 
 def json_call(client, messages, max_tokens=DEEPSEEK_CHAT_DEFAULT_TOKENS, *, model=None):
     """
-    Call DeepSeek in non-thinking mode for JSON generation using streaming.
+    Call the endpoint in non-thinking mode for JSON generation using streaming.
     Streaming mode better handles keep-alive comments during high traffic periods.
-    
+
     Returns:
         tuple: (content, finish_reason) where finish_reason indicates if response was truncated
     """
+    endpoint = resolve_llm_endpoint()
+
     def _call():
         return _measured_stream_request(client.chat.completions.create,
-            model=model or DEEPSEEK_MODEL, reasoning_effort=None, thinking='disabled', max_tokens=max_tokens,
+            model=model or endpoint.model, reasoning_effort=None, thinking='disabled', max_tokens=max_tokens,
             messages=messages,
             response_format={"type": "json_object"},
             stream=True,  # Enable streaming for better high-traffic handling
-            extra_body={"thinking": {"type": "disabled"}},
+            **({'extra_body': {"thinking": {"type": "disabled"}}} if endpoint.is_deepseek else {}),
         )
-    
+
     return _retry_on_connection_error(_call, show_message=True)
 
 
-def chat_call_with_loading(client, messages, tools=None, logger=None, *, reasoning_effort='high', activity='Thinking'):
+def chat_call_with_loading(client, messages, tools=None, logger=None, *, reasoning_effort='high', activity='Thinking',
+                           max_tokens=DEEPSEEK_REASONER_MAX_TOKENS, timeout=DEEPSEEK_PLANNING_TIMEOUT_SECONDS,
+                           tool_choice=None):
     """
     Wrapper for chat_call that shows loading indicator with timer and supports cancellation.
-    
+
     Args:
         client: OpenAI client
         messages: List of message dicts
         tools: Optional list of tool definitions for function calling
         logger: Optional ConversationLogger for debug logging (loading start/stop)
-    
+
     Returns:
         tuple: (content, tool_calls, reasoning_content), or three None values on cancellation.
     """
-    loading = LoadingIndicator(f"{activity} | {DEEPSEEK_MODEL}, thinking, {reasoning_effort} effort")
+    endpoint = resolve_llm_endpoint()
+    mode = f'thinking, {reasoning_effort} effort' if reasoning_effort is not None else 'non-thinking'
+    loading = LoadingIndicator(f"{activity} | {endpoint.model}, {mode}")
     started = time.monotonic()
     result = [None]
     exception = [None]
@@ -523,7 +628,11 @@ def chat_call_with_loading(client, messages, tools=None, logger=None, *, reasoni
         _, active_stage = current_api_metrics_scope()
         with api_metrics_scope(logger, active_stage or activity):
             try:
-                result[0] = chat_call(client, messages, tools, reasoning_effort=reasoning_effort)
+                call_options = {'reasoning_effort': reasoning_effort, 'max_tokens': max_tokens,
+                                'timeout': timeout}
+                if tool_choice is not None:
+                    call_options['tool_choice'] = tool_choice
+                result[0] = chat_call(client, messages, tools, **call_options)
             except KeyboardInterrupt:
                 cancelled[0] = True
                 exception[0] = KeyboardInterrupt()
@@ -531,8 +640,8 @@ def chat_call_with_loading(client, messages, tools=None, logger=None, *, reasoni
                 exception[0] = e
     
     if logger:
-        deadline = f'{DEEPSEEK_PLANNING_TIMEOUT_SECONDS}s' if DEEPSEEK_PLANNING_TIMEOUT_SECONDS else 'none'
-        logger.log(f"Loading started: {activity} (effort={reasoning_effort}, model={DEEPSEEK_MODEL}, thinking=enabled, max_tokens={DEEPSEEK_REASONER_MAX_TOKENS}, deadline={deadline})")
+        deadline = f'{timeout}s' if timeout else 'none'
+        logger.log(f"Loading started: {activity} (effort={reasoning_effort}, model={endpoint.model}, thinking={'enabled' if reasoning_effort is not None else 'disabled'}, max_tokens={max_tokens}, deadline={deadline})")
     loading.start()
     try:
         run_cancellable(api_call)
@@ -799,40 +908,44 @@ def json_call_large(client, messages, max_tokens=DEEPSEEK_REASONER_DEFAULT_TOKEN
     """
     Use thinking mode for larger outputs with streaming.
     Streaming mode better handles keep-alive comments during high traffic periods.
-    
+
     Returns:
         tuple: (content, finish_reason) where finish_reason indicates if response was truncated
     """
+    endpoint = resolve_llm_endpoint()
+
     def _call():
         return _measured_stream_request(client.chat.completions.create,
-            model=DEEPSEEK_MODEL, reasoning_effort='high', thinking='enabled', max_tokens=max_tokens,
+            model=endpoint.model, reasoning_effort='high', thinking='enabled', max_tokens=max_tokens,
             messages=messages,
             response_format={"type": "json_object"},
             stream=True,  # Enable streaming for better high-traffic handling
-            extra_body={"thinking": {"type": "enabled"}},
+            **({'extra_body': {"thinking": {"type": "enabled"}}} if endpoint.is_deepseek else {}),
         )
-    
+
     return _retry_on_connection_error(_call, show_message=True)
 
 
 def json_call_reasoner_only(client, messages, *, model=None):
     """
-    Call DeepSeek in thinking mode for JSON generation with a 64K output budget.
+    Call the endpoint in thinking mode for JSON generation with a 64K output budget.
     This is the standard function for all JSON generation in the planner/emitter architecture.
     Streaming mode better handles keep-alive comments during high traffic periods.
-    
+
     Returns:
         tuple: (content, finish_reason) where finish_reason indicates if response was truncated
     """
+    endpoint = resolve_llm_endpoint()
+
     def _call():
         return _measured_stream_request(client.chat.completions.create,
-            model=model or DEEPSEEK_MODEL, reasoning_effort='high', thinking='enabled', max_tokens=DEEPSEEK_REASONER_MAX_TOKENS,
+            model=model or endpoint.model, reasoning_effort='high', thinking='enabled', max_tokens=DEEPSEEK_REASONER_MAX_TOKENS,
             messages=messages,
             response_format={"type": "json_object"},
             stream=True,  # Enable streaming for better high-traffic handling
-            extra_body={"thinking": {"type": "enabled"}},
+            **({'extra_body': {"thinking": {"type": "enabled"}}} if endpoint.is_deepseek else {}),
         )
-    
+
     return _retry_on_connection_error(_call, show_message=True)
 
 

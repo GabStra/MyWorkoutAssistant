@@ -8,6 +8,7 @@ import os
 import re
 import uuid
 from decimal import Decimal, InvalidOperation
+from functools import lru_cache
 from itertools import zip_longest
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional
@@ -837,10 +838,12 @@ def finalize_and_validate_exercise_definition(
         exercise["equipmentId"] = inferred_equipment_id
 
     sync_plan_owned_exercise_fields(exercise, plan_entry)
-    # Only plan-prescribed loads can bypass calibration; emitted numbers may be guesses.
+    # A history-derived plan flag must survive even when the plan includes a provisional load.
     load_field = "additionalWeight" if exercise.get("exerciseType") == "BODY_WEIGHT" else "weight"
     targets = (plan_entry or {}).get("targetSetPrescriptions") or []
-    exercise["requiresLoadCalibration"] = not (
+    exercise["requiresLoadCalibration"] = (
+        isinstance(plan_entry, dict) and plan_entry.get("requiresLoadCalibration") is True
+    ) or not (
         targets and len(targets) == len([s for s in exercise.get("sets", []) if s.get("type") != "RestSet"])
         and all(isinstance(t.get(load_field), (int, float)) and not isinstance(t.get(load_field), bool) for t in targets)
     )
@@ -929,6 +932,20 @@ def generate_recursive_valid_subsets(available_weights, is_combination_valid=Non
 
 
 def calculate_equipment_weight_combinations(equipment):
+    """Return an independent set, reusing calculations for unchanged equipment data."""
+    try:
+        configuration = json.dumps(equipment, sort_keys=True, separators=(',', ':'), allow_nan=False)
+    except (TypeError, ValueError):
+        return _calculate_equipment_weight_combinations(equipment)
+    return set(_cached_equipment_weight_combinations(configuration))
+
+
+@lru_cache(maxsize=64)
+def _cached_equipment_weight_combinations(configuration):
+    return frozenset(_calculate_equipment_weight_combinations(json.loads(configuration)))
+
+
+def _calculate_equipment_weight_combinations(equipment):
     """
     Calculate all valid weight combinations for a given equipment.
     Matches Kotlin getWeightsCombinations() logic for each equipment type.
@@ -2444,7 +2461,7 @@ def validate_schema_repair(original, repaired, validation_errors):
         'id', 'globalId', 'type', 'libraryDefinitionId', 'exerciseDefinitionId', 'definition_id', 'superset',
         'previousVersionId', 'nextVersionId', 'exerciseIds', 'workoutIds',
         'requirements', 'requirementsId', 'auditTargets', 'workingSetRIR',
-        'targetSetPrescriptions', 'allocationBounds',
+        'targetSetPrescriptions', 'workSetTemplate', 'allocationBounds',
     }
     ordered = {'workouts', 'workoutComponents', 'exercises', 'sets', 'exerciseDefinitions'}
     missing = object()

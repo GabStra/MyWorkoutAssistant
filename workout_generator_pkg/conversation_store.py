@@ -17,7 +17,7 @@ from .paths import (
 
 
 def _timestamp_now() -> str:
-    return datetime.now().isoformat()
+    return datetime.now().astimezone().isoformat()
 
 
 def _conversation_dir(conversation_id: str, script_dir: Optional[str] = None) -> str:

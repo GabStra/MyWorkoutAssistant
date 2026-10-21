@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import copy
+import math
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -174,6 +175,15 @@ def _exercise_requires_unilateral_rest(exercise: Dict[str, Any]) -> bool:
     return any(token in combined for token in hint_tokens)
 
 
+def _is_valid_prescribed_load(value):
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0:
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
 def _equipment_ids_matching_bodyweight_targets(
     equipment_lookup: Dict[str, Dict[str, Any]],
     target_set_prescriptions: Any,
@@ -184,8 +194,8 @@ def _equipment_ids_matching_bodyweight_targets(
         float(item.get("additionalWeight"))
         for item in target_set_prescriptions
         if isinstance(item, dict)
-        and isinstance(item.get("additionalWeight"), (int, float))
-        and float(item.get("additionalWeight")) > 0
+        and _is_valid_prescribed_load(item.get("additionalWeight"))
+        and item['additionalWeight'] > 0
     }
     if not positive_additional_loads:
         return []
@@ -266,10 +276,17 @@ def _normalize_target_set_prescriptions(
     target_set_prescriptions: Any,
     ex_name: str,
     expected_load_field: str,
+    allow_missing_load: bool = False,
 ) -> Tuple[List[Dict[str, Any]], List[ContractIssue]]:
     issues: List[ContractIssue] = []
     normalized_items: List[Dict[str, Any]] = []
     seen_indexes: set[int] = set()
+    alternate_load_field = _alternate_load_field(expected_load_field)
+    reps_only_calibration = allow_missing_load and all(
+        isinstance(item, dict) and expected_load_field not in item
+        and (alternate_load_field is None or alternate_load_field not in item)
+        for item in target_set_prescriptions
+    )
 
     for idx, item in enumerate(target_set_prescriptions):
         if not isinstance(item, dict):
@@ -316,8 +333,10 @@ def _normalize_target_set_prescriptions(
             )
             item_is_valid = False
 
-        if not isinstance(load_value, (int, float)):
-            if isinstance(alternate_load_value, (int, float)):
+        if reps_only_calibration and expected_load_field not in item:
+            pass
+        elif not _is_valid_prescribed_load(load_value):
+            if not isinstance(load_value, (int, float)) and isinstance(alternate_load_value, (int, float)):
                 issues.append(
                     ContractIssue(
                         "mismatched_target_set_prescription_load_field",
@@ -328,14 +347,14 @@ def _normalize_target_set_prescriptions(
                 issues.append(
                     ContractIssue(
                         "invalid_target_set_prescription_load",
-                        f"Exercise '{ex_name}' targetSetPrescriptions[{idx}] is missing numeric {expected_load_field}.",
+                        f"Exercise '{ex_name}' targetSetPrescriptions[{idx}] requires finite non-negative numeric {expected_load_field}.",
                     )
                 )
 
             item_is_valid = False
 
         if item_is_valid:
-            normalized_items.append(item)
+                normalized_items.append(item)
 
     if normalized_items:
         sorted_indexes = sorted(item["workSetIndex"] for item in normalized_items)
@@ -551,11 +570,17 @@ def _collect_contract_issues_plan_index(
                 equipment_lookup,
                 ex.get("targetSetPrescriptions"),
             )
-            if matching_equipment_ids and equipment_id is None:
+            targets = ex.get('targetSetPrescriptions')
+            has_added_load = isinstance(targets, list) and any(isinstance(target, dict)
+                and _is_valid_prescribed_load(target.get('additionalWeight')) and target['additionalWeight'] > 0
+                for target in targets)
+            if has_added_load and equipment_id is None:
                 issues.append(
                     ContractIssue(
                         "missing_plan_bodyweight_equipment_id",
-                        f"Exercise '{ex_name}' has positive BODY_WEIGHT additionalWeight targets that match load-bearing equipment {matching_equipment_ids}; set equipmentId to the correct primary load-bearing equipment instead of null.",
+                        f"Exercise '{ex_id}' ({ex_name}) has positive BODY_WEIGHT additionalWeight targets but no load-bearing equipment. "
+                        f"Matching provided equipment: {matching_equipment_ids}. Choose a supported loadable library variant, or prescribe zero added load; "
+                        "do not alter library-owned equipment fields or invent equipment.",
                     )
                 )
             elif equipment_id is not None and matching_equipment_ids and equipment_id not in matching_equipment_ids:
@@ -633,6 +658,8 @@ def _collect_contract_issues_plan_index(
                     target_set_prescriptions,
                     ex_name,
                     expected_load_field,
+                    allow_missing_load=(ex.get("requiresLoadCalibration") is True and (
+                        ex_type == "WEIGHT" or (ex_type == "BODY_WEIGHT" and equipment_id is not None))),
                 )
                 issues.extend(target_issues)
                 for item in normalized_targets:
@@ -660,6 +687,8 @@ def _collect_contract_issues_plan_index(
                         equipment_name = equipment.get("name", equipment_id)
                         equipment_type = equipment.get("type")
                         for idx, item in enumerate(normalized_targets):
+                            if expected_load_field not in item:
+                                continue
                             target_load = float(item[expected_load_field])
                             if target_load in selectable_weights:
                                 continue
@@ -1084,7 +1113,7 @@ def _collect_contract_issues_for_exercise(plan_ex: Dict[str, Any], actual: Dict[
             )
 
     plan_equipment_id = plan_ex.get("equipmentId")
-    for field in ("notes", "placementNotes", "generateWarmUpSets", "progressionMode"):
+    for field in ("notes", "placementNotes", "generateWarmUpSets", "progressionMode", "requiresLoadCalibration"):
         if field in plan_ex and actual.get(field) != plan_ex[field]:
             issues.append(ContractIssue(
                 "exercise_guidance_mismatch",
@@ -1148,6 +1177,8 @@ def _collect_contract_issues_for_exercise(plan_ex: Dict[str, Any], actual: Dict[
             target_set_prescriptions,
             ex_id,
             expected_load_field,
+            allow_missing_load=(plan_ex.get("requiresLoadCalibration") is True and (
+                plan_type == "WEIGHT" or (plan_type == "BODY_WEIGHT" and plan_equipment_id is not None))),
         )
         issues.extend(target_issues)
         actual_work_set_items = [
@@ -1183,6 +1214,13 @@ def _collect_contract_issues_for_exercise(plan_ex: Dict[str, Any], actual: Dict[
                             f"Exercise '{ex_id}' workSetIndex {work_set_index} reps mismatch: expected {target_item.get('reps')}, got {actual_set.get('reps')} (name: '{actual_name}').",
                         )
                     )
+                if expected_load_field not in target_item:
+                    if plan_ex.get("requiresLoadCalibration") is not True or actual_set.get(expected_load_field) != 0:
+                        issues.append(ContractIssue(
+                            "calibration_placeholder_mismatch",
+                            f"Exercise '{ex_id}' workSetIndex {work_set_index} must use the app's zero placeholder under native load calibration.",
+                        ))
+                    continue
                 actual_load = actual_set.get(expected_load_field)
                 expected_load = target_item.get(expected_load_field)
                 if actual_load != expected_load:

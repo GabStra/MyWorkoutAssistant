@@ -21,8 +21,8 @@ def _build_type_specific_exercise_schema(
         "enabled": {"type": "boolean"},
         "name": {"type": "string"},
         "nameOverride": {"type": ["string", "null"]},
-        "notes": {"type": "string", "maxLength": 500},
-        "placementNotes": {"type": "string", "maxLength": 500},
+        "notes": copy.deepcopy(JSON_SCHEMA["$defs"]["Exercise"]["properties"]["notes"]),
+        "placementNotes": copy.deepcopy(JSON_SCHEMA["$defs"]["Exercise"]["properties"]["placementNotes"]),
         "sets": {
             "type": "array",
             "minItems": 1,

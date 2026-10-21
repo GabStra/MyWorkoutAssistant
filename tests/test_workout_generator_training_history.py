@@ -28,6 +28,55 @@ def history_case():
     return equipment, stored, draft, backup
 
 
+def test_batch_load_validation_resolves_evidence_once_without_weakening_checks(monkeypatch):
+    from workout_generator_pkg import training_history
+    from workout_generator_pkg.planning_tools import build_draft_plan
+    equipment, stored, draft, backup = history_case()
+    history = TrainingHistory(backup)
+    evidence = history._exact_evidence({'definition_ids': ['LIBRARY_0'], 'session_limit': 1}, equipment)
+    messages = [{'role': 'assistant', 'tool_calls': [{'id': 'evidence', 'function': {'name': 'get_training_evidence'}}]},
+                {'role': 'tool', 'tool_call_id': 'evidence', 'content': json.dumps(evidence)}]
+    plan = build_draft_plan(draft, equipment, stored['requirements'])
+    reads = []
+    original = training_history.json.loads
+    def read(value):
+        reads.append(1)
+        return original(value)
+    monkeypatch.setattr(training_history.json, 'loads', read)
+    monkeypatch.setattr(history, '_load_concerns', lambda item: [{'code': 'recorded_load_exceeds_current_capacity'}] if item else [])
+    validate_plan = history.load_suitability_validator(messages, equipment)
+    first = validate_plan(plan)
+    assert first == [] and validate_plan(plan) == first and reads == [1]
+    plan['exercises'][0]['exerciseType'] = 'WEIGHT'
+    plan['exercises'][0]['requiresLoadCalibration'] = True
+    assert validate_plan(plan) == [] and reads == [1]
+
+
+def test_highest_comparable_load_uses_wider_history_without_treating_latest_as_maximum():
+    equipment,_,_,backup=history_case()
+    backup['WorkoutHistories'].append({'id':'older','workoutId':'version1','isDone':True,'date':'2026-09-01'})
+    def record(identifier,load,reps=8,**extra):
+        return {'id':identifier,'exerciseId':'occurrence','workoutHistoryId':'older',
+            'setData':{'type':'BodyWeightSetData','actualReps':reps,'additionalWeight':load,
+                       'relativeBodyWeightInKg':49,**extra}}
+    backup['SetHistories'].extend([record('higher',10),record('warmup',100,subCategory='WarmupSet'),
+        record('different',200,bodyWeightPercentageSnapshot=100),record('zero',300,reps=0)])
+    history=TrainingHistory(backup)
+    result=history.evidence({'definition_ids':['LIBRARY_0'],'session_limit':1},equipment)
+    item=result['exercises'][0]
+    assert len(item['sessions'])==1 and item['loadHeadroom']['latestSessionHeaviestLoadKg']==0
+    assert item['loadHeadroom']['highestObservedComparableLoad']=={
+        'loadKg':10,'date':'2026-09-01','reps':8,'endReason':None}
+    legacy=copy.deepcopy(result)
+    del legacy['exercises'][0]['loadHeadroom']['highestObservedComparableLoad']
+    before=copy.deepcopy(legacy)
+    refreshed=history.refresh_evidence_metadata(legacy,equipment)
+    assert legacy==before
+    assert refreshed['exercises'][0]['loadHeadroom']['highestObservedComparableLoad']['loadKg']==10
+    legacy['historyFingerprint']='stale'
+    assert history.refresh_evidence_metadata(legacy,equipment)==legacy
+
+
 def test_cancelled_matching_does_not_block_new_turns_or_publish_late_cache_results(monkeypatch):
     equipment, _, _, backup = history_case()
     equipment['exerciseDefinitions'].append({**equipment['exerciseDefinitions'][0], 'id': 'new', 'name': 'Related variant'})
@@ -161,6 +210,42 @@ def test_versions_do_not_transfer_history_to_other_definition():
     assert history.unresolved_records == 0
 
 
+def test_native_load_calibration_uses_only_comparable_loaded_history_and_supported_types():
+    from workout_generator_pkg.planning_tools import library_fingerprint
+    from workout_generator_pkg.training_history import apply_native_load_calibration_policy
+
+    equipment, _, _, _ = history_case()
+    definition = equipment['exerciseDefinitions'][0]
+    history_fingerprint = 'current-history'
+    call_id = 'load-evidence'
+    evidence = {'historyFingerprint': history_fingerprint,
+        'libraryFingerprint': library_fingerprint(equipment),
+        'exercises': [{'definitionId': definition['id'], 'status': 'comparable_records',
+            'sessions': [{'performances': [{'record': {'setType': 'WeightSetData',
+                'actualReps': 8, 'loadKg': 20}}]}]}]}
+    messages = [
+        {'role': 'assistant', 'tool_calls': [{'id': call_id, 'type': 'function',
+            'function': {'name': 'get_training_evidence'}}]},
+        {'role': 'tool', 'tool_call_id': call_id, 'content': json.dumps(evidence)},
+    ]
+    plan = {'exercises': [
+        {'id': 'EXERCISE_0', 'libraryDefinitionId': definition['id'], 'exerciseType': 'WEIGHT', 'equipmentId': 'barbell'},
+        {'id': 'EXERCISE_1', 'libraryDefinitionId': 'unrecorded', 'exerciseType': 'WEIGHT', 'equipmentId': 'barbell'},
+        {'id': 'EXERCISE_2', 'libraryDefinitionId': 'bodyweight-loaded', 'exerciseType': 'BODY_WEIGHT', 'equipmentId': 'vest'},
+        {'id': 'EXERCISE_3', 'libraryDefinitionId': 'bodyweight-fixed', 'exerciseType': 'BODY_WEIGHT', 'equipmentId': None},
+        {'id': 'EXERCISE_4', 'libraryDefinitionId': 'timed', 'exerciseType': 'COUNTDOWN', 'equipmentId': None},
+    ]}
+
+    apply_native_load_calibration_policy(plan, messages, equipment, history_fingerprint)
+
+    assert [item['requiresLoadCalibration'] for item in plan['exercises']] == [False, True, True, False, False]
+
+    strict_plan = copy.deepcopy(plan)
+    apply_native_load_calibration_policy(
+        strict_plan, messages, equipment, history_fingerprint, allow_educated_load_guesses=False)
+    assert [item['requiresLoadCalibration'] for item in strict_plan['exercises']] == [True, True, True, False, False]
+
+
 def test_pagination_cache_and_changed_identity():
     equipment, _, _, backup = history_case()
     backup['WorkoutHistories'].append({'id': 'older', 'workoutId': 'version1', 'isDone': True, 'date': '2026-09-01'})
@@ -218,8 +303,8 @@ def test_related_history_is_separate_cached_and_required_for_unrecorded_variant(
     assert history.unreviewed(plan, messages, equipment) == []
     plan['exercises'][0]['id'] = 'EXERCISE_0'
     plan['exercises'][0]['name'] = 'Dumbbell Romanian Deadlift'
-    assert history.load_suitability_errors(plan, messages, equipment)[0]['concerns'][0]['code'] == 'related_history_only'
-    plan['exercises'][0]['requiresEffortCalibration'] = True
+    assert history.load_suitability_errors(plan, messages, equipment) == []
+    plan['exercises'][0].update(exerciseType='WEIGHT', requiresLoadCalibration=True)
     assert history.load_suitability_errors(plan, messages, equipment) == []
 
 
@@ -274,9 +359,6 @@ def test_failed_weak_history_rerank_keeps_load_uncertainty_for_unrecorded_varian
     plan = {'exercises': [{'id': 'EXERCISE_0', 'libraryDefinitionId': 'current', 'name': 'New Press Variant'}]}
     messages = [{'role': 'assistant', 'tool_calls': [{'id': 'evidence', 'function': {'name': 'get_training_evidence'}}]},
                 {'role': 'tool', 'tool_call_id': 'evidence', 'content': json.dumps(result)}]
-    errors = history.load_suitability_errors(plan, messages, equipment)
-    assert errors[0]['concerns'][0]['code'] == 'related_history_unconfirmed'
-    plan['exercises'][0]['requiresEffortCalibration'] = True
     assert history.load_suitability_errors(plan, messages, equipment) == []
     assert history.unreviewed(plan, messages, equipment) == []
 
@@ -314,7 +396,6 @@ def test_history_only_movement_survives_compaction_for_planning_and_independent_
         {'role': 'assistant', 'tool_calls': [{'id': 'history', 'function': {
             'name': 'get_training_evidence', 'arguments': json.dumps({'definition_ids': ['LIBRARY_0']})}}]},
         {'role': 'tool', 'tool_call_id': 'history', 'content': json.dumps(evidence)}]
-    draft['workouts'][0]['exercises'][0]['requiresEffortCalibration'] = True
     result = json.loads(handle_function_call(None, messages, 'audit_workout_plan', draft, equipment,
                                            training_history=history)['result'])
     assert result['passed']
@@ -327,7 +408,7 @@ def test_history_only_movement_survives_compaction_for_planning_and_independent_
     assert 'HISTORY_0' not in state['exerciseCandidates']
 
 
-def test_changing_variant_requires_its_evidence_before_a_fixed_load_can_pass(monkeypatch):
+def test_changing_variant_uses_native_calibration_when_its_load_history_is_missing(monkeypatch):
     from workout_generator_pkg.planning_tools import audit_workout_plan
     equipment, stored, draft, backup = history_case()
     equipment['equipments'] = [{'id': 'EQUIPMENT_0', 'type': 'WEIGHTVEST', 'name': 'Vest',
@@ -356,16 +437,12 @@ def test_changing_variant_requires_its_evidence_before_a_fixed_load_can_pass(mon
     monkeypatch.setattr('workout_generator_pkg.exercise_library_tools._semantic_matches',
                         lambda client, queries, entries: [{0: .95} for _ in queries])
     add_evidence({'definition_ids': ['LIBRARY_1']}, 'variant-evidence', client=object())
-    blocked = audit_workout_plan(patch, equipment, messages, training_history=history)
-    assert any(error['code'] == 'training_load_suitability_unresolved' for error in blocked['errors'])
-    patch['patch'] = [patch['patch'][0], {'op': 'add', 'path': '/workouts/0/exercises/0/requiresEffortCalibration', 'value': True}]
     calibrated = audit_workout_plan(patch, equipment, messages, training_history=history)
-    assert calibrated['passed'] and 'conditional' in calibrated['preview']
+    assert calibrated['passed']
+    assert calibrated['planIndex']['exercises'][0]['requiresLoadCalibration'] is True
 
 
-def test_capacity_mismatch_blocks_preview_until_explicit_effort_calibration():
-    import pytest
-    from workout_generator_pkg.planning_tools import build_draft_plan, PlanningInputError
+def test_historical_load_above_current_capacity_is_review_evidence_not_a_blocker():
     equipment, stored, draft, backup = history_case()
     backup['SetHistories'][0]['setData']['additionalWeight'] = 18
     history = TrainingHistory(backup)
@@ -374,25 +451,29 @@ def test_capacity_mismatch_blocks_preview_until_explicit_effort_calibration():
     messages = requirement_messages(stored) + [
         {'role': 'assistant', 'tool_calls': [{'id': 'history', 'function': {'name': 'get_training_evidence'}}]},
         {'role': 'tool', 'tool_call_id': 'history', 'content': json.dumps(result)}]
-    def audit():
-        return handle_function_call(None, messages, 'audit_workout_plan', draft,
-                                    provided_equipment=equipment, training_history=history)
-    blocked = audit()
-    payload = json.loads(blocked['result'])
-    assert payload['passed'] is False and blocked.get('draft_preview') is None
-    assert payload['errors'][0]['code'] == 'training_load_suitability_unresolved'
-    assert payload['errors'][0]['path'] == '/workouts/0/exercises/0'
-    exercise = draft['workouts'][0]['exercises'][0]
-    exercise['placementNotes'] = 'Use slower tempo and more sets.'
-    assert json.loads(audit()['result'])['passed'] is False
-    exercise['requiresEffortCalibration'] = True
-    passed = json.loads(audit()['result'])
-    assert passed['passed'] and 'Effort verification pending' in passed['preview']
-    assert 'Calibration attempts are additional to working sets' in passed['preview']
-    assert passed['audit']['workouts'][0]['timing']['calibrationSeconds'] == 30
-    exercise['targetSetPrescriptions'] = [{'workSetIndex': i, 'reps': 10, 'additionalWeight': 0} for i in range(5)]
-    with pytest.raises(PlanningInputError, match='fixed work-set loads'):
-        build_draft_plan(draft, equipment, stored['requirements'])
+    assert result['exercises'][0]['loadSuitabilityConcerns'][0]['code'] == 'recorded_load_exceeds_current_capacity'
+    plan = draft
+    assert history.load_suitability_errors(plan, messages, equipment) == []
+
+
+def test_unresolved_historical_rep_suitability_routes_to_candidate_change_when_calibration_is_unsupported(monkeypatch):
+    equipment, _, _, backup = history_case()
+    history = TrainingHistory(backup)
+    evidence = history.evidence({'definition_ids': ['LIBRARY_0']}, equipment)
+    messages = [{'role': 'assistant', 'tool_calls': [{'id': 'history', 'function': {'name': 'get_training_evidence'}}]},
+                {'role': 'tool', 'tool_call_id': 'history', 'content': json.dumps(evidence)}]
+    monkeypatch.setattr(history, '_load_concerns', lambda item: [{'code': 'historical_reps_exceed_prescription'}])
+    plan = {'workouts': [{'exerciseIds': ['EXERCISE_0']}], 'workingSetRIR': {'maximum': 0},
+            'exercises': [{'id': 'EXERCISE_0', 'libraryDefinitionId': evidence['exercises'][0]['definitionId'],
+                'name': 'Nordic Curl', 'exerciseType': 'BODY_WEIGHT', 'equipmentId': None,
+                'maxReps': 8, 'targetSetPrescriptions': [{'reps': 8, 'additionalWeight': 0}]}]}
+
+    errors = history.load_suitability_errors(plan, messages, equipment)
+
+    assert len(errors) == 1
+    assert errors[0]['code'] == 'training_load_suitability_unresolved'
+    assert errors[0]['repairStage'] == 'candidate_reassessment'
+    assert set(concern['code'] for concern in errors[0]['concerns']) == {'historical_reps_exceed_prescription'}
 
 
 def test_audit_requires_current_evidence_and_api_context_is_compact():
@@ -493,6 +574,167 @@ def test_timers_follow_app_countup_and_countdown_semantics():
     assert read('TimedDurationSetData', 60000, 75000) is None
 
 
+def test_bodyweight_equipment_evidence_keeps_load_meaning_snapshots_and_current_context():
+    from workout_generator_pkg.training_history import compact_training_evidence
+    from workout_generator_pkg.plan_review import _compact_evidence
+    equipment, _, _, backup = history_case()
+    vest = {'id': 'vest', 'type': 'WEIGHTVEST', 'name': 'Current vest', 'availableWeights': [{'weight': 10}, {'weight': 20}]}
+    for store in (equipment, backup['WorkoutStore']):
+        store['equipments'] = [copy.deepcopy(vest)]
+        store['exerciseDefinitions'][0]['equipmentId'] = 'vest'
+    equipment['weightKg'] = 80
+    occurrence = backup['WorkoutStore']['workouts'][0]['workoutComponents'][0]
+    occurrence['equipmentId'] = 'vest'
+    record = backup['SetHistories'][0]
+    record.update(equipmentIdSnapshot='vest', equipmentNameSnapshot='Vest at recording', equipmentTypeSnapshot='WEIGHTVEST')
+    record['setData'].update(additionalWeight=10, bodyWeightPercentageSnapshot=65)
+    history = TrainingHistory(backup)
+    result = history.evidence({'definition_ids': ['LIBRARY_0']}, equipment)
+    item = result['exercises'][0]
+    assert item['loadHeadroom']['latestSessionHeaviestLoadKg'] == 10
+    assert item['loadHeadroom']['maximumSelectableLoadKg'] == 20
+    assert item['candidateContext']['effectiveBodyweightKg'] == 52
+    assert item['candidateContext']['loadMeaning'] == 'additional_bodyweight_load'
+    assert result['evidenceFormat']['recordedTotalResistanceKg']
+    for projected in (item, compact_training_evidence([item])['LIBRARY_0'], _compact_evidence(item)):
+        performance = projected['sessions'][0]['performances'][0]
+        assert performance['equipmentContext']['name'] == 'Vest at recording'
+        assert performance['equipmentContext']['source'] == 'set_snapshot'
+        assert performance['bodyWeightPercentageSource'] == 'set_snapshot'
+        assert performance['record']['bodyWeightPercentageSnapshot'] == 65
+        assert performance['record']['recordedRelativeBodyWeightKg'] == 49
+        assert performance['record']['loadKg'] == 10
+        assert performance['record']['recordedTotalResistanceKg'] == 59
+        assert projected['candidateContext']['effectiveBodyweightKg'] == 52
+
+
+@pytest.mark.parametrize('changed', ['equipment', 'percentage'])
+def test_other_setup_records_remain_visible_but_do_not_set_current_load_headroom(changed):
+    from workout_generator_pkg.training_history import compact_training_evidence
+    from workout_generator_pkg.plan_review import _compact_evidence
+    equipment, _, _, backup = history_case()
+    record = backup['SetHistories'][0]
+    if changed == 'equipment':
+        record.update(equipmentIdSnapshot='historical-vest', equipmentNameSnapshot='Old vest', equipmentTypeSnapshot='WEIGHTVEST')
+        record['setData']['additionalWeight'] = 18
+    else:
+        record['setData']['bodyWeightPercentageSnapshot'] = 100
+    history = TrainingHistory(backup)
+    item = history.evidence({'definition_ids': ['LIBRARY_0']}, equipment)['exercises'][0]
+    assert not item['sessions'] and item['totalSessions'] == 0 and item['otherSetupSessionCount'] == 1
+    assert item['loadHeadroom']['latestSessionHeaviestLoadKg'] is None
+    assert any(concern['code'] == 'historical_setup_not_comparable' for concern in item['loadSuitabilityConcerns'])
+    for projected in (item, compact_training_evidence([item])['LIBRARY_0'], _compact_evidence(item)):
+        performance = projected['otherSetupSessions'][0]['performances'][0]
+        assert performance['comparisonLimitations']
+        assert performance['record']['actualReps'] == 12
+
+
+@pytest.mark.parametrize('kind,exercise_type', [('TimedDurationSetData', 'COUNTDOWN'), ('EnduranceSetData', 'COUNTUP')])
+def test_loaded_timers_keep_recorded_resistance_with_duration(kind, exercise_type):
+    from workout_generator_pkg.training_history import compact_training_evidence
+    from workout_generator_pkg.plan_review import _compact_evidence
+    equipment, _, _, backup = history_case()
+    vest = {'id': 'vest', 'type': 'WEIGHTVEST', 'name': 'Vest', 'availableWeights': [{'weight': 10}, {'weight': 20}]}
+    for store in (equipment, backup['WorkoutStore']):
+        store['equipments'] = [copy.deepcopy(vest)]
+        store['exerciseDefinitions'][0].update(exerciseType=exercise_type, equipmentId='vest', bodyWeightPercentage=None)
+    occurrence = backup['WorkoutStore']['workouts'][0]['workoutComponents'][0]
+    occurrence.update(exerciseType=exercise_type, equipmentId='vest')
+    backup['SetHistories'][0]['setData'] = {'type': kind, 'startTimer': 60000,
+        'endTimer': 0 if exercise_type == 'COUNTDOWN' else 60000, 'actualWeight': 10, 'hasBeenExecuted': True,
+        'autoStop': exercise_type == 'COUNTDOWN'}
+    item = TrainingHistory(backup).evidence({'definition_ids': ['LIBRARY_0']}, equipment)['exercises'][0]
+    assert item['loadHeadroom']['latestSessionHeaviestLoadKg'] == 10
+    for projected in (item, compact_training_evidence([item])['LIBRARY_0'], _compact_evidence(item)):
+        record = projected['sessions'][0]['performances'][0]['record']
+        assert record['actualDurationSeconds'] == 60 and record['loadKg'] == 10
+        assert record['configuredDurationSeconds'] == 60 and record['timerAutoStop'] == (exercise_type == 'COUNTDOWN')
+        assert record['loadMeaning'] == 'app_total_external_load'
+
+
+def test_running_evidence_uses_measured_results_once_and_omits_routes():
+    equipment, _, _, backup = history_case()
+    for store in (equipment, backup['WorkoutStore']):
+        store['exerciseDefinitions'][0].update(exerciseType='RUNNING', bodyWeightPercentage=None)
+    backup['WorkoutStore']['workouts'][0]['workoutComponents'][0]['exerciseType'] = 'RUNNING'
+    backup['SetHistories'][0]['setData'] = {'type': 'RunningSetData', 'hasBeenExecuted': True}
+    duplicate = copy.deepcopy(backup['SetHistories'][0])
+    duplicate['id'] = 'duplicate-running-row'
+    backup['SetHistories'].append(duplicate)
+    backup['WorkoutHistories'][0]['runningResults'] = [{'exerciseId': 'occurrence', 'elapsedTimeMillis': 300000,
+        'distanceMeters': 1000, 'averagePaceSecondsPerKilometer': 300, 'averageHeartRateBpm': 150,
+        'minHeartRateBpm': None, 'maxHeartRateBpm': 170, 'route': [{'latitude': 45, 'longitude': 9}]}]
+    item = TrainingHistory(backup).evidence({'definition_ids': ['LIBRARY_0']}, equipment)['exercises'][0]
+    performances = item['sessions'][0]['performances']
+    assert len(performances) == 1
+    record = performances[0]['record']
+    assert record['actualDurationSeconds'] == 300 and record['distanceMeters'] == 1000
+    assert record['averagePaceSecondsPerKilometer'] == 300 and record['averageHeartRateBpm'] == 150
+    assert 'latitude' not in json.dumps(item) and 'route' not in json.dumps(item)
+    assert item['loadHeadroom']['loadMeaning'] == 'not_applicable'
+
+
+def test_shared_recorded_context_survives_reprojection_for_session_workers():
+    from workout_generator_pkg.training_history import pool_execution_contexts
+    equipment = {'name': 'Recorded vest', 'type': 'WEIGHTVEST', 'source': 'set_snapshot',
+                 'loadConvention': 'app_total'}
+    execution = {'type': 'superset', 'members': [{'name': 'Long recorded exercise name', 'restAfterSeconds': 90}] * 6}
+    catalog = {'LIBRARY_0': {'sessions': [{'performances': [
+        {'equipmentContext': equipment, 'executionContext': execution, 'record': {'loadKg': 10}} for _ in range(5)]}]}}
+    first, contexts = pool_execution_contexts(catalog)
+    assert 'equipmentContextRef' in first['LIBRARY_0']['sessions'][0]['performances'][0]
+    second, forwarded = pool_execution_contexts(first, contexts)
+    for performance in second['LIBRARY_0']['sessions'][0]['performances']:
+        assert forwarded[performance['equipmentContextRef']] == equipment
+        assert forwarded[performance['executionContextRef']] == execution
+    with pytest.raises(ValueError, match='no supplied context'):
+        pool_execution_contexts(first)
+
+
+@pytest.mark.parametrize('with_sequence', [False, True])
+def test_history_set_order_is_numeric_and_prefers_recorded_execution_sequence(with_sequence):
+    from workout_generator_pkg.training_history import compact_training_evidence
+    from workout_generator_pkg.plan_review import _compact_evidence
+    equipment, _, _, backup = history_case()
+    source = backup['SetHistories'][0]
+    backup['SetHistories'] = []
+    for order in (10, 2):
+        row = copy.deepcopy(source)
+        row.update(id=f'set-{order}', order=order)
+        if with_sequence:
+            row['executionSequence'] = 1 if order == 10 else 2
+        row['setData']['actualReps'] = order
+        backup['SetHistories'].append(row)
+    item = TrainingHistory(backup).evidence({'definition_ids': ['LIBRARY_0']}, equipment)['exercises'][0]
+    expected = [10, 2] if with_sequence else [2, 10]
+    for projected in (item, compact_training_evidence([item])['LIBRARY_0'], _compact_evidence(item)):
+        performances = projected['sessions'][0]['performances']
+        assert [p['record']['actualReps'] for p in performances] == expected
+        if with_sequence:
+            assert [p['executionSequence'] for p in performances] == [1, 2]
+
+
+def test_changed_occurrence_accessories_are_not_exact_current_load_evidence():
+    from workout_generator_pkg.training_history import compact_training_evidence
+    from workout_generator_pkg.plan_review import _compact_evidence
+    equipment, _, _, backup = history_case()
+    equipment['accessoryEquipments'] = [{'id': 'current-rings', 'name': 'Current rings'}]
+    equipment['exerciseDefinitions'][0]['requiredAccessoryEquipmentIds'] = ['current-rings']
+    backup['WorkoutStore']['exerciseDefinitions'] = copy.deepcopy(equipment['exerciseDefinitions'])
+    backup['WorkoutStore']['accessoryEquipments'] = [{'id': 'old-handles', 'name': 'Recorded handles'}]
+    backup['WorkoutStore']['workouts'][0]['workoutComponents'][0]['requiredAccessoryEquipmentIds'] = ['old-handles']
+    item = TrainingHistory(backup).evidence({'definition_ids': ['LIBRARY_0']}, equipment)['exercises'][0]
+    assert item['loadHeadroom']['latestSessionHeaviestLoadKg'] is None
+    assert item['otherSetupSessionCount'] == 1
+    for projected in (item, compact_training_evidence([item])['LIBRARY_0'], _compact_evidence(item)):
+        assert projected['candidateContext']['requiredAccessoryNames'] == ['Current rings']
+        performance = projected['otherSetupSessions'][0]['performances'][0]
+        assert performance['requiredAccessoryNames'] == ['Recorded handles']
+        assert performance['comparisonLimitations'] == ['required_accessories_changed']
+    assert 'requiredAccessoryEquipmentIds' not in compact_training_evidence([item])['LIBRARY_0']['otherSetupSessions'][0]['performances'][0]
+
+
 def test_app_effort_fields_survive_tool_retrieval_without_conflation():
     equipment, _, _, backup = history_case()
     data = backup['SetHistories'][0]['setData']
@@ -568,6 +810,8 @@ def test_numerical_and_history_errors_are_returned_together_without_review(monke
     equipment, stored, draft, backup = history_case()
     history = TrainingHistory(backup)
     draft['workouts'][0]['exercises'][0]['numWorkSets'] = 1
+    # Isolate error aggregation; automatic numerical repair has separate coverage.
+    monkeypatch.setattr('workout_generator_pkg.interactive_shell.auto_allocate_workout', lambda result, *a, **k: result)
     monkeypatch.setattr('workout_generator_pkg.plan_review.chat_call', lambda *a, **k: pytest.fail('Invalid draft must not invoke reviewer'))
     result = handle_function_call(None, requirement_messages(stored), 'audit_workout_plan', draft,
                                   provided_equipment=equipment, training_history=history)

@@ -10,6 +10,7 @@ def parallel_proposals(jobs, on_result=None):
     cancelled = threading.Event()
     pool = ThreadPoolExecutor(max_workers=min(3, len(jobs))) if jobs else None
     results = {}
+    failures = []
     try:
         pending = {pool.submit(copy_context().run, run_cancellable, function,
                                cancel_event=cancelled): key for key, function in jobs}
@@ -18,9 +19,15 @@ def parallel_proposals(jobs, on_result=None):
             done, _ = wait(pending, timeout=0.1, return_when=FIRST_COMPLETED)
             for future in done:
                 key = pending.pop(future)
-                results[key] = future.result()
+                try:
+                    results[key] = future.result()
+                except Exception as error:
+                    failures.append(error)
+                    continue
                 if on_result:
                     on_result(key, results[key])
+        if failures:
+            raise failures[0]
         return {key: results[key] for key, _ in jobs}
     finally:
         cancelled.set()

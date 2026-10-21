@@ -473,6 +473,10 @@ class ConversationLogger:
         self._closed = False
         self._lock = threading.Lock()
 
+    @property
+    def log_filepath(self):
+        return self._path
+
     def _timestamp(self):
         return datetime.now().strftime("[%Y-%m-%d %H:%M:%S] ")
 
@@ -980,15 +984,22 @@ def _materialize_exercise_definition(exercise_entry):
             if not isinstance(prescriptions, list) or len(prescriptions) != count:
                 raise ValueError(f"Deterministic exercise materialization for {exercise_id} requires one targetSetPrescriptions entry per work set.")
             prescriptions = sorted(prescriptions, key=lambda item: item.get("workSetIndex", -1) if isinstance(item, dict) else -1)
+            missing_loads = [isinstance(target, dict) and load_field not in target for target in prescriptions]
+            supports_load_calibration = exercise_type == "WEIGHT" or (
+                exercise_type == "BODY_WEIGHT" and exercise_entry.get("equipmentId") is not None
+            )
+            if any(missing_loads) and (not all(missing_loads) or not supports_load_calibration
+                    or exercise_entry.get("requiresLoadCalibration") is not True):
+                raise ValueError(f"Deterministic exercise materialization for {exercise_id} may omit every target load only when native requiresLoadCalibration is enabled.")
             for index, target in enumerate(prescriptions):
                 load = target.get(load_field) if isinstance(target, dict) else None
                 reps = target.get("reps") if isinstance(target, dict) else None
                 if (not isinstance(target, dict) or set(target) - {"workSetIndex", "reps", load_field}
                         or target.get("workSetIndex") != index
                         or not isinstance(reps, int) or isinstance(reps, bool) or not min_reps <= reps <= max_reps
-                        or not isinstance(load, (int, float)) or isinstance(load, bool) or load < 0):
+                        or (load_field in target and (not isinstance(load, (int, float)) or isinstance(load, bool) or load < 0))):
                     raise ValueError(f"Deterministic exercise materialization for {exercise_id} has an invalid exact target at work set {index}.")
-                append_work_set({"type": "WeightSet" if exercise_type == "WEIGHT" else "BodyWeightSet", "reps": reps, load_field: load, "subCategory": "WorkSet"})
+                append_work_set({"type": "WeightSet" if exercise_type == "WEIGHT" else "BodyWeightSet", "reps": reps, load_field: 0 if load is None else load, "subCategory": "WorkSet"})
                 if index < count - 1:
                     append_rest_set()
         else:
@@ -1045,10 +1056,10 @@ def _materialize_exercise_definition(exercise_entry):
         progression_mode = exercise_entry["progressionMode"]
     else:
         progression_mode = "AUTO_REGULATION" if exercise_type in {"WEIGHT", "BODY_WEIGHT"} else "OFF"
+    supports_load_calibration = exercise_type == "WEIGHT" or (
+        exercise_type == "BODY_WEIGHT" and exercise_entry.get("equipmentId") is not None
+    )
     notes = exercise_entry.get("notes", "")
-    if exercise_type in {"WEIGHT", "BODY_WEIGHT"} and not exercise_entry.get("targetSetPrescriptions"):
-        calibration_note = "Uncalibrated start: use the lower bound of the approved rep range and calibrate resistance before progressing."
-        notes = f"{notes} {calibration_note}".strip()
     item = {
         "id": exercise_id,
         "type": "Exercise",
@@ -1068,7 +1079,9 @@ def _materialize_exercise_definition(exercise_entry):
         "muscleGroups": copy.deepcopy(exercise_entry["muscleGroups"]),
         "secondaryMuscleGroups": copy.deepcopy(exercise_entry["secondaryMuscleGroups"]),
         "requiredAccessoryEquipmentIds": copy.deepcopy(exercise_entry["requiredAccessoryEquipmentIds"]),
-        "requiresLoadCalibration": exercise_type in {"WEIGHT", "BODY_WEIGHT"} and not exercise_entry.get("targetSetPrescriptions"),
+        "requiresLoadCalibration": supports_load_calibration and (
+            exercise_entry.get("requiresLoadCalibration") is True or not exercise_entry.get("targetSetPrescriptions")
+        ),
         "exerciseCategory": exercise_entry["exerciseCategory"],
     }
     if exercise_type == "RUNNING":
@@ -1165,13 +1178,17 @@ def emit_exercise_definition(
             f"- Copy targetSetPrescriptions exactly into the emitted work sets using `{load_field}` and `reps`.\n"
             "- Emit exactly one work set per targetSetPrescriptions item in workSetIndex order.\n"
         )
+        if all(isinstance(target, dict) and load_field not in target for target in exercise_entry["targetSetPrescriptions"]):
+            exact_load_instruction += (
+                f"- These targets omit `{load_field}` intentionally: preserve their reps, use 0 only as the app-required persisted set placeholder, and preserve requiresLoadCalibration=true so the app's native calibration mode supplies the actual load.\n"
+            )
 
     calibration_instruction = (
-        "The generator, not the model, decides requiresLoadCalibration in educated-guess mode. "
-        "Only complete targetSetPrescriptions carrying user-provided loads can bypass calibration. "
-        "Educated starting-load guesses remain provisional and require calibration.\n"
+        "The approved plan owns requiresLoadCalibration; copy it exactly and never infer or change it from emitted load values. "
+        "Without comparable usable load history, Python sets it true for WEIGHT and equipped BODY_WEIGHT exercises, even when a provisional load is present. "
+        "The app runs its existing calibration mode; do not add separate trial sets or rests.\n"
         if allow_educated_load_guesses
-        else "Set requiresLoadCalibration to true for WEIGHT exercises and BODY_WEIGHT exercises with equipmentId; otherwise false.\n"
+        else "Copy the approved plan's requiresLoadCalibration value exactly. The strict generator policy may require it for every loaded exercise.\n"
     )
 
     base_user_content = (

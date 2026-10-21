@@ -1,7 +1,7 @@
 import pytest
 
 from workout_generator_pkg import cli
-from workout_generator_pkg.plan_contract import validate_single_exercise_definition_contract, validate_workout_structures_contract
+from workout_generator_pkg.plan_contract import ContractValidationError, validate_single_exercise_definition_contract, validate_workout_structures_contract
 
 
 def _plan_entry(exercise_type, **overrides):
@@ -67,6 +67,50 @@ def test_deterministic_uncalibrated_load_uses_explicit_calibration_placeholder(m
     assert [s["reps"] for s in work_sets] == [8, 8]
     assert result["requiresLoadCalibration"] is True
     assert result["progressionMode"] == "AUTO_REGULATION"
+
+
+@pytest.mark.parametrize("exercise_type,load_field", [("WEIGHT", "weight"), ("BODY_WEIGHT", "additionalWeight")])
+def test_deterministic_reps_only_targets_keep_reps_and_use_native_calibration_placeholder(monkeypatch, exercise_type, load_field):
+    entry = _plan_entry(exercise_type, requiresLoadCalibration=True, targetSetPrescriptions=[
+        {"workSetIndex": 0, "reps": 10},
+        {"workSetIndex": 1, "reps": 9},
+    ])
+
+    result = _emit(monkeypatch, entry)
+
+    work_sets = [item for item in result["sets"] if item["type"] != "RestSet"]
+    assert [(item["reps"], item[load_field]) for item in work_sets] == [(10, 0), (9, 0)]
+    assert result["requiresLoadCalibration"] is True
+
+
+def test_deterministic_materialization_rejects_reps_only_targets_without_native_calibration(monkeypatch):
+    entry = _plan_entry("WEIGHT", targetSetPrescriptions=[
+        {"workSetIndex": 0, "reps": 10},
+        {"workSetIndex": 1, "reps": 9},
+    ])
+    with pytest.raises(ValueError, match="only when native requiresLoadCalibration is enabled"):
+        _emit(monkeypatch, entry)
+
+
+def test_emitted_reps_only_target_must_preserve_native_calibration_flag(monkeypatch):
+    entry = _plan_entry("WEIGHT", requiresLoadCalibration=True, targetSetPrescriptions=[
+        {"workSetIndex": 0, "reps": 10},
+        {"workSetIndex": 1, "reps": 9},
+    ])
+    emitted = _emit(monkeypatch, entry)
+    emitted["requiresLoadCalibration"] = False
+
+    with pytest.raises(ContractValidationError, match="requiresLoadCalibration must preserve the plan value"):
+        validate_single_exercise_definition_contract(entry, emitted)
+
+
+def test_deterministic_materialization_rejects_native_calibration_for_unloaded_bodyweight_variant(monkeypatch):
+    entry = _plan_entry("BODY_WEIGHT", equipmentId=None, requiresLoadCalibration=True, targetSetPrescriptions=[
+        {"workSetIndex": 0, "reps": 10},
+        {"workSetIndex": 1, "reps": 9},
+    ])
+    with pytest.raises(ValueError, match="only when native requiresLoadCalibration is enabled"):
+        _emit(monkeypatch, entry)
 
 
 @pytest.mark.parametrize(

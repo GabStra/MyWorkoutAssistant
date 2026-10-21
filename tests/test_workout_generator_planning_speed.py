@@ -51,6 +51,31 @@ def test_automatic_allocator_is_cached_and_reviews_only_a_complete_passing_patch
     assert len(solves) == 1 and len(reviews) == int(feasible)
 
 
+def test_after_preview_allocation_proposes_tradeoffs_without_undoing_the_edit():
+    equipment, _, stored, draft = planning_case()
+    messages = requirement_messages(stored)
+    approved = audit_workout_plan(draft, equipment, messages)
+    _tool(messages, 'audit_workout_plan', draft, approved, 'approved')
+    messages.append({'role': 'assistant', 'content': approved['preview'], 'canonicalDraftPreview': approved['draftId']})
+    patch = {'requirementsId': stored['requirementsId'], 'baseDraftId': approved['currentDraftId'], 'patch': [
+        {'op': 'replace', 'path': '/workouts/0/exercises/0/numWorkSets', 'value': 3},
+        {'op': 'add', 'path': '/workouts/0/exercises/0/allocationBounds', 'value': {'minimum': 1, 'maximum': 6}}]}
+    rejected = audit_workout_plan(patch, equipment, messages)
+    before = copy.deepcopy(rejected)
+    result = allocation.auto_allocate_workout(rejected, equipment, messages)
+    assert not result['passed'] and result['errors'] == before['errors']
+    assert result['submittedDraft'] == before['submittedDraft']
+    assert result['submittedDraft']['workouts'][0]['exercises'][0]['numWorkSets'] == 3
+    proposal = result['automaticAllocation']
+    assert proposal['application'] == 'proposal' and proposal['feasible']
+    assert proposal['patch'] == [{'op': 'replace', 'path': '/workouts/0/exercises/0/numWorkSets', 'value': 5}]
+    assert rejected == before
+    _tool(messages, 'audit_workout_plan', patch, result, 'proposal')
+    accepted = audit_workout_plan({'requirementsId': stored['requirementsId'],
+        'baseDraftId': result['currentDraftId'], 'patch': proposal['patch']}, equipment, messages)
+    assert accepted['passed'] and accepted['submittedDraft']['workouts'][0]['exercises'][0]['numWorkSets'] == 5
+
+
 def test_automatic_allocation_does_not_invent_bounds_or_change_exact_prescriptions(monkeypatch):
     equipment, _, stored, draft = planning_case()
     item = draft['workouts'][0]['exercises'][0]
@@ -210,17 +235,17 @@ def test_empty_filtered_searches_are_remembered_but_invalidated_by_library_chang
     draft['workouts'][0]['exercises'][0]['numWorkSets'] = 3
     messages = requirement_messages(stored)
     _tool(messages, 'audit_workout_plan', draft, audit_workout_plan(draft, equipment, messages), 'draft')
-    for key, query in [('first', 'leg extension'), ('synonym', 'quadriceps isolation')]:
-        args = {'queries': [query], 'muscleTargets': ['quads'], 'exerciseCategories': ['ISOLATION']}
+    for key, query in [('first', 'chest fly'), ('synonym', 'chest isolation')]:
+        args = {'queries': [query], 'muscleTargets': ['chest'], 'exerciseCategories': ['ISOLATION']}
         result = execute_library_tool('search_exercise_library', args, equipment, messages=messages)
         _tool(messages, 'search_exercise_library', args, result, key)
     state = _state(shell._messages_for_api(messages, True, provided_equipment=equipment))
     assert len(state['completedSearches']) == 1 and state['discoveryPaused']
-    assert state['completedSearches'][0]['queries'] == ['leg extension', 'quadriceps isolation']
+    assert state['completedSearches'][0]['queries'] == ['chest fly', 'chest isolation']
     assert all(item['matchMethod'] == 'no_suitable_matches' and item['definition_ids'] == []
-               and item['searchFilters']['muscleTargets'] == ['quads'] for item in state['completedSearches'])
+               and item['searchFilters']['muscleTargets'] == ['chest'] for item in state['completedSearches'])
     equipment['exerciseDefinitions'].append({**copy.deepcopy(equipment['exerciseDefinitions'][0]),
-        'id': 'quad', 'name': 'Leg Extension', 'muscleGroups': ['FRONT_QUADRICEPS'], 'exerciseCategory': 'ISOLATION'})
+        'id': 'chest-isolation', 'name': 'Dumbbell Fly', 'muscleGroups': ['FRONT_CHEST'], 'exerciseCategory': 'ISOLATION'})
     state = _state(shell._messages_for_api(messages, True, provided_equipment=equipment))
     assert not state.get('completedSearches') and not state.get('discoveryPaused')
 
@@ -236,6 +261,34 @@ def test_discovery_progress_is_measured_per_batch_and_novel_results_remain_avail
     state = {}
     _focus_discovery(state, {1: facts, 2: facts}, 2)
     assert not state.get('discoveryPaused')
+
+
+def test_conversational_edit_can_allocate_sets_without_a_failed_audit(monkeypatch, tmp_path):
+    from test_workout_generator_conversation_sessions import make_shell_deps, FakeToolCall, FakeFunction
+    equipment, requirements, _, draft = planning_case()
+    path = tmp_path / 'library.json'
+    path.write_text(json.dumps(equipment), encoding='utf-8')
+    def tool(name, args, key):
+        return (None, [FakeToolCall(key, 'function', FakeFunction(name, json.dumps(args)))])
+    deps = make_shell_deps(tmp_path, chat_results=[
+        tool('set_workout_requirements', requirements, 'requirements'),
+        tool('audit_workout_plan', draft, 'draft'),
+        ('I can redistribute the requested working sets.', None)], generation_results=[], generation_calls=[])
+    requests = []
+    chat = deps.chat_call_with_loading
+    def capture(client, messages, tools, logger, **options):
+        state = _state(messages) if any((m.get('content') or '').startswith('Current planning state') for m in messages) else {}
+        requests.append((state, [t['function']['name'] for t in tools if 'function' in t]))
+        return chat(client, messages, tools, logger, **options)
+    deps.chat_call_with_loading = capture
+    monkeypatch.setattr('sys.argv', ['workout_generator.py', '--exercise-library-file', str(path)])
+    monkeypatch.setenv('DEEPSEEK_API_KEY', 'test-key')
+    inputs = iter(['Plan chest training', 'CONFIRM REQUIREMENTS', 'Redistribute sets to reduce concentrated fatigue.', '/exit'])
+    monkeypatch.setattr('builtins.input', lambda prompt='': next(inputs))
+    shell.main(deps=deps)
+    state, tools = requests[-1]
+    assert state.get('editTask') and not state.get('repairTask')
+    assert 'allocate_workout_sets' in tools
 
 
 @pytest.mark.parametrize('batched', [False, True])
@@ -277,6 +330,6 @@ def test_shell_withholds_redundant_discovery_and_rejects_unadvertised_repeated_c
     assert 'search_exercise_library' not in requests[4]
     assert 'get_exercise_candidates' not in requests[4]
     assert 'audit_workout_plan' in requests[4]
-    assert 'allocate_workout_sets' not in requests[4]
+    assert 'allocate_workout_sets' in requests[4]
     assert executed.count('search_exercise_library') == 2
     assert 'get_exercise_candidates' not in executed

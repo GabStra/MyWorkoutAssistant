@@ -6,16 +6,21 @@ import copy
 import math
 import json
 
-from scipy.optimize import Bounds, LinearConstraint, milp
+from scipy.optimize import Bounds, LinearConstraint, linprog, milp
 from scipy.sparse import lil_matrix
 
-from .generation_audit import audit_workout_package, plan_audit_package
+from .generation_audit import ASSUMPTIONS, audit_workout_package, plan_audit_package
+from .programming_guidelines import normalize_work_set_bounds
 from .planning_tools import (
     _latest_result,
+    _fingerprint,
     _DRAFT_SCHEMA,
+    PlanningInputError,
     _audit_coverage,
     build_draft_plan,
+    draft_coverage_assignments,
     latest_draft_submission,
+    library_fingerprint,
     require_approved_requirements,
     audit_workout_plan,
     validate,
@@ -26,19 +31,34 @@ from .restriction_policy import effective_restrictions
 _MAX_SETS = 20
 _TOLERANCE = 1e-7
 
+
+def latest_allocation_conflict(messages):
+    """Return the newest proven count conflict, skipping later rejected calls."""
+    calls = {call.get('id'): call.get('function', {}).get('name')
+             for message in messages for call in message.get('tool_calls', [])}
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if message.get('role') != 'tool' or calls.get(message.get('tool_call_id')) != 'allocate_workout_sets':
+            continue
+        try:
+            payload = json.loads(message.get('content') or '{}')
+        except (ValueError, TypeError):
+            continue
+        conflict = payload.get('allocationConflict') if isinstance(payload, dict) else None
+        if isinstance(conflict, dict) and conflict.get('status') == 'infeasible':
+            return index, payload
+    return -1, {}
+
 ALLOCATE_WORKOUT_SETS_TOOL = {"type": "function", "function": {
     "name": "allocate_workout_sets",
-    "description": "Use only after the numerical audit reports set-volume or duration findings. Supply allowed integer set-count bounds for existing SLOT_n exercise occurrences; omitted slots stay fixed. If no allocation satisfies the supplied bounds, inspect allocationDiagnostics: it identifies omitted slots that could affect violated targets. A bounds-limited infeasibility does not prove the whole draft impossible. Ask the model to provide coordinated explicit bounds for relevant movable slots, preserving user limits and exact prescriptions; never widen bounds silently. The tool proposes only a numWorkSets JSON patch, checks the exact audit, and never changes movements, loads, requirements or approval. Apply a returned patch to currentDraftId, then audit the complete draft and obtain independent review and fresh confirmation.",
+    "description": "Propose coordinated set-count changes for the current draft. Use preferredSetsBySlot only for soft workload preferences. Python derives hard limits exclusively from approved workSets execution rules and preserves exact prescriptions; no model bounds may restrict other movable slots. Inspect the proposal and coverage totals, apply a permitted patch, re-audit and independently review. Fresh confirmation is required before export.",
     "parameters": {"type": "object", "properties": {
         "requirementsId": {"type": "string"},
         "baseDraftId": {"type": "string"},
-        "boundsBySlot": {"type": "object", "description": "Allowed count ranges keyed by SLOT_n occurrence references from the current planning state. Omitted slots remain at their current count.",
-            "patternProperties": {"^SLOT_[0-9]+$": {"type": "object", "properties": {
-                "minimum": {"type": "integer", "minimum": 1, "maximum": 20},
-                "maximum": {"type": "integer", "minimum": 1, "maximum": 20},
-            }, "required": ["minimum", "maximum"], "additionalProperties": False}},
-            "additionalProperties": False},
-    }, "required": ["requirementsId", "baseDraftId", "boundsBySlot"], "additionalProperties": False},
+        "reallocateAcrossSessions": {"type": "boolean", "description": "For distribution repairs requiring movement relocation: jointly reselect/place existing validated recipes across sessions and balance set concentration. Do not combine with SLOT_n preferences, whose identities change. This remains an unapplied proposal; combine with all other assessed repairs."},
+        "preferredSetsBySlot": {"type": "object", "description": "Optional soft desired counts keyed by existing SLOT_n references; omitted preferences favor current counts. Approved constraints always win.",
+            "patternProperties": {"^SLOT_[0-9]+$": {"type": "integer", "minimum": 1, "maximum": 20}}, "additionalProperties": False},
+    }, "required": ["requirementsId", "baseDraftId"], "additionalProperties": False},
 }}
 
 
@@ -59,9 +79,30 @@ def allocation_slots(draft):
     return result
 
 
+def allocation_input_fingerprint(draft, requirements_id, equipment, *, history_fingerprint=None,
+                                 resolved_decisions=None, allow_educated_load_guesses=True, requirements=None):
+    """Bind an allocation result to its draft, approved requirements, and library."""
+    source = copy.deepcopy(draft or {})
+    if requirements:
+        source = normalize_work_set_bounds(source, equipment, requirements)
+    workouts = source.get('workouts', [])
+    for workout in workouts:
+        for field in ('name', 'description', 'reference'):
+            workout.pop(field, None)
+        for exercise in workout.get('exercises', []):
+            for field in ('placementNotes', 'reference', 'numWorkSets'):
+                exercise.pop(field, None)
+    return _fingerprint({'requirementsId': requirements_id,
+        'libraryFingerprint': library_fingerprint(equipment),
+        'historyFingerprint': history_fingerprint,
+        'resolvedDecisions': resolved_decisions or {},
+        'allowEducatedLoadGuesses': bool(allow_educated_load_guesses),
+        'workouts': workouts})
+
+
 def _failure(reason, **details):
     return {"feasible": False, "reason": reason, **details,
-            "instruction": "Keep the current draft unchanged. Resolve the stated conflict or revise the allowed set bounds, then audit again."}
+            "instruction": "Keep the current draft unchanged. Resolve the stated conflict or revise source-authorized set bounds, preserving approved targets and restrictions, then audit again."}
 
 
 def _feature_values(report):
@@ -77,7 +118,8 @@ def _feature_values(report):
 
 def _audit_raw(draft, equipment, requirements, restriction_policy, allow_educated_load_guesses):
     plan = build_draft_plan(draft, equipment, requirements, restriction_policy)
-    report = audit_workout_package(plan_audit_package(plan, allow_educated_load_guesses), requirements["auditTargets"])
+    report = audit_workout_package(plan_audit_package(plan, allow_educated_load_guesses), requirements["auditTargets"],
+                                  coverage_by_exercise=draft_coverage_assignments(plan, draft))
     _audit_coverage(draft, requirements, report)
     return plan, report
 
@@ -110,6 +152,9 @@ def _variables(draft, bounds_by_slot):
             lower, upper = requested["minimum"], requested["maximum"]
             if not 1 <= lower <= upper <= _MAX_SETS:
                 raise ValueError(f"Bounds for {slot['slotId']} must be within 1–{_MAX_SETS} sets.")
+            declared = slot.get('allocationBounds')
+            if declared and not declared['minimum'] <= lower <= upper <= declared['maximum']:
+                raise ValueError(f"Bounds for {slot['slotId']} exceed its declared allocationBounds. Explicitly revise that field within source constraints and audit before requesting a wider allocation.")
         prescribed = exercise.get("targetSetPrescriptions") or []
         if prescribed:
             prescribed_count = len(prescribed)
@@ -168,57 +213,96 @@ def _constraints(report, requirements, frequency_complete, draft_frequency):
     return rows
 
 
-def _milp_solve(variables, features, timeout_seconds=5):
+def _milp_solve(variables, features, timeout_seconds=None, balance=False, preserve_current=True):
     count = len(variables)
     if not count:
         return "optimal", []
     # Use one integer set-count variable and one deviation variable per exercise occurrence.
     occurrence_count = sum(len(variable["members"]) for variable in variables)
-    objective = [0.0] * count + [1.0] * occurrence_count
+    objective = [variable.get('objectiveCost', 0.0) for variable in variables] + [1.0 if preserve_current else 0.0] * occurrence_count
     lower = [variable["lower"] for variable in variables] + [0.0] * occurrence_count
     upper = [variable["upper"] for variable in variables] + [math.inf] * occurrence_count
     integrality = [1] * count + [0] * occurrence_count
+    if balance:
+        # Initial counts are seeds, not prescriptions: minimize concentration before distance from those seeds.
+        epsilon = 1 / (1 + sum(max(abs(v['lower'] - current), abs(v['upper'] - current))
+                               for v in variables for current in v['current']))
+        objective = [0.0] * count + [epsilon] * occurrence_count + [len(v['members']) for v in variables]
+        lower += [v['lower'] ** 2 for v in variables]
+        upper += [v['upper'] ** 2 for v in variables]
+        integrality += [0] * count
+    activations = {}
+    for index, variable in enumerate(variables):
+        if variable.get('minimumWhenSelected', 1) > 1 or variable.get('selectionCost'):
+            activations[index] = len(objective)
+            objective.append(variable.get('selectionCost', 0.0))
+            lower.append(0)
+            upper.append(1)
+            integrality.append(1)
+    size = len(objective)
     rows = []
     lows = []
     highs = []
     for feature, minimum, maximum, intercept, coefficients in features:
-        rows.append([*coefficients, *([0.0] * occurrence_count)])
+        rows.append(dict(coefficients) if isinstance(coefficients, dict) else dict(enumerate(coefficients)))
         lows.append(minimum - intercept)
         highs.append(maximum - intercept)
+    for index, activation in activations.items():
+        for limit, low, high in ((variables[index].get('minimumWhenSelected', 1), 0, math.inf),
+                                 (variables[index]['upper'], -math.inf, 0)):
+            row = {index: 1, activation: -limit}
+            rows.append(row)
+            lows.append(low)
+            highs.append(high)
     dev_index = count
     for variable_index, variable in enumerate(variables):
         for current in variable["current"]:
-            positive = [0.0] * (count + occurrence_count)
-            positive[variable_index] = 1
-            positive[dev_index] = -1
+            positive = {variable_index: 1, dev_index: -1}
             rows.append(positive)
             lows.append(-math.inf)
             highs.append(current)
-            negative = [0.0] * (count + occurrence_count)
-            negative[variable_index] = -1
-            negative[dev_index] = -1
+            negative = {variable_index: -1, dev_index: -1}
             rows.append(negative)
             lows.append(-math.inf)
             highs.append(-current)
             dev_index += 1
-    matrix = lil_matrix((len(rows), count + occurrence_count), dtype=float)
+    if balance:
+        for index, variable in enumerate(variables):
+            for step in range(variable['lower'], variable['upper']):
+                row = {index: 2 * step + 1, count + occurrence_count + index: -1}
+                rows.append(row)
+                lows.append(-math.inf)
+                highs.append(step * (step + 1))
+    matrix = lil_matrix((len(rows), size), dtype=float)
     for row_index, row in enumerate(rows):
-        for column, value in enumerate(row):
+        for column, value in row.items():
             if value:
                 matrix[row_index, column] = value
+    options = {"mip_rel_gap": 0.0} if balance else {}
+    if timeout_seconds is not None:
+        options['time_limit'] = timeout_seconds
     result = milp(objective, integrality=integrality, bounds=Bounds(lower, upper),
-                  constraints=LinearConstraint(matrix.tocsr(), lows, highs),
-                  options={"time_limit": timeout_seconds})
+                  constraints=LinearConstraint(matrix.tocsr(), lows, highs), options=options)
     if result.status == 2:
         return "infeasible", None
-    if result.x is None or result.status != 0:
+    if result.x is None or result.status not in (0, 1):
         return "unproven", None
-    return "optimal", [int(round(value)) for value in result.x[:count]]
+    values = result.x[:count]
+    if any(not math.isfinite(value) or abs(value - round(value)) > _TOLERANCE for value in values):
+        return 'unproven', None
+    counts = [int(round(value)) for value in values]
+    if any(not variable['lower'] <= value <= variable['upper']
+           or (value and value < variable.get('minimumWhenSelected', variable['lower']))
+           for variable, value in zip(variables, counts)):
+        return 'unproven', None
+    if any(not minimum - _TOLERANCE <= intercept + sum(coeff * counts[index] for index, coeff in
+           (coefficients.items() if isinstance(coefficients, dict) else enumerate(coefficients))) <= maximum + _TOLERANCE
+           for _, minimum, maximum, intercept, coefficients in features):
+        return 'unproven', None
+    return 'optimal' if result.status == 0 else 'feasible', counts
 
 
 def _check_solution(candidate, plan, report, requirements, frequency_complete):
-    if any(error["code"] == "missing_training_muscle_roles" for error in report["errors"]):
-        return "The audit cannot verify one or more targeted muscle credits from the loaded library."
     targets = requirements["auditTargets"]
     feature_values = _feature_values(report)
     for index, workout in enumerate(report["workouts"]):
@@ -246,75 +330,221 @@ def _check_solution(candidate, plan, report, requirements, frequency_complete):
     return None
 
 
+def _conflicting_targets(variables, features):
+    """Explain coupled bound failures; the integer solver and final audit remain authoritative."""
+    bounds = [(item['lower'], item['upper']) for item in variables]
+    def solve(selected, objective=None):
+        rows, limits = [], []
+        for _, minimum, maximum, intercept, coefficients in selected:
+            if math.isfinite(maximum):
+                rows.append(coefficients)
+                limits.append(maximum - intercept)
+            if math.isfinite(minimum):
+                rows.append([-value for value in coefficients])
+                limits.append(intercept - minimum)
+        return linprog(objective if objective is not None else [0.0] * len(variables),
+                       A_ub=rows or None, b_ub=limits or None, bounds=bounds, method='highs')
+    def infeasible(selected):
+        return solve(selected).status == 2
+    if not infeasible(features):
+        return []  # A continuous relaxation cannot explain an integer-only conflict.
+    ranges = {id(item): [item[3] + sum(value * variable['lower' if value >= 0 else 'upper']
+                        for value, variable in zip(item[4], variables)),
+                        item[3] + sum(value * variable['upper' if value >= 0 else 'lower']
+                        for value, variable in zip(item[4], variables))] for item in features}
+    independent = [item for item in features if ranges[id(item)][1] < item[1] - _TOLERANCE
+                   or ranges[id(item)][0] > item[2] + _TOLERANCE]
+    remaining = [item for item in features if all(item is not conflict for conflict in independent)]
+    if not remaining or not infeasible(remaining):
+        remaining = []
+    for feature in list(remaining):
+        candidate = [item for item in remaining if item is not feature]
+        if infeasible(candidate):
+            remaining = candidate
+    conflicts = []
+    for item in independent + remaining:
+        feature, minimum, maximum, intercept, coefficients = item
+        isolated = any(item is conflict for conflict in independent)
+        others = [other for other in remaining if other is not item]
+        low = solve(others, coefficients) if not isolated else None
+        high = solve(others, [-value for value in coefficients]) if not isolated else None
+        conflict = {'target': ':'.join(map(str, feature)),
+             'minimum': minimum if math.isfinite(minimum) else None,
+             'maximum': maximum if math.isfinite(maximum) else None,
+             'rangeWithinSlotBounds': ranges[id(item)],
+             'slotIds': [member['slotId'] for value, variable in zip(coefficients, variables)
+                         if value for member in variable['members']]}
+        if isolated:
+            conflict['individuallyUnreachable'] = True
+        else:
+            conflict['rangeWithOtherConflictingTargets'] = [intercept + low.fun if low.success else None,
+                                                           intercept - high.fun if high.success else None]
+        conflicts.append(conflict)
+    return conflicts
+
+
+def selection_volume_conflicts(sessions, candidates, targets):
+    """Reject only selections infeasible even under relaxed source-schema set bounds."""
+    slots = [(day_index, reference, index) for day_index, day in enumerate(sessions)
+             for index, reference in enumerate(day['definition_ids'])]
+    variables = [{'lower': 1, 'upper': _MAX_SETS,
+                  'members': [{'slotId': f'/sessions/{day}/definition_ids/{index}'}]} for day, _, index in slots]
+    features = []
+    for scope, key in (('weekly', 'weeklyEffectiveSets'), ('session', 'perSessionEffectiveSets')):
+        for muscle, bounds in targets.get(key, {}).items():
+            for day_index in (range(len(sessions)) if scope == 'session' else [None]):
+                coefficients = [sum(candidates[ref]['creditsPerWorkingSet'].get(muscle, {}).get(kind, 0)
+                                    for kind in ('direct', 'indirect'))
+                    * (sessions[day]['timesCompletedInAWeek'] if scope == 'weekly' else int(day == day_index))
+                    for day, ref, _ in slots]
+                label = (scope, muscle) if day_index is None else (scope, day_index, muscle)
+                features.append((label, bounds['minimum'], bounds['maximum'], 0, coefficients))
+    return _conflicting_targets(variables, features) if features else []
+
+
+def allocate_prepared_sets(sessions, candidates, requirements, existing=None, equipment=None, restriction_policy=None,
+                           select_movements=False):
+    """Allocate the selected week before prescriptions can lock otherwise adjustable counts."""
+    base_volume = {}
+    if existing:
+        _, report = _audit_raw(existing, equipment, requirements, restriction_policy, True)
+        base_volume = report['weeklyVolume']
+    variables, layout_errors, bounds_errors = [], [], []
+    for day_index, day in enumerate(sessions):
+        groups = {}
+        for index, item in enumerate(day['exercises']):
+            reference = item['definition_id']
+            bounds = item.get('allocationBounds') or {'minimum': item['numWorkSets'], 'maximum': item['numWorkSets']}
+            if not select_movements and not bounds['minimum'] <= item['numWorkSets'] <= bounds['maximum']:
+                path = f'/sessions/{day_index}/exercises/{index}'
+                bounds_errors.append({'code': 'prepared_count_bounds_conflict', 'path': path,
+                    'message': 'Count is outside its declared bounds.', 'permittedPaths': {
+                        'exact': [path + '/numWorkSets', path + '/allocationBounds'], 'descendants': [path + '/allocationBounds']}})
+            slot = {'day': day_index, 'index': index, 'reference': reference,
+                    'slotId': f'/sessions/{day_index}/exercises/{index}'}
+            key = ('group', item['superset']) if item['superset'] is not None and not select_movements else ('slot', index)
+            groups.setdefault(key, []).append((slot, {**item, 'allocationBounds': bounds}))
+        for key, members in groups.items():
+            lower = max(item['allocationBounds']['minimum'] for _, item in members)
+            upper = min(item['allocationBounds']['maximum'] for _, item in members)
+            indices = [slot['index'] for slot, _ in members]
+            if key[0] == 'group' and (len(indices) < 2 or indices != list(range(indices[0], indices[-1] + 1))):
+                path = f'/sessions/{day_index}/exercises'
+                layout_errors.append({
+                        'code': 'prepared_group_layout', 'path': path, 'message': f'Invalid group {key[1]!r}: {indices}.',
+                        'permittedPaths': {'exact': [path], 'descendants': [path]}})
+                continue
+            if lower > upper and not select_movements:
+                paths = [slot['slotId'] for slot, _ in members]
+                bounds_errors.append({
+                        'code': 'prepared_group_bounds', 'path': paths[0], 'message': f'Group {key[1]!r} has no common allowed count.',
+                        'permittedPaths': {'exact': [path + '/' + field for path in paths for field in ('numWorkSets', 'allocationBounds', 'superset')],
+                                           'descendants': [path + '/allocationBounds' for path in paths]}})
+                continue
+            # Penalize setup churn so optional candidates do not become many one-set exercises.
+            variables.append({'lower': 0 if select_movements else lower, 'upper': upper,
+                              **({'minimumWhenSelected': lower, 'selectionCost': ASSUMPTIONS['transitionSeconds']}
+                                 if select_movements else {}),
+                              'members': [slot for slot, _ in members],
+                              'current': [item['numWorkSets'] for _, item in members]})
+    # Layout repairs preserve prescriptions; resolve all layouts before authorizing count/bounds edits.
+    errors = layout_errors or bounds_errors
+    if errors:
+        raise PlanningInputError(errors[0]['code'], 'Prepared groups need correction.', errors[0]['path'],
+            'Repair every returned finding within its permitted paths; preserve other choices and source constraints.', errors=errors)
+    features = []
+    targets = requirements['auditTargets']
+    for scope, key in (('weekly', 'weeklyEffectiveSets'), ('session', 'perSessionEffectiveSets')):
+        for muscle, bounds in targets.get(key, {}).items():
+            for day_index in (range(len(sessions)) if scope == 'session' else [None]):
+                coefficients = [sum(sum(candidates[slot['reference']]['creditsPerWorkingSet'].get(muscle, {}).get(kind, 0)
+                                        for kind in ('direct', 'indirect')) *
+                                    (sessions[slot['day']]['timesCompletedInAWeek'] if scope == 'weekly'
+                                     else int(slot['day'] == day_index))
+                                    for slot in variable['members']) for variable in variables]
+                label = (scope, muscle) if day_index is None else (scope, day_index, muscle)
+                intercept = base_volume.get(muscle, {}).get('effective', 0) if scope == 'weekly' else 0
+                features.append((label, bounds['minimum'], bounds['maximum'], intercept, coefficients))
+    if select_movements:
+        for day_index in range(len(sessions)):
+            features.append((('session_nonempty', day_index), 1, math.inf, 0,
+                [int(v['members'][0]['day'] == day_index) for v in variables]))
+        for rule in requirements.get('requiredCoverage', []):
+            for day_index in (range(len(sessions)) if rule['scope'] == 'eachSession' else [None]):
+                intercept = sum(item['numWorkSets'] * day['timesCompletedInAWeek']
+                    for day in (existing or {}).get('workouts', []) for item in day['exercises']
+                    if rule['key'] in item.get('satisfiesCoverage', [])) if day_index is None else 0
+                coefficients = []
+                for variable in variables:
+                    slot = variable['members'][0]
+                    item = sessions[slot['day']]['exercises'][slot['index']]
+                    matches = rule['key'] in item.get('satisfiesCoverage', [])
+                    coefficients.append(int(matches) * (sessions[slot['day']]['timesCompletedInAWeek']
+                        if day_index is None else int(slot['day'] == day_index)))
+                features.append((('coverage', rule['key'], day_index), 1, math.inf, intercept, coefficients))
+    status, counts = _milp_solve(variables, features, balance=True)
+    if status not in ('optimal', 'feasible'):
+        return {'feasible': False, 'status': status,
+                'conflictingTargets': _conflicting_targets(variables, features) if status == 'infeasible' else [],
+                'instruction': ('The current candidate pool and approved count limits conflict. Supply qualifying movement alternatives; '
+                    'do not invent bounds, relax approved requirements, or claim all other selections are infeasible.')
+                    if status == 'infeasible' else 'The bounded solve did not prove feasibility or infeasibility. Preserve the proposal and constraints; retry only after an explicit resume.'}
+    # Independently check the returned integer solution; never approve a solver tolerance violation.
+    if any(not minimum - _TOLERANCE <= intercept + sum(a*b for a,b in zip(coefficients, counts)) <= maximum + _TOLERANCE
+           for _, minimum, maximum, intercept, coefficients in features):
+        return {'feasible': False, 'status': 'unverified', 'conflictingTargets': []}
+    if any(count and count < variable.get('minimumWhenSelected', variable['lower'])
+           for variable, count in zip(variables, counts)):
+        return {'feasible': False, 'status': 'unverified', 'conflictingTargets': []}
+    allocated = copy.deepcopy(sessions)
+    for variable, count in zip(variables, counts):
+        for slot in variable['members']:
+            allocated[slot['day']]['exercises'][slot['index']]['numWorkSets'] = count
+    if select_movements:
+        for day in allocated:
+            day['exercises'] = [item for item in day['exercises'] if item['numWorkSets']]
+            groups = {}
+            for index, item in enumerate(day['exercises']):
+                if item['superset'] is not None:
+                    groups.setdefault(item['superset'], []).append(index)
+            for indices in groups.values():
+                members = [day['exercises'][i] for i in indices]
+                if (len(members) < 2 or len({item['numWorkSets'] for item in members}) > 1
+                        or indices != list(range(indices[0], indices[-1] + 1))):
+                    for item in members:
+                        item['superset'] = None
+    diagnostics = []
+    rows, limits = [], []
+    for _, minimum, maximum, intercept, coefficients in features:
+        if math.isfinite(maximum):
+            rows.append(coefficients)
+            limits.append(maximum - intercept)
+        if math.isfinite(minimum):
+            rows.append([-value for value in coefficients])
+            limits.append(intercept - minimum)
+    if rows:
+        for index, variable in enumerate(variables):
+            if variable['lower'] == variable['upper']:
+                continue
+            objective = [int(position == index) for position in range(len(variables))]
+            minimum = linprog(objective, A_ub=rows, b_ub=limits,
+                bounds=[(v['lower'], v['upper']) for v in variables], method='highs')
+            if minimum.success:
+                required = math.ceil(minimum.fun - _TOLERANCE)
+                if required > variable['lower']:
+                    diagnostics.append({'slotIds': [slot['slotId'] for slot in variable['members']],
+                        'minimumRequiredSets': required, 'allowedMinimum': variable['lower'], 'allowedMaximum': variable['upper'],
+                        'instruction': 'These counts are forced by the current selection, placements and approved volume targets. To distribute work, revise placement/selection or source-authorized bounds, not hand-written counts. This is not a physiological set limit.'})
+    return {'feasible': True, 'solveStatus': status, 'sessions': allocated, 'allocationDiagnostics': diagnostics,
+            'scope': 'Integer volume allocation only; detailed timing, effort, setup and programming review still required.'}
+
+
 def _blocking_audit_errors(report, frequency_complete, requirements):
     supported = {"volume_below_target", "volume_above_target", "duration_exceeded",
                  "superset_set_count_mismatch", "empty_superset"}
     if not frequency_complete and requirements.get("sessionsPerWeek") is not None:
         supported.add("weekly_session_count_mismatch")
     return [error for error in report.get("errors", []) if error.get("code") not in supported]
-
-
-def _allocation_diagnostics(draft, equipment, requirements, restrictions, allow_educated_load_guesses,
-                            supplied_bounds, frequency_complete, frequency):
-    """Explain which omitted, unlocked slots could affect currently violated numeric targets."""
-    plan, report = _audit_raw(draft, equipment, requirements, restrictions, allow_educated_load_guesses)
-    values = _feature_values(report)
-    violations = []
-    for feature, minimum, maximum in _constraints(report, requirements, frequency_complete, frequency):
-        value = values[feature]
-        if value < minimum - _TOLERANCE or value > maximum + _TOLERANCE:
-            direction = "increase" if value < minimum else "decrease"
-            violations.append({"feature": feature, "direction": direction, "value": value,
-                               "minimum": minimum, "maximum": maximum})
-    if not violations:
-        return []
-
-    expanded_bounds = dict(supplied_bounds)
-    for slot_id, slot in allocation_slots(draft).items():
-        if slot_id not in expanded_bounds and not slot["fixed"]:
-            expanded_bounds[slot_id] = {"minimum": 1, "maximum": _MAX_SETS}
-    _, variables = _variables(draft, expanded_bounds)
-    effects = _variable_effects(plan, report, variables)
-    by_slot = {member["slotId"]: (variable, effects[index])
-               for index, variable in enumerate(variables) for member in variable["members"]}
-    diagnostics = []
-    for slot_id, slot in allocation_slots(draft).items():
-        if slot_id in supplied_bounds or slot_id not in by_slot:
-            continue
-        variable, effect = by_slot[slot_id]
-        if variable["lower"] == variable["upper"]:
-            continue
-        matching = []
-        for violation in violations:
-            if (violation['direction'] == 'decrease' and max(variable['current']) <= variable['lower']
-                    or violation['direction'] == 'increase' and min(variable['current']) >= variable['upper']):
-                continue
-            feature = violation["feature"]
-            related = ((feature[0] == "duration" and effect["workout"] == feature[1])
-                       or (feature[0] == "session" and effect["workout"] == feature[1]
-                           and feature[2] in effect["muscles"])
-                       or (feature[0] == "weekly" and feature[1] in effect["muscles"]))
-            if related:
-                matching.append({"target": ":".join(map(str, feature)),
-                                 "currentValue": violation["value"],
-                                 "requestedRange": [bound if math.isfinite(bound) else None
-                                                    for bound in (violation["minimum"], violation["maximum"])],
-                                 "neededDirection": violation["direction"]})
-        if not matching:
-            continue
-        workout_index = effect["workout"]
-        credits = {item["exerciseId"]: item["credits"] for item in report["workouts"][workout_index]["contributions"]}
-        exercise_index = int(slot["path"].split("/")[4])
-        exercise_id = plan["workouts"][workout_index]["exerciseIds"][exercise_index]
-        diagnostics.append({"slotId": slot_id, "workout": workout_index,
-                            "currentSets": slot["numWorkSets"],
-                            "weeklyFrequency": draft["workouts"][workout_index].get("timesCompletedInAWeek") or 1,
-                            "effectiveCreditsPerSet": {
-                                muscle: (credit.get("direct", 0) + credit.get("indirect", 0)) / slot["numWorkSets"]
-                                for muscle, credit in credits.get(exercise_id, {}).items()},
-                            "couldAffect": matching,
-                            "reason": "Omitted slot stayed at its current count; give it explicit bounds only if those changes are allowed."})
-    return diagnostics
 
 
 def _variable_effects(plan, report, variables):
@@ -332,10 +562,11 @@ def _variable_effects(plan, report, variables):
     return effects
 
 
-def _allocate_workout_sets(arguments, equipment, messages, allow_educated_load_guesses=True, training_history=None):
+def _allocate_workout_sets(arguments, equipment, messages, allow_educated_load_guesses=True, training_history=None, *, balance=False):
     """Propose a minimal RFC 6902 set-count patch; never stores or approves it."""
-    if set(arguments) != {"requirementsId", "baseDraftId", "boundsBySlot"}:
-        raise ValueError("Allocation requires requirementsId, baseDraftId and boundsBySlot.")
+    required = {"requirementsId", "baseDraftId"}
+    if not required <= set(arguments) <= required | {"preferredSetsBySlot", "boundsBySlot", "reallocateAcrossSessions"}:
+        raise ValueError("Allocation requires requirementsId and baseDraftId.")
     require_approved_requirements(messages)
     _, stored = _latest_result(messages, "set_workout_requirements")
     if stored.get("requirementsId") != arguments["requirementsId"] or not stored.get("requirements"):
@@ -345,11 +576,65 @@ def _allocate_workout_sets(arguments, equipment, messages, allow_educated_load_g
         raise ValueError("The allocation baseDraftId is missing or stale.")
     if draft.get("requirementsId") != arguments["requirementsId"]:
         raise ValueError("The current draft was created under different requirements; re-audit it before allocating sets.")
-    if not isinstance(arguments["boundsBySlot"], dict):
+    suggested_bounds = arguments.get('boundsBySlot', {})
+    if not isinstance(suggested_bounds, dict):
         raise ValueError("boundsBySlot must map SLOT_n references to integer minimum/maximum bounds.")
     validate(draft, _DRAFT_SCHEMA)
     restrictions = effective_restrictions(stored, equipment)
+    draft = normalize_work_set_bounds(draft, equipment, stored['requirements'])
+    _, latest_audit = _latest_result(messages, 'audit_workout_plan')
+    resolved_decisions = latest_audit.get('resolvedDecisions', {})
+    history_fingerprint = latest_audit.get('historyFingerprint', getattr(training_history, 'fingerprint', None))
+    input_fingerprint = allocation_input_fingerprint(draft, arguments['requirementsId'], equipment,
+        history_fingerprint=history_fingerprint, resolved_decisions=resolved_decisions,
+        allow_educated_load_guesses=allow_educated_load_guesses, requirements=stored['requirements'])
+    relocation = arguments.get('reallocateAcrossSessions', False)
+    if type(relocation) is not bool:
+        raise ValueError('reallocateAcrossSessions must be a boolean.')
+    if relocation:
+        if arguments.get('preferredSetsBySlot') or arguments.get('boundsBySlot'):
+            raise ValueError('Relocation changes slot identities; omit SLOT_n preferences and bounds.')
+        from .joint_planning import solve_prescribed_week, prescription_patch
+        joint = solve_prescribed_week(draft['workouts'], stored['requirements'], equipment, restrictions,
+            allow_educated_load_guesses=allow_educated_load_guesses, training_history=training_history,
+            messages=messages, balance=True)
+        if not joint['feasible']:
+            return _failure(joint['instruction'], jointPlanning={key: value for key, value in joint.items()
+                            if key not in ('sessions', 'audit')})
+        return {'feasible': True, 'requirementsId': arguments['requirementsId'], 'baseDraftId': draft_id,
+            'scope': 'joint_selection_placement_prescriptions', 'reallocateAcrossSessions': True,
+            'patch': prescription_patch(draft['workouts'], joint['sessions']),
+            'proposedWorkouts': joint['sessions'], 'summary': joint['audit'],
+            'nextStep': 'Combine this structural proposal with all other assessed repairs (progression, calibration, order and notes), then audit the full patch. This proposal does not mutate or approve the draft.'}
+    _, previous_allocation = latest_allocation_conflict(messages)
+    previous_conflict = previous_allocation.get('allocationConflict') if isinstance(previous_allocation, dict) else None
+    if (isinstance(previous_conflict, dict) and previous_conflict.get('status') == 'infeasible'
+            and previous_conflict.get('requirementsId') == arguments['requirementsId']
+            and previous_conflict.get('baseDraftId') == draft_id
+            and previous_conflict.get('inputFingerprint') == input_fingerprint):
+        return _failure('This exact count-allocation problem was already proven infeasible. Change the exercise menu or another solver-relevant input, then re-audit; soft set preferences cannot change feasibility.',
+            status='infeasible', requirementsId=arguments['requirementsId'], baseDraftId=draft_id,
+            allocationConflict=copy.deepcopy(previous_conflict),
+            conflictingTargets=copy.deepcopy(previous_conflict.get('conflictingTargets', [])))
+    known = allocation_slots(draft)
+    if set(suggested_bounds) - known.keys():
+        raise ValueError('Unknown slot reference(s) in legacy boundsBySlot.')
+    for value in suggested_bounds.values():
+        if (not isinstance(value, dict) or set(value) != {'minimum', 'maximum'}
+                or any(type(number) is not int for number in value.values())
+                or not 1 <= value['minimum'] <= value['maximum'] <= _MAX_SETS):
+            raise ValueError('Legacy boundsBySlot must contain integer ranges within 1-20; they are not hard constraints.')
+    arguments = {**arguments, 'boundsBySlot': {
+        slot: item.get('allocationBounds') or {'minimum': 1, 'maximum': _MAX_SETS} for slot, item in known.items()}}
     slots, variables = _variables(draft, arguments["boundsBySlot"])
+    preferences = arguments.get('preferredSetsBySlot', {})
+    if (not isinstance(preferences, dict) or set(preferences) - {slot['slotId'] for slot in slots}
+            or any(not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= _MAX_SETS
+                   for value in preferences.values())):
+        raise ValueError('preferredSetsBySlot must map existing SLOT_n references to integer counts within 1-20.')
+    for variable in variables:
+        variable['current'] = [preferences.get(slot['slotId'], current)
+                               for slot, current in zip(variable['members'], variable['current'])]
     requirements = stored["requirements"]
     base_vector = []
     for variable in variables:
@@ -431,14 +716,22 @@ def _allocate_workout_sets(arguments, equipment, messages, allow_educated_load_g
         intercept = baseline[feature] - sum(coefficient * value for coefficient, value in zip(coefficients, base_vector))
         feature_constraints.append((feature, minimum, maximum, intercept, coefficients))
 
-    status, counts = _milp_solve(variables, feature_constraints)
+    status, counts = _milp_solve(variables, feature_constraints, balance=balance)
     if counts is None:
         if status == "infeasible":
-            diagnostics = _allocation_diagnostics(draft, equipment, requirements, restrictions,
-                                                  allow_educated_load_guesses, arguments["boundsBySlot"],
-                                                  frequency_complete, frequency)
-            return _failure("No allocation satisfies the supplied bounds and approved numerical targets; this does not establish that the draft is globally infeasible. The draft was left unchanged.",
-                            allocationDiagnostics=diagnostics)
+            conflicting_targets = _conflicting_targets(variables, feature_constraints)
+            conflict = {'status': 'infeasible', 'scope': 'count_allocation_for_current_draft',
+                'requirementsId': arguments['requirementsId'], 'baseDraftId': draft_id,
+                'conflictFingerprint': input_fingerprint, 'inputFingerprint': input_fingerprint,
+                'libraryFingerprint': library_fingerprint(equipment),
+                'historyFingerprint': history_fingerprint,
+                'resolvedDecisions': copy.deepcopy(resolved_decisions),
+                'allowEducatedLoadGuesses': bool(allow_educated_load_guesses),
+                'conflictingTargets': copy.deepcopy(conflicting_targets)}
+            return _failure("The current movements and approved count constraints cannot meet the numerical targets. Changing soft preferredSetsBySlot cannot change feasibility; do not repeat this allocator until permitted prescriptions or movements change. Re-audit that patch first. This does not establish that other movement selections are infeasible. The draft was left unchanged.",
+                            status='infeasible', requirementsId=arguments['requirementsId'], baseDraftId=draft_id,
+                            allocationConflict=conflict, allocationDiagnostics=[],
+                            conflictingTargets=conflicting_targets)
         return _failure("The solver limit was reached before a feasible allocation was proven; the draft was left unchanged.")
     candidate = _draft_with_counts(draft, variables, counts)
     exact_plan, exact_report = _audit_raw(candidate, equipment, requirements, restrictions, allow_educated_load_guesses)
@@ -457,12 +750,18 @@ def _allocate_workout_sets(arguments, equipment, messages, allow_educated_load_g
         count = counts[variable_index]
         if count != slot["currentSets"]:
             patch.append({"op": "replace", "path": slot["countPath"], "value": count})
+    allocated_counts = {slot: value['numWorkSets'] for slot, value in allocation_slots(candidate).items()}
+    differences = {slot: {'preferred': preferred, 'allocated': allocated_counts[slot]}
+                   for slot, preferred in preferences.items() if allocated_counts[slot] != preferred}
     return {
         "feasible": True,
         "requirementsId": arguments["requirementsId"],
         "baseDraftId": draft_id,
         "patch": patch,
+        "preferencesSatisfied": not differences,
         "summary": {
+            "weeklyCoverageSets": exact_report.get('weeklyCoverageSets', {}),
+            "preferenceDifferences": differences,
             "weeklyEffectiveSets": {muscle: values["effective"] for muscle, values in exact_report["weeklyVolume"].items()
                                      if muscle in requirements["auditTargets"].get("weeklyEffectiveSets", {})},
             "sessions": [{"name": item["name"], "estimatedSeconds": item["estimatedSeconds"],
@@ -470,55 +769,326 @@ def _allocate_workout_sets(arguments, equipment, messages, allow_educated_load_g
                          for item in exact_report["workouts"]],
             "completeWeek": frequency_complete,
         },
-        "nextStep": "Apply this patch to the current draft, then call audit_workout_plan and complete independent review and fresh user confirmation. This proposal does not mutate or approve the draft.",
+        "nextStep": ("The requested distribution was NOT achieved. This count-only tool cannot add, move or regroup exercise occurrences. Do not retry count preferences on the unchanged draft or apply this as a completed design repair. Combine necessary structural edits with all other assessed repairs, preserving approved constraints, and submit that coordinated patch for audit."
+                     if differences else "Apply this patch together with any remaining assessed repairs, then audit the complete workout. This proposal does not mutate or approve the draft."),
     }
 
 
-def allocate_workout_sets(arguments, equipment, messages, allow_educated_load_guesses=True, training_history=None):
+def allocate_workout_sets(arguments, equipment, messages, allow_educated_load_guesses=True, training_history=None, *, balance=False):
     """Return conflicts as non-mutating tool results; never turn them into a repair guess."""
     try:
-        return _allocate_workout_sets(arguments, equipment, messages, allow_educated_load_guesses, training_history)
+        return _allocate_workout_sets(arguments, equipment, messages, allow_educated_load_guesses, training_history, balance=balance)
     except ValueError as error:
         return _failure(str(error))
 
 
+def qualify_coordinated_candidate(client, arguments, equipment, messages, training_history=None, logger=None,
+                                  coordinated_repair_context=None):
+    """A complete repair delegates recipe contracts and numerical placement to their owners."""
+    from .review_assessment import latest_assessment
+    from .recipe_contracts import qualify_recipe_contracts
+    from .exercise_library_tools import get_exercise_candidates
+    from .planning_decisions import resolved_decisions
+    require_approved_requirements(messages)
+    _, stored = _latest_result(messages, 'set_workout_requirements')
+    if 'patch' in arguments or 'baseDraftId' in arguments:
+        # Qualification and joint solving must see the exact complete candidate,
+        # even when the caller submitted the normal compact repair patch.
+        from .planning_tools import _resolve_draft_submission
+        arguments, _ = _resolve_draft_submission(arguments, messages, equipment)
+    if 'workouts' not in arguments:
+        return arguments, None
+    if arguments.get('requirementsId') != stored.get('requirementsId'):
+        raise ValueError('The coordinated candidate requirements are stale.')
+    authority = {'requirementsId': arguments.get('requirementsId'), 'libraryFingerprint': library_fingerprint(equipment),
+                 'historyFingerprint': getattr(training_history, 'fingerprint', None),
+                 'resolvedDecisions': resolved_decisions(messages)}
+    _, previous = _latest_result(messages, 'audit_workout_plan')
+    assessment = latest_assessment(messages, authority)
+    if assessment is None:
+        # A reviewed draft may predate a metadata-only requirements refresh.
+        # Reuse its findings as repair guidance only when the stored receipts
+        # prove that source and resolved decisions did not change. The active
+        # requirements below still own qualification and all later proof.
+        previous_id = previous.get('requirementsId')
+        previous_requirements = _requirements_receipt_for_id(messages, previous_id)
+        if previous_id and previous_id != authority['requirementsId'] and previous_requirements:
+            from .planning_tools import requirements_metadata_equivalent
+            if (requirements_metadata_equivalent(previous_requirements, stored)
+                    and all(previous.get(key) == authority[key] for key in (
+                        'libraryFingerprint', 'historyFingerprint', 'resolvedDecisions'))):
+                assessment = latest_assessment(messages, previous)
+    if not assessment or not any(group['disposition'] == 'repair' for group in assessment['groups']):
+        return arguments, None
+    validate(arguments, _DRAFT_SCHEMA)
+    references = sorted({item['definition_id'] for day in arguments['workouts'] for item in day['exercises']})
+    candidates = {}
+    for start in range(0, len(references), 100):
+        selected = get_exercise_candidates({'definition_ids': references[start:start + 100]}, equipment, messages)
+        candidates.update((item['id'], item) for item in selected['exercises'])
+    from .planning_tools import requirement_sources, source_message_context
+    review_feedback_by_definition = _qualification_review_feedback(assessment, previous)
+    qualification_fields_by_occurrence = {}
+    ownership = coordinated_repair_context or {}
+    initial_refs_by_workout = ownership.get('initialExerciseRefsByWorkout', {})
+    for feedback in review_feedback_by_definition.values():
+        for item in feedback:
+            finding_index = item['findingIndex']
+            dimensions = next((group.get('repairDimensions', []) for group in assessment.get('groups', [])
+                if finding_index in group.get('findingIndexes', [])), [])
+            path_parts = str(item['finding'].get('draftPath') or '').strip('/').split('/')
+            if (len(path_parts) < 4 or path_parts[0] != 'workouts'
+                    or not path_parts[1].isdigit() or path_parts[2] != 'exercises'
+                    or not path_parts[3].isdigit()):
+                continue
+            workout_reference = f'WORKOUT_{int(path_parts[1])}'
+            exercise_index = int(path_parts[3])
+            exercise_refs = initial_refs_by_workout.get(workout_reference, [])
+            if exercise_index >= len(exercise_refs):
+                continue
+            occurrence = exercise_refs[exercise_index]
+            fields = qualification_fields_by_occurrence.setdefault(occurrence, set())
+            field_path = path_parts[4:]
+            if field_path and field_path[0] in ('progressionPlan', 'progressionMethod', 'satisfiesCoverage'):
+                fields.add(field_path[0])
+            elif not field_path:
+                if 'progression' in dimensions:
+                    fields.update(('progressionPlan', 'progressionMethod'))
+                if 'coverage' in dimensions:
+                    fields.add('satisfiesCoverage')
+    prepared = {'definition_ids': references, 'candidates': candidates, 'libraryFingerprint': authority['libraryFingerprint'],
+                'sourceMessages': source_message_context(requirement_sources(messages)),
+                'reviewFeedbackByDefinition': review_feedback_by_definition}
+    cached_qualification = _latest_recipe_qualification(messages)
+    qualified = qualify_recipe_contracts(client, prepared, stored, equipment, messages,
+        {'historyFingerprint': authority['historyFingerprint']}, cached_qualification, logger)
+    contracts = {item['definition_id']: item for item in qualified['contracts']}
+    candidate = copy.deepcopy(arguments)
+    ownership = coordinated_repair_context or {}
+    refs_by_workout = ownership.get('exerciseRefsByWorkout', {})
+    workout_refs_by_position = ownership.get('workoutRefsByPosition', [])
+    initial_definitions = ownership.get('initialDefinitionByExerciseRef', {})
+    typed_edits = ownership.get('typedEdits', {})
+    explicit = {}
+    for update in typed_edits.get('exerciseUpdates', []):
+        explicit[update['exerciseRef']] = set(update.get('setFields', {})) | set(update.get('removeOptionalFields', []))
+    for addition in typed_edits.get('exerciseAdditions', []):
+        explicit[addition['temporaryId']] = set(addition.get('exercise', {}))
+    if ownership and (len(workout_refs_by_position) != len(candidate['workouts'])
+            or any(len(refs_by_workout.get(workout_ref, [])) != len(day['exercises'])
+                   for workout_ref, day in zip(workout_refs_by_position, candidate['workouts']))):
+        raise ValueError('Coordinated repair references no longer match the compiled candidate.')
+    for workout_index, day in enumerate(candidate['workouts']):
+        workout_ref = workout_refs_by_position[workout_index] if ownership else None
+        exercise_refs = refs_by_workout.get(workout_ref, []) if ownership else []
+        for exercise_index, item in enumerate(day['exercises']):
+            occurrence = exercise_refs[exercise_index] if ownership else None
+            is_changed = ownership and (occurrence not in initial_definitions
+                or initial_definitions.get(occurrence) != item.get('definition_id'))
+            explicitly_owned = explicit.get(occurrence, set())
+            owned_fields = ({'progressionPlan', 'progressionMethod', 'satisfiesCoverage'} if is_changed
+                else qualification_fields_by_occurrence.get(occurrence, set()))
+            owned_fields -= explicitly_owned
+            if not owned_fields:
+                continue
+            contract = contracts[item['definition_id']]
+            # Apply defaults only to new/changed recipes or the exact recipe
+            # fields an independent finding assigned to qualification. Submitted
+            # values/removals remain authoritative; an existing progression
+            # method is a goal/programming choice and is never overwritten.
+            for field in ('progressionPlan', 'satisfiesCoverage'):
+                if field not in owned_fields:
+                    continue
+                item.pop(field, None)
+                if field in contract:
+                    item[field] = copy.deepcopy(contract[field])
+            if owned_fields.intersection({'progressionPlan', 'progressionMethod'}) and 'progressionMethod' not in item:
+                item['progressionMethod'] = copy.deepcopy(contract.get('progressionMethod', 'sourceDefined'))
+    return candidate, qualified
+
+
+def _qualification_review_feedback(assessment, audit_result):
+    """Route only repair findings owned by recipe qualification to their source exercise."""
+    review = audit_result.get('review') or {}
+    attached = review.get('assessment') or audit_result.get('findingsAssessment')
+    if not assessment or attached != assessment:
+        return {}
+    draft = audit_result.get('submittedDraft') or {}
+    findings = review.get('findings') or []
+    exercises = draft.get('workouts') or []
+    feedback = {}
+    owned_fields = {'progressionPlan', 'progressionMethod', 'satisfiesCoverage'}
+    for group in assessment.get('groups', []):
+        if group.get('disposition') != 'repair':
+            continue
+        for finding_index in group.get('findingIndexes', []):
+            if not isinstance(finding_index, int) or not 0 <= finding_index < len(findings):
+                continue
+            finding = findings[finding_index]
+            parts = str(finding.get('draftPath') or '').strip('/').split('/')
+            if (len(parts) < 4 or parts[0] != 'workouts' or parts[2] != 'exercises'
+                    or not parts[1].isdigit() or not parts[3].isdigit()):
+                continue
+            day_index, exercise_index = int(parts[1]), int(parts[3])
+            try:
+                reference = exercises[day_index]['exercises'][exercise_index]['definition_id']
+            except (IndexError, KeyError, TypeError):
+                continue
+            field_path = parts[4:]
+            if field_path and field_path[0] not in owned_fields:
+                continue
+            feedback.setdefault(reference, []).append({
+                'findingIndex': finding_index,
+                'reason': group.get('reason', ''),
+                'finding': copy.deepcopy(finding),
+            })
+    return feedback
+
+
+def _requirements_receipt_for_id(messages, requirements_id):
+    """Find a stored approved-requirement receipt by identity, not merely latest."""
+    calls = {call.get('id') for message in messages for call in message.get('tool_calls', [])
+             if call.get('function', {}).get('name') in ('set_workout_requirements', 'accept_workout_alternative')}
+    for message in reversed(messages):
+        if message.get('role') != 'tool' or message.get('tool_call_id') not in calls:
+            continue
+        try:
+            result = json.loads(message.get('content') or '{}')
+        except (TypeError, ValueError):
+            continue
+        if (isinstance(result, dict) and result.get('requirementsId') == requirements_id
+                and isinstance(result.get('requirements'), dict)):
+            return result
+    return None
+
+
+def _latest_recipe_qualification(messages):
+    """Recover the newest reusable contracts from any retained tool receipt."""
+    for message in reversed(messages):
+        if message.get('role') != 'tool':
+            continue
+        try:
+            result = json.loads(message.get('content') or '{}')
+        except (TypeError, ValueError):
+            continue
+        qualification = result.get('recipeQualification') if isinstance(result, dict) else None
+        if not isinstance(qualification, dict) or not isinstance(qualification.get('inputHashes'), dict):
+            continue
+        contracts = qualification.get('contracts')
+        if (isinstance(contracts, list) and all(isinstance(item, dict)
+                and isinstance(item.get('definition_id'), str)
+                and isinstance(item.get('progressionPlan'), dict) for item in contracts)):
+            return copy.deepcopy(qualification)
+    return None
+
+
+def reusable_joint_receipt(owner, requirements_id, sessions, requirements, equipment, messages, training_history=None,
+                           restriction_policy=None, allow_educated_load_guesses=True,
+                           preserve_source_selection=False):
+    """Return prior solver evidence only when the same approved objective still owns this prescription."""
+    from .joint_planning import (SELECTION_POLICY_VERSION, joint_objective_input_fingerprint)
+    receipt = owner.get('coordinatedJointPlanning') or owner.get('automaticAllocation') or {}
+    from .planning_tools import library_fingerprint
+    expected_policy = 'approved' if requirements.get('objectiveOrder') is not None else 'preserve_candidate_only'
+    if (receipt.get('feasible') is not True or receipt.get('status') not in ('feasible', 'optimal')
+            or receipt.get('selectionPolicyVersion') != SELECTION_POLICY_VERSION
+            or receipt.get('preserveSourceSelection') is not bool(preserve_source_selection)
+            or receipt.get('objectivePolicy') != expected_policy
+            or receipt.get('approvedObjectiveOrder') != requirements.get('objectiveOrder')
+            or owner.get('requirementsId') != requirements_id
+            or owner.get('libraryFingerprint') != library_fingerprint(equipment)
+            or owner.get('historyFingerprint') != getattr(training_history, 'fingerprint', None)):
+        return None
+    expected = joint_objective_input_fingerprint(sessions, requirements, equipment, training_history, messages,
+        restriction_policy=restriction_policy,
+        allow_educated_load_guesses=allow_educated_load_guesses,
+        preserve_source_selection=preserve_source_selection)
+    if receipt.get('objectiveInputFingerprint') != expected:
+        return None
+    return copy.deepcopy(receipt)
+
+
 def auto_allocate_workout(result, equipment, messages, allow_educated_load_guesses=True, training_history=None, logger=None, progress=None):
-    """Try declared flexibility once; every applied patch receives the full normal audit."""
+    """Jointly solve complete prescriptions; after preview return a proposal only."""
     numeric = {'duration_exceeded', 'volume_below_target', 'volume_above_target', 'superset_set_count_mismatch'}
-    dependencies = {'training_evidence_required', 'training_load_suitability_unresolved'}
-    errors = result.get('errors', [])
     draft = result.get('submittedDraft')
-    if (not draft or result.get('passed') or not any(e.get('code') in numeric for e in errors)
-            or any(e.get('code') not in numeric | dependencies for e in errors)):
+    if not draft:
         return result
     _, stored = _latest_result(messages, 'set_workout_requirements')
+    needs_numbers = any(e.get('code') in numeric for e in result.get('errors', []))
+    objective_order = set(stored.get('requirements', {}).get('objectiveOrder') or [])
+    balance_rules = [rule for rule in stored.get('requirements', {}).get('executionRules', []) if rule['kind'] == 'coverageBalance']
+    report = result.get('audit', {})
+    needs_balance = 'source_balance' in objective_order and any(any(values.get(rule['first'], 0) != values.get(rule['second'], 0) for values in (
+        [report.get('weeklyCoverageSets', {})] if rule['scope'] == 'weekly' else
+        [day.get('coverageSets', {}) for day in report.get('workouts', [])])) for rule in balance_rules)
+    from .joint_planning import (solve_prescribed_week, prescription_patch, prescription_fingerprint,
+        joint_problem_fingerprint, SELECTION_POLICY_VERSION)
+    from .recipe_contracts import progression_capability, progression_margin, recorded_evidence
+    _, previous = _latest_result(messages, 'audit_workout_plan')
+    _, workers = _latest_result(messages, 'draft_workout_sessions')
+    automatic = not any(message.get('canonicalDraftPreview') for message in messages)
+    proofs = [(previous.get('automaticAllocation', {}), previous), (workers.get('jointPlanning', {}), workers)]
+    requirements = stored.get('requirements', {})
+    restrictions = effective_restrictions(stored, equipment)
+
+    def solved_receipt_matches(proof, owner):
+        if proof.get('selectionPolicyVersion') != SELECTION_POLICY_VERSION:
+            return False
+        receipt_owner = {**owner, 'coordinatedJointPlanning': proof}
+        receipt = reusable_joint_receipt(receipt_owner, result['requirementsId'], draft['workouts'],
+            requirements, equipment, messages, training_history, restrictions,
+            allow_educated_load_guesses, automatic)
+        return bool(receipt and proof.get('solvedPrescriptionHash') == prescription_fingerprint(draft['workouts']))
+
+    already_solved = any(solved_receipt_matches(proof, owner) for proof, owner in proofs)
+    needs_progression = False
+    needs_distribution = False
+    if automatic and not already_solved and objective_order.intersection({'progression', 'distribution'}):
+        definitions = {f'LIBRARY_{i}': value for i, value in enumerate(sorted(equipment.get('exerciseDefinitions', []), key=lambda value: value['id']))}
+        if 'progression' in objective_order:
+            evidence = recorded_evidence(messages, library_fingerprint(equipment), getattr(training_history, 'fingerprint', None))
+            penalties = {progression_margin(item, progression_capability(definitions[item['definition_id']], equipment,
+                evidence.get(definitions[item['definition_id']]['id'])))['penalty']
+                for day in draft['workouts'] for item in day['exercises'] if item['definition_id'] in definitions}
+            needs_progression = len(penalties) > 1
+        if 'distribution' in objective_order:
+            counts = [item['numWorkSets'] for day in draft['workouts'] for item in day['exercises']]
+            needs_distribution = len(set(counts)) > 1
+    if not needs_numbers and not needs_balance and not needs_progression and not needs_distribution:
+        return result
     sessions = stored.get('requirements', {}).get('sessionsPerWeek')
     if sessions and sum(day['timesCompletedInAWeek'] for day in draft['workouts']) != sessions:
         return result
-    bounds = {}
-    for slot, item in allocation_slots(draft).items():
-        _, _, day, _, index = item['path'].split('/')
-        exercise = draft['workouts'][int(day)]['exercises'][int(index)]
-        if exercise.get('allocationBounds') and not item['fixed']:
-            bounds[slot] = copy.deepcopy(exercise['allocationBounds'])
-    if not bounds:
-        return result
-    _, previous = _latest_result(messages, 'audit_workout_plan')
     cached = previous.get('automaticAllocation', {})
-    if cached.get('inputDraftId') == result['draftId']:
-        return {**result, 'automaticAllocation': copy.deepcopy(cached)}
+    application = 'automatic' if automatic else 'proposal'
+    current_problem_fingerprint = joint_problem_fingerprint(draft['workouts'], requirements, equipment,
+        training_history, messages, restriction_policy=restrictions,
+        allow_educated_load_guesses=allow_educated_load_guesses,
+        preserve_source_selection=automatic)
+    if (cached.get('inputDraftId') == result['draftId'] and cached.get('objective') == 'joint_prescriptions'
+            and cached.get('application') == application and cached.get('selectionPolicyVersion') == SELECTION_POLICY_VERSION
+            and cached.get('preserveSourceSelection') is automatic
+            and cached.get('problemFingerprint') == current_problem_fingerprint):
+        return {**result, 'automaticAllocation': copy.deepcopy(cached), **(
+            {'jointPlanningStopped': True, 'instruction': cached['instruction']} if not cached['feasible'] else {})}
     if progress:
-        progress('Allocating sets within declared bounds')
-    arguments = {'requirementsId': result['requirementsId'], 'baseDraftId': result['currentDraftId'], 'boundsBySlot': bounds}
-    # The solver reads an immutable in-memory receipt; the actual tool result stores its complete provenance.
-    baseline = messages + [
-        {'role': 'assistant', 'tool_calls': [{'id': 'auto_allocation_base', 'function': {'name': 'audit_workout_plan'}}]},
-        {'role': 'tool', 'tool_call_id': 'auto_allocation_base', 'content': json.dumps(result)}]
-    proposal = allocate_workout_sets(arguments, equipment, baseline, allow_educated_load_guesses, training_history)
-    receipt = {'inputDraftId': result['draftId'], 'boundsBySlot': bounds, **proposal}
+        progress('Solving prescriptions, placement, volume and duration together')
+    joint = solve_prescribed_week(draft['workouts'], stored['requirements'], equipment,
+        restrictions, allow_educated_load_guesses=allow_educated_load_guesses,
+        training_history=training_history, messages=messages,
+        preserve_source_selection=automatic)
+    patch = prescription_patch(draft['workouts'], joint['sessions']) if joint['feasible'] else []
+    receipt = {'inputDraftId': result['draftId'], 'objective': 'joint_prescriptions', 'application': application,
+               **{key: value for key, value in joint.items() if key not in ('sessions', 'audit')}, 'patch': patch}
     if logger:
-        logger.log_response('automatic_set_allocation', json.dumps(receipt), truncate_at=0)
-    if proposal.get('feasible') and proposal.get('patch'):
+        logger.log_response('automatic_joint_planning', json.dumps(receipt), truncate_at=0)
+    if automatic and joint['feasible'] and patch:
+        baseline = messages + [
+            {'role': 'assistant', 'tool_calls': [{'id': 'auto_allocation_base', 'function': {'name': 'audit_workout_plan'}}]},
+            {'role': 'tool', 'tool_call_id': 'auto_allocation_base', 'content': json.dumps(result)}]
         result = audit_workout_plan({'requirementsId': result['requirementsId'], 'baseDraftId': result['currentDraftId'],
-            'patch': proposal['patch']}, equipment, baseline, allow_educated_load_guesses, training_history)
+            'patch': patch}, equipment, baseline, allow_educated_load_guesses, training_history)
+    if not joint['feasible']:
+        result = {**result, 'jointPlanningStopped': True, 'instruction': joint['instruction']}
     return {**result, 'automaticAllocation': receipt}

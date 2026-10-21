@@ -24,7 +24,9 @@ from .plan_contract import (
     validate_assembled_workout_contract,
 )
 from .exercise_library_tools import selected_library_ids_from_messages
-from .planning_tools import confirmed_draft
+from .planning_tools import confirmed_draft, draft_coverage_assignments
+from .training_history import apply_native_load_calibration_policy
+from jsonschema import Draft7Validator
 from .plan_review import require_current_review
 from .generation_audit import audit_workout_package, plan_audit_package, validate_audit_targets
 from .progress_migration import migrate_progress_schema_v2_layout_step
@@ -219,9 +221,9 @@ def execute_workout_generation(
     deps=None,
     force_use_reasoner=None,
     allow_educated_load_guesses=True,
+    training_history=None,
 ):
     deps = deps or resolve_pipeline_deps()
-    test_connection = deps.test_connection
     hash_conversation = deps.hash_conversation
     PlaceholderIdManager = deps.PlaceholderIdManager
     load_generation_progress = deps.load_generation_progress
@@ -291,15 +293,6 @@ def execute_workout_generation(
         except (NameError, AttributeError):
             script_dir = os.getcwd()
 
-    # Test connection before starting generation (skip if resuming)
-    if not resume_session_id:
-        success, error_msg = test_connection(client, show_message=True, logger=logger)
-        if not success:
-            err = f"Connection test failed. Cannot proceed with generation. {error_msg}"
-            if logger:
-                logger.log("Connection test failed: " + str(error_msg))
-            return {"success": False, "filepath": None, "error": err}
-    
     if not custom_prompt:
         custom_prompt = "Generate workout JSON based on our conversation so far."
     
@@ -338,8 +331,9 @@ def execute_workout_generation(
                         for message in messages for call in message.get("tool_calls", []))
         if has_draft:
             canonical_snapshot = confirmed_draft(messages, provided_equipment or {}, allow_educated_load_guesses, require_confirmation=True)
-            # The shell validates the live backup; resumed pipelines verify the saved evidence snapshot.
-            require_current_review(canonical_snapshot, messages, provided_equipment or {}, canonical_snapshot.get('historyFingerprint'))
+            # Reproduce derived evidence metadata from the same live backup when available.
+            require_current_review(canonical_snapshot, messages, provided_equipment or {},
+                training_history if training_history is not None else canonical_snapshot.get('historyFingerprint'))
             selected_definition_ids = list(dict.fromkeys(e["libraryDefinitionId"] for e in canonical_snapshot["planIndex"]["exercises"]))
         else:
             selected_definition_ids = selected_library_ids_from_messages(messages, supplied_exercise_definitions)
@@ -604,9 +598,25 @@ def execute_workout_generation(
                             "repair": "Revise the plan through the planning workflow and obtain fresh confirmation. This contract error supplies no permitted schema-repair paths; do not regenerate the entire index as an automatic repair.",
                         }]})
                 return failure
+            history_fingerprint = getattr(training_history, 'fingerprint', None)
+            if history_fingerprint is None and canonical_snapshot:
+                history_fingerprint = canonical_snapshot.get('historyFingerprint')
+            expected_plan_index = copy.deepcopy(plan_index)
+            apply_native_load_calibration_policy(
+                expected_plan_index, messages, provided_equipment or {}, history_fingerprint,
+                allow_educated_load_guesses=allow_educated_load_guesses,
+            )
+            current_flags = [item.get('requiresLoadCalibration') for item in plan_index.get('exercises', [])]
+            expected_flags = [item.get('requiresLoadCalibration') for item in expected_plan_index.get('exercises', [])]
+            if canonical_snapshot and current_flags != expected_flags:
+                return {"success": False, "filepath": None,
+                        "error": "The approved draft's load-calibration flags do not match its current comparable history. Re-audit the draft before generation.",
+                        "requires_plan_revision": True}
+            plan_index = expected_plan_index
             _gen_print("Step 1: Auditing planned volume and duration before emission...")
             with LoadingIndicator("Auditing planned volume and duration"):
-                plan_audit = audit_workout_package(plan_audit_package(plan_index, allow_educated_load_guesses), plan_index.get("auditTargets") or {})
+                plan_audit = audit_workout_package(plan_audit_package(plan_index, allow_educated_load_guesses), plan_index.get("auditTargets") or {},
+                    coverage_by_exercise=draft_coverage_assignments(plan_index, canonical_snapshot.get('submittedDraft')) if canonical_snapshot else None)
             step_data["step_1_programming_audit"] = plan_audit
             if plan_audit["issues"]:
                 _gen_print("Programming audit failed: " + " | ".join(plan_audit["issues"]))
@@ -1281,7 +1291,15 @@ def execute_workout_generation(
         with LoadingIndicator("Auditing generated volume and duration"):
             setup_seconds = {id_manager.placeholder_to_uuid.get(e['id'], e['id']): e['setupSeconds']
                              for e in plan_index['exercises'] if 'setupSeconds' in e}
-            final_audit = audit_workout_package(data, plan_index.get("auditTargets") or {}, setup_seconds_by_exercise=setup_seconds)
+            coverage = ({id_manager.placeholder_to_uuid.get(identifier, identifier): keys for identifier, keys in
+                         draft_coverage_assignments(plan_index, canonical_snapshot.get('submittedDraft')).items()}
+                        if canonical_snapshot else None)
+            final_audit = audit_workout_package(data, plan_index.get("auditTargets") or {},
+                setup_seconds_by_exercise=setup_seconds,
+                coverage_by_exercise=coverage, rep_duration_seconds_by_exercise={
+                    id_manager.placeholder_to_uuid.get(e['id'], e['id']): e['repDurationSeconds']
+                    for e in plan_index['exercises'] if 'repDurationSeconds' in e},
+                )
         final_audit["prescriptionChanges"] = step_data.get("step_1_programming_audit", {}).get("prescriptionChanges", [])
         step_data["step_8_programming_audit"] = final_audit
         timing_data["step_times"][8] = time.time() - audit_start
@@ -1311,6 +1329,17 @@ def execute_workout_generation(
         
         # Save workout to file
         filepath = save_workout_to_file(data, script_dir)
+        program_guidance = (canonical_snapshot or {}).get("submittedDraft", {}).get("programGuidance")
+        guidance_filepath = None
+        if isinstance(program_guidance, str) and program_guidance.strip():
+            if not filepath:
+                return {"success": False, "filepath": None, "error": "Could not save the workout required for its program guidance sidecar."}
+            guidance_filepath = os.path.splitext(filepath)[0] + ".guidance.md"
+            with open(guidance_filepath, "w", encoding="utf-8") as guidance_file:
+                guidance_file.write("# Program guidance\n\nManual reference for the generated program; this file is not included in the phone or watch workout data.\n\n")
+                guidance_file.write(program_guidance.strip())
+                guidance_file.write("\n")
+            _gen_print(f"Manual program guidance saved to: {guidance_filepath}")
         if filepath:
             audit_filepath = os.path.splitext(filepath)[0] + ".audit.json"
             with open(audit_filepath, "w", encoding="utf-8") as audit_file:
@@ -1336,6 +1365,7 @@ def execute_workout_generation(
         return {
             "success": True,
             "filepath": filepath,
+            "guidance_filepath": guidance_filepath,
             "error": None,
             "emitter_conversations": aggregated_emitter_conversations,
         }

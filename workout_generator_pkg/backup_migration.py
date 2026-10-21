@@ -11,7 +11,6 @@ from pathlib import Path
 
 from .api_client import chat_call
 from .domain_ops import DEFINITION_OWNED_FIELDS
-from .interactive_shell import _resolve_api_key
 from .logging_ui import LoadingIndicator
 
 
@@ -152,7 +151,7 @@ def semantic_matches(sources, targets, equipment, client):
             'Output JSON only: {"mappings":[{"sourceKey":"...","targetReference":null,"reason":"..."}]}. '
             'A non-null targetReference must be a supplied TARGET_n reference. Return every source exactly once.')},
         {'role': 'user', 'content': json.dumps({'sources': request, 'catalog': catalog, 'equipment': equipment}, separators=(',', ':'))},
-    ], reasoning_effort='low', max_tokens=8192, timeout=120)
+    ], reasoning_effort='low', max_tokens=8192, timeout=None)
     decisions = json.loads(content)['mappings']
     by_ref = {f'TARGET_{i}': target for i, target in enumerate(targets)}
     result = {}
@@ -401,8 +400,8 @@ def main():
     previous = read(report_path) if report_path.exists() else None
     client = None
     if not args.offline:
-        from openai import OpenAI
-        client = OpenAI(api_key=_resolve_api_key(), base_url='https://api.deepseek.com', max_retries=0)
+        from .llm_config import build_llm_client
+        client = build_llm_client(max_retries=0)
     try:
         converted, report = convert_backup(read(source), read(library), [read(p) for p in args.recovery_backup],
             previous, read(args.mapping_file) if args.mapping_file else None, client,

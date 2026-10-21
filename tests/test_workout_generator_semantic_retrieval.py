@@ -69,7 +69,7 @@ def test_corpus_embeddings_are_cached_and_reused(monkeypatch, tmp_path):
     model = FakeEmbeddingModel()
     monkeypatch.setattr(semantic_retrieval, "_model_instance", lambda: model)
     monkeypatch.setattr(semantic_retrieval, "CACHE_DIRECTORY", tmp_path)
-    entries = [{"name": "Barbell Squat", "equipmentName": "Barbell", "trainingMuscles": ["quads"]}]
+    entries = [{"name": "Barbell Squat", "equipmentName": "Barbell", "muscleGroups": ["FRONT_QUADRICEPS"]}]
 
     first = semantic_retrieval.rank(["squat"], entries)
     second = semantic_retrieval.rank(["squat"], entries)
@@ -96,7 +96,7 @@ def test_invalid_cached_embeddings_are_rebuilt(monkeypatch, tmp_path):
 
 def test_history_similarity_query_uses_candidate_metadata_not_purpose_prompt():
     candidate = {"name": "Dumbbell Romanian Deadlift", "equipmentName": "Dumbbell",
-                 "trainingMuscles": {"primary": ["hamstrings", "glutes"], "secondary": []}}
+                 "muscleGroups": ["BACK_HAMSTRING", "BACK_GLUTEAL"], "secondaryMuscleGroups": []}
     query = json.dumps({"candidate": candidate, "purpose": "irrelevant injected instructions"})
     assert semantic_retrieval._query_text(query) == semantic_retrieval._entry_text(candidate)
     assert "irrelevant injected instructions" not in semantic_retrieval._query_text(query)

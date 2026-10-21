@@ -44,7 +44,7 @@ def _history_results(calls, equipment, client, history, on_result=None, messages
             if item.get('reference') in references:
                 by_reference[item['reference']] = copy.deepcopy(item)
         load_options.update(copy.deepcopy(payload.get('equipmentLoadOptions', {})))
-        common.update({key: payload[key] for key in ('historyFingerprint', 'libraryFingerprint') if key in payload})
+        common.update({key: payload[key] for key in ('historyFingerprint', 'libraryFingerprint', 'evidenceFormat') if key in payload})
 
     def finish_ready():
         for key, args in calls:

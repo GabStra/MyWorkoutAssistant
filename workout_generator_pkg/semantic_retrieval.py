@@ -126,11 +126,8 @@ def _entry_text(entry):
     name = entry.get("name") or ""
     equipment = entry.get("equipmentName") or ""
     accessories = words(entry.get("accessoryNames"))
-    muscles = entry.get("trainingMuscles", entry.get("muscleGroups", []))
+    muscles = entry.get("muscleGroups", [])
     secondary = entry.get("secondaryMuscleGroups", [])
-    if isinstance(muscles, dict):
-        secondary = muscles.get("secondary", secondary)
-        muscles = muscles.get("primary", [])
     return (f"Exercise: {name}. Equipment: {equipment}. Required accessories: {', '.join(accessories)}. "
             f"Primary training muscles: {', '.join(words(muscles))}. Secondary training muscles: {', '.join(words(secondary))}. "
             f"Category: {entry.get('exerciseCategory') or ''}. Movement identity: {entry.get('movementRef') or ''}.")

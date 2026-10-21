@@ -214,8 +214,8 @@ JSON_SCHEMA = {
                 "enabled": {"type": "boolean"},                                                                                                                                                                                                  
                 "name": {"type": "string"},                                                                                                                                                                                                      
                 "nameOverride": {"type": ["string", "null"]},
-                "notes": {"type": "string", "maxLength": 500},                                                                                                                                                                                                     
-                "placementNotes": {"type": "string", "maxLength": 500},
+                "notes": {"type": "string", "maxLength": 500},
+                "placementNotes": {"type": "string"},
                 "sets": {"type": "array", "items": {"$ref": "#/$defs/Set"}},                                                                                                                                                                     
                 "exerciseType": {"$ref": "#/$defs/ExerciseType"},                                                                                                                                                                                
                 "minReps": {"type": "integer"},                                                                                                                                                                                                  
@@ -332,7 +332,7 @@ JSON_SCHEMA = {
             "properties": {                                                                                                                                                                                                                      
                 "id": {"$ref": "#/$defs/UUID"},                                                                                                                                                                                                  
                 "name": {"type": "string"},                                                                                                                                                                                                      
-                "description": {"type": "string", "maxLength": 50},                                                                                                                                                                                               
+                "description": {"type": "string", "maxLength": 50},
                 "workoutComponents": {
                     "type": "array",
                     "items": {
@@ -729,8 +729,8 @@ JSON_SYSTEM_PROMPT = (
     f"- exerciseType must use ExerciseType enum values only: {EXERCISE_TYPE_ENUM_VALUES}.\n"
     f"- exerciseCategory must use ExerciseCategory enum values only: {EXERCISE_CATEGORY_ENUM_VALUES}.\n\n"
     "Text fields:\n"
-    "- workout.description max 50 chars, concise and specific.\n"
-    "- exercise.notes max 500 chars, concise.\n\n"
+    "- workout.description: max 50 characters INCLUDING generated schedule text. Use a short training-focus label, not an exercise list.\n"
+    "- exercise.notes: max 500 characters for model-written cues; Python adds standard guidance separately. Preserve execution, progression and stop instructions; do not repeat structured values.\n\n"
     "Optional advanced fields:\n"
     "- HR target fields and load jump tuning fields should be set only when explicitly requested; otherwise null.\n"
     "JSON Schema:\n"

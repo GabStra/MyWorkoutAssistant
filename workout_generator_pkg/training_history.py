@@ -8,12 +8,35 @@ from collections import defaultdict
 from datetime import date
 
 from jsonschema import validate
-from workout_history_mcp.loader import WorkoutHistoryStore, load_backup, _is_active_set
+from workout_history_mcp.loader import WorkoutHistoryStore, load_backup, _is_active_set, _sort_number
 from .domain_ops import get_selectable_weights_for_exercise
 from .planning_tools import library_fingerprint
 from .cancellation import check_cancelled
 
 RELATED_LOAD_TRANSFER_CAUTION = 'Do not convert or transfer loads automatically. Execution, laterality, reps, effort and equipment affect comparability.'
+LOAD_PROGRESSION_INSTRUCTION = ('For external-load progression, use the next selectable app load in the supplied load convention; '
+    'increments can vary across the range. Do not invent fixed increments from plate sizes. '
+    'If the selected definition cannot represent the progressed setup or added load, explicitly require selecting a supported library variant and re-auditing first. '
+    'Use history to choose provisional prescriptions. Keep placementNotes for movement-specific technique/setup cues and explicitly qualified source-backed safety exceptions. Use typed progressionPlan for progression; Python renders its guidance and working-set effort rules. The app owns native load calibration. '
+    'Do not duplicate structured work-set counts, rep targets, default RIR, rests, exercise order or superset assignments there; the renderer owns those facts. '
+    'Do not restate or embellish historical performances; structured evidence already preserves them. '
+    'A prescribed RIR is a target, never an observed historical effort when effort data is absent. ')
+EVIDENCE_FORMAT = {
+    'candidateContext': 'Loaded current configuration, not a fresh measurement. Effective bodyweight is derived from configured body mass and the selected library percentage.',
+    'sessions': 'Recorded sessions comparable to the selected movement and recorded setup; records are observations, not strength maxima.',
+    'otherSetupSessions': 'Same stored movement identity with changed or uncertain setup/definition. Read comparisonLimitations; do not transfer loads automatically.',
+    'executionSequence': 'Recorded execution order across the session; preferred over the per-exercise set order when available.',
+    'loadKg': 'External load only. For BODY_WEIGHT this is added load, not total resistance. Dumbbell-pair loads are combined across both implements.',
+    'recordedRelativeBodyWeightKg': 'Recorded effective bodyweight contribution, not necessarily the athlete\'s full body mass.',
+    'recordedTotalResistanceKg': 'Recorded effective bodyweight plus added load; never compare this total to an added-load equipment ceiling.',
+    'bodyWeightPercentage': 'Application resistance-accounting factor, not a measured cross-variant strength scale. Differing percentages do not establish that one variant is heavier, easier, or impossible by comparing derived totals alone.',
+    'comparisonLimitations': 'Restrictions on permissible inference, not evidence of incapacity. Missing comparable history or changed accounting cannot alone prove that a movement is infeasible. When supported, the app handles an unknown starting load through its built-in load-calibration mode; do not prescribe separate trial sets or rests.',
+    'loadHeadroom': 'latestSessionHeaviestLoadKg describes only the latest comparable session. highestObservedComparableLoad summarizes positive-rep work sets across all comparable sessions, not just the returned page; it is an observation with a date, not a strength maximum or current capacity.',
+    'equipmentContext': 'Set-time snapshots take precedence. workout_occurrence_fallback is inferred historical context, not a recorded snapshot.',
+    'requiredAccessoryNames': 'Inferred from the saved occurrence or definition, not set-time accessory snapshots. Migrated identities alone do not prove setup equivalence.',
+    'timing': 'Duration is seconds. COUNTDOWN=startTimer-endTimer; COUNTUP=endTimer. Running duration/distance come from the recorded RunningResult; GPS routes are omitted.',
+    'configuredDurationSeconds': 'Recorded timer configuration, not measured effort. A count-up timer without auto-stop has no enforced duration target.',
+}
 
 GET_TRAINING_EVIDENCE_TOOL = {'type': 'function', 'function': {
     'name': 'get_training_evidence',
@@ -34,23 +57,26 @@ HISTORY_PLANNING_INSTRUCTION = (
     'History age, rest, unilateral execution and workout order affect comparability. '
     'executionContext distinguishes straight sets from supersets. For supersets, prescribedRestSeconds is empty: member rest is a transition, '
     'and recovery between that movement\'s own sets also includes other members\' work and rests. The schedule is prescribed, not measured recovery. '
+    'equipmentContextRef and executionContextRef resolve through historyExecutionContexts; shared context is not omitted evidence. '
     'When the equipment ceiling is already used, consider progression within the agreed rep range or an appropriate available variant; '
     'do not silently add sets, change volume/time targets, or invent a strength conversion between related movements. '
-    'Use targetSetPrescriptions only for justified achievable starting loads or explicit user-provided loads. '
-    'When history does not justify a load, leave exact prescriptions unset so load calibration is required. '
+    'Use workSetTemplate for a uniform target and targetSetPrescriptions for distinct per-set reps or loads. '
+    'When comparable usable load history exists, use it to justify a starting load; when it does not, omit the load from every target and let Python enable the app built-in load-calibration mode for WEIGHT and equipped BODY_WEIGHT exercises. Never invent a starting load or mix fixed and omitted loads in one exercise. Do not add separate calibration trials, trial counts, or recovery periods; the app owns calibration execution. Fixed BODY_WEIGHT and timed exercises do not support this load-calibration mode. '
     'Compare relatedMovementHistory with the candidate equipment ceiling before choosing an unrecorded variant. '
     'Related movement loads are not directly interchangeable: inspect equipment, execution and load conventions. '
     'relatedHistoryStatus=checked_local_unconfirmed means weak local matches could not be adjudicated; no related records were accepted. Do not treat that as strength or suitability evidence. '
     'HISTORY_n references identify evidence-only historical movements; only LIBRARY_n references are selectable exercises. '
-    'If related performance suggests a candidate may be too lightly loaded at the requested reps/RIR, justify its use, '
-    'choose a supported alternative, or ask for calibration; do not count it as a hard set merely to fill a volume gap. '
+    'If related performance suggests a candidate may be too lightly loaded at the requested reps/RIR, justify its use or choose a supported alternative; related performance does not establish candidate-specific capacity. '
     'Resolve loadSuitabilityConcerns before submitting a draft. Prefer an available loadable variant. If suitability remains uncertain, '
-    'set requiresEffortCalibration=true for that occurrence and omit targetSetPrescriptions; the preview must show conditional volume. '
+    'do not invent a separate trial procedure or remove prescribed work merely to represent load calibration; the app mode handles supported starting-load uncertainty. '
     'Extra sets or slower tempo do not by themselves resolve an equipment-capacity concern. '
     'Keep capability conclusions scoped to the supplied movement and setup. Consider supported alternatives for a demonstrated suitability gap before requesting changed targets. '
     'An empty loadSuitabilityConcerns list only means these deterministic checks found no flag; it does not verify current RIR, '
     'prescribed reps, or performance with shorter rests. Treat history-based loads as provisional starting points. '
     'Dumbbell-pair loads are app totals across both implements; bodyweight additional load is separate from recorded relative bodyweight. '
+    'Read candidateContext and each performance equipmentContext/bodyWeightPercentageSource. Snapshots describe the recorded setup; fallback context is less certain. '
+    'otherSetupSessions are historical observations with comparisonLimitations, not equivalent sessions for choosing exact loads. '
+    'Loaded timed work retains external load separately from duration; running records retain duration, distance and recorded pace/heart rate without routes. '
     'Use only established movement identities; unresolved identity requires clarification before prescription. '
     'An equipment limit is not evidence that an exercise is ineffective or that the athlete cannot progress.'
 )
@@ -71,13 +97,14 @@ def compact_training_evidence(items):
             links.append({key: copy.deepcopy(other[key]) for key in ('reference',) + comparison_fields if key in other})
         entry = {key: copy.deepcopy(value) for key, value in item.items()
                  if key != 'relatedMovementHistory' and not (related and key in comparison_fields)}
+        entry.pop('definitionId', None)  # LIBRARY_n/HISTORY_n is the model-facing identity.
         if 'relatedMovementHistory' in item:
             entry['relatedMovementHistory'] = links
-        for session in entry.get('sessions', []):
+        for session in entry.get('sessions', []) + entry.get('otherSetupSessions', []):
             for field in ('sessionId', 'workoutId', 'time'):
                 session.pop(field, None)
             for performance in session.get('performances', []):
-                for field in ('exerciseId', 'startTime'):
+                for field in ('exerciseId', 'equipmentId', 'requiredAccessoryEquipmentIds', 'startTime'):
                     performance.pop(field, None)
                 performance.get('record', {}).pop('setHistoryId', None)
         if (not related or reference not in catalog
@@ -89,27 +116,35 @@ def compact_training_evidence(items):
     return catalog
 
 
-def pool_execution_contexts(catalog):
+def pool_execution_contexts(catalog, existing_contexts=None):
     """Factor repeated bulky execution contexts without dropping any performance facts."""
     catalog = copy.deepcopy(catalog)
     groups, contexts = {}, {}
     for entry in catalog.values():
-        for session in entry.get('sessions', []):
+        for session in entry.get('sessions', []) + entry.get('otherSetupSessions', []):
             for performance in session.get('performances', []):
-                context = performance.get('executionContext')
-                if isinstance(context, dict):
-                    key = json.dumps(context, sort_keys=True, separators=(',', ':'))
-                    groups.setdefault(key, []).append(performance)
-    for key, performances in groups.items():
+                for field in ('executionContext', 'equipmentContext'):
+                    reference_field = field + 'Ref'
+                    if reference_field in performance:
+                        reference = performance[reference_field]
+                        if reference not in (existing_contexts or {}):
+                            raise ValueError(f'Historical context reference {reference} has no supplied context.')
+                        performance[field] = copy.deepcopy(existing_contexts[reference])
+                        performance.pop(reference_field)
+                    context = performance.get(field)
+                    if isinstance(context, dict):
+                        key = (field, json.dumps(context, sort_keys=True, separators=(',', ':')))
+                        groups.setdefault(key, []).append(performance)
+    for (field, _), performances in groups.items():
         reference = f'CONTEXT_{len(contexts)}'
-        replacement = {'executionContextRef': reference}
-        new_size = len(json.dumps({reference: performances[0]['executionContext']})) + len(performances) * len(json.dumps(replacement))
-        old_size = len(performances) * len(json.dumps({'executionContext': performances[0]['executionContext']}))
+        replacement = {field + 'Ref': reference}
+        new_size = len(json.dumps({reference: performances[0][field]})) + len(performances) * len(json.dumps(replacement))
+        old_size = len(performances) * len(json.dumps({field: performances[0][field]}))
         if new_size >= old_size:
             continue
-        contexts[reference] = performances[0]['executionContext']
+        contexts[reference] = performances[0][field]
         for performance in performances:
-            performance.pop('executionContext')
+            performance.pop(field)
             performance.update(replacement)
     return catalog, contexts
 
@@ -118,13 +153,67 @@ def number(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
+def has_usable_comparable_load_history(evidence):
+    """True only when exact comparable records include a usable loaded work set."""
+    if not isinstance(evidence, dict) or evidence.get('status') != 'comparable_records':
+        return False
+    return any(
+        isinstance(performance, dict)
+        and isinstance(performance.get('record'), dict)
+        and performance['record'].get('setType') in ('WeightSetData', 'BodyWeightSetData')
+        and number(performance['record'].get('actualReps'))
+        and performance['record']['actualReps'] > 0
+        and number(performance['record'].get('loadKg'))
+        and performance['record']['loadKg'] >= 0
+        for session in evidence.get('sessions', []) if isinstance(session, dict)
+        for performance in session.get('performances', [])
+    )
+
+
+def apply_native_load_calibration_policy(plan, messages, equipment, history_fingerprint=None, *,
+                                         allow_educated_load_guesses=True):
+    """Bind native app load calibration to each plan before its preview is reviewed."""
+    from .recipe_contracts import recorded_evidence
+
+    evidence = recorded_evidence(messages, library_fingerprint(equipment or {}), history_fingerprint)
+    for exercise in plan.get('exercises', []):
+        exercise_type = exercise.get('exerciseType')
+        supported = exercise_type == 'WEIGHT' or (
+            exercise_type == 'BODY_WEIGHT' and exercise.get('equipmentId') is not None
+        )
+        if not supported:
+            exercise['requiresLoadCalibration'] = False
+            continue
+        prior = evidence.get(exercise.get('libraryDefinitionId'))
+        rir = plan.get('workingSetRIR', {}).get('maximum')
+        recorded_rep_conflict = False
+        if prior and exercise.get('maxReps') and number(rir):
+            over_ceiling = [performance['record'] for session in prior.get('sessions', [])[:1]
+                for performance in session.get('performances', [])
+                if isinstance(performance, dict) and isinstance(performance.get('record'), dict)
+                and performance['record'].get('actualReps', 0) > exercise['maxReps'] + rir]
+            loads = [prescription.get('weight', prescription.get('additionalWeight'))
+                for prescription in exercise.get('targetSetPrescriptions', [])]
+            recorded_rep_conflict = bool(over_ceiling and (not loads or any(
+                number(load) and load <= record.get('loadKg', float('inf'))
+                for load in loads for record in over_ceiling)))
+        exercise['requiresLoadCalibration'] = (
+            exercise.get('requiresLoadCalibration') is True
+            or not allow_educated_load_guesses
+            or bool((prior or {}).get('loadSuitabilityConcerns'))
+            or recorded_rep_conflict
+            or not has_usable_comparable_load_history(prior)
+        )
+    return plan
+
+
 class TrainingHistory:
     def __init__(self, backup):
         store = WorkoutHistoryStore(backup)
         if not isinstance(backup.get('WorkoutStore'), dict) or not isinstance(backup.get('SetHistories'), list):
             raise ValueError('Expected an AppBackup with WorkoutStore and SetHistories')
         # Invalidate saved tool results when evidence interpretation changes.
-        self.fingerprint = hashlib.sha256(json.dumps({'evidenceVersion': 6, 'backup': backup}, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+        self.fingerprint = hashlib.sha256(json.dumps({'evidenceVersion': 8, 'backup': backup}, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
         self.definitions = {d['id']: d for d in store.workout_store.get('exerciseDefinitions', [])}
         occurrences, execution_contexts = {}, {}
         for workout in store.workouts:
@@ -146,22 +235,33 @@ class TrainingHistory:
                         else:
                             execution_contexts[key] = {'type': 'straightSets'}
         sessions = {s['id']: s for s in store.completed_sessions()}
+        historical_gear = {item['id']: item for item in store.workout_store.get('equipments', [])}
+        historical_accessories = {item['id']: item for item in store.workout_store.get('accessoryEquipments', [])}
         grouped = defaultdict(dict)
         self.unresolved_records = 0
+        self.unreadable_records = defaultdict(int)
+        running_seen = set()
         for record in store.set_histories:
             session = sessions.get(record.get('workoutHistoryId'))
-            if not session or not _is_active_set(record) or record.get('skipped'):
-                continue
             data = record.get('setData', {})
+            running = data.get('type') == 'RunningSetData'
+            if not session or not (_is_active_set(record) or running) or record.get('skipped'):
+                continue
             if data.get('hasBeenExecuted') is False:
                 continue
             exercise = occurrences.get((session.get('workoutId'), record.get('exerciseId')))
             if exercise is None or exercise.get('exerciseDefinitionId') not in self.definitions:
                 self.unresolved_records += 1
                 continue
-            item = self._set_record(record)
+            item = self._running_record(record, session) if running else self._set_record(record)
             if item is None:
+                self.unreadable_records[data.get('type', 'unknown')] += 1
                 continue
+            if running:
+                key = (session['id'], exercise['id'])
+                if key in running_seen:
+                    continue  # RunningResult describes the occurrence, not each repeated set-history row.
+                running_seen.add(key)
             definition_id = exercise['exerciseDefinitionId']
             execution_context = execution_contexts[(session['workoutId'], exercise['id'])]
             group = grouped[definition_id].setdefault(session['id'], {
@@ -169,9 +269,33 @@ class TrainingHistory:
                 'workoutId': session['workoutId'], 'endReason': session.get('endReason'), 'performances': [],
             })
             # Retain occurrence context: one movement can appear twice in a session.
+            has_snapshot = any(record.get(field) is not None for field in
+                               ('equipmentIdSnapshot', 'equipmentNameSnapshot', 'equipmentTypeSnapshot'))
+            equipment_id = record.get('equipmentIdSnapshot') if has_snapshot else exercise.get('equipmentId')
+            gear = historical_gear.get(equipment_id, {})
+            equipment_type = record.get('equipmentTypeSnapshot') if has_snapshot else gear.get('type')
+            percentage = data.get('bodyWeightPercentageSnapshot')
+            percentage_source = 'set_snapshot' if number(percentage) else 'workout_occurrence_fallback'
+            if not number(percentage):
+                percentage = exercise.get('bodyWeightPercentage')
+                if not number(percentage):
+                    percentage = self.definitions[definition_id].get('bodyWeightPercentage')
+                    percentage_source = 'definition_fallback' if number(percentage) else 'unknown'
+            accessory_ids = exercise.get('requiredAccessoryEquipmentIds')
+            accessory_source = 'workout_occurrence_fallback' if isinstance(accessory_ids, list) else 'definition_fallback'
+            if not isinstance(accessory_ids, list):
+                accessory_ids = self.definitions[definition_id].get('requiredAccessoryEquipmentIds') or []
             group['performances'].append({
-                'exerciseId': exercise['id'], 'equipmentId': exercise.get('equipmentId'),
+                'exerciseId': exercise['id'], 'equipmentId': equipment_id,
+                'equipmentContext': {'name': record.get('equipmentNameSnapshot') if has_snapshot else gear.get('name'),
+                    'type': equipment_type, 'source': 'set_snapshot' if has_snapshot else 'workout_occurrence_fallback',
+                    'loadConvention': 'pair_total' if equipment_type == 'DUMBBELLS' else 'app_total' if equipment_type else 'unknown'},
+                'requiredAccessoryNames': [historical_accessories.get(key, {}).get('name') for key in accessory_ids],
+                'requiredAccessoryEquipmentIds': accessory_ids,
+                'accessoryContextSource': accessory_source,
+                'bodyWeightPercentage': percentage, 'bodyWeightPercentageSource': percentage_source,
                 'exerciseType': exercise.get('exerciseType'), 'order': record.get('order'),
+                'executionSequence': record.get('executionSequence'),
                 'startTime': record.get('startTime'),
                 'prescribedRestSeconds': self._rest_seconds(exercise) if execution_context['type'] == 'straightSets' else [],
                 'executionContext': execution_context,
@@ -181,7 +305,9 @@ class TrainingHistory:
                          for key, values in grouped.items()}
         for values in self.sessions.values():
             for session in values:
-                session['performances'].sort(key=lambda item: (item.get('startTime') or '', str(item.get('order', ''))))
+                session['performances'].sort(key=lambda item: (
+                    item.get('executionSequence') is None, _sort_number(item.get('executionSequence')),
+                    _sort_number(item.get('order')), item.get('startTime') or ''))
         self._loads = {}
         self._cache = {}
         self._related_cache = {}
@@ -212,6 +338,10 @@ class TrainingHistory:
             result.update({'actualReps': reps, 'loadKg': load, 'loadMeaning': 'app_total_external_load' if kind == 'WeightSetData' else 'additional_bodyweight_load'})
             if number(data.get('relativeBodyWeightInKg')):
                 result['recordedRelativeBodyWeightKg'] = data['relativeBodyWeightInKg']
+                if kind == 'BodyWeightSetData':
+                    result['recordedTotalResistanceKg'] = data['relativeBodyWeightInKg'] + load
+            if kind == 'BodyWeightSetData' and number(data.get('bodyWeightPercentageSnapshot')):
+                result['bodyWeightPercentageSnapshot'] = data['bodyWeightPercentageSnapshot']
         elif kind in ('TimedDurationSetData', 'EnduranceSetData'):
             start, end = data.get('startTimer'), data.get('endTimer')
             if not number(end) or (kind == 'TimedDurationSetData' and not number(start)):
@@ -220,6 +350,12 @@ class TrainingHistory:
             if elapsed <= 0:
                 return None
             result['actualDurationSeconds'] = elapsed / 1000
+            if number(start) and start >= 0:
+                result['configuredDurationSeconds'] = start / 1000
+            if isinstance(data.get('autoStop'), bool):
+                result['timerAutoStop'] = data['autoStop']
+            if number(data.get('actualWeight')) and data['actualWeight'] >= 0:
+                result.update(loadKg=data['actualWeight'], loadMeaning='app_total_external_load')
         else:
             return None
         for field in ('autoRegulationRIR', 'calibrationRIR', 'rir', 'rpe'):
@@ -227,10 +363,26 @@ class TrainingHistory:
                 result[field] = data[field]
         return result
 
+    @staticmethod
+    def _running_record(record, session):
+        results = [item for item in session.get('runningResults', [])
+                   if item.get('exerciseId') == record.get('exerciseId')]
+        if len(results) != 1 or not number(results[0].get('elapsedTimeMillis')) or results[0]['elapsedTimeMillis'] <= 0:
+            return None
+        source = results[0]
+        result = {'setHistoryId': record['id'], 'setType': 'RunningSetData',
+                  'actualDurationSeconds': source['elapsedTimeMillis'] / 1000,
+                  'measurementSource': 'workout_running_result'}
+        for field in ('distanceMeters', 'averagePaceSecondsPerKilometer', 'averageHeartRateBpm', 'minHeartRateBpm', 'maxHeartRateBpm'):
+            if number(source.get(field)) and source[field] >= 0:
+                result[field] = source[field]
+        return result
+
     def context(self):
         dates = [s['date'] for values in self.sessions.values() for s in values if s.get('date')]
         return {'historyFingerprint': self.fingerprint, 'definitionsWithEvidence': len(self.sessions),
-                'latestRecordedDate': max(dates) if dates else None, 'unresolvedRecordsExcluded': self.unresolved_records}
+                'latestRecordedDate': max(dates) if dates else None, 'unresolvedRecordsExcluded': self.unresolved_records,
+                'unreadableRecordsBySetType': dict(self.unreadable_records), 'evidenceFormat': EVIDENCE_FORMAT}
 
     def evidence(self, arguments, equipment, client=None):
         result = self._exact_evidence(arguments, equipment)
@@ -245,6 +397,29 @@ class TrainingHistory:
                 self._related_matching_lock.release()
         for item in result['exercises']:
             item['loadSuitabilityConcerns'] = self._load_concerns(item)
+        return result
+
+    def refresh_evidence_metadata(self, payload, equipment):
+        """Add current derived summaries to retained evidence without another model lookup."""
+        if (payload.get('historyFingerprint') != self.fingerprint
+                or payload.get('libraryFingerprint') != library_fingerprint(equipment)):
+            return payload
+        result = copy.deepcopy(payload)
+        def entries(items):
+            for item in items:
+                yield item
+                yield from entries(item.get('relatedMovementHistory', []))
+        missing = [item for item in entries(result.get('exercises', []))
+                   if isinstance(item.get('reference'),str) and item['reference'].startswith('LIBRARY_')
+                   and 'highestObservedComparableLoad' not in item.get('loadHeadroom', {})]
+        references = list(dict.fromkeys(item['reference'] for item in missing))
+        summaries = {}
+        for start in range(0,len(references),12):
+            fresh = self._exact_evidence({'definition_ids':references[start:start+12]},equipment)
+            summaries.update((item['reference'],item['loadHeadroom']['highestObservedComparableLoad']) for item in fresh['exercises'])
+        for item in missing:
+            item.setdefault('loadHeadroom', {})['highestObservedComparableLoad'] = summaries[item['reference']]
+        result['evidenceFormat'] = EVIDENCE_FORMAT
         return result
 
     def begin_turn(self):
@@ -264,49 +439,59 @@ class TrainingHistory:
             concerns.append({'code': 'recorded_load_exceeds_current_capacity',
                 'recordedLoadKg': observed, 'maximumSelectableLoadKg': maximum,
                 'message': 'Exact exercise history used more resistance than is currently selectable. This flags uncertainty, not current strength.'})
-        if not item['totalSessions'] and any(e.get('sessions') for e in item.get('relatedMovementHistory', [])):
+        if not item['totalSessions'] and any(e.get('sessions') or e.get('otherSetupSessions') for e in item.get('relatedMovementHistory', [])):
             concerns.append({'code': 'related_history_only',
                 'message': 'Only related movement performance is available. Verify the candidate resistance/effort; do not transfer loads or infer suitability from another implement ceiling.'})
         if not item['totalSessions'] and item.get('relatedHistoryStatus') == 'checked_local_unconfirmed':
             concerns.append({'code': 'related_history_unconfirmed',
                 'message': 'No exact exercise sessions are recorded, and related-history matching could not be confirmed. Calibrate effort before treating this movement as load-suitable; do not infer a match or transfer loads.'})
+        if not item['totalSessions'] and item.get('otherSetupSessionCount'):
+            concerns.append({'code': 'historical_setup_not_comparable',
+                'message': 'Recorded performances use a different or unresolved setup. Read otherSetupSessions and candidateContext; do not transfer their load as an exact current prescription.'})
         return concerns
 
     def load_suitability_errors(self, plan, messages, equipment):
-        calls = {call['id']: call['function']['name'] for message in messages for call in message.get('tool_calls', [])}
-        evidence = {}
-        fingerprint = library_fingerprint(equipment)
-        for message in messages:
-            if calls.get(message.get('tool_call_id')) != 'get_training_evidence':
-                continue
-            try:
-                result = json.loads(message.get('content', ''))
-            except (TypeError, ValueError):
-                continue
-            if isinstance(result, dict) and result.get('historyFingerprint') == self.fingerprint and result.get('libraryFingerprint') == fingerprint:
-                evidence.update({e['definitionId']: e for e in result.get('exercises', [])})
-        errors = []
-        positions = {key: f'/workouts/{day}/exercises/{index}' for day, workout in enumerate(plan.get('workouts', []))
-                     for index, key in enumerate(workout.get('exerciseIds', []))}
-        for exercise in plan.get('exercises', []):
-            item = evidence.get(exercise.get('libraryDefinitionId'))
-            concerns = self._load_concerns(item) if item else []
-            maximum_rir = plan.get('workingSetRIR', {}).get('maximum')
-            if item and exercise.get('maxReps') and number(maximum_rir):
-                records = [p['record'] for session in item.get('sessions', [])[:1] for p in session.get('performances', [])
-                           if p.get('record', {}).get('actualReps', 0) > exercise['maxReps'] + maximum_rir]
-                loads = [p.get('weight', p.get('additionalWeight')) for p in exercise.get('targetSetPrescriptions', [])]
-                if records and (not loads or any(number(load) and load <= record['loadKg']
-                        for load in loads for record in records)):
-                    concerns.append({'code': 'historical_reps_exceed_prescription',
-                        'message': 'The latest exact-movement history exceeded the prescribed rep ceiling at an equal/higher load, or no starting load is declared. This is an effort-calibration concern, not proof of current strength. Verify effort instead of silently counting easier sets as hard work.'})
-            if concerns and not exercise.get('requiresEffortCalibration'):
-                errors.append({'code': 'training_load_suitability_unresolved', 'path': positions.get(exercise['id'], '/exercises'),
-                    'exerciseId': exercise['id'], 'exercise': exercise['name'], 'concerns': concerns,
-                    'repair': 'Compare available loadable variants using search_exercise_library and get_training_evidence. '
-                              'Choose a supported alternative, or explicitly set requiresEffortCalibration=true and remove targetSetPrescriptions. '
-                              'Volume must remain conditional on verifying prescribed effort; extra sets or tempo alone do not resolve this concern. Re-audit.'})
-        return errors
+        return self.load_suitability_validator(messages, equipment)(plan)
+
+    def load_suitability_validator(self, messages, equipment):
+        """Resolve evidence once for a bounded batch of candidate prescriptions."""
+        from .recipe_contracts import recorded_evidence
+        evidence = recorded_evidence(messages, library_fingerprint(equipment), self.fingerprint)
+        def validate_plan(plan):
+            errors = []
+            positions = {key: f'/workouts/{day}/exercises/{index}' for day, workout in enumerate(plan.get('workouts', []))
+                         for index, key in enumerate(workout.get('exerciseIds', []))}
+            for exercise in plan.get('exercises', []):
+                item = evidence.get(exercise.get('libraryDefinitionId'))
+                concerns = self._load_concerns(item) if item else []
+                maximum_rir = plan.get('workingSetRIR', {}).get('maximum')
+                if item and exercise.get('maxReps') and number(maximum_rir):
+                    records = [p['record'] for session in item.get('sessions', [])[:1] for p in session.get('performances', [])
+                               if p.get('record', {}).get('actualReps', 0) > exercise['maxReps'] + maximum_rir]
+                    loads = [p.get('weight', p.get('additionalWeight')) for p in exercise.get('targetSetPrescriptions', [])]
+                    if records and (not loads or any(number(load) and load <= record['loadKg']
+                            for load in loads for record in records)):
+                        concerns.append({'code': 'historical_reps_exceed_prescription',
+                            'message': 'The latest exact-movement history exceeded the prescribed rep ceiling at an equal/higher load, or no starting load is declared. This is an effort-calibration concern, not proof of current strength. Verify effort instead of silently counting easier sets as hard work.'})
+                supports_load_calibration = exercise.get('exerciseType') == 'WEIGHT' or (
+                    exercise.get('exerciseType') == 'BODY_WEIGHT' and exercise.get('equipmentId') is not None
+                )
+                # Historical headroom describes what was recorded, not whether
+                # this candidate prescription can be performed. Candidate load
+                # feasibility is checked against current selectable weights.
+                suitability_concerns = [concern for concern in concerns
+                    if concern.get('code') == 'historical_reps_exceed_prescription']
+                if not suitability_concerns:
+                    continue
+                if supports_load_calibration and exercise.get('requiresLoadCalibration') is True:
+                    continue
+                if suitability_concerns:
+                    errors.append({'code': 'training_load_suitability_unresolved', 'path': positions.get(exercise['id'], '/exercises'),
+                        'exerciseId': exercise['id'], 'exercise': exercise.get('name', exercise['id']), 'concerns': suitability_concerns,
+                        **({'repairStage': 'candidate_reassessment'} if not supports_load_calibration else {}),
+                        'repair': 'For WEIGHT or equipped BODY_WEIGHT, enable the app native load-calibration mode. For unsupported types, choose a configuration that can meet the prescribed load with available equipment or ask the user. Do not add separate trial sets, rests, or conditional-volume procedures.'})
+            return errors
+        return validate_plan
 
     def _add_related_history(self, result, equipment, client):
         from .exercise_library_tools import _semantic_matches, _selection_entry
@@ -380,21 +565,51 @@ class TrainingHistory:
         if unknown:
             raise ValueError(f'Unknown exercise library references: {sorted(unknown)}')
         gear = {item['id']: item for item in equipment.get('equipments', [])}
-        result = {'historyFingerprint': self.fingerprint, 'libraryFingerprint': cache_key[1], 'exercises': [], 'equipmentLoadOptions': {}}
+        accessories = {item['id']: item for item in equipment.get('accessoryEquipments', [])}
+        result = {'historyFingerprint': self.fingerprint, 'libraryFingerprint': cache_key[1], 'exercises': [], 'equipmentLoadOptions': {},
+                  'evidenceFormat': EVIDENCE_FORMAT}
         for reference in dict.fromkeys(arguments['definition_ids']):
             definition = by_ref[reference]
             saved_definition = self.definitions.get(definition['id'], {})
             identity_matches = all(saved_definition.get(field) == definition.get(field)
                                    for field in ('name', 'exerciseType', 'equipmentId', 'bodyWeightPercentage', 'requiredAccessoryEquipmentIds', 'movementRef'))
-            sessions = self.sessions.get(definition['id'], []) if identity_matches else []
-            comparable = []
+            sessions = self.sessions.get(definition['id'], [])
+            selected_gear = gear.get(definition.get('equipmentId'))
+            comparable, other_setups = [], []
             for session in sessions:
-                performances = [p for p in session['performances'] if p['equipmentId'] == definition.get('equipmentId') and p['exerciseType'] == definition.get('exerciseType')]
+                performances, different = [], []
+                for performance in session['performances']:
+                    limitations = []
+                    if not identity_matches:
+                        limitations.append('exercise_definition_changed')
+                    if performance['equipmentId'] != definition.get('equipmentId'):
+                        limitations.append('recorded_equipment_differs_or_is_unresolved')
+                    historical_type = performance.get('equipmentContext', {}).get('type')
+                    if historical_type and selected_gear and historical_type != selected_gear.get('type'):
+                        limitations.append('recorded_equipment_type_changed')
+                    if performance['exerciseType'] != definition.get('exerciseType'):
+                        limitations.append('exercise_type_changed')
+                    if set(performance['requiredAccessoryEquipmentIds']) != set(definition.get('requiredAccessoryEquipmentIds') or []):
+                        limitations.append('required_accessories_changed')
+                    percentage = performance.get('bodyWeightPercentage')
+                    if (definition.get('exerciseType') == 'BODY_WEIGHT' and number(percentage)
+                            and percentage != definition.get('bodyWeightPercentage')):
+                        limitations.append('bodyweight_percentage_changed')
+                    if limitations:
+                        different.append({**performance, 'comparisonLimitations': limitations})
+                    else:
+                        performances.append(performance)
                 if performances:
                     comparable.append({**session, 'performances': performances})
+                if different:
+                    other_setups.append({**session, 'performances': different})
             latest = comparable[0] if comparable else None
             loads = [p['record']['loadKg'] for p in latest['performances'] if 'loadKg' in p['record']] if latest else []
             reference_load = max(loads) if loads else None
+            observations = [(p['record']['loadKg'],session.get('date'),p['record']['actualReps'],session.get('endReason'))
+                for session in comparable for p in session['performances']
+                if number(p['record'].get('loadKg')) and number(p['record'].get('actualReps')) and p['record']['actualReps']>0]
+            highest = max(observations,key=lambda item:item[0]) if observations else None
             equipment_id = definition.get('equipmentId')
             selected_gear = gear.get(equipment_id)
             load_key = json.dumps([definition.get('exerciseType'), selected_gear], sort_keys=True)
@@ -408,11 +623,14 @@ class TrainingHistory:
             higher = [load for load in options if reference_load is not None and load > reference_load + 0.001]
             maximum = max(options) if options else None
             headroom = {'latestSessionHeaviestLoadKg': reference_load, 'maximumSelectableLoadKg': maximum,
+                        'highestObservedComparableLoad':dict(zip(('loadKg','date','reps','endReason'),highest)) if highest else None,
                         'nextHigherSelectableLoadKg': higher[0] if higher else None, 'higherLoadOptionCount': len(higher),
                         'observedAtCurrentEquipmentMaximum': reference_load is not None and maximum is not None and abs(reference_load - maximum) < 0.001,
                         'latestObservedLoadsNotSelectableNow': [load for load in sorted(set(loads)) if not any(abs(load - option) < 0.001 for option in options)]}
             offset, limit = arguments.get('session_offset', 0), arguments.get('session_limit', 1)
             page = comparable[offset:offset + limit]
+            other_page = other_setups[offset:offset + limit]
+            page_count = max(len(comparable), len(other_setups))
             days = None
             if latest and latest.get('date'):
                 try:
@@ -421,9 +639,25 @@ class TrainingHistory:
                     pass
             result['exercises'].append({'reference': reference, 'definitionId': definition['id'], 'name': definition['name'],
                 'status': 'comparable_records' if comparable else 'no_comparable_records', 'totalSessions': len(comparable),
-                'daysSinceLatestSession': days, 'sessions': page, 'hasMore': offset + len(page) < len(comparable),
-                'nextOffset': offset + len(page) if offset + len(page) < len(comparable) else None, 'loadHeadroom': headroom,
+                'daysSinceLatestSession': days, 'sessions': page,
+                'otherSetupSessions': other_page, 'otherSetupSessionCount': len(other_setups),
+                'sessionOffset': offset, 'hasMore': offset + limit < page_count,
+                'nextOffset': offset + limit if offset + limit < page_count else None, 'loadHeadroom': headroom,
                 'uncertainty': 'Effort is unknown unless recorded per set. Historical performance is not a measured maximum or guaranteed current capability.'})
+            current_context = {'exerciseType': definition['exerciseType'],
+                'requiredAccessoryNames': [accessories.get(key, {}).get('name')
+                    for key in definition.get('requiredAccessoryEquipmentIds') or []],
+                'equipment': {'name': (selected_gear or {}).get('name'), 'type': (selected_gear or {}).get('type'),
+                              'source': 'current_configuration'},
+                'loadMeaning': ('additional_bodyweight_load' if definition['exerciseType'] == 'BODY_WEIGHT'
+                                else 'not_applicable' if definition['exerciseType'] == 'RUNNING' else 'app_total_external_load')}
+            if definition['exerciseType'] == 'BODY_WEIGHT':
+                current_context['bodyWeightPercentage'] = definition.get('bodyWeightPercentage')
+                if number(equipment.get('weightKg')) and number(definition.get('bodyWeightPercentage')):
+                    current_context.update(configuredBodyMassKg=equipment['weightKg'],
+                        effectiveBodyweightKg=equipment['weightKg'] * definition['bodyWeightPercentage'] / 100)
+            result['exercises'][-1]['candidateContext'] = current_context
+            result['exercises'][-1]['loadHeadroom']['loadMeaning'] = current_context['loadMeaning']
         self._cache[cache_key] = copy.deepcopy(result)
         return result
 
@@ -433,7 +667,7 @@ class TrainingHistory:
         for start in range(0, len(references), 12):
             evidence = self.evidence({'definition_ids': references[start:start + 12], 'session_limit': 1}, equipment)
             for item in evidence['exercises']:
-                by_ref[item['reference']] = {key: item[key] for key in ('status', 'totalSessions', 'daysSinceLatestSession', 'loadHeadroom')}
+                by_ref[item['reference']] = {key: item[key] for key in ('status', 'totalSessions', 'daysSinceLatestSession', 'loadHeadroom', 'candidateContext', 'otherSetupSessionCount')}
         for query in payload.get('results', []):
             for entry in query.get('exercises', []):
                 entry['trainingEvidence'] = by_ref[entry['id']]

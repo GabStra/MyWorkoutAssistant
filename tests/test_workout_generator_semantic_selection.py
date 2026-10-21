@@ -130,10 +130,10 @@ def test_local_semantic_search_avoids_model_fanout_and_returns_library_placehold
 def test_structured_muscle_filter_excludes_semantically_similar_unrelated_exercises(monkeypatch, tmp_path):
     monkeypatch.setattr(library_tools, "CACHE_DIRECTORY", tmp_path)
     definitions = [
-        {"id": "cable-triceps", "name": "Cable Overhead Tricep Extension", "trainingMuscles": {"primary": ["triceps"], "secondary": []}},
-        {"id": "quad-extension", "name": "Leg Extension", "trainingMuscles": {"primary": ["quads"], "secondary": []}},
+        {"id": "cable-triceps", "name": "Cable Overhead Tricep Extension", "muscleGroups": ['FRONT_TRICEPS'], "secondaryMuscleGroups": []},
+        {"id": "quad-extension", "name": "Leg Extension", "muscleGroups": ['FRONT_QUADRICEPS'], "secondaryMuscleGroups": []},
         {"id": "quad-assist", "name": "Front Squat", "exerciseCategory": "HEAVY_COMPOUND",
-         "trainingMuscles": {"primary": ["quads"], "secondary": ["triceps"]}},
+         "muscleGroups": ['FRONT_QUADRICEPS'], "secondaryMuscleGroups": ['FRONT_TRICEPS']},
     ]
     seen = []
     monkeypatch.setattr(library_tools, "_local_semantic_rank", lambda _queries, entries, **_kwargs: (seen.extend(e["name"] for e in entries) or [{i: 0.9 for i in range(len(entries))}]))
@@ -147,7 +147,7 @@ def test_structured_muscle_filter_excludes_semantically_similar_unrelated_exerci
 
 def test_structured_muscle_role_filter_allows_compound_assistance_when_requested(monkeypatch):
     definitions = [{"id": "squat", "name": "Front Squat", "exerciseCategory": "HEAVY_COMPOUND",
-                    "trainingMuscles": {"primary": ["quads"], "secondary": ["glutes"]}}]
+                    "muscleGroups": ['FRONT_QUADRICEPS'], "secondaryMuscleGroups": ['BACK_GLUTEAL']}]
     monkeypatch.setattr(library_tools, "_local_semantic_rank", lambda _q, entries, **_kwargs: [{0: 0.8}] if entries else [])
     equipment = {"exerciseDefinitions": definitions}
     no_assistance = library_tools.execute_library_tool(
@@ -168,14 +168,43 @@ def test_structured_muscle_filter_rejects_unsupported_targets():
         )
 
 
+def test_search_schema_and_runtime_use_loaded_library_muscle_capabilities():
+    from jsonschema import validate, ValidationError
+    equipment = {'exerciseDefinitions': [{'id': 'row', 'name': 'Row', 'exerciseCategory': 'MODERATE_COMPOUND',
+                 'muscleGroups': ['BACK_UPPER_BACK'], 'secondaryMuscleGroups': ['FRONT_BICEPS']}]}
+    original = copy.deepcopy(library_tools.SEARCH_EXERCISE_LIBRARY_TOOL)
+    tool = library_tools.exercise_library_search_tool(equipment)
+    schema = tool['function']['parameters']
+    assert set(schema['properties']['muscleTargets']['items']['enum']) == {'back', 'biceps'}
+    args = {'queries': ['row'], 'muscleTargets': ['lats']}
+    with pytest.raises(ValidationError):
+        validate(args, schema)
+    with pytest.raises(ValueError, match='supported muscle targets'):
+        library_tools.execute_library_tool('search_exercise_library', args, equipment)
+    assert library_tools.SEARCH_EXERCISE_LIBRARY_TOOL == original
+
+
+def test_empty_intersection_explains_filter_scope_without_claiming_library_gap():
+    equipment = {'exerciseDefinitions': [
+        {'id': 'press', 'name': 'Press', "muscleGroups": ['FRONT_CHEST'], "secondaryMuscleGroups": ['FRONT_DELTOIDS']},
+        {'id': 'ohp', 'name': 'Overhead press', "muscleGroups": ['FRONT_DELTOIDS'], "secondaryMuscleGroups": []},
+    ]}
+    result = library_tools.execute_library_tool('search_exercise_library',
+        {'queries': ['press'], 'muscleTargets': ['chest', 'shoulders']}, equipment)
+    row = result['results'][0]
+    assert not row['exercises']
+    assert 'All muscleTargets must match' in row['reason']
+    assert 'Split alternative muscle groups' in row['reason']
+
+
 def test_structured_filters_exclude_glute_credit_and_non_isolation_categories(monkeypatch):
     definitions = [
         {"id": "quad-only", "name": "Leg Extension", "exerciseCategory": "ISOLATION",
-         "trainingMuscles": {"primary": ["quads"], "secondary": []}},
+         "muscleGroups": ['FRONT_QUADRICEPS'], "secondaryMuscleGroups": []},
         {"id": "quad-glute", "name": "Squat", "exerciseCategory": "HEAVY_COMPOUND",
-         "trainingMuscles": {"primary": ["quads", "glutes"], "secondary": []}},
+         "muscleGroups": ['FRONT_QUADRICEPS', 'BACK_GLUTEAL'], "secondaryMuscleGroups": []},
         {"id": "quad-curl", "name": "Leg Press", "exerciseCategory": "MODERATE_COMPOUND",
-         "trainingMuscles": {"primary": ["quads"], "secondary": []}},
+         "muscleGroups": ['FRONT_QUADRICEPS'], "secondaryMuscleGroups": []},
     ]
     monkeypatch.setattr(library_tools, "_local_semantic_rank", lambda _q, entries, **_kwargs: [{i: 0.8 for i in range(len(entries))}])
     result = library_tools.execute_library_tool(
@@ -218,14 +247,14 @@ def test_combined_search_keeps_same_query_results_isolated_by_muscle_filter(monk
 
     monkeypatch.setattr(library_tools, "_local_semantic_rank", rank)
     equipment = {"exerciseDefinitions": [
-        {"id": "quad", "name": "Leg Extension", "trainingMuscles": {"primary": ["quads"], "secondary": []}},
-        {"id": "triceps", "name": "Cable Extension", "trainingMuscles": {"primary": ["triceps"], "secondary": []}},
+        {"id": "quad", "name": "Leg Extension", "muscleGroups": ['FRONT_QUADRICEPS'], "secondaryMuscleGroups": []},
+        {"id": "triceps", "name": "Cable Extension", "muscleGroups": ['FRONT_TRICEPS'], "secondaryMuscleGroups": []},
     ]}
     result = library_tools.execute_library_searches([
         ("quad", {"queries": ["extension"], "muscleTargets": ["quads"]}),
         ("triceps", {"queries": ["extension"], "muscleTargets": ["triceps"]}),
     ], equipment, object(), [])
-    assert ranked_catalogs == [(["extension"], ["Leg Extension"]), (["extension"], ["Cable Extension"])]
+    assert sorted(ranked_catalogs) == sorted([(["extension"], ["Leg Extension"]), (["extension"], ["Cable Extension"])])
     assert result["quad"]["results"][0]["exercises"][0]["name"] == "Leg Extension"
     assert result["triceps"]["results"][0]["exercises"][0]["name"] == "Cable Extension"
     assert result["quad"]["searchFingerprint"] != result["triceps"]["searchFingerprint"]
@@ -465,9 +494,28 @@ def test_combined_search_reports_each_call_when_its_queries_are_available(monkey
         calls, {}, object(), [], on_result=lambda call_id, result: reports.append((call_id, result, len(batches))),
     )
 
-    assert [(call_id, batch_count) for call_id, _, batch_count in reports] == [("early", 1), ("late", 2)]
-    assert results["early"] == reports[0][1]
-    assert results["late"] == reports[1][1]
+    assert {call_id for call_id, _, _ in reports} == {'early', 'late'}
+    assert all(results[call_id] == payload for call_id, payload, _ in reports)
+
+
+def test_independent_search_filters_run_concurrently_and_publish_on_caller_thread(monkeypatch):
+    import threading
+    barrier = threading.Barrier(2, timeout=3)
+    caller = threading.get_ident()
+    published = []
+
+    def execute(_name, arguments, *_args, **_kwargs):
+        barrier.wait()
+        return {'libraryFingerprint': 'library', 'results': [
+            {'query': query, 'exercises': []} for query in arguments['queries']]}
+
+    monkeypatch.setattr(library_tools, 'execute_library_tool', execute)
+    results = library_tools.execute_library_searches([
+        ('quad', {'queries': ['squat'], 'muscleTargets': ['quads']}),
+        ('chest', {'queries': ['press'], 'muscleTargets': ['chest']})], {}, object(), [],
+        on_result=lambda key, payload: published.append((key, threading.get_ident())))
+    assert list(results) == ['quad', 'chest']
+    assert set(published) == {('quad', caller), ('chest', caller)}
 
 
 def test_selection_must_precede_confirmation_and_survives_saved_messages():
@@ -572,7 +620,7 @@ def test_plan_guidance_survives_repair_and_loaded_guesses_require_calibration():
     exercise = {
         "id": "EXERCISE_0", "type": "Exercise", "enabled": True, "name": "Bench Press",
         "notes": "", "placementNotes": "", "exerciseType": "WEIGHT", "equipmentId": "EQUIPMENT_0",
-        "bodyWeightPercentage": None, "requiredAccessoryEquipmentIds": [], "muscleGroups": ["FRONT_CHEST"],
+        "bodyWeightPercentage": None, "requiredAccessoryEquipmentIds": [], "muscleGroups": ['FRONT_CHEST'],
         "minReps": 6, "maxReps": 8, "generateWarmUpSets": False, "progressionMode": "OFF",
         "showCountDownTimer": False, "keepScreenOn": False, "requiresLoadCalibration": False,
         "sets": [{"id": "SET_0", "type": "WeightSet", "reps": 8, "weight": 60.0, "subCategory": "WorkSet"}],

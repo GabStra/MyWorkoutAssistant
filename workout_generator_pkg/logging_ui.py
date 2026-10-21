@@ -44,7 +44,11 @@ def print_markdown(text, logger, paged=False):
 
 def format_question(question):
     lines = [question['question'], '']
-    lines.extend(f"{index}. {option}" for index, option in enumerate(question['options'], 1))
+    recommendation = question.get('recommendation', {})
+    lines.extend(f"{index}. {option}" + (' (Recommended)' if index == recommendation.get('option') else '')
+                 for index, option in enumerate(question['options'], 1))
+    if recommendation:
+        lines.extend(['', 'Why: ' + recommendation['reason']])
     hint = 'Choose a listed number, or type your own response.' if question['options'] else 'Type your own response.'
     lines.extend(['', hint, 'You can ask a question, suggest changes or give another answer. Use /ml for multiple lines; commands remain available.'])
     return '\n'.join(lines)

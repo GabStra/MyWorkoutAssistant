@@ -48,12 +48,14 @@ def test_planner_and_requirements_reviewer_share_actual_numerical_capabilities(m
     assert payload['errors'][0]['action'] == 'clarify'
 
 
-@pytest.mark.parametrize('muscle', ['abs', 'lats', 'lateralDelts', 'abductors'])
-def test_supported_target_flows_through_without_extra_muscle_choices(monkeypatch, muscle):
+@pytest.mark.parametrize('muscle,tag', [('abs', 'FRONT_ABS'), ('back', 'BACK_UPPER_BACK'),
+                                      ('shoulders', 'FRONT_DELTOIDS'), ('adductors', 'FRONT_ADDUCTORS')])
+def test_supported_target_flows_through_without_extra_muscle_choices(monkeypatch, muscle, tag):
     from workout_generator_pkg.generation_audit import audit_policy, available_muscle_targets
     from workout_generator_pkg.planning_tools import workout_requirements_tool
     equipment, arguments, _, _ = planning_case()
-    equipment['exerciseDefinitions'][0]['trainingMuscles'] = {'primary': [muscle], 'secondary': []}
+    equipment['exerciseDefinitions'][0]['muscleGroups'] = [tag]
+    equipment['exerciseDefinitions'][0]['secondaryMuscleGroups'] = []
     arguments['auditTargets']['weeklyEffectiveSets'] = {muscle: {'minimum': 5, 'maximum': 6}}
     arguments['auditTargets']['perSessionEffectiveSets'] = {}
     messages = [{'role': 'user', 'content': f'Plan 5-6 weekly effective sets for {muscle}.'}]
@@ -167,6 +169,7 @@ def test_cancelled_source_review_propagates(monkeypatch):
 
 
 def test_source_review_is_bound_to_the_actual_extracted_fields(monkeypatch):
+    from workout_generator_pkg import generation_audit
     equipment, arguments, _, _ = planning_case()
     messages = [{'role': 'user', 'content': 'Plan 5-6 chest sets.'}]
     monkeypatch.setattr(review, 'chat_call', lambda *a, **k: ('{"findings":[]}', None, None))
@@ -174,6 +177,9 @@ def test_source_review_is_bound_to_the_actual_extracted_fields(monkeypatch):
     _record(messages, result)
     messages.append({'role': 'user', 'content': 'CONFIRM REQUIREMENTS'})
     assert requirements_approved(messages)
+    monkeypatch.setattr(generation_audit, 'CALIBRATION_TIMING', 'Updated workout execution timing explanation.')
+    assert generation_audit.audit_workout_package({'workouts': []}, {})['calibrationTiming'] == generation_audit.CALIBRATION_TIMING
+    assert requirements_approved(messages)  # Execution-report metadata does not change approved requirements.
     changed = copy.deepcopy(result)
     changed['requirements']['auditTargets']['weeklyEffectiveSets']['calves'] = {'minimum': 0, 'maximum': 0}
     assert not requirements_approved(messages, changed)
@@ -197,6 +203,10 @@ def test_source_placeholders_do_not_expose_or_confuse_original_transcript_positi
     candidate['restrictionPolicy'] = {'excludedDefinitionIds': [original_id],
         'excludedExerciseNames': ['Barbell Deadlift'], 'exceptExerciseNames': []}
     context = review._requirements_context(candidate)
+    schema = SET_WORKOUT_REQUIREMENTS_TOOL['function']['parameters']['properties']['executionRules']
+    assert json.dumps(schema, separators=(',', ':')) in review._REQUIREMENTS_PROMPT
+    assert 'executionRulesSchema' not in review._with_review_refs(context)[0]
+    assert 'Conditional advice' in review._REQUIREMENTS_PROMPT
     assert list(context['sourceMessages']) == ['SOURCE_0', 'SOURCE_1', 'SOURCE_2']
     assert review._pointer(context, '/sourceMessages/SOURCE_2/content') == 'a'
     assert 'messageIndex' not in json.dumps(context) and original_id not in json.dumps(context)
