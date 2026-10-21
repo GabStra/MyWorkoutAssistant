@@ -30,8 +30,13 @@ from workout_generator_pkg.llm_config import (
 )
 from exercise_motion_pkg.discovery_budget import DiscoveryBudget
 from exercise_motion_pkg.chunking import estimate_chunking, frames_for_chunk_seconds
-from exercise_motion_pkg.ffmpeg_utils import ffmpeg_location_for_ytdlp, resolve_ffmpeg_path
-from exercise_motion_pkg.gpu_lock import GlobalGpuLock
+from exercise_motion_pkg.ffmpeg_utils import (
+    ffmpeg_location_for_ytdlp,
+    h264_codec_args,
+    resolve_ffmpeg_path,
+    retry_h264_codec_args,
+)
+from exercise_motion_pkg.gpu_lock import GlobalGpuLock, exclusive_gpu_device
 from exercise_motion_pkg.shared_llama_server import (
     detach_shared_llama_request_publisher,
     install_shared_llama_request_publisher,
@@ -740,25 +745,24 @@ def _sanitize_downloaded_video_uncached(video_path: Path) -> Path:
     if copy_exit_code == 0 and not copy_has_decode_warning:
         return _finalize_sanitized_video(temp_path, sanitized_path, video_path)
 
+    codec_args = h264_codec_args()
     reencode_args = command_base + [
         "-fflags",
         "+discardcorrupt+genpts",
         "-err_detect",
         "ignore_err",
-        "-c:v",
-        "libx264",
+    ] + codec_args + [
         "-pix_fmt",
         "yuv420p",
-        "-preset",
-        "fast",
-        "-crf",
-        "20",
         "-an",
         "-movflags",
         "+faststart",
         str(temp_path),
     ]
-    _run_ffmpeg(reencode_args)
+    exit_code, _stderr = _run_ffmpeg(reencode_args)
+    if exit_code != 0 and retry_h264_codec_args(reencode_args, codec_args) is not None:
+        _run_ffmpeg(reencode_args)
+    # A failed re-encode degrades to the original video via _finalize_sanitized_video.
     return _finalize_sanitized_video(temp_path, sanitized_path, video_path)
 
 
@@ -9533,9 +9537,12 @@ class LlamaCppVisionRanker:
         if mmproj_path is not None and self.settings.llama_cpp_mtmd_batch_max_tokens is not None:
             args.extend(["--mtmd-batch-max-tokens", str(max(1, self.settings.llama_cpp_mtmd_batch_max_tokens))])
         if not self.settings.llama_cpp_mmap:
-            args.append("--no-mmap")
-        if self.settings.llama_cpp_mlock:
-            args.append("--mlock")
+            # llama.cpp b11xxx+ replaced --no-mmap/--mlock with --load-mode.
+            args.extend(
+                ["--load-mode", "mlock" if self.settings.llama_cpp_mlock else "none"]
+            )
+        elif self.settings.llama_cpp_mlock:
+            args.extend(["--load-mode", "mmap+mlock"])
         if mmproj_path is not None:
             args.append("--mmproj-offload" if self.settings.llama_cpp_mmproj_offload else "--no-mmproj-offload")
         args.append("--cont-batching" if self.settings.llama_cpp_cont_batching else "--no-cont-batching")
@@ -9571,6 +9578,14 @@ class LlamaCppVisionRanker:
             log_directory = Path(tempfile.gettempdir()) / "myworkoutassistant-llama-server"
             log_directory.mkdir(parents=True, exist_ok=True)
             self.server_log_path = log_directory / f"llama-server-{os.getpid()}-{time.time_ns()}.log"
+            server_env = os.environ.copy()
+            exclusive_device = exclusive_gpu_device()
+            if exclusive_device is not None:
+                # Keep the resident server off the exclusive stages' device;
+                # pinning also beats layer-splitting both cards on decode speed.
+                server_env["CUDA_VISIBLE_DEVICES"] = (
+                    "1" if exclusive_device == "1" else "0"
+                )
             with self.server_log_path.open("w", encoding="utf-8", errors="replace") as server_log:
                 self.process = subprocess.Popen(
                     active_args,
@@ -9578,6 +9593,7 @@ class LlamaCppVisionRanker:
                     stderr=subprocess.STDOUT,
                     text=True,
                     creationflags=creationflags,
+                    env=server_env,
                 )
                 from exercise_motion_pkg.child_process import ChildProcessOwner
 

@@ -13,7 +13,7 @@ import time
 from typing import Any, Iterable
 from urllib.request import urlretrieve
 
-from exercise_motion_pkg.gpu_lock import gpu_stage_lock
+from exercise_motion_pkg.gpu_lock import exclusive_gpu_device, gpu_stage_lock
 from exercise_motion_pkg.kinematic_cut import contract_completion_mode
 from exercise_motion_pkg.process_lock import InterProcessFileLock
 from exercise_motion_pkg.target_motion import (
@@ -189,7 +189,7 @@ def run_yolo_pose_prefilter(
         return empty_pose_prefilter_result("pose_prefilter_no_video_metadata")
     model_path = resolve_pose_model_path(settings.model)
     gpu_lock_wait_seconds = 0.0
-    with gpu_stage_lock(stage="yolo_pose_prefilter") as lock_wait_seconds:
+    with gpu_stage_lock(stage="yolo_pose_prefilter", device=exclusive_gpu_device()) as lock_wait_seconds:
         gpu_lock_wait_seconds = lock_wait_seconds
         device = resolve_yolo_device(settings.device)
         model = load_thread_local_yolo_pose_model(model_path)

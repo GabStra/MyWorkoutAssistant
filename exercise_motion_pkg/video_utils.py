@@ -5,7 +5,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from exercise_motion_pkg.ffmpeg_utils import resolve_ffmpeg_path, resolve_ffprobe_path
+from exercise_motion_pkg.ffmpeg_utils import h264_codec_args, resolve_ffmpeg_path, resolve_ffprobe_path, retry_h264_codec_args
 
 
 @dataclass(frozen=True)
@@ -345,15 +345,10 @@ def _trim_video_with_ffmpeg(
     ]
     if target_fps is not None and target_fps > 0.0:
         command.extend(["-vf", f"fps={float(target_fps):g}"])
-    command.extend([
-        "-c:v",
-        "libx264",
+    codec_args = h264_codec_args()
+    command.extend(codec_args + [
         "-pix_fmt",
         "yuv420p",
-        "-preset",
-        "fast",
-        "-crf",
-        "20",
         "-movflags",
         "+faststart",
         str(output_path),
@@ -365,6 +360,16 @@ def _trim_video_with_ffmpeg(
         stderr=subprocess.PIPE,
         text=True,
     )
+    if process.returncode != 0:
+        retried = retry_h264_codec_args(command, codec_args)
+        if retried is not None:
+            process = subprocess.run(
+                retried,
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
     if process.returncode != 0:
         raise RuntimeError(f"ffmpeg trim failed: {process.stderr}")
     if not output_path.exists() or output_path.stat().st_size == 0:

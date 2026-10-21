@@ -60,6 +60,12 @@ this policy only pauses between operations. If temperature telemetry is initiall
 unavailable, a warning reports that cooling admission cannot be enforced; losing
 telemetry during an active cooling wait fails that operation.
 
+On dual-GPU hosts, set `EXERCISE_MOTION_EXCLUSIVE_GPU_DEVICE=1` to move
+reconstruction, pose/depth/spine stages to the second card behind their own
+lock lane while the resident llama server is pinned to the first card. Reviews
+and reconstruction then overlap instead of trading server drain/restart cycles;
+single-GPU hosts ignore the setting and keep the legacy single-lane behavior.
+
 For the current app-ready movement-generation commands, including single-exercise YouTube search/ranking and workout-plan generation, use the runbook:
 
 ```text

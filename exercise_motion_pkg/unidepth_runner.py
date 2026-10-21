@@ -12,7 +12,7 @@ from typing import Any
 
 import numpy as np
 
-from exercise_motion_pkg.gpu_lock import gpu_stage_lock
+from exercise_motion_pkg.gpu_lock import exclusive_gpu_device, gpu_stage_lock
 from exercise_motion_pkg.video_utils import read_basic_video_metadata
 
 UNIDEPTH_ENABLED_ENV_VAR = "EXERCISE_MOTION_UNIDEPTH_ENABLED"
@@ -227,7 +227,7 @@ def infer_depth_samples_for_video(
         return []
 
     samples: list[DepthFrameSample] = []
-    with gpu_stage_lock(stage="unidepth"):
+    with gpu_stage_lock(stage="unidepth", device=exclusive_gpu_device()):
         import torch
 
         model, resolved_device = _load_unidepth_model(

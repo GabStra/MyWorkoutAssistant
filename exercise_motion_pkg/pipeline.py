@@ -22,7 +22,7 @@ from exercise_motion_pkg.cleanup import (
     cleanup_motion_clip,
     ground_contact_mode_allows_floor_support,
 )
-from exercise_motion_pkg.gpu_lock import gpu_stage_lock
+from exercise_motion_pkg.gpu_lock import exclusive_gpu_device, gpu_stage_lock, resolve_stage_cuda_device
 from exercise_motion_pkg.stage_cache import cache_key, load_stage, save_stage, stage_lock
 from exercise_motion_pkg.ground import GroundMetadata, generate_ground_metadata
 from exercise_motion_pkg.motion_io import load_motion_json, save_motion_json
@@ -1737,6 +1737,10 @@ def run_spinepose_extraction(
     model_version: str,
     device: str,
 ) -> dict[str, Any]:
+    # Bare "cuda" means "the exclusive-lane GPU" when a secondary lane is
+    # configured; the extraction subprocess cannot inherit torch's current
+    # device, so the index must be explicit in the command.
+    device = resolve_stage_cuda_device(device)
     output_dir.mkdir(parents=True, exist_ok=True)
     logs_dir.mkdir(parents=True, exist_ok=True)
     for existing_json in output_dir.glob("*.json"):
@@ -1754,7 +1758,11 @@ def run_spinepose_extraction(
     started = time.perf_counter()
     gpu_lock_wait_seconds = 0.0
     with log_path.open("w", encoding="utf-8", errors="replace") as log_file:
-        with gpu_stage_lock(stage="spinepose", enabled=_spinepose_uses_gpu(device)) as lock_wait_seconds:
+        with gpu_stage_lock(
+            stage="spinepose",
+            enabled=_spinepose_uses_gpu(device),
+            device=exclusive_gpu_device() if _spinepose_uses_gpu(device) else None,
+        ) as lock_wait_seconds:
             gpu_lock_wait_seconds = lock_wait_seconds
             completed = subprocess.run(
                 command_line,

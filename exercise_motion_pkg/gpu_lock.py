@@ -20,6 +20,87 @@ GPU_LOCK_ENABLED_ENV_VAR = "EXERCISE_MOTION_GPU_LOCK"
 GPU_LOCK_PATH_ENV_VAR = "EXERCISE_MOTION_GPU_LOCK_PATH"
 GPU_LOCK_TIMEOUT_SECONDS_ENV_VAR = "EXERCISE_MOTION_GPU_LOCK_TIMEOUT_SECONDS"
 DEFAULT_GPU_LOCK_TIMEOUT_SECONDS = 6 * 60 * 60
+EXCLUSIVE_GPU_DEVICE_ENV_VAR = "EXERCISE_MOTION_EXCLUSIVE_GPU_DEVICE"
+_GPU_COUNT_CACHE: tuple[float, int | None] = (0.0, None)
+
+
+def exclusive_gpu_device() -> str | None:
+    """Secondary CUDA device for exclusive GPU stages, or None for one lane.
+
+    When set to a device index (e.g. "1"), exclusive stages run on that
+    physical device behind a per-device lock lane, and the resident llama
+    server is pinned to a different device, so reviews and reconstruction
+    overlap instead of trading drain/restart cycles. Unset, empty, or "0"
+    keeps the legacy single-lane behavior.
+    """
+    raw = os.environ.get(EXCLUSIVE_GPU_DEVICE_ENV_VAR)
+    if raw is None:
+        return None
+    device = raw.strip()
+    if not device or device == "0":
+        return None
+    try:
+        device_index = int(device)
+    except ValueError:
+        raise ValueError(
+            f"{EXCLUSIVE_GPU_DEVICE_ENV_VAR} must be a CUDA device index, got {raw!r}"
+        )
+    if device_index < 1:
+        raise ValueError(
+            f"{EXCLUSIVE_GPU_DEVICE_ENV_VAR} must be a device index >= 1, got {raw!r}"
+        )
+    count = visible_gpu_count()
+    if count is not None and device_index >= count:
+        return None
+    return str(device_index)
+
+
+def visible_gpu_count() -> int | None:
+    """Cached CUDA device count from nvidia-smi; None when unknowable."""
+    global _GPU_COUNT_CACHE
+    with _FREE_VRAM_CACHE_LOCK:
+        cached_at, cached_value = _GPU_COUNT_CACHE
+        if time.perf_counter() - cached_at < 30.0:
+            return cached_value
+    count: int | None = None
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=index", "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=5.0,
+        )
+        if result.returncode == 0:
+            count = len([line for line in result.stdout.splitlines() if line.strip()])
+    except (OSError, subprocess.SubprocessError):
+        pass
+    with _FREE_VRAM_CACHE_LOCK:
+        _GPU_COUNT_CACHE = (time.perf_counter(), count)
+    return count
+
+
+def resolve_stage_cuda_device(device: str) -> str:
+    """Map bare "cuda" to the exclusive lane's device for subprocess launchers."""
+    lane = exclusive_gpu_device()
+    if lane is not None and device.strip().lower() in {"cuda", "gpu"}:
+        return f"cuda:{lane}"
+    return device
+
+
+def resolve_docker_gpu_selection(docker_gpus: str) -> str:
+    """Pin a default "all" container GPU grant to the exclusive lane's device."""
+    lane = exclusive_gpu_device()
+    if lane is not None and docker_gpus.strip().lower() in {"", "all"}:
+        return f"device={lane}"
+    return docker_gpus
+
+
+def _activate_torch_device(device: str) -> None:
+    """Point current-device CUDA calls (.cuda(), tensor.to("cuda")) at this lane."""
+    try:
+        import torch
+    except ImportError:
+        return
+    if torch.cuda.is_available():
+        torch.cuda.set_device(int(device))
 GPU_LOCK_SAME_PROCESS_TIMEOUT_SECONDS_ENV_VAR = (
     "EXERCISE_MOTION_GPU_LOCK_SAME_PROCESS_TIMEOUT_SECONDS"
 )
@@ -266,10 +347,12 @@ class GlobalGpuLock:
         enabled: bool = True,
         on_force_release: Callable[[], None] | None = None,
         deadline: float | None = None,
+        device: str | None = None,
     ) -> None:
         self.stage = stage
         self.enabled = enabled and gpu_lock_enabled()
-        self.path = gpu_lock_path()
+        self.device = device
+        self.path = gpu_lock_path(device)
         self.timeout_seconds = gpu_lock_timeout_seconds()
         self.same_process_timeout_seconds = gpu_lock_same_process_timeout_seconds()
         self.wait_seconds = 0.0
@@ -448,6 +531,8 @@ class GlobalGpuLock:
                 time.sleep(sleep_seconds)
         try:
             wait_for_gpu_cooling(self.stage, deadline=self.deadline)
+            if self.device is not None:
+                _activate_torch_device(self.device)
             self.wait_seconds = time.perf_counter() - started
             return self._acquired()
         except BaseException:
@@ -485,6 +570,7 @@ def gpu_stage_lock(
     stage: str,
     enabled: bool = True,
     deadline: float | None = None,
+    device: str | None = None,
 ) -> GlobalGpuLock:
     if deadline is None:
         try:
@@ -493,7 +579,7 @@ def gpu_stage_lock(
             deadline = current_gpu_stage_deadline()
         except ImportError:
             pass
-    return GlobalGpuLock(stage=stage, enabled=enabled, deadline=deadline)
+    return GlobalGpuLock(stage=stage, enabled=enabled, deadline=deadline, device=device)
 
 
 def gpu_lock_enabled() -> bool:
@@ -503,11 +589,17 @@ def gpu_lock_enabled() -> bool:
     return value.strip().lower() not in {"0", "false", "off", "no"}
 
 
-def gpu_lock_path() -> Path:
+def gpu_lock_path(device: str | None = None) -> Path:
     configured = os.environ.get(GPU_LOCK_PATH_ENV_VAR)
     if configured:
-        return Path(configured).expanduser()
-    return Path(tempfile.gettempdir()) / "myworkoutassistant-gpu.lock"
+        base = Path(configured).expanduser()
+    else:
+        base = Path(tempfile.gettempdir()) / "myworkoutassistant-gpu.lock"
+    if device:
+        # One lane per physical device so stages on different GPUs never wait
+        # for each other; the legacy unsuffixed path remains lane zero.
+        return base.with_name(f"{base.stem}-{device}{base.suffix}")
+    return base
 
 
 def gpu_lock_timeout_seconds() -> float:

@@ -440,3 +440,62 @@ def test_cross_process_gpu_wait_sleep_is_bounded_by_candidate_deadline(
 
     assert observed_sleeps
     assert 0.0 <= observed_sleeps[0] <= 0.051
+
+
+def test_exclusive_gpu_device_parsing(monkeypatch: pytest.MonkeyPatch) -> None:
+    import exercise_motion_pkg.gpu_lock as gpu_lock
+    from exercise_motion_pkg.gpu_lock import (
+        EXCLUSIVE_GPU_DEVICE_ENV_VAR,
+        exclusive_gpu_device,
+        resolve_docker_gpu_selection,
+        resolve_stage_cuda_device,
+    )
+
+    monkeypatch.delenv(EXCLUSIVE_GPU_DEVICE_ENV_VAR, raising=False)
+    assert exclusive_gpu_device() is None
+    for off in ("", "0", "  "):
+        monkeypatch.setenv(EXCLUSIVE_GPU_DEVICE_ENV_VAR, off)
+        assert exclusive_gpu_device() is None
+    monkeypatch.setattr(gpu_lock, "visible_gpu_count", lambda: 2)
+    monkeypatch.setenv(EXCLUSIVE_GPU_DEVICE_ENV_VAR, "1")
+    assert exclusive_gpu_device() == "1"
+    monkeypatch.setenv(EXCLUSIVE_GPU_DEVICE_ENV_VAR, "3")
+    assert exclusive_gpu_device() is None
+    monkeypatch.setattr(gpu_lock, "visible_gpu_count", lambda: None)
+    monkeypatch.setenv(EXCLUSIVE_GPU_DEVICE_ENV_VAR, "1")
+    assert exclusive_gpu_device() == "1"
+    monkeypatch.setenv(EXCLUSIVE_GPU_DEVICE_ENV_VAR, "abc")
+    with pytest.raises(ValueError, match="EXCLUSIVE_GPU_DEVICE"):
+        exclusive_gpu_device()
+
+    monkeypatch.setenv(EXCLUSIVE_GPU_DEVICE_ENV_VAR, "1")
+    assert resolve_docker_gpu_selection("all") == "device=1"
+    assert resolve_docker_gpu_selection(" device=0 ") == " device=0 "
+    assert resolve_stage_cuda_device("cuda") == "cuda:1"
+    assert resolve_stage_cuda_device("cpu") == "cpu"
+    assert resolve_stage_cuda_device("cuda:0") == "cuda:0"
+    monkeypatch.delenv(EXCLUSIVE_GPU_DEVICE_ENV_VAR)
+    assert resolve_docker_gpu_selection("all") == "all"
+    assert resolve_stage_cuda_device("cuda") == "cuda"
+
+
+def test_per_device_lock_lanes_are_independent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import exercise_motion_pkg.gpu_lock as gpu_lock
+    from exercise_motion_pkg.gpu_lock import gpu_lock_path
+
+    monkeypatch.setenv(GPU_LOCK_PATH_ENV_VAR, str(tmp_path / "gpu.lock"))
+    monkeypatch.setattr(gpu_lock, "_activate_torch_device", lambda device: None)
+    secondary_path = gpu_lock_path("1")
+
+    with GlobalGpuLock(stage="secondary", device="1"):
+        assert secondary_path.exists()
+        with GlobalGpuLock(stage="primary"):
+            pass
+        with pytest.raises(RuntimeError, match="would deadlock"):
+            with GlobalGpuLock(stage="nested-secondary", device="1"):
+                pass
+    assert not secondary_path.exists()
+    assert not (tmp_path / "gpu.lock").exists()

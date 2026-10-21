@@ -46,7 +46,7 @@ from exercise_motion_pkg.boundary_evidence import (
     explicit_endpoint_requirements,
 )
 from exercise_motion_pkg.observation_cache import ObservationCache
-from exercise_motion_pkg.gpu_lock import small_gpu_stage_lock
+from exercise_motion_pkg.gpu_lock import exclusive_gpu_device, small_gpu_stage_lock
 from exercise_motion_pkg.process_lock import InterProcessFileLock, exclusive_workspace_lease
 import inspect
 import json
@@ -98,7 +98,7 @@ from exercise_motion_pkg.camera_stability import (
     CAMERA_STABILITY_POLICY_VERSION,
     analyze_video_scene_camera_stability,
 )
-from exercise_motion_pkg.ffmpeg_utils import resolve_ffmpeg_path
+from exercise_motion_pkg.ffmpeg_utils import h264_codec_args, resolve_ffmpeg_path
 from exercise_motion_pkg.motion_io import load_motion_json
 from exercise_motion_pkg.models import MotionClip, MotionFrame
 from exercise_motion_pkg.render_geometry import UNIFORM_CAPSULE_RADIUS, support_surface_height
@@ -3600,6 +3600,11 @@ class LazyLlamaCppVisionSession:
             )
             if operation_result is not _CO_RESIDENT_FALLBACK:
                 return operation_result
+        if exclusive_gpu_device() is not None:
+            # Exclusive ops own a different CUDA device than the resident
+            # server, so no quiesce/restart cycle is needed; the stage's own
+            # per-device GPU lock keeps device-0 work out of the way.
+            return operation()
         with self._condition:
             self._exclusive_waiters += 1
             quiesce_summary: QuiesceSummary | None = None
@@ -34436,21 +34441,29 @@ def write_review_frames_with_ffmpeg(
             "0",
         ]
     elif suffix == ".mp4":
+        h264_args = h264_codec_args()
         codec_args = [
             "-an",
-            "-c:v",
-            "libx264",
+            *h264_args,
             "-pix_fmt",
             "yuv420p",
-            "-preset",
-            "fast",
-            "-crf",
-            "20",
             "-movflags",
             "+faststart",
         ]
     else:
         raise ValueError(f"Unsupported review-video container: {output_path.suffix}")
+    fallback_codec_args = (
+        [
+            "-an",
+            *h264_codec_args(fallback=True),
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+        ]
+        if suffix == ".mp4" and h264_args[1] == "h264_nvenc"
+        else None
+    )
     command = [
         ffmpeg,
         "-hide_banner",
@@ -34470,43 +34483,51 @@ def write_review_frames_with_ffmpeg(
         *codec_args,
         str(output_path),
     ]
-    process = subprocess.Popen(
-        command,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-    )
-    try:
-        frame_bytes = b"".join(frame.tobytes() for frame in frames)
-        _, stderr_bytes = process.communicate(
-            input=frame_bytes,
-            timeout=REVIEW_VIDEO_FFMPEG_TIMEOUT_SECONDS,
+
+    def run_ffmpeg_encode(encode_command: list[str]) -> tuple[int, bytes]:
+        process = subprocess.Popen(
+            encode_command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
         )
-        stderr_bytes = stderr_bytes or b""
-        return_code = process.returncode
-    except subprocess.TimeoutExpired as exc:
         try:
-            process.kill()
-        except OSError:
-            if process.poll() is None:
-                raise
-        _, stderr_bytes = process.communicate()
-        stderr_bytes = stderr_bytes or exc.stderr or b""
-        stderr = stderr_bytes.decode("utf-8", errors="replace").strip()
-        detail = f": {stderr}" if stderr else ""
-        raise RuntimeError(
-            "FFmpeg review-video encode exceeded "
-            f"{REVIEW_VIDEO_FFMPEG_TIMEOUT_SECONDS:.0f}s and was terminated{detail}"
-        ) from exc
-    except Exception:
-        if process.poll() is None:
+            frame_bytes = b"".join(frame.tobytes() for frame in frames)
+            _, stderr_bytes = process.communicate(
+                input=frame_bytes,
+                timeout=REVIEW_VIDEO_FFMPEG_TIMEOUT_SECONDS,
+            )
+            stderr_bytes = stderr_bytes or b""
+            return process.returncode, stderr_bytes
+        except subprocess.TimeoutExpired as exc:
             try:
                 process.kill()
             except OSError:
                 if process.poll() is None:
                     raise
-        process.communicate()
-        raise
+            _, stderr_bytes = process.communicate()
+            stderr_bytes = stderr_bytes or exc.stderr or b""
+            stderr = stderr_bytes.decode("utf-8", errors="replace").strip()
+            detail = f": {stderr}" if stderr else ""
+            raise RuntimeError(
+                "FFmpeg review-video encode exceeded "
+                f"{REVIEW_VIDEO_FFMPEG_TIMEOUT_SECONDS:.0f}s and was terminated{detail}"
+            ) from exc
+        except Exception:
+            if process.poll() is None:
+                try:
+                    process.kill()
+                except OSError:
+                    if process.poll() is None:
+                        raise
+            process.communicate()
+            raise
+
+    return_code, stderr_bytes = run_ffmpeg_encode(command)
+    if return_code != 0 and fallback_codec_args is not None:
+        start = command.index(codec_args[0])
+        command[start:start + len(codec_args)] = fallback_codec_args
+        return_code, stderr_bytes = run_ffmpeg_encode(command)
     if return_code != 0:
         stderr = stderr_bytes.decode("utf-8", errors="replace").strip()
         raise RuntimeError(f"FFmpeg review-video encode failed with exit code {return_code}: {stderr}")

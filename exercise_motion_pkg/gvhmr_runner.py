@@ -13,7 +13,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from exercise_motion_pkg.gpu_lock import gpu_stage_lock
+from exercise_motion_pkg.gpu_lock import (
+    exclusive_gpu_device,
+    gpu_stage_lock,
+    resolve_docker_gpu_selection,
+)
 from exercise_motion_pkg.motion_scheduler import gpu_stage_task, timeout_with_candidate_deadline
 from exercise_motion_pkg.reconstruction_runner import (
     assert_warm_worker_available,
@@ -245,7 +249,7 @@ def run_gvhmr_with_warm_worker(
     started = time.perf_counter()
     lock_wait_seconds = 0.0
     gpu_lock_wait_seconds = 0.0
-    with gpu_stage_lock(stage="gvhmr_warm_worker_job") as gpu_lock_wait_seconds:
+    with gpu_stage_lock(stage="gvhmr_warm_worker_job", device=exclusive_gpu_device()) as gpu_lock_wait_seconds:
         with reconstruction_docker_run_lock(enabled=True) as lock_wait_seconds:
             # Model loading during lazy startup uses CUDA too. Keep GPU and
             # Docker admission through startup, then verify readiness again
@@ -384,7 +388,7 @@ def build_gvhmr_command(
     if docker_container_name:
         command.extend(["--name", docker_container_name])
     if docker_gpus:
-        command.extend(["--gpus", docker_gpus])
+        command.extend(["--gpus", resolve_docker_gpu_selection(docker_gpus)])
     if docker_shm_size:
         command.extend(["--shm-size", docker_shm_size])
     command.extend(
@@ -475,7 +479,7 @@ def run_gvhmr_locally(
     with stdout_log.open("w", encoding="utf-8") as stdout_handle, stderr_log.open(
         "w", encoding="utf-8"
     ) as stderr_handle:
-        with gpu_stage_lock(stage="gvhmr") as gpu_lock_wait_seconds:
+        with gpu_stage_lock(stage="gvhmr", device=exclusive_gpu_device()) as gpu_lock_wait_seconds:
             with reconstruction_docker_run_lock(enabled=True) as lock_wait_seconds:
                 returncode = run_reconstruction_process(
                     command,

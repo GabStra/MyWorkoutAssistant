@@ -2,7 +2,50 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 from pathlib import Path
+
+_NVENC_H264_PROBE: tuple[bool, bool] | None = None
+LIBX264_CODEC_ARGS = ["-c:v", "libx264", "-preset", "fast", "-crf", "20"]
+
+
+def h264_codec_args(*, fallback: bool = False) -> list[str]:
+    """H.264 encode args: NVENC when the resolved ffmpeg supports it, else libx264.
+
+    NVENC runs on the GPU's dedicated encoder block, keeping encodes off the
+    CPU fit lanes. fallback=True forces libx264 for runtime retries (NVENC
+    sessions can be exhausted even when the encoder exists).
+    """
+    if fallback:
+        return list(LIBX264_CODEC_ARGS)
+    global _NVENC_H264_PROBE
+    if _NVENC_H264_PROBE is None:
+        available = False
+        ffmpeg = resolve_ffmpeg_path()
+        if ffmpeg:
+            try:
+                result = subprocess.run(
+                    [ffmpeg, "-hide_banner", "-encoders"],
+                    capture_output=True,
+                    text=True,
+                    timeout=15.0,
+                )
+                available = " h264_nvenc" in result.stdout
+            except (OSError, subprocess.SubprocessError):
+                available = False
+        _NVENC_H264_PROBE = (True, available)
+    if _NVENC_H264_PROBE[1]:
+        return ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "20", "-b:v", "0"]
+    return list(LIBX264_CODEC_ARGS)
+
+
+def retry_h264_codec_args(command: list[str], codec_args: list[str]) -> list[str] | None:
+    """Replace a failed NVENC codec section with libx264 args, or None if n/a."""
+    if codec_args[1] != "h264_nvenc":
+        return None
+    start = command.index(codec_args[0])
+    command[start:start + len(codec_args)] = h264_codec_args(fallback=True)
+    return command
 
 
 def resolve_ffmpeg_path() -> str | None:
