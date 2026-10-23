@@ -174,6 +174,17 @@ open class AppViewModel : WorkoutViewModel() {
         _isRunningControlsDialogOpen.value = false
     }
 
+    private val _isSetStopControlsDialogOpen = MutableStateFlow(false)
+    val isSetStopControlsDialogOpen = _isSetStopControlsDialogOpen.asStateFlow()
+
+    fun openSetStopControlsDialog() {
+        _isSetStopControlsDialogOpen.value = true
+    }
+
+    fun closeSetStopControlsDialog() {
+        _isSetStopControlsDialogOpen.value = false
+    }
+
     fun initApplicationContext(context: android.content.Context) {
         applicationContext = context.applicationContext
         _alertSoundEnabled.value = AlertSoundPreferences.isEnabled(context.applicationContext)

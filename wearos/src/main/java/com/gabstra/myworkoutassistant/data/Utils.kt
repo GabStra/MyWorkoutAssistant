@@ -1407,6 +1407,7 @@ fun Modifier.repeatActionOnLongPressOrTap(
     intervalMillis: Long = 1000L,
     speedStages: List<LongPressRepeatSpeedStage> = DefaultLongPressRepeatSpeedStages,
     enabled: Boolean = true,
+    onPressedChange: (Boolean) -> Unit = {},
     onAction: () -> Unit,
     onTap: () -> Unit
 ): Modifier = this.then(
@@ -1416,6 +1417,7 @@ fun Modifier.repeatActionOnLongPressOrTap(
             detectTapGestures(
                 onPress = { _ ->
                     if (!enabled) return@detectTapGestures
+                    onPressedChange(true)
                     val job = launch {
                         delay(thresholdMillis)
                         val repeatStartMillis = System.currentTimeMillis()
@@ -1433,9 +1435,13 @@ fun Modifier.repeatActionOnLongPressOrTap(
                             )
                         } while (isActive)
                     }
-                    tryAwaitRelease()
-                    job.cancel()
-                    repeatedActionHappening = false
+                    try {
+                        tryAwaitRelease()
+                    } finally {
+                        job.cancel()
+                        repeatedActionHappening = false
+                        onPressedChange(false)
+                    }
                 },
                 onTap = {
                     if(enabled && !repeatedActionHappening) onTap()

@@ -1,18 +1,27 @@
 package com.gabstra.myworkoutassistant.composables
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.FilledTonalIconButton
@@ -30,7 +39,20 @@ fun EnhancedIconButton(
     hitBoxScale: Float = 1.5f,
     content: @Composable () -> Unit
 ) {
+    val latestOnClick by rememberUpdatedState(onClick)
     val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val containerColor by animateColorAsState(
+        targetValue = if (isPressed) darkenButtonColor(colors.containerColor) else colors.containerColor,
+        label = "icon button press",
+    )
+    val contentColor by animateColorAsState(
+        targetValue = if (isPressed) darkenButtonColor(colors.contentColor) else colors.contentColor,
+        label = "icon button content press",
+    )
+    val pressedColors = remember(colors, containerColor, contentColor) {
+        colors.copy(containerColor = containerColor, contentColor = contentColor)
+    }
     val hitBoxSize = remember(buttonSize, hitBoxScale) {
         buttonSize * hitBoxScale
     }
@@ -38,6 +60,15 @@ fun EnhancedIconButton(
     Box(
         modifier = modifier
             .size(hitBoxSize)
+            .semantics(mergeDescendants = true) {
+                role = Role.Button
+                if (!enabled) disabled()
+                onClick {
+                    if (!enabled) return@onClick false
+                    latestOnClick()
+                    true
+                }
+            }
             .pointerInput(enabled) {
                 awaitEachGesture {
                     // Observe the complete tap before the child visual button consumes it.
@@ -50,7 +81,7 @@ fun EnhancedIconButton(
                     val up = waitForUpOrCancellation(pass = PointerEventPass.Initial)
                     interactionSource.tryEmit(PressInteraction.Release(press))
                     if (enabled && up != null) {
-                        onClick()
+                        latestOnClick()
                     }
                 }
             }
@@ -61,7 +92,7 @@ fun EnhancedIconButton(
                 .size(buttonSize)
                 .align(Alignment.Center),
             enabled = enabled,
-            colors = colors,
+            colors = pressedColors,
             interactionSource = interactionSource
         ) {
             content()

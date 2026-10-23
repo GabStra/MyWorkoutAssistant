@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
+import androidx.compose.animation.animateColorAsState
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -17,6 +18,10 @@ import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -126,6 +131,16 @@ private fun ControlButton(
     buttonSize: androidx.compose.ui.unit.Dp = WearStandardIconButtonSize,
     iconSize: androidx.compose.ui.unit.Dp = WearStandardIconButtonIconSize,
 ) {
+    var isPressed by remember { mutableStateOf(false) }
+    val buttonBackground by animateColorAsState(
+        targetValue = if (enabled && isPressed) darkenButtonColor(backgroundColor) else backgroundColor,
+        label = "control button press",
+    )
+    val iconColor by animateColorAsState(
+        targetValue = if (enabled && isPressed) darkenButtonColor(MaterialTheme.colorScheme.onBackground)
+        else MaterialTheme.colorScheme.onBackground,
+        label = "control button icon press",
+    )
     Box(
         modifier = Modifier
             .size(hitBoxSize)
@@ -153,6 +168,7 @@ private fun ControlButton(
                 thresholdMillis = 1000,
                 intervalMillis = 150,
                 enabled = enabled,
+                onPressedChange = { isPressed = it },
                 onAction = onLongPress,
                 onTap = onTap
             ),
@@ -161,14 +177,14 @@ private fun ControlButton(
         Box(
             modifier = Modifier
                 .size(buttonSize)
-                .background(backgroundColor, CircleShape),
+                .background(buttonBackground, CircleShape),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 modifier = Modifier.size(iconSize),
                 imageVector = icon,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onBackground,
+                tint = iconColor,
             )
         }
     }

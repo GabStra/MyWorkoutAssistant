@@ -12,7 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.Icon
-import androidx.wear.compose.material3.IconButton
+import androidx.wear.compose.material3.IconButtonDefaults
 
 @Composable
 fun PreviousNextNavigationHeader(
@@ -35,12 +35,16 @@ fun PreviousNextNavigationHeader(
         ) {
             content()
         }
-        IconButton(
+        EnhancedIconButton(
             onClick = onSelectPrevious,
             modifier = Modifier
                 .align(Alignment.CenterStart)
                 .size(buttonSize),
             enabled = canSelectPrevious,
+            colors = IconButtonDefaults.iconButtonColors(),
+            buttonSize = buttonSize,
+            hitBoxScale = 1f,
+            buttonModifier = Modifier,
         ) {
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
@@ -48,12 +52,16 @@ fun PreviousNextNavigationHeader(
                 modifier = Modifier.size(iconSize),
             )
         }
-        IconButton(
+        EnhancedIconButton(
             onClick = onSelectNext,
             modifier = Modifier
                 .align(Alignment.CenterEnd)
                 .size(buttonSize),
             enabled = canSelectNext,
+            colors = IconButtonDefaults.iconButtonColors(),
+            buttonSize = buttonSize,
+            hitBoxScale = 1f,
+            buttonModifier = Modifier,
         ) {
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,

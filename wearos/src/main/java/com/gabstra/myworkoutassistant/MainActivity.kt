@@ -16,7 +16,6 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
 import android.util.Log
 import android.view.KeyEvent
 import androidx.core.content.edit
@@ -41,7 +40,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
-import androidx.core.net.toUri
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
@@ -55,9 +53,12 @@ import androidx.wear.compose.navigation.composable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import com.gabstra.myworkoutassistant.composables.EdgeSwipeBackHandler
 import com.gabstra.myworkoutassistant.composables.KeepOn
+import com.gabstra.myworkoutassistant.composables.PermissionRequestDialog
 import com.gabstra.myworkoutassistant.composables.RecoveryDialog
 import com.gabstra.myworkoutassistant.composables.SyncStatusBadge
 import com.gabstra.myworkoutassistant.composables.FullScreenLoadingIndicator
+import com.gabstra.myworkoutassistant.composables.missingWorkoutPermissions
+import com.gabstra.myworkoutassistant.composables.workoutPermissionMessage
 import com.gabstra.myworkoutassistant.composables.TutorialOverlay
 import com.gabstra.myworkoutassistant.composables.TutorialStep
 import com.gabstra.myworkoutassistant.data.AppViewModel
@@ -87,7 +88,10 @@ import com.gabstra.myworkoutassistant.screens.WorkoutScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutSelectionScreen
 import com.gabstra.myworkoutassistant.shared.datalayer.SyncPhase
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.HeartRateSource
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
+import com.gabstra.myworkoutassistant.shared.workout.model.IncompleteWorkout
+import com.gabstra.myworkoutassistant.shared.workout.recovery.RecoveryResumeOptions
 import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutSessionPhase
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
@@ -180,14 +184,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         appViewModel.initApplicationContext(applicationContext)
-
-        val nm = this.getSystemService(NotificationManager::class.java)
-        if (!nm.canUseFullScreenIntent()) {
-            this.startActivity(
-                Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT)
-                    .setData("package:${this.packageName}".toUri())
-            )
-        }
 
         lifecycleScope.launch(Dispatchers.IO) {
             val prefs = getSharedPreferences("workout_state", MODE_PRIVATE)
@@ -656,12 +652,11 @@ fun WearApp(
             val recoveryPromptUiState by appViewModel.recoveryPromptUiState
             val showRecoveredNotice by appViewModel.showRecoveredWorkoutNotice
 
-            val basePermissions = listOf(
-                android.Manifest.permission.BODY_SENSORS,
-                android.Manifest.permission.BLUETOOTH_SCAN,
-                android.Manifest.permission.BLUETOOTH_CONNECT,
-                android.Manifest.permission.POST_NOTIFICATIONS
-            )
+            var showRecoveryPermissionRationale by remember { mutableStateOf(false) }
+            var recoveryPermissionsToRequest by remember { mutableStateOf(emptyList<String>()) }
+            var pendingRecoveryResume by remember {
+                mutableStateOf<Pair<IncompleteWorkout, RecoveryResumeOptions>?>(null)
+            }
             val resumeRecoveredWorkout = {
                 val workoutId = appViewModel.selectedWorkoutId.value
                 if (workoutId != null) {
@@ -681,21 +676,38 @@ fun WearApp(
                 }
             }
 
-            val hasAllRecoveryPermissions = {
-                basePermissions.all { permission ->
-                    ContextCompat.checkSelfPermission(localContext, permission) ==
-                        PackageManager.PERMISSION_GRANTED
-                }
-            }
-
             val permissionLauncherResume =
                 androidx.activity.compose.rememberLauncherForActivityResult(
                     androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
                 ) {
-                    // Recovery resume must not silently die on partial permission denial.
-                    // External-HR preparation can still surface the missing requirement and allow skip.
-                    resumeRecoveredWorkout()
+                    pendingRecoveryResume?.let { (incompleteWorkout, recoveryOptions) ->
+                        appViewModel.setPendingRecoveryResumeOptions(recoveryOptions)
+                        appViewModel.prepareResumeWorkout(incompleteWorkout)
+                        resumeRecoveredWorkout()
+                    }
+                    pendingRecoveryResume = null
+                    recoveryPermissionsToRequest = emptyList()
                 }
+
+            fun requestRecoveryResume(
+                incompleteWorkout: IncompleteWorkout,
+                recoveryOptions: RecoveryResumeOptions,
+            ) {
+                val heartRateSource = appViewModel.workoutStore.workouts
+                    .firstOrNull { it.id == incompleteWorkout.workoutId }
+                    ?.heartRateSource ?: HeartRateSource.WATCH_SENSOR
+                val missingPermissions = missingWorkoutPermissions(localContext, heartRateSource)
+                if (missingPermissions.isEmpty()) {
+                    appViewModel.hideRecoveryPrompt()
+                    appViewModel.setPendingRecoveryResumeOptions(recoveryOptions)
+                    appViewModel.prepareResumeWorkout(incompleteWorkout)
+                    resumeRecoveredWorkout()
+                } else {
+                    pendingRecoveryResume = incompleteWorkout to recoveryOptions
+                    recoveryPermissionsToRequest = missingPermissions
+                    showRecoveryPermissionRationale = true
+                }
+            }
 
             LaunchedEffect(showRecoveredNotice) {
                 if (!showRecoveredNotice) return@LaunchedEffect
@@ -713,7 +725,7 @@ fun WearApp(
             }
 
             RecoveryDialog(
-                show = showRecoveryPrompt,
+                show = showRecoveryPrompt && !showRecoveryPermissionRationale,
                 workout = recoveryWorkout,
                 uiState = recoveryPromptUiState,
                 onDismiss = {
@@ -722,14 +734,7 @@ fun WearApp(
                 },
                 onResume = { incompleteWorkout, recoveryOptions ->
                     hapticsViewModel.doGentleVibration()
-                    appViewModel.hideRecoveryPrompt()
-                    appViewModel.setPendingRecoveryResumeOptions(recoveryOptions)
-                    appViewModel.prepareResumeWorkout(incompleteWorkout)
-                    if (hasAllRecoveryPermissions()) {
-                        resumeRecoveredWorkout()
-                    } else {
-                        permissionLauncherResume.launch(basePermissions.toTypedArray())
-                    }
+                    requestRecoveryResume(incompleteWorkout, recoveryOptions)
                 },
                 onDiscard = { incompleteWorkout ->
                     hapticsViewModel.doGentleVibration()
@@ -739,6 +744,24 @@ fun WearApp(
                     appViewModel.hideRecoveryPrompt()
                 }
             )
+
+            if (showRecoveryPermissionRationale) {
+                PermissionRequestDialog(
+                    title = "Workout permissions",
+                    message = workoutPermissionMessage(recoveryPermissionsToRequest),
+                    onContinue = {
+                        if (pendingRecoveryResume == null) return@PermissionRequestDialog
+                        appViewModel.hideRecoveryPrompt()
+                        showRecoveryPermissionRationale = false
+                        permissionLauncherResume.launch(recoveryPermissionsToRequest.toTypedArray())
+                    },
+                    onDismiss = {
+                        showRecoveryPermissionRationale = false
+                        recoveryPermissionsToRequest = emptyList()
+                        pendingRecoveryResume = null
+                    },
+                )
+            }
         }
     }
 }

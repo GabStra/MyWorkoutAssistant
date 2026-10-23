@@ -39,6 +39,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.semantics.Role
@@ -54,12 +55,13 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.wear.compose.material3.Icon
-import androidx.wear.compose.material3.IconButton
 import androidx.wear.compose.material3.IconButtonDefaults
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import androidx.wear.tooling.preview.devices.WearDevices
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.composables.PermissionRequestDialog
+import com.gabstra.myworkoutassistant.composables.workoutPermissionMessage
 import com.gabstra.myworkoutassistant.data.HapticsHelper
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.presentation.theme.MyWorkoutAssistantTheme
@@ -124,6 +126,8 @@ internal fun RunningSetScreen(
     var targetAlerted by remember(state.set.id, previewState) {
         mutableStateOf(previewState?.targetAlerted ?: false)
     }
+    var showPermissionRationale by remember { mutableStateOf(false) }
+    var permissionsToRequest by remember { mutableStateOf(emptyList<String>()) }
     val isOutdoor = prescription.environment == RunningEnvironment.OUTDOOR
     val locationGranted = previewState?.locationGranted ?: (!isOutdoor || ContextCompat.checkSelfPermission(
         context,
@@ -132,8 +136,14 @@ internal fun RunningSetScreen(
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { grants ->
-        val hasLocation = !isOutdoor || grants[Manifest.permission.ACCESS_FINE_LOCATION] == true
+    ) {
+        showPermissionRationale = false
+        permissionsToRequest = emptyList()
+        viewModel.closeRunningControlsDialog()
+        val hasLocation = !isOutdoor || ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+        ) == PackageManager.PERMISSION_GRANTED
         RunningTrackingService.reset()
         RunningTrackingService.start(context, isOutdoor, useGps = hasLocation && isOutdoor)
     }
@@ -162,7 +172,6 @@ internal fun RunningSetScreen(
     }
 
     fun startTracking() {
-        viewModel.closeRunningControlsDialog()
         val requested = mutableListOf<String>()
         if (isOutdoor && !locationGranted) {
             requested += Manifest.permission.ACCESS_FINE_LOCATION
@@ -175,10 +184,12 @@ internal fun RunningSetScreen(
             requested += Manifest.permission.BODY_SENSORS
         }
         if (requested.isEmpty()) {
+            viewModel.closeRunningControlsDialog()
             RunningTrackingService.reset()
             RunningTrackingService.start(context, isOutdoor, useGps = isOutdoor && locationGranted)
         } else {
-            permissionLauncher.launch(requested.toTypedArray())
+            permissionsToRequest = requested
+            showPermissionRationale = true
         }
     }
 
@@ -462,7 +473,7 @@ internal fun RunningSetScreen(
         }
     }
 
-    if (showRunningControlsDialog && tracker.running && !completed) {
+    if (showRunningControlsDialog && tracker.running && !completed && !showPermissionRationale) {
         RunningControlsDialog(
             isPaused = tracker.paused,
             distance = formatDistanceValue(currentDistanceMeters.takeIf { it > 0.0 }, distanceUnit),
@@ -477,12 +488,29 @@ internal fun RunningSetScreen(
             onDismiss = viewModel::closeRunningControlsDialog,
         )
     }
+
+    if (showPermissionRationale) {
+        PermissionRequestDialog(
+            title = "Run tracking permissions",
+            message = workoutPermissionMessage(permissionsToRequest),
+            onContinue = {
+                showPermissionRationale = false
+                viewModel.closeRunningControlsDialog()
+                permissionLauncher.launch(permissionsToRequest.toTypedArray())
+            },
+            onDismiss = {
+                showPermissionRationale = false
+                permissionsToRequest = emptyList()
+            },
+        )
+    }
 }
 
 @Composable
 private fun RunPlayIconButton(contentDescription: String, onClick: () -> Unit) {
-    IconButton(
+    EnhancedIconButton(
         modifier = Modifier.size(WearStandardIconButtonSize),
+        hitBoxScale = 1f,
         onClick = onClick,
         colors = IconButtonDefaults.iconButtonColors(containerColor = Green),
     ) {
@@ -490,7 +518,7 @@ private fun RunPlayIconButton(contentDescription: String, onClick: () -> Unit) {
             modifier = Modifier.size(WearStandardIconButtonIconSize),
             imageVector = Icons.Default.PlayArrow,
             contentDescription = contentDescription,
-            tint = MaterialTheme.colorScheme.onBackground,
+            tint = androidx.wear.compose.material3.LocalContentColor.current,
         )
     }
 }
@@ -553,8 +581,9 @@ private fun RunningControlsDialog(
                     horizontalArrangement = Arrangement.spacedBy(20.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    IconButton(
+                    EnhancedIconButton(
                         modifier = Modifier.size(WearStandardIconButtonSize),
+                        hitBoxScale = 1f,
                         onClick = onPauseResume,
                         colors = IconButtonDefaults.iconButtonColors(
                             containerColor = if (isPaused) Green else MaterialTheme.colorScheme.primary,
@@ -564,11 +593,12 @@ private fun RunningControlsDialog(
                             modifier = Modifier.size(WearStandardIconButtonIconSize),
                             imageVector = if (isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
                             contentDescription = if (isPaused) "Resume run" else "Pause run",
-                            tint = MaterialTheme.colorScheme.onBackground,
+                            tint = androidx.wear.compose.material3.LocalContentColor.current,
                         )
                     }
-                    IconButton(
+                    EnhancedIconButton(
                         modifier = Modifier.size(WearStandardIconButtonSize),
+                        hitBoxScale = 1f,
                         onClick = onFinish,
                         colors = IconButtonDefaults.iconButtonColors(containerColor = Red),
                     ) {
@@ -576,32 +606,25 @@ private fun RunningControlsDialog(
                             modifier = Modifier.size(WearStandardIconButtonIconSize),
                             imageVector = Icons.Default.Stop,
                             contentDescription = "Finish run",
-                            tint = MaterialTheme.colorScheme.onBackground,
+                            tint = androidx.wear.compose.material3.LocalContentColor.current,
                         )
                     }
                 }
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .semantics(mergeDescendants = true) {
-                            contentDescription = "Back to run"
-                        }
-                        .clickable(role = Role.Button, onClick = onDismiss),
-                    contentAlignment = Alignment.Center,
+                EnhancedIconButton(
+                    buttonSize = 40.dp,
+                    hitBoxScale = 1.2f,
+                    onClick = onDismiss,
+                    colors = IconButtonDefaults.iconButtonColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    ),
+                    buttonModifier = Modifier.clip(CircleShape),
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .background(MaterialTheme.colorScheme.surfaceContainerHigh, CircleShape),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            modifier = Modifier.size(20.dp),
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onBackground,
-                        )
-                    }
+                    Icon(
+                        modifier = Modifier.size(20.dp),
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back to run",
+                        tint = androidx.wear.compose.material3.LocalContentColor.current,
+                    )
                 }
             }
         }

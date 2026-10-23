@@ -48,10 +48,18 @@ fun OutlinedButtonWithText(
     textColor: Color? = null,
     onClick: () -> Unit
 ) {
+    val (pressedColors, interactionSource) = rememberPressedButtonColors(
+        colors = ButtonDefaults.outlinedButtonColors(
+            contentColor = textColor ?: MaterialTheme.colorScheme.onSurface,
+        ),
+        fallbackContainerColor = Color.Transparent,
+    )
     OutlinedButton(
         modifier = modifier,
         transformation = transformation,
         enabled = enabled,
+        colors = pressedColors,
+        interactionSource = interactionSource,
         border = borderColor?.let {
             ButtonDefaults.outlinedButtonBorder(
                 enabled = enabled,
@@ -64,7 +72,6 @@ fun OutlinedButtonWithText(
             modifier = Modifier.fillMaxWidth(),
             text = text,
             textAlign = TextAlign.Center,
-            color = textColor ?: MaterialTheme.colorScheme.onSurface
         )
     }
 }

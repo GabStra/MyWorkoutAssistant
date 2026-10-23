@@ -3,9 +3,11 @@ package com.gabstra.myworkoutassistant.screens
 import android.Manifest
 import android.app.Activity
 import android.app.AlarmManager
+import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -63,6 +65,7 @@ import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import androidx.wear.compose.material3.openOnPhoneDialogCurvedText
 import com.gabstra.myworkoutassistant.composables.ButtonWithText
+import com.gabstra.myworkoutassistant.composables.PermissionRequestDialog
 import com.gabstra.myworkoutassistant.composables.WearPrimaryButton
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
@@ -186,6 +189,27 @@ fun rememberCanScheduleExactAlarmsState(context: Context): State<Boolean> {
     return canScheduleState
 }
 
+@Composable
+fun rememberCanUseFullScreenIntentState(context: Context): State<Boolean> {
+    val notificationManager = context.getSystemService(NotificationManager::class.java)
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val permissionState = remember {
+        mutableStateOf(notificationManager.canUseFullScreenIntent())
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                permissionState.value = notificationManager.canUseFullScreenIntent()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    return permissionState
+}
+
 @OptIn(ExperimentalHorologistApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun WorkoutSelectionScreen(
@@ -255,9 +279,11 @@ fun WorkoutSelectionScreen(
     val versionName = getVersionName(context);
 
     val canScheduleExactAlarms by rememberCanScheduleExactAlarmsState(context)
+    val canUseFullScreenIntent by rememberCanUseFullScreenIntentState(context)
 
     var showClearData by remember { mutableStateOf(false) }
     var showOpenOnPhoneDialog by remember { mutableStateOf(false) }
+    var reminderSettingsRationale by remember { mutableStateOf<Pair<Intent, String>?>(null) }
     val scope = rememberWearCoroutineScope()
 
     LaunchedEffect(showOpenOnPhoneDialog) {
@@ -267,6 +293,19 @@ fun WorkoutSelectionScreen(
         } else {
             viewModel.reEvaluateDimmingForCurrentState()
         }
+    }
+
+    reminderSettingsRationale?.let { (intent, message) ->
+        PermissionRequestDialog(
+            title = "Workout reminders",
+            message = message,
+            continueLabel = "Open settings",
+            onContinue = {
+                reminderSettingsRationale = null
+                context.startActivity(intent)
+            },
+            onDismiss = { reminderSettingsRationale = null },
+        )
     }
 
     val state: TransformingLazyColumnState = rememberTransformingLazyColumnState()
@@ -364,13 +403,41 @@ fun WorkoutSelectionScreen(
                             text = "Open reminder settings",
                             onClick = {
                                 hapticsViewModel.doGentleVibration()
-                                val intent = Intent(
+                                reminderSettingsRationale = Intent(
                                     Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
-                                    "package:${context.packageName}".toUri()
-                                )
-
-                                context.startActivity(intent)
+                                    "package:${context.packageName}".toUri(),
+                                ) to "Allow exact alarms so scheduled workout reminders can appear at the time you chose."
                             }
+                        )
+                    }
+                }
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && !canUseFullScreenIntent) {
+                    item {
+                        Text(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 5.dp)
+                                .transformedHeight(this, spec)
+                                .animateItem(),
+                            text = "Allow alarms to open full screen",
+                            textAlign = TextAlign.Center,
+                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Normal),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    item {
+                        WearPrimaryButton(
+                            modifier = Modifier.transformedHeight(this, spec).animateItem(),
+                            transformation = SurfaceTransformation(spec),
+                            text = "Open alarm display settings",
+                            onClick = {
+                                hapticsViewModel.doGentleVibration()
+                                reminderSettingsRationale = Intent(
+                                    Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
+                                ).setData("package:${context.packageName}".toUri()) to
+                                    "Allow full-screen alarms so a scheduled workout reminder can bring the alarm screen forward."
+                            },
                         )
                     }
                 }

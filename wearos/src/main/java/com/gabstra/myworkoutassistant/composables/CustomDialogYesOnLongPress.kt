@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.animateColorAsState
 import com.gabstra.myworkoutassistant.presentation.theme.tertiaryContent
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
@@ -84,6 +85,16 @@ fun CustomDialogYesOnLongPress(
     var confirmHoldJob by remember { mutableStateOf<Job?>(null) }
     val coroutineScope = rememberWearCoroutineScope()
     val holdProgress = remember { Animatable(0f) }
+    val confirmContainerColor by animateColorAsState(
+        if (holdProgress.value > 0f) darkenButtonColor(MaterialTheme.colorScheme.primary)
+        else MaterialTheme.colorScheme.primary,
+        label = "confirm button press",
+    )
+    val confirmContentColor by animateColorAsState(
+        if (holdProgress.value > 0f) darkenButtonColor(MaterialTheme.colorScheme.onPrimary)
+        else MaterialTheme.colorScheme.onPrimary,
+        label = "confirm button content press",
+    )
     val latestHandleNoClick by rememberUpdatedState(handleNoClick)
     val latestHandleYesClick by rememberUpdatedState(handleYesClick)
     val latestHandleOnAutomaticClose by rememberUpdatedState(handleOnAutomaticClose)
@@ -280,7 +291,7 @@ fun CustomDialogYesOnLongPress(
                                     modifier = Modifier.size(ConfirmationCancelIconSize),
                                     imageVector = Icons.Default.Close,
                                     contentDescription = "Close",
-                                    tint = contentColor
+                                    tint = androidx.wear.compose.material3.LocalContentColor.current
                                 )
                             }
                             Spacer(modifier = Modifier.width(14.dp))
@@ -314,14 +325,14 @@ fun CustomDialogYesOnLongPress(
                                     modifier = Modifier
                                         .size(ConfirmationButtonSize)
                                         .clip(CircleShape)
-                                        .background(MaterialTheme.colorScheme.primary),
+                                        .background(confirmContainerColor),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Icon(
                                         modifier = Modifier.size(ConfirmationButtonIconSize),
                                         imageVector = Icons.Default.Check,
                                         contentDescription = "Done",
-                                        tint = MaterialTheme.colorScheme.onPrimary
+                                        tint = confirmContentColor
                                     )
                                 }
                             }

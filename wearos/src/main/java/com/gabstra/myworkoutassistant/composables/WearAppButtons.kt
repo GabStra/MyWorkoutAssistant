@@ -1,5 +1,8 @@
 package com.gabstra.myworkoutassistant.composables
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -7,8 +10,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.takeOrElse
+import androidx.compose.ui.graphics.colorspace.ColorSpaces
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
@@ -46,12 +54,17 @@ fun WearPrimaryButton(
     onClick: () -> Unit,
     colors: ButtonColors = ButtonDefaults.buttonColors(),
 ) {
+    val (pressedColors, interactionSource) = rememberPressedButtonColors(
+        colors = colors,
+        fallbackContainerColor = MaterialTheme.colorScheme.primary,
+    )
     Button(
         modifier = modifier,
         transformation = transformation,
         enabled = enabled,
         onClick = onClick,
-        colors = colors,
+        colors = pressedColors,
+        interactionSource = interactionSource,
     ) {
         Text(
             modifier = Modifier.fillMaxWidth(),
@@ -71,12 +84,17 @@ fun WearPrimaryContentButton(
     colors: ButtonColors = ButtonDefaults.buttonColors(),
     content: @Composable RowScope.() -> Unit,
 ) {
+    val (pressedColors, interactionSource) = rememberPressedButtonColors(
+        colors = colors,
+        fallbackContainerColor = MaterialTheme.colorScheme.primary,
+    )
     Button(
         modifier = modifier,
         transformation = transformation,
         enabled = enabled,
         onClick = onClick,
-        colors = colors,
+        colors = pressedColors,
+        interactionSource = interactionSource,
         content = content,
     )
 }
@@ -92,16 +110,21 @@ fun WearTonalButton(
     onClick: () -> Unit,
     colors: ButtonColors = ButtonDefaults.filledTonalButtonColors(),
 ) {
+    val (pressedColors, interactionSource) = rememberPressedButtonColors(
+        colors = colors,
+        fallbackContainerColor = MaterialTheme.colorScheme.secondaryContainer,
+    )
     FilledTonalButton(
         modifier = modifier,
         transformation = transformation,
         enabled = enabled,
-        colors = colors,
+        colors = pressedColors,
+        interactionSource = interactionSource,
         onClick = onClick,
     ) {
         if (scaleTextToFit) {
             val labelColor = if (enabled) {
-                MaterialTheme.colorScheme.onSecondaryContainer
+                pressedColors.secondaryContentColor
             } else {
                 MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
             }
@@ -149,4 +172,74 @@ fun WearTonalButton(
             )
         }
     }
+}
+
+@Composable
+fun WearTonalContentButton(
+    modifier: Modifier = Modifier,
+    transformation: SurfaceTransformation? = null,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+    colors: ButtonColors = ButtonDefaults.filledTonalButtonColors(),
+    content: @Composable RowScope.() -> Unit,
+) {
+    val (pressedColors, interactionSource) = rememberPressedButtonColors(
+        colors = colors,
+        fallbackContainerColor = MaterialTheme.colorScheme.secondaryContainer,
+    )
+    FilledTonalButton(
+        modifier = modifier,
+        transformation = transformation,
+        enabled = enabled,
+        colors = pressedColors,
+        interactionSource = interactionSource,
+        onClick = onClick,
+        content = content,
+    )
+}
+
+@Composable
+internal fun rememberPressedButtonColors(
+    colors: ButtonColors,
+    fallbackContainerColor: Color,
+): Pair<ButtonColors, MutableInteractionSource> {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val defaultContainerColor = colors.containerColor.takeOrElse { fallbackContainerColor }
+    val defaultContentColor = colors.contentColor.takeOrElse { MaterialTheme.colorScheme.onSurface }
+    val defaultSecondaryContentColor = colors.secondaryContentColor.takeOrElse { defaultContentColor }
+    val defaultIconColor = colors.iconColor.takeOrElse { defaultContentColor }
+    val containerColor by animateColorAsState(
+        targetValue = if (isPressed) darkenButtonColor(defaultContainerColor) else defaultContainerColor,
+        label = "button press",
+    )
+    val contentColor by animateColorAsState(
+        targetValue = if (isPressed) darkenButtonColor(defaultContentColor) else defaultContentColor,
+        label = "button content press",
+    )
+    val secondaryContentColor by animateColorAsState(
+        targetValue = if (isPressed) darkenButtonColor(defaultSecondaryContentColor) else defaultSecondaryContentColor,
+        label = "button secondary content press",
+    )
+    val iconColor by animateColorAsState(
+        targetValue = if (isPressed) darkenButtonColor(defaultIconColor) else defaultIconColor,
+        label = "button icon press",
+    )
+    return colors.copy(
+        containerColor = containerColor,
+        contentColor = contentColor,
+        secondaryContentColor = secondaryContentColor,
+        iconColor = iconColor,
+    ) to interactionSource
+}
+
+internal fun darkenButtonColor(color: Color): Color {
+    val oklab = color.convert(ColorSpaces.Oklab)
+    return Color(
+        red = oklab.red * 0.8f,
+        green = oklab.green,
+        blue = oklab.blue,
+        alpha = color.alpha,
+        colorSpace = ColorSpaces.Oklab,
+    ).convert(color.colorSpace)
 }

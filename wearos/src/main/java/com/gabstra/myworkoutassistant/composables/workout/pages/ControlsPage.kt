@@ -34,8 +34,6 @@ import androidx.navigation.NavController
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumnState
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
-import androidx.wear.compose.material3.ButtonDefaults
-import androidx.wear.compose.material3.FilledTonalButton
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.ScrollIndicator
@@ -369,7 +367,7 @@ fun ControlsPage(
                     }
                 }
 
-                FilledTonalButton(
+                WearTonalContentButton(
                     modifier = Modifier
                         .fillMaxWidth()
                         .then(
@@ -379,7 +377,6 @@ fun ControlsPage(
                             )
                         ),
                     transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
-                    colors = ButtonDefaults.filledTonalButtonColors(),
                     onClick = {
                         updateAlertSoundEnabled(!alertSoundEnabled)
                     }
@@ -432,7 +429,7 @@ fun ControlsPage(
                     hapticsViewModel.doGentleVibration()
                 }
 
-                FilledTonalButton(
+                WearTonalContentButton(
                     modifier = Modifier
                         .fillMaxWidth()
                         .then(
@@ -442,7 +439,6 @@ fun ControlsPage(
                             )
                         ),
                     transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
-                    colors = ButtonDefaults.filledTonalButtonColors(),
                     onClick = {
                         updateCalorieDisplayEnabled(!calorieDisplayEnabled)
                     }
@@ -498,7 +494,7 @@ fun ControlsPage(
                 val isSwitchEnabled = !exerciseDefaultKeepOn
                 val switchChecked = exerciseDefaultKeepOn || keepScreenOnOverride
 
-                FilledTonalButton(
+                WearTonalContentButton(
                     enabled = isSwitchEnabled,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -509,7 +505,6 @@ fun ControlsPage(
                             )
                         ),
                     transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
-                    colors = ButtonDefaults.filledTonalButtonColors(),
                     onClick = {
                         hapticsViewModel.doGentleVibration()
                         viewModel.toggleKeepScreenOn()

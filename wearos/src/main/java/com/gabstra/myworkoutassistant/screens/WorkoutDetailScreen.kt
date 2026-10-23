@@ -1,9 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
-import android.Manifest
 import com.gabstra.myworkoutassistant.presentation.theme.tertiaryContent
 import android.content.Context
-import android.content.pm.PackageManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -30,7 +28,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
-import androidx.core.content.ContextCompat
 import androidx.navigation.NavController
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumnState
@@ -51,8 +48,11 @@ import com.gabstra.myworkoutassistant.composables.ButtonWithText
 import com.gabstra.myworkoutassistant.composables.FullScreenLoadingIndicator
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.LoadingText
+import com.gabstra.myworkoutassistant.composables.PermissionRequestDialog
 import com.gabstra.myworkoutassistant.composables.WearPrimaryButton
 import com.gabstra.myworkoutassistant.composables.WorkoutNameText
+import com.gabstra.myworkoutassistant.composables.missingWorkoutPermissions
+import com.gabstra.myworkoutassistant.composables.workoutPermissionMessage
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.Screen
@@ -104,17 +104,9 @@ fun WorkoutDetailScreen(
         }
     }
 
-    val basePermissions = listOf(
-        Manifest.permission.BODY_SENSORS,
-        Manifest.permission.BLUETOOTH_SCAN,
-        Manifest.permission.BLUETOOTH_CONNECT,
-        Manifest.permission.POST_NOTIFICATIONS
-    )
-
-    fun hasAllWorkoutPermissions(): Boolean =
-        basePermissions.all { permission ->
-            ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
-        }
+    var showPermissionRationale by remember { mutableStateOf(false) }
+    var permissionsToRequest by remember { mutableStateOf(emptyList<String>()) }
+    var resumeAfterPermissionRequest by remember { mutableStateOf(false) }
 
     fun navigateToWorkout() {
         navController.navigate(Screen.Workout.route) {
@@ -143,31 +135,35 @@ fun WorkoutDetailScreen(
         viewModel.consumeStartWorkout()
     }
 
-    val permissionLauncherStart = rememberLauncherForActivityResult(
+    val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) {
-        startWorkoutAfterPermissions()
-    }
-
-    val permissionLauncherResume = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) {
-        resumeWorkoutAfterPermissions()
+        showPermissionRationale = false
+        permissionsToRequest = emptyList()
+        if (resumeAfterPermissionRequest) resumeWorkoutAfterPermissions()
+        else startWorkoutAfterPermissions()
+        resumeAfterPermissionRequest = false
     }
 
     fun requestPermissionsOrStartWorkout() {
-        if (hasAllWorkoutPermissions()) {
+        val missingPermissions = missingWorkoutPermissions(context, workout.heartRateSource)
+        if (missingPermissions.isEmpty()) {
             startWorkoutAfterPermissions()
         } else {
-            permissionLauncherStart.launch(basePermissions.toTypedArray())
+            permissionsToRequest = missingPermissions
+            resumeAfterPermissionRequest = false
+            showPermissionRationale = true
         }
     }
 
     fun requestPermissionsOrResumeWorkout() {
-        if (hasAllWorkoutPermissions()) {
+        val missingPermissions = missingWorkoutPermissions(context, workout.heartRateSource)
+        if (missingPermissions.isEmpty()) {
             resumeWorkoutAfterPermissions()
         } else {
-            permissionLauncherResume.launch(basePermissions.toTypedArray())
+            permissionsToRequest = missingPermissions
+            resumeAfterPermissionRequest = true
+            showPermissionRationale = true
         }
     }
 
@@ -184,6 +180,23 @@ fun WorkoutDetailScreen(
                 requestPermissionsOrStartWorkout()
             }
         }
+    }
+
+    if (showPermissionRationale) {
+        PermissionRequestDialog(
+            title = "Workout permissions",
+            message = workoutPermissionMessage(permissionsToRequest),
+            onContinue = {
+                showPermissionRationale = false
+                permissionLauncher.launch(permissionsToRequest.toTypedArray())
+            },
+            onDismiss = {
+                showPermissionRationale = false
+                permissionsToRequest = emptyList()
+                resumeAfterPermissionRequest = false
+                viewModel.consumeStartWorkout()
+            },
+        )
     }
 
     // Show loading screen while checking workout record (with minimum display time to prevent flashing)

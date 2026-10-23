@@ -83,6 +83,8 @@ import com.gabstra.myworkoutassistant.shared.workout.calibration.applyCalibratio
 import com.gabstra.myworkoutassistant.shared.workout.calibration.confirmCalibrationLoad
 import com.gabstra.myworkoutassistant.shared.workout.display.formatWorkoutDurationSecondsForDisplay
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
+import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
+import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutScreenState
 import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutSessionPhase
 import com.google.android.horologist.compose.ambient.AmbientAwareTime
@@ -368,6 +370,14 @@ fun WorkoutScreen(
                         RunningTrackingService.state.value.running
                     if (isActiveRun) {
                         viewModel.openRunningControlsDialog()
+                    } else if (
+                        workoutState.set is TimedDurationSet || workoutState.set is EnduranceSet
+                    ) {
+                        if (viewModel.workoutTimerService.isTimerRegistered(workoutState.set.id)) {
+                            viewModel.openSetStopControlsDialog()
+                        } else {
+                            viewModel.openCustomDialog()
+                        }
                     } else {
                         viewModel.openCustomDialog()
                     }

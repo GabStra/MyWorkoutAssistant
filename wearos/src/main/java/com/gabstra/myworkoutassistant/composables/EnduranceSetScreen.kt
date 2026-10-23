@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
@@ -37,14 +36,12 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.Icon
-import androidx.wear.compose.material3.IconButton
 import androidx.wear.compose.material3.IconButtonDefaults
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.Green
-import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.buildTimedSetGoalLabel
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
@@ -84,6 +81,7 @@ fun EnduranceSetScreen (
             // Clean up auto-start job when composable is disposed
             // Timer service continues running in background and will unregister when timer completes
             autoStartJob?.cancel()
+            viewModel.closeSetStopControlsDialog()
             topOverlayController.clear("endurance_countdown_${state.set.id}")
         }
     }
@@ -163,6 +161,7 @@ fun EnduranceSetScreen (
     var lastInteractionTime by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
     val updateInteractionTime = { lastInteractionTime = SystemClock.elapsedRealtime() }
     val isPaused by viewModel.isPaused
+    val showSetStopControlsDialog by viewModel.isSetStopControlsDialogOpen.collectAsState()
 
     val typography = MaterialTheme.typography
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
@@ -250,7 +249,13 @@ fun EnduranceSetScreen (
     }
 
     var currentMillis by remember(set.id) { mutableIntStateOf(0) }
-    var showStopDialog by remember { mutableStateOf(false) }
+    fun requestStop() {
+        hapticsViewModel.doGentleVibration()
+        viewModel.workoutTimerService.unregisterTimer(set.id)
+        markSetExecuted()
+        onTimerDisabled()
+        onTimerEnd()
+    }
 
 
     suspend fun showCountDownIfEnabled(){
@@ -528,8 +533,9 @@ fun EnduranceSetScreen (
             }
 
             if (showStartButton) {
-                IconButton(
+                EnhancedIconButton(
                     modifier = Modifier.size(WearStandardIconButtonSize),
+                    hitBoxScale = 1f,
                     onClick = {
                         autoStartJob?.cancel()
                         scope.launch {
@@ -553,16 +559,17 @@ fun EnduranceSetScreen (
                         modifier = Modifier.size(WearStandardIconButtonIconSize),
                         imageVector = Icons.Default.PlayArrow,
                         contentDescription = "Start",
-                        tint = MaterialTheme.colorScheme.onBackground
+                        tint = androidx.wear.compose.material3.LocalContentColor.current
                     )
                 }
             }
 
             if (showRepeatButton) {
-                IconButton(
+                EnhancedIconButton(
                     modifier = Modifier
                         .size(WearStandardIconButtonSize)
                         .semantics { contentDescription = "Repeat set" },
+                    hitBoxScale = 1f,
                     colors = IconButtonDefaults.iconButtonColors(containerColor = MaterialTheme.colorScheme.primary),
                     onClick = {
                         autoStartJob?.cancel()
@@ -596,29 +603,11 @@ fun EnduranceSetScreen (
                         modifier = Modifier.size(WearStandardIconButtonIconSize),
                         imageVector = Icons.Default.Replay,
                         contentDescription = "Repeat set",
-                        tint = MaterialTheme.colorScheme.onBackground
+                        tint = androidx.wear.compose.material3.LocalContentColor.current
                     )
                 }
             }
 
-            if (viewModel.workoutTimerService.isTimerRegistered(set.id)) {
-                IconButton(
-                    modifier = Modifier.size(WearStandardIconButtonSize),
-                    onClick = {
-                        hapticsViewModel.doGentleVibration()
-                        viewModel.workoutTimerService.unregisterTimer(set.id)
-                        showStopDialog = true
-                    },
-                    colors = IconButtonDefaults.iconButtonColors(containerColor = Red),
-                ) {
-                    Icon(
-                        modifier = Modifier.size(WearStandardIconButtonIconSize),
-                        imageVector = Icons.Default.Stop,
-                        contentDescription = "Stop",
-                        tint = MaterialTheme.colorScheme.onBackground
-                    )
-                }
-            }
         }
     }
 
@@ -724,36 +713,15 @@ fun EnduranceSetScreen (
             }
         }
 
-        CustomDialogYesOnLongPress(
-            show = showStopDialog,
-            title = "Stop exercise",
-            message = "End this timed set now?",
-            handleYesClick = {
-                hapticsViewModel.doGentleVibration()
-                showStopDialog = false
-                markSetExecuted()
-                onTimerDisabled()
-                onTimerEnd()
-            },
-            handleNoClick = {
-                hapticsViewModel.doGentleVibration()
-                showStopDialog = false
-                startTimer()
-            },
-            closeTimerInMillis = 5000,
-            handleOnAutomaticClose = {
-                showStopDialog = false
-                startTimer()
-            },
-            onVisibilityChange = { isVisible ->
-                if (isVisible) {
-                    viewModel.setDimming(false)
-                    viewModel.lightScreenUp()
-                } else {
-                    viewModel.reEvaluateDimmingForCurrentState()
-                }
-            }
-        )
+        if (showSetStopControlsDialog && viewModel.workoutTimerService.isTimerRegistered(set.id)) {
+            SetStopControlsDialog(
+                onStop = {
+                    viewModel.closeSetStopControlsDialog()
+                    requestStop()
+                },
+                onDismiss = viewModel::closeSetStopControlsDialog,
+            )
+        }
 
     }
 }
