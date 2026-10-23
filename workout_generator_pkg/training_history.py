@@ -14,10 +14,8 @@ from .planning_tools import library_fingerprint
 from .cancellation import check_cancelled
 
 RELATED_LOAD_TRANSFER_CAUTION = 'Do not convert or transfer loads automatically. Execution, laterality, reps, effort and equipment affect comparability.'
-LOAD_PROGRESSION_INSTRUCTION = ('For external-load progression, use the next selectable app load in the supplied load convention; '
-    'increments can vary across the range. Do not invent fixed increments from plate sizes. '
-    'If the selected definition cannot represent the progressed setup or added load, explicitly require selecting a supported library variant and re-auditing first. '
-    'Use history to choose provisional prescriptions. Keep placementNotes for movement-specific technique/setup cues and explicitly qualified source-backed safety exceptions. Use typed progressionPlan for progression; Python renders its guidance and working-set effort rules. The app owns native load calibration. '
+PRESCRIPTION_EVIDENCE_INSTRUCTION = (
+    'Use history to choose provisional prescriptions. Python renders working-set effort criteria. The app owns native load calibration. '
     'Do not duplicate structured work-set counts, rep targets, default RIR, rests, exercise order or superset assignments there; the renderer owns those facts. '
     'Do not restate or embellish historical performances; structured evidence already preserves them. '
     'A prescribed RIR is a target, never an observed historical effort when effort data is absent. ')

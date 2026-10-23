@@ -58,82 +58,12 @@ def test_local_cue_budget_excludes_generated_working_set_guidance():
     {'kind': 'technical_criteria', 'acceptanceCriterion': 'complete each repetition with controlled form',
      'terminationCriterion': 'stop when form cannot remain controlled'},
 ])
-def test_working_set_underperformance_rule_is_rendered_for_both_acceptance_types(acceptance):
-    from workout_generator_pkg.repair_capabilities import WORKING_SET_UNDERPERFORMANCE_GUIDANCE
-    item = {'effortAcceptance': acceptance}
-    expected = WORKING_SET_UNDERPERFORMANCE_GUIDANCE
+def test_effort_acceptance_does_not_emit_loading_or_progression_advice(acceptance):
+    text = planning_tools.effort_acceptance_guidance(acceptance)
+    assert 'Working-set acceptance' in text
+    assert 're-audit' not in text and 'change load' not in text
+    assert 'maximum selectable load' not in text
 
-    assert expected in planning_tools.effort_acceptance_guidance(acceptance)
-    assert expected in planning_tools.placement_notes_text_contract(item)['generatedText']
-    assert expected in planning_tools.placement_notes_text_contract({'effortAcceptance': acceptance})['generatedText']
-
-
-def test_double_progression_uses_range_even_when_this_workout_has_exact_starting_reps():
-    item = {'progressionPlan': {'kind': 'load', 'nextDefinitionId': None, 'nextDefinitionName': None,
-                                'atCeilingAction': 're_audit_higher_reps'},
-            'minReps': 10, 'maxReps': 15, 'numWorkSets': 3,
-            'progressionMethod': 'doubleProgression',
-            'workSetTemplate': {'reps': 12, 'weight': 20}}
-    note = planning_tools.generated_progression_note(item)
-    assert "today's prescribed reps as the starting target" in note
-    assert 'build each set from 10 to 15 reps' in note
-    assert 'after every set reaches 15' in note
-    assert 'increase to the next selectable load and reset to 10 reps' in note
-    assert 'keep the prescribed reps' not in note
-    assert item['workSetTemplate'] == {'reps': 12, 'weight': 20}
-
-
-def test_reps_progression_uses_the_range_before_its_qualified_variant():
-    item = {'progressionPlan': {'kind': 'reps', 'nextDefinitionId': 'LIBRARY_82',
-                                'nextDefinitionName': 'Qualified harder variant', 'atCeilingAction': 're_audit_variant'},
-            'minReps': 5, 'maxReps': 8, 'progressionMethod': 'reps',
-            'workSetTemplate': {'reps': 6}}
-    note = planning_tools.generated_progression_note(item)
-    assert 'build each set from 5 to 8 reps' in note
-    assert 'After every set reaches 8, select Qualified harder variant and re-audit before use.' in note
-    assert 'do not exceed that target' not in note
-    assert 'next selectable load' not in note
-    item['progressionPlan'].update(nextDefinitionId=None, nextDefinitionName=None, atCeilingAction='re_audit_higher_reps')
-    assert 'After every set reaches 8, re-audit a higher-rep prescription' in planning_tools.generated_progression_note(item)
-    item['progressionMethod'] = 'sourceDefined'
-    assert 'do not exceed that target' in planning_tools.generated_progression_note(item)
-    assert item['workSetTemplate'] == {'reps': 6}
-
-
-def test_source_defined_load_progression_keeps_its_existing_exact_rep_guidance():
-    item = {'progressionPlan': {'kind': 'load', 'nextDefinitionId': None, 'nextDefinitionName': None,
-                                'atCeilingAction': 're_audit_higher_reps'},
-            'minReps': 10, 'maxReps': 15, 'progressionMethod': 'sourceDefined',
-            'workSetTemplate': {'reps': 12, 'weight': 20}}
-
-    note = planning_tools.generated_progression_note(item)
-
-    assert 'keep the prescribed reps' in note
-    assert 'build each set from' not in note
-
-
-def test_progression_guidance_keeps_an_explicit_single_rep_target_fixed():
-    item = {'progressionPlan': {'kind': 'load', 'nextDefinitionId': None, 'nextDefinitionName': None,
-                                'atCeilingAction': 're_audit_higher_reps'},
-            'minReps': 12, 'maxReps': 12, 'workSetTemplate': {'reps': 12, 'weight': 20}}
-
-    note = planning_tools.generated_progression_note(item)
-
-    assert 'keep the prescribed reps' in note
-    assert 'build each set from' not in note
-
-
-def test_generated_guidance_respects_fixed_reps_and_bodyweight_load_limits():
-    item = {'progressionPlan': {'kind': 'reps', 'nextDefinitionId': None, 'nextDefinitionName': None,
-                                'atCeilingAction': 're_audit_higher_reps'},
-            'minReps': 10, 'maxReps': 15, 'numWorkSets': 3,
-            'workSetTemplate': {'reps': 12, 'additionalWeight': 0}}
-
-    progression = planning_tools.generated_progression_note(item)
-
-    assert 'prescribed reps' in progression and 'do not exceed that target' in progression
-    assert 'rep ceiling' not in progression.casefold() and 'top reps' not in progression.casefold()
-    assert 'at this supported configuration' in progression
 
 
 def test_local_notes_cannot_restate_typed_effort_or_progression():

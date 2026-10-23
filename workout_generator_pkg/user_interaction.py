@@ -64,12 +64,12 @@ def repair_workout_alternative_tool(task):
     properties.pop('baseDraftId', None)
     properties['repairCandidateId'] = {'type': 'string', 'enum': [candidate_id]}
     properties['originalRequirementsId'] = {'type': 'string', 'enum': [original_requirements_id]}
-    parameters['required'] = ['repairCandidateId', 'originalRequirementsId',
-        'addressedFindingIndexes', 'edits']
+    parameters['required'] = ['repairCandidateId', 'originalRequirementsId', *[
+        field for field in parameters['required'] if field not in ('requirementsId', 'baseDraftId')]]
     tool['function']['name'] = 'repair_workout_alternative'
     tool['function']['description'] = (
         'Repair the exact saved hypothetical workout alternative identified by repairCandidateId, using originalRequirementsId and every actionable addressedFindingIndexes. '
-        'Use one atomic typed edits transaction with stable WORKOUT_n and EXERCISE_n references from that candidate. '
+        'Submit one atomic repair using the structured fields in the supplied schema. '
         'The numerical relaxation is fixed and hypothetical; do not change it, any mandatory requirement, equipment, safety restriction, or the active workout draft. '
         'Python applies edits only to the saved alternative, re-runs its full numerical audit, then a fresh independent review. '
         'This does not approve the alternative. The user must separately approve its exact reviewed proposal ID. '

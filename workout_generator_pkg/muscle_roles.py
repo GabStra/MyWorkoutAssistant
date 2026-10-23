@@ -8,6 +8,33 @@ MUSCLE_LABELS = {
     'forearms': 'Forearms', 'traps': 'Trapezius', 'tibialis': 'Tibialis anterior', 'neck': 'Neck',
 }
 
+MOVEMENT_COVERAGE_ROLES = {
+    'knee_dominant': 'Knee-dominant lower-body work',
+    'posterior_chain': 'Posterior-chain work',
+    'upper_push': 'Upper-body pushing work',
+    'upper_pull': 'Upper-body pulling work',
+    'horizontal_push': 'Horizontal push work',
+    'horizontal_pull': 'Horizontal pull work',
+    'vertical_push': 'Vertical push work',
+    'vertical_pull': 'Vertical pull work',
+    'hip_dominant': 'Hip-dominant lower-body work',
+    'knee_flexion_hamstring': 'Knee-flexion hamstring work',
+    'lateral_delt': 'Lateral-delt work',
+    'rear_delt': 'Rear-delt work',
+    'elbow_flexion': 'Elbow-flexion work',
+    'elbow_extension': 'Elbow-extension work',
+    'calves': 'Dedicated calf work',
+    'core': 'Dedicated abdominal/core work',
+}
+
+
+def coverage_role_descriptions(supported_muscles=None):
+    """Code-owned labels for movement patterns and supported muscle groups."""
+    muscle_roles = {name.replace('lowerBack', 'lower_back'):
+                    f'Dedicated {label.lower()} work' for name, label in MUSCLE_LABELS.items()
+                    if supported_muscles is None or name in supported_muscles}
+    return {**muscle_roles, **MOVEMENT_COVERAGE_ROLES}
+
 MUSCLE_ROLE_GUIDANCE = """Use a consistent training-role convention across the entire inventory:
 muscleGroups identifies the directly trained target regions; secondaryMuscleGroups identifies
 meaningfully loaded assisting regions. These roles feed fractional set accounting (direct 1,

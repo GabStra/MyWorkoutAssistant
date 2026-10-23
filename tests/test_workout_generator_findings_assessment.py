@@ -41,6 +41,16 @@ def _alternative_repair_failures(candidate_ids, *, statuses=None):
     return messages
 
 
+def test_capability_pause_allows_new_human_resolution_without_dropping_the_finding():
+    from workout_generator_pkg.interactive_shell import _repair_capability_pause
+
+    state = {'repairCapabilityUnresolved': {'currentDraftId': 'REVISION_1', 'findingIndexes': [1]}}
+    assert _repair_capability_pause(state)
+    assert _repair_capability_pause({**state, 'newInstructionPending': True}) is None
+    assert _repair_capability_pause({**state, 'planningDecisionNeeded': True}) is None
+    assert state['repairCapabilityUnresolved']['findingIndexes'] == [1]
+
+
 def test_capability_pause_does_not_block_a_current_alternative_for_stale_source_findings():
     from workout_generator_pkg.interactive_shell import _repair_capability_pause
 
@@ -304,6 +314,154 @@ def test_stable_coordinated_edits_compile_atomically_and_reject_stale_or_duplica
         compile_coordinated_repair(duplicate, task, current)
 
 
+def test_assessed_repair_rejects_count_edits_without_silently_dropping_them():
+    from workout_generator_pkg.planning_tools import compile_coordinated_repair, coordinated_repair_tool
+    _, _, _, current = planning_case()
+    before = copy.deepcopy(current)
+    task = {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_4',
+            'findingsAssessment': {'groups': [{'findingIndexes': [0], 'disposition': 'repair',
+                'repairDimensions': ['session_timing']}]}}
+    schema = coordinated_repair_tool({**task, 'currentDraft': current})['function']['parameters']
+    assert 'numWorkSets' not in schema['properties']['edits']['properties']['exerciseUpdates']['items']['properties']['setFields']['properties']
+    arguments = {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_4',
+        'addressedFindingIndexes': [0], 'edits': {'exerciseUpdates': [
+            {'exerciseRef': 'EXERCISE_0', 'setFields': {'numWorkSets': 99, 'setupSeconds': 90}}]}}
+    with pytest.raises(ValidationError, match='numWorkSets'):
+        compile_coordinated_repair(arguments, task, current)
+    assert current == before and arguments['edits']['exerciseUpdates'][0]['setFields']['numWorkSets'] == 99
+    arguments['edits']['exerciseUpdates'][0]['setFields'].pop('numWorkSets')
+    compiled, _ = compile_coordinated_repair(arguments, task, current)
+    assert compiled['patch'] == [{'op': 'replace', 'path': '/workouts/0/exercises/0/setupSeconds', 'value': 90}]
+
+
+def test_explicit_superset_detachment_normalizes_only_detached_or_singleton_members():
+    from workout_generator_pkg.json_patching import apply_json_patch
+    from workout_generator_pkg.planning_tools import compile_coordinated_repair
+
+    _, _, _, current = planning_case()
+    first = current['workouts'][0]['exercises'][0]
+    first.update(superset='PAIR', restBetweenSetsSeconds=0,
+                 restAfterSupersetExerciseSeconds=20)
+    second = copy.deepcopy(first)
+    second.update(restAfterSupersetExerciseSeconds=90)
+    current['workouts'][0]['exercises'].append(second)
+    task = {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_21',
+        'findingCode': 'independent_review_finding'}
+    arguments = {'requirementsId': task['requirementsId'], 'baseDraftId': task['baseDraftId'],
+        'edits': {'exerciseUpdates': [
+            {'exerciseRef': 'EXERCISE_0', 'setFields': {
+                'superset': None, 'restBetweenSetsSeconds': 75}}]}}
+
+    compiled, source_refs = compile_coordinated_repair(arguments, task, current)
+    repaired = apply_json_patch(current, compiled['patch'])
+    assert repaired['workouts'][0]['exercises'][0]['superset'] is None
+    assert repaired['workouts'][0]['exercises'][1]['superset'] is None
+    assert [item['restBetweenSetsSeconds'] for item in repaired['workouts'][0]['exercises']] == [75, 90]
+    assert all(item['restAfterSupersetExerciseSeconds'] == 0
+               for item in repaired['workouts'][0]['exercises'])
+    assert any('EXERCISE_1' in refs for refs in source_refs)
+
+    after_rest_only = copy.deepcopy(arguments)
+    after_rest_only['edits']['exerciseUpdates'][0]['setFields'] = {
+        'superset': None, 'restAfterSupersetExerciseSeconds': 80}
+    after_rest_compiled, _ = compile_coordinated_repair(after_rest_only, task, current)
+    after_rest_repaired = apply_json_patch(current, after_rest_compiled['patch'])
+    assert after_rest_repaired['workouts'][0]['exercises'][0]['restBetweenSetsSeconds'] == 90
+    assert after_rest_repaired['workouts'][0]['exercises'][0]['restAfterSupersetExerciseSeconds'] == 0
+
+
+def test_explicit_detachment_preserves_remaining_pair_and_accepts_explicit_reorder():
+    from workout_generator_pkg.json_patching import apply_json_patch
+    from workout_generator_pkg.planning_tools import compile_coordinated_repair
+
+    _, _, _, current = planning_case()
+    first = current['workouts'][0]['exercises'][0]
+    first.update(superset='TRIO', restBetweenSetsSeconds=0,
+                 restAfterSupersetExerciseSeconds=20)
+    for recovery in (30, 90):
+        member = copy.deepcopy(first)
+        member['restAfterSupersetExerciseSeconds'] = recovery
+        current['workouts'][0]['exercises'].append(member)
+    task = {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_22',
+        'findingCode': 'independent_review_finding'}
+
+    arguments = {'requirementsId': task['requirementsId'], 'baseDraftId': task['baseDraftId'],
+        'edits': {'exerciseUpdates': [
+            {'exerciseRef': 'EXERCISE_0', 'setFields': {'superset': None}}]}}
+    compiled, _ = compile_coordinated_repair(arguments, task, current)
+    repaired = apply_json_patch(current, compiled['patch'])
+    assert repaired['workouts'][0]['exercises'][0]['superset'] is None
+    assert [item['superset'] for item in repaired['workouts'][0]['exercises'][1:]] == ['TRIO', 'TRIO']
+
+    middle_detach = copy.deepcopy(arguments)
+    middle_detach['edits']['exerciseUpdates'][0]['exerciseRef'] = 'EXERCISE_1'
+    unordered, _ = compile_coordinated_repair(middle_detach, task, current)
+    assert unordered['patch']
+
+    middle_detach['edits']['exerciseOrders'] = [{'workoutRef': 'WORKOUT_0',
+        'exerciseRefs': ['EXERCISE_0', 'EXERCISE_2', 'EXERCISE_1']}]
+    compiled, _ = compile_coordinated_repair(middle_detach, task, current)
+    repaired = apply_json_patch(current, compiled['patch'])
+    assert [item['superset'] for item in repaired['workouts'][0]['exercises']] == ['TRIO', 'TRIO', None]
+
+
+def test_assessed_redistribution_owns_superset_recovery_in_combined_repair():
+    from workout_generator_pkg.json_patching import apply_json_patch
+    from workout_generator_pkg.planning_tools import compile_coordinated_repair, set_workout_requirements
+
+    equipment, requirements, _, current = planning_case()
+    requirements['sessionsPerWeek'] = 2
+    requirements['auditTargets']['weeklyEffectiveSets']['chest'] = {'minimum': 11, 'maximum': 11}
+    requirements['auditTargets']['perSessionEffectiveSets'] = {}
+    stored = set_workout_requirements(requirements,
+        [{'role': 'user', 'content': 'Two weekly sessions with eleven chest sets total.'}], equipment)
+    current['requirementsId'] = stored['requirementsId']
+    source = copy.deepcopy(current['workouts'][0]['exercises'][0])
+    source.update(superset='GROUP_A', restBetweenSetsSeconds=0,
+                  restAfterSupersetExerciseSeconds=20)
+    current['workouts'][0]['exercises'][0] = source
+    companion = copy.deepcopy(source)
+    companion.update(minReps=6, maxReps=8, restAfterSupersetExerciseSeconds=90)
+    current['workouts'][0]['exercises'].append(companion)
+    second_day = copy.deepcopy(current['workouts'][0])
+    second_day['name'] = 'Day B'
+    second_day['exercises'] = [copy.deepcopy(source)]
+    second_day['exercises'][0].update(superset=None, numWorkSets=1, restBetweenSetsSeconds=90,
+                                      restAfterSupersetExerciseSeconds=0)
+    unrelated_first = copy.deepcopy(source)
+    unrelated_first.update(minReps=7, maxReps=9, superset='GROUP_B',
+                           restAfterSupersetExerciseSeconds=30)
+    unrelated_second = copy.deepcopy(unrelated_first)
+    unrelated_second['restAfterSupersetExerciseSeconds'] = 60
+    second_day['exercises'].extend([unrelated_first, unrelated_second])
+    current['workouts'].append(second_day)
+
+    task = {'requirementsId': stored['requirementsId'], 'baseDraftId': 'REVISION_24',
+        'requirements': stored['requirements'],
+        'findingsAssessment': {'groups': [{'findingIndexes': [0], 'disposition': 'repair',
+            'repairDimensions': ['superset', 'session_timing'],
+            'repairObjectives': [{'kind': 'redistribute_work',
+                'exerciseRefs': ['EXERCISE_0', 'EXERCISE_2'], 'minimumSessions': 2}]}]}}
+    arguments = {'requirementsId': stored['requirementsId'], 'baseDraftId': task['baseDraftId'],
+        'addressedFindingIndexes': [0], 'edits': {
+            'redistributionTargets': {'REDISTRIBUTION_0': ['WORKOUT_0', 'WORKOUT_1']},
+            'exerciseUpdates': [{'exerciseRef': 'EXERCISE_3', 'setFields': {'superset': None}}]}}
+
+    compiled, operation_refs, reference_map = compile_coordinated_repair(
+        arguments, task, current, return_reference_map=True)
+    repaired = apply_json_patch(current, compiled['patch'])
+    assert all(item['superset'] is None for item in repaired['workouts'][0]['exercises'])
+    assert repaired['workouts'][0]['exercises'][0]['restBetweenSetsSeconds'] == 90
+    assert repaired['workouts'][0]['exercises'][1]['restBetweenSetsSeconds'] == 90
+    assert all(item['superset'] is None for item in repaired['workouts'][1]['exercises'])
+    assert [item['restBetweenSetsSeconds'] for item in repaired['workouts'][1]['exercises'][1:]] == [60, 60]
+    assert reference_map['redistributionManifest'][0]['minimumSessions'] == 2
+    updates = reference_map['composedEdits']['exerciseUpdates']
+    assert len({update['exerciseRef'] for update in updates}) == len(updates)
+    referenced = {reference for refs in operation_refs for reference in refs}
+    assert {'EXERCISE_0', 'EXERCISE_1'} <= referenced
+
+
 def test_unassessed_saved_draft_repairs_use_stable_typed_edits_and_add_missing_optional_fields():
     from workout_generator_pkg.json_patching import apply_json_patch
     from workout_generator_pkg.planning_tools import (
@@ -335,203 +493,125 @@ def test_unassessed_saved_draft_repairs_use_stable_typed_edits_and_add_missing_o
         compile_coordinated_repair({**arguments, 'baseDraftId': 'REVISION_5'}, task, current)
 
 
-def test_rejected_typed_repair_is_amended_by_default_and_can_be_explicitly_replaced():
+def test_rejected_typed_repair_is_evidence_not_implicitly_applied():
     from workout_generator_pkg.json_patching import apply_json_patch
     from workout_generator_pkg.planning_tools import compile_coordinated_repair, coordinated_repair_tool
-
     _, _, _, current = planning_case()
-    requirements_id = current['requirementsId']
-    previous = {
-        'workoutUpdates': [{'workoutRef': 'WORKOUT_0', 'setFields': {'description': 'Retained focus'}}],
-        'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0', 'setFields': {'setupSeconds': 45}}],
-    }
-    task = {'requirementsId': requirements_id, 'baseDraftId': 'REVISION_8',
-        'rejectedCoordinatedRepair': {
-            'requirementsId': requirements_id, 'baseDraftId': 'REVISION_8', 'currentDraftId': 'REVISION_8',
-            'submittedEdits': previous,
-        }}
-    schema = coordinated_repair_tool({**task, 'currentDraft': current})['function']['parameters']
-    assert 'replaceRejectedRepair' in schema['properties']
-    correction = {'requirementsId': requirements_id, 'baseDraftId': 'REVISION_8', 'edits': {
-        'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0', 'setFields': {
-            'setupSeconds': 90, 'placementNotes': 'Corrected cue'}}]}}
-    compiled, _ = compile_coordinated_repair(correction, task, current)
+    previous = {'workoutUpdates': [{'workoutRef': 'WORKOUT_0', 'setFields': {'description': 'Rejected focus'}}],
+                'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0', 'setFields': {'setupSeconds': 45}}]}
+    task = {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_8',
+        'rejectedCoordinatedRepair': {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_8',
+            'currentDraftId': 'REVISION_8', 'submittedEdits': previous}}
+    assert 'replaceRejectedRepair' not in coordinated_repair_tool({**task, 'currentDraft': current})['function']['parameters']['properties']
+    correction = {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_8',
+        'edits': {'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0', 'setFields': {'setupSeconds': 90}}]}}
+    context = {}
+    compiled, _ = compile_coordinated_repair(correction, task, current, proposal_context=context)
     updated = apply_json_patch(current, compiled['patch'])
-    assert updated['workouts'][0]['description'] == 'Retained focus'
+    assert updated['workouts'][0].get('description') == current['workouts'][0].get('description')
     assert updated['workouts'][0]['exercises'][0]['setupSeconds'] == 90
-    assert updated['workouts'][0]['exercises'][0]['placementNotes'] == 'Corrected cue'
-    assert correction['edits'] == {'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0', 'setFields': {
-        'setupSeconds': 90, 'placementNotes': 'Corrected cue'}}]}
-    assert 'replaceRejectedRepair' not in correction
+    assert context['submittedEdits'] == correction['edits']
+    assert context['replacedSubmittedEdits'] == previous == task['rejectedCoordinatedRepair']['submittedEdits']
 
-    replacement = {'requirementsId': requirements_id, 'baseDraftId': 'REVISION_8',
-        'replaceRejectedRepair': True, 'edits': {'exerciseUpdates': [
-            {'exerciseRef': 'EXERCISE_0', 'setFields': {'placementNotes': 'Full replacement'}}]}}
-    replaced, _ = compile_coordinated_repair(replacement, task, current)
-    replaced_candidate = apply_json_patch(current, replaced['patch'])
-    assert replaced_candidate['workouts'][0].get('description') != 'Retained focus'
-    assert replaced_candidate['workouts'][0]['exercises'][0]['setupSeconds'] == current['workouts'][0]['exercises'][0]['setupSeconds']
+
+def test_rejected_removal_cannot_poison_a_later_valid_update():
+    from workout_generator_pkg.json_patching import apply_json_patch
+    from workout_generator_pkg.planning_tools import compile_coordinated_repair
+    _, _, _, current = planning_case()
+    task = {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_9',
+        'rejectedCoordinatedRepair': {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_9',
+            'currentDraftId': 'REVISION_9', 'submittedEdits': {'exerciseRemovals': ['EXERCISE_0']}}}
+    correction = {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_9',
+        'edits': {'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0', 'setFields': {'setupSeconds': 90}}]}}
+    compiled, _ = compile_coordinated_repair(correction, task, current)
+    assert len(apply_json_patch(current, compiled['patch'])['workouts'][0]['exercises']) == 1
+    assert not any(op['op'] == 'remove' for op in compiled['patch'])
+
+
+def test_malformed_retained_proposal_does_not_block_an_independent_valid_edit():
+    from workout_generator_pkg.planning_tools import compile_coordinated_repair
+    _, _, _, current = planning_case()
+    previous = {'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0', 'setFields': {'staleUnknownField': 'evidence'}}]}
+    task = {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_10',
+        'rejectedCoordinatedRepair': {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_10',
+            'currentDraftId': 'REVISION_10', 'submittedEdits': previous}}
+    correction = {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_10',
+        'edits': {'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0', 'setFields': {'setupSeconds': 90}}]}}
+    compiled, _ = compile_coordinated_repair(correction, task, current)
+    assert compiled['patch'] == [{'op': 'replace', 'path': '/workouts/0/exercises/0/setupSeconds', 'value': 90}]
     assert task['rejectedCoordinatedRepair']['submittedEdits'] == previous
 
 
-def test_rejected_typed_repair_conflicts_require_an_explicit_full_replacement():
-    from workout_generator_pkg.planning_tools import PlanningInputError, compile_coordinated_repair
-
-    _, _, _, current = planning_case()
-    task = {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_9',
-        'rejectedCoordinatedRepair': {
-            'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_9', 'currentDraftId': 'REVISION_9',
-            'submittedEdits': {'exerciseRemovals': ['EXERCISE_0']},
-        }}
-    correction = {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_9', 'edits': {
-        'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0', 'setFields': {'placementNotes': 'Keep this movement'}}]}}
-    with pytest.raises(PlanningInputError, match='cannot be updated or removed more than once'):
-        compile_coordinated_repair(correction, task, current)
-    correction['replaceRejectedRepair'] = True
-    compiled, _ = compile_coordinated_repair(correction, task, current)
-    assert any(operation['path'].endswith('/placementNotes') for operation in compiled['patch'])
-    assert task['rejectedCoordinatedRepair']['submittedEdits']['exerciseRemovals'] == ['EXERCISE_0']
-
-
-def test_malformed_retained_repair_is_revalidated_and_only_explicit_replacement_discards_it():
-    from workout_generator_pkg.planning_tools import compile_coordinated_repair
-
-    _, _, _, current = planning_case()
-    task = {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_10',
-        'rejectedCoordinatedRepair': {
-            'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_10', 'currentDraftId': 'REVISION_10',
-            'submittedEdits': {'exerciseUpdates': [
-                {'exerciseRef': 'EXERCISE_0', 'setFields': {'staleUnknownField': 'retain and diagnose'}}]},
-        }}
-    correction = {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_10', 'edits': {
-        'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0', 'setFields': {'placementNotes': 'Valid correction'}}]}}
-    proposal_context = {}
-    with pytest.raises(ValidationError) as caught:
-        compile_coordinated_repair(correction, task, current, proposal_context=proposal_context)
-    assert 'staleUnknownField' in str(caught.value)
-    assert proposal_context['proposalCompiled'] is True
-    assert proposal_context['submittedEdits']['exerciseUpdates'][0]['setFields'] == {
-        'staleUnknownField': 'retain and diagnose', 'placementNotes': 'Valid correction'}
-    assert correction['edits'] == {'exerciseUpdates': [
-        {'exerciseRef': 'EXERCISE_0', 'setFields': {'placementNotes': 'Valid correction'}}]}
-
-    correction['replaceRejectedRepair'] = True
-    compiled, _ = compile_coordinated_repair(correction, task, current)
-    assert any(operation['path'].endswith('/placementNotes') for operation in compiled['patch'])
-    assert task['rejectedCoordinatedRepair']['submittedEdits']['exerciseUpdates'][0]['setFields']['staleUnknownField'] == 'retain and diagnose'
-
-
-def test_invalid_correction_keeps_prior_proposal_and_next_valid_edit_amends_it():
+def test_invalid_correction_leaves_evidence_and_next_valid_edit_uses_saved_candidate():
     from workout_generator_pkg.json_patching import apply_json_patch
-    from workout_generator_pkg.interactive_shell import _admit_repair_scope
     from workout_generator_pkg.planning_tools import compile_coordinated_repair
-
     _, _, _, current = planning_case()
-    requirements_id = current['requirementsId']
-    previous = {
-        'workoutUpdates': [{'workoutRef': 'WORKOUT_0', 'setFields': {'description': 'Retained focus'}}],
-        'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0', 'setFields': {'setupSeconds': 45}}],
-    }
-    first_task = {'requirementsId': requirements_id, 'baseDraftId': 'REVISION_14',
-        'rejectedCoordinatedRepair': {
-            'requirementsId': requirements_id, 'baseDraftId': 'REVISION_14', 'currentDraftId': 'REVISION_14',
-            'submittedEdits': previous,
-        }}
-    malformed = {'requirementsId': requirements_id, 'baseDraftId': 'REVISION_14', 'edits': {
-        'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0', 'setFields': {'unknownTypedField': 'bad'}}]}}
-    submission = {'attemptedEdits': copy.deepcopy(malformed['edits'])}
+    previous = {'workoutUpdates': [{'workoutRef': 'WORKOUT_0', 'setFields': {'description': 'Rejected focus'}}]}
+    task = {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_14',
+        'rejectedCoordinatedRepair': {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_14',
+            'currentDraftId': 'REVISION_14', 'submittedEdits': previous}}
+    malformed = {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_14',
+        'edits': {'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0', 'setFields': {'unknownTypedField': 'bad'}}]}}
     with pytest.raises(ValidationError):
-        _admit_repair_scope(malformed, first_task, current, [], 0, 3, submission_context=submission)
-    assert submission['submittedEdits'] == previous
-    assert submission['attemptedEdits'] == malformed['edits']
-    assert 'proposalCompiled' not in submission
-
-    next_task = {'requirementsId': requirements_id, 'baseDraftId': 'REVISION_14',
-        'rejectedCoordinatedRepair': {
-            'requirementsId': requirements_id, 'baseDraftId': 'REVISION_14', 'currentDraftId': 'REVISION_14',
-            'submittedEdits': submission['submittedEdits'],
-        }}
-    next_correction = {'requirementsId': requirements_id, 'baseDraftId': 'REVISION_14', 'edits': {
-        'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0', 'setFields': {'setupSeconds': 90}}]}}
-    compiled, _ = compile_coordinated_repair(next_correction, next_task, current)
+        compile_coordinated_repair(malformed, task, current)
+    valid = copy.deepcopy(malformed)
+    valid['edits']['exerciseUpdates'][0]['setFields'] = {'setupSeconds': 90}
+    compiled, _ = compile_coordinated_repair(valid, task, current)
     updated = apply_json_patch(current, compiled['patch'])
-    assert updated['workouts'][0]['description'] == 'Retained focus'
-    assert updated['workouts'][0]['exercises'][0]['setupSeconds'] == 90
+    assert updated['workouts'][0].get('description') == current['workouts'][0].get('description')
+    assert task['rejectedCoordinatedRepair']['submittedEdits'] == previous
 
 
-def test_scope_rejection_receipt_context_keeps_the_composed_proposal():
+def test_scope_rejection_records_only_the_submitted_proposal():
     from workout_generator_pkg.interactive_shell import _admit_repair_scope
     from workout_generator_pkg.planning_tools import PlanningInputError
-
     _, _, _, current = planning_case()
     task = {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_11',
-        'rejectedCoordinatedRepair': {
-            'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_11', 'currentDraftId': 'REVISION_11',
-            'submittedEdits': {'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0',
-                'setFields': {'setupSeconds': 45}}]},
-        }}
-    arguments = {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_11', 'edits': {
-        'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0', 'setFields': {'placementNotes': 'Correction'}}]}}
-    submission = {'attemptedEdits': copy.deepcopy(arguments['edits'])}
-
-    def reject_after_compilation(*_args):
-        raise PlanningInputError('scope_rejected', 'Not admitted.', '/edits', 'Keep repairing the assessed scope.')
-
-    with pytest.raises(PlanningInputError, match='Not admitted'):
-        _admit_repair_scope(arguments, task, current, [], 0, 3, scope_validator=reject_after_compilation,
-            submission_context=submission)
-    assert submission['proposalCompiled'] is True
-    assert submission['submittedEdits']['exerciseUpdates'][0]['setFields'] == {
-        'setupSeconds': 45, 'placementNotes': 'Correction'}
+        'rejectedCoordinatedRepair': {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_11',
+            'currentDraftId': 'REVISION_11', 'submittedEdits': {'exerciseRemovals': ['EXERCISE_0']}}}
+    arguments = {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_11',
+        'edits': {'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0', 'setFields': {'setupSeconds': 90}}]}}
+    def reject(*args):
+        raise PlanningInputError('scope_rejected', 'Keep the original draft.', '/edits', 'Correct the scope.')
+    context = {}
+    with pytest.raises(PlanningInputError, match='Keep the original draft'):
+        _admit_repair_scope(arguments, task, current, [], 0, 3, scope_validator=reject, submission_context=context)
+    assert context['submittedEdits'] == arguments['edits'] and context['proposalCompiled']
 
 
-def test_composed_structural_addition_keeps_its_order_when_later_fields_are_corrected():
+def test_rejected_structural_addition_and_order_are_not_inherited():
+    from workout_generator_pkg.json_patching import apply_json_patch
     from workout_generator_pkg.planning_tools import compile_coordinated_repair
-
     _, _, _, current = planning_case()
-    exercise = copy.deepcopy(current['workouts'][0]['exercises'][0])
-    previous = {'exerciseAdditions': [{'temporaryId': 'NEW_EXERCISE_kept', 'workoutRef': 'WORKOUT_0',
-        'exercise': exercise}], 'exerciseOrders': [{'workoutRef': 'WORKOUT_0',
-        'exerciseRefs': ['NEW_EXERCISE_kept', 'EXERCISE_0']}]}
+    previous = {'exerciseAdditions': [{'temporaryId': 'NEW_EXERCISE_rejected', 'workoutRef': 'WORKOUT_0',
+        'exercise': copy.deepcopy(current['workouts'][0]['exercises'][0])}],
+        'exerciseOrders': [{'workoutRef': 'WORKOUT_0', 'exerciseRefs': ['NEW_EXERCISE_rejected', 'EXERCISE_0']}]}
     task = {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_12',
-        'rejectedCoordinatedRepair': {
-            'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_12', 'currentDraftId': 'REVISION_12',
-            'submittedEdits': previous,
-        }}
-    correction = {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_12', 'edits': {
-        'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0', 'setFields': {'placementNotes': 'Keep the source change'}}]}}
-    compiled, operation_refs, references = compile_coordinated_repair(
-        correction, task, current, return_reference_map=True)
-    assert references['composedEdits']['exerciseAdditions'][0]['temporaryId'] == 'NEW_EXERCISE_kept'
-    assert references['composedEdits']['exerciseOrders'][0]['exerciseRefs'] == ['NEW_EXERCISE_kept', 'EXERCISE_0']
-    assert any(operation['op'] == 'add' and operation['path'].endswith('/exercises/-') for operation in compiled['patch'])
-    assert any(operation['op'] == 'move' for operation in compiled['patch'])
-    assert any('NEW_EXERCISE_kept' in refs for refs in operation_refs)
+        'rejectedCoordinatedRepair': {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_12',
+            'currentDraftId': 'REVISION_12', 'submittedEdits': previous}}
+    correction = {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_12',
+        'edits': {'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0', 'setFields': {'setupSeconds': 90}}]}}
+    compiled, _ = compile_coordinated_repair(correction, task, current)
+    assert len(apply_json_patch(current, compiled['patch'])['workouts'][0]['exercises']) == 1
+    assert not any(op['op'] in ('add', 'move') for op in compiled['patch'])
+    assert task['rejectedCoordinatedRepair']['submittedEdits'] == previous
 
 
-def test_explicit_replacement_still_must_cover_every_assessed_group():
+def test_independent_repair_still_must_cover_every_assessed_group():
     from workout_generator_pkg.planning_tools import PlanningInputError, compile_coordinated_repair, validate_repair_scope
-
     _, _, _, current = planning_case()
     task = {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_13',
-        'findingsAssessment': {'inputHash': 'assessment-input', 'groups': [
-            {'findingIndexes': [0], 'disposition': 'repair', 'repairDimensions': ['guidance']},
-            {'findingIndexes': [1], 'disposition': 'repair', 'repairDimensions': ['coverage']},
-        ]},
-        'reviewFindings': [
-            {'draftPath': '/workouts/0/exercises/0/placementNotes'},
-            {'draftPath': '/workouts/0/exercises/0/satisfiesCoverage'},
-        ],
-        'rejectedCoordinatedRepair': {
-            'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_13', 'currentDraftId': 'REVISION_13',
-            'assessmentInputHash': 'assessment-input', 'submittedEdits': {'exerciseRemovals': ['EXERCISE_0']},
-        }}
-    replacement = {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_13',
-        'addressedFindingIndexes': [0, 1], 'replaceRejectedRepair': True, 'edits': {
-            'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0', 'setFields': {'placementNotes': 'Complete guidance'}}]}}
-    compiled, operation_refs = compile_coordinated_repair(replacement, task, current)
+        'findingsAssessment': {'groups': [
+            {'findingIndexes': [0], 'disposition': 'repair', 'repairDimensions': ['session_timing']},
+            {'findingIndexes': [1], 'disposition': 'repair', 'repairDimensions': ['coverage']}]},
+        'reviewFindings': [{'draftPath': '/workouts/0/exercises/0/setupSeconds'},
+                           {'draftPath': '/workouts/0/exercises/0/satisfiesCoverage'}]}
+    arguments = {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_13',
+        'addressedFindingIndexes': [0, 1], 'edits': {'exerciseUpdates': [
+            {'exerciseRef': 'EXERCISE_0', 'setFields': {'setupSeconds': 90}}]}}
+    compiled, refs = compile_coordinated_repair(arguments, task, current)
     with pytest.raises(PlanningInputError, match='matching structured field'):
-        validate_repair_scope(compiled, {**task, '_compiledRepairOperationRefs': operation_refs}, current)
+        validate_repair_scope(compiled, {**task, '_compiledRepairOperationRefs': refs}, current)
 
 
 def test_typed_repair_schema_feedback_preserves_all_errors_and_shows_correct_sibling_location():
@@ -633,56 +713,25 @@ def test_typed_repair_advertises_current_description_cap_without_rejecting_sched
     assert any(operation['op'] == 'move' for operation in reordered_compiled['patch'])
 
 
-def test_saved_metadata_repair_compiles_stable_refs_with_exact_path_scope_and_replays_rejected_candidate():
+def test_metadata_repair_does_not_replay_rejected_candidate_operations():
     from workout_generator_pkg.json_patching import apply_json_patch
-    from workout_generator_pkg.planning_tools import (
-        PlanningInputError, compile_coordinated_repair, coordinated_repair_tool, planning_tool_failure, validate_repair_scope,
-    )
-
+    from workout_generator_pkg.interactive_shell import _admit_repair_scope
     _, _, _, saved = planning_case()
-    saved['workouts'][0]['exercises'].append(copy.deepcopy(saved['workouts'][0]['exercises'][0]))
-    path = '/workouts/0/exercises/0/placementNotes'
-    second_path = '/workouts/0/exercises/1/placementNotes'
-    rejected = {'requirementsId': saved['requirementsId'], 'baseDraftId': 'REVISION_7',
-        'patch': [{'op': 'replace', 'path': path, 'value': 'Rejected source cue'}]}
-    hypothetical = apply_json_patch(saved, rejected['patch'])
+    saved['workouts'][0]['description'] = 'Original focus'
+    path = '/workouts/0/description'
+    rejected = {'requirementsId': saved['requirementsId'], 'baseDraftId': 'REVISION_7', 'patch': [
+        {'op': 'replace', 'path': '/workouts/0/exercises/0/numWorkSets', 'value': 99},
+        {'op': 'replace', 'path': path, 'value': 'Rejected long focus'}]}
     task = {'requirementsId': saved['requirementsId'], 'baseDraftId': 'REVISION_7',
-        'permittedPatchPaths': [path, second_path], 'metadataFields': {
-            path: {'maximumCharacters': 80}, second_path: {'maximumCharacters': 25}},
-        'rejectedSubmission': rejected}
-    schema = coordinated_repair_tool({**task, 'currentDraft': hypothetical})['function']['parameters']['properties']['edits']['properties']
-    assert set(schema) == {'exerciseUpdates'}
-    variants = schema['exerciseUpdates']['items']['oneOf']
-    assert [(variant['properties']['exerciseRef']['enum'],
-             variant['properties']['setFields']['properties']['placementNotes']['maxLength'])
-            for variant in variants] == [(['EXERCISE_0'], 80), (['EXERCISE_1'], 25)]
-
-    too_long = {'requirementsId': task['requirementsId'], 'baseDraftId': 'REVISION_7', 'edits': {
-        'exerciseUpdates': [{'exerciseRef': 'EXERCISE_1',
-            'setFields': {'placementNotes': 'x' * 26}}]}}
-    with pytest.raises(ValidationError) as caught:
-        compile_coordinated_repair(too_long, task, hypothetical)
-    scoped_feedback = planning_tool_failure('audit_workout_plan', caught.value, too_long)
-    assert len(scoped_feedback['errors']) == 1
-    assert scoped_feedback['errors'][0]['validator'] == 'maxLength'
-    assert scoped_feedback['errors'][0]['expected'] == 25
-    assert scoped_feedback['errors'][0]['textFieldContract']['maximumCharacters'] == 25
-
-    arguments = {'requirementsId': task['requirementsId'], 'baseDraftId': 'REVISION_7', 'edits': {
-        'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0',
-            'setFields': {'placementNotes': 'Short valid cue'}}, {'exerciseRef': 'EXERCISE_1',
-            'setFields': {'placementNotes': 'Brief cue'}}]}}
-    compiled, refs = compile_coordinated_repair(arguments, task, hypothetical)
-    merged = validate_repair_scope(compiled, {**task, '_compiledRepairOperationRefs': refs}, hypothetical)
-    assert merged['patch'] == rejected['patch'] + [
-        {'op': 'replace', 'path': path, 'value': 'Short valid cue'},
-        {'op': 'replace', 'path': second_path, 'value': 'Brief cue'}]
-    final = apply_json_patch(saved, merged['patch'])
-    assert final['workouts'][0]['exercises'][0]['placementNotes'] == 'Short valid cue'
-    assert final['workouts'][0]['exercises'][1]['placementNotes'] == 'Brief cue'
-    with pytest.raises(ValueError, match='outside allowed error paths'):
-        validate_repair_scope({**compiled, 'patch': [{'op': 'replace',
-            'path': '/workouts/0/exercises/0/numWorkSets', 'value': 2}]}, task, hypothetical)
+        'rejectedSubmission': rejected, 'permittedPatchPaths': [path],
+        'metadataFields': {path: {'maximumCharacters': 25}}}
+    arguments = {'requirementsId': saved['requirementsId'], 'baseDraftId': 'REVISION_7', 'edits': {
+        'workoutUpdates': [{'workoutRef': 'WORKOUT_0', 'setFields': {'description': 'Short focus'}}]}}
+    admitted = _admit_repair_scope(arguments, task, saved, [], 0, 3)
+    final = apply_json_patch(saved, admitted['patch'])
+    assert final['workouts'][0]['description'] == 'Short focus'
+    assert final['workouts'][0]['exercises'] == saved['workouts'][0]['exercises']
+    assert admitted['patch'] == [{'op': 'replace', 'path': path, 'value': 'Short focus'}]
 
 
 def test_stable_coordinated_repair_moves_exercise_between_workouts_and_reorders_final_inventory():
@@ -1134,6 +1183,8 @@ def test_recipe_qualification_runs_only_for_owned_contract_or_movement_changes()
         'setFields': {'definition_id': 'LIBRARY_1'}}]}, draft)
     assert not _repair_requires_coordinated_qualification({'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0',
         'setFields': {'progressionMethod': 'doubleProgression'}}]}, draft)
+    assert not _repair_requires_coordinated_qualification({'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0',
+        'removeOptionalFields': ['progressionMethod']}]}, draft)
     assert _repair_requires_coordinated_qualification({'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0',
         'setFields': {'progressionPlan': {'kind': 'reps'}}}]}, draft)
     assert _repair_requires_coordinated_qualification({'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0',
@@ -1141,6 +1192,28 @@ def test_recipe_qualification_runs_only_for_owned_contract_or_movement_changes()
     assert _repair_requires_coordinated_qualification({'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0',
         'setFields': {'definition_id': 'LIBRARY_2'}}]}, draft)
     assert _repair_requires_coordinated_qualification({'exerciseAdditions': [{'temporaryId': 'NEW_EXERCISE_1'}]}, draft)
+    assert _repair_requires_coordinated_qualification({'exerciseMoves': [{'exerciseRef': 'EXERCISE_0',
+        'workoutRef': 'WORKOUT_1'}]}, draft)
+    assert _repair_requires_coordinated_qualification({'exerciseOrders': [{'workoutRef': 'WORKOUT_0',
+        'exerciseRefs': ['EXERCISE_0', 'EXERCISE_1']}]}, draft)
+    assert _repair_requires_coordinated_qualification({'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0',
+        'setFields': {'superset': 'A'}}]}, draft)
+    assert _repair_requires_coordinated_qualification({'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0',
+        'removeOptionalFields': ['superset']}]}, draft)
+
+
+def test_structural_exercise_layout_edits_require_coordinated_qualification():
+    from workout_generator_pkg.interactive_shell import _repair_requires_coordinated_qualification
+
+    draft = {'workouts': [{'exercises': [{'definition_id': 'LIBRARY_1'}]}]}
+    for edits in (
+            {'exerciseAdditions': [{'temporaryId': 'NEW_EXERCISE_1'}]},
+            {'exerciseRemovals': ['EXERCISE_0']},
+            {'exerciseMoves': [{'exerciseRef': 'EXERCISE_0', 'workoutRef': 'WORKOUT_1'}]},
+            {'exerciseOrders': [{'workoutRef': 'WORKOUT_0', 'exerciseRefs': ['EXERCISE_0']}]},
+            {'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0', 'setFields': {'superset': 'A'}}]},
+            {'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0', 'removeOptionalFields': ['superset']}]},):
+        assert _repair_requires_coordinated_qualification(edits, draft)
 
 
 def test_selection_repair_can_read_only_omitted_draft_details_while_choosing():
@@ -1406,7 +1479,7 @@ def test_every_finding_is_assessed_together_cached_and_malformed_assessments_fai
     result = assessment.assess_findings(None, {'draft': 'whole week', 'alternativeReview': alternative_review}, review)
     assert set(calls[0]['findings']) == {'0', '1', '2'}
     assert calls[0]['context']['alternativeReview'] == alternative_review
-    assert 'Pending approval is expected' in prompts[0]
+    assert 'pending approval is expected' in prompts[0].lower()
     review['assessment'] = result
     assert assessment.assess_findings(None, {}, review) == result and len(calls) == 1
     for indexes in ([0], [0, 0, 2], [0, 2, True]):
@@ -1431,7 +1504,7 @@ def test_blocking_finding_assessment_gets_one_bounded_correction(monkeypatch):
     invalid = {'groups': [{'findingIndexes': [0], 'disposition': 'advisory', 'repairDimensions': [],
         'reason': 'The finding is unsupported.', 'errorKind': 'none', 'authorityEvidenceRefs': [], 'currentDataEvidenceRefs': []}],
         'repairPlan': ''}
-    corrected = {'groups': [{'findingIndexes': [0], 'disposition': 'repair', 'repairDimensions': ['guidance'],
+    corrected = {'groups': [{'findingIndexes': [0], 'disposition': 'repair', 'repairDimensions': ['prescription'],
         'reason': 'Blocking finding must be corrected.', 'errorKind': 'none', 'authorityEvidenceRefs': [], 'currentDataEvidenceRefs': []}],
         'repairPlan': 'Repair the unsupported cap while preserving the approved plan.'}
     calls = []
@@ -1926,7 +1999,8 @@ def test_complete_candidate_uses_owned_contracts_and_joint_solver_before_review(
     assert result['submittedDraft']['name'] == draft['name']
 
 
-def test_qualified_candidate_with_only_solver_numeric_errors_reaches_joint_solver(monkeypatch):
+@pytest.mark.parametrize('rest_error', [False, True])
+def test_qualified_candidate_with_only_solver_numeric_errors_reaches_joint_solver(monkeypatch, rest_error):
     from workout_generator_pkg import interactive_shell
     from workout_generator_pkg.joint_planning import solve_prescribed_week
     from workout_generator_pkg.planning_tools import set_workout_requirements
@@ -1935,12 +2009,18 @@ def test_qualified_candidate_with_only_solver_numeric_errors_reaches_joint_solve
     requirements['auditTargets']['weeklyEffectiveSets']['chest'] = {'minimum': 1, 'maximum': 6}
     requirements['auditTargets']['perSessionEffectiveSets']['chest'] = {'minimum': 1, 'maximum': 6}
     requirements['auditTargets']['maximumSessionSeconds'] = 600
+    if rest_error:
+        requirements['executionRules'] = [{'kind': 'rest', 'context': 'straightSets',
+            'coverageKey': None, 'minimumSeconds': 90, 'maximumSeconds': 180}]
+        draft['workouts'][0]['exercises'][0]['restBetweenSetsSeconds'] = 60
     stored = set_workout_requirements(requirements, [{'role': 'user', 'content':
         'Plan 1 to 6 chest sets, with a maximum session duration of 10 minutes.'}], equipment)
     draft['requirementsId'] = stored['requirementsId']
     messages = requirement_messages(stored)
     baseline = audit_workout_plan(draft, equipment, messages)
-    assert not baseline['passed'] and [error['code'] for error in baseline['errors']] == ['duration_exceeded']
+    assert not baseline['passed']
+    assert {error['code'] for error in baseline['errors']} == ({'duration_exceeded', 'execution_rest'}
+        if rest_error else {'duration_exceeded'})
     real_audit = interactive_shell.audit_workout_plan
     audit_calls = []
 
@@ -2285,10 +2365,11 @@ def test_confirmation_only_review_skips_full_required_checks(monkeypatch):
         'auditPolicy': {'supportedMuscleTargets': []}}
     context = {'draft': {'workouts': [{'id': 'WORKOUT_0', 'name': 'Session'}],
                         'exercises': [{'id': 'EXERCISE_0'}]},
-        'auditPolicy': {'supportedMuscleTargets': []}, 'sourceMessages': []}
+        'auditPolicy': {'supportedMuscleTargets': []}, 'sourceMessages': {}}
     result = {'planIndex': {}, 'submittedDraft': {}}
     monkeypatch.setattr(plan_review, '_with_review_refs', lambda value: (copy.deepcopy(value), {'FACT_0': '/draft/exercises/0'}))
     monkeypatch.setattr(plan_review, '_review_pointer', lambda context, path, root='/draft': path)
+    monkeypatch.setattr(plan_review, '_review_views', lambda *args: None)
     seen = {}
     calls = []
     def call(client, request, **kwargs):
@@ -2299,7 +2380,7 @@ def test_confirmation_only_review_skips_full_required_checks(monkeypatch):
         return json.dumps({'findings': [], 'blockerResolutions': {'ISSUE_0': {
             'status': status, 'reason': 'Current evidence disproves the claim.',
             'disposition': 'withdrawn_review_error', 'repairDimensions': [],
-            'evidencePaths': ['FACT_0']}}}), None, None
+            'repairObjectives': [], 'evidencePaths': ['FACT_0']}}}), None, None
     monkeypatch.setattr(plan_review, '_review_call', call)
 
     checked = plan_review._review_part(None, 'evidence', part, context, result, [], 0, None)
@@ -2312,29 +2393,30 @@ def test_confirmation_only_review_skips_full_required_checks(monkeypatch):
     assert 'do not run a second review or return findings' in calls[0][0]['content']
     assert not checked['findings']
     assert checked['blockerResolutions']['DISPUTE_0']['status'] == 'withdrawn_review_error'
-    assert seen['schema']['properties']['blockerResolutions']['properties']['ISSUE_0']['properties']['status']['enum'] == [
-        'open', 'withdrawn_review_error']
+    assert all(variant['properties']['status']['enum'] == ['open', 'withdrawn_review_error']
+        for variant in seen['schema']['properties']['blockerResolutions']['properties']['ISSUE_0']['anyOf'])
     assert len(calls) == 2
     assert 'Correct only the response contract error' in calls[1][-1]['content']
 
     def unexpected_finding(client, request, **kwargs):
         return json.dumps({'findings': [{'severity': 'warning', 'basis': 'uncertainty', 'path': 'FACT_0',
-            'evidencePaths': ['FACT_0'], 'message': 'Invented additional finding.', 'repair': 'Repair it.',
+            'repairObjectives': [], 'evidencePaths': ['FACT_0'], 'message': 'Invented additional finding.', 'repair': 'Repair it.',
             'action': 'repair', 'decisionId': None, 'newConflictEvidencePaths': [], 'muscleTargets': []}],
             'blockerResolutions': {'ISSUE_0': {'status': 'withdrawn_review_error',
-                'reason': 'Current evidence disproves the claim.', 'evidencePaths': ['FACT_0']}}}), None, None
+                'reason': 'Current evidence disproves the claim.', 'repairObjectives': [], 'evidencePaths': ['FACT_0']}}}), None, None
     monkeypatch.setattr(plan_review, '_review_call', unexpected_finding)
     with pytest.raises(ValidationError):
         plan_review._review_part(None, 'evidence', part, context, result, [], 0, None)
 
 
 def test_confirmation_response_corrects_missing_repair_owner_without_repeating_review(monkeypatch):
-    context = {'draft': {'exercises': [{'id': 'EXERCISE_0'}], 'workouts': []}, 'sourceMessages': [],
+    context = {'draft': {'exercises': [{'id': 'EXERCISE_0'}], 'workouts': []}, 'sourceMessages': {},
                'auditPolicy': {'supportedMuscleTargets': []}}
     part = {'confirmationOnly': True, 'previousBlockingFindings': {
         'DISPUTE_0': {'severity': 'blocking', 'message': 'The prescription remains unsuitable.'}}}
     monkeypatch.setattr(plan_review, '_with_review_refs', lambda value: (copy.deepcopy(value), {'FACT_0': '/draft'}))
     monkeypatch.setattr(plan_review, '_review_pointer', lambda context, path, root='/draft': path)
+    monkeypatch.setattr(plan_review, '_review_views', lambda *args: None)
     calls = []
     def respond(client, request, **options):
         calls.append((request, options))
@@ -2342,7 +2424,7 @@ def test_confirmation_response_corrects_missing_repair_owner_without_repeating_r
             'status': 'open', 'disposition': 'repair',
             'repairDimensions': [] if len(calls) == 1 else ['prescription'],
             'reason': 'Change the supported prescription within approved constraints.',
-            'evidencePaths': ['FACT_0']}}}), None, None
+            'repairObjectives': [], 'evidencePaths': ['FACT_0']}}}), None, None
     monkeypatch.setattr(plan_review, '_review_call', respond)
 
     checked = plan_review._review_part(None, 'evidence', part, context, {}, [], 0, None)
@@ -2484,3 +2566,148 @@ def test_recipe_feedback_is_scoped_to_repair_findings_and_source_exercise():
     assert set(feedback) == {'LIBRARY_1', 'LIBRARY_2'}
     assert feedback['LIBRARY_1'][0]['findingIndex'] == 1
     assert feedback['LIBRARY_2'][0]['findingIndex'] == 2
+
+@pytest.mark.parametrize('data_path', ['/programmingSummary/exposures/LIBRARY_0', '/inventedSummary'])
+def test_withdrawal_recognizes_computed_programming_summary_but_requires_authority(data_path):
+    context = {'requirements': {'goal': 'Spread work.'},
+        'programmingSummary': {'exposures': {'LIBRARY_0': {'weeklyWorkingSets': 3}}}}
+    group = {'errorKind': 'contradicted_by_current_data', 'reason': 'The computed exposure contradicts the complaint.',
+        'evidencePaths': ['/requirements/goal', data_path]}
+    if data_path.startswith('/programmingSummary/'):
+        assert assessment._error_evidence(context, group)
+        group['evidencePaths'] = [data_path]
+    with pytest.raises(ValueError):
+        assessment._error_evidence(context, group)
+
+@pytest.mark.parametrize('mismatch', [None, 'draft', 'requirements', 'pending', 'assessment'])
+def test_new_repair_transaction_requires_complete_review_of_exact_candidate(mismatch):
+    from workout_generator_pkg.review_assessment import reviewed_candidate_matches, assessment_hash, VERSION
+    from workout_generator_pkg.plan_review import REVIEW_VERSION
+    draft = {'requirementsId': 'REQ', 'workouts': []}
+    review = {'version': REVIEW_VERSION, 'inputHash': 'review-input', 'findings': []}
+    review['assessment'] = {'version': VERSION, 'inputHash': assessment_hash(review), 'groups': [], 'repairPlan': ''}
+    owner = {'requirementsId': 'REQ', 'currentDraftId': 'REVISION_1', 'submittedDraft': copy.deepcopy(draft), 'review': review}
+    if mismatch == 'draft': owner['submittedDraft']['name'] = 'Another candidate'
+    if mismatch == 'requirements': owner['requirementsId'] = 'OTHER'
+    if mismatch == 'pending': owner['reviewPending'] = True
+    if mismatch == 'assessment': review['assessment']['inputHash'] = 'stale'
+    assert reviewed_candidate_matches(owner, draft, 'REQ') is (mismatch is None)
+
+
+def test_correcting_rejected_container_does_not_retain_misplaced_edit_metadata():
+    from workout_generator_pkg.planning_tools import compile_coordinated_repair
+    from workout_generator_pkg.json_patching import apply_json_patch
+    _, _, _, current = planning_case()
+    current['workouts'][0]['exercises'][0].pop('placementNotes', None)
+    previous = {'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0', 'setFields': {
+        'numWorkSets': 4, 'removeOptionalFields': ['targetSetPrescriptions']}}]}
+    task = {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_8',
+        'rejectedCoordinatedRepair': {'requirementsId': current['requirementsId'],
+            'baseDraftId': 'REVISION_8', 'submittedEdits': previous}}
+    correction = {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_8',
+        'edits': {'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0', 'setFields': {'setupSeconds': 90}}]}}
+    compiled, _ = compile_coordinated_repair(correction, task, current)
+    exercise = apply_json_patch(current, compiled['patch'])['workouts'][0]['exercises'][0]
+    assert exercise['numWorkSets'] == current['workouts'][0]['exercises'][0]['numWorkSets']
+    assert exercise['setupSeconds'] == 90
+    assert 'removeOptionalFields' not in exercise
+    unrelated = {**correction, 'edits': {'workoutUpdates': [
+        {'workoutRef': 'WORKOUT_0', 'setFields': {'description': 'Still rejected'}}]}}
+    independent, _ = compile_coordinated_repair(unrelated, task, current)
+    assert apply_json_patch(current, independent['patch'])['workouts'][0]['exercises'] == current['workouts'][0]['exercises']
+    assert 'removeOptionalFields' in previous['exerciseUpdates'][0]['setFields']
+
+
+def test_nested_optional_removal_is_unambiguous_idempotent_and_not_a_repair_change():
+    from workout_generator_pkg.planning_tools import compile_coordinated_repair, PlanningInputError
+    _, _, _, current = planning_case()
+    current['workouts'][0]['exercises'][0].pop('placementNotes', None)
+    task = {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_8'}
+    args = {**task, 'edits': {'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0',
+        'setFields': {'removeOptionalFields': ['targetSetPrescriptions']}}]}}
+    before = copy.deepcopy(args)
+    with pytest.raises(PlanningInputError) as noop:
+        compile_coordinated_repair(args, task, current)
+    assert noop.value.code == 'empty_coordinated_edits' and args == before
+    args['edits']['exerciseUpdates'][0]['setFields']['numWorkSets'] = 4
+    compiled, _ = compile_coordinated_repair(args, task, current)
+    assert compiled['patch'] == [{'op': 'replace', 'path': '/workouts/0/exercises/0/numWorkSets', 'value': 4}]
+    args['edits']['exerciseUpdates'][0]['removeOptionalFields'] = ['workSetTemplate']
+    with pytest.raises(PlanningInputError) as error:
+        compile_coordinated_repair(args, task, current)
+    assert error.value.code == 'conflicting_field_removals'
+
+
+@pytest.mark.parametrize('corrected', [True, False])
+@pytest.mark.parametrize('failure', ['schema', 'authority'])
+def test_keyed_assessment_schema_error_has_one_bounded_correction(monkeypatch, corrected, failure):
+    context = {'draft': {'workouts': [{}]}}
+    receipt = {'inputHash': 'current', 'findings': [{'severity': 'blocking', 'basis': 'material_uncertainty',
+        'action': 'clarify', 'path': '/draft/workouts/0', 'evidencePaths': ['/draft/workouts/0'],
+        'message': 'Capability needs assessment.'}]}
+    invalid = {'findingAssessments': {'FINDING_0': {'disposition': 'advisory', 'repairDimensions': [],
+        'repairObjectives': [], 'reason': 'Uncertainty alone.'}}, 'repairPlan': ''}
+    if failure == 'authority':
+        invalid['findingAssessments']['FINDING_0'].update(disposition='repair',
+            repairDimensions=['superset'], repairObjectives=[{'kind': 'redistribute_work',
+                'exerciseRefs': ['EXERCISE_0'], 'minimumSessions': 2}])
+        invalid['repairPlan'] = 'Invalid redistribution authority.'
+    valid = copy.deepcopy(invalid)
+    valid['findingAssessments']['FINDING_0'].update(disposition='repair', repairDimensions=['ordering'], repairObjectives=[])
+    valid['repairPlan'] = 'Correct the supported ordering.'
+    calls = []
+    def respond(client, messages, **options):
+        calls.append(copy.deepcopy(messages))
+        if len(calls) == 2:
+            feedback = json.loads(messages[-1]['content'])
+            assert feedback['findingKeys'] == ['FINDING_0']
+            assert json.loads(feedback['rejectedAssessment']) == invalid
+            assert feedback['validationError']
+        return json.dumps(valid if corrected and len(calls) == 2 else invalid), None, None
+    monkeypatch.setattr(assessment, '_review_call', respond)
+    if corrected:
+        result = assessment.assess_findings(None, context, receipt, single_attempt=True)
+        assert result['groups'][0]['disposition'] == 'repair'
+        assert 'assessmentFailure' not in receipt
+    else:
+        with pytest.raises((ValidationError, ValueError)):
+            assessment.assess_findings(None, context, receipt, single_attempt=True)
+        assert json.loads(receipt['assessmentFailure']['rejectedResponse']) == invalid
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize('references,valid', [(['FACT_A', 'FACT_D'], True),
+    (['FACT_D'], False), (['FACT_A'], False), (['FACT_UNKNOWN'], False)])
+def test_keyed_assessment_classifies_evidence_and_preserves_withdrawal_proof(monkeypatch, references, valid):
+    context = {'requirements': {'goal': 'Hypertrophy'}, 'draft': {'exercises': [{'sets': 3}]}}
+    finding = {'severity': 'blocking', 'action': 'repair', 'path': '/draft/exercises/0',
+        'evidencePaths': ['/draft/exercises/0'], 'message': 'Claim requiring adjudication.'}
+    # No inherited data citation in the missing-data case: proof must still fail closed.
+    if references == ['FACT_A']:
+        finding.update(path='/requirements', evidencePaths=['/requirements'])
+    facts = {'FACT_A': '/requirements', 'FACT_D': '/draft/exercises/0'}
+    monkeypatch.setattr(plan_review, '_with_review_refs', lambda value: (copy.deepcopy(value), facts))
+    calls = []
+    def respond(client, messages, **options):
+        calls.append(1)
+        variants = options['output_schema']['properties']['findingAssessments']['properties']['FINDING_0']['anyOf']
+        for variant in variants:
+            props = variant['properties']
+            assert 'authorityEvidenceRefs' not in props and 'currentDataEvidenceRefs' not in props
+            assert props['evidenceRefs']['items']['enum'] == ['FACT_A', 'FACT_D']
+        return json.dumps({'findingAssessments': {'FINDING_0': {
+            'disposition': 'withdrawn_review_error', 'repairDimensions': [], 'repairObjectives': [],
+            'reason': 'The source and current candidate contradict the complaint.',
+            'errorKind': 'contradicted_by_current_data', 'evidenceRefs': references}}, 'repairPlan': ''}), None, None
+    monkeypatch.setattr(assessment, '_review_call', respond)
+    receipt = {'inputHash': 'current', 'findings': [finding]}
+    if valid:
+        result = assessment.assess_findings(None, context, receipt, single_attempt=True)
+        group = result['groups'][0]
+        assert set(group['evidencePaths']) == {'/requirements', '/draft/exercises/0'}
+        assert group['evidenceHash']
+        assert len(calls) == 1
+    else:
+        with pytest.raises((ValueError, ValidationError)):
+            assessment.assess_findings(None, context, receipt, single_attempt=True)
+        assert len(calls) == 2

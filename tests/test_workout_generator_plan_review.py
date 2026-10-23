@@ -16,11 +16,24 @@ def assessment_transport(monkeypatch):
     # These tests isolate individual reviews; the complete assessment has dedicated tests.
     def respond(client, request, **options):
         findings = json.loads(request[-1]['content'])['findings']
-        return json.dumps({'groups': [{'findingIndexes': [int(index)],
-            'disposition': ('advisory' if finding.get('action') == 'advisory' else
-                            'repair' if finding['severity'] == 'blocking' or finding.get('action') == 'repair' else 'advisory'),
-            'repairDimensions': ['guidance'] if finding.get('action') == 'repair' or finding['severity'] == 'blocking' else [],
-            'reason': 'Existing scope-specific test disposition.'} for index, finding in findings.items()],
+        entries = {}
+        schema = options['output_schema']['properties']['findingAssessments']['properties']
+        for key, finding in findings.items():
+            entry_schema = schema[key]
+            fields = entry_schema.get('properties') or next(variant['properties'] for variant in entry_schema['anyOf']
+                if variant['properties']['disposition']['enum'][0] == (
+                    'advisory' if finding.get('action') == 'advisory' else 'repair'))
+            disposition = ('advisory' if finding.get('action') == 'advisory' else
+                           'repair' if finding['severity'] == 'blocking' or finding.get('action') == 'repair' else 'advisory')
+            values = {'disposition': disposition,
+                'repairDimensions': ['prescription'] if disposition == 'repair' else [],
+                'reason': 'Existing scope-specific test disposition.', 'repairObjectives': [],
+                'errorKind': 'none', 'authorityEvidenceRefs': [], 'currentDataEvidenceRefs': []}
+            if 'resolution' in fields:
+                values['resolution'] = {'kind': 'candidate_edit' if disposition == 'repair' else 'advisory',
+                    'requirementPaths': [], 'unsupportedBehavior': None}
+            entries[key] = {field: value for field, value in values.items() if field in fields}
+        return json.dumps({'findingAssessments': entries,
             'repairPlan': 'Repair all supported findings together.'}), None, None
     monkeypatch.setattr('workout_generator_pkg.review_assessment._review_call', respond)
 
@@ -34,7 +47,7 @@ def _finding(severity='blocking'):
             'repair': 'Match the prescribed effort to the approved requirement and re-audit.'}
 
 
-def test_review_includes_progression_target_and_invalidates_only_dependent_evidence():
+def test_review_limits_load_facts_to_selected_exercises_and_ignores_future_route():
     equipment, _, stored, draft = planning_case()
     target = copy.deepcopy(equipment['exerciseDefinitions'][0])
     target.update(id='variant', name='Harder Push-Up')
@@ -48,33 +61,45 @@ def test_review_includes_progression_target_and_invalidates_only_dependent_evide
     context = review._context(result, messages, equipment, None, len(messages) - 1)
     identifier = context['draft']['exercises'][0]['id']
     part = review._evidence_review_context(context, [identifier])
-    assert part['draft']['libraryDefinitions']['LIBRARY_1']['name'] == target['name']
-    assert 'LIBRARY_1' in part['progressionCapabilities']
-    unrelated = copy.deepcopy(context)
-    unrelated['draft']['libraryDefinitions']['LIBRARY_99'] = {'name': 'Unrelated'}
-    assert review._evidence_review_context(unrelated, [identifier]) == part
-    changed = copy.deepcopy(context)
-    changed['draft']['libraryDefinitions']['LIBRARY_1']['name'] = 'Changed target'
-    assert review._evidence_review_context(changed, [identifier]) != part
+    assert target['name'] not in [definition['name'] for definition in part['draft']['libraryDefinitions'].values()]
+    selected_reference = context['draft']['exercises'][0]['libraryDefinitionId']
+    assert set(part['progressionCapabilities']) == {selected_reference}
+    assert all(item['libraryDefinitionId'] != 'LIBRARY_1'
+               for item in part['draft']['exercises'])
 
 
-def test_saved_recipe_qualification_does_not_claim_or_replace_legacy_portable_notes():
+def test_saved_recipe_qualification_ignores_legacy_method_and_preserves_native_mode():
     equipment, _, stored, draft = planning_case()
     messages = requirement_messages(stored)
     result = audit_workout_plan(draft, equipment, messages)
     exercise = result['submittedDraft']['workouts'][0]['exercises'][0]
     exercise['satisfiesCoverage'] = []
+    exercise['progressionMethod'] = 'sourceDefined'
     exercise['progressionPlan'] = {'kind': 'reps', 'nextDefinitionId': None, 'nextDefinitionName': None}
     exercise['placementNotes'] = 'Keep each working set at 2-3 RIR.'
     result['recipeQualification'] = {'contracts': [{'definition_id': 'LIBRARY_0', 'satisfiesCoverage': [],
+        'progressionMethod': exercise['progressionMethod'],
         'progressionPlan': copy.deepcopy(exercise['progressionPlan']), 'portableNotes': 'Obsolete cue from an older receipt.'}]}
 
     context = review._context(result, messages, equipment, None, len(messages) - 1)
 
     assert context['qualifiedRecipeContracts']['LIBRARY_0'] == {
-        'definition_id': 'LIBRARY_0', 'satisfiesCoverage': [],
-        'progressionPlan': exercise['progressionPlan']}
+        'definition_id': 'LIBRARY_0', 'satisfiesCoverage': []}
+    projected = context['draft']['exercises'][0]
+    assert 'progressionMethod' not in projected['coachingAuthority']
+    assert 'progressionPlan' not in projected
+    assert 'progressionPlan' not in projected['coachingAuthority']
+    emitted = next(component for day in context['finalArtifact']['workouts'] for component in day['components']
+                   if component['type'] == 'Exercise')
+    assert emitted['progressionMode'] == 'AUTO_REGULATION'
+    owned = context['repairCapabilityContract']['codeOwnedBehaviors']['app_native_rep_load_progression']
+    assert 'AUTO_REGULATION' in owned and 'OFF has none' in owned
     assert exercise['placementNotes'] == 'Keep each working set at 2-3 RIR.'
+
+    mismatched = copy.deepcopy(result)
+    mismatched['submittedDraft']['workouts'][0]['exercises'][0]['progressionMethod'] = 'doubleProgression'
+    mismatched_context = review._context(mismatched, messages, equipment, None, len(messages) - 1)
+    assert 'LIBRARY_0' in mismatched_context['qualifiedRecipeContracts']
 
 
 def test_oversized_blocker_resolution_is_kept_open_without_discarding_review():
@@ -93,11 +118,22 @@ def test_oversized_blocker_resolution_is_kept_open_without_discarding_review():
 
 def test_proposed_alternative_review_separates_pending_approval_from_candidate_merit(monkeypatch):
     equipment, _, stored, draft = planning_case()
+    original = copy.deepcopy(stored)
+    path = '/auditTargets/weeklyEffectiveSets/chest/maximum'
+    original['requirements']['auditTargets']['weeklyEffectiveSets']['chest']['maximum'] = 18
+    original['requirements']['requirementAccounting'] = [{'priority': 'negotiable', 'enforcement': 'constraint',
+        'requirementPaths': [path], 'relaxationDirection': 'raise_maximum',
+        'instruction': 'May propose a higher volume ceiling.', 'sourceReferences': ['SOURCE_0'],
+        'reason': 'The proposed exception requires later approval.'}]
+    stored = copy.deepcopy(original)
+    stored['requirementsId'] = 'PROPOSED_TEST'
+    stored['requirements']['auditTargets']['weeklyEffectiveSets']['chest']['maximum'] = 21
     stored['proposedAlternative'] = {
-        'originalRequirementsId': stored['requirementsId'],
-        'changes': [{'path': '/auditTargets/weeklyEffectiveSets/chest/minimum', 'from': 15, 'to': 10}],
+        'originalRequirementsId': original['requirementsId'],
+        'changes': [{'path': path, 'from': 18, 'to': 21}],
         'requiresUserApproval': True}
-    messages = requirement_messages(stored)
+    draft['requirementsId'] = stored['requirementsId']
+    messages = requirement_messages(original) + requirement_messages(stored)
     result = audit_workout_plan(draft, equipment, messages)
 
     context = review._context(result, messages, equipment, None, len(messages) - 1)
@@ -120,6 +156,8 @@ def test_proposed_alternative_review_separates_pending_approval_from_candidate_m
 
     review_request = json.loads(requests[0][-1]['content'])
     assert review_request['alternativeReview'] == context['alternativeReview']
+    assert review_request['evaluationContract'] == context['evaluationContract']
+    assert context['evaluationContract']['proposedOverrides'] == stored['proposedAlternative']['changes']
     assert 'MUST NOT be reported as a finding' in requests[0][0]['content']
 
 
@@ -165,7 +203,6 @@ def test_uniform_review_target_is_lossless_and_does_not_hide_tampering(monkeypat
 
 
 def test_review_uses_native_load_calibration_without_inventing_trial_protocol(monkeypatch):
-    from workout_generator_pkg.repair_capabilities import WORKING_SET_UNDERPERFORMANCE_GUIDANCE
     equipment, _, stored, draft = planning_case()
     messages = requirement_messages(stored)
     raw = audit_workout_plan(draft,equipment,messages)
@@ -174,11 +211,11 @@ def test_review_uses_native_load_calibration_without_inventing_trial_protocol(mo
     before = copy.deepcopy(raw['planIndex'])
     compact = review._compact_review_draft(raw['planIndex'],equipment,raw['submittedDraft'])
     item = compact['exercises'][0]
-    assert item['prescriptionStatus'] == 'calibration_required_no_fixed_load'
+    assert item['prescriptionStatus'] == 'load_calibration_enabled'
     assert item['requiresLoadCalibration'] is True
     assert not item.get('repeatedWorkSetTarget') and not item.get('targetSetPrescriptions')
     coaching = item['coachingAuthority']
-    assert WORKING_SET_UNDERPERFORMANCE_GUIDANCE in coaching['generatedEffortAcceptance']
+    assert 'calibration' not in coaching['generatedEffortAcceptance'].lower()
     assert 'generatedCalibration' not in coaching
     assert 'calibrationAttempts' not in item
     assert raw['planIndex'] == before and 'prescriptionStatus' not in before['exercises'][0]
@@ -207,9 +244,9 @@ def test_unavailable_muscle_targets_do_not_overwrite_findings_or_repairs(monkeyp
     metadata_repair = 'Correct or explicitly assess unavailable muscle-target metadata.'
     findings = [
         {'severity': 'blocking', 'basis': 'established_violation', 'muscleTargets': unsupported,
-         'path': '/draft/exercises/0/placementNotes',
+         'path': '/draft/exercises/0',
          'message': 'Eccentric fatigue and exercise order reduce productive squat work.',
-         'evidencePaths': ['/draft/exercises/0/placementNotes'], 'repair': fatigue_repair,
+         'evidencePaths': ['/draft/exercises/0'], 'repair': fatigue_repair,
          'action': 'repair', 'decisionId': None, 'newConflictEvidencePaths': []},
         {'severity': 'warning', 'basis': 'uncertainty', 'muscleTargets': unsupported,
          'path': '/draft/exercises/0/libraryDefinitionId',
@@ -234,9 +271,11 @@ def test_unavailable_muscle_targets_do_not_overwrite_findings_or_repairs(monkeyp
         assessor_prompts.append(request[0]['content'])
         return json.dumps({'groups': [
             {'findingIndexes': [0], 'disposition': 'repair', 'repairDimensions': ['ordering'],
-             'reason': 'The fatigue defect is supported.'},
+             'reason': 'The fatigue defect is supported.', 'repairObjectives': [],
+             'errorKind': 'none', 'authorityEvidenceRefs': [], 'currentDataEvidenceRefs': []},
             {'findingIndexes': [1], 'disposition': 'advisory', 'repairDimensions': [],
-             'reason': 'Do not infer stimulus from absent finer metadata.'}],
+             'reason': 'Do not infer stimulus from absent finer metadata.', 'repairObjectives': [],
+             'errorKind': 'none', 'authorityEvidenceRefs': [], 'currentDataEvidenceRefs': []}],
             'repairPlan': 'Repair the supported fatigue/order issue while preserving requirements.'}), None, None
     monkeypatch.setattr(review_assessment, '_review_call', assess)
     assessed = review_assessment.assess_findings(None, context, {'inputHash': 'test', 'findings': checked['findings']})
@@ -643,9 +682,20 @@ def test_explicit_continue_retries_failed_output_but_not_valid_blocking_findings
     responses = iter([json.dumps(review._RESPONSE), json.dumps({'findings': [_finding()]})])
     def call(client, request, **options):
         calls.append(1)
-        assert 'Never return a JSON Schema' in request[0]['content']
-        assert json.dumps(review._RESPONSE) not in request[0]['content']
-        return next(responses), None, None
+        assert 'Find concrete semantic concerns' in request[0]['content']
+        assert json.dumps(options['output_schema']) not in request[0]['content']
+        payload = json.loads(next(responses))
+        if len(calls) == 2:
+            data = json.loads(request[-1]['content'])
+            source = data['sourceMessages']['SOURCE_0']['_reviewRef']
+            exercise = data['draft']['exercises'][0]['_reviewRef']
+            payload['findings'] = [{'message': 'Execution instructions conflict with approved effort.',
+                'decisionId': None, 'evidencePaths': [exercise, source]}]
+            requirement_schemas = options['output_schema']['properties']['requirementAssessments']['properties']
+            payload['requirementAssessments'] = {key: {
+                'status': 'supported', 'reason': 'The source-backed target is present in the current draft.',
+                'evidencePaths': [data['audit']['_reviewRef']]} for key in requirement_schemas}
+        return json.dumps(payload), None, None
     monkeypatch.setattr(review, 'chat_call', call)
     failed = review.review_draft(None, result, messages, equipment)
     _store(messages, {'result': json.dumps(failed)}, 'failed-format')
@@ -654,7 +704,7 @@ def test_explicit_continue_retries_failed_output_but_not_valid_blocking_findings
     messages.append({'role': 'user', 'content': '/continue'})
     retried = review.review_draft(None, result, messages, equipment)
     assert len(calls) == 2 and not retried['passed']
-    assert retried['errors'][0]['code'] == 'independent_review_finding'
+    assert retried['errors'][0]['code'] == 'independent_review_finding', retried['review'].get('failure')
     _store(messages, {'result': json.dumps(retried)}, 'valid-blocker')
     messages.append({'role': 'user', 'content': '/continue'})
     assert not review.review_draft(None, result, messages, equipment)['passed']
@@ -725,7 +775,7 @@ def test_execution_load_references_preserve_setup_without_strength_transfer():
                 {'id': 'EXERCISE_2', 'libraryDefinitionId': 'LIBRARY_1',
                  'repeatedWorkSetTarget': {'reps': 12, 'weight': 80}},
                 {'id': 'EXERCISE_3', 'libraryDefinitionId': 'LIBRARY_1',
-                 'prescriptionStatus': 'calibration_required_no_fixed_load'}]}}
+                 'prescriptionStatus': 'load_calibration_enabled'}]}}
     original = copy.deepcopy(context)
     execution = review._execution_review_context(context)
     exercises = execution['draft']['exercises']
@@ -734,7 +784,7 @@ def test_execution_load_references_preserve_setup_without_strength_transfer():
     assert exercises[1]['targetSetPrescriptions'][1]['loadConfigurationRef'] != first
     assert exercises[2]['repeatedWorkSetTarget']['loadConfigurationRef'] != first
     assert exercises[1]['targetSetPrescriptions'][1]['reps'] == 7
-    assert exercises[3]['prescriptionStatus'] == 'calibration_required_no_fixed_load'
+    assert exercises[3]['prescriptionStatus'] == 'load_calibration_enabled'
     assert 'weight' not in json.dumps(exercises) and 'history' not in execution
     assert execution['sourceMessages'] == context['sourceMessages'] and context == original
     changed = copy.deepcopy(context)
@@ -858,6 +908,16 @@ def test_review_preserves_questions_and_answers_in_order_without_requiring_copie
     assert not outcome['passed'] and 'failure' not in outcome['review']
     assert outcome['errors'][0]['path'] == '/restrictionPolicy/excludedExerciseNames'
     assert len(requests) == 1
+
+
+def test_draft_fact_citation_can_prove_a_scalar_guidance_change():
+    equipment, _, stored, draft = planning_case()
+    result = audit_workout_plan(draft, equipment, requirement_messages(stored))
+    context = {'sourceMessages': {}}
+    assert review._blocker_change_cited('/draft', {'changedDraftPaths': ['/programGuidance']}, context, result)
+    assert not review._blocker_change_cited('/draft', {'changedDraftPaths': []}, context, result)
+    assert not review._blocker_change_cited('/audit/weeklyVolume',
+        {'changedDraftPaths': ['/programGuidance']}, context, result)
 
 
 def test_raw_review_is_logged_even_when_references_are_invalid(monkeypatch):
@@ -1131,6 +1191,110 @@ def test_each_carried_obligation_uses_its_own_source_draft_for_changed_paths():
     assert any(path.startswith('/workouts/0/exercises') for path in obligation['changedDraftPaths'])
 
 
+def test_rendered_final_artifact_changes_can_resolve_a_code_owned_note_blocker():
+    equipment, _, stored, draft = planning_case()
+    messages = requirement_messages(stored)
+    result = audit_workout_plan(draft, equipment, messages)
+    assert result['passed']
+    result.update(allowEducatedLoadGuesses=False)
+    authority = {key: result.get(key) for key in (
+        'requirementsId', 'libraryFingerprint', 'historyFingerprint', 'resolvedDecisions', 'allowEducatedLoadGuesses')}
+    from workout_generator_pkg.domain_ops import reviewable_workout_artifact
+    finding = _finding()
+    finding.update(path='/finalArtifact/workouts/0/components/0/notes',
+        evidencePaths=['/finalArtifact/workouts/0/components/0/notes'], reviewScope='execution',
+        message='A code-rendered execution disclosure is missing.')
+    receipt = _review_receipt('rendered-note-audit', authority, result['submittedDraft'], 71,
+        [finding], {0: 'repair'}, len(messages) - 1)
+    prior = json.loads(receipt[-1]['content'])
+    prior['audit'] = copy.deepcopy(result['audit'])
+    prior['planIndex'] = copy.deepcopy(result['planIndex'])
+    prior['planIndex']['exercises'][0]['notes'] = 'Previous code-rendered note.'
+    prior['preview'] = '# Plan\n\n## Program guidance (code-owned)\nPrevious guidance.\n\n## Session A\n'
+    prior['review']['reviewedArtifact'] = reviewable_workout_artifact(
+        prior['planIndex'], 'Previous guidance.')
+    prior.update(passed=False, errors=[{'code': 'independent_review_finding'}])
+    prior.pop('planIndex')
+    prior.pop('preview')
+    assert not prior['passed'] and 'planIndex' not in prior and 'preview' not in prior
+    receipt[-1]['content'] = json.dumps(prior)
+    messages.extend(receipt)
+
+    result['planIndex']['exercises'][0]['notes'] = 'Current code-rendered note with the required disclosure.'
+    result['preview'] = '# Plan\n\n## Program guidance (code-owned)\nCurrent guidance.\n\n## Session A\n'
+    checklist = review._review_checklist(result, messages)
+    obligation = next(iter(checklist['findings'].values()))
+    artifact = reviewable_workout_artifact(result['planIndex'], '')
+    first_exercise_path = next(
+        f"/finalArtifact/workouts/0/components/{index}/notes"
+        for index, component in enumerate(artifact['workouts'][0]['components'])
+        if component.get('type') == 'Exercise')
+
+    assert not checklist['changedDraftPaths']
+    assert first_exercise_path in obligation['changedDraftPaths']
+    assert '/finalArtifact/programGuidance' in obligation['changedDraftPaths']
+    context = {'sourceMessages': {}}
+    assert review._blocker_change_cited(first_exercise_path, {
+        'changedDraftPaths': obligation['changedDraftPaths']}, context, result)
+
+
+def test_failed_review_receipt_keeps_exact_rendered_artifact_without_plan_or_preview(monkeypatch):
+    equipment, _, stored, draft = planning_case()
+    messages = requirement_messages(stored)
+    raw = audit_workout_plan(draft, equipment, messages)
+    expected_artifact = review._context(raw, messages, equipment, None,
+        len(messages) - 1)['finalArtifact']
+    finding = {**_finding(), 'message': 'A required program disclosure is missing.',
+        'path': '/finalArtifact/programGuidance',
+        'evidencePaths': ['/finalArtifact/programGuidance'], 'reviewScope': 'execution'}
+    monkeypatch.setattr(review, 'chat_call', lambda *a, **k: (
+        json.dumps({'findings': [finding]}), None, None))
+
+    failed = review.review_draft(None, raw, messages, equipment)
+
+    assert not failed['passed']
+    assert 'planIndex' not in failed and 'preview' not in failed
+    assert failed['review']['reviewedArtifact'] == expected_artifact
+
+
+def test_final_artifact_blocker_needs_a_matching_rendered_change():
+    path = '/finalArtifact/workouts/0/components/2/notes'
+    result = {'planIndex': {}}
+    context = {'sourceMessages': {}}
+
+    assert review._blocker_change_cited(path, {
+        'changedDraftPaths': ['/finalArtifact/workouts/0/components/2/notes']}, context, result)
+    assert not review._blocker_change_cited(path, {
+        'changedDraftPaths': ['/finalArtifact/workouts/0/components/1/notes']}, context, result)
+
+
+def test_missing_persisted_guidance_section_does_not_claim_a_guidance_change():
+    equipment, _, stored, draft = planning_case()
+    messages = requirement_messages(stored)
+    result = audit_workout_plan(draft, equipment, messages)
+    assert result['passed']
+    result.update(allowEducatedLoadGuesses=False)
+    authority = {key: result.get(key) for key in (
+        'requirementsId', 'libraryFingerprint', 'historyFingerprint', 'resolvedDecisions', 'allowEducatedLoadGuesses')}
+    finding = _finding()
+    finding.update(path='/finalArtifact/programGuidance',
+        evidencePaths=['/finalArtifact/programGuidance'], reviewScope='execution',
+        message='A program-level rendered instruction is missing.')
+    receipt = _review_receipt('guidance-without-snapshot', authority, result['submittedDraft'], 71,
+        [finding], {0: 'repair'}, len(messages) - 1)
+    prior = json.loads(receipt[-1]['content'])
+    prior['planIndex'] = copy.deepcopy(result['planIndex'])
+    receipt[-1]['content'] = json.dumps(prior)
+    messages.extend(receipt)
+
+    result['preview'] = '# Plan\n\n## Program guidance (code-owned)\nCurrent guidance.\n\n## Session A\n'
+    checklist = review._review_checklist(result, messages)
+
+    obligation = next(iter(checklist['findings'].values()))
+    assert not any(path.startswith('/finalArtifact/programGuidance')
+                   for path in obligation['changedDraftPaths'])
+
+
 def test_unmodified_carried_blocker_does_not_resolve_or_dereference_stale_path(monkeypatch):
     equipment, _, stored, draft = planning_case()
     messages = requirement_messages(stored)
@@ -1211,6 +1375,8 @@ def test_long_stable_blocker_ids_use_exact_request_local_aliases_and_reject_unkn
     assert wire_action['type'] == 'string'
     assert wire_action['enum'] == ['repair', 'clarify', 'advisory', 'none']
     assert None not in wire_action['enum']
+    assert wire_resolution['properties']['evidencePaths']['items'] == {'type': 'string', 'enum': ['FACT_0']}
+    assert '$ref' not in json.dumps(schema)
     assert not {'allOf', 'if', 'then', 'const'}.intersection(wire_resolution)
 
     checked = review._review_part(None, 'execution', execution_part,
@@ -1400,7 +1566,8 @@ def test_terminally_resolved_review_is_cached_and_remains_exportable(monkeypatch
         return json.dumps({'findings': [finding]}), None, None
 
     monkeypatch.setattr(review, 'chat_call', respond)
-    first = review.review_draft(None, audit_workout_plan(draft, equipment, messages), messages, equipment)
+    raw = audit_workout_plan(draft, equipment, messages)
+    first = review.review_draft(None, raw, messages, equipment)
     assert not first['passed']
     _store(messages, {'result': json.dumps(first)}, 'terminal-source')
 
@@ -1626,3 +1793,15 @@ def test_unchanged_blocker_cannot_be_closed_by_an_unrelated_repair():
     assert resolution == {'status': 'open', 'action': 'repair',
         'reason': 'The proposed resolution did not cite a verified change for this finding; keep it open for reassessment. Prior finding: The unsupported setup cue remains.',
         'evidencePaths': ['/draft/exercises/1/placementNotes']}
+
+
+def test_calibration_review_retains_prescribed_load_without_claiming_it_is_absent():
+    equipment, _, stored, draft = planning_case()
+    raw = audit_workout_plan(draft, equipment, requirement_messages(stored))
+    source = raw['planIndex']['exercises'][0]
+    source['requiresLoadCalibration'] = True
+    source['numWorkSets'] = 1
+    source['targetSetPrescriptions'] = [{'workSetIndex': 0, 'reps': 8, 'weight': 41.5}]
+    item = review._compact_review_draft(raw['planIndex'], equipment, raw['submittedDraft'])['exercises'][0]
+    assert item['prescriptionStatus'] == 'load_calibration_enabled'
+    assert item['repeatedWorkSetTarget'] == {'reps': 8, 'weight': 41.5}

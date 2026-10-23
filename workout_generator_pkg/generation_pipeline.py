@@ -12,7 +12,7 @@ from datetime import datetime
 
 from .deps import resolve_pipeline_deps
 from .logging_ui import LoadingIndicator
-from .domain_ops import strip_rep_range_fields_for_timed_exercises_in_workout_store
+from .domain_ops import strip_rep_range_fields_for_timed_exercises_in_workout_store, reviewable_workout_artifact
 from .plan_contract import (
     ContractValidationError,
     hydrate_plan_index_from_exercise_library,
@@ -317,6 +317,7 @@ def execute_workout_generation(
     
     # Initialize placeholder ID manager
     id_manager = PlaceholderIdManager()
+    review_equipment = copy.deepcopy(provided_equipment or {})
     
     supplied_exercise_definitions = copy.deepcopy(
         (provided_equipment or {}).get("exerciseDefinitions", [])
@@ -330,9 +331,9 @@ def execute_workout_generation(
         has_draft = any(call.get("function", {}).get("name") == "audit_workout_plan"
                         for message in messages for call in message.get("tool_calls", []))
         if has_draft:
-            canonical_snapshot = confirmed_draft(messages, provided_equipment or {}, allow_educated_load_guesses, require_confirmation=True)
+            canonical_snapshot = confirmed_draft(messages, review_equipment, allow_educated_load_guesses, require_confirmation=True)
             # Reproduce derived evidence metadata from the same live backup when available.
-            require_current_review(canonical_snapshot, messages, provided_equipment or {},
+            require_current_review(canonical_snapshot, messages, review_equipment,
                 training_history if training_history is not None else canonical_snapshot.get('historyFingerprint'))
             selected_definition_ids = list(dict.fromkeys(e["libraryDefinitionId"] for e in canonical_snapshot["planIndex"]["exercises"]))
         else:
@@ -1326,10 +1327,21 @@ def execute_workout_generation(
             data,
             allow_educated_load_guesses=allow_educated_load_guesses,
         )
+
+        program_guidance = None
+        if canonical_snapshot:
+            from .plan_review import _context
+            reviewed_context = _context(canonical_snapshot, messages, review_equipment,
+                training_history if training_history is not None else canonical_snapshot.get('historyFingerprint'),
+                canonical_snapshot['review']['instructionBoundary'])
+            program_guidance = reviewed_context['finalArtifact']['programGuidance']
+            actual = reviewable_workout_artifact(canonical_snapshot['planIndex'], program_guidance,
+                data, id_manager.placeholder_to_uuid)
+            if actual != reviewed_context['finalArtifact']:
+                raise ContractValidationError('The final export differs from the independently reviewed artifact. Re-audit and review before export.')
         
         # Save workout to file
         filepath = save_workout_to_file(data, script_dir)
-        program_guidance = (canonical_snapshot or {}).get("submittedDraft", {}).get("programGuidance")
         guidance_filepath = None
         if isinstance(program_guidance, str) and program_guidance.strip():
             if not filepath:
@@ -1339,7 +1351,7 @@ def execute_workout_generation(
                 guidance_file.write("# Program guidance\n\nManual reference for the generated program; this file is not included in the phone or watch workout data.\n\n")
                 guidance_file.write(program_guidance.strip())
                 guidance_file.write("\n")
-            _gen_print(f"Manual program guidance saved to: {guidance_filepath}")
+            _gen_print(f"Program guidance and audit disclosures saved to: {guidance_filepath}")
         if filepath:
             audit_filepath = os.path.splitext(filepath)[0] + ".audit.json"
             with open(audit_filepath, "w", encoding="utf-8") as audit_file:

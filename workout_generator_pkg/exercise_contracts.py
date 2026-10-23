@@ -22,7 +22,6 @@ def _build_type_specific_exercise_schema(
         "name": {"type": "string"},
         "nameOverride": {"type": ["string", "null"]},
         "notes": copy.deepcopy(JSON_SCHEMA["$defs"]["Exercise"]["properties"]["notes"]),
-        "placementNotes": copy.deepcopy(JSON_SCHEMA["$defs"]["Exercise"]["properties"]["placementNotes"]),
         "sets": {
             "type": "array",
             "minItems": 1,
@@ -163,7 +162,6 @@ def _exercise_example_base(
         "enabled": True,
         "name": name,
         "notes": "",
-        "placementNotes": "",
         "sets": sets,
         "exerciseType": exercise_type,
         "equipmentId": equipment_id,

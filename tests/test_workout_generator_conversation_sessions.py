@@ -763,40 +763,153 @@ def test_generate_with_instructions_enters_planning_instead_of_exporting(monkeyp
 
 
 def test_passing_automatic_review_returns_to_pending_followup_before_preview(monkeypatch, tmp_path, capsys):
-    from test_workout_generator_planning_tools import planning_case
-    equipment, requirements, _, draft = planning_case()
+    from test_workout_generator_planning_tools import planning_case, requirement_messages
+    from test_workout_generator_planner_context import _tool
+    from workout_generator_pkg.planning_tools import audit_workout_plan, confirmed_draft
+    from workout_generator_pkg.plan_review import REVIEW_VERSION
+    from workout_generator_pkg.planning_tools import _latest_result
+    equipment, requirements, stored, draft = planning_case()
     path = tmp_path / 'library.json'
     path.write_text(json.dumps(equipment), encoding='utf-8')
-    def tool(name, arguments, key):
-        return (None, [FakeToolCall(key, 'function', FakeFunction(name, json.dumps(arguments)))])
+    messages = requirement_messages(stored)
+    initial_audit = audit_workout_plan(draft, equipment, messages)
+    initial_audit['reviewVersion'] = REVIEW_VERSION
+    initial_audit['review'] = {'version': REVIEW_VERSION, 'findings': []}
+    _tool(messages, 'audit_workout_plan', draft, initial_audit, 'initial')
+    messages.extend([
+        {'role': 'assistant', 'content': initial_audit['preview'],
+         'canonicalDraftPreview': initial_audit['draftId']},
+        {'role': 'user', 'content': 'CONFIRM GENERATE'},
+        {'role': 'user', 'content': 'Review the saved draft and explain whether repairs are needed.'},
+    ])
+    conversation_id = save_conversation(messages, script_dir=str(tmp_path), migrate=False)
     deps = make_shell_deps(tmp_path, chat_results=[
-        tool('set_workout_requirements', requirements, 'requirements'),
-        tool('audit_workout_plan', draft, 'initial'),
-        tool('set_workout_requirements', requirements, 'refreshed')], generation_results=[], generation_calls=[])
+        ('The saved review passed; the prescriptions need no correction.', None)],
+        generation_results=[], generation_calls=[])
     original_chat = deps.chat_call_with_loading
     requests = []
     def capture(client, messages, tools, logger, **options):
         requests.append(copy.deepcopy(messages))
-        if len(requests) == 4:
-            state = interactive_shell.request_planning_state(messages)
-            assert state['lastAudit']['passed']
-            assert state['pendingPreviewFollowup'] == 'Review the saved draft and explain whether repairs are needed.'
-            return (*tool('audit_workout_plan', {'requirementsId': state['requirementsId'],
-                'baseDraftId': state['currentDraftId'], 'patch': []}, 'final-model-audit'), None)
         return original_chat(client, messages, tools, logger, **options)
     deps.chat_call_with_loading = capture
-    inputs = iter(['Plan 5-6 chest sets', 'CONFIRM REQUIREMENTS',
-        'Review the saved draft and explain whether repairs are needed.', 'CONFIRM REQUIREMENTS', '/exit'])
+    original_pending = interactive_shell.pending_reaudit
+    forced = False
+    def pending_reaudit(state, user_input):
+        nonlocal forced
+        if user_input == '/continue' and not forced:
+            forced = True
+            return {'requirementsId': state['requirementsId'], 'baseDraftId': state['currentDraftId'], 'patch': []}
+        return original_pending(state, user_input)
+    monkeypatch.setattr(interactive_shell, 'pending_reaudit', pending_reaudit)
+    rendered = []
+    monkeypatch.setattr(interactive_shell, 'print_markdown', lambda text, logger, paged=False: rendered.append(text))
+    inputs = iter([f'/resume-conversation {conversation_id}', '/continue', '/exit'])
     monkeypatch.setenv('DEEPSEEK_API_KEY', 'test-key')
     monkeypatch.setattr('builtins.input', lambda prompt='': next(inputs))
     monkeypatch.setattr('sys.argv', ['workout_generator.py', '--exercise-library-file', str(path)])
     interactive_shell.main(deps=deps)
     messages = load_active_conversation_record(str(tmp_path))['messages']
-    assert len(requests) == 4
+    assert len(requests) == 1
     assert any(c['id'].startswith('reaudit_') for m in messages for c in m.get('tool_calls', []))
-    assert any(c['id'] == 'final-model-audit' for m in messages for c in m.get('tool_calls', []))
     assert sum(bool(m.get('canonicalDraftPreview')) for m in messages) == 2
+    latest_audit = _latest_result(messages, 'audit_workout_plan')[1]
+    assert latest_audit['passed'] is True
+    assert messages[-1].get('canonicalDraftPreview') == latest_audit['draftId']
+    assert messages[-1]['content'] == latest_audit['preview']
+    assert rendered[-1] == latest_audit['preview']
+    with pytest.raises(ValueError, match='fresh CONFIRM GENERATE'):
+        confirmed_draft(messages, equipment, require_confirmation=True)
+    messages.append({'role': 'user', 'content': 'CONFIRM GENERATE'})
+    assert confirmed_draft(messages, equipment, require_confirmation=True)['draftId'] == latest_audit['draftId']
     assert 'returning to your pending request' in capsys.readouterr().out
+
+
+def test_continue_retries_only_saved_requirements_source_review_without_reextracting(monkeypatch, tmp_path):
+    from test_workout_generator_planning_tools import planning_case
+    from workout_generator_pkg import plan_review
+    from workout_generator_pkg.planning_tools import requirements_approved, set_workout_requirements
+
+    equipment, arguments, _, _ = planning_case()
+    library = tmp_path / 'library.json'
+    library.write_text(json.dumps(equipment), encoding='utf-8')
+    messages = [{'role': 'user', 'content': 'Plan 5-6 chest sets.'}]
+    candidate = set_workout_requirements(arguments, messages, equipment)
+    failure = 'TruncatedResponseError: source review exhausted its reasoning budget before emitting a result.'
+    candidate.update(sourceReview={'version': plan_review.REQUIREMENTS_REVIEW_VERSION,
+                                   'inputHash': 'saved-failed-review', 'passed': False,
+                                   'findings': [], 'failure': failure, 'instructionBoundary': 0},
+                     passed=False,
+                     errors=[{'code': 'requirements_review_failed', 'message': failure,
+                              'repair': 'Retry the saved source review explicitly.'}],
+                     instruction='The source review failed; requirements remain unchanged.')
+    tool_arguments = copy.deepcopy(arguments)
+    messages.extend([
+        {'role': 'assistant', 'tool_calls': [{'id': 'failed-requirements', 'type': 'function',
+            'function': {'name': 'set_workout_requirements', 'arguments': json.dumps(tool_arguments)}}]},
+        {'role': 'tool', 'tool_call_id': 'failed-requirements', 'content': json.dumps(candidate)},
+        {'role': 'assistant', 'content': 'The source review failed. Type /continue to retry explicitly.'},
+        {'role': 'user', 'content': '/continue'},
+        {'role': 'assistant', 'content': 'Updating requirements. The prior review can be tried again with /continue.'},
+    ])
+    conversation_id = save_conversation(messages, script_dir=str(tmp_path), migrate=False)
+    calls = []
+
+    def review_again(_client, request, **options):
+        calls.append((copy.deepcopy(request), options))
+        return '{"findings":[]}', None, None
+
+    monkeypatch.setattr(plan_review, '_review_call', review_again)
+    deps = make_shell_deps(tmp_path, chat_results=[], generation_results=[], generation_calls=[])
+    deps.load_equipment_from_file = lambda _path: equipment
+    monkeypatch.setattr('builtins.input', lambda prompt='': next(inputs))
+    monkeypatch.setenv('DEEPSEEK_API_KEY', 'test-key')
+    monkeypatch.setattr('sys.argv', ['workout_generator.py', '--exercise-library-file', str(library)])
+    rendered = []
+    monkeypatch.setattr(interactive_shell, 'print_markdown', lambda text, logger, paged=False: rendered.append(text))
+    inputs = iter([f'/resume-conversation {conversation_id}', '/continue', '/exit'])
+
+    interactive_shell.main(deps=deps)
+
+    saved = load_active_conversation_record(str(tmp_path))['messages']
+    requirement_calls = [call for message in saved for call in message.get('tool_calls', [])
+                         if call.get('function', {}).get('name') == 'set_workout_requirements']
+    requirement_results = [json.loads(message['content']) for message in saved
+                           if message.get('role') == 'tool' and message.get('tool_call_id') in
+                           {call['id'] for message in saved for call in message.get('tool_calls', [])
+                            if call.get('function', {}).get('name') == 'set_workout_requirements'}]
+    assert len(calls) == 1  # The planner LLM was not asked to interpret /continue.
+    assert len(requirement_calls) == 2
+    assert json.loads(requirement_calls[-1]['function']['arguments']) == tool_arguments
+    assert len(requirement_results) == 2
+    assert requirement_results[-1]['requirementsId'] == candidate['requirementsId']
+    assert requirement_results[-1]['requirements'] == candidate['requirements']
+    assert requirement_results[-1].get('resolvedDecisions', {}) == candidate.get('resolvedDecisions', {})
+    assert requirement_results[-1]['passed'] is True
+    assert not requirements_approved(saved)
+    assert rendered[-1] == requirement_results[-1]['requirementsPreview']
+    assert any(message.get('canonicalRequirementsPreview') == candidate['requirementsId']
+               for message in saved)
+
+
+def test_continue_does_not_retry_semantic_requirements_findings(monkeypatch, tmp_path):
+    from test_workout_generator_planning_tools import planning_case
+    from workout_generator_pkg import plan_review
+    from workout_generator_pkg.planning_tools import set_workout_requirements
+
+    equipment, arguments, _, _ = planning_case()
+    candidate = set_workout_requirements(arguments, [{'role': 'user', 'content': 'Plan 5-6 chest sets.'}], equipment)
+    candidate.update(sourceReview={'version': plan_review.REQUIREMENTS_REVIEW_VERSION,
+                                   'passed': False, 'findings': [{'severity': 'blocking'}]},
+                     passed=False,
+                     errors=[{'code': 'requirement_source_finding', 'message': 'Clarify a genuine ambiguity.'}])
+    messages = [
+        {'role': 'user', 'content': 'Plan 5-6 chest sets.'},
+        {'role': 'assistant', 'tool_calls': [{'id': 'semantic-requirements', 'function': {
+            'name': 'set_workout_requirements', 'arguments': json.dumps(arguments)}}]},
+        {'role': 'tool', 'tool_call_id': 'semantic-requirements', 'content': json.dumps(candidate)},
+        {'role': 'user', 'content': '/continue'},
+    ]
+    assert interactive_shell._requirements_review_retry_arguments(messages, '/continue') is None
 
 
 def test_requirements_reapproval_repairs_saved_draft_against_current_revision(monkeypatch, tmp_path, capsys):
@@ -1720,3 +1833,12 @@ def test_combined_search_failure_keeps_tool_responses_and_preserves_approved_req
         assert results[identifier]['errors'][0]['code'] == 'library_search_failed'
         assert 'truncated' in results[identifier]['errors'][0]['message']
         assert 'Do not automatically repeat' in results[identifier]['instruction']
+def test_unvalidated_assistant_proposal_does_not_become_requirement_authority():
+    from workout_generator_pkg.planning_tools import requirement_sources
+    messages = [
+        {'role': 'user', 'content': 'Keep the approved volume targets.'},
+        {'role': 'assistant', 'content': 'Malformed attempted repair', 'unvalidatedProposal': True},
+        {'role': 'user', 'content': 'Use three sessions.', 'unvalidatedProposal': True},
+    ]
+    sources = requirement_sources(messages)
+    assert [item['content'] for item in sources] == ['Keep the approved volume targets.', 'Use three sessions.']

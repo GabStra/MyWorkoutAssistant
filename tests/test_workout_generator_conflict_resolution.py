@@ -145,12 +145,16 @@ def test_time_cap_is_removed_then_tightened_to_audited_duration():
 
 def test_upper_volume_cap_is_raised_then_tightened_to_audited_output():
     equipment, requirements, sessions = prescription_case()
-    requirements['auditTargets']['weeklyEffectiveSets']['chest'] = {'minimum': 0, 'maximum': 10}
+    requirements['auditTargets']['weeklyEffectiveSets']['chest'] = {'minimum': 10, 'maximum': 10}
     requirements['executionRules'] = [{'kind': 'workSets', 'coverageKey': None,
                                       'minimumSets': 5, 'maximumSets': 5}]
     for day in sessions:
         day['exercises'][0]['allocationBounds'] = {'minimum': 1, 'maximum': 1}
     requirements['requirementAccounting'] = [{
+        'instruction': 'Keep the weekly chest minimum fixed', 'sourceReferences': ['SOURCE_0'],
+        'requirementPaths': ['/auditTargets/weeklyEffectiveSets/chest/minimum'],
+        'priority': 'mandatory', 'enforcement': 'constraint',
+        'reason': 'A volume ceiling compromise does not authorize reducing the minimum.'}, {
         'instruction': 'Negotiable weekly chest upper bound', 'sourceReferences': ['SOURCE_0'],
         'requirementPaths': ['/auditTargets/weeklyEffectiveSets/chest/maximum'],
         'priority': 'negotiable', 'relaxationDirection': 'raise_maximum', 'enforcement': 'constraint',
@@ -166,6 +170,8 @@ def test_upper_volume_cap_is_raised_then_tightened_to_audited_output():
         'path': '/auditTargets/weeklyEffectiveSets/chest/maximum', 'from': 10,
         'to': actual, 'basis': 'audited candidate volume'}]
     assert proposal['requirements']['auditTargets']['weeklyEffectiveSets']['chest']['maximum'] == actual
+    assert proposal['requirements']['auditTargets']['weeklyEffectiveSets']['chest']['minimum'] == 10
+    assert requirements['auditTargets']['weeklyEffectiveSets']['chest'] == {'minimum': 10, 'maximum': 10}
 
 
 def test_conflict_diagnosis_has_no_elapsed_deadline(monkeypatch):
@@ -362,6 +368,64 @@ def test_validated_menu_scoped_tradeoff_is_available_without_claiming_global_bes
     assert 'No global optimum or impossibility' in result['proposals'][0]['claim']
 
 
+def test_candidate_scoped_tradeoff_keeps_original_shortfall_and_binds_saved_menu(monkeypatch):
+    from workout_generator_pkg import joint_planning
+    from workout_generator_pkg.conflict_resolution import _hash, _proposal_core
+    from workout_generator_pkg.joint_planning import candidate_menu_fingerprint
+    from workout_generator_pkg.planning_tools import _fingerprint, library_fingerprint
+
+    equipment, approved, sessions = prescription_case()
+    approved['auditTargets']['weeklyEffectiveSets']['chest'] = {'minimum': 16, 'maximum': 20}
+    approved['requirementAccounting'] = [{
+        'instruction': 'Negotiable weekly chest minimum', 'sourceReferences': ['SOURCE_0'],
+        'requirementPaths': ['/auditTargets/weeklyEffectiveSets/chest'], 'priority': 'negotiable',
+        'relaxationDirection': 'lower_minimum', 'enforcement': 'constraint',
+        'reason': 'The original source allows this target to be reduced.'}]
+    candidate_requirements = copy.deepcopy(approved)
+    candidate_requirements['auditTargets']['weeklyEffectiveSets']['chest']['minimum'] = 15
+    library_hash = library_fingerprint(equipment)
+    menu_fp = candidate_menu_fingerprint(sessions)
+    problem_fp = joint_planning.joint_problem_fingerprint(sessions, candidate_requirements,
+        equipment, None, [], restriction_policy=None, allow_educated_load_guesses=True,
+        preserve_source_selection=True)
+    proof = {'status': 'infeasible', 'problemFingerprint': problem_fp,
+        'preserveSourceSelection': True,
+        'selectionPolicyVersion': joint_planning.SELECTION_POLICY_VERSION,
+        'feasibilityDomainFingerprint': 'saved-candidate-domain'}
+    candidate_source = {'requirementsId': 'REQ_CANDIDATE_TEST', 'baseDraftId': 'DRAFT_SOURCE',
+        'sourceDraftId': 'DRAFT_SOURCE',
+        'repairCandidateId': 'REVISION_CANDIDATE_TEST', 'submittedMenuFingerprint': menu_fp,
+        'feasibilityDomainFingerprint': 'saved-candidate-domain',
+        'candidateRequirementsId': 'ALT_CANDIDATE_TEST', 'sourceMenuFingerprint': menu_fp}
+
+    def solve(workouts, requirements, *_args, **kwargs):
+        assert kwargs['preserve_source_selection'] is True
+        minimum = requirements['auditTargets']['weeklyEffectiveSets']['chest']['minimum']
+        if minimum > 10:
+            return {'feasible': False, 'status': 'infeasible', 'problemFingerprint': 'later-tradeoff'}
+        return {'feasible': True, 'status': 'optimal', 'sessions': copy.deepcopy(sessions),
+            'audit': {'errors': [], 'weeklyVolume': {'chest': {'effective': 10}}, 'workouts': []}}
+
+    monkeypatch.setattr(joint_planning, 'solve_prescribed_week', solve)
+    result = diagnose_conflict_and_propose(requirements_id='REQ_CANDIDATE_TEST',
+        base_draft_id='DRAFT_SOURCE', workouts=sessions, requirements=candidate_requirements,
+        equipment=equipment, restriction_policy=None, review_candidate=_review,
+        existing_conflict=proof, candidate_scope={**candidate_source,
+            'originalRequirements': approved, 'originalRequirementsHash': _fingerprint(approved),
+            'programGuidance': 'Preserve manual recovery guidance.'})
+
+    assert result['outcome'] == 'alternatives_ready', result
+    proposal = result['proposals'][0]
+    assert proposal['changes'] == [{
+        'path': '/auditTargets/weeklyEffectiveSets/chest/minimum', 'from': 16, 'to': 10,
+        'basis': 'audited candidate volume'}]
+    assert proposal['shortfallsAgainstOriginalRequirements'][0]['required'] == 16
+    assert proposal['shortfallsAgainstOriginalRequirements'][0]['actual'] == 10
+    assert proposal['programGuidance'] == 'Preserve manual recovery guidance.'
+    assert proposal['candidateDiagnosisSource'] == candidate_source
+    assert proposal['proposalId'] == 'ALT_' + _hash(_proposal_core(proposal))[:24]
+
+
 def test_source_rank_requires_supported_negotiable_numeric_constraint():
     _, requirements, _ = prescription_case()
     entry = {'instruction': 'Prioritize shorter sessions over volume.', 'sourceReferences': ['SOURCE_0'],
@@ -488,9 +552,16 @@ def test_feasible_lower_rank_holds_higher_rank_fixed(monkeypatch):
     assert result['unexploredTradeoffAxes'] == ['relax:rank:2']
 
 
-def test_alternative_requires_latest_draft_display_and_exact_approval():
+@pytest.mark.parametrize('legacy_requirements_hash', [False, True])
+def test_alternative_requires_latest_draft_display_and_exact_approval(legacy_requirements_hash):
+    from workout_generator_pkg.conflict_resolution import _hash, _proposal_core
+    from workout_generator_pkg.planning_tools import _fingerprint
     equipment, requirements, result = _alternative_case()
     proposal = result['proposals'][0]
+    assert result['originalRequirementsHash'] == proposal['originalRequirementsHash'] == _fingerprint(requirements)
+    if legacy_requirements_hash:
+        result['originalRequirementsHash'] = proposal['originalRequirementsHash'] = _hash(requirements)
+        proposal['proposalId'] = 'ALT_' + _hash(_proposal_core(proposal))[:24]
     messages = [
         {'role': 'assistant', 'tool_calls': [{'id': 'audit-1', 'function': {'name': 'audit_workout_plan', 'arguments': '{}'}}]},
         {'role': 'tool', 'tool_call_id': 'audit-1', 'content': json.dumps({'currentDraftId': 'DRAFT_TEST', 'draftId': 'DRAFT_TEST'})},
@@ -577,6 +648,34 @@ def test_program_guidance_is_reviewed_rendered_bound_and_approved_with_alternati
         messages=stored_messages, current_requirements={'requirementsId': 'REQ_TEST',
             'requirements': requirements}, equipment=equipment)
     assert accepted['programGuidance'] == guidance
+
+
+def test_approved_alternative_binds_and_preserves_its_repair_contract():
+    from workout_generator_pkg.conflict_resolution import _hash, _proposal_core
+
+    equipment, requirements, result = _alternative_case()
+    proposal = result['proposals'][0]
+    proposal['repairContract'] = {'requirementsId': 'REQ_TEST', 'sessionsPerWeek': 3,
+        'requiredCoverage': [], 'redistributions': []}
+    proposal['jointSolve'] = {'feasible': True, 'status': 'optimal',
+        'redistributionOptimization': {'optimal': True}}
+    proposal['proposalId'] = 'ALT_' + _hash(_proposal_core(proposal))[:24]
+    proposal_id = proposal['proposalId']
+    messages = [
+        {'role': 'assistant', 'tool_calls': [{'id': 'source', 'function': {'name': 'audit_workout_plan'}}]},
+        {'role': 'tool', 'tool_call_id': 'source', 'content': json.dumps({'currentDraftId': 'DRAFT_TEST'})},
+        {'role': 'assistant', 'tool_calls': [{'id': 'proposal', 'function': {'name': 'propose_workout_alternatives'}}]},
+        {'role': 'tool', 'tool_call_id': 'proposal', 'content': json.dumps(result)},
+        {'role': 'assistant', 'content': render_alternative_preview(proposal), 'canonicalAlternativePreview': proposal_id},
+        {'role': 'user', 'content': 'APPROVE ALTERNATIVE ' + proposal_id}]
+    accepted = accept_workout_alternative(proposal_id=proposal_id, proposal_result=result, messages=messages,
+        current_requirements={'requirementsId': 'REQ_TEST', 'requirements': requirements}, equipment=equipment)
+    assert accepted['repairContract']['requirementsId'] == accepted['requirementsId']
+    assert accepted['jointSolve'] == proposal['jointSolve']
+    assert proposal['repairContract']['requirementsId'] == 'REQ_TEST'
+    tampered = copy.deepcopy(proposal)
+    tampered['repairContract']['sessionsPerWeek'] = 2
+    assert 'ALT_' + _hash(_proposal_core(tampered))[:24] != proposal_id
 
 
 def test_repaired_alternative_acceptance_preserves_fixed_restrictions_and_opens_current_generation_gate(monkeypatch):

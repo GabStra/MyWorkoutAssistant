@@ -155,14 +155,14 @@ def test_malformed_chat_response_still_records_provider_usage():
 
 
 @pytest.mark.parametrize('submitted', [True, False])
-def test_strict_reply_uses_beta_schema_and_requires_single_submission(submitted):
+def test_native_json_schema_reply_preserves_local_validation(submitted):
     options,requests,rows=[],[],[]
     schema={'type':'object','properties':{'ok':{'type':'boolean'}},'required':['ok'],'additionalProperties':False}
     def create(**kwargs):
         requests.append(kwargs)
-        calls=[SimpleNamespace(function=SimpleNamespace(name='emit_result',arguments='{"ok":true}'))] if submitted else []
+        calls=[]
         return SimpleNamespace(choices=[SimpleNamespace(finish_reason='stop',message=SimpleNamespace(
-            content='unstructured',tool_calls=calls,reasoning_content=None))],usage={'prompt_tokens':12,'completion_tokens':3})
+            content='{"ok":true}' if submitted else 'unstructured',tool_calls=calls,reasoning_content=None))],usage={'prompt_tokens':12,'completion_tokens':3})
     def configure(**kwargs):
         options.append(kwargs)
         return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
@@ -173,10 +173,38 @@ def test_strict_reply_uses_beta_schema_and_requires_single_submission(submitted)
         else:
             with pytest.raises(ValueError):
                 api_client.chat_call(SimpleNamespace(with_options=configure),[],output_schema=schema)
-    assert options==[{'max_retries':0,'base_url':'https://api.deepseek.com/beta'}]
-    assert requests[0]['tools'][0]['function']['strict'] is True
-    assert 'response_format' not in requests[0]
+    assert options==[{'max_retries':0}]
+    assert 'tools' not in requests[0] and 'tool_choice' not in requests[0]
+    assert requests[0]['response_format'] == {'type': 'json_object'}
+    assert requests[0]['messages'][-1]['content'].endswith(json.dumps(schema, separators=(',', ':')))
     assert json.loads(rows[-1].split(' ',1)[1])['completionTokens']==3
+
+
+def test_unresolvable_output_schema_records_provider_usage_without_becoming_rejection(monkeypatch):
+    from jsonschema import SchemaError
+
+    rows = []
+    call = SimpleNamespace(function=SimpleNamespace(name='emit_result', arguments='{"ok":"yes"}'))
+    response = SimpleNamespace(model='test-model', choices=[SimpleNamespace(finish_reason='tool_calls',
+        message=SimpleNamespace(content=None, tool_calls=[call], reasoning_content=None))],
+        usage={'prompt_tokens': 12, 'completion_tokens': 3})
+    endpoint = SimpleNamespace(base_url='https://api.example.com/v1', model='test-model', is_deepseek=False)
+    monkeypatch.setattr(api_client, 'resolve_llm_endpoint', lambda: endpoint)
+    client = SimpleNamespace(with_options=lambda **_: SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **__: response))))
+    schema = {'type': 'object', 'properties': {'ok': {'type': 'string', '$ref': '#/$def/reference'}},
+        'required': ['ok'], 'additionalProperties': False}
+
+    with api_metrics_scope(SimpleNamespace(log=rows.append), 'independent_plan_review'):
+        with pytest.raises(SchemaError) as raised:
+            api_client.chat_call(client, [], output_schema=schema)
+
+    assert raised.value.__cause__ is not None
+    assert type(raised.value.__cause__).__name__ == '_WrappedReferencingError'
+    metric = json.loads(next(row for row in rows if '"event":"api_request"' in row).split(' ', 1)[1])
+    assert metric['outcome'] == 'failure' and metric['errorType'] == 'SchemaError'
+    assert metric['promptTokens'] == 12 and metric['completionTokens'] == 3
+    assert not any('rejected' in row for row in rows)
 
 
 @pytest.mark.parametrize('content,valid', [(' {"ok":true} ',True),('{"ok":"wrong"}',False),
@@ -197,6 +225,273 @@ def test_schema_reply_accepts_only_fully_valid_json_when_tool_not_called(content
         with pytest.raises((ValueError,ValidationError)):
             api_client.chat_call(client,[],output_schema=schema)
     assert len(calls)==1
+
+
+def test_deepseek_strict_structured_output_uses_beta_and_requires_emit_result(monkeypatch):
+    endpoint = SimpleNamespace(base_url='https://api.deepseek.com', model='deepseek-flash', is_deepseek=True)
+    monkeypatch.setattr(api_client, 'resolve_llm_endpoint', lambda: endpoint)
+    options, requests = [], []
+    schema = {'type': 'object', 'properties': {'ok': {'type': 'boolean'}},
+              'required': ['ok'], 'additionalProperties': False}
+
+    def create(**kwargs):
+        requests.append(kwargs)
+        call = SimpleNamespace(function=SimpleNamespace(name='emit_result', arguments='{"ok":true}'))
+        return SimpleNamespace(choices=[SimpleNamespace(finish_reason='tool_calls', message=SimpleNamespace(
+            content=None, tool_calls=[call], reasoning_content=None))], usage=None)
+
+    client = SimpleNamespace(with_options=lambda **kwargs: (options.append(kwargs) or SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create)))))
+    content, tool_calls, _ = api_client.chat_call(client, [], reasoning_effort=None, output_schema=schema)
+
+    assert json.loads(content) == {'ok': True} and tool_calls is None
+    assert options == [{'max_retries': 0, 'base_url': 'https://api.deepseek.com/beta'}]
+    assert requests[0]['tools'][0]['function']['strict'] is True
+    assert requests[0]['tool_choice'] == {'type': 'function', 'function': {'name': 'emit_result'}}
+    assert requests[0]['extra_body']['thinking']['type'] == 'disabled'
+    assert 'response_format' not in requests[0]
+
+
+def test_non_deepseek_preserves_existing_strict_tool_path_for_unsupported_schema(monkeypatch):
+    endpoint = SimpleNamespace(base_url='https://api.example.com/v1', model='test-model', is_deepseek=False)
+    monkeypatch.setattr(api_client, 'resolve_llm_endpoint', lambda: endpoint)
+    requests = []
+    schema = {'type': 'object', 'properties': {'items': {'type': 'array', 'items': {'type': 'string'},
+        'maxItems': 3}}, 'required': ['items'], 'additionalProperties': False}
+
+    def create(**kwargs):
+        requests.append(kwargs)
+        call = SimpleNamespace(function=SimpleNamespace(name='emit_result', arguments='{"items":["a"]}'))
+        return SimpleNamespace(choices=[SimpleNamespace(finish_reason='tool_calls', message=SimpleNamespace(
+            content=None, tool_calls=[call], reasoning_content=None))], usage=None)
+
+    client = SimpleNamespace(with_options=lambda **_: SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create))))
+    content, _, _ = api_client.chat_call(client, [], reasoning_effort=None, output_schema=schema)
+
+    assert json.loads(content) == {'items': ['a']}
+    assert requests[0]['tools'][0]['function']['strict'] is True
+    assert requests[0]['tool_choice'] == {'type': 'function', 'function': {'name': 'emit_result'}}
+    assert 'response_format' not in requests[0]
+
+
+def test_deepseek_thinking_structured_output_preserves_reasoning_and_uses_json_fallback(monkeypatch):
+    endpoint = SimpleNamespace(base_url='https://api.deepseek.com', model='deepseek-flash', is_deepseek=True)
+    monkeypatch.setattr(api_client, 'resolve_llm_endpoint', lambda: endpoint)
+    options, requests = [], []
+    schema = {'type': 'object', 'properties': {'ok': {'type': 'boolean'}},
+              'required': ['ok'], 'additionalProperties': False}
+
+    def create(**kwargs):
+        requests.append(kwargs)
+        return SimpleNamespace(choices=[SimpleNamespace(finish_reason='stop', message=SimpleNamespace(
+            content='{"ok":true}', tool_calls=None, reasoning_content='kept reasoning'))], usage=None)
+
+    client = SimpleNamespace(with_options=lambda **kwargs: (options.append(kwargs) or SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create)))))
+    content, tool_calls, reasoning = api_client.chat_call(client, [], reasoning_effort='low', output_schema=schema)
+
+    assert json.loads(content) == {'ok': True} and tool_calls is None and reasoning == 'kept reasoning'
+    assert options == [{'max_retries': 0}]
+    assert requests[0]['response_format'] == {'type': 'json_object'}
+    assert 'tools' not in requests[0] and 'tool_choice' not in requests[0]
+    assert requests[0]['reasoning_effort'] == 'low'
+    assert requests[0]['extra_body']['thinking']['type'] == 'enabled'
+
+
+def test_deepseek_application_tools_use_strict_schema_without_changing_thinking(monkeypatch):
+    endpoint = SimpleNamespace(base_url='https://api.deepseek.com', model='deepseek-flash', is_deepseek=True)
+    monkeypatch.setattr(api_client, 'resolve_llm_endpoint', lambda: endpoint)
+    options, requests = [], []
+    tool = {'type': 'function', 'function': {'name': 'choose', 'parameters': {
+        'type': 'object', 'properties': {'choice': {'type': 'string'}},
+        'required': ['choice'], 'additionalProperties': False}}}
+
+    def create(**kwargs):
+        requests.append(kwargs)
+        call = SimpleNamespace(id='call_1', type='function', function=SimpleNamespace(name='choose', arguments='{"choice":"a"}'))
+        return SimpleNamespace(choices=[SimpleNamespace(finish_reason='tool_calls', message=SimpleNamespace(
+            content=None, tool_calls=[call], reasoning_content='reasoning'))], usage=None)
+
+    client = SimpleNamespace(with_options=lambda **kwargs: (options.append(kwargs) or SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create)))))
+    _, calls, reasoning = api_client.chat_call(client, [], tools=[tool], reasoning_effort='low')
+
+    assert calls[0].function.name == 'choose' and reasoning == 'reasoning'
+    assert options == [{'max_retries': 0, 'base_url': 'https://api.deepseek.com/beta'}]
+    assert requests[0]['tools'][0]['function']['strict'] is True
+    assert requests[0]['reasoning_effort'] == 'low'
+    assert requests[0]['extra_body']['thinking']['type'] == 'enabled'
+    assert tool['function'].get('strict') is None
+
+
+def test_deepseek_incompatible_application_schema_keeps_existing_json_tool_path(monkeypatch):
+    endpoint = SimpleNamespace(base_url='https://api.deepseek.com', model='deepseek-flash', is_deepseek=True)
+    monkeypatch.setattr(api_client, 'resolve_llm_endpoint', lambda: endpoint)
+    options, requests = [], []
+    tool = {'type': 'function', 'function': {'name': 'choose', 'parameters': {
+        'type': 'object', 'properties': {'choice': {'type': 'string', 'maxLength': 12}},
+        'required': ['choice'], 'additionalProperties': False}}}
+
+    def create(**kwargs):
+        requests.append(kwargs)
+        call = SimpleNamespace(id='call_1', type='function', function=SimpleNamespace(name='choose', arguments='{"choice":"a"}'))
+        return SimpleNamespace(choices=[SimpleNamespace(finish_reason='tool_calls', message=SimpleNamespace(
+            content=None, tool_calls=[call], reasoning_content=None))], usage=None)
+
+    client = SimpleNamespace(with_options=lambda **kwargs: (options.append(kwargs) or SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create)))))
+    api_client.chat_call(client, [], tools=[tool], reasoning_effort=None)
+
+    assert options == [{'max_retries': 0}]
+    assert 'strict' not in requests[0]['tools'][0]['function']
+    assert tool['function'].get('strict') is None
+
+
+def test_assessed_menu_repair_projects_real_tools_and_requires_deepseek_strict(monkeypatch):
+    import copy
+    from test_workout_generator_redistribution_intent import intent_case
+    from workout_generator_pkg.planning_tools import (GET_WORKOUT_DRAFT_TOOL, coordinated_repair_tool,
+        workout_requirements_tool)
+    from workout_generator_pkg.user_interaction import ASK_USER_TOOL
+    from workout_generator_pkg.exercise_library_tools import (GET_EXERCISE_CANDIDATES_TOOL,
+        exercise_library_search_tool)
+    from workout_generator_pkg.training_history import GET_TRAINING_EVIDENCE_TOOL
+    from workout_generator_pkg.planning_decisions import RECORD_PLANNING_DECISIONS_TOOL
+    from workout_generator_pkg.allocation import ALLOCATE_WORKOUT_SETS_TOOL
+    from workout_generator_pkg.user_interaction import (ACCEPT_WORKOUT_ALTERNATIVE_TOOL,
+        PROPOSE_WORKOUT_ALTERNATIVES_TOOL)
+    from workout_generator_pkg.constants import GENERATE_WORKOUT_TOOL
+    from workout_generator_pkg.interactive_shell import _strict_assessed_menu_repair_tools
+    from jsonschema import ValidationError, validate
+
+    endpoint = SimpleNamespace(base_url='https://api.deepseek.com', model='deepseek-flash', is_deepseek=True)
+    monkeypatch.setattr(api_client, 'resolve_llm_endpoint', lambda: endpoint)
+    draft, task, _, _ = intent_case()
+    additional = copy.deepcopy(draft['workouts'][0]['exercises'][0])
+    additional['definition_id'] = 'LIBRARY_1'
+    draft['workouts'][0]['exercises'].append(additional)
+    task['currentDraft'] = draft
+    task['findingsAssessment']['groups'][0]['repairObjectives'][0]['exerciseRefs'] = [
+        'EXERCISE_0', 'EXERCISE_2']
+    task['findingsAssessment']['groups'][0]['repairDimensions'].append('exercise_selection')
+    coordinated = coordinated_repair_tool(task)
+    tools = [workout_requirements_tool({}, []), RECORD_PLANNING_DECISIONS_TOOL, GENERATE_WORKOUT_TOOL,
+        exercise_library_search_tool({}), GET_EXERCISE_CANDIDATES_TOOL, coordinated,
+        ALLOCATE_WORKOUT_SETS_TOOL, GET_WORKOUT_DRAFT_TOOL, PROPOSE_WORKOUT_ALTERNATIVES_TOOL,
+        ACCEPT_WORKOUT_ALTERNATIVE_TOOL, GET_TRAINING_EVIDENCE_TOOL, ASK_USER_TOOL]
+    tools, require_strict = _strict_assessed_menu_repair_tools(tools, coordinated, task)
+    assert require_strict
+    assert _strict_assessed_menu_repair_tools(tools, coordinated, {}) == (tools, False)
+    names = {tool['function']['name'] for tool in tools}
+    assert names.isdisjoint({'allocate_workout_sets', 'propose_workout_alternatives', 'generate_workout'})
+    assert {'ask_user', 'search_exercise_library', 'get_exercise_candidates', 'get_workout_draft',
+        'get_training_evidence'} <= names
+    requests, options = [], []
+
+    def create(**kwargs):
+        requests.append(kwargs)
+        call = SimpleNamespace(id='call_1', type='function', function=SimpleNamespace(
+            name='ask_user', arguments='{"question":"Need one detail.","options":null,"recommendation":null}'))
+        return SimpleNamespace(choices=[SimpleNamespace(finish_reason='tool_calls', message=SimpleNamespace(
+            content=None, tool_calls=[call], reasoning_content=None))], usage=None)
+
+    client = SimpleNamespace(with_options=lambda **kwargs: (options.append(kwargs) or SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create)))))
+    _, calls, _ = api_client.chat_call(client, [], tools=tools, reasoning_effort=None,
+        require_strict_tool_delivery=require_strict)
+
+    assert options == [{'max_retries': 0, 'base_url': 'https://api.deepseek.com/beta'}]
+    assert all(tool['function']['strict'] is True
+        and api_client._strict_parameters_compatible(tool['function']['parameters'])
+        for tool in requests[0]['tools'])
+    repair_wire = next(tool['function']['parameters'] for tool in requests[0]['tools']
+        if tool['function']['name'] == 'audit_workout_plan')
+    assert 'EXERCISE_0' not in json.dumps(repair_wire['properties']['sessionBlocks'])
+    assert json.loads(calls[0].function.arguments) == {'question': 'Need one detail.'}
+    assert coordinated['function'].get('strict') is None
+    target_schema = coordinated['function']['parameters']['properties']['edits']['properties'][
+        'redistributionTargets']['properties']['REDISTRIBUTION_0']
+    with pytest.raises(ValidationError):
+        validate(['WORKOUT_0'], target_schema)
+
+
+def test_required_strict_tool_delivery_fails_before_api_for_unprojectable_schema(monkeypatch):
+    endpoint = SimpleNamespace(base_url='https://api.deepseek.com', model='deepseek-flash', is_deepseek=True)
+    monkeypatch.setattr(api_client, 'resolve_llm_endpoint', lambda: endpoint)
+    calls = []
+    client = SimpleNamespace(with_options=lambda **_: SimpleNamespace(chat=SimpleNamespace(
+        completions=SimpleNamespace(create=lambda **kwargs: calls.append(kwargs)))))
+    tool = {'type': 'function', 'function': {'name': 'bad', 'parameters': {
+        'type': 'object', 'properties': {'value': {'$ref': '#/$defs/value'}},
+        'required': ['value'], 'additionalProperties': False}}}
+
+    with pytest.raises(ValueError, match='cannot project schema keywords'):
+        api_client.chat_call(client, [], tools=[tool], reasoning_effort=None,
+            require_strict_tool_delivery=True)
+
+    assert calls == []
+
+
+def test_nullable_type_union_keeps_constraints_only_on_compatible_branch():
+    projected_integer = api_client._strict_wire_schema({
+        'type': ['integer', 'null'], 'minimum': 0,
+    })['anyOf']
+    assert projected_integer == [
+        {'type': 'integer', 'minimum': 0},
+        {'type': 'null'},
+    ]
+
+    projected_string = api_client._strict_wire_schema({
+        'type': ['string', 'null'], 'pattern': '^[A-Z]+$',
+    })['anyOf']
+    assert projected_string == [
+        {'type': 'string', 'pattern': '^[A-Z]+$'},
+        {'type': 'null'},
+    ]
+
+    projected_array = api_client._strict_wire_schema({
+        'type': ['array', 'null'], 'items': {'type': 'string'},
+    })['anyOf']
+    assert projected_array == [
+        {'type': 'array', 'items': {'type': 'string'}},
+        {'type': 'null'},
+    ]
+
+    projected_enum = api_client._strict_wire_schema({
+        'type': ['integer', 'null'], 'enum': [1],
+    })['anyOf']
+    assert projected_enum == [{'type': 'integer', 'enum': [1]}]
+
+
+def test_required_strict_tool_delivery_rejects_unknown_provider_before_api(monkeypatch):
+    endpoint = SimpleNamespace(base_url='https://api.example.com/v1', model='test', is_deepseek=False)
+    monkeypatch.setattr(api_client, 'resolve_llm_endpoint', lambda: endpoint)
+    calls = []
+    client = SimpleNamespace(with_options=lambda **_: SimpleNamespace(chat=SimpleNamespace(
+        completions=SimpleNamespace(create=lambda **kwargs: calls.append(kwargs)))))
+    tool = {'type': 'function', 'function': {'name': 'choose', 'parameters': {
+        'type': 'object', 'properties': {'choice': {'type': 'string'}},
+        'required': ['choice'], 'additionalProperties': False}}}
+
+    with pytest.raises(ValueError, match='not supported by the configured provider'):
+        api_client.chat_call(client, [], tools=[tool], require_strict_tool_delivery=True)
+
+    assert calls == []
+
+
+def test_deepseek_strict_compatible_schema_rejects_body_fallback(monkeypatch):
+    endpoint = SimpleNamespace(base_url='https://api.deepseek.com', model='deepseek-flash', is_deepseek=True)
+    monkeypatch.setattr(api_client, 'resolve_llm_endpoint', lambda: endpoint)
+    schema = {'type': 'object', 'properties': {'ok': {'type': 'boolean'}},
+              'required': ['ok'], 'additionalProperties': False}
+    response = SimpleNamespace(choices=[SimpleNamespace(finish_reason='stop', message=SimpleNamespace(
+        content='{"ok":true}', tool_calls=None, reasoning_content=None))], usage=None)
+    client = SimpleNamespace(with_options=lambda **_: SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **__: response))))
+
+    with pytest.raises(ValueError, match='exactly one emit_result'):
+        api_client.chat_call(client, [], reasoning_effort=None, output_schema=schema)
 
 
 def test_metrics_context_survives_cancellable_worker_thread():
@@ -343,3 +638,76 @@ def test_strict_reply_recovers_only_redundant_terminal_object_closers(suffix, ac
         else:
             with pytest.raises(json.JSONDecodeError):
                 api_client.chat_call(client, [], output_schema={'type': 'object', 'required': ['findings']})
+
+
+def test_requirements_intake_real_siblings_use_strict_provider_delivery(monkeypatch):
+    from jsonschema import ValidationError, validate
+    from workout_generator_pkg.planning_tools import workout_requirements_tool
+    from workout_generator_pkg.planning_decisions import RECORD_PLANNING_DECISIONS_TOOL
+    from workout_generator_pkg.user_interaction import ASK_USER_TOOL
+    from test_workout_generator_planning_tools import planning_case
+    equipment, _, _, _ = planning_case()
+    endpoint = SimpleNamespace(base_url='https://api.deepseek.com', model='deepseek-flash', is_deepseek=True)
+    monkeypatch.setattr(api_client, 'resolve_llm_endpoint', lambda: endpoint)
+    requests, options, rows = [], [], []
+    arguments = {'auditTargets': {'weeklyEffectiveSets': {}, 'perSessionEffectiveSets': {},
+                                 'maximumSessionSeconds': None}, 'sessionsPerWeek': 3}
+    raw_arguments = json.dumps(arguments, separators=(',', ':')) + '}}}'
+    def create(**kwargs):
+        requests.append(kwargs)
+        call = SimpleNamespace(id='call_1', type='function', function=SimpleNamespace(
+            name='set_workout_requirements', arguments=raw_arguments))
+        return SimpleNamespace(choices=[SimpleNamespace(finish_reason='tool_calls', message=SimpleNamespace(
+            content=None, tool_calls=[call], reasoning_content=None))], usage=None)
+    client = SimpleNamespace(with_options=lambda **kwargs: (options.append(kwargs) or SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create)))))
+    tools = [workout_requirements_tool(equipment), RECORD_PLANNING_DECISIONS_TOOL, ASK_USER_TOOL]
+    original = copy.deepcopy(tools)
+    with api_metrics_scope(SimpleNamespace(log=rows.append), 'Extracting workout requirements'):
+        _, calls, _ = api_client.chat_call(client, [], tools=tools, reasoning_effort=None,
+            require_strict_tool_delivery=True)
+    assert options == [{'max_retries': 0, 'base_url': 'https://api.deepseek.com/beta'}]
+    assert all(t['function']['strict'] and api_client._strict_parameters_compatible(
+        t['function']['parameters']) for t in requests[0]['tools'])
+    assert tools == original
+    assert json.loads(calls[0].function.arguments) == arguments
+    requirement_wire = next(t['function'] for t in requests[0]['tools']
+        if t['function']['name'] == 'set_workout_requirements')
+    requirement_schema = original[0]['function']['parameters']
+    wire_coverage = requirement_wire['parameters']['properties']['requiredCoverage']
+    wire_array = next(branch for branch in wire_coverage['anyOf'] if branch.get('type') == 'array')
+    assert wire_array['items']['properties']['key']['enum'] == requirement_schema[
+        'properties']['requiredCoverage']['items']['properties']['key']['enum']
+    with pytest.raises(ValidationError):
+        validate({'key': 'unknown_role', 'scope': 'weekly'},
+                 requirement_schema['properties']['requiredCoverage']['items'])
+    invalid_arguments = {**arguments, 'requiredCoverage': [{'key': 'unknown_role', 'scope': 'weekly'}]}
+    recovered_invalid = api_client._recover_strict_tool_argument_syntax(
+        json.dumps(invalid_arguments, separators=(',', ':')) + '}}}', requirement_schema)
+    assert json.loads(recovered_invalid) == invalid_arguments
+    with pytest.raises(ValidationError):
+        validate(invalid_arguments, requirement_schema)
+    request_metric = json.loads(next(row for row in rows if '"event":"api_request"' in row).split(' ', 1)[1])
+    repair = request_metric['strictToolSyntaxRepairs'][0]
+    assert repair['kind'] == 'redundant_terminal_closers' and repair['rawArguments'] == raw_arguments
+    assert repair['rawArgumentsFingerprint'] != repair['acceptedArgumentsFingerprint']
+    assert api_client._recover_strict_tool_argument_syntax(raw_arguments + ' trailing', requirement_schema) is None
+
+
+def test_optional_nullable_union_flattens_provider_branches_without_losing_constraints():
+    from jsonschema import validate, ValidationError
+    schema = {'type': 'object', 'properties': {
+        'supersedes': {'anyOf': [{'type': 'string', 'pattern': '^DECISION_[0-9]+$'},
+                                 {'type': 'null'}]}}, 'required': [], 'additionalProperties': False}
+    original = copy.deepcopy(schema)
+    wire = api_client._strict_wire_schema(schema)
+    assert wire['properties']['supersedes']['anyOf'] == [
+        {'type': 'string', 'pattern': '^DECISION_[0-9]+$'}, {'type': 'null'}]
+    validate({'supersedes': None}, wire)
+    validate({'supersedes': 'DECISION_12'}, wire)
+    with pytest.raises(ValidationError):
+        validate({'supersedes': 'anything'}, wire)
+    assert schema == original
+    nested = {'anyOf': [{'anyOf': [{'type': 'string'}, {'type': 'null'}]}, {'type': 'null'}]}
+    assert not api_client._strict_schema_compatible(nested)
+    assert api_client._strict_wire_schema(nested) == {'anyOf': [{'type': 'string'}, {'type': 'null'}]}

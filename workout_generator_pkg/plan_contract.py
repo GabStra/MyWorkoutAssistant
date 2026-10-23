@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import copy
 import math
 import re
@@ -71,6 +71,9 @@ class ContractValidationError(ValueError):
 class ContractIssue:
     code: str
     message: str
+    exercise_id: Optional[str] = None
+    field: Optional[str] = None
+    work_set_index: Optional[int] = None
 
 
 CANONICAL_PLAN_ID_PATTERNS = {
@@ -136,14 +139,10 @@ def _exercise_requires_unilateral_rest(exercise: Dict[str, Any]) -> bool:
     if not isinstance(exercise, dict):
         return False
 
-    combined = " ".join(
-        part
-        for part in (
-            _normalize_unilateral_text(exercise.get("name")),
-            _normalize_unilateral_text(exercise.get("notes")),
-        )
-        if part
-    )
+    # Technique notes describe how to perform the movement; they do not define
+    # whether both sides work together. For example, "stop if one arm lags"
+    # is a bilateral symmetry cue, not unilateral execution.
+    combined = _normalize_unilateral_text(exercise.get("name"))
     if not combined:
         return False
 
@@ -503,6 +502,7 @@ def _collect_contract_issues_plan_index(
         if not isinstance(ex, dict):
             issues.append(ContractIssue("invalid_exercise_entry", "PlanIndex contains a non-object exercise entry."))
             continue
+        exercise_issue_start = len(issues)
         if library_definition_ids:
             library_definition_id = ex.get("libraryDefinitionId")
             if library_definition_id not in library_definition_ids:
@@ -533,6 +533,7 @@ def _collect_contract_issues_plan_index(
                     ContractIssue(
                         "invalid_intra_set_rest",
                         f"Exercise '{ex_name}' must use a positive integer intraSetRestInSeconds when provided.",
+                        field="intraSetRestInSeconds",
                     )
                 )
         if _exercise_requires_unilateral_rest(ex) and not (
@@ -542,6 +543,7 @@ def _collect_contract_issues_plan_index(
                 ContractIssue(
                     "missing_unilateral_intra_set_rest",
                     f"Exercise '{ex_name}' is unilateral single-side work and must include a positive intraSetRestInSeconds in the PlanIndex.",
+                    field="intraSetRestInSeconds",
                 )
             )
         equipment_id = ex.get("equipmentId")
@@ -669,7 +671,8 @@ def _collect_contract_issues_plan_index(
                         issues.append(ContractIssue('target_set_prescription_outside_rep_range',
                             f"Exercise '{ex_id}' ({ex_name}) targetSetPrescriptions workSetIndex={item['workSetIndex']} "
                             f"prescribes {reps} reps outside minReps={lower}, maxReps={upper}. "
-                            'Keep each target inside the prescribed range; do not fabricate rep drop-off or silently change an agreed range.'))
+                            'Keep each target inside the prescribed range; do not fabricate rep drop-off or silently change an agreed range.',
+                            work_set_index=item['workSetIndex']))
 
                 expected_work_sets = ex.get("numWorkSets")
                 if isinstance(expected_work_sets, int) and len(target_set_prescriptions) != expected_work_sets:
@@ -721,6 +724,10 @@ def _collect_contract_issues_plan_index(
                                     f"{expected_load_field} is {_format_contract_weight(nearest)}.",
                                 )
                             )
+
+        # Preserve occurrence identity for every issue, including nested target validation.
+        issues[exercise_issue_start:] = [replace(issue, exercise_id=ex_id)
+                                         for issue in issues[exercise_issue_start:]]
 
     workout_ids: List[str] = [wo.get("id") for wo in workouts if isinstance(wo, dict) and wo.get("id")]
     if len(workout_ids) != len(set(workout_ids)):
@@ -1113,7 +1120,7 @@ def _collect_contract_issues_for_exercise(plan_ex: Dict[str, Any], actual: Dict[
             )
 
     plan_equipment_id = plan_ex.get("equipmentId")
-    for field in ("notes", "placementNotes", "generateWarmUpSets", "progressionMode", "requiresLoadCalibration"):
+    for field in ("notes", "generateWarmUpSets", "progressionMode", "requiresLoadCalibration"):
         if field in plan_ex and actual.get(field) != plan_ex[field]:
             issues.append(ContractIssue(
                 "exercise_guidance_mismatch",

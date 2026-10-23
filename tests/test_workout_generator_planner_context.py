@@ -35,7 +35,7 @@ def _draft_with_references(draft):
     return result
 
 
-def _unresolved_joint_candidate(equipment, stored, draft, messages, base_draft_id=None):
+def _unresolved_joint_candidate(equipment, stored, draft, messages, base_draft_id=None, preserve_selection=False):
     import hashlib
     from workout_generator_pkg.joint_planning import joint_problem_fingerprint, prescription_fingerprint
     from workout_generator_pkg.planning_tools import library_fingerprint, source_message_context, requirement_sources
@@ -50,8 +50,10 @@ def _unresolved_joint_candidate(equipment, stored, draft, messages, base_draft_i
         'libraryFingerprint': library_fingerprint(equipment), 'historyFingerprint': None,
         'sourceMessagesHash': source_hash,
         'jointPlanning': {'problemFingerprint': joint_problem_fingerprint(submission['workouts'],
-            stored['requirements'], equipment, messages=messages, restriction_policy=stored.get('restrictionPolicy')),
-            'feasible': False, 'status': 'unproven', 'instruction': 'Solver did not establish feasibility.'},
+            stored['requirements'], equipment, messages=messages, restriction_policy=stored.get('restrictionPolicy'),
+            preserve_source_selection=preserve_selection),
+            'feasible': False, 'status': 'unproven', 'preserveSourceSelection': preserve_selection,
+            'instruction': 'Solver did not establish feasibility.'},
         'recipeQualification': {'contracts': [{'definition_id': 'LIBRARY_0'}], 'inputHashes': {}}}
 
 
@@ -70,7 +72,121 @@ def test_movement_selection_only_prefers_progression_when_approved():
 
     approved = {'requirements': {'objectiveOrder': ['progression']}}
     _movement_selection_context(approved)
-    assert 'prefer the most supported progression margin' in approved['progressionSelectionPolicy']
+    assert 'not training quality or a working-set target' in approved['progressionSelectionPolicy']
+
+
+def test_first_construction_selection_exposes_library_demand_facts_without_prior_artifact():
+    from workout_generator_pkg.generation_audit import programming_demand_evidence
+
+    state = {'requirements': {'objectiveOrder': []}, 'constructionTask': {
+        'action': 'create_first_session', 'stage': 'choose_movements'},
+        'exerciseCandidates': {'LIBRARY_0': {'id': 'LIBRARY_0', 'name': 'Example Row',
+            'exerciseType': 'WEIGHT', 'exerciseCategory': 'ROW',
+            'movementRef': {'id': 'horizontal_pull'}, 'equipmentName': 'Cable',
+            'accessoryNames': ['Handle'], 'muscleGroups': ['BACK_UPPER_BACK'],
+            'secondaryMuscleGroups': ['FRONT_BICEPS'],
+            'creditsPerWorkingSet': {'back': {'direct': 1}}}}}
+    state['cachedCandidateIndex'] = {'LIBRARY_0': {'exerciseType': 'WEIGHT'}}
+
+    assert 'currentDraft' not in state and 'programmingSelectionFacts' not in state
+    _movement_selection_context(state)
+
+    assert state['demandEvidence'] == programming_demand_evidence()
+    assert state['exerciseDemandEvidence']['candidates']['LIBRARY_0'] == {
+        'exerciseType': 'WEIGHT', 'exerciseCategory': 'ROW',
+        'movementRef': {'id': 'horizontal_pull'}, 'equipmentName': 'Cable',
+        'accessoryNames': ['Handle'], 'muscleGroups': ['BACK_UPPER_BACK'],
+        'secondaryMuscleGroups': ['FRONT_BICEPS'],
+        'creditsPerWorkingSet': {'back': {'direct': 1}}}
+    assert 'support configuration' in state['demandEvidence']['notRepresentedByCurrentLibraryFields']
+    assert 'fatigue' in state['demandEvidence']['interpretation']
+
+
+@pytest.mark.parametrize(('preview', 'expected'), [
+    ({'scope': 'pre_prescription_count_domain', 'objectives': [
+        {'priority': 'distribution', 'improvement': 0.25}]}, False),
+    ({'scope': 'pre_prescription_count_domain', 'objectives': [
+        {'priority': 'distribution', 'improvement': 1}]}, False),
+    ({'scope': 'pre_prescription_count_domain', 'roleComparisons': [
+        {'relationship': 'first_not_less_than_second', 'proposalDeviation': [0, 1]}]}, True),
+    ({'scope': 'pre_prescription_count_domain', 'roleComparisons': [
+        {'relationship': 'balanced', 'proposalDeviation': [0, 4]}]}, False),
+])
+def test_selection_preview_reconsideration_uses_only_directional_shortfall(preview, expected):
+    from workout_generator_pkg.planner_context import _selection_preview_requires_reconsideration
+
+    assert _selection_preview_requires_reconsideration(preview) is expected
+
+
+def test_compact_programming_facts_preserve_occurrences_and_weighted_credits():
+    from workout_generator_pkg.planner_context import _compact_programming_selection_facts
+    summary = {'sessions': [{'name': 'Day A', 'muscles': {'shoulders': {
+        'direct': 2, 'indirect': 1.5, 'effective': 3.5}}, 'movementSets': {'horizontal_pull': 4},
+        'conservativeEstimatedSeconds': 3000}],
+        'exposures': {'LIBRARY_0': {'name': 'Supported Row', 'weeklyWorkingSets': 6,
+            'occurrences': [{'exercise': 'EXERCISE_0', 'session': 'Day A', 'sets': 4,
+                'category': 'ROW', 'roles': ['horizontal_pull'], 'progression': {'kind': 'reps'},
+                'capacityEvidenceStatus': 'no_comparable_records', 'loadCeilingKg': 20},
+                {'exercise': 'EXERCISE_4', 'session': 'Day B', 'sets': 2,
+                 'category': 'ROW', 'roles': ['horizontal_pull'], 'progression': {'kind': 'reps'}}]}},
+        'timingAssumptions': {'secondsPerRep': 3}, 'executionTimeVerified': False,
+        'coverageBalanceEvidence': [{'first': 'horizontal_push', 'second': 'horizontal_pull',
+            'scope': 'weekly', 'workingSets': {'horizontal_push': 5, 'horizontal_pull': 4}}],
+        'priorityExecution': {'approvedPriorities': [{'priority': 'distribution',
+            'owner': 'joint_solver', 'status': 'optimal'}]}}
+    facts = _compact_programming_selection_facts(summary)
+    assert [item['exercise'] for item in facts['exerciseExposures'][0]['occurrences']] == [
+        'EXERCISE_0', 'EXERCISE_4']
+    assert facts['exerciseExposures'][0]['weeklyWorkingSets'] == 6
+    assert facts['exerciseExposures'][0]['occurrences'][0]['capacityEvidenceStatus'] == 'no_comparable_records'
+    assert facts['exerciseExposures'][0]['occurrences'][0]['loadCeilingKg'] == 20
+    assert facts['sessions'][0]['muscles']['shoulders'] == {
+        'direct': 2, 'indirect': 1.5, 'effective': 3.5}
+    assert 'personal suitability' in facts['limits']
+    assert 'timingAssumptions' not in facts and 'progression' not in json.dumps(facts)
+    assert facts['coverageBalanceEvidence'] == summary['coverageBalanceEvidence']
+    assert facts['priorityExecution'] == summary['priorityExecution']
+
+
+def test_request_includes_programming_facts_for_current_menu_selection_without_review():
+    equipment, _, stored, draft = planning_case()
+    stored['requirements']['sessionsPerWeek'] = 2
+    messages = requirement_messages(stored)
+    audit = audit_workout_plan(draft, equipment, messages)
+    assert not audit['passed'] and 'review' not in audit
+    _tool(messages, 'audit_workout_plan', draft, audit, 'selection-baseline')
+    messages.append({'role': 'user', 'content': '/continue'})
+    outgoing = shell._messages_for_api(messages, True, provided_equipment=equipment)
+    state = _state(outgoing)
+    facts = state['programmingSelectionFacts']
+    assert state['constructionTask']['stage'] in ('discover_movements', 'choose_movements')
+    assert facts['scope'].startswith('Descriptive facts')
+    assert facts['exerciseExposures']
+    assert all(item['occurrences'] for item in facts['exerciseExposures'])
+    assert not any('fatigue' in json.dumps(item).casefold() for item in facts['exerciseExposures'])
+    assert len(json.dumps(facts, separators=(',', ':'))) < 12000
+
+
+def test_programming_facts_are_not_projected_from_stale_audit_bindings():
+    equipment, _, stored, draft = planning_case()
+    messages = requirement_messages(stored)
+    audit = audit_workout_plan(draft, equipment, messages)
+    from workout_generator_pkg.planner_context import _programming_selection_facts_from_receipt
+    malformed = copy.deepcopy(audit)
+    malformed['planIndex']['exercises'][0]['libraryDefinitionId'] = 'different-library-item'
+    bound_state = {'currentDraftId': audit['currentDraftId'], 'resolvedDecisions': audit['resolvedDecisions']}
+    bound_state['trainingEvidence'] = {'LIBRARY_0': {'status': 'no_comparable_records'}}
+    current = _programming_selection_facts_from_receipt(audit, bound_state, stored,
+        library_fingerprint(equipment), None, equipment)
+    assert current['exerciseExposures'][0]['occurrences'][0]['capacityEvidenceStatus'] == 'no_comparable_records'
+    assert _programming_selection_facts_from_receipt(malformed, bound_state, stored,
+        library_fingerprint(equipment), None, equipment) is None
+    _tool(messages, 'audit_workout_plan', draft, audit, 'stale-selection-baseline')
+    messages.append({'role': 'user', 'content': 'Consider a different suitable movement.'})
+    changed_equipment = copy.deepcopy(equipment)
+    changed_equipment['exerciseDefinitions'][0]['name'] += ' changed'
+    state = _state(shell._messages_for_api(messages, True, provided_equipment=changed_equipment))
+    assert 'programmingSelectionFacts' not in state
 
 
 def test_continue_hands_off_exact_unproven_joint_candidate_without_redrafting_workers():
@@ -100,13 +216,14 @@ def test_continue_hands_off_exact_unproven_joint_candidate_without_redrafting_wo
     assert not stale_state.get('unresolvedJointCandidate')
 
 
-def test_unresolved_candidate_reaudit_reuses_qualification_and_only_retries_joint_solve(monkeypatch):
+@pytest.mark.parametrize('preserve_selection', [False, True])
+def test_unresolved_candidate_reaudit_reuses_qualification_and_only_retries_joint_solve(monkeypatch, preserve_selection):
     from types import SimpleNamespace
     from workout_generator_pkg import joint_planning
 
     equipment, _, stored, draft = planning_case()
     messages = requirement_messages(stored)
-    candidate = _unresolved_joint_candidate(equipment, stored, draft, messages)
+    candidate = _unresolved_joint_candidate(equipment, stored, draft, messages, preserve_selection=preserve_selection)
     _tool(messages, 'draft_workout_sessions', {'preparationId': 'PREP_UNRESOLVED'},
           _unresolved_worker_result(equipment, stored, candidate), 'unresolved')
     messages.append({'role': 'user', 'content': '/continue'})
@@ -119,7 +236,7 @@ def test_unresolved_candidate_reaudit_reuses_qualification_and_only_retries_join
     def solve(*args, **kwargs):
         joint_calls.append((args, kwargs))
         return {'feasible': False, 'status': 'unproven', 'problemFingerprint': candidate['jointPlanning']['problemFingerprint'],
-            'instruction': 'Solver remains unproven.'}
+            'preserveSourceSelection': preserve_selection, 'instruction': 'Solver remains unproven.'}
 
     monkeypatch.setattr(shell, 'audit_workout_plan', audit)
     monkeypatch.setattr(shell, 'review_draft', lambda client, result, *args, **kwargs: result)
@@ -128,6 +245,7 @@ def test_unresolved_candidate_reaudit_reuses_qualification_and_only_retries_join
     result = json.loads(shell.handle_function_call(None, messages, 'audit_workout_plan', candidate['submission'], equipment,
         deps=SimpleNamespace(execute_workout_generation=None))['result'])
     assert len(joint_calls) == 1
+    assert joint_calls[0][1]['preserve_source_selection'] is preserve_selection
     assert result['jointUnresolvedCandidate']['recipeQualification'] == candidate['recipeQualification']
     assert result['jointUnresolvedCandidate']['baseDraftId'] == 'REVISION_0'
     assert result['jointUnresolvedCandidate']['jointPlanning']['status'] == 'unproven'
@@ -314,7 +432,7 @@ def test_production_joint_receipt_round_trips_without_display_reference_stalenes
 
     production_audit = auto_allocate_workout(initial_audit, equipment, messages)
     assert production_audit['automaticAllocation']['status'] == 'infeasible'
-    assert production_audit['submittedDraft'] == draft
+    assert production_audit['submittedDraft'] == initial_audit['submittedDraft']
     _tool(messages, 'audit_workout_plan', production_audit['submittedDraft'], production_audit,
         'production_joint_receipt')
 
@@ -334,6 +452,32 @@ def test_production_joint_receipt_round_trips_without_display_reference_stalenes
     assert changed_state.get('savedDraftReaudit')
     assert changed_state['staleJointPlanningReceipt']['sourceProblemFingerprint'] == production_audit[
         'automaticAllocation']['problemFingerprint']
+
+
+def test_solved_candidate_uses_output_identity_without_ignoring_later_changes():
+    from types import SimpleNamespace
+    from workout_generator_pkg.allocation import auto_allocate_workout
+
+    equipment, _, stored, draft = planning_case()
+    draft['workouts'][0]['exercises'][0]['numWorkSets'] = 1
+    messages = requirement_messages(stored)
+    initial = audit_workout_plan(draft, equipment, messages)
+    solved = auto_allocate_workout(initial, equipment, messages)
+    assert solved['automaticAllocation']['feasible']
+    candidate = solved['submittedDraft']
+    assert candidate['workouts'][0]['exercises'][0]['numWorkSets'] != 1
+    _tool(messages, 'audit_workout_plan', candidate, solved, 'solved_candidate')
+    history = SimpleNamespace(fingerprint=None, context=lambda: {})
+    state = _state(shell._messages_for_api(messages, True, history, equipment))
+    assert not state.get('staleJointPlanningReceipt')
+    assert state['lastAudit']['automaticAllocation']['feasible']
+
+    changed = copy.deepcopy(solved)
+    changed['submittedDraft']['workouts'][0]['exercises'][0]['numWorkSets'] += 1
+    _tool(messages, 'audit_workout_plan', changed['submittedDraft'], changed, 'changed_candidate')
+    state = _state(shell._messages_for_api(messages, True, history, equipment))
+    assert state.get('staleJointPlanningReceipt')
+    assert state.get('savedDraftReaudit')
 
 
 def test_current_repair_group_owns_exact_matching_stable_review_obligation_once():
@@ -447,12 +591,12 @@ def test_alternative_repair_handler_binds_result_for_planner_resume(monkeypatch)
     candidate = {'repairCandidateId': 'ALT_1', 'originalRequirementsId': 'REQ_1',
         'requirementsId': 'REQ_ALT', 'trainingHistoryFingerprint': 'current-history',
         'submissionCorrectionEdits': {'exerciseAdds': [{'definitionId': 'LIBRARY_A'}]},
-        'currentDraft': {'workouts': [{'exercises': [{'definition_id': 'LIBRARY_0'}]}]},
+        'currentDraft': {'workouts': [{'exercises': [{'definition_id': 'LIBRARY_0', 'numWorkSets': 3}]}]},
         'findingsAssessment': {'groups': [{'findingIndexes': [0], 'disposition': 'repair',
             'repairDimensions': ['exercise_selection']} ]}}
     arguments = {'repairCandidateId': 'ALT_1', 'originalRequirementsId': 'REQ_1',
         'addressedFindingIndexes': [0], 'edits': {'exerciseAdds': [{'definitionId': 'LIBRARY_B'}]}}
-    assert 'replaceRejectedRepair' in repair_workout_alternative_tool(candidate)['function']['parameters']['properties']
+    assert 'replaceRejectedRepair' not in repair_workout_alternative_tool(candidate)['function']['parameters']['properties']
 
     expected_edits = {'exerciseAdds': [
         {'definitionId': 'LIBRARY_A'}, {'definitionId': 'LIBRARY_B'}]}
@@ -479,7 +623,10 @@ def test_alternative_repair_handler_binds_result_for_planner_resume(monkeypatch)
     assert state['otherToolResults']['repair_workout_alternative']['attemptStatus'] == 'repair_failed'
 
 
-def test_infeasible_repair_resume_uses_reviewed_candidate_and_keeps_full_proposal(monkeypatch):
+@pytest.mark.parametrize('proof_defect', [None, 'coverage', 'frequency', 'missing_menu', 'fingerprint'])
+@pytest.mark.parametrize('assessment_refreshed', [False, True])
+def test_infeasible_repair_resume_uses_reviewed_candidate_and_keeps_full_proposal(
+        monkeypatch, proof_defect, assessment_refreshed):
     from types import SimpleNamespace
     from workout_generator_pkg.conflict_resolution import CONFLICT_RESOLUTION_VERSION
     from workout_generator_pkg.joint_planning import SELECTION_POLICY_VERSION, candidate_menu_fingerprint
@@ -487,6 +634,10 @@ def test_infeasible_repair_resume_uses_reviewed_candidate_and_keeps_full_proposa
     from workout_generator_pkg.review_assessment import assessment_hash
 
     equipment, _, stored, draft = planning_case()
+    if proof_defect == 'coverage':
+        stored['requirements']['requiredCoverage'] = [
+            {'key': 'press', 'scope': 'eachSession', 'description': 'Press in each session.'}]
+        draft['workouts'][0]['exercises'][0]['satisfiesCoverage'] = ['press']
     messages = requirement_messages(stored)
     audit = audit_workout_plan(draft, equipment, messages)
     audit['reviewVersion'] = REVIEW_VERSION
@@ -529,23 +680,97 @@ def test_infeasible_repair_resume_uses_reviewed_candidate_and_keeps_full_proposa
         'jointSolve': {'status': 'infeasible', 'feasibilityDomainFingerprint': 'PROVEN_DOMAIN',
             'selectionPolicyVersion': SELECTION_POLICY_VERSION,
             'preserveSourceSelection': True, 'recipeCount': 17, 'optionCount': 51},
+        'workouts': copy.deepcopy(draft['workouts']), 'submittedMenuFingerprint': source_menu,
         'submittedEdits': proposal, 'errors': [{'code': 'joint_menu_infeasible',
             'message': 'No combination in the supplied repair menu is feasible.'}]}
+    if proof_defect == 'coverage':
+        failed['workouts'][0]['exercises'][0]['satisfiesCoverage'] = []
+    elif proof_defect == 'frequency':
+        failed['workouts'][0]['timesCompletedInAWeek'] = 2
+    if proof_defect in ('coverage', 'frequency'):
+        failed['submittedMenuFingerprint'] = candidate_menu_fingerprint(failed['workouts'])
+    elif proof_defect == 'missing_menu':
+        failed.pop('workouts')
+    elif proof_defect == 'fingerprint':
+        failed['submittedMenuFingerprint'] = 'DIFFERENT_MENU'
     _tool(messages, 'repair_workout_alternative', {'repairCandidateId': candidate['repairCandidateId']}, failed,
         'failed-infeasible-repair')
     from workout_generator_pkg.planner_context import _known_infeasible_alternative_receipt
     direct = _known_infeasible_alternative_receipt([(0, {'name': 'repair_workout_alternative'}, failed)],
         candidate, equipment, candidate.get('trainingHistoryFingerprint'))
     assert direct
+    if proof_defect is None and not assessment_refreshed:
+        changed_prescription = copy.deepcopy(candidate['workouts'])
+        changed_prescription[0]['exercises'][0]['minReps'] = 4
+        for field, value in [('requirements', {'sessionsPerWeek': 2}),
+                ('resolvedDecisions', {'DECISION_0': {'choice': 'Changed decision'}}),
+                ('restrictionPolicy', {'excludedDefinitionIds': ['press']}),
+                ('workouts', changed_prescription)]:
+            changed_authority = {**candidate, field: value}
+            assert _known_infeasible_alternative_receipt(
+                [(0, {'name': 'repair_workout_alternative'}, failed)], changed_authority,
+                equipment, candidate.get('trainingHistoryFingerprint')) is None
+    if assessment_refreshed:
+        refreshed = copy.deepcopy(candidate)
+        refreshed['review']['inputHash'] = 'fresh-review-input'
+        refreshed['review']['assessment']['inputHash'] = assessment_hash(refreshed['review'])
+        diagnosis['alternativeRepairCandidates'] = [refreshed]
+        _tool(messages, 'propose_workout_alternatives', {'staleAlternativeAssessment': True}, diagnosis,
+            'fresh-assessment')
+        candidate = refreshed
 
     state = _state(shell._messages_for_api(messages, True, provided_equipment=equipment))
     task = state['alternativeRepairTask']
     assert task['repairCandidateId'] == candidate['repairCandidateId']
     assert task['currentDraft'].get('programGuidance') is None
     assert task['submissionCorrectionEdits'] == proposal
+    if proof_defect:
+        assert direct['status'] == 'menu_repair_required'
+        assert task['structuralCorrectionRequired'] is True
+        assert task['submissionCorrectionErrors'] == direct['errors']
+        assert 'knownInfeasibleMenu' not in task
+        assert 'submissionJointSolve' not in task
+        assert 'candidateConflictDiagnosisTask' not in state
+        assert 'conflictDiagnosisTask' not in state
+        assert task['findingsAssessment'] == candidate['review']['assessment']
+        # Neither a rejected diagnosis nor a later empty-menu diagnosis may discard this candidate.
+        for identifier in ('structural-rejection', 'empty-menu-diagnosis', 'unbound-rejection'):
+            rejected_result = ({'staleHistory': True, 'tool': 'propose_workout_alternatives', 'historyFingerprint': None}
+                if identifier == 'unbound-rejection' else {
+                    'outcome': 'unresolved', 'requirementsId': stored['requirementsId'],
+                    'baseDraftId': audit['currentDraftId'], 'jointPlanningStopped': True,
+                    'reason': 'No conflict was established.', 'errors': direct['errors']})
+            _tool(messages, 'propose_workout_alternatives', {}, {
+                **rejected_result}, identifier)
+            resumed = _state(shell._messages_for_api(messages, True, provided_equipment=equipment))
+            assert resumed['alternativeRepairTask']['repairCandidateId'] == candidate['repairCandidateId']
+            assert resumed['alternativeRepairTask']['structuralCorrectionRequired'] is True
+            assert resumed['alternativeRepairTask']['submissionCorrectionEdits'] == proposal
+            assert 'candidateConflictDiagnosisTask' not in resumed
+            assert 'conflictDiagnosisTask' not in resumed
+        return
+    assert direct['status'] == 'proven_infeasible'
     assert task['repairStage'] == 'change_feasibility_domain'
     assert task['decisionRequired'] is True
     assert task['knownInfeasibleMenu']['feasibilityDomainFingerprint'] == 'PROVEN_DOMAIN'
+    assert state['candidateConflictDiagnosisTask'] == {
+        'requirementsId': stored['requirementsId'], 'baseDraftId': audit['currentDraftId'],
+        'repairCandidateId': candidate['repairCandidateId'],
+        'submittedMenuFingerprint': source_menu, 'feasibilityDomainFingerprint': 'PROVEN_DOMAIN'}
+    paused = copy.deepcopy(messages)
+    _tool(paused, 'propose_workout_alternatives', state['candidateConflictDiagnosisTask'], {
+        'outcome': 'unresolved', 'requirementsId': stored['requirementsId'],
+        'baseDraftId': audit['currentDraftId'], 'diagnosisVersion': CONFLICT_RESOLUTION_VERSION,
+        'candidateDiagnosisSource': state['candidateConflictDiagnosisTask'],
+        'reason': 'The provider did not complete independent review.'}, 'candidate-diagnosis-paused')
+    paused_state = _state(shell._messages_for_api(paused, True, provided_equipment=equipment))
+    assert 'candidateConflictDiagnosisTask' not in paused_state
+    assert paused_state['candidateConflictDiagnosisUnresolved']['reason'] == 'The provider did not complete independent review.'
+    assert paused_state['alternativeRepairTask']['currentDraft'].get('programGuidance') is None
+    assert paused_state['alternativeRepairTask']['submissionCorrectionEdits'] == proposal
+    paused.append({'role': 'user', 'content': '/continue'})
+    retried_state = _state(shell._messages_for_api(paused, True, provided_equipment=equipment))
+    assert retried_state['candidateConflictDiagnosisTask'] == state['candidateConflictDiagnosisTask']
 
     refreshed_candidates = []
     monkeypatch.setattr('workout_generator_pkg.alternative_repair._fresh_binding', lambda *args, **kwargs: True)
@@ -582,6 +807,32 @@ def test_stale_worker_candidate_reassessment_does_not_force_old_preparation_patc
     assert preparation_repair_task(messages)
     assert preparation_repair_task(active) is None
     assert resolve_preparation_patch(fresh_full_prepare, active) == fresh_full_prepare
+
+
+def test_candidate_diagnosis_is_scheduled_once_for_exact_proof_without_mutating_state():
+    from workout_generator_pkg.conflict_resolution import CONFLICT_RESOLUTION_VERSION
+    from workout_generator_pkg.planner_context import _candidate_conflict_diagnosis_task
+
+    candidate = {'repairCandidateId': 'ALT', 'sourceDraftId': 'SOURCE'}
+    proof = {'status': 'proven_infeasible', 'submittedMenuFingerprint': 'MENU', 'feasibilityDomainFingerprint': 'DOMAIN'}
+    expected = {'requirementsId': 'REQ', 'baseDraftId': 'SOURCE', 'repairCandidateId': 'ALT',
+        'submittedMenuFingerprint': 'MENU', 'feasibilityDomainFingerprint': 'DOMAIN'}
+    assert _candidate_conflict_diagnosis_task('REQ', candidate, proof, []) == expected
+    completed = [(1, {'name': 'propose_workout_alternatives'}, {
+        'outcome': 'unresolved', 'candidateDiagnosisSource': expected,
+        'diagnosisVersion': CONFLICT_RESOLUTION_VERSION})]
+    assert _candidate_conflict_diagnosis_task('REQ', candidate, proof, completed) is None
+    assert _candidate_conflict_diagnosis_task('REQ', candidate, proof, completed, retry_after_index=2) == expected
+    retried = completed + [(3, completed[0][1], completed[0][2])]
+    assert _candidate_conflict_diagnosis_task('REQ', candidate, proof, retried, retry_after_index=2) is None
+    verified = [(1, completed[0][1], {**completed[0][2], 'outcome': 'verified_conflict'})]
+    assert _candidate_conflict_diagnosis_task('REQ', candidate, proof, verified, retry_after_index=2) is None
+    stale = [(1, completed[0][1], {**completed[0][2], 'diagnosisVersion': CONFLICT_RESOLUTION_VERSION - 1})]
+    assert _candidate_conflict_diagnosis_task('REQ', candidate, proof, stale) == expected
+    different = {**proof, 'feasibilityDomainFingerprint': 'NEW_DOMAIN'}
+    assert _candidate_conflict_diagnosis_task('REQ', candidate, different, completed)
+    assert _candidate_conflict_diagnosis_task('REQ', candidate, {}, []) is None
+    assert candidate == {'repairCandidateId': 'ALT', 'sourceDraftId': 'SOURCE'}
 
 
 def test_alternative_repair_model_request_contains_only_hypothetical_candidate_and_bound_evidence():
@@ -759,27 +1010,30 @@ def test_repair_snapshots_keep_stable_evidence_before_changing_draft():
     assert prefixes[0]==prefixes[1]
 
 
-def test_compacted_review_assessment_keeps_its_validation_hash_and_routes_to_coordinated_repair():
+@pytest.mark.parametrize('qualitative', [False, True])
+def test_compacted_review_assessment_keeps_its_validation_hash_and_routes_to_coordinated_repair(qualitative):
     from workout_generator_pkg.review_assessment import assessment_hash
 
     equipment, _, stored, draft = planning_case()
     messages = requirement_messages(stored)
     result = audit_workout_plan(draft, equipment, messages)
-    finding = {'severity': 'warning', 'basis': 'uncertainty', 'path': '/draft/exercises/0/placementNotes',
-        'evidencePaths': ['/draft/exercises/0/placementNotes'], 'message': 'Add the missing local setup cue.',
+    finding = {'severity': 'warning', 'basis': 'uncertainty', 'path': '/draft/exercises/0/progressionPlan',
+        'evidencePaths': ['/draft/exercises/0/progressionPlan'], 'message': 'Add the missing local setup cue.',
         'repair': 'Describe the setup.', 'action': 'repair', 'decisionId': None,
         'newConflictEvidencePaths': [], 'muscleTargets': []}
     review_input_hash = 'review-input-hash'
     findings = [finding]
+    review = {'version': REVIEW_VERSION, 'inputHash': review_input_hash, 'findings': findings}
+    if qualitative:
+        review['requirementAssessments'] = {'0': {'status': 'needs_correction', 'reason': 'The approved progression requires correction.', 'findingIndexes': [0]}}
     assessment = {'version': ASSESSMENT_VERSION,
-        'inputHash': assessment_hash({'inputHash': review_input_hash, 'findings': findings}),
-        'groups': [{'findingIndexes': [0], 'disposition': 'repair', 'repairDimensions': ['guidance'],
+        'inputHash': assessment_hash(review),
+        'groups': [{'findingIndexes': [0], 'disposition': 'repair', 'repairDimensions': ['prescription'],
                     'reason': 'The setup cue is missing.'}], 'repairPlan': 'Add the setup cue.'}
     result.update(passed=False, errors=[{'code': 'independent_review_finding',
-        'path': '/draft/exercises/0/placementNotes', 'draftPath': '/workouts/0/exercises/0/placementNotes',
+        'path': '/draft/exercises/0/progressionPlan', 'draftPath': '/workouts/0/exercises/0/progressionPlan',
         'reviewScope': 'execution', 'message': finding['message']}],
-        review={'version': REVIEW_VERSION, 'inputHash': review_input_hash,
-            'findings': findings, 'assessment': assessment})
+        review={**review, 'assessment': assessment})
     _tool(messages, 'audit_workout_plan', {'requirementsId': stored['requirementsId'], 'workouts': draft['workouts']},
           result, 'reviewed-candidate')
 
@@ -789,6 +1043,145 @@ def test_compacted_review_assessment_keeps_its_validation_hash_and_routes_to_coo
     assert state['repairTask']['findingsAssessment'] == assessment
     assert state['repairTask']['reviewFindings'] == findings
     assert state.get('savedDraftReaudit') is None
+
+
+    if qualitative:
+        assert state['repairTask']['requirementAssessments'] == review['requirementAssessments']
+        receipt = shell._coordinated_repair_receipt_context(state['repairTask'], state['lastAudit'])
+        assert receipt['requirementAssessments'] == review['requirementAssessments']
+
+
+def test_semantic_repair_dimension_does_not_force_new_movement_search():
+    from workout_generator_pkg.review_assessment import assessment_hash
+
+    equipment, _, stored, draft = planning_case()
+    messages = requirement_messages(stored)
+    result = audit_workout_plan(draft, equipment, messages)
+    finding = {'severity': 'warning', 'basis': 'uncertainty', 'path': '/draft/workouts/0/components/0',
+        'draftPath': '/workouts/0/exercises/0', 'evidencePaths': ['/draft/workouts/0/components/0'],
+        'message': ('Consolidate the duplicate overhead-extension slot and split it from the preceding superset; '
+                    'the existing exercise occurrences can satisfy this repair.'),
+        'repair': 'Remove the duplicate occurrence and make the remaining slot straight sets.',
+        'action': 'repair', 'decisionId': None, 'newConflictEvidencePaths': [], 'muscleTargets': [],
+        'reviewScope': 'execution'}
+    review_input_hash = 'review-duplicate-occurrence-and-superset'
+    findings = [finding]
+    review = {'version': REVIEW_VERSION, 'inputHash': review_input_hash, 'findings': findings}
+    assessment = {'version': ASSESSMENT_VERSION,
+        'inputHash': assessment_hash(review),
+        'groups': [{'findingIndexes': [0], 'disposition': 'repair',
+            'repairDimensions': ['exercise_selection', 'superset'],
+            'reason': 'The existing slots can be consolidated and regrouped without adding a movement.'}],
+        'repairPlan': finding['repair']}
+    result.update(passed=False,
+        errors=[{'code': 'independent_review_finding', **finding}],
+        review={**review, 'assessment': assessment})
+    _tool(messages, 'audit_workout_plan', {'requirementsId': stored['requirementsId'], 'workouts': draft['workouts']},
+          result, 'existing-occurrence-review')
+
+    state = _state(shell._messages_for_api(messages, True, provided_equipment=equipment))
+
+    assert state['repairTask']['findingsAssessment'] == assessment
+    assert not state.get('candidateMenuExpansionTask')
+    available = [{'function': {'name': name}} for name in (
+        'audit_workout_plan', 'search_exercise_library', 'propose_workout_alternatives')]
+    assert shell._candidate_menu_expansion_tools(available, state.get('candidateMenuExpansionTask')) == available
+
+
+def test_new_user_feedback_routes_to_sparse_edit_instead_of_stale_assessed_menu_scope():
+    from workout_generator_pkg.review_assessment import assessment_hash
+    from workout_generator_pkg.planner_context import planner_response_profile, construction_tool_failure
+
+    equipment, _, stored, draft = planning_case()
+    messages = requirement_messages(stored)
+    result = audit_workout_plan(draft, equipment, messages)
+    finding = {'severity': 'warning', 'basis': 'uncertainty', 'action': 'repair',
+        'path': '/draft/exercises/0', 'draftPath': '/workouts/0/exercises/0/definition_id',
+        'evidencePaths': ['/draft/exercises/0'], 'message': 'Choose a different movement menu.',
+        'repair': 'Select an eligible alternative movement.', 'decisionId': None,
+        'newConflictEvidencePaths': [], 'muscleTargets': [], 'reviewScope': 'execution'}
+    review_input_hash = 'current-menu-review'
+    findings = [finding]
+    assessment = {'version': ASSESSMENT_VERSION,
+        'inputHash': assessment_hash({'inputHash': review_input_hash, 'findings': findings}),
+        'groups': [{'findingIndexes': [0], 'disposition': 'repair',
+            'repairDimensions': ['exercise_selection'], 'reason': 'The current menu needs a different movement choice.'}],
+        'repairPlan': 'Select an eligible movement menu, then independently review the resulting draft.'}
+    result.update(passed=False, errors=[{'code': 'repair_round_cap_reached',
+            'path': '/patch', 'message': 'This attempt reached its repair cap.'}],
+        review={'version': REVIEW_VERSION, 'inputHash': review_input_hash, 'findings': findings},
+        findingsAssessment=assessment, reviewFindings=findings)
+    result['coordinatedRepairReceipt'] = {
+        'status': 'rejected_before_materialization', 'baseDraftId': result['currentDraftId'],
+        'currentDraftId': result['currentDraftId'], 'requirementsId': stored['requirementsId'],
+        'submittedEdits': {'exerciseUpdates': []}, 'findingsAssessment': assessment,
+        'reviewFindings': findings, 'assessmentInputHash': assessment['inputHash'],
+        'assessmentHash': assessment_hash({'inputHash': assessment['inputHash'], 'findings': findings}),
+        'reviewVersion': REVIEW_VERSION, 'reviewInputHash': review_input_hash,
+        'libraryFingerprint': result['libraryFingerprint'],
+        'historyFingerprint': result.get('historyFingerprint'),
+        'resolvedDecisions': result.get('resolvedDecisions', {}),
+    }
+    _tool(messages, 'audit_workout_plan', {'requirementsId': stored['requirementsId'], 'workouts': draft['workouts']},
+        result, 'reviewed-menu-repair')
+    messages.append({'role': 'user', 'content': (
+        'Continue the reviewed repair with a different eligible movement menu; preserve the approved targets and floor.')})
+
+    state = _state(shell._messages_for_api(messages, True, provided_equipment=equipment))
+
+    assert state['newInstructionPending'] is True
+    assert state['requirementsApproved'] is True
+    assert 'repairTask' not in state
+    assert state['editTask']['baseDraftId'] == state['currentDraftId']
+    assert 'findingsAssessment' not in state['editTask']
+    assert state['lastAudit']['errors'][0]['code'] == 'repair_round_cap_reached'
+    assert 'repairCapabilityUnresolved' not in state
+    assert planner_response_profile(state) == {
+        'reasoning_effort': None, 'activity': 'Editing workout', 'max_tokens': 16384, 'timeout': None}
+    task_state = {**state, 'constructionTask': {'stage': 'choose_movements', 'remainingWeeklySessions': 3}}
+    assert construction_tool_failure('set_workout_requirements', {}, task_state) is None
+    assert construction_tool_failure('record_planning_decisions', {}, task_state) is None
+
+
+def test_pending_coordinated_candidate_is_definition_normalized_before_new_feedback():
+    from workout_generator_pkg.planner_context import pending_reaudit
+
+    equipment, _, stored, draft = planning_case()
+    equipment['exerciseDefinitions'][0]['name'] = 'Single-Leg Test Exercise'
+    draft = copy.deepcopy(draft)
+    draft['requirementsId'] = stored['requirementsId']
+    draft['workouts'][0]['exercises'][0]['intraSetRestInSeconds'] = None
+    messages = requirement_messages(stored)
+    arguments = {'requirementsId': stored['requirementsId'], 'workouts': draft['workouts']}
+    _tool(messages, 'audit_workout_plan', arguments, {
+        'passed': False, 'requirementsId': stored['requirementsId'], 'currentDraftId': 'REVISION_0',
+        'submittedDraft': draft, 'libraryFingerprint': library_fingerprint(equipment),
+        'historyFingerprint': None, 'resolvedDecisions': {}, 'coordinatedCandidatePending': True,
+        'errors': [{'code': 'missing_unilateral_intra_set_rest',
+            'path': '/workouts/0/exercises/0/intraSetRestInSeconds'}]}, 'pending-candidate')
+    feedback = 'Resume the pending repair using the newly verified movement option.'
+    messages.append({'role': 'user', 'content': feedback})
+
+    state = _state(shell._messages_for_api(messages, True, provided_equipment=equipment))
+
+    assert state['savedDraftReaudit'] == {
+        'requirementsId': stored['requirementsId'], 'baseDraftId': 'REVISION_0', 'patch': [],
+        '_internalAuditAction': 'definition_dependent_normalization'}
+    assert pending_reaudit(state, feedback) == state['savedDraftReaudit']
+    assert not state.get('repairTask', {}).get('findingsAssessment')
+
+    normalized = copy.deepcopy(draft)
+    from workout_generator_pkg.planning_tools import _normalize_definition_dependent_fields
+    _normalize_definition_dependent_fields(normalized, equipment)
+    assert normalized['workouts'][0]['exercises'][0]['intraSetRestInSeconds'] == 30
+    _tool(messages, 'audit_workout_plan', {'requirementsId': stored['requirementsId'],
+        'baseDraftId': 'REVISION_0', 'patch': []}, {
+        'passed': False, 'requirementsId': stored['requirementsId'], 'currentDraftId': 'REVISION_0',
+        'submittedDraft': normalized, 'libraryFingerprint': library_fingerprint(equipment),
+        'historyFingerprint': None, 'resolvedDecisions': {},
+        'errors': [{'code': 'volume_above_target', 'path': '/audit/weeklyVolume/glutes'}]}, 'normalized-candidate')
+    after_reaudit = _state(shell._messages_for_api(messages, True, provided_equipment=equipment))
+    assert not (after_reaudit.get('savedDraftReaudit') or {}).get('_internalAuditAction')
 
 
 def test_continue_reopens_a_capped_repair_from_its_saved_review_receipt():
@@ -806,7 +1199,7 @@ def test_continue_reopens_a_capped_repair_from_its_saved_review_receipt():
     findings = [finding]
     assessment = {'version': ASSESSMENT_VERSION,
         'inputHash': assessment_hash({'inputHash': review_input_hash, 'findings': findings}),
-        'groups': [{'findingIndexes': [0], 'disposition': 'repair', 'repairDimensions': ['guidance'],
+        'groups': [{'findingIndexes': [0], 'disposition': 'repair', 'repairDimensions': ['session_timing'],
                     'reason': 'The setup cue is missing.'}], 'repairPlan': 'Add the setup cue.'}
     baseline.update(passed=False, errors=[{'code': 'independent_review_finding', **finding}],
         review={'version': REVIEW_VERSION, 'inputHash': review_input_hash,
@@ -820,6 +1213,7 @@ def test_continue_reopens_a_capped_repair_from_its_saved_review_receipt():
         'submittedEdits': {'exerciseUpdates': []}, 'findingsAssessment': assessment, 'reviewFindings': findings,
         'assessmentInputHash': assessment['inputHash'],
         'assessmentHash': assessment_hash({'inputHash': assessment['inputHash'], 'findings': findings}),
+        'reviewVersion': REVIEW_VERSION, 'reviewInputHash': review_input_hash,
         'libraryFingerprint': baseline['libraryFingerprint'], 'historyFingerprint': baseline['historyFingerprint'],
         'resolvedDecisions': baseline['resolvedDecisions']}
     _tool(messages, 'audit_workout_plan', {'requirementsId': stored['requirementsId'],
@@ -833,7 +1227,6 @@ def test_continue_reopens_a_capped_repair_from_its_saved_review_receipt():
 
     assert state.get('savedDraftReaudit') is None
     assert state['lastAudit']['errors'][0]['code'] == 'independent_review_finding'
-    assert state['lastAudit']['errors'][0]['findingIndex'] == 0
     assert state['repairTask']['findingIndexes'] == [0]
     assert state['repairTask']['findingsAssessment'] == assessment
 
@@ -884,15 +1277,15 @@ def test_newer_current_review_supersedes_older_rejected_repair_receipt():
     baseline = audit_workout_plan(draft, equipment, messages)
 
     def reviewed(message, review_input_hash):
-        finding = {'severity': 'warning', 'basis': 'uncertainty', 'path': '/draft/exercises/0/placementNotes',
-            'evidencePaths': ['/draft/exercises/0/placementNotes'], 'message': message,
+        finding = {'severity': 'warning', 'basis': 'uncertainty', 'path': '/draft/exercises/0/numWorkSets',
+            'evidencePaths': ['/draft/exercises/0/numWorkSets'], 'message': message,
             'repair': f'Address: {message}', 'action': 'repair', 'decisionId': None,
-            'newConflictEvidencePaths': [], 'muscleTargets': [], 'draftPath': '/workouts/0/exercises/0/placementNotes',
+            'newConflictEvidencePaths': [], 'muscleTargets': [], 'draftPath': '/workouts/0/exercises/0/numWorkSets',
             'reviewScope': 'execution'}
         findings = [finding]
         assessment = {'version': ASSESSMENT_VERSION,
             'inputHash': assessment_hash({'inputHash': review_input_hash, 'findings': findings}),
-            'groups': [{'findingIndexes': [0], 'disposition': 'repair', 'repairDimensions': ['guidance'],
+            'groups': [{'findingIndexes': [0], 'disposition': 'repair', 'repairDimensions': ['prescription'],
                 'reason': message}], 'repairPlan': finding['repair']}
         result = copy.deepcopy(baseline)
         result.update(passed=False, errors=[{'code': 'independent_review_finding', **finding}],
@@ -998,7 +1391,7 @@ def test_candidate_history_pooling_is_lossless_and_preserves_distinct_movements_
 
 
 def test_request_pools_search_summaries_without_changing_saved_results_or_candidate_metadata():
-    from workout_generator_pkg.exercise_library_tools import _selection_entry, search_catalog
+    from workout_generator_pkg.exercise_library_tools import get_exercise_candidates
     equipment, _, stored, _ = planning_case()
     base = equipment['exerciseDefinitions'][0]
     equipment['exerciseDefinitions'] = [{**base, 'id': f'd{i}', 'name': f'Movement {i}'} for i in range(3)]
@@ -1009,7 +1402,7 @@ def test_request_pools_search_summaries_without_changing_saved_results_or_candid
                for i, definition in enumerate(equipment['exerciseDefinitions'])]
     messages = requirement_messages(stored)
     _tool(messages, 'search_exercise_library', {'queries': ['movement']},
-          {'libraryFingerprint': search_catalog(equipment, {})[1],
+          {'libraryFingerprint': library_fingerprint(equipment),
            'results': [{'query': 'movement', 'exercises': entries}]}, 'search')
     before = copy.deepcopy(messages)
     outgoing = shell._messages_for_api(messages, True, provided_equipment=equipment)
@@ -1074,7 +1467,7 @@ def test_coordinated_failure_context_keeps_active_and_background_findings_bound_
         'repairPlan': 'Fix both groups.',
         'groups': [
             {'findingIndexes': [0], 'disposition': 'repair', 'repairDimensions': ['exercise_selection'], 'reason': 'The movement is unsuitable.'},
-            {'findingIndexes': [1], 'disposition': 'repair', 'repairDimensions': ['guidance'], 'reason': 'Guidance is inconsistent.'},
+            {'findingIndexes': [1], 'disposition': 'repair', 'repairDimensions': ['prescription'], 'reason': 'Guidance is inconsistent.'},
         ]}
 
     def receipt(status, base_id, current_id, edits, identity_audit):
@@ -1145,7 +1538,8 @@ def test_coordinated_failure_context_keeps_active_and_background_findings_bound_
     assert pending['repairTask']['findingCode'] == 'volume_below_target'
     projected_obligations = pending['repairTask']['pendingReviewObligations']
     assert {item['obligationId'] for item in projected_obligations} == set(base_result['reviewChecklist']['findings'])
-    assert all('finding' not in item and item['sourceDraftId'] == base_result['currentDraftId']
+    assert all(item['finding'] == base_result['reviewChecklist']['findings'][item['obligationId']]['finding']
+               and item['sourceDraftId'] == base_result['currentDraftId']
                and item['sourceFingerprint'] == review_input_hash for item in projected_obligations)
     assert pending['reviewLedgerSummary'] == {
         'status': 'source_bound_pending_adjudication', 'sourceBoundObligationCount': 2,
@@ -1153,6 +1547,21 @@ def test_coordinated_failure_context_keeps_active_and_background_findings_bound_
     assert pending['repairTask']['reviewLedgerSummary'] == pending['reviewLedgerSummary']
     assert 'reviewFindings' not in pending['lastAudit']
     assert all('detailsOmitted' not in day for day in pending['currentDraft']['workouts'])
+
+    # Admission and its completed independent review can be saved in one tool result.
+    completed = copy.deepcopy(numeric_result)
+    completed['errors'] = copy.deepcopy(base_result['errors'])
+    completed['review'] = copy.deepcopy(base_result['review'])
+    completed['review']['inputHash'] = 'completed-current-review'
+    completed['review']['assessment']['inputHash'] = assessment_hash(completed['review'])
+    completed_messages = copy.deepcopy(changed_messages)
+    _tool(completed_messages, 'audit_workout_plan', candidate, completed, 'completed_same_result')
+    reviewed = _state(shell._messages_for_api(completed_messages, True, provided_equipment=equipment))
+    assert not reviewed.get('savedDraftReaudit')
+    current_assessment = reviewed['repairTask']['findingsAssessment']
+    assert current_assessment['inputHash'] == completed['review']['assessment']['inputHash']
+    assert [{key: value for key, value in group.items() if key != 'obligationIds'}
+            for group in current_assessment['groups']] == completed['review']['assessment']['groups']
 
     legacy_messages = copy.deepcopy(changed_messages)
     legacy_result = json.loads(legacy_messages[-1]['content'])
@@ -1305,9 +1714,12 @@ def test_new_selected_evidence_is_reaudited_before_another_planner_response():
 @pytest.mark.parametrize('pending_clarification', [False, True])
 def test_planning_choices_are_only_enabled_for_new_user_instructions_or_pending_authorization(pending_clarification):
     equipment, _, stored, draft = planning_case()
+    draft['workouts'][0]['exercises'][0]['numWorkSets'] = 3
     messages = requirement_messages(stored)
     error = {'code': 'independent_review_finding', 'action': 'clarify' if pending_clarification else 'repair'}
-    _tool(messages, 'audit_workout_plan', draft, {'passed': False, 'errors': [error]}, 'audit')
+    result = audit_workout_plan(draft, equipment, messages)
+    result.update(passed=False, errors=[error])
+    _tool(messages, 'audit_workout_plan', draft, result, 'audit')
     state = _state(shell._messages_for_api(messages, True, provided_equipment=equipment))
     assert state['planningDecisionNeeded'] is pending_clarification
     _tool(messages, 'record_planning_decisions', {}, {'passed': False, 'errors': [
@@ -1440,6 +1852,129 @@ def test_new_user_revision_is_not_restricted_to_an_obsolete_automatic_metadata_r
     assert revision['currentDraft'] == _draft_with_references(draft)
 
 
+def test_new_instruction_on_failed_review_uses_typed_edit_without_replaying_old_assessment():
+    from workout_generator_pkg.planning_tools import coordinated_repair_tool
+    from workout_generator_pkg.review_assessment import assessment_hash
+
+    equipment, _, stored, draft = planning_case()
+    messages = requirement_messages(stored)
+    result = audit_workout_plan(draft, equipment, messages)
+    finding = {'severity': 'warning', 'basis': 'uncertainty', 'path': '/draft/workouts/0',
+        'evidencePaths': ['/draft/workouts/0'], 'message': 'The reviewed order may be improved.',
+        'repair': 'Apply the previously assessed order change.', 'action': 'repair', 'decisionId': None,
+        'newConflictEvidencePaths': [], 'muscleTargets': []}
+    review = {'version': REVIEW_VERSION, 'inputHash': 'review-before-followup', 'findings': [finding]}
+    review['assessment'] = {'version': ASSESSMENT_VERSION, 'inputHash': assessment_hash(review),
+        'groups': [{'findingIndexes': [0], 'disposition': 'repair', 'repairDimensions': ['ordering'],
+            'reason': 'The original review identified an ordering concern.'}],
+        'repairPlan': 'Apply the assessed order change.'}
+    result.update(passed=False, assessmentDraftId='REVISION_0', review=review,
+        errors=[{'code': 'independent_review_finding', 'path': '/draft/workouts/0',
+            'draftPath': '/workouts/0', 'findingIndex': 0, 'message': finding['message']}])
+    _tool(messages, 'audit_workout_plan', draft, result, 'reviewed-failed-draft')
+    messages.append({'role': 'user', 'content': 'Please change only the exercise order I specified.'})
+
+    state = _state(shell._messages_for_api(messages, True, provided_equipment=equipment))
+
+    assert state['newInstructionPending'] and not state['lastAudit']['passed']
+    assert state['editTask']['baseDraftId'] == state['currentDraftId']
+    assert 'findingsAssessment' not in state['editTask']
+    assert 'reviewFindings' not in state['editTask']
+    typed = coordinated_repair_tool({**state['editTask'], 'currentDraft': state['currentDraft']})
+    properties = typed['function']['parameters']['properties']
+    assert 'edits' in properties and 'patch' not in properties
+    assert 'exerciseOrders' in properties['edits']['properties']
+
+
+def test_new_user_selection_reaches_existing_stable_reference_edit_and_admission():
+    from workout_generator_pkg.exercise_library_tools import get_exercise_candidates
+    from workout_generator_pkg.planning_tools import coordinated_repair_tool
+    from workout_generator_pkg.review_assessment import assessment_hash
+
+    equipment, _, stored, draft = planning_case()
+    replacement = {**copy.deepcopy(equipment['exerciseDefinitions'][0]),
+        'id': 'incline-press', 'name': 'Incline Push-Up'}
+    equipment['exerciseDefinitions'].append(replacement)
+    replacement_ref = 'LIBRARY_1'
+    messages = requirement_messages(stored)
+    source_audit = audit_workout_plan(draft, equipment, messages)
+    finding = {'severity': 'warning', 'basis': 'established_violation', 'action': 'repair',
+        'path': '/draft/workouts/0/exercises/0', 'draftPath': '/workouts/0/exercises/0',
+        'evidencePaths': ['/draft/workouts/0/exercises/0'], 'message': 'The reviewed order needs correction.',
+        'repair': 'Correct the reviewed order.', 'decisionId': None,
+        'newConflictEvidencePaths': [], 'muscleTargets': [], 'reviewScope': 'execution'}
+    review_input_hash = 'ordering-review'
+    assessment = {'version': ASSESSMENT_VERSION,
+        'inputHash': assessment_hash({'inputHash': review_input_hash, 'findings': [finding]}),
+        'groups': [{'findingIndexes': [0], 'disposition': 'repair', 'repairDimensions': ['ordering'],
+            'reason': 'Restore the specified order.'}], 'repairPlan': 'Restore the specified order.'}
+    source_audit.pop('coordinatedJointPlanning', None)
+    source_audit.pop('automaticAllocation', None)
+    source_audit.update(passed=False, assessmentDraftId='REVISION_0',
+        errors=[{'code': 'independent_review_finding', 'path': '/draft/workouts/0',
+            'draftPath': '/workouts/0', 'findingIndex': 0, 'message': finding['message']}],
+        review={'version': REVIEW_VERSION, 'inputHash': review_input_hash,
+            'findings': [finding], 'assessment': assessment}, findingsAssessment=assessment,
+        reviewFindings=[finding])
+    _tool(messages, 'audit_workout_plan', draft, source_audit, 'ordering-review')
+    _tool(messages, 'get_exercise_candidates', {'definition_ids': [replacement_ref]},
+        get_exercise_candidates({'definition_ids': [replacement_ref]}, equipment, messages), 'replacement-candidate')
+    messages.append({'role': 'user', 'content': 'Replace only this exercise with the existing incline movement and restore the specified order.'})
+
+    state = _state(shell._messages_for_api(messages, True, provided_equipment=equipment))
+    assert state['newInstructionPending']
+    assert 'repairTask' not in state and state['editTask']['baseDraftId'] == state['currentDraftId']
+    assert replacement_ref in shell._retrieved_replacement_definition_references(state)
+
+    current_draft = state['currentDraft']
+    schema_task = {**state['editTask'], 'requirementsId': stored['requirementsId'],
+        'baseDraftId': state['currentDraftId'], 'currentDraft': current_draft,
+        'requirements': state['requirements'],
+        'replacementDefinitionReferences': shell._retrieved_replacement_definition_references(state),
+        'replacementDefinitionTypes': shell._replacement_definition_types(equipment, state, current_draft)}
+    schema = coordinated_repair_tool(schema_task)['function']['parameters']
+    set_fields = schema['properties']['edits']['properties']['exerciseUpdates']['items']['properties']['setFields']
+    assert replacement_ref in set_fields['properties']['definition_id']['enum']
+    assert 'exerciseOrders' in schema['properties']['edits']['properties']
+
+    submission = {'requirementsId': stored['requirementsId'], 'baseDraftId': state['currentDraftId'],
+        'edits': {'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0',
+            'setFields': {'definition_id': replacement_ref}}]}}
+    admitted = shell._admit_repair_scope(submission, schema_task, current_draft, messages,
+        0, 3, equipment)
+    assert any(operation.get('path') == '/workouts/0/exercises/0/definition_id'
+        and operation.get('value') == replacement_ref for operation in admitted['patch'])
+
+
+def test_new_edit_supersedes_only_current_independent_review_pending_checkpoint():
+    equipment, _, stored, draft = planning_case()
+    messages = requirement_messages(stored)
+    pending = audit_workout_plan(draft, equipment, messages)
+    pending.update(passed=False, errors=[{'code': 'independent_review_pending', 'path': '/',
+        'message': 'Numerical audit saved; independent review is unfinished.'}])
+    pending.pop('coordinatedJointPlanning', None)
+    pending.pop('automaticAllocation', None)
+    _tool(messages, 'audit_workout_plan', {'requirementsId': stored['requirementsId'],
+        'workouts': draft['workouts']}, pending, 'pending-review')
+
+    waiting = _state(shell._messages_for_api(messages, True, provided_equipment=equipment))
+    assert waiting['savedDraftReaudit']['baseDraftId'] == waiting['currentDraftId']
+    assert not waiting.get('editTask')
+
+    edited = _state(shell._messages_for_api(messages + [{'role': 'user',
+        'content': 'Replace the selected movement with the already retrieved alternative.'}],
+        True, provided_equipment=equipment))
+    assert edited['newInstructionPending']
+    assert edited['currentDraftId'] == waiting['currentDraftId']
+    assert not edited.get('savedDraftReaudit')
+    assert edited['editTask']['baseDraftId'] == edited['currentDraftId']
+
+    continued = _state(shell._messages_for_api(messages + [{'role': 'user', 'content': '/continue'}],
+        True, provided_equipment=equipment))
+    assert continued['savedDraftReaudit']['baseDraftId'] == continued['currentDraftId']
+    assert not continued.get('editTask')
+
+
 def test_missing_coverage_is_repaired_before_numeric_allocation():
     equipment, _, stored, draft = planning_case()
     from workout_generator_pkg.planning_tools import library_fingerprint
@@ -1456,12 +1991,110 @@ def test_missing_coverage_is_repaired_before_numeric_allocation():
     state = _state(shell._messages_for_api(messages, True, provided_equipment=equipment))
     assert state['repairTask']['findingCode'] == 'required_coverage_missing'
     assert state['repairTask']['findingIndexes'] == [1]
-    assert state['repairTask']['placementNotesLimits']['/workouts/0/exercises/0/placementNotes']['exportMaximumCharacters'] >= 500
+    assert 'placementNotesLimits' not in state['repairTask']
     assert state['lastAudit']['errors'] == errors
     assert state['candidateMenuExpansionTask']['sourceProblemFingerprint'] == 'source-problem-fingerprint'
     assert state['candidateMenuExpansionTask']['blockers'] == [errors[1], errors[2]]
     assert 'Do not offer numeric relaxations' in state['candidateMenuExpansionTask']['instruction']
     assert 'conflictDiagnosisTask' not in state
+
+
+def _messages_with_infeasible_joint_menu(equipment, stored, draft):
+    from workout_generator_pkg.planning_tools import library_fingerprint
+    messages = requirement_messages(stored)
+    source = {'passed': False, 'requirementsId': stored['requirementsId'], 'currentDraftId': 'REVISION_0',
+        'submittedDraft': draft, 'libraryFingerprint': library_fingerprint(equipment),
+        'historyFingerprint': None, 'resolvedDecisions': {},
+        'errors': [{'code': 'volume_above_target', 'path': '/workouts', 'scope': 'weekly'}],
+        'coordinatedJointPlanning': {'status': 'infeasible', 'problemFingerprint': 'SOURCE_FP'}}
+    _tool(messages, 'audit_workout_plan', draft, source, 'canonical-infeasible')
+    return messages, source
+
+
+def test_initial_rejected_audit_without_candidate_keeps_nonselection_errors_visible():
+    equipment, _, stored, _ = planning_case()
+    messages = requirement_messages(stored)
+    arguments = {'requirementsId': stored['requirementsId'], 'baseDraftId': 'REVISION_0',
+        'patch': [{'op': 'replace', 'path': '/workouts/0/name', 'value': 'A'}]}
+    errors = [{'code': 'invalid_draft_patch', 'path': '/patch/0', 'message': 'Patch does not bind to a saved draft.'}]
+    _tool(messages, 'audit_workout_plan', arguments,
+        {'tool': 'audit_workout_plan', 'passed': False, 'errors': errors}, 'initial-rejected-audit')
+
+    state = _state(shell._messages_for_api(messages, True, provided_equipment=equipment))
+
+    assert state.get('currentDraft') is None
+    assert state.get('lastAudit') is None
+    assert state['rejectedSubmissionFeedback']['errors'] == errors
+    assert state['rejectedSubmissionFeedback']['baseDraftId'] == 'REVISION_0'
+
+
+def test_rejected_selection_submission_keeps_canonical_infeasible_audit_and_menu_task():
+    equipment, _, stored, draft = planning_case()
+    messages, source = _messages_with_infeasible_joint_menu(equipment, stored, draft)
+    attempted = {'requirementsId': stored['requirementsId'], 'baseDraftId': 'REVISION_0',
+        'sessionBlocks': [{'sessionIndex': 0, 'blocks': []}]}
+    invalid = {'passed': False, 'requirementsId': stored['requirementsId'],
+        'currentDraftId': 'REVISION_0', 'errors': [{'code': 'invalid_arguments',
+            'path': '/sessionBlocks/0/blocks/0', 'message': 'Unknown library definition.'}]}
+    _tool(messages, 'audit_workout_plan', attempted, invalid, 'rejected-selection')
+
+    state = _state(shell._messages_for_api(messages, True, provided_equipment=equipment))
+
+    assert state['lastAudit']['coordinatedJointPlanning'] == source['coordinatedJointPlanning']
+    assert state['lastAudit']['currentDraftId'] == 'REVISION_0'
+    assert state['currentDraftId'] == 'REVISION_0'
+    assert state['rejectedSubmissionFeedback']['errors'] == invalid['errors']
+    assert state['rejectedSelectionSubmission']['errors'] == invalid['errors']
+    assert state['candidateMenuExpansionTask']['sourceProblemFingerprint'] == 'SOURCE_FP'
+    assert state['candidateMenuExpansionTask']['selectionAttemptFeedback']['errors'] == invalid['errors']
+    assert not state.get('editTask')
+
+
+def test_new_selection_feedback_preserves_current_infeasible_menu_as_choice_only_task():
+    equipment, _, stored, draft = planning_case()
+    messages, source = _messages_with_infeasible_joint_menu(equipment, stored, draft)
+    messages.append({'role': 'user', 'content':
+        'Use LIBRARY_255 for the RDL and remove the redundant dumbbell RDL; keep the set counts.'})
+
+    state = _state(shell._messages_for_api(messages, True, provided_equipment=equipment))
+
+    assert state['newInstructionPending']
+    assert state['lastAudit']['coordinatedJointPlanning'] == source['coordinatedJointPlanning']
+    assert state['currentDraftId'] == 'REVISION_0'
+    assert state['candidateMenuExpansionTask']['sourceProblemFingerprint'] == 'SOURCE_FP'
+    assert state['candidateMenuExpansionTask']['proofScope'] == 'exercise_selection_repair'
+    assert state['candidateMenuExpansionTask']['stage'] == 'discover_candidates'
+    allowed = shell._candidate_menu_expansion_tools([
+        {'function': {'name': name}} for name in ('search_exercise_library', 'audit_workout_plan',
+            'allocate_workout_sets')], state['candidateMenuExpansionTask'])
+    assert {item['function']['name'] for item in allowed} == {'search_exercise_library'}
+    assert not state.get('editTask')
+
+
+def test_new_instruction_uses_cached_replacement_without_repeating_search():
+    from workout_generator_pkg.exercise_library_tools import _selection_entry
+    from workout_generator_pkg.planning_tools import library_fingerprint
+    equipment, _, stored, draft = planning_case()
+    replacement = copy.deepcopy(equipment['exerciseDefinitions'][0])
+    replacement.update(id='row', name='Supported Row', muscleGroups=['BACK_LATS'], secondaryMuscleGroups=[])
+    equipment['exerciseDefinitions'].append(replacement)
+    messages, _ = _messages_with_infeasible_joint_menu(equipment, stored, draft)
+    entry = _selection_entry(replacement, {}, 'LIBRARY_1')
+    _tool(messages, 'get_exercise_candidates', {'definition_ids': ['LIBRARY_1']},
+        {'libraryFingerprint': library_fingerprint(equipment), 'exercises': [entry]}, 'cached-replacement')
+    messages.append({'role': 'user', 'content': 'Use the retrieved supported row as the replacement; preserve set counts.'})
+
+    state = _state(shell._messages_for_api(messages, True, provided_equipment=equipment))
+    task = state['candidateMenuExpansionTask']
+
+    assert task['proofScope'] == 'exercise_selection_repair'
+    assert task['stage'] == 'choose_candidate'
+    allowed = shell._candidate_menu_expansion_tools([
+        {'function': {'name': name}} for name in ('search_exercise_library', 'audit_workout_plan',
+            'propose_workout_alternatives', 'allocate_workout_sets')], task)
+    assert {item['function']['name'] for item in allowed} == {
+        'audit_workout_plan', 'propose_workout_alternatives'}
+    assert 'LIBRARY_1' in shell._retrieved_replacement_definition_references(state)
 
 
 def test_expansion_marker_requires_changed_menu_and_current_bound_problem_proof():
@@ -1550,7 +2183,8 @@ def test_changed_expansion_menu_does_not_hide_a_persisting_coverage_blocker():
         {'code': 'required_coverage_missing', 'coverageKey': 'vertical_pull_weekly'}]) == []
 
 
-def test_invalid_menu_expansion_patch_gets_one_correction_then_pauses():
+@pytest.mark.parametrize('numerical_receipt', [False, True])
+def test_invalid_menu_expansion_patch_gets_one_correction_then_pauses(numerical_receipt):
     from workout_generator_pkg.planning_tools import library_fingerprint
     equipment, _, stored, draft = planning_case()
     messages = requirement_messages(stored)
@@ -1563,16 +2197,60 @@ def test_invalid_menu_expansion_patch_gets_one_correction_then_pauses():
     failed_patch = {'requirementsId': stored['requirementsId'], 'baseDraftId': 'REVISION_0', 'patch': []}
     invalid = {'passed': False, 'currentDraftId': 'REVISION_0',
         'errors': [{'code': 'invalid_draft_patch', 'path': '/', 'message': 'The patch is malformed.'}]}
+    if numerical_receipt:
+        failed_patch = {'requirementsId': stored['requirementsId'], 'baseDraftId': 'REVISION_0',
+            'edits': {'workoutUpdates': [{'workoutRef': 'WORKOUT_0', 'setFields': {'name': 'Proposed focus'}}]}}
+        invalid.update(requirementsId=stored['requirementsId'], errors=[{
+            'code': 'carried_repair_contract_changed', 'path': '/', 'message': 'Required coverage is missing.'}],
+            coordinatedRepairReceipt={'status': 'rejected_before_materialization',
+                'requirementsId': stored['requirementsId'], 'baseDraftId': 'REVISION_0', 'currentDraftId': 'REVISION_0',
+                'libraryFingerprint': library_fingerprint(equipment), 'historyFingerprint': None, 'resolvedDecisions': {},
+                'submittedEdits': copy.deepcopy(failed_patch['edits']), 'findingsAssessment': None,
+                'reviewFindings': [], 'assessmentInputHash': None, 'assessmentHash': None,
+                'reviewInputHash': None, 'reviewVersion': None})
     _tool(messages, 'audit_workout_plan', failed_patch, invalid, 'invalid-expansion')
     state = _state(shell._messages_for_api(messages, True, provided_equipment=equipment))
     assert state['candidateMenuExpansionTask']['sourceProblemFingerprint'] == 'SOURCE_FP'
     assert state['candidateMenuExpansionTask']['submissionCorrectionErrors'] == invalid['errors']
-    assert 'repairTask' not in state
+    if numerical_receipt:
+        from workout_generator_pkg.planning_tools import compile_coordinated_repair
+        from workout_generator_pkg.json_patching import apply_json_patch
+        task = state['repairTask']
+        assert task['rejectedCoordinatedRepair']['submittedEdits'] == failed_patch['edits']
+        assert not task.get('findingsAssessment') and not state['lastAudit'].get('review')
+        assert state['currentDraft']['workouts'][0]['name'] == draft['workouts'][0]['name']
+        correction = {'requirementsId': stored['requirementsId'], 'baseDraftId': 'REVISION_0',
+            'edits': {'exerciseRemovals': ['EXERCISE_0']}}
+        task = {**{key: value for key, value in task.items() if key != 'candidateMenuExpansionTask'},
+                'requirementsId': stored['requirementsId']}
+        compiled, _ = compile_coordinated_repair(correction, task, draft)
+        candidate = apply_json_patch(draft, compiled['patch'])
+        assert candidate['workouts'][0]['name'] == 'Proposed focus'
+        assert candidate['workouts'][0]['exercises'] == []
+    else:
+        assert 'repairTask' not in state
 
     _tool(messages, 'audit_workout_plan', failed_patch, invalid, 'invalid-expansion-again')
     state = _state(shell._messages_for_api(messages, True, provided_equipment=equipment))
     assert state['menuExpansionUnresolved']['status'] == 'unresolved'
     assert 'candidateMenuExpansionTask' not in state
+
+
+@pytest.mark.parametrize('change', [
+    {'requirementsId': 'other'}, {'currentDraftId': 'REVISION_2'}, {'baseDraftId': 'REVISION_2'},
+    {'libraryFingerprint': 'other'}, {'historyFingerprint': 'other'}, {'resolvedDecisions': {'new': True}},
+    {'reviewInputHash': 'unverified'}, {'findingsAssessment': {}}, {'assessmentHash': 'unverified'},
+])
+def test_numerical_edit_recovery_rejects_stale_or_partial_review_receipts(change):
+    from workout_generator_pkg.planner_context import _coordinated_receipt_matches
+    receipt = {'status': 'rejected_before_materialization', 'requirementsId': 'REQ',
+        'baseDraftId': 'REVISION_0', 'currentDraftId': 'REVISION_0', 'libraryFingerprint': 'LIB',
+        'historyFingerprint': None, 'resolvedDecisions': {}, 'submittedEdits': {'exerciseUpdates': []},
+        'findingsAssessment': None, 'reviewFindings': [], 'assessmentInputHash': None,
+        'assessmentHash': None, 'reviewInputHash': None, 'reviewVersion': None}
+    assert _coordinated_receipt_matches(receipt, 'REQ', 'REVISION_0', 'LIB', None, {})
+    receipt.update(change)
+    assert not _coordinated_receipt_matches(receipt, 'REQ', 'REVISION_0', 'LIB', None, {})
 
 
 def test_preparation_description_repair_is_compact_and_preserves_scope_after_rejection():
@@ -2413,21 +3091,38 @@ def test_matching_count_conflict_routes_to_movement_repair_and_surfaces_affected
     assert captured['existing_conflict'] is None
 
 
-def test_review_selection_repair_uses_same_no_search_then_atomic_choice_stage():
+def test_review_selection_repair_uses_same_no_search_then_atomic_choice_stage(monkeypatch):
     equipment, _, stored, draft = planning_case()
     equipment['exerciseDefinitions'].append({**equipment['exerciseDefinitions'][0],
-        'id': 'alternative', 'name': 'Alternative', 'muscleGroups': ['FRONT_DELTOIDS'],
+        'id': 'zz-alternative', 'name': 'Alternative', 'muscleGroups': ['FRONT_DELTOIDS'],
         'secondaryMuscleGroups': []})
     messages = requirement_messages(stored)
     audit = audit_workout_plan(draft, equipment, messages)
     audit.update(passed=False, errors=[{'code': 'required_coverage_missing', 'coverageKey': 'upper_back'}])
     _tool(messages, 'audit_workout_plan', draft, audit, 'selection-audit')
-    from workout_generator_pkg.exercise_library_tools import _selection_entry
-    entry = _selection_entry(equipment['exerciseDefinitions'][-1], {}, 'LIBRARY_1')
-    _tool(messages, 'search_exercise_library', {'queries': ['upper back eligible movement']},
-        {'libraryFingerprint': library_fingerprint(equipment), 'results': [
-            {'query': 'upper back eligible movement', 'exercises': [entry]}]}, 'selection-search')
-    state = _state(shell._messages_for_api(messages, True, provided_equipment=equipment))
+    from workout_generator_pkg.exercise_library_tools import _selection_entry, execute_library_tool, search_catalog
+    from workout_generator_pkg import exercise_library_tools
+    monkeypatch.setattr(exercise_library_tools, 'chat_call', lambda *_args, **_kwargs:
+        (_ for _ in ()).throw(AssertionError('exact-name fixture must not make a provider call')))
+    candidate = equipment['exerciseDefinitions'][-1]
+    candidate_reference = f"LIBRARY_{sorted(equipment['exerciseDefinitions'], key=lambda item: item['id']).index(candidate)}"
+    entry = _selection_entry(candidate, {}, candidate_reference)
+    # Exact-name search is deterministic and does not call a provider. Exercise
+    # the production search receipt and planner consumer together so their
+    # library identity semantics cannot drift independently again.
+    search_result = execute_library_tool('search_exercise_library', {'queries': ['Alternative']},
+        equipment, messages=messages)
+    assert search_result['libraryFingerprint'] == library_fingerprint(equipment)
+    catalog_identity = search_catalog(equipment, {})[1]
+    expected_search_fingerprint = __import__('hashlib').sha256(json.dumps(
+        {'libraryFingerprint': catalog_identity, 'filters': {}}, sort_keys=True,
+        separators=(',', ':')).encode()).hexdigest()
+    assert search_result['searchFingerprint'] == expected_search_fingerprint
+    assert search_result['results'][0]['exercises'][0]['id'] == entry['id']
+    _tool(messages, 'search_exercise_library', {'queries': ['Alternative']}, search_result, 'selection-search')
+    from workout_generator_pkg.planner_context import request_planning_state
+    outgoing = shell._messages_for_api(messages, True, provided_equipment=equipment)
+    state = request_planning_state(outgoing)
     task = state['candidateMenuExpansionTask']
     assert task['proofScope'] == 'exercise_selection_repair'
     assert task['sourceConflictFingerprint'] is None
@@ -2490,3 +3185,199 @@ def test_legacy_calibration_patch_preserves_other_edits_without_reintroducing_pr
     assert item['placementNotes'] == 'Keep the torso steady.'
     assert 'requiresEffortCalibration' not in item and 'calibrationAttempts' not in item
     assert 'trial' not in result['preview'].lower()
+
+@pytest.mark.parametrize('superset_mode', [False, True])
+def test_assessed_redistribution_preflight_accepts_straight_and_grouped_sources(superset_mode):
+    from workout_generator_pkg.review_assessment import assessment_hash
+    equipment, _, stored, draft = planning_case()
+    first = draft['workouts'][0]['exercises'][0]
+    if superset_mode:
+        first.update(superset='PAIR', restBetweenSetsSeconds=0, restAfterSupersetExerciseSeconds=60)
+    draft['workouts'][0]['exercises'].append(copy.deepcopy(first))
+    draft['workouts'][0]['exercises'][1]['minReps'] = 6
+    second = copy.deepcopy(draft['workouts'][0]); second['name'] = 'Day B'
+    draft['workouts'].append(second)
+    messages = requirement_messages(stored)
+    result = audit_workout_plan(draft, equipment, messages)
+    finding = {'severity': 'warning', 'basis': 'uncertainty', 'action': 'repair',
+        'path': '/draft/exercises/0', 'evidencePaths': ['/draft/exercises/0'],
+        'message': 'Spread this work.', 'repair': 'Redistribute it.', 'decisionId': None,
+        'newConflictEvidencePaths': [], 'muscleTargets': []}
+    review = {'version': REVIEW_VERSION, 'inputHash': 'bound-review', 'findings': [finding]}
+    review['assessment'] = {'version': ASSESSMENT_VERSION, 'inputHash': assessment_hash(review),
+        'groups': [{'findingIndexes': [0], 'disposition': 'repair', 'repairDimensions': ['prescription'],
+            'repairObjectives': [{'kind': 'redistribute_work', 'exerciseRefs': ['EXERCISE_0', 'EXERCISE_2'], 'minimumSessions': 2}],
+            'reason': 'The supported source requires redistribution.'}], 'repairPlan': 'Spread this work.'}
+    result.update(passed=False, review=review, errors=[{'code': 'independent_review_finding',
+        'path': finding['path'], 'findingIndex': 0, 'message': finding['message']}])
+    _tool(messages, 'audit_workout_plan', draft, result, 'unsupported-reviewed-draft')
+    state = _state(shell._messages_for_api(messages, True, provided_equipment=equipment))
+    assert state['repairTask']['findingsAssessment'] == review['assessment']
+    assert not state.get('repairCapabilityUnresolved') and not state.get('savedDraftReaudit')
+
+
+def test_assessed_redistribution_with_two_set_source_minimum_clean_stops_before_repair_tool():
+    from workout_generator_pkg.review_assessment import assessment_hash
+    equipment, _, stored, draft = planning_case()
+    source = draft['workouts'][0]['exercises'][0]
+    source.pop('targetSetPrescriptions', None)
+    source.update(numWorkSets=2, allocationBounds={'minimum': 2, 'maximum': 20})
+    second = copy.deepcopy(draft['workouts'][0])
+    second['name'] = 'Day B'
+    second['exercises'][0]['minReps'] = 6
+    draft['workouts'].append(second)
+    messages = requirement_messages(stored)
+    result = audit_workout_plan(draft, equipment, messages)
+    finding = {'severity': 'warning', 'basis': 'uncertainty', 'action': 'repair',
+        'path': '/draft/exercises/0', 'evidencePaths': ['/draft/exercises/0'],
+        'message': 'Spread this work.', 'repair': 'Redistribute it.', 'decisionId': None,
+        'newConflictEvidencePaths': [], 'muscleTargets': []}
+    review = {'version': REVIEW_VERSION, 'inputHash': 'bound-review', 'findings': [finding]}
+    review['assessment'] = {'version': ASSESSMENT_VERSION, 'inputHash': assessment_hash(review),
+        'groups': [{'findingIndexes': [0], 'disposition': 'repair', 'repairDimensions': ['prescription'],
+            'repairObjectives': [{'kind': 'redistribute_work', 'exerciseRefs': ['EXERCISE_0'], 'minimumSessions': 2}],
+            'reason': 'The source set minimum prevents splitting two sets across two sessions.'}],
+        'repairPlan': 'Spread this work.'}
+    result.update(passed=False, review=review, errors=[{'code': 'independent_review_finding',
+        'path': finding['path'], 'findingIndex': 0, 'message': finding['message']}])
+    _tool(messages, 'audit_workout_plan', draft, result, 'impossible-reviewed-draft')
+
+    state = _state(shell._messages_for_api(messages, True, provided_equipment=equipment))
+
+    assert state['repairCapabilityUnresolved']['status'] == 'unresolved_capability'
+    assert state['repairCapabilityUnresolved']['errors'][0]['code'] == 'redistribution_no_feasible_destinations'
+    assert 'repairTask' not in state
+
+
+def test_assessed_redistribution_preflight_uses_more_destinations_when_source_max_requires_it():
+    from workout_generator_pkg.review_assessment import assessment_hash
+    equipment, _, stored, draft = planning_case()
+    source = draft['workouts'][0]['exercises'][0]
+    source.pop('targetSetPrescriptions', None)
+    source.update(numWorkSets=12, allocationBounds={'minimum': 2, 'maximum': 4})
+    for day_index, min_reps in ((1, 6), (2, 7)):
+        day = copy.deepcopy(draft['workouts'][0])
+        day['name'] = f'Day {day_index + 1}'
+        exercise = day['exercises'][0]
+        exercise.pop('targetSetPrescriptions', None)
+        exercise.update(numWorkSets=4, minReps=min_reps)
+        draft['workouts'].append(day)
+    messages = requirement_messages(stored)
+    result = audit_workout_plan(draft, equipment, messages)
+    finding = {'severity': 'warning', 'basis': 'uncertainty', 'action': 'repair',
+        'path': '/draft/exercises/0', 'evidencePaths': ['/draft/exercises/0'],
+        'message': 'Spread this work.', 'repair': 'Redistribute it.', 'decisionId': None,
+        'newConflictEvidencePaths': [], 'muscleTargets': []}
+    review = {'version': REVIEW_VERSION, 'inputHash': 'bound-review', 'findings': [finding]}
+    review['assessment'] = {'version': ASSESSMENT_VERSION, 'inputHash': assessment_hash(review),
+        'groups': [{'findingIndexes': [0], 'disposition': 'repair', 'repairDimensions': ['prescription'],
+            'repairObjectives': [{'kind': 'redistribute_work', 'exerciseRefs': ['EXERCISE_0'], 'minimumSessions': 2}],
+            'reason': 'Spread the source work across at least two sessions.'}],
+        'repairPlan': 'Spread this work.'}
+    result.update(passed=False, review=review, errors=[{'code': 'independent_review_finding',
+        'path': finding['path'], 'findingIndex': 0, 'message': finding['message']}])
+    _tool(messages, 'audit_workout_plan', draft, result, 'source-maximum-needs-three-destinations')
+
+    state = _state(shell._messages_for_api(messages, True, provided_equipment=equipment))
+
+    assert not state.get('repairCapabilityUnresolved')
+    assert state['repairTask']['findingsAssessment'] == review['assessment']
+
+def test_joint_freshness_uses_the_same_redistribution_inputs_as_the_solver():
+    from workout_generator_pkg.planner_context import _current_joint_problem_fingerprint
+    from workout_generator_pkg.joint_planning import joint_problem_fingerprint
+    from workout_generator_pkg.repair_contract import redistribution_solver_constraints
+    from workout_generator_pkg.restriction_policy import effective_restrictions
+    equipment, _, stored, draft = planning_case()
+    draft['workouts'][0]['exercises'][0].pop('placementNotes', None)
+    contract = {'redistributions': [{'recipeSignature': 'recipe', 'weeklyWorkSets': 5,
+        'exactSetTargets': None, 'targetWorkoutIndexes': [0]}]}
+    joint = {'preserveSourceSelection': True}
+    joint['problemFingerprint'] = joint_problem_fingerprint(draft['workouts'], stored['requirements'], equipment,
+        restriction_policy=effective_restrictions(stored, equipment), allow_educated_load_guesses=False,
+        preserve_source_selection=True, redistribution_constraints=redistribution_solver_constraints(contract))
+    def current(value):
+        return _current_joint_problem_fingerprint(joint, draft['workouts'], stored, equipment, None, [], False, True, value)
+    assert current(contract) == joint['problemFingerprint']
+    assert current(None) != joint['problemFingerprint']
+    changed = copy.deepcopy(contract); changed['redistributions'][0]['weeklyWorkSets'] += 1
+    assert current(changed) != joint['problemFingerprint']
+
+
+def test_current_search_hits_survive_repair_projection_for_menu_schema():
+    from workout_generator_pkg.exercise_library_tools import _selection_entry
+    from workout_generator_pkg.planning_tools import coordinated_repair_tool
+
+    equipment, _, stored, draft = planning_case()
+    searched = {**copy.deepcopy(equipment['exerciseDefinitions'][0]), 'id': 'searched-row',
+        'name': 'Bodyweight Row', 'muscleGroups': ['BACK_LATS']}
+    equipment['exerciseDefinitions'].append(searched)
+    reference = 'LIBRARY_1'
+    messages = requirement_messages(stored)
+    audit = audit_workout_plan(draft, equipment, messages)
+    audit.update(passed=False, errors=[{'code': 'required_coverage_missing', 'path': '/workouts',
+        'coverageKey': 'back'}])
+    _tool(messages, 'audit_workout_plan', draft, audit, 'source-audit')
+    _tool(messages, 'search_exercise_library', {'queries': ['bodyweight row']}, {
+        'libraryFingerprint': library_fingerprint(equipment), 'results': [{
+            'query': 'bodyweight row', 'exercises': [_selection_entry(searched, {}, reference)],
+            'searchFilters': {'muscleTargets': ['back']}}]}, 'fresh-search')
+
+    state = _state(shell._messages_for_api(messages, True, provided_equipment=equipment))
+    assert reference in state['exerciseCandidates']
+    replacement_references = shell._retrieved_replacement_definition_references(state)
+    task = {'requirementsId': stored['requirementsId'], 'baseDraftId': state['currentDraftId'],
+        'currentDraft': state['currentDraft'], 'requirements': state['requirements'],
+        'replacementDefinitionReferences': replacement_references,
+        'candidateMenuExpansionTask': {'sourceProblemFingerprint': 'source'}}
+    schema = coordinated_repair_tool(task)['function']['parameters']
+    exercise_items = schema['properties']['sessionBlocks']['items']['properties']['blocks']['items']\
+        ['properties']['exercises']['items']
+    replacement_schema = next(choice for choice in exercise_items['oneOf'] if choice.get('type') == 'object')
+    assert reference in replacement_schema['properties']['definition_id']['enum']
+
+
+def test_interrupted_typed_repair_preserves_audit_and_admission_task():
+    from workout_generator_pkg.planner_context import request_planning_state
+    equipment, _, stored, draft = planning_case()
+    draft['workouts'][0]['exercises'][0].pop('placementNotes', None)
+    messages = requirement_messages(stored)
+    audited = audit_workout_plan(draft, equipment, messages)
+    audited.update(passed=False, errors=[{'code': 'volume_below_target', 'path': '/workouts',
+        'message': 'Increase chest work', 'muscleTargets': ['chest']}])
+    _tool(messages, 'audit_workout_plan', draft, audited, 'source-audit')
+    submission = {'requirementsId': stored['requirementsId'], 'baseDraftId': audited['currentDraftId'],
+        'edits': {'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0', 'setFields': {'numWorkSets': 6}}]}}
+    _tool(messages, 'audit_workout_plan', submission, {'passed': False, 'executionFailure': True}, 'crash')
+    state = request_planning_state(shell._messages_for_api(messages, True, None, equipment))
+    assert state['savedDraftReaudit'] == submission
+    assert state['lastAudit']['errors'][0]['code'] == 'volume_below_target'
+    assert state['repairTask']['baseDraftId'] == audited['currentDraftId']
+
+
+def test_menu_expansion_uses_full_saved_menu_identity_when_sessions_are_omitted():
+    from workout_generator_pkg.joint_planning import candidate_menu_fingerprint
+    equipment, _, stored, draft = planning_case()
+    stored['requirements']['sessionsPerWeek'] = 3
+    draft['workouts'] = [copy.deepcopy(draft['workouts'][0]) for _ in range(3)]
+    for index, day in enumerate(draft['workouts']):
+        day['name'] = f'Day {index}'
+    messages = requirement_messages(stored)
+    error = {'code': 'required_coverage_missing', 'path': '/workouts/0/exercises', 'coverageKey': 'push'}
+    _tool(messages, 'audit_workout_plan', draft, {'passed': False, 'submittedDraft': draft,
+        'requirementsId': stored['requirementsId'], 'currentDraftId': 'REVISION_0',
+        'libraryFingerprint': library_fingerprint(equipment), 'historyFingerprint': None,
+        'resolvedDecisions': {}, 'coordinatedJointPlanning': {'status': 'infeasible',
+            'problemFingerprint': 'SOURCE_FP'}, 'errors': [error]}, 'coverage')
+    state = _state(shell._messages_for_api(messages, True, provided_equipment=equipment))
+    assert any(day.get('detailsOmitted') for day in state['currentDraft']['workouts'])
+    assert state['candidateMenuExpansionTask']['sourceMenuFingerprint'] == candidate_menu_fingerprint(draft['workouts'])
+
+
+def test_generic_edit_task_uses_nonthinking_response_profile():
+    from workout_generator_pkg.planner_context import planner_response_profile
+
+    profile = planner_response_profile({'editTask': {'baseDraftId': 'REVISION_1'}})
+
+    assert profile == {'reasoning_effort': None, 'activity': 'Editing workout',
+                       'max_tokens': 16384, 'timeout': None}

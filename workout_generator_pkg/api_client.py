@@ -6,8 +6,10 @@ import json
 import random
 import time
 import traceback
+import copy
 from contextlib import nullcontext
-from jsonschema import validate, ValidationError
+from urllib.parse import urlparse
+from jsonschema import validate, ValidationError, SchemaError
 from .constants import (
     DEEPSEEK_CHAT_DEFAULT_TOKENS,
     DEEPSEEK_CHAT_MAX_TOKENS,
@@ -19,7 +21,8 @@ from .llm_config import resolve_llm_endpoint
 from .logging_ui import LoadingIndicator
 from .cancellation import check_cancelled, run_cancellable
 from .image_attachments import prepare_image_messages, validate_image_request
-from .api_metrics import api_metrics_scope, current_api_metrics_scope, record_api_metric, begin_api_request, remaining_request_timeout
+from .api_metrics import (api_metrics_scope, current_api_metrics_scope, record_api_metric,
+    begin_api_request, remaining_request_timeout, response_fingerprint, record_submission_rejection)
 
 try:
     from openai import APIConnectionError
@@ -68,6 +71,298 @@ class StructuredResponseError(ValueError):
         self.content = content
 
 
+_STRICT_SCHEMA_KEYWORDS = {'type', 'properties', 'required', 'additionalProperties', 'items', 'enum', 'anyOf',
+                           'description', 'pattern', 'minimum', 'maximum', 'exclusiveMinimum',
+                           'exclusiveMaximum', 'multipleOf'}
+
+
+def _strict_schema_compatible(schema):
+    """Accept only already-valid strict subsets; never rewrite schema meaning."""
+    if not isinstance(schema, dict) or set(schema) - _STRICT_SCHEMA_KEYWORDS:
+        return False
+    if 'anyOf' in schema:
+        return (set(schema) <= {'anyOf', 'description'} and isinstance(schema['anyOf'], list)
+                and bool(schema['anyOf']) and all(isinstance(item, dict) and 'type' in item
+                    and _strict_schema_compatible(item) for item in schema['anyOf']))
+    kind = schema.get('type')
+    if kind == 'object':
+        properties = schema.get('properties')
+        required = schema.get('required')
+        return (isinstance(properties, dict) and isinstance(required, list)
+                and len(required) == len(properties) and set(required) == set(properties)
+                and schema.get('additionalProperties') is False
+                and all(_strict_schema_compatible(value) for value in properties.values()))
+    if kind == 'array':
+        return isinstance(schema.get('items'), dict) and _strict_schema_compatible(schema['items'])
+    if kind not in ('string', 'number', 'integer', 'boolean', 'null'):
+        return False
+    if 'enum' in schema and not isinstance(schema['enum'], list):
+        return False
+    return True
+
+
+def _strict_parameters_compatible(schema):
+    return isinstance(schema, dict) and schema.get('type') == 'object' and _strict_schema_compatible(schema)
+
+
+def _strict_provider(endpoint):
+    parsed = urlparse(endpoint.base_url)
+    if parsed.scheme != 'https':
+        return None
+    path = parsed.path.rstrip('/')
+    if parsed.hostname == 'api.deepseek.com' and path in ('', '/beta'):
+        return ('deepseek', endpoint.base_url.rstrip('/') if path == '/beta'
+                else endpoint.base_url.rstrip('/') + '/beta')
+    return None
+
+
+def _strict_application_tools(tools, provider):
+    if not tools or provider is None or not all(
+            isinstance(tool, dict) and tool.get('type') == 'function'
+            and isinstance(tool.get('function'), dict)
+            and _strict_parameters_compatible(tool['function'].get('parameters')) for tool in tools):
+        return None
+    strict_tools = json.loads(json.dumps(tools))
+    for tool in strict_tools:
+        tool['function']['strict'] = True
+    return strict_tools
+
+
+def _strict_wire_schema(schema):
+    """Project a local tool schema onto DeepSeek's strict subset without changing local validation."""
+    if not isinstance(schema, dict):
+        raise ValueError('Strict tool delivery requires an object JSON schema.')
+    unsupported = set(schema) - _STRICT_SCHEMA_KEYWORDS - {
+        'const', 'oneOf', 'minItems', 'maxItems', 'uniqueItems', 'minProperties', 'maxProperties',
+        'minLength', 'maxLength', 'pattern', 'minimum', 'maximum', 'exclusiveMinimum',
+        'exclusiveMaximum', 'multipleOf',
+    }
+    if unsupported:
+        raise ValueError('Strict tool delivery cannot project schema keywords: ' + ', '.join(sorted(unsupported)))
+
+    if 'enum' in schema and (schema.get('type') in ('array', 'object')
+            or not schema.get('type') and any(isinstance(value, (dict, list)) for value in schema['enum'])):
+        values = schema['enum']
+        if not values:
+            raise ValueError('Strict tool delivery cannot project an empty enum.')
+        result = {'anyOf': [_schema_for_choice(value) for value in values]}
+        if schema.get('description'):
+            result['description'] = schema['description']
+        if not _strict_schema_compatible(result):
+            raise ValueError('Strict tool delivery could not project a composite enum.')
+        return result
+    result = {key: json.loads(json.dumps(value)) for key, value in schema.items()
+              if key not in {'const', 'oneOf', 'minItems', 'maxItems', 'uniqueItems', 'minProperties',
+                             'maxProperties', 'minLength', 'maxLength'}}
+    if 'const' in schema:
+        value = schema['const']
+        if value is None:
+            result['type'] = 'null'
+        elif isinstance(value, (str, int, float, bool)):
+            result['type'] = ('boolean' if isinstance(value, bool) else 'integer' if isinstance(value, int)
+                              else 'number' if isinstance(value, float) else 'string')
+            result['enum'] = [value]
+        else:
+            result = _schema_for_choice(value)
+    if 'oneOf' in schema:
+        result['anyOf'] = [_strict_wire_schema(branch) for branch in schema['oneOf']]
+    elif 'anyOf' in schema:
+        result['anyOf'] = [_strict_wire_schema(branch) for branch in schema['anyOf']]
+    kind = result.get('type')
+    if isinstance(kind, list):
+        description = result.pop('description', None)
+        constraints = {key: value for key, value in result.items() if key not in {'type', 'anyOf'}}
+        applicable = {
+            'string': {'enum', 'pattern'},
+            'integer': {'enum', 'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf'},
+            'number': {'enum', 'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf'},
+            'boolean': {'enum'},
+            'null': set(),
+            'array': {'enum', 'items'},
+            'object': {'enum', 'properties', 'required', 'additionalProperties'},
+        }
+        result.clear()
+        branches = []
+        for value in kind:
+            if value not in applicable:
+                raise ValueError(f'Strict tool delivery cannot project type: {value}')
+            if value == 'null' and isinstance(constraints.get('enum'), list) and None not in constraints['enum']:
+                continue
+            branch = {'type': value}
+            if value != 'null':
+                branch.update({key: item for key, item in constraints.items() if key in applicable[value]})
+                enum = branch.get('enum')
+                if isinstance(enum, list):
+                    matching_values = [item for item in enum if _schema_value_matches_type(item, value)]
+                    if not matching_values:
+                        continue
+                    branch['enum'] = matching_values
+            branches.append(_strict_wire_schema(branch))
+        if not branches:
+            raise ValueError('Strict tool delivery cannot project a type union with no allowed branches.')
+        result['anyOf'] = branches
+        if description is not None:
+            result['description'] = description
+    if 'enum' in schema and not kind:
+        values = schema['enum']
+        if not values:
+            raise ValueError('Strict tool delivery cannot project an empty enum.')
+        if all(isinstance(value, str) for value in values):
+            result['type'] = 'string'
+        elif all(isinstance(value, (dict, list)) for value in values):
+            result.pop('enum', None)
+            result['anyOf'] = [_schema_for_choice(value) for value in values]
+        else:
+            raise ValueError('Strict tool delivery cannot project a mixed or non-string enum.')
+    if result.get('type') == 'object':
+        properties = result.get('properties')
+        if not isinstance(properties, dict):
+            raise ValueError('Strict tool delivery requires object properties.')
+        if schema.get('additionalProperties') is not False:
+            raise ValueError('Strict tool delivery cannot close an object that permits additional properties.')
+        original_required = set(schema.get('required', []))
+        result['properties'] = {
+            name: _strict_wire_schema(value if name in original_required else {
+                'anyOf': [value, {'type': 'null'}]})
+            for name, value in properties.items()
+        }
+        result['required'] = list(properties)
+        result['additionalProperties'] = False
+    if result.get('type') == 'array':
+        result['items'] = _strict_wire_schema(result.get('items'))
+    if 'anyOf' in result:
+        # Optional nullable fields must not introduce an untyped union branch.
+        branches = []
+        for branch in result['anyOf']:
+            for choice in branch.get('anyOf', [branch]):
+                if choice not in branches:
+                    branches.append(choice)
+        result['anyOf'] = branches
+    if not _strict_schema_compatible(result):
+        raise ValueError('Strict tool delivery could not produce a compatible provider schema.')
+    return result
+
+
+def _schema_value_matches_type(value, kind):
+    if kind == 'null':
+        return value is None
+    if kind == 'boolean':
+        return isinstance(value, bool)
+    if kind == 'integer':
+        return isinstance(value, int) and not isinstance(value, bool)
+    if kind == 'number':
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if kind == 'string':
+        return isinstance(value, str)
+    if kind == 'array':
+        return isinstance(value, list)
+    if kind == 'object':
+        return isinstance(value, dict)
+    return False
+
+
+def _schema_for_choice(value):
+    """Build a strict-valid shape for one enumerated composite choice."""
+    if isinstance(value, dict):
+        properties = {key: _schema_for_choice(item) for key, item in value.items()}
+        return {'type': 'object', 'properties': properties, 'required': list(properties),
+                'additionalProperties': False}
+    if isinstance(value, list):
+        if not value:
+            return {'type': 'array', 'items': {'type': 'string'}}
+        item_schemas = [_schema_for_choice(item) for item in value]
+        if all(isinstance(item, str) for item in value):
+            return {'type': 'array', 'items': {'type': 'string', 'enum': list(dict.fromkeys(value))}}
+        return {'type': 'array', 'items': {'anyOf': item_schemas}}
+    if value is None:
+        return {'type': 'null'}
+    if isinstance(value, bool):
+        return {'type': 'boolean', 'enum': [value]}
+    if isinstance(value, int):
+        return {'type': 'integer', 'enum': [value]}
+    if isinstance(value, float):
+        return {'type': 'number', 'enum': [value]}
+    if isinstance(value, str):
+        return {'type': 'string', 'enum': [value]}
+    raise ValueError('Strict tool delivery cannot project this enumerated value.')
+
+
+def _normalize_strict_tool_arguments(arguments, original_schema):
+    """Turn strict-schema null placeholders back into omitted optional properties."""
+    try:
+        value = json.loads(arguments)
+    except (TypeError, json.JSONDecodeError):
+        return arguments
+
+    def allows_null(schema):
+        if not isinstance(schema, dict):
+            return False
+        if schema.get('type') == 'null' or 'null' in (schema.get('type') if isinstance(schema.get('type'), list) else []):
+            return True
+        if schema.get('const', object()) is None or None in schema.get('enum', []):
+            return True
+        return any(allows_null(branch) for key in ('oneOf', 'anyOf') for branch in schema.get(key, []))
+
+    def normalize(node, schema):
+        if isinstance(schema, dict) and ('oneOf' in schema or 'anyOf' in schema):
+            variants = schema.get('oneOf', schema.get('anyOf', []))
+            for variant in variants:
+                candidate = json.loads(json.dumps(node))
+                normalize(candidate, variant)
+                try:
+                    validate(candidate, schema)
+                    if isinstance(node, dict) and isinstance(candidate, dict):
+                        node.clear()
+                        node.update(candidate)
+                    elif isinstance(node, list) and isinstance(candidate, list):
+                        node[:] = candidate
+                    return
+                except ValidationError:
+                    pass
+            return
+        if isinstance(node, dict) and isinstance(schema, dict) and isinstance(schema.get('properties'), dict):
+            required = set(schema.get('required', []))
+            for key in list(node):
+                child_schema = schema['properties'].get(key)
+                if child_schema is None:
+                    continue
+                if node[key] is None and key not in required and not allows_null(child_schema):
+                    node.pop(key)
+                else:
+                    normalize(node[key], child_schema)
+        elif isinstance(node, list) and isinstance(schema, dict) and isinstance(schema.get('items'), dict):
+            for item in node:
+                normalize(item, schema['items'])
+
+    normalize(value, original_schema)
+    return json.dumps(value, ensure_ascii=False, separators=(',', ':'))
+
+
+def _decode_json_with_terminal_closer_repair(content):
+    """Decode JSON, tolerating only redundant terminal object-closing braces."""
+    try:
+        return content, json.loads(content), False
+    except json.JSONDecodeError as error:
+        if error.msg != 'Extra data':
+            raise
+        payload, end = json.JSONDecoder().raw_decode(content, len(content) - len(content.lstrip()))
+        trailing = content[end:].strip()
+        if not isinstance(payload, dict) or not trailing or any(character != '}' for character in trailing):
+            raise error
+        return content[:end], payload, True
+
+
+def _recover_strict_tool_argument_syntax(arguments, original_schema):
+    """Repair only redundant terminal braces, leaving semantic validation to the application boundary."""
+    try:
+        normalized, payload, repaired = _decode_json_with_terminal_closer_repair(arguments)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not repaired:
+        return None
+    return _normalize_strict_tool_arguments(normalized, original_schema)
+
+
 def _request_messages(messages, response_format=None):
     prepared = prepare_image_messages(messages)
     if response_format and response_format.get('type') == 'json_object':
@@ -84,23 +379,27 @@ def _request_messages(messages, response_format=None):
     return prepared
 
 
-def chat_call(client, messages, tools=None, *, reasoning_effort="high", max_tokens=DEEPSEEK_REASONER_MAX_TOKENS, timeout=DEEPSEEK_PLANNING_TIMEOUT_SECONDS, response_format=None, output_schema=None, tool_choice=None):
+def chat_call(client, messages, tools=None, *, reasoning_effort="high", max_tokens=DEEPSEEK_REASONER_MAX_TOKENS, timeout=DEEPSEEK_PLANNING_TIMEOUT_SECONDS, response_format=None, output_schema=None, tool_choice=None, retry=True, require_strict_tool_delivery=False):
     options = dict(max_tokens=max_tokens, timeout=timeout, response_format=response_format,
-                   output_schema=output_schema, tool_choice=tool_choice)
+                   output_schema=output_schema, tool_choice=tool_choice,
+                   require_strict_tool_delivery=require_strict_tool_delivery)
     def call(effort):
+        if not retry:
+            return _chat_call_once(client, messages, tools, reasoning_effort=effort, **options)
         return _retry_on_connection_error(
             lambda: _chat_call_once(client, messages, tools, reasoning_effort=effort, **options),
             max_retries=2, base_delay=1)
     try:
         return call(reasoning_effort)
     except TruncatedResponseError as error:
-        if reasoning_effort is None or error.diagnostics['cause'] != 'reasoning_budget_exhausted':
+        if not retry or reasoning_effort is None or error.diagnostics['cause'] != 'reasoning_budget_exhausted':
             raise
         # No answer was emitted; retry the same task once without the exhausted reasoning channel.
         return call(None)
 
 
-def _chat_call_once(client, messages, tools=None, *, reasoning_effort, max_tokens, timeout, response_format, output_schema, tool_choice=None):
+def _chat_call_once(client, messages, tools=None, *, reasoning_effort, max_tokens, timeout, response_format, output_schema,
+                    tool_choice=None, require_strict_tool_delivery=False):
     """
     Call the configured LLM endpoint for conversational responses with optional function calling.
 
@@ -113,6 +412,34 @@ def _chat_call_once(client, messages, tools=None, *, reasoning_effort, max_token
         tuple: (content, tool_calls, reasoning_content). Preserve reasoning in conversation history.
     """
     endpoint = resolve_llm_endpoint()
+    strict_provider = _strict_provider(endpoint)
+    if require_strict_tool_delivery and (not tools or output_schema is not None):
+        raise ValueError('Strict application-tool delivery requires application tools and no structured output schema.')
+    if require_strict_tool_delivery and endpoint.is_deepseek and strict_provider is None:
+        raise ValueError('Strict application-tool delivery requires the configured DeepSeek beta endpoint.')
+    if (require_strict_tool_delivery and not endpoint.is_deepseek
+            and urlparse(endpoint.base_url).hostname != 'api.openai.com'):
+        raise ValueError('Strict application-tool delivery is not supported by the configured provider.')
+    strict_output_schema = bool(output_schema is not None and (
+        not endpoint.is_deepseek or (_strict_parameters_compatible(output_schema)
+                                     and strict_provider and reasoning_effort is None)))
+    original_tool_schemas = {tool['function']['name']: tool['function']['parameters'] for tool in (tools or [])
+                             if isinstance(tool, dict) and isinstance(tool.get('function'), dict)
+                             and isinstance(tool['function'].get('name'), str)
+                             and isinstance(tool['function'].get('parameters'), dict)}
+    if require_strict_tool_delivery:
+        strict_application_tools = copy.deepcopy(tools)
+        for tool in strict_application_tools:
+            if not isinstance(tool, dict) or tool.get('type') != 'function' or not isinstance(tool.get('function'), dict):
+                raise ValueError('Strict application-tool delivery requires function tools only.')
+            parameters = tool['function'].get('parameters')
+            tool['function']['parameters'] = _strict_wire_schema(parameters)
+            tool['function']['strict'] = True
+    else:
+        strict_application_tools = (_strict_application_tools(tools, strict_provider)
+                                    if output_schema is None else None)
+    deepseek_base_url = strict_provider[1] if strict_provider else None
+    structured_output_mode = None
     request_messages = _request_messages(messages, response_format)
     if endpoint.is_deepseek and reasoning_effort is not None:
         request_messages = [
@@ -132,7 +459,9 @@ def _chat_call_once(client, messages, tools=None, *, reasoning_effort, max_token
         kwargs['reasoning_effort'] = reasoning_effort
     if endpoint.is_deepseek:
         kwargs['extra_body'] = {"thinking": {"type": "enabled" if reasoning_effort is not None else "disabled"}}
-    if tools:
+    if strict_application_tools is not None:
+        kwargs['tools'] = strict_application_tools
+    elif tools:
         kwargs["tools"] = tools
     if tool_choice is not None:
         kwargs['tool_choice'] = tool_choice
@@ -141,21 +470,34 @@ def _chat_call_once(client, messages, tools=None, *, reasoning_effort, max_token
     if output_schema is not None:
         if tools:
             raise ValueError('Structured replies cannot also execute application tools.')
-        kwargs.pop('response_format', None)
-        kwargs['messages'] = [*kwargs['messages'], {'role':'system', 'content':
-            'Submit the final result through emit_result exactly once, following its schema.'}]
-        kwargs['tools'] = [{'type':'function','function':{'name':'emit_result',
-            'description':'Submit the final structured result.','strict':True,'parameters':output_schema}}]
+        if strict_output_schema:
+            kwargs.pop('response_format', None)
+            kwargs['tools'] = [{'type': 'function', 'function': {'name': 'emit_result',
+                'description': 'Submit the final structured result.', 'strict': True, 'parameters': output_schema}}]
+            kwargs['tool_choice'] = {'type': 'function', 'function': {'name': 'emit_result'}}
+            structured_output_mode = 'strict_tool'
+        else:
+            kwargs['response_format'] = {'type': 'json_object'}
+            kwargs.pop('tool_choice', None)
+            kwargs['messages'] = [*kwargs['messages'], {'role': 'system', 'content':
+                'Return one JSON object matching this schema: ' + json.dumps(output_schema, separators=(',', ':'))}]
+            structured_output_mode = 'validated_json'
     validate_image_request(kwargs)
     
     started = time.monotonic()
     request = begin_api_request(endpoint.model, messages=kwargs['messages'], tools=kwargs.get('tools'))
+    if structured_output_mode:
+        request['structuredOutputMode'] = structured_output_mode
+    uses_deepseek_strict = bool(deepseek_base_url and (
+        strict_output_schema or strict_application_tools is not None or require_strict_tool_delivery))
+    if uses_deepseek_strict:
+        request['strictEndpoint'] = 'deepseek_beta'
     resp = None
     try:
-        options = {'max_retries':0}
-        if output_schema is not None and endpoint.is_deepseek:
-            options['base_url'] = 'https://api.deepseek.com/beta'
-        resp = run_cancellable(client.with_options(**options).chat.completions.create, deadline_seconds=remaining_request_timeout(timeout), **kwargs)
+        client_options = {'max_retries': 0}
+        if uses_deepseek_strict:
+            client_options['base_url'] = deepseek_base_url
+        resp = run_cancellable(client.with_options(**client_options).chat.completions.create, deadline_seconds=remaining_request_timeout(timeout), **kwargs)
         if getattr(resp.choices[0], "finish_reason", None) == "length":
             error = TruncatedResponseError(resp, max_tokens, reasoning_effort)
             _record_chat_metric(resp, started, model=endpoint.model, reasoning_effort=reasoning_effort,
@@ -163,33 +505,62 @@ def _chat_call_once(client, messages, tools=None, *, reasoning_effort, max_token
             raise error
         message = resp.choices[0].message
         content = message.content
+        request['responseFingerprint'] = response_fingerprint(content)
         tool_calls = message.tool_calls if hasattr(message, 'tool_calls') and message.tool_calls else None
+        if require_strict_tool_delivery and tool_calls:
+            tool_calls = copy.deepcopy(tool_calls)
+            syntax_repairs = []
+            for tool_call in tool_calls:
+                schema = original_tool_schemas.get(tool_call.function.name)
+                if schema is not None:
+                    raw_arguments = tool_call.function.arguments
+                    recovered = _recover_strict_tool_argument_syntax(raw_arguments, schema)
+                    if recovered is not None:
+                        tool_call.function.arguments = recovered
+                        syntax_repairs.append({
+                            'toolName': tool_call.function.name,
+                            'kind': 'redundant_terminal_closers',
+                            'rawArguments': raw_arguments,
+                            'rawArgumentsFingerprint': response_fingerprint(raw_arguments),
+                            'acceptedArgumentsFingerprint': response_fingerprint(recovered),
+                        })
+                    else:
+                        tool_call.function.arguments = _normalize_strict_tool_arguments(
+                            tool_call.function.arguments, schema)
+            if syntax_repairs:
+                request['strictToolSyntaxRepairs'] = syntax_repairs
         if output_schema is not None:
+            if strict_output_schema and (not tool_calls or len(tool_calls) != 1
+                    or tool_calls[0].function.name != 'emit_result'):
+                raise ValueError('Strict structured output must submit exactly one emit_result tool call.')
             if tool_calls and (len(tool_calls) != 1 or tool_calls[0].function.name != 'emit_result'):
                 raise ValueError('Structured response did not submit exactly one emit_result call.')
-            request['structuredOutputDelivery'] = 'strict_tool' if tool_calls else 'validated_json'
+            request['structuredOutputDelivery'] = 'strict_tool' if strict_output_schema else 'validated_json'
             if tool_calls:
                 content = tool_calls[0].function.arguments
+                request['responseFingerprint'] = response_fingerprint(content)
             try:
-                try:
-                    payload = json.loads(content)
-                except json.JSONDecodeError as error:
-                    if error.msg != 'Extra data':
-                        raise
-                    payload, end = json.JSONDecoder().raw_decode(content, len(content) - len(content.lstrip()))
-                    # Ignore only redundant outer closers after one complete object, never additional data.
-                    if not isinstance(payload, dict) or set(content[end:].strip()) != {'}'}:
-                        raise error
-                    content = content[:end]
+                content, payload, syntax_repaired = _decode_json_with_terminal_closer_repair(content)
+                if syntax_repaired:
                     request['structuredOutputSyntaxRepair'] = 'redundant_terminal_closers'
+            except json.JSONDecodeError:
+                raise
+            try:
                 validate(payload, output_schema)
             except ValidationError as error:
                 raise StructuredResponseError(content,error) from error
+            except SchemaError:
+                raise
+            except Exception as error:
+                raise SchemaError('Structured output schema could not be evaluated.') from error
             tool_calls = None
+        request['responseFingerprint'] = response_fingerprint(content)
         _record_chat_metric(resp, started, model=endpoint.model, reasoning_effort=reasoning_effort,
                             max_tokens=max_tokens, timeout=timeout, outcome='success', request=request)
         return content, tool_calls, getattr(message, "reasoning_content", None)
     except BaseException as error:
+        if isinstance(error, (ValueError, ValidationError)) and resp is not None:
+            record_submission_rejection(error, request_id=request['requestId'])
         if output_schema is not None and resp is not None and not hasattr(error, 'diagnostics'):
             choice = next(iter(getattr(resp, 'choices', None) or []), None)
             message = getattr(choice, 'message', None)
@@ -235,6 +606,10 @@ def _record_chat_metric(response, started, *, model, reasoning_effort, max_token
     }
     if error_type:
         metric['errorType'] = error_type
+    choice = next(iter(getattr(response, 'choices', None) or []), None)
+    message = getattr(choice, 'message', None)
+    metric['submissionIds'] = [call.id for call in (getattr(message, 'tool_calls', None) or [])
+                               if getattr(call, 'id', None)]
     record_api_metric(metric)
 
 
@@ -603,7 +978,7 @@ def json_call(client, messages, max_tokens=DEEPSEEK_CHAT_DEFAULT_TOKENS, *, mode
 
 def chat_call_with_loading(client, messages, tools=None, logger=None, *, reasoning_effort='high', activity='Thinking',
                            max_tokens=DEEPSEEK_REASONER_MAX_TOKENS, timeout=DEEPSEEK_PLANNING_TIMEOUT_SECONDS,
-                           tool_choice=None):
+                           tool_choice=None, require_strict_tool_delivery=False):
     """
     Wrapper for chat_call that shows loading indicator with timer and supports cancellation.
 
@@ -629,7 +1004,8 @@ def chat_call_with_loading(client, messages, tools=None, logger=None, *, reasoni
         with api_metrics_scope(logger, active_stage or activity):
             try:
                 call_options = {'reasoning_effort': reasoning_effort, 'max_tokens': max_tokens,
-                                'timeout': timeout}
+                                'timeout': timeout,
+                                'require_strict_tool_delivery': require_strict_tool_delivery}
                 if tool_choice is not None:
                     call_options['tool_choice'] = tool_choice
                 result[0] = chat_call(client, messages, tools, **call_options)

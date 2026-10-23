@@ -110,6 +110,51 @@ def build_workout_structure(workout_entry):
     return {"workoutMetadata": metadata, "workoutComponents": components}
 
 
+def reviewable_workout_artifact(plan, guidance, workout_store=None, id_map=None):
+    """Compare the user-visible execution fields, including exact emitted sets and order."""
+    resource_ids = {item['id'] for key in ('equipments', 'accessoryEquipments') for item in plan.get(key, [])}
+    reverse_ids = {value: key for key, value in (id_map or {}).items() if value not in resource_ids}
+    def normalize(value):
+        if isinstance(value, dict):
+            return {reverse_ids.get(k, k): normalize(v) for k, v in value.items() if k != 'id'}
+        if isinstance(value, list):
+            return [normalize(v) for v in value]
+        return reverse_ids.get(value, value) if isinstance(value, str) else value
+    def exercise_view(item):
+        fields = ('name', 'enabled', 'exerciseType', 'equipmentId', 'requiredAccessoryEquipmentIds', 'bodyWeightPercentage', 'exerciseCategory',
+            'notes', 'minReps', 'maxReps', 'generateWarmUpSets', 'requiresLoadCalibration',
+            'progressionMode', 'intraSetRestInSeconds', 'runningPrescription', 'muscleGroups', 'secondaryMuscleGroups')
+        view = {'type': 'Exercise', 'id': reverse_ids.get(item['id'], item['id']),
+            **{key: normalize(item[key]) for key in fields if key in item}}
+        set_fields = ('type', 'subCategory', 'reps', 'weight', 'additionalWeight', 'timeInSeconds',
+            'timeInMillis', 'autoStart', 'autoStop', 'targetDistanceMeters', 'targetCalories')
+        view['sets'] = [{key: value for key, value in target.items() if key in set_fields} for target in item['sets']]
+        return view
+    if workout_store is None:
+        exercises = {item['id']: _materialize_exercise_definition(item) for item in plan['exercises']}
+        structures = {day['id']: build_workout_structure(day) for day in plan['workouts']}
+        workouts = assemble_placeholder_workout_store({}, {}, exercises, structures, plan)['workouts']
+    else:
+        workouts = workout_store['workouts']
+    result = []
+    for day in workouts:
+        components = []
+        for item in day['workoutComponents']:
+            kind = item['type']
+            if kind == 'Exercise':
+                components.append({'type': kind, **exercise_view(item)})
+            elif kind == 'Superset':
+                components.append({'type': kind, 'enabled': item.get('enabled', True), **{key: normalize(item[key]) for key in (
+                    'restSecondsByExercise', 'timeCapSeconds', 'roundDurationSeconds', 'amrap') if key in item},
+                    'exercises': [exercise_view(e) for e in item['exercises']]})
+            else:
+                components.append({'type': kind, 'enabled': item.get('enabled', True), 'timeInSeconds': item['timeInSeconds']})
+        result.append({'id': reverse_ids.get(day['id'], day['id']), 'name': day['name'], 'enabled': day.get('enabled', True),
+            'description': day.get('description', ''), 'timesCompletedInAWeek': day.get('timesCompletedInAWeek', 1),
+            'components': components})
+    return {'workouts': result, 'programGuidance': guidance}
+
+
 def _is_loadable_bodyweight_exercise(exercise: Dict[str, Any], accessory_subset=None) -> bool:
     """Detect BODY_WEIGHT exercises that are commonly externally loadable."""
     if not isinstance(exercise, dict):
@@ -1013,7 +1058,7 @@ def _calculate_equipment_weight_combinations(equipment):
         max_extra_per_point = equipment.get("maxExtraWeightsPerLoadingPoint", 0)
         loading_points = 2  # Pair
         
-        # Base combinations: each dumbbell weight × 2 (pair)
+        # Base combinations: each dumbbell weight Ã— 2 (pair)
         for db in available_dumbbells:
             if isinstance(db, dict):
                 db_weight = db.get("weight", 0.0)
@@ -1160,7 +1205,7 @@ def get_selectable_weights_for_exercise(exercise_type, equipment):
 
 
 # Equipment whose selectable loads are SUMS over a pair of implements while
-# coach-authored loads name ONE implement (its stamped weight) — e.g. dumbbell
+# coach-authored loads name ONE implement (its stamped weight) â€” e.g. dumbbell
 # pairs. Bilateral-ness alone is not the trigger: a barbell is also two-sided,
 # but coaches program its total, which already matches the stored value. New
 # pair-implement equipment types must be added here to get per-implement
@@ -1261,7 +1306,7 @@ def format_planner_equipment_context(equipment_list, accessory_list=None):
                 lines.append(
                     "  - These loads are PER-PAIR TOTALS (2 x the weight of ONE dumbbell), while"
                     " coach dumbbell loads are per implement. Transcribe the coach's dumbbell"
-                    " load exactly as written ('@ 22.5' stays 22.5) — the pipeline normalizes it"
+                    " load exactly as written ('@ 22.5' stays 22.5) â€” the pipeline normalizes it"
                     " to the pair total. Never round it or substitute a listed load for it."
                 )
     else:
@@ -1577,6 +1622,7 @@ def apply_exercise_library_schema_v2(
         definition = copy.deepcopy(raw_definition)
         definition.pop("instructions", None)
         definition.pop("instructionEquipmentIds", None)
+        definition.pop("programmingDemands", None)  # Generator evidence is not part of the app definition schema.
         existing = supplied_by_id.get(definition["id"])
         if existing is not None and existing != definition:
             raise ValueError(
@@ -1630,7 +1676,7 @@ def apply_exercise_library_schema_v2(
             canonical_by_identity[key] = definition
 
         exercise["exerciseDefinitionId"] = definition["id"]
-        exercise["placementNotes"] = exercise.get("placementNotes") or exercise.get("notes") or ""
+        exercise.pop("placementNotes", None)
         for field in DEFINITION_OWNED_FIELDS:
             if field in definition:
                 exercise[field] = copy.deepcopy(definition[field])
@@ -1719,7 +1765,7 @@ def convert_placeholders_to_uuids(placeholder_workout_store, id_manager, validat
     if validate_final and validate is not None:
         try:
             validate(instance=uuid_workout_store, schema=JSON_SCHEMA)
-            _out("✓ Final UUID-based validation passed")
+            _out("Ã¢Å“â€œ Final UUID-based validation passed")
         except Exception as final_err:
             _out(f"Warning: Final UUID validation failed (this should be rare): {final_err}")
             # Don't raise - the placeholder validation should have caught structural issues
@@ -2287,7 +2333,6 @@ def sync_exercises_from_definitions(workout_store, exercise_definitions):
 
     fields_to_sync = [
         "notes",
-        "placementNotes",
         "intraSetRestInSeconds",
         "exerciseCategory",
         "requiredAccessoryEquipmentIds",
@@ -2382,7 +2427,6 @@ def sync_plan_owned_exercise_fields(exercise, plan_entry):
         "name",
         "nameOverride",
         "notes",
-        "placementNotes",
         "generateWarmUpSets",
         "progressionMode",
         "exerciseType",
@@ -3253,3 +3297,164 @@ def WorkoutStructure(workout_structure_dict):
         raise ValueError("Missing 'workoutComponents' in workout structure")
     
     return workout_structure_dict
+
+
+def _materialize_exercise_definition(exercise_entry):
+    """Build an exercise object when its approved PlanIndex has enough data."""
+    exercise_id = exercise_entry.get("id")
+    exercise_type = exercise_entry.get("exerciseType")
+    if exercise_type not in {"WEIGHT", "BODY_WEIGHT", "COUNTDOWN", "COUNTUP", "RUNNING"}:
+        raise ValueError(f"Deterministic exercise materialization does not support {exercise_type!r}.")
+    if not isinstance(exercise_id, str) or not re.fullmatch(r"EXERCISE_\d+", exercise_id):
+        raise ValueError(f"Deterministic exercise materialization requires a canonical EXERCISE_N id; got {exercise_id!r}.")
+
+    required_fields = (
+        "name", "equipmentId", "bodyWeightPercentage", "requiredAccessoryEquipmentIds",
+        "muscleGroups", "secondaryMuscleGroups", "generateWarmUpSets", "intraSetRestInSeconds",
+        "exerciseCategory", "numWorkSets", "restBetweenSetsSeconds",
+    )
+    missing = [field for field in required_fields if field not in exercise_entry]
+    if missing:
+        raise ValueError(f"Deterministic exercise materialization for {exercise_id} is missing plan fields: {', '.join(missing)}.")
+    count = exercise_entry["numWorkSets"]
+    if not isinstance(count, int) or isinstance(count, bool) or count < 1:
+        raise ValueError(f"Deterministic exercise materialization for {exercise_id} requires positive numWorkSets.")
+    rest = exercise_entry["restBetweenSetsSeconds"]
+    if not isinstance(rest, int) or isinstance(rest, bool) or rest < 0:
+        raise ValueError(f"Deterministic exercise materialization for {exercise_id} requires non-negative restBetweenSetsSeconds.")
+    if not isinstance(exercise_entry["generateWarmUpSets"], bool):
+        raise ValueError(f"Deterministic exercise materialization for {exercise_id} requires boolean generateWarmUpSets.")
+    if not isinstance(exercise_entry["requiredAccessoryEquipmentIds"], list):
+        raise ValueError(f"Deterministic exercise materialization for {exercise_id} requires an accessory ID list.")
+    if not isinstance(exercise_entry["muscleGroups"], list) or not exercise_entry["muscleGroups"]:
+        raise ValueError(f"Deterministic exercise materialization for {exercise_id} requires non-empty library muscle groups.")
+    if not isinstance(exercise_entry["secondaryMuscleGroups"], list):
+        raise ValueError(f"Deterministic exercise materialization for {exercise_id} requires a secondary muscle group list.")
+
+    set_number = int(exercise_id.removeprefix("EXERCISE_")) * 50
+    sets = []
+
+    def append_work_set(work_set):
+        sets.append({"id": f"SET_{set_number + len(sets)}", **work_set})
+
+    def append_rest_set():
+        sets.append({"id": f"SET_{set_number + len(sets)}", "type": "RestSet", "timeInSeconds": rest, "subCategory": "WorkSet"})
+
+    running_prescription = None
+    if exercise_type in {"WEIGHT", "BODY_WEIGHT"}:
+        min_reps, max_reps = exercise_entry.get("minReps"), exercise_entry.get("maxReps")
+        if not isinstance(min_reps, int) or isinstance(min_reps, bool) or min_reps < 1:
+            raise ValueError(f"Deterministic exercise materialization for {exercise_id} requires positive minReps.")
+        if not isinstance(max_reps, int) or isinstance(max_reps, bool) or max_reps < min_reps:
+            raise ValueError(f"Deterministic exercise materialization for {exercise_id} requires maxReps >= minReps.")
+        load_field = "weight" if exercise_type == "WEIGHT" else "additionalWeight"
+        prescriptions = exercise_entry.get("targetSetPrescriptions") or None
+        if prescriptions is not None:
+            if not isinstance(prescriptions, list) or len(prescriptions) != count:
+                raise ValueError(f"Deterministic exercise materialization for {exercise_id} requires one targetSetPrescriptions entry per work set.")
+            prescriptions = sorted(prescriptions, key=lambda item: item.get("workSetIndex", -1) if isinstance(item, dict) else -1)
+            missing_loads = [isinstance(target, dict) and load_field not in target for target in prescriptions]
+            supports_load_calibration = exercise_type == "WEIGHT" or (
+                exercise_type == "BODY_WEIGHT" and exercise_entry.get("equipmentId") is not None
+            )
+            if any(missing_loads) and (not all(missing_loads) or not supports_load_calibration
+                    or exercise_entry.get("requiresLoadCalibration") is not True):
+                raise ValueError(f"Deterministic exercise materialization for {exercise_id} may omit every target load only when native requiresLoadCalibration is enabled.")
+            for index, target in enumerate(prescriptions):
+                load = target.get(load_field) if isinstance(target, dict) else None
+                reps = target.get("reps") if isinstance(target, dict) else None
+                if (not isinstance(target, dict) or set(target) - {"workSetIndex", "reps", load_field}
+                        or target.get("workSetIndex") != index
+                        or not isinstance(reps, int) or isinstance(reps, bool) or not min_reps <= reps <= max_reps
+                        or (load_field in target and (not isinstance(load, (int, float)) or isinstance(load, bool) or load < 0))):
+                    raise ValueError(f"Deterministic exercise materialization for {exercise_id} has an invalid exact target at work set {index}.")
+                append_work_set({"type": "WeightSet" if exercise_type == "WEIGHT" else "BodyWeightSet", "reps": reps, load_field: 0 if load is None else load, "subCategory": "WorkSet"})
+                if index < count - 1:
+                    append_rest_set()
+        else:
+            # A zero load is the app's explicit calibration placeholder, not a starting-load guess.
+            for index in range(count):
+                work_set = {"type": "WeightSet" if exercise_type == "WEIGHT" else "BodyWeightSet", "reps": min_reps, load_field: 0, "subCategory": "WorkSet"}
+                append_work_set(work_set)
+                if index < count - 1:
+                    append_rest_set()
+    elif exercise_type in {"COUNTDOWN", "COUNTUP"}:
+        timed_targets = exercise_entry.get("timedSetPrescriptions")
+        if timed_targets is None:
+            duration = exercise_entry.get("timeInMillis")
+            if duration is None and isinstance(exercise_entry.get("durationSeconds"), int):
+                duration = exercise_entry["durationSeconds"] * 1000
+            if not isinstance(duration, int) or isinstance(duration, bool) or duration < 0:
+                raise ValueError(f"Deterministic exercise materialization for {exercise_id} requires timeInMillis or durationSeconds.")
+            auto_start = exercise_entry.get("autoStart", True)
+            auto_stop = exercise_entry.get("autoStop", duration > 0)
+            timed_targets = [{"timeInMillis": duration, "autoStart": auto_start, "autoStop": auto_stop} for _ in range(count)]
+        if not isinstance(timed_targets, list) or len(timed_targets) != count:
+            raise ValueError(f"Deterministic exercise materialization for {exercise_id} requires one timed prescription per work set.")
+        for index, target in enumerate(timed_targets):
+            if (not isinstance(target, dict) or not isinstance(target.get("timeInMillis"), int)
+                    or set(target) - {"timeInMillis", "autoStart", "autoStop", "targetWeight", "targetDistanceMeters", "targetCalories"}
+                    or isinstance(target.get("timeInMillis"), bool) or target["timeInMillis"] < 0
+                    or not isinstance(target.get("autoStart"), bool) or not isinstance(target.get("autoStop"), bool)):
+                raise ValueError(f"Deterministic exercise materialization for {exercise_id} has an invalid timed target at work set {index}.")
+            if target["autoStop"] and target["timeInMillis"] <= 0:
+                raise ValueError(f"Deterministic exercise materialization for {exercise_id} cannot auto-stop a zero-duration set.")
+            target_weight_fields = ("targetWeight", "targetDistanceMeters", "targetCalories")
+            append_work_set({
+                "type": "TimedDurationSet" if exercise_type == "COUNTDOWN" else "EnduranceSet",
+                **{field: target[field] for field in target_weight_fields if field in target},
+                "timeInMillis": target["timeInMillis"],
+                "autoStart": target["autoStart"],
+                "autoStop": target["autoStop"],
+            })
+            if index < count - 1:
+                append_rest_set()
+    else:
+        running_prescription = exercise_entry.get("runningPrescription")
+        if running_prescription is None and isinstance(exercise_entry.get("targetDistanceMeters"), (int, float)):
+            running_prescription = {
+                "environment": exercise_entry.get("environment", "OUTDOOR"),
+                "targetType": "DISTANCE",
+                "targetValue": exercise_entry["targetDistanceMeters"],
+            }
+        if count != 1 or not isinstance(running_prescription, dict):
+            raise ValueError(f"Deterministic exercise materialization for {exercise_id} requires one explicit runningPrescription.")
+        append_work_set({"type": "RunningSet"})
+
+    if exercise_entry.get("progressionMode") is not None:
+        progression_mode = exercise_entry["progressionMode"]
+    else:
+        progression_mode = "AUTO_REGULATION" if exercise_type in {"WEIGHT", "BODY_WEIGHT"} else "OFF"
+    supports_load_calibration = exercise_type == "WEIGHT" or (
+        exercise_type == "BODY_WEIGHT" and exercise_entry.get("equipmentId") is not None
+    )
+    notes = exercise_entry.get("notes", "")
+    item = {
+        "id": exercise_id,
+        "type": "Exercise",
+        "enabled": True,
+        "name": exercise_entry["name"],
+        "notes": notes,
+        "sets": sets,
+        "exerciseType": exercise_type,
+        "equipmentId": exercise_entry["equipmentId"],
+        "bodyWeightPercentage": exercise_entry["bodyWeightPercentage"],
+        "generateWarmUpSets": exercise_entry["generateWarmUpSets"],
+        "progressionMode": progression_mode,
+        "keepScreenOn": False,
+        "showCountDownTimer": exercise_type == "COUNTDOWN",
+        "intraSetRestInSeconds": exercise_entry["intraSetRestInSeconds"],
+        "muscleGroups": copy.deepcopy(exercise_entry["muscleGroups"]),
+        "secondaryMuscleGroups": copy.deepcopy(exercise_entry["secondaryMuscleGroups"]),
+        "requiredAccessoryEquipmentIds": copy.deepcopy(exercise_entry["requiredAccessoryEquipmentIds"]),
+        "requiresLoadCalibration": supports_load_calibration and (
+            exercise_entry.get("requiresLoadCalibration") is True or not exercise_entry.get("targetSetPrescriptions")
+        ),
+        "exerciseCategory": exercise_entry["exerciseCategory"],
+    }
+    if exercise_type == "RUNNING":
+        item["runningPrescription"] = copy.deepcopy(running_prescription)
+    if exercise_type in {"WEIGHT", "BODY_WEIGHT"}:
+        item["minReps"] = exercise_entry["minReps"]
+        item["maxReps"] = exercise_entry["maxReps"]
+    return item

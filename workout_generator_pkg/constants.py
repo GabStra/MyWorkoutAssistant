@@ -214,8 +214,7 @@ JSON_SCHEMA = {
                 "enabled": {"type": "boolean"},                                                                                                                                                                                                  
                 "name": {"type": "string"},                                                                                                                                                                                                      
                 "nameOverride": {"type": ["string", "null"]},
-                "notes": {"type": "string", "maxLength": 500},
-                "placementNotes": {"type": "string"},
+                "notes": {"type": "string"},
                 "sets": {"type": "array", "items": {"$ref": "#/$defs/Set"}},                                                                                                                                                                     
                 "exerciseType": {"$ref": "#/$defs/ExerciseType"},                                                                                                                                                                                
                 "minReps": {"type": "integer"},                                                                                                                                                                                                  
@@ -565,7 +564,6 @@ EXAMPLE_JSON = {
                     "enabled": True,                                                                                                                                                                                                             
                     "name": "Back Squat",                                                                                                                                                                                                        
                     "notes": "",
-                    "placementNotes": "",
                     "sets": [                                                                                                                                                                                                                    
                         {                                                                                                                                                                                                                        
                             "id": "33333333-3333-3333-3333-333333333333",                                                                                                                                                                        

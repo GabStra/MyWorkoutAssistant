@@ -5,8 +5,9 @@ from __future__ import annotations
 import copy
 import math
 import json
+import time
 
-from scipy.optimize import Bounds, LinearConstraint, linprog, milp
+from scipy.optimize import Bounds, LinearConstraint, OptimizeResult, linprog, milp
 from scipy.sparse import lil_matrix
 
 from .generation_audit import ASSUMPTIONS, audit_workout_package, plan_audit_package
@@ -213,16 +214,78 @@ def _constraints(report, requirements, frequency_complete, draft_frequency):
     return rows
 
 
-def _milp_solve(variables, features, timeout_seconds=None, balance=False, preserve_current=True):
+def _milp_with_incumbent(objective, integrality, bounds, constraints, options, initial_values):
+    """Use the public HiGHS API when SciPy cannot pass a known feasible start."""
+    import highspy
+
+    solver = highspy.Highs()
+    def checked(status):
+        if status == highspy.HighsStatus.kError:
+            raise RuntimeError('HiGHS rejected the model, options, or validated incumbent.')
+    checked(solver.setOptionValue('output_flag', False))
+    for name, value in options.items():
+        checked(solver.setOptionValue(name, value))
+    matrix = constraints.A.tocsc()
+    model = highspy.HighsLp()
+    model.num_col_, model.num_row_ = matrix.shape[1], matrix.shape[0]
+    model.col_cost_, model.col_lower_, model.col_upper_ = objective, bounds.lb, bounds.ub
+    model.row_lower_, model.row_upper_ = constraints.lb, constraints.ub
+    model.integrality_ = [highspy.HighsVarType.kInteger if value else highspy.HighsVarType.kContinuous
+                          for value in integrality]
+    model.a_matrix_.format_ = highspy.MatrixFormat.kColwise
+    model.a_matrix_.start_, model.a_matrix_.index_, model.a_matrix_.value_ = (
+        matrix.indptr, matrix.indices, matrix.data)
+    checked(solver.passModel(model))
+    if initial_values is not None:
+        checked(solver.setSolution(len(initial_values), list(range(len(initial_values))), initial_values))
+    checked(solver.run())
+    status, info, solution = solver.getModelStatus(), solver.getInfo(), solver.getSolution()
+    limited = {highspy.HighsModelStatus.kTimeLimit, highspy.HighsModelStatus.kIterationLimit,
+        highspy.HighsModelStatus.kSolutionLimit, highspy.HighsModelStatus.kObjectiveBound,
+        highspy.HighsModelStatus.kObjectiveTarget, highspy.HighsModelStatus.kInterrupt}
+    code = (0 if status == highspy.HighsModelStatus.kOptimal else 1 if status in limited
+            else 2 if status == highspy.HighsModelStatus.kInfeasible
+            else 3 if status == highspy.HighsModelStatus.kUnbounded else 4)
+    feasible = solution.value_valid and info.primal_solution_status == highspy.SolutionStatus.kSolutionStatusFeasible
+    return OptimizeResult(status=code, message=solver.modelStatusToString(status),
+        x=list(solution.col_value) if feasible else None,
+        mip_dual_bound=info.mip_dual_bound, mip_gap=info.mip_gap, mip_node_count=info.mip_node_count)
+
+
+def _milp_solve(variables, features, timeout_seconds=30, balance=False, preserve_current=True,
+                diagnostics=None, incumbent=None):
+    started = time.perf_counter()
+    build_seconds = 0.0
+    solver_seconds = 0.0
+
+    def finish(status, candidate, reason, result=None, validated=False):
+        if diagnostics is not None:
+            def number(value):
+                return float(value) if value is not None and math.isfinite(float(value)) else None
+            node_count = getattr(result, 'mip_node_count', None)
+            diagnostics.update({
+                'terminationStatus': int(result.status) if result is not None else None,
+                'terminationMessage': str(result.message) if result is not None else None,
+                'incumbentFound': getattr(result, 'x', None) is not None,
+                'incumbentValidated': validated,
+                'objectiveBound': number(getattr(result, 'mip_dual_bound', None)),
+                'relativeGap': number(getattr(result, 'mip_gap', None)),
+                'nodeCount': int(node_count) if node_count is not None else None,
+                'modelBuildSeconds': build_seconds,
+                'solveSeconds': solver_seconds,
+                'returnReason': reason,
+            })
+        return status, candidate
+
     count = len(variables)
     if not count:
-        return "optimal", []
+        return finish("optimal", [], 'empty_variable_domain', validated=True)
     # Use one integer set-count variable and one deviation variable per exercise occurrence.
     occurrence_count = sum(len(variable["members"]) for variable in variables)
     objective = [variable.get('objectiveCost', 0.0) for variable in variables] + [1.0 if preserve_current else 0.0] * occurrence_count
     lower = [variable["lower"] for variable in variables] + [0.0] * occurrence_count
     upper = [variable["upper"] for variable in variables] + [math.inf] * occurrence_count
-    integrality = [1] * count + [0] * occurrence_count
+    integrality = [int(variable.get('integer', True)) for variable in variables] + [0] * occurrence_count
     if balance:
         # Initial counts are seeds, not prescriptions: minimize concentration before distance from those seeds.
         epsilon = 1 / (1 + sum(max(abs(v['lower'] - current), abs(v['upper'] - current))
@@ -281,25 +344,55 @@ def _milp_solve(variables, features, timeout_seconds=None, balance=False, preser
     options = {"mip_rel_gap": 0.0} if balance else {}
     if timeout_seconds is not None:
         options['time_limit'] = timeout_seconds
-    result = milp(objective, integrality=integrality, bounds=Bounds(lower, upper),
-                  constraints=LinearConstraint(matrix.tocsr(), lows, highs), options=options)
+    constraint_matrix = matrix.tocsr()
+    bounds = Bounds(lower, upper)
+    constraints = LinearConstraint(constraint_matrix, lows, highs)
+    initial_values = None
+    if incumbent is not None:
+        if len(incumbent) != count:
+            raise ValueError('The incumbent does not match the current variable domain.')
+        initial_values = list(incumbent) + [abs(incumbent[index] - value)
+            for index, variable in enumerate(variables) for value in variable['current']]
+        if balance:
+            initial_values.extend(value ** 2 for value in incumbent)
+        initial_values.extend(int(bool(incumbent[index])) for index in activations)
+        activities = constraint_matrix @ initial_values
+        if (any(not math.isfinite(value) or not low - _TOLERANCE <= value <= high + _TOLERANCE
+                or (integer and abs(value - round(value)) > _TOLERANCE)
+                for value, low, high, integer in zip(initial_values, lower, upper, integrality))
+                or any(not low - _TOLERANCE <= value <= high + _TOLERANCE
+                    for value, low, high in zip(activities, lows, highs))):
+            raise ValueError('The incumbent violates the current bounds, integrality, or constraints.')
+    if diagnostics is not None and initial_values is not None:
+        diagnostics['incumbentSupplied'] = True
+        diagnostics['backend'] = 'highspy'
+    solver_started = time.perf_counter()
+    build_seconds = solver_started - started
+    solve_started = time.perf_counter()
+    result = (milp(objective, integrality=integrality, bounds=bounds,
+                   constraints=constraints, options=options) if initial_values is None else
+              _milp_with_incumbent(objective, integrality, bounds, constraints, options, initial_values))
+    solver_seconds = time.perf_counter() - solve_started
     if result.status == 2:
-        return "infeasible", None
+        return finish("infeasible", None, 'solver_infeasible', result)
     if result.x is None or result.status not in (0, 1):
-        return "unproven", None
+        return finish("unproven", None, 'no_incumbent' if result.x is None else 'unsupported_solver_status', result)
     values = result.x[:count]
-    if any(not math.isfinite(value) or abs(value - round(value)) > _TOLERANCE for value in values):
-        return 'unproven', None
-    counts = [int(round(value)) for value in values]
-    if any(not variable['lower'] <= value <= variable['upper']
+    if any(not math.isfinite(value) or (variable.get('integer', True)
+           and abs(value - round(value)) > _TOLERANCE) for variable, value in zip(variables, values)):
+        return finish('unproven', None, 'invalid_count_value', result)
+    counts = [int(round(value)) if variable.get('integer', True) else float(value)
+              for variable, value in zip(variables, values)]
+    if any(not variable['lower'] - _TOLERANCE <= value <= variable['upper'] + _TOLERANCE
            or (value and value < variable.get('minimumWhenSelected', variable['lower']))
            for variable, value in zip(variables, counts)):
-        return 'unproven', None
+        return finish('unproven', None, 'count_outside_bounds', result)
     if any(not minimum - _TOLERANCE <= intercept + sum(coeff * counts[index] for index, coeff in
            (coefficients.items() if isinstance(coefficients, dict) else enumerate(coefficients))) <= maximum + _TOLERANCE
            for _, minimum, maximum, intercept, coefficients in features):
-        return 'unproven', None
-    return 'optimal' if result.status == 0 else 'feasible', counts
+        return finish('unproven', None, 'feature_constraint_violation', result)
+    return finish('optimal' if result.status == 0 else 'feasible', counts,
+                  'accepted_optimal' if result.status == 0 else 'accepted_feasible', result, validated=True)
 
 
 def _check_solution(candidate, plan, report, requirements, frequency_complete):
@@ -346,8 +439,14 @@ def _conflicting_targets(variables, features):
                        A_ub=rows or None, b_ub=limits or None, bounds=bounds, method='highs')
     def infeasible(selected):
         return solve(selected).status == 2
+    integer_only = False
     if not infeasible(features):
-        return []  # A continuous relaxation cannot explain an integer-only conflict.
+        if not any(variable.get('minimumWhenSelected', 1) > 1 for variable in variables):
+            return []
+        status, _ = _milp_solve(variables, features, preserve_current=False, timeout_seconds=1)
+        if status != 'infeasible':
+            return []  # Do not report conflicts without an exact infeasibility proof.
+        integer_only = True
     ranges = {id(item): [item[3] + sum(value * variable['lower' if value >= 0 else 'upper']
                         for value, variable in zip(item[4], variables)),
                         item[3] + sum(value * variable['upper' if value >= 0 else 'lower']
@@ -355,12 +454,20 @@ def _conflicting_targets(variables, features):
     independent = [item for item in features if ranges[id(item)][1] < item[1] - _TOLERANCE
                    or ranges[id(item)][0] > item[2] + _TOLERANCE]
     remaining = [item for item in features if all(item is not conflict for conflict in independent)]
-    if not remaining or not infeasible(remaining):
-        remaining = []
-    for feature in list(remaining):
-        candidate = [item for item in remaining if item is not feature]
-        if infeasible(candidate):
-            remaining = candidate
+    if integer_only:
+        remaining = list(features)
+        for feature in list(remaining):
+            candidate = [item for item in remaining if item is not feature]
+            status, _ = _milp_solve(variables, candidate, preserve_current=False, timeout_seconds=1)
+            if status == 'infeasible':
+                remaining = candidate
+    else:
+        if not remaining or not infeasible(remaining):
+            remaining = []
+        for feature in list(remaining):
+            candidate = [item for item in remaining if item is not feature]
+            if infeasible(candidate):
+                remaining = candidate
     conflicts = []
     for item in independent + remaining:
         feature, minimum, maximum, intercept, coefficients = item
@@ -374,6 +481,8 @@ def _conflicting_targets(variables, features):
              'rangeWithinSlotBounds': ranges[id(item)],
              'slotIds': [member['slotId'] for value, variable in zip(coefficients, variables)
                          if value for member in variable['members']]}
+        if integer_only:
+            conflict['integerOnlyConflict'] = True
         if isolated:
             conflict['individuallyUnreachable'] = True
         else:
@@ -381,6 +490,140 @@ def _conflicting_targets(variables, features):
                                                            intercept - high.fun if high.success else None]
         conflicts.append(conflict)
     return conflicts
+
+
+def _prepared_selection_objectives(sessions, candidates, requirements, existing, base_report, variables, features):
+    """Build soft, source-approved menu preferences over the early count domain."""
+    # Recipe roles are model-proposed until qualify_recipe_contracts runs.  The
+    # early menu solve may therefore compare muscle-volume distribution only.
+    order = [goal for goal in requirements.get('objectiveOrder', []) if goal == 'distribution']
+    if not order:
+        return {'order': [], 'terms': {'source_balance': [], 'distribution': []}}
+    terms = {'source_balance': [], 'distribution': []}
+    base_count = len(variables)
+    def term(goal, label, intercept, coefficients, mode, multiplier=1):
+        upper = (max(0, intercept + sum(max(0, value) * variable['upper']
+                                        for value, variable in zip(coefficients, variables)))
+                 if mode == 'shortfall' else
+                 abs(intercept) + sum(abs(value) * variable['upper']
+                                      for value, variable in zip(coefficients, variables)))
+        terms[goal].append({'label': label, 'intercept': intercept, 'coefficients': coefficients,
+                            'mode': mode, 'multiplier': multiplier, 'upper': upper})
+
+    if 'source_balance' in order:
+        for rule_index, rule in enumerate(item for item in requirements.get('executionRules', [])
+                                           if item['kind'] == 'coverageBalance'):
+            for day_index in ([None] if rule['scope'] == 'weekly' else range(len(sessions))):
+                first, second = rule['first'], rule['second']
+                direction = -1 if rule.get('relationship', 'balanced') == 'first_not_less_than_second' else 1
+                coefficients = []
+                for variable in variables:
+                    slot = variable['members'][0]
+                    item = sessions[slot['day']]['exercises'][slot['index']]
+                    matches = (int(first in item.get('satisfiesCoverage', []))
+                               - int(second in item.get('satisfiesCoverage', []))) * direction
+                    coefficients.append(matches * (sessions[slot['day']]['timesCompletedInAWeek']
+                        if day_index is None else int(slot['day'] == day_index)))
+                intercept = 0
+                if day_index is None:
+                    intercept = sum(workout.get('timesCompletedInAWeek', 1) * item.get('numWorkSets', 0)
+                        * (int(first in item.get('satisfiesCoverage', []))
+                           - int(second in item.get('satisfiesCoverage', []))) * direction
+                        for workout in (existing or {}).get('workouts', []) for item in workout.get('exercises', []))
+                mode = 'shortfall' if direction == -1 else 'absolute'
+                term('source_balance', {'ruleIndex': rule_index, 'first': first, 'second': second,
+                    'scope': rule['scope'], 'workoutIndex': day_index,
+                    'relationship': rule.get('relationship', 'balanced')}, intercept, coefficients, mode)
+
+    if 'distribution' in order:
+        targets = requirements.get('auditTargets', {})
+        muscles = sorted(set(targets.get('weeklyEffectiveSets', {}))
+                         | set(targets.get('perSessionEffectiveSets', {})))
+        fixed = (base_report or {}).get('workouts', [])
+        frequency = sum(day['timesCompletedInAWeek'] for day in sessions) + sum(
+            day.get('timesCompletedInAWeek', 1) for day in (existing or {}).get('workouts', []))
+        if frequency:
+            base_weekly = (base_report or {}).get('weeklyVolume', {})
+            for muscle in muscles:
+                weekly_intercept = 2 * base_weekly.get(muscle, {}).get('effective', 0)
+                credit = [sum(candidates[variable['members'][0]['reference']]['creditsPerWorkingSet']
+                              .get(muscle, {}).get(kind, 0) for kind in ('direct', 'indirect'))
+                          for variable in variables]
+                for day_index, day in enumerate(sessions):
+                    coefficients = [2 * ((frequency if variable['members'][0]['day'] == day_index else 0)
+                                         - sessions[variable['members'][0]['day']]['timesCompletedInAWeek']) * value
+                                    for variable, value in zip(variables, credit)]
+                    term('distribution', {'muscle': muscle, 'workoutIndex': day_index, 'fixed': False},
+                         -weekly_intercept, coefficients, 'absolute', day['timesCompletedInAWeek'])
+                for workout_index, workout in enumerate(fixed):
+                    session_volume = workout.get('volume', {}).get(muscle, {}).get('effective', 0)
+                    coefficients = [-2 * sessions[variable['members'][0]['day']]['timesCompletedInAWeek'] * value
+                                    for variable, value in zip(variables, credit)]
+                    intercept = 2 * (frequency * session_volume - base_weekly.get(muscle, {}).get('effective', 0))
+                    term('distribution', {'muscle': muscle, 'workoutIndex': workout_index, 'fixed': True},
+                         intercept, coefficients, 'absolute', workout.get('timesCompletedInAWeek', 1))
+
+    order = [goal for goal in order if terms[goal]]
+    for goal in order:
+        for item in terms[goal]:
+            auxiliary_index = len(variables)
+            variables.append({'lower': 0, 'upper': item['upper'],
+                'objectiveCost': 0, 'selectionGoal': goal, 'selectionMultiplier': item['multiplier'],
+                'members': [], 'current': []})
+            features[:] = [(label, minimum, maximum, intercept, coefficients + [0])
+                           for label, minimum, maximum, intercept, coefficients in features]
+            coefficients = item['coefficients'] + [0] * (auxiliary_index - base_count) + [-1]
+            features.append((('selection_preference', goal, item['label'], 1), -math.inf, 0,
+                             item['intercept'], coefficients))
+            if item['mode'] == 'absolute':
+                features.append((('selection_preference', goal, item['label'], -1), -math.inf, 0,
+                                 -item['intercept'], [-value for value in item['coefficients']]
+                                 + [0] * (auxiliary_index - base_count) + [-1]))
+    return {'order': order, 'terms': terms}
+
+
+def _selection_preview(sessions, allocated, requirements, existing, candidates, base_report, details,
+                       variables, counts, status, hard_features):
+    if not details['order']:
+        return None
+    seed_counts = [sessions[variable['members'][0]['day']]['exercises'][variable['members'][0]['index']]['numWorkSets']
+                   for variable in variables]
+    selected_counts = counts[:len(variables)]
+    baseline_feasible = (all(minimum - _TOLERANCE <= intercept + sum(a*b for a, b in
+        zip(coefficients, seed_counts)) <= maximum + _TOLERANCE
+        for _, minimum, maximum, intercept, coefficients in hard_features)
+        and all(value == 0 or value >= variable.get('minimumWhenSelected', variable['lower'])
+                for variable, value in zip(variables, seed_counts)))
+    objectives = []
+    for goal in details['order']:
+        def cost(values):
+            return sum(item['multiplier'] * (abs(item['intercept'] + sum(a*b for a, b in
+                zip(item['coefficients'], values))) if item['mode'] == 'absolute' else
+                max(0, item['intercept'] + sum(a*b for a, b in zip(item['coefficients'], values))))
+                for item in details['terms'][goal])
+        baseline, proposal = cost(seed_counts), cost(selected_counts)
+        objectives.append({'priority': goal, 'baselineCost': baseline, 'proposalCost': proposal,
+                           'improvement': baseline - proposal})
+
+    comparisons = []
+    distribution = []
+    for muscle in sorted(set(requirements.get('auditTargets', {}).get('weeklyEffectiveSets', {}))
+                         | set(requirements.get('auditTargets', {}).get('perSessionEffectiveSets', {}))):
+        by_session = []
+        for source, days in (('candidate', sessions), ('selected', allocated)):
+            for index, day in enumerate(days):
+                value = sum(item.get('numWorkSets', 0) * sum(
+                    candidates[item['definition_id']]['creditsPerWorkingSet'].get(muscle, {}).get(kind, 0)
+                    for kind in ('direct', 'indirect')) for item in day.get('exercises', []))
+                by_session.append({'source': source, 'workoutIndex': index, 'effectiveSets': value})
+        for index, day in enumerate((base_report or {}).get('workouts', [])):
+            value = day.get('volume', {}).get(muscle, {}).get('effective', 0)
+            by_session.append({'source': 'fixed', 'workoutIndex': index, 'effectiveSets': value})
+        distribution.append({'muscle': muscle, 'sessions': by_session})
+    return {'scope': 'pre_prescription_count_domain', 'roleMapping': 'unqualified_and_not_used',
+            'baselineFeasibleWithinCountDomain': baseline_feasible,
+            'objectiveStatus': status, 'objectives': objectives,
+            'roleComparisons': comparisons, 'distributionByMuscle': distribution}
 
 
 def selection_volume_conflicts(sessions, candidates, targets):
@@ -405,10 +648,10 @@ def selection_volume_conflicts(sessions, candidates, targets):
 def allocate_prepared_sets(sessions, candidates, requirements, existing=None, equipment=None, restriction_policy=None,
                            select_movements=False):
     """Allocate the selected week before prescriptions can lock otherwise adjustable counts."""
-    base_volume = {}
+    base_volume, base_report = {}, None
     if existing:
-        _, report = _audit_raw(existing, equipment, requirements, restriction_policy, True)
-        base_volume = report['weeklyVolume']
+        _, base_report = _audit_raw(existing, equipment, requirements, restriction_policy, True)
+        base_volume = base_report['weeklyVolume']
     variables, layout_errors, bounds_errors = [], [], []
     for day_index, day in enumerate(sessions):
         groups = {}
@@ -441,9 +684,10 @@ def allocate_prepared_sets(sessions, candidates, requirements, existing=None, eq
                         'permittedPaths': {'exact': [path + '/' + field for path in paths for field in ('numWorkSets', 'allocationBounds', 'superset')],
                                            'descendants': [path + '/allocationBounds' for path in paths]}})
                 continue
-            # Penalize setup churn so optional candidates do not become many one-set exercises.
+            # Optional preparation is only a feasibility check; the full recipe
+            # pool is retained for the final executable solve.
             variables.append({'lower': 0 if select_movements else lower, 'upper': upper,
-                              **({'minimumWhenSelected': lower, 'selectionCost': ASSUMPTIONS['transitionSeconds']}
+                              **({'minimumWhenSelected': lower}
                                  if select_movements else {}),
                               'members': [slot for slot, _ in members],
                               'current': [item['numWorkSets'] for _, item in members]})
@@ -469,23 +713,45 @@ def allocate_prepared_sets(sessions, candidates, requirements, existing=None, eq
         for day_index in range(len(sessions)):
             features.append((('session_nonempty', day_index), 1, math.inf, 0,
                 [int(v['members'][0]['day'] == day_index) for v in variables]))
-        for rule in requirements.get('requiredCoverage', []):
-            for day_index in (range(len(sessions)) if rule['scope'] == 'eachSession' else [None]):
-                intercept = sum(item['numWorkSets'] * day['timesCompletedInAWeek']
-                    for day in (existing or {}).get('workouts', []) for item in day['exercises']
-                    if rule['key'] in item.get('satisfiesCoverage', [])) if day_index is None else 0
-                coefficients = []
-                for variable in variables:
-                    slot = variable['members'][0]
-                    item = sessions[slot['day']]['exercises'][slot['index']]
-                    matches = rule['key'] in item.get('satisfiesCoverage', [])
-                    coefficients.append(int(matches) * (sessions[slot['day']]['timesCompletedInAWeek']
-                        if day_index is None else int(slot['day'] == day_index)))
-                features.append((('coverage', rule['key'], day_index), 1, math.inf, intercept, coefficients))
-    status, counts = _milp_solve(variables, features, balance=True)
+    hard_variables, hard_features = copy.deepcopy(variables), copy.deepcopy(features)
+    candidate_variables = copy.deepcopy(variables)
+    preference_details = (_prepared_selection_objectives(sessions, candidates, requirements, existing,
+        base_report, variables, features) if select_movements else {'order': [], 'terms': {}})
+    diagnostic_feature_count = len(hard_features)
+    if select_movements and preference_details['order']:
+        status, counts = 'optimal', None
+        def verified_stage_counts(candidate):
+            return (candidate is not None and len(candidate) == len(variables)
+                and all(minimum - _TOLERANCE <= intercept + sum(a*b for a, b in zip(coefficients, candidate))
+                        <= maximum + _TOLERANCE
+                        for _, minimum, maximum, intercept, coefficients in features)
+                and all(count == 0 or count >= variable.get('minimumWhenSelected', variable['lower'])
+                        for variable, count in zip(variables, candidate)))
+
+        for stage_index, goal in enumerate(preference_details['order']):
+            for variable in variables:
+                variable['objectiveCost'] = (variable.get('selectionMultiplier', 1)
+                    if variable.get('selectionGoal') == goal else 0)
+            stage_status, stage_counts = _milp_solve(variables, features, preserve_current=False)
+            if verified_stage_counts(stage_counts):
+                counts = stage_counts
+            if stage_status != 'optimal' or not verified_stage_counts(stage_counts):
+                status = ('feasible' if counts is not None else
+                          'unproven' if stage_index and stage_status == 'infeasible' else
+                          stage_status if stage_status != 'optimal' else 'unverified')
+                break
+            locked_value = sum(variable['objectiveCost'] * count for variable, count in zip(variables, counts))
+            features.append((('selection_objective_lock', goal), locked_value, locked_value, 0,
+                             [variable['objectiveCost'] if variable.get('selectionGoal') == goal else 0
+                              for variable in variables]))
+        else:
+            status = 'optimal'
+    else:
+        status, counts = _milp_solve(variables, features, balance=not select_movements,
+                                   preserve_current=not select_movements)
     if status not in ('optimal', 'feasible'):
         return {'feasible': False, 'status': status,
-                'conflictingTargets': _conflicting_targets(variables, features) if status == 'infeasible' else [],
+                'conflictingTargets': _conflicting_targets(hard_variables, hard_features) if status == 'infeasible' else [],
                 'instruction': ('The current candidate pool and approved count limits conflict. Supply qualifying movement alternatives; '
                     'do not invent bounds, relax approved requirements, or claim all other selections are infeasible.')
                     if status == 'infeasible' else 'The bounded solve did not prove feasibility or infeasibility. Preserve the proposal and constraints; retry only after an explicit resume.'}
@@ -515,7 +781,7 @@ def allocate_prepared_sets(sessions, candidates, requirements, existing=None, eq
                         item['superset'] = None
     diagnostics = []
     rows, limits = [], []
-    for _, minimum, maximum, intercept, coefficients in features:
+    for _, minimum, maximum, intercept, coefficients in features[:diagnostic_feature_count]:
         if math.isfinite(maximum):
             rows.append(coefficients)
             limits.append(maximum - intercept)
@@ -523,20 +789,39 @@ def allocate_prepared_sets(sessions, candidates, requirements, existing=None, eq
             rows.append([-value for value in coefficients])
             limits.append(intercept - minimum)
     if rows:
-        for index, variable in enumerate(variables):
-            if variable['lower'] == variable['upper']:
-                continue
-            objective = [int(position == index) for position in range(len(variables))]
+        diagnostic_objectives = [(
+            [int(position == index) for position in range(len(variables))],
+            {'slotIds': [slot['slotId'] for slot in variable['members']]})
+            for index, variable in enumerate(variables) if variable['members'] and variable['lower'] != variable['upper']]
+        for reference in sorted(candidates):
+            objective = [sum(sessions[slot['day']]['timesCompletedInAWeek']
+                             for slot in variable['members'] if slot['reference'] == reference)
+                         for variable in variables]
+            slots = [slot['slotId'] for variable in variables for slot in variable['members']
+                     if slot['reference'] == reference]
+            if len(slots) > 1:
+                diagnostic_objectives.append((objective, {'scope': 'weekly',
+                    'definitionReference': reference, 'slotIds': slots}))
+        for objective, identity in diagnostic_objectives:
+            allowed_minimum = sum(value * variable['lower'] for value, variable in zip(objective, variables))
+            allowed_maximum = sum(value * variable['upper'] for value, variable in zip(objective, variables))
             minimum = linprog(objective, A_ub=rows, b_ub=limits,
                 bounds=[(v['lower'], v['upper']) for v in variables], method='highs')
             if minimum.success:
                 required = math.ceil(minimum.fun - _TOLERANCE)
-                if required > variable['lower']:
-                    diagnostics.append({'slotIds': [slot['slotId'] for slot in variable['members']],
-                        'minimumRequiredSets': required, 'allowedMinimum': variable['lower'], 'allowedMaximum': variable['upper'],
+                if required > allowed_minimum:
+                    diagnostics.append({**identity,
+                        'minimumRequiredSets': required, 'allowedMinimum': allowed_minimum, 'allowedMaximum': allowed_maximum,
                         'instruction': 'These counts are forced by the current selection, placements and approved volume targets. To distribute work, revise placement/selection or source-authorized bounds, not hand-written counts. This is not a physiological set limit.'})
+    preview = None
+    if select_movements and preference_details['order']:
+        preference_details['status'] = status
+        preview = _selection_preview(sessions, allocated, requirements, existing, candidates, base_report,
+                                     preference_details, candidate_variables, counts, status, hard_features)
     return {'feasible': True, 'solveStatus': status, 'sessions': allocated, 'allocationDiagnostics': diagnostics,
-            'scope': 'Integer volume allocation only; detailed timing, effort, setup and programming review still required.'}
+            **({'selectionPreview': preview} if preview else {}),
+            'scope': ('Pre-prescription muscle-credit count-domain comparison only; proposed role labels are unqualified and do not constrain this result. '
+                'Detailed prescriptions, timing, effort, setup and qualified-role coverage remain for later stages.')}
 
 
 def _blocking_audit_errors(report, frequency_complete, requirements):
@@ -804,7 +1089,7 @@ def qualify_coordinated_candidate(client, arguments, equipment, messages, traini
                  'historyFingerprint': getattr(training_history, 'fingerprint', None),
                  'resolvedDecisions': resolved_decisions(messages)}
     _, previous = _latest_result(messages, 'audit_workout_plan')
-    assessment = latest_assessment(messages, authority)
+    assessment = latest_assessment(messages, authority, stored.get('requirements'), equipment or {})
     if assessment is None:
         # A reviewed draft may predate a metadata-only requirements refresh.
         # Reuse its findings as repair guidance only when the stored receipts
@@ -817,9 +1102,7 @@ def qualify_coordinated_candidate(client, arguments, equipment, messages, traini
             if (requirements_metadata_equivalent(previous_requirements, stored)
                     and all(previous.get(key) == authority[key] for key in (
                         'libraryFingerprint', 'historyFingerprint', 'resolvedDecisions'))):
-                assessment = latest_assessment(messages, previous)
-    if not assessment or not any(group['disposition'] == 'repair' for group in assessment['groups']):
-        return arguments, None
+                assessment = latest_assessment(messages, previous, stored.get('requirements'), equipment or {})
     validate(arguments, _DRAFT_SCHEMA)
     references = sorted({item['definition_id'] for day in arguments['workouts'] for item in day['exercises']})
     candidates = {}
@@ -849,11 +1132,9 @@ def qualify_coordinated_candidate(client, arguments, equipment, messages, traini
             occurrence = exercise_refs[exercise_index]
             fields = qualification_fields_by_occurrence.setdefault(occurrence, set())
             field_path = path_parts[4:]
-            if field_path and field_path[0] in ('progressionPlan', 'progressionMethod', 'satisfiesCoverage'):
+            if field_path and field_path[0] in ('satisfiesCoverage',):
                 fields.add(field_path[0])
             elif not field_path:
-                if 'progression' in dimensions:
-                    fields.update(('progressionPlan', 'progressionMethod'))
                 if 'coverage' in dimensions:
                     fields.add('satisfiesCoverage')
     prepared = {'definition_ids': references, 'candidates': candidates, 'libraryFingerprint': authority['libraryFingerprint'],
@@ -886,7 +1167,7 @@ def qualify_coordinated_candidate(client, arguments, equipment, messages, traini
             is_changed = ownership and (occurrence not in initial_definitions
                 or initial_definitions.get(occurrence) != item.get('definition_id'))
             explicitly_owned = explicit.get(occurrence, set())
-            owned_fields = ({'progressionPlan', 'progressionMethod', 'satisfiesCoverage'} if is_changed
+            owned_fields = ({'satisfiesCoverage'} if is_changed
                 else qualification_fields_by_occurrence.get(occurrence, set()))
             owned_fields -= explicitly_owned
             if not owned_fields:
@@ -894,16 +1175,13 @@ def qualify_coordinated_candidate(client, arguments, equipment, messages, traini
             contract = contracts[item['definition_id']]
             # Apply defaults only to new/changed recipes or the exact recipe
             # fields an independent finding assigned to qualification. Submitted
-            # values/removals remain authoritative; an existing progression
-            # method is a goal/programming choice and is never overwritten.
-            for field in ('progressionPlan', 'satisfiesCoverage'):
+            # values/removals remain authoritative.
+            for field in ('satisfiesCoverage',):
                 if field not in owned_fields:
                     continue
                 item.pop(field, None)
                 if field in contract:
                     item[field] = copy.deepcopy(contract[field])
-            if owned_fields.intersection({'progressionPlan', 'progressionMethod'}) and 'progressionMethod' not in item:
-                item['progressionMethod'] = copy.deepcopy(contract.get('progressionMethod', 'sourceDefined'))
     return candidate, qualified
 
 
@@ -917,7 +1195,7 @@ def _qualification_review_feedback(assessment, audit_result):
     findings = review.get('findings') or []
     exercises = draft.get('workouts') or []
     feedback = {}
-    owned_fields = {'progressionPlan', 'progressionMethod', 'satisfiesCoverage'}
+    owned_fields = {'satisfiesCoverage'}
     for group in assessment.get('groups', []):
         if group.get('disposition') != 'repair':
             continue
@@ -977,20 +1255,22 @@ def _latest_recipe_qualification(messages):
         contracts = qualification.get('contracts')
         if (isinstance(contracts, list) and all(isinstance(item, dict)
                 and isinstance(item.get('definition_id'), str)
-                and isinstance(item.get('progressionPlan'), dict) for item in contracts)):
+                and isinstance(item.get('satisfiesCoverage'), list) for item in contracts)):
             return copy.deepcopy(qualification)
     return None
 
 
 def reusable_joint_receipt(owner, requirements_id, sessions, requirements, equipment, messages, training_history=None,
                            restriction_policy=None, allow_educated_load_guesses=True,
-                           preserve_source_selection=False):
+                           preserve_source_selection=False, redistribution_constraints=None):
     """Return prior solver evidence only when the same approved objective still owns this prescription."""
     from .joint_planning import (SELECTION_POLICY_VERSION, joint_objective_input_fingerprint)
     receipt = owner.get('coordinatedJointPlanning') or owner.get('automaticAllocation') or {}
     from .planning_tools import library_fingerprint
     expected_policy = 'approved' if requirements.get('objectiveOrder') is not None else 'preserve_candidate_only'
+    # Generic objective identity cannot establish a solve performed under additional repair constraints.
     if (receipt.get('feasible') is not True or receipt.get('status') not in ('feasible', 'optimal')
+            or (receipt.get('redistributionOptimization') and not redistribution_constraints)
             or receipt.get('selectionPolicyVersion') != SELECTION_POLICY_VERSION
             or receipt.get('preserveSourceSelection') is not bool(preserve_source_selection)
             or receipt.get('objectivePolicy') != expected_policy
@@ -1002,7 +1282,8 @@ def reusable_joint_receipt(owner, requirements_id, sessions, requirements, equip
     expected = joint_objective_input_fingerprint(sessions, requirements, equipment, training_history, messages,
         restriction_policy=restriction_policy,
         allow_educated_load_guesses=allow_educated_load_guesses,
-        preserve_source_selection=preserve_source_selection)
+        preserve_source_selection=preserve_source_selection,
+        redistribution_constraints=redistribution_constraints)
     if receipt.get('objectiveInputFingerprint') != expected:
         return None
     return copy.deepcopy(receipt)
@@ -1019,12 +1300,14 @@ def auto_allocate_workout(result, equipment, messages, allow_educated_load_guess
     objective_order = set(stored.get('requirements', {}).get('objectiveOrder') or [])
     balance_rules = [rule for rule in stored.get('requirements', {}).get('executionRules', []) if rule['kind'] == 'coverageBalance']
     report = result.get('audit', {})
-    needs_balance = 'source_balance' in objective_order and any(any(values.get(rule['first'], 0) != values.get(rule['second'], 0) for values in (
+    needs_balance = 'source_balance' in objective_order and any(any(
+        (values.get(rule['first'], 0) < values.get(rule['second'], 0)
+            if rule.get('relationship') == 'first_not_less_than_second'
+            else values.get(rule['first'], 0) != values.get(rule['second'], 0)) for values in (
         [report.get('weeklyCoverageSets', {})] if rule['scope'] == 'weekly' else
         [day.get('coverageSets', {}) for day in report.get('workouts', [])])) for rule in balance_rules)
     from .joint_planning import (solve_prescribed_week, prescription_patch, prescription_fingerprint,
         joint_problem_fingerprint, SELECTION_POLICY_VERSION)
-    from .recipe_contracts import progression_capability, progression_margin, recorded_evidence
     _, previous = _latest_result(messages, 'audit_workout_plan')
     _, workers = _latest_result(messages, 'draft_workout_sessions')
     automatic = not any(message.get('canonicalDraftPreview') for message in messages)
@@ -1038,24 +1321,24 @@ def auto_allocate_workout(result, equipment, messages, allow_educated_load_guess
         receipt_owner = {**owner, 'coordinatedJointPlanning': proof}
         receipt = reusable_joint_receipt(receipt_owner, result['requirementsId'], draft['workouts'],
             requirements, equipment, messages, training_history, restrictions,
-            allow_educated_load_guesses, automatic)
+                        allow_educated_load_guesses, False)
         return bool(receipt and proof.get('solvedPrescriptionHash') == prescription_fingerprint(draft['workouts']))
 
     already_solved = any(solved_receipt_matches(proof, owner) for proof, owner in proofs)
-    needs_progression = False
+    needs_balance = needs_balance and not already_solved
     needs_distribution = False
-    if automatic and not already_solved and objective_order.intersection({'progression', 'distribution'}):
-        definitions = {f'LIBRARY_{i}': value for i, value in enumerate(sorted(equipment.get('exerciseDefinitions', []), key=lambda value: value['id']))}
-        if 'progression' in objective_order:
-            evidence = recorded_evidence(messages, library_fingerprint(equipment), getattr(training_history, 'fingerprint', None))
-            penalties = {progression_margin(item, progression_capability(definitions[item['definition_id']], equipment,
-                evidence.get(definitions[item['definition_id']]['id'])))['penalty']
-                for day in draft['workouts'] for item in day['exercises'] if item['definition_id'] in definitions}
-            needs_progression = len(penalties) > 1
-        if 'distribution' in objective_order:
-            counts = [item['numWorkSets'] for day in draft['workouts'] for item in day['exercises']]
-            needs_distribution = len(set(counts)) > 1
-    if not needs_numbers and not needs_balance and not needs_progression and not needs_distribution:
+    if automatic and not already_solved and 'distribution' in objective_order:
+        frequency = sum(day['timesCompletedInAWeek'] for day in draft['workouts'])
+        targets = requirements['auditTargets']
+        muscles = set(targets.get('weeklyEffectiveSets', {})) | set(targets.get('perSessionEffectiveSets', {}))
+        needs_distribution = bool(frequency) and any(
+            abs(day.get('volume', {}).get(muscle, {}).get('effective', 0)
+                - report.get('weeklyVolume', {}).get(muscle, {}).get('effective', 0) / frequency) > _TOLERANCE
+            for day in report.get('workouts', []) for muscle in muscles)
+    durations = [day['estimatedSeconds'] for day in report.get('workouts', [])]
+    needs_duration_balance = (automatic and not already_solved and 'duration_balance' in objective_order
+                              and len(durations) > 1 and max(durations) - min(durations) > _TOLERANCE)
+    if not needs_numbers and not needs_balance and not needs_distribution and not needs_duration_balance:
         return result
     sessions = stored.get('requirements', {}).get('sessionsPerWeek')
     if sessions and sum(day['timesCompletedInAWeek'] for day in draft['workouts']) != sessions:
@@ -1065,10 +1348,10 @@ def auto_allocate_workout(result, equipment, messages, allow_educated_load_guess
     current_problem_fingerprint = joint_problem_fingerprint(draft['workouts'], requirements, equipment,
         training_history, messages, restriction_policy=restrictions,
         allow_educated_load_guesses=allow_educated_load_guesses,
-        preserve_source_selection=automatic)
+        preserve_source_selection=False)
     if (cached.get('inputDraftId') == result['draftId'] and cached.get('objective') == 'joint_prescriptions'
             and cached.get('application') == application and cached.get('selectionPolicyVersion') == SELECTION_POLICY_VERSION
-            and cached.get('preserveSourceSelection') is automatic
+            and cached.get('preserveSourceSelection') is False
             and cached.get('problemFingerprint') == current_problem_fingerprint):
         return {**result, 'automaticAllocation': copy.deepcopy(cached), **(
             {'jointPlanningStopped': True, 'instruction': cached['instruction']} if not cached['feasible'] else {})}
@@ -1077,8 +1360,8 @@ def auto_allocate_workout(result, equipment, messages, allow_educated_load_guess
     joint = solve_prescribed_week(draft['workouts'], stored['requirements'], equipment,
         restrictions, allow_educated_load_guesses=allow_educated_load_guesses,
         training_history=training_history, messages=messages,
-        preserve_source_selection=automatic)
-    patch = prescription_patch(draft['workouts'], joint['sessions']) if joint['feasible'] else []
+        preserve_source_selection=False)
+    patch = prescription_patch(draft['workouts'], joint['sessions'], joint.get('occurrenceLineage')) if joint['feasible'] else []
     receipt = {'inputDraftId': result['draftId'], 'objective': 'joint_prescriptions', 'application': application,
                **{key: value for key, value in joint.items() if key not in ('sessions', 'audit')}, 'patch': patch}
     if logger:

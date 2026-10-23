@@ -6,6 +6,25 @@ import pytest
 from workout_generator_pkg import generation_audit as audit
 
 
+def test_volume_disclosure_uses_audited_roles_and_weekly_frequency():
+    report = {'weeklyVolume': {'shoulders': {'direct': 5, 'indirect': 2, 'effective': 7}},
+        'workouts': [
+            {'timesCompletedInAWeek': 2, 'contributions': [
+                {'exercise': 'Press', 'workingSets': 2, 'credits': {'shoulders': {'direct': 2, 'indirect': 0}}},
+                {'exercise': 'Row', 'workingSets': 2, 'credits': {'shoulders': {'direct': 0, 'indirect': 1}}}]},
+            {'timesCompletedInAWeek': 1, 'contributions': [
+                {'exercise': 'Fly', 'workingSets': 1, 'credits': {'shoulders': {'direct': 1, 'indirect': 0}}}]}]}
+    before = copy.deepcopy(report)
+    text = audit.render_volume_disclosure(report, 'shoulders')
+    assert '7 effective sets weekly (5 direct + 2 weighted indirect)' in text
+    direct, indirect = text.split('Indirect credit sources:')
+    assert 'Press: 4 working sets weekly (4 credited sets)' in direct
+    assert 'Fly: 1 working sets weekly (1 credited sets)' in direct
+    assert 'Row' not in direct and 'Press' not in indirect
+    assert 'Row: 4 working sets weekly (2 credited sets)' in indirect
+    assert report == before
+
+
 def _exercise(exercise_id, reps, count, *, primary=None, secondary=None, intra=None):
     sets = []
     for index in range(count):

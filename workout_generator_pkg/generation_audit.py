@@ -8,6 +8,7 @@ from .api_client import json_call_reasoner_only_with_loading
 from .domain_ops import build_workout_structure
 from .plan_contract import ContractValidationError, validate_plan_index_contract
 from .muscle_roles import MUSCLE_LABELS
+from .repair_capabilities import RECOVERY_ADJUSTMENT_GUIDANCE
 
 
 MUSCLES = {
@@ -34,6 +35,267 @@ EXCLUDED_VOLUME_CATEGORIES = {"WarmupSet", "CalibrationSet"}
 VOLUME_SET_TYPES = {'WEIGHT': 'WeightSet', 'BODY_WEIGHT': 'BodyWeightSet'}
 
 
+def programming_demand_evidence():
+    """State what library data can and cannot establish, before and after audit."""
+    return {
+        'known': ('Before prescription: library exercise type/category, movement identity, equipment, and primary/secondary '
+            'muscle fields. After audit: prescribed work-set count, reps or duration, effort criteria, rest fields, and '
+            'audited direct/indirect library muscle credits by occurrence and session.'),
+        'interpretation': ('Movement roles and muscle credits describe the program and library accounting; they are not '
+            'measurements of fatigue or proof that two exercises impose the same physical demand.'),
+        'notRepresentedByCurrentLibraryFields': ['support configuration', 'trunk bracing demand', 'spinal loading',
+            'grip demand', 'eccentric or unfamiliar-work demand', 'actual weekday spacing'],
+        'personalTolerance': ('Unknown without comparable execution and recovery evidence; do not convert missing '
+            'information into a failure or approval.'),
+        'optionalLibraryProperties': ('Reviewed programmingDemands annotations carry explicit present/absent values and sources. '
+            'Missing annotations stay unknown. They describe execution properties, not their severity, equivalent fatigue or personal capacity.'),
+    }
+
+
+def render_volume_disclosure(report, muscle):
+    """Render the audited credits, never infer muscle roles from exercise names."""
+    totals = report['weeklyVolume'][muscle]
+    sources = {'direct': {}, 'indirect': {}}
+    for workout in report['workouts']:
+        frequency = workout['timesCompletedInAWeek']
+        for contribution in workout['contributions']:
+            credits = contribution['credits'].get(muscle, {})
+            for role, entries in sources.items():
+                credit = credits.get(role, 0) * frequency
+                if credit:
+                    entry = entries.setdefault(contribution['exercise'], {'sets': 0, 'credit': 0})
+                    entry['sets'] += contribution['workingSets'] * frequency
+                    entry['credit'] += credit
+    text = (f"{MUSCLE_LABELS.get(muscle, muscle)}: {totals['effective']:g} effective sets weekly "
+            f"({totals['direct']:g} direct + {totals['indirect']:g} weighted indirect).")
+    for role, entries in sources.items():
+        details = '; '.join(f"{name}: {entry['sets']:g} working sets weekly "
+                            f"({entry['credit']:g} credited sets)" for name, entry in entries.items())
+        text += f" {role.capitalize()} credit sources: {details or 'none'}."
+    return text
+
+
+def render_plan_disclosures(report, muscles=None, source_draft=None, coverage_rules=()):
+    """One factual disclosure view for preview, review and export; no inferred anatomy."""
+    muscles = report['weeklyVolume'] if muscles is None else muscles
+    lines = ['Code-computed credit sources:']
+    lines.extend(render_volume_disclosure(report, muscle) for muscle in muscles if muscle in report['weeklyVolume'])
+    lines.extend(['', 'Credits use the library\'s tracked regions. Finer anatomical sub-region totals are not '
+        'independently available; the exercise and movement distribution is reported below without inventing them.'])
+    if 'back' in muscles:
+        lines.append('Back detail — lats versus upper back: the library credits one combined region, '
+            'so separate exercise attribution and relative development of these subregions are unverified. '
+            'The horizontal-pull and vertical-pull rows below identify selected movement sources; '
+            'these roles do not establish a measured allocation between lats and upper back.')
+    if 'shoulders' in muscles:
+        lines.append('Shoulder detail — anterior, lateral and rear deltoids: aggregate primary/secondary '
+            'shoulder credits do not independently separate individual heads. The lateral-delt and rear-delt '
+            'rows below identify movements explicitly assigned those roles. Pressing sources are listed '
+            'in the shoulder credit sources and horizontal/vertical push rows; anterior-delt-specific '
+            'attribution and relative head development remain unverified. These descriptions add no credits or quotas.')
+    descriptions = {rule['key']: rule['description'] for rule in coverage_rules}
+    sources = {}
+    if source_draft:
+        for day, source_day in zip(report['workouts'], source_draft.get('workouts', []), strict=True):
+            frequency = day['timesCompletedInAWeek']
+            for contribution, exercise in zip(day['contributions'], source_day['exercises'], strict=True):
+                for role in set(exercise.get('satisfiesCoverage', [])):
+                    entries = sources.setdefault(role, {})
+                    name = contribution['exercise']
+                    entries[name] = entries.get(name, 0) + contribution['workingSets'] * frequency
+    for role, count in report.get('weeklyCoverageSets', {}).items():
+        details = '; '.join(f'{name}: {sets:g} working sets weekly' for name, sets in sources.get(role, {}).items())
+        lines.append(f"{descriptions.get(role, role.replace('_', ' '))}: {count:g} working sets weekly. "
+                     + (details + '.' if details else ''))
+    if report.get('coverageAccounting'):
+        lines.append(report['coverageAccounting'])
+    lines.extend(['', f"Total weekly working sets: {report['weeklyWorkingSets']} (each physical set counted once; warm-ups excluded)."])
+    return '\n'.join(lines)
+
+
+def render_program_guidance(report, muscles=None, source_draft=None, coverage_rules=()):
+    """Render requirement exceptions and code-computed disclosures for the final artifact."""
+    overrides = report.get('requirementOverrides', {})
+    exceptions = '\n'.join(f"{overrides['status'].capitalize()} requirement exception: {change['path']} "
+        f"{change['from']} to {change['to']}. All unlisted requirements remain binding."
+        for change in overrides.get('changes', []))
+    return (exceptions + '\n\n' if exceptions else '') + RECOVERY_ADJUSTMENT_GUIDANCE + '\n\n' + render_plan_disclosures(
+        report, muscles, source_draft, coverage_rules)
+
+
+def build_programming_summary(report, emitted_report, source_draft, plan_index, review_draft,
+                              progression_capabilities, weekly_targets, final_artifact=None,
+                              requirements=None, priority_execution=None, priority_tradeoffs=None,
+                              demand_distribution=None, definition_demand_facts_by_ref=None):
+    """Build reviewer facts from audited prescriptions while retaining occurrence identity."""
+    if final_artifact is None:
+        from .domain_ops import reviewable_workout_artifact
+        final_artifact = reviewable_workout_artifact(plan_index, '')
+    plan_exercises = {exercise['id']: exercise for exercise in plan_index['exercises']}
+    review_exercises = {exercise['id']: exercise for exercise in review_draft['exercises']}
+    sources_by_exercise = {}
+    for source_day, plan_day in zip(source_draft['workouts'], plan_index['workouts'], strict=True):
+        for source, identifier in zip(source_day['exercises'], plan_day['exerciseIds'], strict=True):
+            plan_exercise = plan_exercises[identifier]
+            review_exercise = review_exercises[identifier]
+            if source['definition_id'] != review_exercise['libraryDefinitionId']:
+                raise ValueError(f'Exercise occurrence {identifier} does not match its submitted definition.')
+            sources_by_exercise[identifier] = (source, plan_exercise, plan_day, review_exercise)
+
+    exposures = {}
+    contributions_by_exercise = {item['exerciseId']: item for day in report['workouts']
+        for item in day['contributions']}
+    for identifier, (source, plan_exercise, plan_day, review_exercise) in sources_by_exercise.items():
+        reference = review_exercise['libraryDefinitionId']
+        entry = exposures.setdefault(reference, {'name': plan_exercise['name'],
+            'weeklyWorkingSets': 0, 'occurrences': []})
+        count = source['numWorkSets'] * plan_day['timesCompletedInAWeek']
+        contribution = contributions_by_exercise.get(identifier, {})
+        entry['weeklyWorkingSets'] += count
+        entry['occurrences'].append({'exercise': identifier, 'session': plan_day['name'], 'sets': source['numWorkSets'],
+            'sessionsPerWeek': plan_day['timesCompletedInAWeek'],
+            'category': plan_exercise.get('exerciseCategory'),
+            'exerciseType': plan_exercise.get('exerciseType'),
+            'movementRef': copy.deepcopy(plan_exercise.get('movementRef')),
+            'programmingDemandFacts': copy.deepcopy((definition_demand_facts_by_ref or {}).get(reference, {})),
+            'equipmentId': plan_exercise.get('equipmentId'),
+            'requiredAccessoryEquipmentIds': copy.deepcopy(plan_exercise.get('requiredAccessoryEquipmentIds', [])),
+            'primaryMuscles': copy.deepcopy(plan_exercise.get('muscleGroups', [])),
+            'secondaryMuscles': copy.deepcopy(plan_exercise.get('secondaryMuscleGroups', [])),
+            'roles': source.get('satisfiesCoverage', []),
+            'prescribedReps': ([source['minReps'], source['maxReps']]
+                if source.get('minReps') is not None and source.get('maxReps') is not None else None),
+            'prescribedDurationSeconds': source.get('durationSeconds'),
+            'effortAcceptance': source.get('effortAcceptance'),
+            'restBetweenSetsSeconds': source.get('restBetweenSetsSeconds'),
+            'restAfterExerciseSeconds': source.get('restAfterExerciseSeconds'),
+            'intraSetRestInSeconds': source.get('intraSetRestInSeconds'),
+            'weeklyMuscleCredits': {muscle: {role: value * plan_day['timesCompletedInAWeek']
+                for role, value in credits.items()} for muscle, credits in contribution.get('credits', {}).items()},
+            'loadCeilingKg': progression_capabilities.get(reference, {}).get('maximumSelectableLoadKg'),
+            'capacityEvidenceStatus': progression_capabilities.get(reference, {}).get('evidenceStatus', 'unknown')})
+
+    coverage_requirements = []
+    coverage_balance_evidence = []
+    if requirements:
+        coverage_sessions = report.get('workouts', [])
+        weekly_coverage = report.get('weeklyCoverageSets', {})
+        for requirement in requirements.get('requiredCoverage', []):
+            key = requirement['key']
+            coverage_requirements.append({
+                'key': key, 'description': requirement['description'], 'scope': requirement['scope'],
+                **({'intent': requirement['intent']} if requirement.get('intent') is not None else {}),
+                'weeklyWorkingSets': weekly_coverage.get(key, 0),
+                'sessionWorkingSets': [{'session': day['name'], 'workingSets': day.get('coverageSets', {}).get(key, 0)}
+                    for day in coverage_sessions],
+                'interpretation': ('Development intent is qualitative; these exposure counts do not by themselves establish adequate development.'
+                    if requirement.get('intent') == 'development' else
+                    'Required role presence follows scope; these counts do not set a minimum dose.')})
+        for rule in requirements.get('executionRules', []):
+            if rule['kind'] != 'coverageBalance':
+                continue
+            pair = {'first': rule['first'], 'second': rule['second'], 'scope': rule['scope']}
+            relationship = rule.get('relationship', 'balanced')
+            pair['relationship'] = relationship
+            if rule['scope'] == 'weekly':
+                pair['workingSets'] = {key: weekly_coverage.get(key, 0)
+                    for key in (rule['first'], rule['second'])}
+                counts = pair['workingSets']
+                if relationship == 'first_not_less_than_second':
+                    pair['comparisonOutcome'] = ('met' if counts[rule['first']] >= counts[rule['second']]
+                        else 'first_below_second')
+                else:
+                    pair['absoluteDifference'] = abs(counts[rule['first']] - counts[rule['second']])
+            else:
+                pair['sessions'] = [{'session': day['name'], 'workingSets': {
+                    key: day.get('coverageSets', {}).get(key, 0)
+                    for key in (rule['first'], rule['second'])}}
+                    for day in coverage_sessions]
+                for session in pair['sessions']:
+                    counts = session['workingSets']
+                    if relationship == 'first_not_less_than_second':
+                        session['comparisonOutcome'] = ('met' if counts[rule['first']] >= counts[rule['second']]
+                            else 'first_below_second')
+                    else:
+                        session['absoluteDifference'] = abs(counts[rule['first']] - counts[rule['second']])
+            pair['interpretation'] = (
+                ('The preferred comparison is for the first role to have at least as many counted working sets as the second; this is a soft objective, not a hard quota.'
+                    if relationship == 'first_not_less_than_second' else
+                    'Requested qualitative balance relationship; no numeric tolerance is approved. Unequal counts alone are not a violation.')
+                + ' Coverage roles may overlap.')
+            coverage_balance_evidence.append(pair)
+
+    sessions = []
+    for day, emitted, artifact_day in zip(report['workouts'], emitted_report['workouts'],
+                                          final_artifact['workouts'], strict=True):
+        setup_by_exercise = {item['exerciseId']: item for item in emitted.get('setupEstimates', [])}
+        exercise_order = []
+        transitions = []
+        previous_block_last = None
+        pending_rest_seconds = 0
+        for component in artifact_day['components']:
+            if component['type'] == 'Rest':
+                if previous_block_last is not None:
+                    pending_rest_seconds += component['timeInSeconds']
+                continue
+            exercises = (component.get('exercises', []) if component['type'] == 'Superset'
+                         else [component] if component['type'] == 'Exercise' else [])
+            if not exercises:
+                continue
+            current_block = [{'id': exercise['id'], 'name': exercise['name']} for exercise in exercises]
+            exercise_order.extend(current_block)
+            if previous_block_last is not None:
+                current = current_block[0]
+                setup_seconds = setup_by_exercise.get(current['id'], {}).get('seconds')
+                transitions.append({
+                    'scope': 'between_blocks',
+                    'fromExerciseId': previous_block_last['id'], 'toExerciseId': current['id'],
+                    'recoveryOwner': {'exerciseRef': previous_block_last['id'],
+                        'field': 'restAfterExerciseSeconds'},
+                    'setupOwner': {'exerciseRef': current['id'], 'field': 'setupSeconds'},
+                    'betweenExerciseRestComponentSeconds': pending_rest_seconds,
+                    'estimatedSetupSeconds': setup_seconds,
+                    'setupScope': 'one_time_before_destination_block',
+                    'estimatedTransitionSeconds': (pending_rest_seconds + setup_seconds
+                        if setup_seconds is not None else None),
+                })
+            previous_block_last = current_block[-1]
+            pending_rest_seconds = 0
+        timing = emitted['timing']
+        sessions.append({
+            'name': day['name'], 'muscles': {muscle: day['volume'].get(muscle) for muscle in weekly_targets},
+            'movementSets': day.get('coverageSets', {}), 'conservativeEstimatedSeconds': day['estimatedSeconds'],
+            'emittedPrescriptionEstimatedSeconds': emitted['estimatedSeconds'],
+            'finalExerciseOrder': exercise_order,
+            'timingComponents': {
+                'prescribedRecoveryRestSeconds': timing['restSeconds'],
+                'estimatedSetupSeconds': timing['transitionSeconds'],
+                'estimatedTotalSeconds': emitted['estimatedSeconds'],
+                'transitions': transitions,
+                'setupScope': 'One-time allowance before each exercise after the first; not repeated per set or superset round.',
+                'supersetRoundSetup': 'Repeated equipment changes between superset members are not estimated; treat their duration as unknown.',
+                'note': ('Transition rows show separate Rest components and one-time setup estimates between blocks. Setup is not prescribed recovery and is not repeated each superset round. '
+                    'Prescribed set, explicit Rest, and superset-round rests are included in prescribedRecoveryRestSeconds. All components are already included in estimatedTotalSeconds.'),
+            },
+        })
+
+    summary = {'sessions': sessions,
+        'exposures': exposures, 'timingAssumptions': report['assumptions'], 'executionTimeVerified': False,
+        'demandEvidence': programming_demand_evidence(),
+        'techniqueLimitations': 'Only library movement identity and typed effort criteria are available. Unspecified technique is unknown; do not infer elbow position or anatomical stimulus from a movement name.',
+        'personalRecoveryAndTolerance': 'Not established from plan text. Missing comparable performance or recovery data is uncertainty, not proof of incapacity or suitability.'}
+    if requirements is not None:
+        summary['coverageRequirements'] = coverage_requirements
+        summary['coverageBalanceEvidence'] = coverage_balance_evidence
+    if priority_execution is not None:
+        summary['priorityExecution'] = copy.deepcopy(priority_execution)
+    if priority_tradeoffs is not None:
+        summary['priorityTradeoffs'] = copy.deepcopy(priority_tradeoffs)
+    if demand_distribution is not None:
+        summary['demandDistribution'] = copy.deepcopy(demand_distribution)
+    return summary
+
+
 def available_muscle_targets(equipment=None):
     if equipment is None or 'exerciseDefinitions' not in equipment:
         return {muscle: sorted(tags) for muscle, tags in MUSCLES.items()}
@@ -55,9 +317,9 @@ def audit_policy(muscle_targets=None):
         'supportedMuscleTargets': supported,
         'muscleLabels': {key: value for key, value in {**MUSCLE_LABELS, 'back': 'Back (combined lats and upper back)',
             'shoulders': 'Shoulders (combined deltoids)'}.items() if key in supported},
-        'capabilityLimits': 'supportedMuscleTargets comes only from the library primary and secondary muscle arrays. Use those supplied muscle credits; do not infer subdivisions, invent credits, or substitute a combined-region target for separately requested targets. If the existing library fields cannot represent an explicit target, explain the limitation and resolve it before planning; do not silently change the request.',
+        'capabilityLimits': 'supportedMuscleTargets comes only from the library primary and secondary muscle arrays. Use those supplied muscle credits; do not infer subdivisions or invent credits. Do not substitute a combined-region target for separately requested targets without explicit user agreement. When explicit agreement authorizes a combined target because the library audits only that region, apply only the agreed aggregate target and report constituent subregions descriptively; this does not make their separate set totals auditable. Without that agreement, if the existing library fields cannot represent an explicit target, explain the limitation and resolve it before planning; do not silently change the request.',
         'prescribedRests': 'Explicit between-set rests, workout rest components and per-member superset rests are counted separately from setup transitions. The final superset recovery is omitted after the last round.',
-        'setupTiming': 'setupSeconds itemizes each exercise transition and replaces the default allowance; it is not added twice. The final audit reuses these assumptions by converted occurrence ID. Estimates are not measured changeover times or guarantees of session duration.',
+        'setupTiming': 'setupSeconds is a one-time allowance before each exercise after the first; it is separate from prescribed rest and is not repeated per set or superset round. Repeated equipment changes within a superset are not estimated here. The final audit reuses these estimates by occurrence ID; they are not measurements or duration guarantees.',
         'unilateralWork': 'Both sides of each set plus the prescribed between-side rest count for time; the working set counts once for muscle volume.',
         'volumeAccounting': 'Credits follow library primary/secondary roles. A working set may credit multiple muscles; summing muscle credits does not count distinct sets.',
         'precision': 'Duration is an estimate using the defaults above, plus prescribed work and rests; it is not a second-precise prediction.'}
@@ -171,8 +433,10 @@ def audit_workout_package(package, targets, *, setup_seconds_by_exercise=None, c
                         'Correct the declared setup estimate and re-audit; negative or invalid values cannot reduce session duration.',
                         path=f'/workouts/{workout_index}/exercises/{exercises_seen - 1}/setupSeconds', exerciseId=exercise['id'])
                     seconds = None
-                setup_estimates.append({'exerciseId': exercise['id'], 'seconds': ASSUMPTIONS['transitionSeconds'] if seconds is None else seconds,
-                                        'basis': 'default_allowance' if seconds is None else 'declared_estimate'})
+                setup_estimates.append({'exerciseId': exercise['id'],
+                    'seconds': ASSUMPTIONS['transitionSeconds'] if seconds is None else seconds,
+                    'scope': 'one_time_before_exercise',
+                    'basis': 'default_allowance' if seconds is None else 'declared_estimate'})
             credits = {}
             per_set_credits = muscle_credits_per_set(exercise)
             for muscle, per_set in per_set_credits.items():
@@ -350,17 +614,17 @@ def audit_and_repair_plan(client, plan, provided_equipment, logger=None, max_rep
                 "exerciseId": exercise["id"], "name": exercise["name"], "workingSets": exercise.get("numWorkSets"),
                 "creditsPerWorkingSet": {muscle: (credit["direct"] + credit["indirect"]) / count for muscle, credit in contribution.get("credits", {}).items() if count},
                 "maxReps": exercise.get("maxReps"), "restBetweenSetsSeconds": exercise.get("restBetweenSetsSeconds"),
-                "countsLocked": bool(exercise.get("targetSetPrescriptions")), "placementNotes": exercise.get("placementNotes", ""),
+                "countsLocked": bool(exercise.get("targetSetPrescriptions")),
             })
         messages = [
             {"role": "system", "content": (
                 "Repair ONLY working-set counts of the supplied plan to satisfy the deterministic audit. "
                 "Keep identities, equipment, exercise order, rests, warm-ups, rep ranges and target bounds unchanged. "
                 "Superset members must retain equal work-set counts. Never alter exact targetSetPrescriptions. "
-                "Update placementNotes when counts change so guidance remains accurate. If infeasible, return changes=[]. "
+                "If infeasible, return changes=[]. "
                 "Use the supplied creditsPerWorkingSet coefficients for arithmetic. Correct the FULL shortfall/excess in one attempt, "
                 "not one set at a time. Budget additional work and rests against each session's remaining time. "
-                'Output JSON only: {"changes":[{"exerciseId":"EXERCISE_0","numWorkSets":4,"placementNotes":"..."}]}.'
+                'Output JSON only: {"changes":[{"exerciseId":"EXERCISE_0","numWorkSets":4}]}.'
             )},
             {"role": "user", "content": json.dumps({"exercises": repair_exercises, "workouts": plan["workouts"], "audit": report}, separators=(",", ":"))},
         ]
@@ -378,7 +642,7 @@ def audit_and_repair_plan(client, plan, provided_equipment, logger=None, max_rep
         by_id = {e["id"]: e for e in repaired["exercises"]}
         seen = set()
         for change in changes:
-            if not isinstance(change, dict) or set(change) - {"exerciseId", "numWorkSets", "placementNotes"}:
+            if not isinstance(change, dict) or set(change) - {"exerciseId", "numWorkSets"}:
                 raise ValueError("Audit repair may change only working-set counts and placement notes")
             exercise_id, count = change.get("exerciseId"), change.get("numWorkSets")
             if exercise_id not in by_id or exercise_id in seen or not isinstance(count, int) or isinstance(count, bool) or not 1 <= count <= 20:
@@ -386,11 +650,9 @@ def audit_and_repair_plan(client, plan, provided_equipment, logger=None, max_rep
             seen.add(exercise_id)
             if by_id[exercise_id].get("targetSetPrescriptions"):
                 raise ValueError("Audit repair cannot overwrite exact user-prescribed sets")
-            if not isinstance(change.get("placementNotes"), str) or len(change["placementNotes"]) > 500:
-                raise ValueError("Audit repair must provide updated placement notes of at most 500 characters")
             applied_changes.append({"exerciseId": exercise_id, "name": by_id[exercise_id]["name"], "previousWorkingSets": by_id[exercise_id]["numWorkSets"], "workingSets": count})
             if logger:
                 logger.log_print(f"  Audit repair {attempt+1}/{max_repairs}: {by_id[exercise_id]['name']} working sets {by_id[exercise_id]['numWorkSets']} -> {count}")
-            by_id[exercise_id].update(numWorkSets=count, placementNotes=change["placementNotes"])
+            by_id[exercise_id].update(numWorkSets=count)
         validate_plan_index_contract(repaired, provided_equipment)
         plan = repaired

@@ -1,7 +1,7 @@
 import json
 import pytest
 
-from workout_generator_pkg import plan_review
+from workout_generator_pkg import interactive_shell, plan_review
 from workout_generator_pkg.interactive_shell import handle_function_call
 from workout_generator_pkg.planning_decisions import resolved_decisions, saved_decisions
 from workout_generator_pkg.planning_tools import requirements_approved, requirement_sources, set_workout_requirements
@@ -36,6 +36,80 @@ def test_schema_invalid_transport_reply_keeps_valid_blockers_during_finding_repa
     assert len(calls)==2 and findings==[first,second]
 
 
+def _review_truncation(cause='reasoning_budget_exhausted'):
+    from workout_generator_pkg.api_client import TruncatedResponseError
+    error = TruncatedResponseError.__new__(TruncatedResponseError)
+    error.diagnostics = {
+        'cause': cause,
+        'usage': {'completion_tokens_details': {'reasoning_tokens': 7000}},
+        'reasoningContent': 'Checked all original source requirements and found one omitted rule.',
+        'toolCalls': [],
+    }
+    ValueError.__init__(error, 'synthetic review truncation')
+    return error
+
+
+def test_review_call_accepts_initial_review_without_retry(monkeypatch):
+    calls = []
+
+    def respond(_client, _request, **options):
+        calls.append(options)
+        return '{"findings":[]}', None, None
+
+    monkeypatch.setattr(plan_review, 'chat_call', respond)
+    result, _, _ = plan_review._review_call(None, [{'role': 'user', 'content': 'source'}],
+        reasoning_effort='low', max_tokens=8192, retry=True)
+
+    assert json.loads(result) == {'findings': []}
+    assert len(calls) == 1
+    assert calls[0]['reasoning_effort'] == 'low' and calls[0]['retry'] is False
+
+
+def test_review_call_recovers_reasoning_only_truncation_with_original_source_and_strict_schema(monkeypatch):
+    from workout_generator_pkg.api_client import _strict_parameters_compatible
+    schema = plan_review._strict_review_schema({'FACT_0': '/sourceMessages/SOURCE_0/content'})
+    source_request = [
+        {'role': 'system', 'content': 'Review source requirements.'},
+        {'role': 'user', 'content': '{"sourceMessages":{"SOURCE_0":"do not reconfigure"}}'},
+    ]
+    calls = []
+
+    def respond(_client, request, **options):
+        calls.append((request, options))
+        if len(calls) == 1:
+            raise _review_truncation()
+        assert request[:2] == source_request
+        assert 'do not reconfigure' in json.dumps(request)
+        assert 'Checked all original source requirements' in request[-1]['content']
+        assert options['reasoning_effort'] is None and options['retry'] is False
+        assert options['output_schema'] is schema and _strict_parameters_compatible(schema)
+        return '{"findings":[]}', None, None
+
+    monkeypatch.setattr(plan_review, 'chat_call', respond)
+    result, _, _ = plan_review._review_call(None, source_request,
+        reasoning_effort='low', max_tokens=8192, retry=True, output_schema=schema)
+
+    assert json.loads(result) == {'findings': []}
+    assert len(calls) == 2
+    assert calls[0][1]['retry'] is False and calls[0][1]['reasoning_effort'] == 'low'
+
+
+def test_review_call_does_not_retry_again_after_recovery_truncates(monkeypatch):
+    calls = []
+
+    def respond(_client, _request, **_options):
+        calls.append(1)
+        raise _review_truncation()
+
+    monkeypatch.setattr(plan_review, 'chat_call', respond)
+    with pytest.raises(Exception, match='synthetic review truncation'):
+        plan_review._review_call(None, [{'role': 'user', 'content': 'original source'}],
+            reasoning_effort='low', max_tokens=8192, retry=True,
+            output_schema=plan_review._strict_review_schema({'FACT_0': '/source'}))
+
+    assert len(calls) == 2
+
+
 def test_review_serialization_keeps_evidence_before_changing_draft():
     context={'draft':{'exercises':[{'reps':8}]},'history':[{'reps':10}],
         'requirements':{'weeklySets':15},'audit':{'passed':True}}
@@ -48,9 +122,39 @@ def test_review_serialization_keeps_evidence_before_changing_draft():
     assert request['history'][0]['reps'] == 10 and context['draft']['exercises'][0]['reps'] == 8
 
 
+def test_review_references_do_not_advertise_the_uncitable_context_wrapper():
+    from workout_generator_pkg.review_assessment import _evidence_categories
+    context = {'requirements': {'coverage': [{'key': 'press'}]},
+               'draft': {'exercises': [{'name': 'Press'}]}}
+    request, facts = plan_review._with_review_refs(context)
+    authority, current_data = _evidence_categories(facts)
+    assert '_reviewRef' not in request and '' not in facts.values()
+    assert request['requirements']['_reviewRef'] in authority
+    assert request['draft']['_reviewRef'] in current_data
+    assert '_reviewRef' not in context
+
+
+def test_audit_capability_guidance_respects_explicit_combined_region_agreement():
+    from workout_generator_pkg.generation_audit import audit_policy, muscle_metadata_policy
+    supported = {
+        'back': ['BACK_UPPER_BACK'],
+        'shoulders': ['BACK_DELTOIDS', 'FRONT_DELTOIDS'],
+    }
+    metadata_guidance = muscle_metadata_policy(supported)['interpretation']
+    audit_guidance = audit_policy(supported)['capabilityLimits']
+
+    for guidance in (metadata_guidance, audit_guidance):
+        assert 'without explicit' in guidance
+        assert 'Do not infer extra muscles' in guidance or 'do not infer subdivisions' in guidance
+    assert 'When explicit agreement authorizes a combined target' in audit_guidance
+    assert 'apply only the agreed aggregate target' in audit_guidance
+    assert 'does not make their separate set totals auditable' in audit_guidance
+
+
 def test_strict_review_schema_restricts_citations_without_mutating_local_validation():
     import copy
     from jsonschema import validate,ValidationError
+    from workout_generator_pkg.api_client import _strict_parameters_compatible
     original=copy.deepcopy(plan_review._PLAN_RESPONSE)
     schema=plan_review._strict_review_schema({'FACT_0':'','FACT_1':'/draft'},original)
     finding={'severity':'blocking','basis':'established_violation','path':'FACT_1','message':'Missing exercise.',
@@ -62,6 +166,12 @@ def test_strict_review_schema_restricts_citations_without_mutating_local_validat
         validate({'findings':[{**finding,'path':'FACT_999'}]},schema)
     with pytest.raises(ValidationError):
         validate({'findings':[{**finding,'unexpected':True}]},schema)
+    assert _strict_parameters_compatible(schema)
+    assert '$def' not in schema
+    decision_id = schema['properties']['findings']['items']['properties']['decisionId']
+    assert set(decision_id) == {'anyOf', 'description'}
+    assert decision_id['anyOf'] == [
+        {'type': 'string', 'pattern': '^DECISION_[0-9]+$'}, {'type': 'null'}]
     def check(value):
         if isinstance(value,dict):
             assert not {'minLength','maxLength','minItems','maxItems','uniqueItems'} & value.keys()
@@ -122,7 +232,7 @@ def test_fixing_a_finding_schema_error_does_not_authorize_retargeting_it(monkeyp
 
 @pytest.mark.parametrize('rewrite_evidence', [False, True])
 def test_missing_muscle_targets_repair_preserves_evidence_scope(monkeypatch, rewrite_evidence):
-    original = {'basis': 'uncertainty', 'severity': 'warning', 'path': 'FACT_486',
+    original = {'basis': 'uncertainty', 'severity': 'warning', 'action': 'clarify', 'path': 'FACT_486',
         'message': 'Session duration depends on declared setup assumptions.',
         'evidencePaths': ['FACT_517'], 'repair': 'Disclose the timing uncertainty.'}
     repaired = {**original, 'muscleTargets': []}
@@ -164,7 +274,12 @@ def test_all_review_stages_classify_severity_from_basis(monkeypatch, stage, basi
             assert plan_review._DECISION_SCOPE_INSTRUCTIONS in request[0]['content']
         context = json.loads(request[-1]['content'])
         target = context['requirements'] if stage == 'requirements' else context['decisions']['DECISION_0']
-        finding = {'basis': basis, 'severity': severity, 'path': target['_reviewRef'],
+        # Source uncertainty is a warning unless it requests clarification; decision reviews
+        # independently classify severity from the basis rather than the model's label.
+        reported_severity = (severity if stage == 'decision' or basis == 'established_violation'
+                             else 'warning')
+        finding = {'basis': basis, 'severity': reported_severity, 'action': 'repair',
+            'path': target['_reviewRef'],
             'message': 'Check the extracted choice against the original instructions.',
             'evidencePaths': [context['sourceMessages']['SOURCE_0']['_reviewRef']],
             'repair': 'Preserve the requested targets.'}
@@ -178,7 +293,7 @@ def test_all_review_stages_classify_severity_from_basis(monkeypatch, stage, basi
         result = plan_review.review_requirements(None, candidate, messages,
             planning_decisions=proposal if stage == 'joint' else None)
         receipt = result['sourceReview']
-    assert result['passed'] is passed
+    assert result['passed'] is passed, result
     assert receipt['findings'][0]['severity'] == ('warning' if passed else 'blocking')
     if stage == 'joint' and not passed:
         assert not result['jointDecisionReview']['passed'] and result['decisions'] == {}
@@ -245,7 +360,7 @@ def test_decision_finding_repairs_only_the_invalid_field(monkeypatch, field, mis
 
 @pytest.mark.parametrize('rewrite_valid_reference', [False, True])
 def test_schema_and_reference_errors_share_one_scoped_repair(monkeypatch, rewrite_valid_reference):
-    original = {'severity': 'blocking', 'basis': 'established_violation', 'path': 'FACT_999',
+    original = {'severity': 'blocking', 'basis': 'established_violation', 'action': 'repair', 'path': 'FACT_999',
         'message': 'The draft conflicts with the source.', 'evidencePaths': ['FACT_998', 'FACT_1'],
         'newConflictEvidencePaths': ['FACT_1'], 'repair': 'Preserve the source requirement.'}
     repaired = {**original, 'path': 'FACT_0', 'evidencePaths': ['FACT_1'], 'muscleTargets': []}
@@ -295,11 +410,13 @@ def test_independent_review_maps_fact_refs_to_exact_draft_paths(monkeypatch):
     messages = requirement_messages(stored)
 
     def respond(client, request, **options):
-        assert 'every finding also requires muscleTargets' in request[0]['content']
         context = json.loads(request[-1]['content'])
+        if 'draft' not in context:
+            return '{"findings":[]}', None, None
+        assert 'every finding also requires muscleTargets' in request[0]['content']
         assert context['draft']['exercises'][0]['_reviewRef'].startswith('FACT_')
         assert '_reviewRef' not in draft['workouts'][0]['exercises'][0]
-        finding = {'severity': 'blocking', 'basis': 'established_violation', 'muscleTargets': [],
+        finding = {'severity': 'blocking', 'basis': 'established_violation', 'action': 'repair', 'muscleTargets': [],
             'path': context['draft']['exercises'][0]['_reviewRef'],
             'message': 'The exercise conflicts with a stated execution requirement.',
             'evidencePaths': [context['sourceMessages']['SOURCE_0']['_reviewRef']],
@@ -307,6 +424,19 @@ def test_independent_review_maps_fact_refs_to_exact_draft_paths(monkeypatch):
         return json.dumps({'findings': [finding]}), None, None
 
     monkeypatch.setattr(plan_review, 'chat_call', respond)
+    def assess_single_mapping_finding(client, context, review, logger=None, **options):
+        return {'version': plan_review.ASSESSMENT_VERSION,
+            'inputHash': plan_review.assessment_hash(review),
+            'groups': [{'findingIndexes': [0], 'disposition': 'repair',
+                'repairDimensions': ['exercise_selection'],
+                'reason': 'The selected movement conflicts with the source requirement.'}],
+            'repairPlan': 'Replace the movement with a source-compatible choice.'}
+    monkeypatch.setattr(plan_review, 'assess_findings', assess_single_mapping_finding)
+    monkeypatch.setattr(plan_review, '_confirm_review_corrections', lambda *args, **kwargs: None)
+    original_review_draft = interactive_shell.review_draft
+    def run_legacy_review_path(*args, **kwargs):
+        return original_review_draft(*args, **(kwargs | {'two_pass': False}))
+    monkeypatch.setattr(interactive_shell, 'review_draft', run_legacy_review_path)
     result = json.loads(handle_function_call(None, messages, 'audit_workout_plan', draft, equipment)['result'])
     assert result['errors'][0].get('draftPath') == '/workouts/0/exercises/0', result['errors']
     assert result['review']['findings'][0]['path'] == '/draft/exercises/0'
@@ -401,3 +531,231 @@ def test_joint_choice_replacement_keeps_only_the_new_choice_active(monkeypatch):
         {'role': 'tool', 'tool_call_id': 'requirements-joint', 'content': json.dumps(result)},
     ])
     assert list(resolved_decisions(messages)) == ['DECISION_1']
+
+
+def test_numeric_fact_spelling_normalizes_only_citation_identity():
+    from workout_generator_pkg.plan_review import _canonical_review_content
+    import json
+    schema = {'$def': {'reference': {'enum': ['FACT_99']}}}
+    payload = {'findings': [{'path': 'FACT_099', 'evidencePaths': ['FACT_0099', 'FACT_100'],
+        'message': 'FACT_099 remains verbatim evidence text.'}]}
+    result = json.loads(_canonical_review_content(json.dumps(payload), schema))
+    assert result['findings'][0]['path'] == 'FACT_99'
+    assert result['findings'][0]['evidencePaths'] == ['FACT_99', 'FACT_100']
+    assert result['findings'][0]['message'] == payload['findings'][0]['message']
+
+
+@pytest.mark.parametrize('metadata,accepted', [
+    ({'type': 'json_object'}, True), ({'type': 'advisory'}, False), ({'extra': True}, False)])
+def test_review_transport_tag_is_ignored_without_accepting_unknown_content(metadata, accepted):
+    from jsonschema import validate, ValidationError
+    from workout_generator_pkg.plan_review import _canonical_review_content, _strict_review_schema
+    schema = _strict_review_schema({'FACT_0': '/draft'})
+    payload = json.loads(_canonical_review_content(json.dumps({'findings': [], **metadata}), schema))
+    if accepted:
+        validate(payload, schema)
+        assert payload == {'findings': []}
+    else:
+        with pytest.raises(ValidationError):
+            validate(payload, schema)
+
+
+@pytest.mark.parametrize(('rest_seconds', 'setup_seconds'), [(0, 60), (120, 30)])
+def test_programming_summary_separates_recovery_rest_from_setup(rest_seconds, setup_seconds):
+    from workout_generator_pkg.generation_audit import audit_workout_package, build_programming_summary
+
+    components = [
+        {'type': 'Exercise', 'id': 'EXERCISE_0', 'name': 'Press', 'sets': [
+            {'type': 'WeightSet', 'subCategory': 'WorkSet', 'reps': 1, 'weight': 10}]},
+        {'type': 'Rest', 'timeInSeconds': rest_seconds},
+        {'type': 'Exercise', 'id': 'EXERCISE_1', 'name': 'Row', 'sets': [
+            {'type': 'WeightSet', 'subCategory': 'WorkSet', 'reps': 1, 'weight': 10}]},
+    ]
+    final_artifact = {'workouts': [{'name': 'Day', 'components': components}]}
+    emitted_report = audit_workout_package(
+        {'workouts': [{'name': 'Day', 'workoutComponents': components}]}, {},
+        setup_seconds_by_exercise={'EXERCISE_1': setup_seconds})
+    source_draft = {'workouts': [{'name': 'Day', 'exercises': [
+        {'definition_id': 'def_press', 'numWorkSets': 1},
+        {'definition_id': 'def_row', 'numWorkSets': 1}]}]}
+    plan_index = {
+        'exercises': [
+            {'id': 'EXERCISE_0', 'name': 'Press'}, {'id': 'EXERCISE_1', 'name': 'Row'}],
+        'workouts': [{'name': 'Day', 'exerciseIds': ['EXERCISE_0', 'EXERCISE_1'],
+            'timesCompletedInAWeek': 1}],
+    }
+    review_draft = {'exercises': [
+        {'id': 'EXERCISE_0', 'libraryDefinitionId': 'def_press'},
+        {'id': 'EXERCISE_1', 'libraryDefinitionId': 'def_row'}]}
+
+    summary = build_programming_summary(emitted_report, emitted_report, source_draft, plan_index,
+        review_draft, {}, {}, final_artifact=final_artifact)
+
+    session = summary['sessions'][0]
+    timing = session['timingComponents']
+    transition = timing['transitions'][0]
+    assert session['finalExerciseOrder'] == [
+        {'id': 'EXERCISE_0', 'name': 'Press'}, {'id': 'EXERCISE_1', 'name': 'Row'}]
+    assert timing['prescribedRecoveryRestSeconds'] == rest_seconds
+    assert timing['estimatedSetupSeconds'] == setup_seconds
+    assert timing['estimatedTotalSeconds'] == 300 + 6 + rest_seconds + setup_seconds
+    assert transition == {
+        'scope': 'between_blocks',
+        'fromExerciseId': 'EXERCISE_0', 'toExerciseId': 'EXERCISE_1',
+        'recoveryOwner': {'exerciseRef': 'EXERCISE_0', 'field': 'restAfterExerciseSeconds'},
+        'setupOwner': {'exerciseRef': 'EXERCISE_1', 'field': 'setupSeconds'},
+        'betweenExerciseRestComponentSeconds': rest_seconds,
+        'estimatedSetupSeconds': setup_seconds,
+        'setupScope': 'one_time_before_destination_block',
+        'estimatedTransitionSeconds': rest_seconds + setup_seconds,
+    }
+    assert emitted_report['workouts'][0]['setupEstimates'][0]['scope'] == 'one_time_before_exercise'
+    assert 'not repeated per set or superset round' in timing['setupScope']
+    assert 'unknown' in timing['supersetRoundSetup']
+
+
+def test_programming_summary_exposes_hard_coverage_and_qualitative_balance_facts():
+    from workout_generator_pkg.generation_audit import audit_workout_package, build_programming_summary
+
+    def exercise(identifier, name, reps, sets):
+        return {'type': 'Exercise', 'id': identifier, 'name': name, 'sets': [
+            {'type': 'WeightSet', 'subCategory': 'WorkSet', 'reps': reps, 'weight': 10}
+            for _ in range(sets)]}
+
+    press = exercise('EXERCISE_0', 'Press', 1, 4)
+    press.update(exerciseType='WEIGHT', exerciseCategory='MODERATE_COMPOUND',
+        muscleGroups=['FRONT_CHEST'], secondaryMuscleGroups=['BACK_TRICEPS'], equipmentId='EQUIPMENT_0')
+    row = exercise('EXERCISE_1', 'Row', 1, 3)
+    row.update(exerciseType='WEIGHT', exerciseCategory='MODERATE_COMPOUND',
+        muscleGroups=['BACK_UPPER_BACK'], secondaryMuscleGroups=['BACK_BICEPS'], equipmentId='EQUIPMENT_1',
+        requiredAccessoryEquipmentIds=['ACCESSORY_0'])
+    components = [press, row]
+    final_artifact = {'workouts': [{'name': 'Day', 'components': components}]}
+    coverage = {'EXERCISE_0': ['horizontal_push'], 'EXERCISE_1': ['horizontal_pull']}
+    report = audit_workout_package(
+        {'workouts': [{'name': 'Day', 'workoutComponents': components}]}, {}, coverage_by_exercise=coverage)
+    source_draft = {'workouts': [{'name': 'Day', 'exercises': [
+        {'definition_id': 'def_press', 'numWorkSets': 4, 'satisfiesCoverage': ['horizontal_push']},
+        {'definition_id': 'def_row', 'numWorkSets': 3, 'satisfiesCoverage': ['horizontal_pull']}]}]}
+    plan_index = {'exercises': [
+        {'id': 'EXERCISE_0', 'name': 'Press', 'exerciseType': 'WEIGHT', 'exerciseCategory': 'MODERATE_COMPOUND',
+            'muscleGroups': ['FRONT_CHEST'], 'secondaryMuscleGroups': ['BACK_TRICEPS'], 'equipmentId': 'EQUIPMENT_0'},
+        {'id': 'EXERCISE_1', 'name': 'Row', 'exerciseType': 'WEIGHT', 'exerciseCategory': 'MODERATE_COMPOUND',
+            'muscleGroups': ['BACK_UPPER_BACK'], 'secondaryMuscleGroups': ['BACK_BICEPS'], 'equipmentId': 'EQUIPMENT_1',
+            'requiredAccessoryEquipmentIds': ['ACCESSORY_0']}],
+        'workouts': [{'name': 'Day', 'exerciseIds': ['EXERCISE_0', 'EXERCISE_1'], 'timesCompletedInAWeek': 1}]}
+    review_draft = {'exercises': [
+        {'id': 'EXERCISE_0', 'libraryDefinitionId': 'def_press'},
+        {'id': 'EXERCISE_1', 'libraryDefinitionId': 'def_row'}]}
+    requirements = {'requiredCoverage': [
+        {'key': 'horizontal_push', 'description': 'Horizontal pressing', 'scope': 'weekly', 'intent': 'development'},
+        {'key': 'horizontal_pull', 'description': 'Horizontal pulling', 'scope': 'weekly', 'intent': 'inclusion'}],
+        'executionRules': [
+            {'kind': 'coverageBalance', 'first': 'horizontal_push', 'second': 'horizontal_pull',
+             'scope': 'weekly', 'relationship': 'balanced'},
+            {'kind': 'coverageBalance', 'first': 'horizontal_push', 'second': 'horizontal_pull',
+             'scope': 'eachSession', 'relationship': 'first_not_less_than_second'}]}
+    priority_execution = {'approvedPriorities': [{'priority': 'distribution', 'owner': 'solver', 'status': 'ran'}],
+        'coverageBalance': [{'first': 'horizontal_push', 'second': 'horizontal_pull',
+            'scope': 'weekly', 'owner': 'semantic_review', 'status': 'semantic_review_required'}]}
+    priority_tradeoffs = [{'first': 'horizontal_push', 'second': 'horizontal_pull', 'relationship': 'balanced',
+        'scope': 'weekly', 'firstSets': 4, 'secondSets': 3, 'deviation': 1,
+        'status': 'residual_at_approved_optimum',
+        'scopeOfProof': 'Submitted recipes and hard constraints only; other menus were not searched.'}]
+
+    summary = build_programming_summary(report, report, source_draft, plan_index, review_draft, {}, {},
+        final_artifact=final_artifact, requirements=requirements, priority_execution=priority_execution,
+        priority_tradeoffs=priority_tradeoffs)
+
+    assert [(item['key'], item['weeklyWorkingSets'], item['scope']) for item in summary['coverageRequirements']] == [
+        ('horizontal_push', 4, 'weekly'), ('horizontal_pull', 3, 'weekly')]
+    assert summary['coverageRequirements'][0]['intent'] == 'development'
+    assert 'not by themselves establish adequate development' in summary['coverageRequirements'][0]['interpretation']
+    assert summary['coverageRequirements'][1]['intent'] == 'inclusion'
+    assert summary['coverageBalanceEvidence'][0]['workingSets'] == {'horizontal_push': 4, 'horizontal_pull': 3}
+    assert summary['coverageBalanceEvidence'][0]['relationship'] == 'balanced'
+    assert summary['coverageBalanceEvidence'][0]['absoluteDifference'] == 1
+    assert summary['coverageBalanceEvidence'][1]['sessions'][0]['workingSets'] == {
+        'horizontal_push': 4, 'horizontal_pull': 3}
+    assert summary['coverageBalanceEvidence'][1]['relationship'] == 'first_not_less_than_second'
+    assert summary['coverageBalanceEvidence'][1]['sessions'][0]['comparisonOutcome'] == 'met'
+    assert 'no numeric tolerance' in summary['coverageBalanceEvidence'][0]['interpretation']
+    assert 'unequal counts alone are not a violation' in summary['coverageBalanceEvidence'][0]['interpretation'].lower()
+    assert summary['priorityExecution'] == priority_execution
+    assert summary['priorityTradeoffs'] == priority_tradeoffs
+    press_occurrence = summary['exposures']['def_press']['occurrences'][0]
+    assert press_occurrence['primaryMuscles'] == ['FRONT_CHEST']
+    assert press_occurrence['restBetweenSetsSeconds'] is None
+    assert press_occurrence['weeklyMuscleCredits']['chest']['direct'] == 4
+    row_occurrence = summary['exposures']['def_row']['occurrences'][0]
+    assert row_occurrence['requiredAccessoryEquipmentIds'] == ['ACCESSORY_0']
+    assert 'not measurements of fatigue' in summary['demandEvidence']['interpretation']
+    assert 'support configuration' in summary['demandEvidence']['notRepresentedByCurrentLibraryFields']
+    from workout_generator_pkg.planner_context import _compact_programming_selection_facts
+    selection_facts = _compact_programming_selection_facts(summary)
+    assert selection_facts['coverageRequirements'][0]['intent'] == 'development'
+    assert selection_facts['coverageBalanceEvidence'][1]['relationship'] == 'first_not_less_than_second'
+    assert selection_facts['demandEvidence'] == summary['demandEvidence']
+    assert selection_facts['priorityTradeoffs'] == priority_tradeoffs
+
+
+def test_requirement_review_marks_application_workset_floor_as_code_owned():
+    from workout_generator_pkg.programming_guidelines import MINIMUM_WORK_SETS_RULE
+
+    candidate = {'requirements': {'executionRules': [MINIMUM_WORK_SETS_RULE]},
+        'sourceMessages': [], 'restrictionPolicy': {}, 'resolvedDecisions': {}}
+    context = plan_review._requirements_context(candidate)
+
+    assert context['applicationWorkSetPolicy'] == {
+        'rule': MINIMUM_WORK_SETS_RULE, 'presentInRequirements': True}
+
+
+def test_programming_summary_does_not_present_superset_internal_timing_as_a_block_transition():
+    from workout_generator_pkg.generation_audit import audit_workout_package, build_programming_summary
+
+    def exercise(identifier, name, sets):
+        return {'type': 'Exercise', 'id': identifier, 'name': name, 'sets': [
+            {'type': 'WeightSet', 'subCategory': 'WorkSet', 'reps': 1, 'weight': 10} for _ in range(sets)]}
+
+    first = exercise('EXERCISE_0', 'Press', 1)
+    superset_members = [exercise('EXERCISE_1', 'Row', 2), exercise('EXERCISE_2', 'Fly', 2)]
+    components = [first, {'type': 'Superset', 'exercises': superset_members,
+        'restSecondsByExercise': {'EXERCISE_1': 60, 'EXERCISE_2': 30}}]
+    final_artifact = {'workouts': [{'name': 'Day', 'components': components}]}
+    emitted_report = audit_workout_package(
+        {'workouts': [{'name': 'Day', 'workoutComponents': components}]}, {},
+        setup_seconds_by_exercise={'EXERCISE_1': 60, 'EXERCISE_2': 60})
+    source_draft = {'workouts': [{'name': 'Day', 'exercises': [
+        {'definition_id': 'def_press', 'numWorkSets': 1},
+        {'definition_id': 'def_row', 'numWorkSets': 2},
+        {'definition_id': 'def_fly', 'numWorkSets': 2}]}]}
+    plan_index = {
+        'exercises': [
+            {'id': 'EXERCISE_0', 'name': 'Press'}, {'id': 'EXERCISE_1', 'name': 'Row'},
+            {'id': 'EXERCISE_2', 'name': 'Fly'}],
+        'workouts': [{'name': 'Day', 'exerciseIds': ['EXERCISE_0', 'EXERCISE_1', 'EXERCISE_2'],
+            'timesCompletedInAWeek': 1}],
+    }
+    review_draft = {'exercises': [
+        {'id': 'EXERCISE_0', 'libraryDefinitionId': 'def_press'},
+        {'id': 'EXERCISE_1', 'libraryDefinitionId': 'def_row'},
+        {'id': 'EXERCISE_2', 'libraryDefinitionId': 'def_fly'}]}
+
+    summary = build_programming_summary(emitted_report, emitted_report, source_draft, plan_index,
+        review_draft, {}, {}, final_artifact=final_artifact)
+
+    session = summary['sessions'][0]
+    timing = session['timingComponents']
+    assert [exercise['id'] for exercise in session['finalExerciseOrder']] == [
+        'EXERCISE_0', 'EXERCISE_1', 'EXERCISE_2']
+    assert timing['prescribedRecoveryRestSeconds'] == 150
+    assert timing['estimatedSetupSeconds'] == 120
+    assert timing['estimatedTotalSeconds'] == 585
+    assert timing['transitions'] == [{
+        'scope': 'between_blocks', 'fromExerciseId': 'EXERCISE_0', 'toExerciseId': 'EXERCISE_1',
+        'recoveryOwner': {'exerciseRef': 'EXERCISE_0', 'field': 'restAfterExerciseSeconds'},
+        'setupOwner': {'exerciseRef': 'EXERCISE_1', 'field': 'setupSeconds'},
+        'betweenExerciseRestComponentSeconds': 0, 'estimatedSetupSeconds': 60,
+        'setupScope': 'one_time_before_destination_block',
+        'estimatedTransitionSeconds': 60,
+    }]

@@ -1,5 +1,6 @@
 import copy
 import json
+from pathlib import Path
 
 import pytest
 
@@ -403,7 +404,8 @@ def test_numeric_review_claims_cannot_override_allocator_but_semantic_defects_st
         payload = json.loads(request[-1]['content'])
         index = int(payload['reviewScope']['workoutReference'].split('_')[1]) if payload['reviewScope']['kind'] == 'workout' else 0
         ref = payload['draft']['workouts'][index]['_reviewRef']
-        finding = {'check': 'numerical', 'basis': 'established_violation', 'severity': 'blocking', 'muscleTargets': ['chest'],
+        finding = {'check': 'numerical', 'basis': 'established_violation', 'severity': 'blocking',
+            'action': 'repair', 'muscleTargets': ['chest'],
             'path': ref, 'evidencePaths': [ref], 'message': 'Wrong arithmetic claims nine chest sets instead of the verified fifteen.',
             'repair': 'Add extra sets based on this incorrect recalculation.'}
         semantic = {**finding, 'check': 'equipment_setup', 'muscleTargets': [],
@@ -608,9 +610,10 @@ def test_movement_only_preparation_allocates_counts_and_preserves_explicit_sourc
     Draft7Validator(public).validate(arguments)
     prepared = session_drafting.prepare_workout_sessions(arguments, messages, equipment)
     assert arguments == original
-    assert [day['exercises'][0]['numWorkSets'] for day in prepared['sessions']] == [5, 5, 5]
+    assert sum(day['timesCompletedInAWeek'] * day['exercises'][0]['numWorkSets']
+               for day in prepared['sessions']) == 15
     assert prepared['setAllocation']['feasible']
-    assert all(day['exercises'][0]['allocationBounds'] == {'minimum': 1, 'maximum': 20} for day in prepared['sessions'])
+    assert all(day['exercises'][0]['allocationBounds'] == {'minimum': 2, 'maximum': 20} for day in prepared['sessions'])
     counted = copy.deepcopy(arguments)
     counted['sessions'][0]['blocks'][0]['numWorkSets'] = 5
     assert not Draft7Validator(public).is_valid(counted)  # The model's new tool has no arithmetic output field.
@@ -628,3 +631,60 @@ def test_movement_only_preparation_allocates_counts_and_preserves_explicit_sourc
     assert schema is not public
     assert 'blocks' in schema['properties']['sessions']['items'][0]['properties']
     assert isinstance(public['properties']['sessions']['items'], dict)
+
+
+def test_saved_role_mismatch_does_not_block_prequalification_count_domain():
+    root = Path(__file__).resolve().parents[1]
+    conversation = root / 'build/workout_joint_priority_solver_20261023/fresh_e2e_role_keys/workouts/conversation_sessions/cb4bdd91-e219-40ef-a3d3-28478ce85a6c/messages.json'
+    library = root / 'build/backup_conversion/workout_store_backup_2026-10-15_current_library_snapshot_evidence.json'
+    if not conversation.exists() or not library.exists():
+        pytest.skip('Retained E2E conversation/library snapshot is unavailable.')
+    from workout_generator_pkg import interactive_shell
+    messages = json.loads(conversation.read_text(encoding='utf-8'))
+    arguments = json.loads(messages[20]['tool_calls'][0]['function']['arguments'])
+    expanded = session_drafting._expand_preparation_blocks(arguments)
+    expected_roles = [(item['definition_id'], item['satisfiesCoverage'])
+        for day in expanded['sessions'] for item in day['exercises']
+        if item['definition_id'] in ('LIBRARY_130', 'LIBRARY_249')]
+    equipment = interactive_shell._load_exercise_library_payload(str(library))
+
+    prepared = session_drafting.prepare_workout_sessions(arguments, messages[:20], equipment)
+
+    recipe_items = [item for day in prepared['recipeSessions'] for item in day['exercises']]
+    assert prepared['setAllocation']['feasible']
+    assert len(prepared['candidates']) == 30
+    assert len(recipe_items) == sum(len(day['exercises']) for day in expanded['sessions'])
+    assert {item['definition_id'] for item in recipe_items} == set(prepared['candidates'])
+    for reference, roles in expected_roles:
+        assert any(item['definition_id'] == reference and item['satisfiesCoverage'] == roles for item in recipe_items)
+
+
+def test_qualified_coverage_remains_a_hard_gate_after_preparation(monkeypatch):
+    from test_workout_generator_planning_tools import planning_case, requirement_messages
+
+    equipment, requirements, _, _ = planning_case()
+    requirements['sessionsPerWeek'] = 3
+    requirements['auditTargets']['weeklyEffectiveSets']['chest'] = {'minimum': 15, 'maximum': 18}
+    requirements['requiredCoverage'] = [{'key': 'push', 'description': 'A pushing movement', 'scope': 'eachSession'}]
+    stored = set_workout_requirements(requirements,
+        [{'role': 'user', 'content': 'Three sessions and a pushing movement each session.'}], equipment)
+    messages = requirement_messages(stored)
+    arguments = {'requirementsId': stored['requirementsId'], 'baseDraftId': None, 'name': 'Week',
+        'sessions': [{'name': f'Day {i}', 'description': 'Full body', 'trainingDays': [i * 2],
+            'timesCompletedInAWeek': 1, 'exercises': [{'definition_id': 'LIBRARY_0', 'numWorkSets': 3,
+                'superset': None, 'satisfiesCoverage': ['push']}]} for i in range(3)]}
+    prepared = session_drafting.prepare_workout_sessions(arguments, messages, equipment)
+    assert prepared['setAllocation']['feasible']
+    store(messages, 'prepare_workout_sessions', prepared)
+    def no_qualified_roles(_, prepared, *args, **kwargs):
+        return {'inputHash': 'empty-qualified-roles', 'contracts': [
+            {'definition_id': reference, 'satisfiesCoverage': []} for reference in prepared['definition_ids']]}
+    monkeypatch.setattr('workout_generator_pkg.recipe_contracts.qualify_recipe_contracts', no_qualified_roles)
+    monkeypatch.setattr(session_drafting, 'chat_call', lambda *args, **kwargs: pytest.fail(
+        'Draft workers must not run before qualified coverage passes'))
+
+    result = session_drafting.draft_workout_sessions(None, {'preparationId': prepared['preparationId']}, messages,
+        equipment, {})
+
+    assert not result['passed']
+    assert result['errors'][0]['code'] == 'required_coverage_missing'

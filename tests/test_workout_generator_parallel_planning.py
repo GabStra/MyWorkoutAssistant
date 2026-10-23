@@ -65,6 +65,42 @@ def week_case(execution_rules=None, occurrences=1, coverage=None):
     return equipment, messages, prepared, draft['workouts'][0]['exercises']
 
 
+def test_forced_weekly_dose_returns_to_menu_choice_before_workers_and_resumes_started_work():
+    from workout_generator_pkg.planner_context import construction_tool_failure
+    equipment, messages, prepared, _ = week_case()
+    state = request_planning_state(shell._messages_for_api(messages, True, provided_equipment=equipment))
+    assert state['constructionTask']['reviewAllocationBeforeDrafting']
+    for name in ('draft_workout_sessions', 'prepare_workout_sessions', 'search_exercise_library'):
+        assert construction_tool_failure(name, {}, state) is None
+    assert construction_tool_failure('audit_workout_plan', {}, state)
+    assert any(item.get('scope') == 'weekly'
+               for item in state['parallelPreparation']['setAllocation']['allocationDiagnostics'])
+    store_tool(messages, 'draft_workout_sessions', {'preparationId': prepared['preparationId']}, {
+        'preparationId': prepared['preparationId'], 'passed': False, 'executionFailure': True,
+        'workerResults': {}, 'workerFailures': {}})
+    resumed = request_planning_state(shell._messages_for_api(messages, True, provided_equipment=equipment))
+    assert not resumed['constructionTask']['reviewAllocationBeforeDrafting']
+    assert construction_tool_failure('prepare_workout_sessions', {}, resumed)
+
+
+def test_menu_reconsideration_is_compact_and_a_second_preparation_goes_to_workers():
+    from workout_generator_pkg.planner_context import _focus_session_preparation, planner_response_profile
+    equipment, messages, prepared, _ = week_case()
+    state = request_planning_state(shell._messages_for_api(messages, True, provided_equipment=equipment))
+    evidence = {'LIBRARY_0': {'name': 'Press', 'status': 'comparable_records', 'totalSessions': 1,
+                             'sessions': [{'largeDetail': 'Detailed worker-only history'}]}}
+    _focus_session_preparation(state, {}, evidence, False)
+    assert state['constructionTask']['reviewAllocationBeforeDrafting']
+    assert planner_response_profile(state)['reasoning_effort'] is None
+    assert state['trainingEvidence'] == {}
+    assert state['trainingEvidenceSummary']['LIBRARY_0']['totalSessions'] == 1
+    assert 'Detailed worker-only history' not in json.dumps(state)
+    store_tool(messages, 'prepare_workout_sessions', {}, prepared)
+    revised = request_planning_state(shell._messages_for_api(messages, True, provided_equipment=equipment))
+    assert revised['constructionTask']['stage'] == 'draft_sessions'
+    assert not revised['constructionTask']['reviewAllocationBeforeDrafting']
+
+
 def test_joint_week_is_solved_before_any_semantic_review(monkeypatch):
     equipment, messages, prepared, exercises = week_case()
     state = request_planning_state(shell._messages_for_api(messages, True, provided_equipment=equipment))
@@ -74,7 +110,100 @@ def test_joint_week_is_solved_before_any_semantic_review(monkeypatch):
     monkeypatch.setattr(session_drafting, 'chat_call', draft)
     result = session_drafting.draft_workout_sessions(None, {'preparationId': prepared['preparationId']}, messages, equipment, state)
     assert result['jointPlanning']['feasible']
+    assert result['jointPlanning']['preserveSourceSelection'] is False
     assert 'proposedSubmission' in result
+
+
+def test_final_menu_selection_keeps_required_coverage_and_fixed_dose(monkeypatch):
+    from workout_generator_pkg import joint_planning
+
+    equipment, requirements, _, draft = planning_case()
+    optional = copy.deepcopy(equipment['exerciseDefinitions'][0])
+    optional.update(id='zz_optional_push', name='Optional Push-Up Variant')
+    equipment['exerciseDefinitions'].append(optional)
+    requirements.update(sessionsPerWeek=2, objectiveOrder=['progression'])
+    requirements['auditTargets']['weeklyEffectiveSets']['chest'] = {'minimum': 10, 'maximum': 12}
+    requirements['requiredCoverage'] = [{'key': 'push', 'description': 'Pressing movement', 'scope': 'eachSession'}]
+    stored = set_workout_requirements(requirements,
+        [{'role': 'user', 'content': 'Two sessions; include pressing each session and prefer the better progression route.'}], equipment)
+    messages = requirement_messages(stored)
+    source = {'definition_id': 'LIBRARY_0', 'numWorkSets': 5,
+              'allocationBounds': {'minimum': 1, 'maximum': 6},
+              'superset': None, 'satisfiesCoverage': ['push']}
+    fixed = {**source, 'definition_id': 'LIBRARY_1',
+             'allocationBounds': {'minimum': 5, 'maximum': 5}}
+    template = copy.deepcopy(draft['workouts'][0]['exercises'][0])
+    template['repDurationSeconds'] = 3
+    sessions = [{'name': f'Day {index}', 'description': 'Pressing', 'timesCompletedInAWeek': 1,
+                 'trainingDays': [index * 3], 'exercises': [copy.deepcopy(source), copy.deepcopy(fixed)]}
+                for index in range(2)]
+    arguments = {'requirementsId': stored['requirementsId'], 'baseDraftId': None,
+                 'name': 'Program', 'sessions': sessions}
+    prepared = session_drafting.prepare_workout_sessions(arguments, messages, equipment)
+    store_tool(messages, 'prepare_workout_sessions', arguments, prepared)
+    state = request_planning_state(shell._messages_for_api(messages, True, provided_equipment=equipment))
+    monkeypatch.setattr(joint_planning, 'progression_margin', lambda item, capability: {
+        'penalty': 100 if item['definition_id'] == 'LIBRARY_0' else 0})
+
+    def draft(client, request, **options):
+        payload = json.loads(request[-1]['content'])
+        if 'session' not in payload:
+            raise AssertionError('Unexpected repair call')
+        selection = payload['session']
+        values = []
+        for structure in selection['exercises']:
+            exercise = copy.deepcopy(template)
+            exercise.update({key: copy.deepcopy(structure[key]) for key in
+                ('definition_id', 'numWorkSets', 'allocationBounds', 'superset', 'satisfiesCoverage')
+                if key in structure})
+            values.append(exercise)
+        return json.dumps({key: copy.deepcopy(selection[key]) for key in
+            ('name', 'description', 'timesCompletedInAWeek', 'trainingDays')} | {'exercises': values}), None, None
+
+    monkeypatch.setattr(session_drafting, 'chat_call', draft)
+    result = session_drafting.draft_workout_sessions(None, {'preparationId': prepared['preparationId']},
+        messages, equipment, state)
+
+    assert 'jointPlanning' in result, result
+    assert result['jointPlanning']['feasible'], result.get('errors')
+    assert result['jointPlanning']['preserveSourceSelection'] is False
+    assert [item['definition_id'] for day in result['proposedSubmission']['workouts']
+            for item in day['exercises']] == ['LIBRARY_1', 'LIBRARY_1']
+    assert [item['numWorkSets'] for day in result['proposedSubmission']['workouts']
+            for item in day['exercises']] == [5, 5]
+    audited = audit_workout_plan(result['proposedSubmission'], equipment, messages)
+    assert audited['passed']
+    assert audited['audit']['weeklyCoverageSets']['push'] == 10
+
+
+def test_session_drafting_does_not_require_or_request_app_owned_progression_method(monkeypatch):
+    equipment, messages, prepared, exercises = week_case()
+    exercises = [{key: value for key, value in item.items() if key != 'progressionMethod'} for item in exercises]
+    monkeypatch.setattr('workout_generator_pkg.recipe_contracts.qualify_recipe_contracts',
+        lambda *a, **k: {'contracts': [{'definition_id': 'LIBRARY_0', 'satisfiesCoverage': [],
+            'progressionPlan': {'kind': 'reps', 'nextDefinitionId': None, 'nextDefinitionName': None,
+                'atCeilingAction': 're_audit_higher_reps'}}], 'capabilities': {}})
+    state = request_planning_state(shell._messages_for_api(messages, True, provided_equipment=equipment))
+    response_schemas = []
+
+    def draft_session(_, request, **__):
+        payload = json.loads(request[-1]['content'])
+        response_schemas.append(payload['responseSchema'])
+        assert 'progressionMethod' not in payload['recipeContracts']['LIBRARY_0']
+        return json.dumps({'name': payload['session']['name'], 'description': payload['session']['description'],
+            'timesCompletedInAWeek': 1, 'trainingDays': payload['session']['trainingDays'],
+            'exercises': copy.deepcopy(exercises)}), None, None
+
+    monkeypatch.setattr(session_drafting, 'chat_call', draft_session)
+    result = session_drafting.draft_workout_sessions(None, {'preparationId': prepared['preparationId']}, messages,
+        equipment, state)
+
+    assert result['jointPlanning']['feasible'], result
+    exercise_schema = response_schemas[0]['properties']['exercises']['items']
+    assert 'progressionMethod' not in exercise_schema['properties']
+    assert 'progressionMethod' not in exercise_schema['required']
+    assert all('progressionMethod' not in item
+        for day in result['proposedSubmission']['workouts'] for item in day['exercises'])
 
 
 def test_qualified_missing_coverage_returns_to_selection_before_workers(monkeypatch):
@@ -89,6 +218,27 @@ def test_qualified_missing_coverage_returns_to_selection_before_workers(monkeypa
     assert result['preparationErrors'] and not result.get('executionFailure')
     store_tool(messages, 'draft_workout_sessions', {'preparationId': prepared['preparationId']}, result)
     assert session_drafting.preparation_repair_task(messages)
+
+
+def test_only_unsupported_approved_warmup_option_returns_to_selection_before_workers(monkeypatch):
+    equipment, messages, prepared, _ = week_case(
+        execution_rules=[{'kind': 'warmup', 'coverageKey': 'chest'}],
+        coverage=[{'key': 'chest', 'description': 'Chest work', 'scope': 'eachSession'}])
+    monkeypatch.setattr('workout_generator_pkg.recipe_contracts.qualify_recipe_contracts',
+        lambda *a, **k: {'contracts': [{'definition_id': 'LIBRARY_0', 'satisfiesCoverage': ['chest']} ]})
+    monkeypatch.setattr(session_drafting, 'chat_call', lambda *a, **k: pytest.fail(
+        'Unsupported warm-up capability must return to menu selection before worker drafting'))
+
+    result = session_drafting.draft_workout_sessions(None,
+        {'preparationId': prepared['preparationId']}, messages, equipment, {})
+
+    assert not result.get('executionFailure')
+    assert result['preparationErrors']
+    assert {error['code'] for error in result['preparationErrors']} == {'required_coverage_missing'}
+    store_tool(messages, 'draft_workout_sessions',
+        {'preparationId': prepared['preparationId']}, result)
+    task = session_drafting.preparation_repair_task(messages)
+    assert task and task['needsAlternatives']
 
 
 def test_unsupported_load_suitability_returns_to_scoped_candidate_selection():
@@ -263,9 +413,9 @@ def test_sessions_draft_concurrently_then_merge_once_and_audit_complete_week(mon
     monkeypatch.setattr(plan_review, 'review_week_structure', lambda *a, **k: {'passed': True, 'findings': warnings})
     barrier = threading.Barrier(3)
     def draft(client, request, **options):
-        from workout_generator_pkg.training_history import LOAD_PROGRESSION_INSTRUCTION
-        assert LOAD_PROGRESSION_INSTRUCTION in request[0]['content']
-        assert LOAD_PROGRESSION_INSTRUCTION in shell.CANONICAL_PLANNING_INSTRUCTION
+        from workout_generator_pkg.training_history import PRESCRIPTION_EVIDENCE_INSTRUCTION
+        assert PRESCRIPTION_EVIDENCE_INSTRUCTION in request[0]['content']
+        assert PRESCRIPTION_EVIDENCE_INSTRUCTION in shell.CANONICAL_PLANNING_INSTRUCTION
         payload = json.loads(request[-1]['content'])
         assert payload['sharedSessionTargets']['chest'] == {'minimum': 5, 'maximum': 6}
         assert len(payload['sharedWeek']) == 3
@@ -285,6 +435,8 @@ def test_sessions_draft_concurrently_then_merge_once_and_audit_complete_week(mon
     store_tool(messages, 'draft_workout_sessions', {}, result)
     pending = request_planning_state(shell._messages_for_api(messages, True, provided_equipment=equipment))
     assert pending['currentDraft'] is None and pending['parallelSubmission'] == result['proposedSubmission']
+    assert 'constructionTask' not in pending
+    assert shell.construction_tool_failure('audit_workout_plan', pending['parallelSubmission'], pending) is None
     report = audit_workout_plan(pending['parallelSubmission'], equipment, messages)
     assert report['passed'] and report['audit']['weeklyVolume']['chest']['effective'] == 15
 
@@ -438,15 +590,17 @@ def test_worker_repairs_grouping_and_non_group_finding_together(monkeypatch):
         if 'permittedPaths' in payload:
             repairs.append(payload)
             assert any(error.get('groupRepairOnly') for error in payload['errors'])
-            assert any(error.get('path', '').endswith('/placementNotes') for error in payload['errors'])
+            assert any(error.get('path', '').endswith('/effortAcceptance/acceptanceCriterion') for error in payload['errors'])
             assert 'apply those field edits before any moves' in request[0]['content']
             return json.dumps({'patch': [
-                {'op': 'replace', 'path': '/workouts/0/exercises/0/placementNotes', 'value': 'Controlled execution.'},
+                {'op': 'replace', 'path': '/workouts/0/exercises/0/effortAcceptance/acceptanceCriterion', 'value': 'Controlled execution.'},
                 {'op': 'replace', 'path': '/workouts/0/exercises/0/superset', 'value': None},
             ]}), None, None
         values = copy.deepcopy(exercises)
         if payload['session']['name'] == 'Session 0':
-            values[0].update(placementNotes='x' * 501, superset='singleton')
+            values[0].update(superset='singleton', effortAcceptance={
+                'kind': 'technical_criteria', 'acceptanceCriterion': 'x' * 241,
+                'terminationCriterion': 'Stop before technique degrades.'})
         return json.dumps({**{key: value for key, value in payload['session'].items()
                               if key not in ('definition_ids', 'structure', 'coverageAssignments')},
                            'exercises': values}), None, None
@@ -455,7 +609,7 @@ def test_worker_repairs_grouping_and_non_group_finding_together(monkeypatch):
         messages, equipment, state)
     assert 'proposedSubmission' in result, json.dumps(result.get('workerFailures', result.get('errors')), indent=2)
     assert len(repairs) == 1
-    assert result['workerResults']['0']['exercises'][0]['placementNotes'] == 'Controlled execution.'
+    assert result['workerResults']['0']['exercises'][0]['effortAcceptance']['acceptanceCriterion'] == 'Controlled execution.'
     assert result['workerResults']['0']['exercises'][0]['superset'] is None
 
 
@@ -770,7 +924,7 @@ def test_evidence_batches_cover_every_occurrence_once_and_retain_comparison_cont
     for batch in batches:
         selected = set(batch['reviewedExerciseIds'])
         assert set(batch['requiredChecks']) == selected
-        assert all('post_ceiling_next_step' in checks and 'progression_order' in checks
+        assert all(checks == ['history_and_load', 'stop_rule']
                    for checks in batch['requiredChecks'].values())
         assert len({e['libraryDefinitionId'] for e in batch['draft']['exercises'] if e['id'] in selected}) <= 4
         assert set(batch['history']) == {e['libraryDefinitionId'] for e in batch['draft']['exercises'] if e['id'] in selected}

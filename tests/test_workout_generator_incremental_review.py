@@ -133,7 +133,7 @@ def test_followup_uses_low_effort_patch_work_order(monkeypatch):
     state = request_planning_state(interactive_shell._messages_for_api(messages, True, provided_equipment=equipment))
     assert state['editTask']['baseDraftId'] == state['currentDraftId']
     assert 'constructionTask' not in state and 'repairTask' not in state
-    assert planner_response_profile(state) == {'reasoning_effort': 'low', 'activity': 'Editing workout',
+    assert planner_response_profile(state) == {'reasoning_effort': None, 'activity': 'Editing workout',
                                              'max_tokens': 16384, 'timeout': 120}
 
 

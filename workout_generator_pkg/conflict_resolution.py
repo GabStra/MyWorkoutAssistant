@@ -12,6 +12,33 @@ from .requirement_accounting import (has_unresolved_numeric_relaxation, pointer,
 CONFLICT_RESOLUTION_VERSION = 4
 
 
+def latest_candidate_diagnosis(messages, requirements_id, base_draft_id):
+    """An empty/failed diagnosis cannot replace a saved candidate's authority."""
+    from .planning_tools import _latest_result
+    latest_index, latest = _latest_result(messages, 'propose_workout_alternatives')
+    terminal = (latest.get('outcome') == 'unresolved'
+        and not latest.get('alternativeRepairCandidates') and not latest.get('proposals'))
+    if not (latest.get('executionFailure') or latest.get('staleHistory') or terminal):
+        return latest_index, latest
+    call_names = {call.get('id'): call.get('function', {}).get('name')
+        for message in messages for call in message.get('tool_calls', [])}
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if message.get('role') != 'tool' or call_names.get(message.get('tool_call_id')) != 'propose_workout_alternatives':
+            continue
+        try:
+            result = json.loads(message.get('content') or '{}')
+        except (TypeError, ValueError):
+            continue
+        if (isinstance(result, dict) and result.get('requirementsId') == requirements_id
+                and result.get('baseDraftId') == base_draft_id
+                and result.get('diagnosisVersion') == CONFLICT_RESOLUTION_VERSION
+                and isinstance(result.get('alternativeRepairCandidates'), list)
+                and result['alternativeRepairCandidates']):
+            return index, result
+    return latest_index, latest
+
+
 def _hash(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode()).hexdigest()
 
@@ -77,9 +104,18 @@ def _conflict_details(receipt, requirements):
         accounted.append({'instruction': item.get('instruction'),
             'sourceReferences': item.get('sourceReferences', []), 'priority': item.get('priority'),
             'requirementPaths': values})
+    ranks = relaxation_rank_by_path(requirements)
+    permissions = []
+    for path in relaxation_paths(requirements):
+        direction = ('increase_duration' if path.endswith('/maximumSessionSeconds')
+                     else 'lower_minimum' if path.endswith('/minimum') else 'raise_maximum')
+        permissions.append({'path': path, 'direction': direction,
+            'currentValue': copy.deepcopy(pointer(requirements, path)),
+            **({'rank': ranks[path]} if path in ranks else {})})
     return {'solverStatus': receipt.get('status'),
         'solverConsideredConstraints': receipt.get('consideredConstraints', []),
         'instruction': receipt.get('instruction'), 'accountedRequirements': accounted,
+        'authorizedNumericRelaxations': permissions,
         'claimScope': 'The joint solver proved this supplied menu infeasible; this is not a minimal conflicting-requirements core.'}
 
 
@@ -157,6 +193,11 @@ def _proposal_core(proposal):
         core['programGuidance'] = proposal['programGuidance']
     if proposal.get('allocationConflictFingerprint'):
         core['allocationConflictFingerprint'] = proposal['allocationConflictFingerprint']
+    if isinstance(proposal.get('candidateDiagnosisSource'), dict):
+        core['candidateDiagnosisSource'] = proposal['candidateDiagnosisSource']
+    for key in ('repairContract', 'jointSolve'):
+        if isinstance(proposal.get(key), dict):
+            core[key] = proposal[key]
     core['searchScope'] = proposal.get('searchScope', 'the supplied exercise menu')
     core['structuralSearchStatus'] = proposal.get('structuralSearchStatus',
         'Structural alternatives may remain unexplored.')
@@ -271,7 +312,8 @@ def diagnose_conflict_and_propose(*, requirements_id, base_draft_id, workouts=No
                                   equipment, restriction_policy, review_candidate, training_history=None,
                                   messages=None, allow_educated_load_guesses=True,
                                   max_solver_attempts=8,
-                                  existing_conflict=None, allocation_conflict=None):
+                                  existing_conflict=None, allocation_conflict=None,
+                                  candidate_scope=None):
     """Validate menu-scoped alternatives within explicitly negotiable numeric bounds.
 
     `review_candidate(sessions, requirements, solver_receipt)` must run the ordinary
@@ -282,15 +324,28 @@ def diagnose_conflict_and_propose(*, requirements_id, base_draft_id, workouts=No
     solver-attempt count, not elapsed wall-clock time.
     """
     from .joint_planning import joint_problem_fingerprint, solve_prescribed_week
-    from .planning_tools import _latest_result, library_fingerprint
+    from .planning_tools import _fingerprint as source_fingerprint, _latest_result, library_fingerprint
     from .cancellation import run_cancellable
 
     started = time.monotonic()
+    invalid_candidate_scope = candidate_scope is not None and not isinstance(candidate_scope, dict)
+    if invalid_candidate_scope:
+        candidate_scope = None
+    candidate_diagnosis_source = ({key: copy.deepcopy(candidate_scope[key]) for key in (
+        'requirementsId', 'baseDraftId', 'repairCandidateId', 'submittedMenuFingerprint',
+        'feasibilityDomainFingerprint', 'candidateRequirementsId', 'sourceDraftId', 'sourceMenuFingerprint')
+        if key in candidate_scope} if candidate_scope else None)
 
     def diagnosed_outcome(status, scope, **details):
         result = _outcome(status, scope, **details)
         result['diagnosisVersion'] = CONFLICT_RESOLUTION_VERSION
+        if candidate_diagnosis_source:
+            result['candidateDiagnosisSource'] = copy.deepcopy(candidate_diagnosis_source)
         return result
+
+    if invalid_candidate_scope:
+        return diagnosed_outcome('unresolved', 'saved hypothetical alternative menu',
+            reason='The candidate conflict binding is invalid.')
 
     if workouts is None:
         _, current_draft = _latest_result(messages or [], 'audit_workout_plan')
@@ -305,10 +360,35 @@ def diagnose_conflict_and_propose(*, requirements_id, base_draft_id, workouts=No
     # itself has been expanded and re-audited.
     _, current_audit = _latest_result(messages or [], 'audit_workout_plan')
     audited_workouts = (current_audit.get('submittedDraft') or {}).get('workouts')
-    source_program_guidance = (current_audit.get('submittedDraft') or {}).get('programGuidance', '')
+    if candidate_scope is not None and not isinstance(candidate_scope, dict):
+        return diagnosed_outcome('unresolved', 'saved hypothetical alternative menu',
+            reason='The candidate conflict binding is invalid.')
+    source_program_guidance = ((candidate_scope or {}).get('programGuidance')
+        if isinstance(candidate_scope, dict) else None)
+    if source_program_guidance is None:
+        source_program_guidance = (current_audit.get('submittedDraft') or {}).get('programGuidance', '')
     if not isinstance(source_program_guidance, str):
         return diagnosed_outcome('unresolved', 'saved workout draft',
             reason='The current draft has invalid program guidance; refresh the saved draft before diagnosing alternatives.')
+    if candidate_scope is not None:
+        from .joint_planning import SELECTION_POLICY_VERSION, candidate_menu_fingerprint
+        proof = existing_conflict if isinstance(existing_conflict, dict) else {}
+        expected_domain = candidate_scope.get('feasibilityDomainFingerprint')
+        if (not isinstance(candidate_scope, dict)
+                or not isinstance(candidate_scope.get('repairCandidateId'), str)
+                or candidate_scope.get('requirementsId') != requirements_id
+                or candidate_scope.get('baseDraftId') != base_draft_id
+                or not isinstance(candidate_scope.get('candidateRequirementsId'), str)
+                or candidate_scope.get('sourceDraftId') != base_draft_id
+                or candidate_scope.get('submittedMenuFingerprint') != candidate_menu_fingerprint(workouts)
+                or not isinstance(expected_domain, str) or not expected_domain
+                or proof.get('status') != 'infeasible'
+                or proof.get('preserveSourceSelection') is not True
+                or proof.get('selectionPolicyVersion') != SELECTION_POLICY_VERSION
+                or proof.get('feasibilityDomainFingerprint') != expected_domain
+                or proof.get('rejectedOptions')):
+            return diagnosed_outcome('unresolved', 'saved hypothetical alternative menu',
+                reason='The saved menu conflict proof no longer matches this candidate, submitted menu, selection policy, or executable domain.')
     if (current_audit.get('requirementsId') == requirements_id
             and current_audit.get('currentDraftId', current_audit.get('draftId')) == base_draft_id
             and current_audit.get('passed') is False and audited_workouts == workouts):
@@ -325,7 +405,26 @@ def diagnose_conflict_and_propose(*, requirements_id, base_draft_id, workouts=No
     attempts = []
     paths = relaxation_paths(requirements)
     original = copy.deepcopy(requirements)
-    original_hash = _hash(original)
+    approved_original = copy.deepcopy((candidate_scope or {}).get('originalRequirements', original))
+    original_hash = source_fingerprint(approved_original)
+    def changes_from_approved(candidate_requirements, change_evidence=()):
+        evidence = [*(candidate_scope or {}).get('priorChanges', []), *(change_evidence or [])]
+        bases = {item.get('path'): item.get('basis') for item in evidence
+                 if isinstance(item, dict) and isinstance(item.get('basis'), str)}
+        changes = []
+        for path in relaxation_paths(approved_original):
+            before, after = pointer(approved_original, path), pointer(candidate_requirements, path)
+            if before == after:
+                continue
+            change = {'path': path, 'from': before, 'to': after}
+            if path in bases:
+                change['basis'] = bases[path]
+            changes.append(change)
+        return changes
+    if (candidate_scope is not None
+            and candidate_scope.get('originalRequirementsHash') != source_fingerprint(approved_original)):
+        return diagnosed_outcome('unresolved', 'saved hypothetical alternative menu',
+            reason='The candidate conflict diagnosis no longer matches the approved source requirements.')
     library_hash = library_fingerprint(equipment)
     history_hash = getattr(training_history, 'fingerprint', None)
     allocation_conflict_fingerprint = None
@@ -368,6 +467,7 @@ def diagnose_conflict_and_propose(*, requirements_id, base_draft_id, workouts=No
             return None
         receipt = solve_prescribed_week(workouts, requirement_set, equipment, restriction_policy,
             allow_educated_load_guesses=allow_educated_load_guesses,
+            preserve_source_selection=candidate_scope is not None,
             training_history=training_history, messages=messages)
         attempts.append({'scenario': label, 'status': receipt.get('status'),
                          'elapsedSeconds': receipt.get('elapsedSeconds')})
@@ -384,7 +484,8 @@ def diagnose_conflict_and_propose(*, requirements_id, base_draft_id, workouts=No
     expected_problem_fingerprint = joint_problem_fingerprint(
         workouts, original, equipment, training_history, messages,
         restriction_policy=restriction_policy, existing=None,
-        allow_educated_load_guesses=allow_educated_load_guesses)
+        allow_educated_load_guesses=allow_educated_load_guesses,
+        preserve_source_selection=candidate_scope is not None)
     if (isinstance(existing_conflict, dict)
             and existing_conflict.get('status') == 'infeasible'
             and existing_conflict.get('problemFingerprint') == expected_problem_fingerprint):
@@ -414,7 +515,7 @@ def diagnose_conflict_and_propose(*, requirements_id, base_draft_id, workouts=No
         return diagnosed_outcome('unresolved', 'supplied prescription menu', reason=first.get('instruction', 'The solver did not prove a conflict.'), attempts=attempts)
 
     structural_search_verified = False
-    if messages is not None:
+    if messages is not None and candidate_scope is None:
         _, current_audit = _latest_result(messages, 'audit_workout_plan')
         if current_audit.get('currentDraftId', current_audit.get('draftId')) != base_draft_id:
             return diagnosed_outcome('unresolved', 'supplied prescription menu',
@@ -471,9 +572,11 @@ def diagnose_conflict_and_propose(*, requirements_id, base_draft_id, workouts=No
                     numeric_candidates.append({'requirementsId': requirements_id, 'baseDraftId': base_draft_id,
                         'programGuidance': source_program_guidance,
                         'originalRequirementsHash': original_hash, 'libraryFingerprint': library_hash,
-                        'trainingHistoryFingerprint': history_hash, 'changes': changes,
+                        'trainingHistoryFingerprint': history_hash, 'changes': changes_from_approved(tightened, changes),
                         'requirements': tightened, 'workouts': best_receipt['sessions'],
                         'audit': best_receipt['audit'],
+                        **({'candidateDiagnosisSource': copy.deepcopy(candidate_diagnosis_source)}
+                            if candidate_diagnosis_source else {}),
                         'search': {'method': 'common_volume_floor_bisection', 'ratio': low,
                                    'rounds': sum(1 for attempt in attempts
                                        if attempt['scenario'].startswith('relax:all_volume_minima:common_floor_'))}})
@@ -582,7 +685,9 @@ def diagnose_conflict_and_propose(*, requirements_id, base_draft_id, workouts=No
                 # A temporary broadening that the audited output did not need is
                 # not a user-facing trade-off.
                 continue
-            changes = actual_changes
+            changes = changes_from_approved(candidate_requirements, actual_changes)
+            if not changes:
+                continue
             if not _unchanged_except_relaxations(original, candidate_requirements, allowed):
                 continue
             if not isinstance(receipt.get('audit'), dict) or receipt['audit'].get('errors'):
@@ -592,6 +697,8 @@ def diagnose_conflict_and_propose(*, requirements_id, base_draft_id, workouts=No
                 'originalRequirementsHash': original_hash, 'libraryFingerprint': library_hash,
                 'trainingHistoryFingerprint': history_hash, 'changes': changes,
                 'requirements': candidate_requirements, 'workouts': receipt['sessions'], 'audit': receipt['audit'],
+                **({'candidateDiagnosisSource': copy.deepcopy(candidate_diagnosis_source)}
+                    if candidate_diagnosis_source else {}),
                 **({'relaxationRanks': _ranked_change_paths(changes, rank_by_path)} if rank_by_path else {})})
 
     candidates, seen_proposals = [], set()
@@ -624,12 +731,15 @@ def diagnose_conflict_and_propose(*, requirements_id, base_draft_id, workouts=No
         candidate['diagnosisVersion'] = CONFLICT_RESOLUTION_VERSION
         candidate['reviewVersion'] = REVIEW_VERSION
         candidate['shortfallsAgainstOriginalRequirements'] = _shortfalls_against_original_requirements(
-            candidate['audit'], original, candidate['changes'])
+            candidate['audit'], approved_original, candidate['changes'])
         if allocation_conflict_fingerprint:
             candidate['allocationConflictFingerprint'] = allocation_conflict_fingerprint
-        candidate['searchScope'] = 'the supplied exercise menu'
+        candidate['searchScope'] = ('the exact saved hypothetical repair menu' if candidate_scope
+            else 'the supplied exercise menu')
         candidate['structuralSearchStatus'] = structural_status
-        candidate['claim'] = ('Validated against the proposed requirements for the supplied exercise menu; '
+        candidate['claim'] = ('Validated against the proposed requirements for the exact saved hypothetical repair menu; '
+            'the original approved target shortfalls are shown. No global optimum or impossibility is claimed.'
+            if candidate_scope else 'Validated against the proposed requirements for the supplied exercise menu; '
             'original-target shortfalls are shown. No global optimum or impossibility is claimed.')
         proposal_id = 'ALT_' + _hash(_proposal_core(candidate))[:24]
         if proposal_id in seen_proposals:
@@ -670,7 +780,7 @@ def diagnose_conflict_and_propose(*, requirements_id, base_draft_id, workouts=No
 def accept_workout_alternative(*, proposal_id, proposal_result, messages, current_requirements,
                                equipment, training_history=None):
     """Accept only a displayed proposal with exact, current user authorization."""
-    from .planning_tools import _latest_result, library_fingerprint
+    from .planning_tools import _fingerprint, _latest_result, library_fingerprint
 
     _, recorded = _latest_result(messages, 'propose_workout_alternatives')
     if not isinstance(recorded, dict) or recorded.get('outcome') != 'alternatives_ready':
@@ -690,7 +800,9 @@ def accept_workout_alternative(*, proposal_id, proposal_result, messages, curren
         raise ValueError('The alternative review is stale; generate and review alternatives again.')
     if recorded.get('requirementsId') != current_requirements.get('requirementsId'):
         raise ValueError('The approved requirements changed; generate and review alternatives again.')
-    if recorded.get('originalRequirementsHash') != _hash(current_requirements.get('requirements', current_requirements)):
+    source_requirements = current_requirements.get('requirements', current_requirements)
+    # Older diagnosis receipts used compact JSON; both hashes bind the exact current source.
+    if recorded.get('originalRequirementsHash') not in (_fingerprint(source_requirements), _hash(source_requirements)):
         raise ValueError('The original requirements changed; generate and review alternatives again.')
     if recorded.get('libraryFingerprint') != library_fingerprint(equipment):
         raise ValueError('The exercise library or equipment changed; validate alternatives again.')
@@ -725,6 +837,12 @@ def accept_workout_alternative(*, proposal_id, proposal_result, messages, curren
     new_requirements = copy.deepcopy(proposal['requirements'])
     new_requirements_id = 'REQ_' + _hash({'supersedes': current_requirements['requirementsId'],
         'proposalId': proposal_id, 'requirements': new_requirements})[:24]
+    repair_metadata = {key: copy.deepcopy(proposal[key]) for key in ('repairContract', 'jointSolve')
+        if isinstance(proposal.get(key), dict)}
+    if 'repairContract' in repair_metadata:
+        repair_metadata['repairContract']['requirementsId'] = new_requirements_id
+        repair_metadata['libraryFingerprint'] = proposal['libraryFingerprint']
+        repair_metadata['historyFingerprint'] = proposal['trainingHistoryFingerprint']
     return {'requirementsId': new_requirements_id, 'requirements': new_requirements,
         'supersedesRequirementsId': current_requirements['requirementsId'],
         'approvedAlternativeId': proposal_id,
@@ -732,4 +850,4 @@ def accept_workout_alternative(*, proposal_id, proposal_result, messages, curren
         'workouts': copy.deepcopy(proposal['workouts']),
         'programGuidance': proposal.get('programGuidance', ''),
         'audit': copy.deepcopy(proposal['audit']),
-        'independentReview': copy.deepcopy(proposal['independentReview'])}
+        'independentReview': copy.deepcopy(proposal['independentReview']), **repair_metadata}

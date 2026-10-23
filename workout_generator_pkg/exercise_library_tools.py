@@ -100,6 +100,7 @@ SELECT_EXERCISES_TOOL = {
 
 def _selection_entry(definition, gear_names, reference):
     from .generation_audit import muscle_credits_per_set
+    from .programming_demands import definition_demand_facts
     fields = (
         "name", "exerciseType", "bodyWeightPercentage",
         "muscleGroups", "secondaryMuscleGroups", "exerciseCategory",
@@ -110,6 +111,7 @@ def _selection_entry(definition, gear_names, reference):
     entry["equipmentName"] = gear_names.get(definition.get("equipmentId"))
     entry["accessoryNames"] = [gear_names.get(item, item) for item in definition.get("requiredAccessoryEquipmentIds", [])]
     entry["creditsPerWorkingSet"] = muscle_credits_per_set(definition)
+    entry['programmingDemandFacts'] = definition_demand_facts(definition)
     from .generation_audit import VOLUME_SET_TYPES
     if definition.get('exerciseType') not in VOLUME_SET_TYPES:
         entry['volumeAuditNote'] = 'Timed/cardio prescriptions count for duration but have no effective-set equivalence in the current volume audit.'
@@ -457,7 +459,7 @@ def execute_library_tool(function_name, arguments, provided_equipment, client=No
     }
     if not definitions:
         raise ValueError("No exercise library is loaded")
-    from .planning_tools import _latest_result, require_approved_requirements
+    from .planning_tools import _latest_result, library_fingerprint, require_approved_requirements
     from .restriction_policy import effective_restrictions
     _, requirements = _latest_result(messages, 'set_workout_requirements')
     restrictions = effective_restrictions(requirements, provided_equipment or {})
@@ -614,7 +616,8 @@ def execute_library_tool(function_name, arguments, provided_equipment, client=No
                 if index in rerank_failures:
                     entry["rerankWarning"] = rerank_failures[index]
                 cached[normalize(query)] = entry
-    output = {"libraryFingerprint": fingerprint, "searchFingerprint": search_fingerprint,
+    output = {"libraryFingerprint": library_fingerprint(provided_equipment or {}),
+              "searchFingerprint": search_fingerprint,
               "results": [{**cached[normalize(query)], "query": query} for query in queries]}
     errors = [item for item in output["results"] if item.get("error")]
     uncertain = [item for item in output["results"] if item.get("rerankWarning")]

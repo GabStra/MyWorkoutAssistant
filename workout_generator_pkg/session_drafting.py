@@ -7,18 +7,18 @@ from collections import Counter
 from jsonschema import validate, Draft7Validator, ValidationError
 
 from .api_client import chat_call
-from .api_metrics import api_metrics_scope
+from .api_metrics import api_metrics_scope, record_submission_rejection
 from .exercise_library_tools import get_exercise_candidates
 from .generation_audit import audit_policy, available_muscle_targets
 from .image_attachments import image_message
 from .parallel_work import parallel_proposals
 from .planning_tools import (_DRAFT_SCHEMA, _latest_result, latest_draft_submission,
-                             library_fingerprint, require_approved_requirements, description_text_contract, placement_notes_text_contract,
+                             library_fingerprint, require_approved_requirements, description_text_contract, _strip_legacy_calibration_fields,
                              requirement_sources, source_message_context, _audit_coverage, PlanningInputError,
                              build_draft_plan, requirements_approved, planning_tool_failure, _PATCH_SCHEMA)
 from .json_patching import (apply_json_patch, build_allowed_patch_scope, collect_changed_json_paths,
                             is_path_allowed_in_scope, validate_patch_operations_scope)
-from .training_history import (pool_execution_contexts, EVIDENCE_FORMAT, LOAD_PROGRESSION_INSTRUCTION,
+from .training_history import (pool_execution_contexts, EVIDENCE_FORMAT, PRESCRIPTION_EVIDENCE_INSTRUCTION,
     apply_native_load_calibration_policy)
 from .programming_guidelines import GUIDELINE_POLICY, audit_execution_rules, audit_execution_details, approved_work_set_bounds
 
@@ -190,8 +190,8 @@ PREPARE_WORKOUT_SESSIONS_TOOL = {'type': 'function', 'function': {
     'Use when two or more sessions remain. Select ONLY movements, grouping, coverage and schedule for the remaining sessions. '
     'Honor each coverage rule at its declared scope: a weekly pattern need not occur in every session. '
     'One-member blocks prefer straight sets; multiple members prefer a superset. Python may omit redundant candidates, '
-    'move weekly patterns between sessions, or separate incompatible supersets. It jointly satisfies approved volume, '
-    'coverage and workSets rules as a preliminary check. Prescription recipes are then solved jointly with duration and execution rules before full-week review. Do not emit counts or bounds; '
+    'move weekly patterns between sessions, or separate incompatible supersets. Preparation checks library muscle credits and role-independent set limits; '
+    'coverage and role-dependent rules are checked after recipe qualification. Prescription recipes are then solved jointly with duration and execution rules before full-week review. Do not emit counts or bounds; '
     'only approved requirements can impose set limits. No approval or export occurs.')}}
 
 
@@ -505,7 +505,8 @@ def preparation_repair_task(messages):
     task = {'basePreparationId': f'PREPARATION_{index}', 'arguments': copy.deepcopy(arguments), 'errors': copy.deepcopy(errors),
             'allocationDiagnostics': result.get('allocationDiagnostics', []),
             'permittedPaths': sorted(exact), 'permittedDescendantPaths': sorted(descendants), 'metadataFields': fields,
-            'needsAlternatives': any(e.get('code') in ('required_coverage_missing', 'infeasible_set_allocation', 'prepared_library_reference', 'prepared_design_finding') for e in errors)}
+            'needsAlternatives': any(e.get('code') in ('required_coverage_missing', 'infeasible_set_allocation',
+                'prepared_library_reference', 'prepared_design_finding') for e in errors)}
     task['blockRepair'] = _block_repair_contract(task)
     return task
 
@@ -636,7 +637,7 @@ def revalidate_saved_preparation(messages, equipment):
     return arguments, result
 
 
-def _movement_pool(sessions, candidates, requirements):
+def _movement_pool(sessions, candidates, requirements, *, qualified_roles=True):
     """Session proposals are preferences; only approved rules constrain the solver."""
     pool = {}
     for day in sessions:
@@ -653,11 +654,12 @@ def _movement_pool(sessions, candidates, requirements):
         for reference in ordered:
             item = copy.deepcopy(pool[reference])
             item['superset'] = originals.get(reference, {}).get('superset')
-            item['allocationBounds'] = approved_work_set_bounds(item, candidates[reference], requirements)
+            bounds_item = item if qualified_roles else {**item, 'satisfiesCoverage': []}
+            item['allocationBounds'] = approved_work_set_bounds(bounds_item, candidates[reference], requirements)
             bounds = item['allocationBounds']
             item['numWorkSets'] = min(bounds['maximum'], max(bounds['minimum'],
                 originals.get(reference, {}).get('numWorkSets', 1)))
-            if any(rule['kind'] == 'straightSets' and rule['coverageKey'] in item['satisfiesCoverage']
+            if qualified_roles and any(rule['kind'] == 'straightSets' and rule['coverageKey'] in item['satisfiesCoverage']
                    for rule in requirements.get('executionRules', [])):
                 item['superset'] = None
             day['exercises'].append(item)
@@ -746,25 +748,16 @@ def _prepare_week(arguments, messages, equipment):
     recipe_sessions = copy.deepcopy(arguments['sessions'])
     for day in recipe_sessions:
         for item in day['exercises']:
-            bounds = approved_work_set_bounds(item, candidates[item['definition_id']], requirements)
+            # Coverage-keyed count rules depend on qualified roles, which are
+            # not available until the drafting stage.
+            bounds = approved_work_set_bounds({**item, 'satisfiesCoverage': []},
+                candidates[item['definition_id']], requirements)
             item['allocationBounds'] = bounds
             item['numWorkSets'] = min(bounds['maximum'], max(bounds['minimum'], item['numWorkSets']))
             item.setdefault('satisfiesCoverage', [])
-    arguments['sessions'] = _movement_pool(arguments['sessions'], candidates, requirements)
-    coverage_days = copy.deepcopy((existing or {}).get('workouts', [])) + copy.deepcopy(arguments['sessions'])
-    coverage_report = {'issues': [], 'errors': []}
-    _audit_coverage({'workouts': coverage_days}, requirements, coverage_report)
-    existing_count = len((existing or {}).get('workouts', []))
-    for error in coverage_report['errors']:
-        parts = error['path'].split('/')
-        if len(parts) > 2 and parts[2].isdigit() and int(parts[2]) >= existing_count:
-            error['path'] = f'/sessions/{int(parts[2]) - existing_count}/exercises'
-        elif error['path'] == '/workouts':
-            error['path'] = '/sessions'
-        error['repair'] = 'Patch qualifying exercises or their satisfiesCoverage using approved roles; preserve requirements and unaffected choices.'
-    if coverage_report['errors']:
-        raise PlanningInputError('incomplete_weekly_selection', 'Week preparation needs correction.', '/sessions',
-            'Repair the indicated coverage before workers start.', errors=coverage_report['errors'])
+    # Proposed roles are not yet qualified; do not make them a feasibility gate
+    # or use them to alter execution placement before recipe qualification.
+    arguments['sessions'] = _movement_pool(arguments['sessions'], candidates, requirements, qualified_roles=False)
     from .allocation import allocate_prepared_sets
     allocation = allocate_prepared_sets(arguments['sessions'], candidates, requirements, existing, equipment, receipt.get('restrictionPolicy'), select_movements=True)
     if not allocation['feasible']:
@@ -775,11 +768,6 @@ def _prepare_week(arguments, messages, equipment):
             errors=[{'code': code, 'path': '/sessions', **allocation}])
         error.preparation_arguments = copy.deepcopy(arguments)
         raise error
-    checked_coverage = {'issues': [], 'errors': []}
-    _audit_coverage({'workouts': (existing or {}).get('workouts', []) + allocation['sessions']}, requirements, checked_coverage)
-    if checked_coverage['errors']:
-        raise PlanningInputError('allocation_unverified', 'Selected coverage failed independent validation.', '/sessions',
-            'Preserve the proposal and report the failed allocation check.', errors=checked_coverage['errors'])
     references = list(candidates)
     shared_targets = {muscle: {'minimum': bounds['minimum'] / (frequency + proposed_frequency),
                              'maximum': bounds['maximum'] / (frequency + proposed_frequency)}
@@ -813,7 +801,7 @@ def draft_workout_sessions(client, arguments, messages, equipment, planning_stat
         raise ValueError('Parallel preparation is stale. Prepare the remaining sessions against current authority.')
     fingerprint = planning_state.get('historyFingerprint')
     _, previous = _latest_result(messages, 'draft_workout_sessions')
-    selections = copy.deepcopy(prepared['recipeSessions'])
+    selections = [_strip_legacy_calibration_fields(copy.deepcopy(day)) for day in prepared['recipeSessions']]
     from .recipe_contracts import qualify_recipe_contracts
     try:
         qualified = qualify_recipe_contracts(client, prepared, requirements, equipment, messages,
@@ -828,14 +816,14 @@ def draft_workout_sessions(client, arguments, messages, equipment, planning_stat
             contract = contracts.get(item['definition_id'])
             if contract:
                 item['satisfiesCoverage'] = copy.deepcopy(contract['satisfiesCoverage'])
-                item['progressionPlan'] = copy.deepcopy(contract['progressionPlan'])
-                item['progressionMethod'] = 'sourceDefined'
             bounds = approved_work_set_bounds(item, prepared['candidates'][item['definition_id']], requirements['requirements'])
             item['allocationBounds'] = bounds
             item['numWorkSets'] = min(bounds['maximum'], max(bounds['minimum'], item['numWorkSets']))
+    from .planning_tools import _filter_unsupported_warmup_candidates
+    _filter_unsupported_warmup_candidates(selections, equipment, requirements['requirements'])
     qualified_coverage = {'issues': [], 'errors': []}
     _audit_coverage({'workouts': (existing or {}).get('workouts', []) +
-                    _movement_pool(selections, prepared['candidates'], requirements['requirements'])},
+                    _movement_pool(selections, prepared['candidates'], requirements['requirements'], qualified_roles=True)},
                     requirements['requirements'], qualified_coverage)
     if qualified_coverage['errors']:
         errors = [{**error, 'path': '/sessions', 'permittedPaths': {
@@ -843,7 +831,7 @@ def draft_workout_sessions(client, arguments, messages, equipment, planning_stat
             'descendants': [f'/sessions/{i}/exercises' for i in range(len(selections))]}}
             for error in qualified_coverage['errors']]
         return {'preparationId': prepared['preparationId'], 'passed': False,
-                'recipeQualification': qualified, 'preparationErrors': errors, 'errors': errors,
+                  'recipeQualification': qualified, 'preparationErrors': errors, 'errors': errors,
                 'instruction': 'Add eligible movements for the missing qualified coverage before drafting; preserve approved requirements.'}
     worker_hashes = {str(index): hashlib.sha256(json.dumps({
         'exercises': selection['exercises'], 'requirements': requirements, 'existing': existing,
@@ -858,7 +846,13 @@ def draft_workout_sessions(client, arguments, messages, equipment, planning_stat
         return {key: copy.deepcopy(value) for key, value in previous.get(field, {}).items()
                 if key in worker_hashes and previous.get('workerInputHashes', {}).get(key) == worker_hashes[key]}
     completed, failed_proposals = reusable_workers('workerResults'), reusable_workers('workerFailures')
+    # Hash the original worker input so saved proposals remain locally reusable;
+    # derive the approved warm-up flag only after that cache match.
+    from .planning_tools import _normalize_required_warmup_flags
+    _normalize_required_warmup_flags({'workouts': selections}, equipment, requirements['requirements'])
     for key, session in completed.items():
+        _strip_legacy_calibration_fields(session)
+        _normalize_required_warmup_flags({'workouts': [session]}, equipment, requirements['requirements'])
         for field in ('name', 'description', 'timesCompletedInAWeek', 'trainingDays'):
             if field in selections[int(key)]:
                 session[field] = copy.deepcopy(selections[int(key)][field])
@@ -909,8 +903,8 @@ def draft_workout_sessions(client, arguments, messages, equipment, planning_stat
     def draft_session(index, selection):
         response_schema = copy.deepcopy(_SESSION)
         exercise_schema = response_schema['properties']['exercises']['items']
+        exercise_schema['properties'].pop('progressionMethod', None)
         exercise_schema['required'].append('allocationBounds')
-        exercise_schema['required'].append('progressionMethod')
         exercise_schema['required'].append('repDurationSeconds')
         if not requirements['requirements'].get('workingSetRIR'):
             exercise_schema['required'].append('effortAcceptance')
@@ -924,15 +918,6 @@ def draft_workout_sessions(client, arguments, messages, equipment, planning_stat
         payload = {'requirements': requirements['requirements'], 'sourceMessages': prepared['sourceMessages'],
                    'descriptionTextContract': description_text_contract(selection),
                    'recipeContracts': {ref: contracts[ref] for ref in refs if ref in contracts},
-                   'progressionCapabilities': {ref: qualified.get('capabilities', {}).get(ref) for ref in refs},
-                   'qualifiedNotesLimits': {ref: placement_notes_text_contract({
-                       'progressionPlan': contracts[ref]['progressionPlan']},
-                       requirements['requirements'].get('workingSetRIR'))
-                       for ref in refs if ref in contracts},
-                   'placementNotesLimits': {method: {
-                       'maximumCharacters': placement_notes_text_contract({'progressionMethod': method},
-                           requirements['requirements'].get('workingSetRIR'))['maximumCharacters']}
-                       for method in ('reps', 'doubleProgression', 'duration', 'sourceDefined')},
                    'session': selection, 'sessionReference': f'SESSION_{index}',
                    'sharedWeek': selections, 'existingSessions': (existing or {}).get('workouts', []),
                    'sharedSessionTargets': prepared['sharedSessionTargets'],
@@ -948,14 +933,13 @@ def draft_workout_sessions(client, arguments, messages, equipment, planning_stat
                   'Use each selected definition_id exactly as often as selected; do not add or substitute movements. '
                   'Preserve the selected name, description, frequency and trainingDays. '
                   'Preserve satisfiesCoverage for each prepared exercise occurrence. '
-                  'Qualified recipeContracts own coverage and progressionPlan. Python restores them and renders their progression instructions. '
-                  'Do not duplicate or contradict those instructions in placementNotes. Use qualifiedNotesLimits for space after generated progression. '
+                  'Qualified recipeContracts own coverage. Python restores it. '
                   'These metadata and coverage fields are owned by the prepared selection; Python restores them before validation. '
                   'Use sharedWeek as candidate context, not fixed placement or volume decisions. '
-                  'Apply programmingGuidelines to exercise suitability, effort, progression, rest and equipment. Supply reusable prescriptions without assuming specific neighbors or final counts; the joint solver chooses the executable week and final review assesses cumulative fatigue and recovery together. '
-                  'Do not hide unsuitable prescriptions with generic recovery notes or claim that unresolved conflicts are solved. placementNotes are athlete-facing execution guidance: describe practical limitations and actions, never requests to a later reviewer, pending approval or internal hand-offs. The full-week reviewer receives the actual solved prescriptions. '
+                  'Apply programmingGuidelines to exercise suitability, effort, rest and equipment. Supply reusable prescriptions without assuming specific neighbors or final counts; the joint solver chooses the executable week and final review assesses cumulative fatigue and recovery together. '
+                  'Do not hide unsuitable prescriptions with generic recovery notes or claim that unresolved conflicts are solved. The full-week reviewer receives the actual solved prescriptions. '
                   'Declare repDurationSeconds as the complete rep time whenever notes prescribe tempo, including both phases and pauses. Use 3 seconds when no tempo is prescribed, null for timed/running work. '
-                  'Do not prescribe separate load-calibration sets, trial counts, bracketing or calibration rests. The app enables its native load-calibration mode when needed; Python derives requiresLoadCalibration from exercise type, load evidence and policy. Keep placementNotes to movement-specific technique/setup, not starting loads, RIR acceptance or progression triggers. '
+                  'Do not prescribe separate load-calibration sets, trial counts, bracketing or calibration rests. The app enables its native load-calibration mode when needed; Python derives requiresLoadCalibration from exercise type, load evidence and policy. '
                   'Do not solve the entire week or calculate audit totals; Python audits the combined proposals. '
                   'Preserve recipe identity, order and grouping for validation. The supplied counts are provisional seeds; Python will solve the executable week after all prescriptions exist. '
                   'Prefer a uniform workSetTemplate so Python can allocate counts before detailed repair; distinct per-set prescriptions remain locked. '
@@ -963,14 +947,15 @@ def draft_workout_sessions(client, arguments, messages, equipment, planning_stat
                   'Use targetSetPrescriptions only when distinct per-set targets are actually needed; do not invent descending prescriptions. '
                   'Use exact history for loads only when supported and selectable; otherwise omit unsupported fixed-load prescriptions and let Python enable native load calibration when applicable. Do not copy UUIDs; use LIBRARY_n references. '
                   'Use only confirmed equipment and assistance configurations represented by the selected library definition; notes cannot add missing equipment or transfer strength between variants. '
-                  'Keep placementNotes local to this occurrence: movement-specific technique, setup and source-required qualifications only. Do not use notes for an effort target or repeat weekly totals, schedules, all-session claims, prescribed loads or counts. Python derives native load-calibration mode and renders progression separately. When no approved general workingSetRIR exists, choose a usable plan-authored working-set effortAcceptance for every occurrence. Return the minimal typed shape: rir_range is {kind: "rir_range", minimumRIR: 1, maximumRIR: 2}; technical_criteria is {kind: "technical_criteria", acceptanceCriterion: "...", terminationCriterion: "..."}. Do not include the other kind’s fields; Python fills them as null. Technical criteria must be concrete, observable, and distinct. This is a programming choice, not a user requirement; do not claim it came from the user. When a general workingSetRIR exists, Python supplies that exact range. Qualified progressionPlan supplies the validated next step; preserve it and put only additional source-required technique and stop/recovery cues in local notes. Do not invent equipment, configuration changes or alternative progression prose. '
-                  + LOAD_PROGRESSION_INSTRUCTION + 'No tools, approval claims or prose.')
+                  'Choose typed effortAcceptance for working-set effort and observable technical acceptance/termination criteria. Python preserves approved workingSetRIR exactly. '
+                  + PRESCRIPTION_EVIDENCE_INSTRUCTION + 'No tools, approval claims or prose.')
         request = [{'role': 'system', 'content': prompt}, *image_message(requirement_sources(messages)),
                    {'role': 'user', 'content': json.dumps(payload, separators=(',', ':'))}]
         stage = f'draft_session_{index}'
         if logger:
             logger.log_request(stage, request[-1]['content'])
         retained = failed_proposals.get(str(index), {}).get('proposal')
+        validation_content, validation_stage = None, stage
         if retained is not None:
             session = copy.deepcopy(retained)
         else:
@@ -979,10 +964,15 @@ def draft_workout_sessions(client, arguments, messages, equipment, planning_stat
                                           response_format={'type': 'json_object'})
             if logger:
                 logger.log_response(stage, content, truncate_at=0)
-            session = json.loads(content)
+            try:
+                session = json.loads(content)
+            except json.JSONDecodeError as error:
+                record_submission_rejection(error, logger=logger, stage=stage, content=content)
+                raise
+            validation_content = content
         group_repaired = retained is not None
         def preflight(value):
-            value = copy.deepcopy(value)
+            value = _strip_legacy_calibration_fields(copy.deepcopy(value))
             if isinstance(value, dict):
                 for field in ('name', 'description', 'timesCompletedInAWeek', 'trainingDays'):
                     if field in selection:
@@ -996,6 +986,7 @@ def draft_workout_sessions(client, arguments, messages, equipment, planning_stat
                     for item, structure in zip(items, selection['exercises']):
                         item.update({key: copy.deepcopy(entry) for key, entry in structure.items()
                                      if not group_repaired or key not in _GROUP_REPAIR_FIELDS or key not in item})
+                _normalize_required_warmup_flags({'workouts': [value]}, equipment, requirements['requirements'])
             schema_errors = list(Draft7Validator(response_schema).iter_errors(value))
             errors = []
             for error in schema_errors:
@@ -1028,7 +1019,9 @@ def draft_workout_sessions(client, arguments, messages, equipment, planning_stat
                     errors.extend(finding for finding in local_report['errors'] if finding['code'] in (
                         'execution_rest', 'execution_warmup', 'setup_time_required'))
                     for finding in local_report['errors']:
-                        if finding['code'] in ('execution_supersetNoReconfiguration', 'execution_straightSets'):
+                        # Pairing is optional recipe input. The joint solver rejects
+                        # incompatible shared-load groups and can select straight sets.
+                        if finding['code'] == 'execution_straightSets':
                             errors.append({**finding, 'groupRepairOnly': True, 'permittedPaths': {
                                 'exact': ['/workouts/0/exercises'], 'descendants': ['/workouts/0/exercises']}})
             group_indices = {index for finding in errors if finding.get('groupRepairOnly')
@@ -1065,6 +1058,10 @@ def draft_workout_sessions(client, arguments, messages, equipment, planning_stat
                 return preflight(session)
             except PlanningInputError as error:
                 errors = error.errors or [{'path': error.path, 'message': str(error), 'repair': error.repair}]
+                if validation_content is not None:
+                    for finding in errors:
+                        record_submission_rejection(finding, logger=logger, stage=validation_stage,
+                                                    content=validation_content)
                 session = copy.deepcopy(getattr(error, 'submitted_session', session))
                 signature = json.dumps([session, [{key: finding.get(key) for key in
                     ('code', 'path', 'validator', 'permittedPaths', 'affectedIndices')} for finding in errors]], sort_keys=True)
@@ -1085,11 +1082,6 @@ def draft_workout_sessions(client, arguments, messages, equipment, planning_stat
                 grouping_only = all(finding.get('groupRepairOnly') for finding in errors)
                 repair_payload = {'draft': wrapper, 'errors': errors, 'permittedPaths': sorted(exact),
                     'permittedDescendantPaths': sorted(descendants), 'responseSchema': response_schema}
-                repair_payload['textFieldContracts'] = {
-                    f'/workouts/0/exercises/{i}/placementNotes': placement_notes_text_contract(item,
-                        requirements['requirements'].get('workingSetRIR'))
-                    for i, item in enumerate(session.get('exercises', []))
-                    if isinstance(item, dict) and isinstance(item.get('placementNotes'), str)}
                 if group_repair:
                     repair_payload.update(groupRepairFields=sorted(_GROUP_REPAIR_FIELDS), candidates=payload['candidates'])
                 repair_instruction = ('For groupRepairOnly findings, reorder complete existing exercises with move operations and change only groupRepairFields. '
@@ -1104,9 +1096,9 @@ def draft_workout_sessions(client, arguments, messages, equipment, planning_stat
                     logger.log_request(repair_stage, repair_request[-1]['content'])
                 with api_metrics_scope(logger, repair_stage):
                     mechanical = all(finding.get('code') in (
-                        'export_notes_too_long', 'export_description_too_long')
+                        'export_description_too_long',)
                         or (finding.get('validator') in ('minLength', 'maxLength')
-                            and finding.get('path', '').split('/')[-1] in ('placementNotes', 'description'))
+                            and finding.get('path', '').split('/')[-1] == 'description')
                         for finding in errors)
                     repaired, _, _ = chat_call(client, repair_request, reasoning_effort=None if mechanical else 'low',
                         max_tokens=2048 if mechanical else 16384, timeout=None,
@@ -1121,11 +1113,13 @@ def draft_workout_sessions(client, arguments, messages, equipment, planning_stat
                         _validate_mixed_group_repair(wrapper, updated, patch, errors)
                         group_repaired = True
                 except (ValueError, KeyError, TypeError) as invalid:
+                    record_submission_rejection(invalid, logger=logger, stage=repair_stage, content=repaired)
                     rejected = PlanningInputError('session_repair_rejected', str(invalid), '/workouts/0',
                         'Correct the patch within the original permitted scope; no rejected operations were applied.', errors=errors)
                     rejected.submitted_session = session
                     raise rejected from invalid
                 session = updated
+                validation_content, validation_stage = repaired, repair_stage
 
     def capture_session(index, selection):
         try:
@@ -1141,7 +1135,7 @@ def draft_workout_sessions(client, arguments, messages, equipment, planning_stat
         plan = build_draft_plan({'name': prepared['name'], 'workouts': [session]}, equipment,
                                 requirements['requirements'], requirements.get('restrictionPolicy'))
         audit_execution_rules({'workouts': [session]}, requirements['requirements'], report, plan)
-        if any(finding['code'] in ('execution_supersetNoReconfiguration', 'execution_straightSets') for finding in report['errors']):
+        if any(finding['code'] == 'execution_straightSets' for finding in report['errors']):
             failed_proposals[key] = {'proposal': completed.pop(key)}
     jobs = [(str(i), lambda i=i, selection=selection: capture_session(i, selection))
             for i, selection in enumerate(selections) if str(i) not in completed]
@@ -1163,7 +1157,7 @@ def draft_workout_sessions(client, arguments, messages, equipment, planning_stat
     initial_sessions = copy.deepcopy((existing or {}).get('workouts', [])) + recipes
     joint = solve_prescribed_week(initial_sessions, requirements['requirements'], equipment,
         requirements.get('restrictionPolicy'), training_history=training_history, messages=messages,
-        preserve_source_selection=True)
+        preserve_source_selection=False)
     base_receipt['jointPlanning'] = {key: value for key, value in joint.items() if key not in ('sessions', 'audit')}
     if not joint['feasible']:
         from .joint_planning import prescription_fingerprint

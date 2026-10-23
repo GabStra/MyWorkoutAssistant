@@ -1,5 +1,6 @@
 import copy
 import json
+from pathlib import Path
 
 import pytest
 
@@ -8,8 +9,22 @@ from workout_generator_pkg.interactive_shell import handle_function_call, _messa
 from workout_generator_pkg.planning_tools import (
     SET_WORKOUT_REQUIREMENTS_TOOL, requirement_sources, requirements_approved, set_workout_requirements,
 )
-from test_workout_generator_planning_tools import planning_case
+from test_workout_generator_planning_tools import planning_case, requirement_messages
 from test_workout_generator_planning_decisions import _without_review_refs
+
+
+def test_minimum_policy_reaches_extraction_and_independent_review():
+    from workout_generator_pkg.interactive_shell import CANONICAL_PLANNING_INSTRUCTION
+    from workout_generator_pkg.requirement_accounting import MINIMUM_TARGET_POLICY
+    equipment, _, _, _ = planning_case()
+    from workout_generator_pkg.planning_tools import workout_requirements_tool
+    properties = workout_requirements_tool(equipment)['function']['parameters']['properties']
+    assert 'requirementAccounting' not in properties
+    assert 'relaxationPermissions' in properties
+    assert MINIMUM_TARGET_POLICY in CANONICAL_PLANNING_INSTRUCTION
+    assert MINIMUM_TARGET_POLICY in review._REQUIREMENTS_PROMPT
+    assert 'Do not require or reconstruct a prose ledger' in review._REQUIREMENTS_PROMPT
+    assert 'Verify requirementAccounting covers EVERY explicit instruction' not in review._REQUIREMENTS_PROMPT
 
 
 def _record(messages, result):
@@ -95,6 +110,51 @@ def test_extraction_preserves_originals_and_never_promotes_model_notes():
     assert any('generalWarmupSeconds' in m.get('content', '') and 'Application auditPolicy' in m['content'] for m in outgoing)
 
 
+def test_coverage_role_schema_uses_code_owned_keys_and_labels_without_variant_text():
+    from jsonschema import ValidationError
+    from workout_generator_pkg.planning_tools import validate, workout_requirements_tool
+
+    equipment, arguments, _, _ = planning_case()
+    messages = [{'role': 'user', 'content': (
+        'Include horizontal push work. Low-incline press is only an illustrative example in the accounting notes.') }]
+    arguments['requiredCoverage'] = [{'key': 'horizontal_push', 'scope': 'weekly', 'intent': 'inclusion'}]
+    schema = workout_requirements_tool(equipment)['function']['parameters']
+    role_schema = schema['properties']['requiredCoverage']['items']
+    assert 'description' not in role_schema['properties']
+    assert 'horizontal_push' in role_schema['properties']['key']['enum']
+    validate({'requiredCoverage': arguments['requiredCoverage']}, {
+        'type': 'object', 'properties': {'requiredCoverage': schema['properties']['requiredCoverage']},
+        'required': ['requiredCoverage'], 'additionalProperties': False})
+    with pytest.raises(ValidationError):
+        validate({'requiredCoverage': [{'key': 'horizontal_push', 'description': 'Low-incline emphasis', 'scope': 'weekly'}]}, {
+            'type': 'object', 'properties': {'requiredCoverage': schema['properties']['requiredCoverage']},
+            'required': ['requiredCoverage'], 'additionalProperties': False})
+    with pytest.raises(ValidationError):
+        validate({'requiredCoverage': [{'key': 'invented_role', 'scope': 'weekly'}]}, {
+            'type': 'object', 'properties': {'requiredCoverage': schema['properties']['requiredCoverage']},
+            'required': ['requiredCoverage'], 'additionalProperties': False})
+
+    result = set_workout_requirements(arguments, messages, equipment)
+    rule = result['requirements']['requiredCoverage'][0]
+    assert rule['description'] == 'Horizontal push work'
+    assert 'low-incline' not in result['requirementsPreview'].lower()
+    assert 'Low-incline press' in result['sourceMessages'][0]['content']
+
+
+def test_coverage_sparse_update_schema_cannot_add_freeform_role_description():
+    from jsonschema import ValidationError
+    from workout_generator_pkg.planning_tools import validate, _requirement_update_tool
+
+    equipment, _, _, _ = planning_case()
+    candidate = {'requirementsId': 'REQUIREMENTS_test'}
+    schema = _requirement_update_tool(equipment, candidate)['function']['parameters']
+    coverage_schema = schema['properties']['updates']['properties']['requiredCoverage']
+    assert 'description' not in coverage_schema['items']['properties']
+    with pytest.raises(ValidationError):
+        validate({'baseRequirementsId': candidate['requirementsId'], 'updates': {'requiredCoverage': [
+            {'key': 'horizontal_push', 'description': 'Low-incline emphasis', 'scope': 'weekly'}]}}, schema)
+
+
 @pytest.mark.parametrize('path,message,repair', [
     ('/requirements/auditTargets/weeklyEffectiveSets/calves', 'Unspecified calves became a zero target.', 'Remove the unsupported calf target.'),
     ('/sourceMessages/SOURCE_0/content', 'Posterior balance counting is unresolved.', 'Ask how overlapping posterior sets should count and wait.'),
@@ -115,10 +175,237 @@ def test_source_findings_block_requirement_approval(monkeypatch, path, message, 
     payload = json.loads(result['result'])
     assert payload['passed'] is False and 'requirements_preview' not in result
     assert payload['errors'][0]['repair'] == repair
+    assert payload['requirementsReviewQuestion']['kind'] == 'clarification'
+    assert 'current requirements remain unchanged' in payload['requirementsReviewQuestion']['question']
     assert calls[0]['sourceMessages']['SOURCE_0']['content'] == messages[0]['content']
     _record(messages, payload)
     messages.append({'role': 'user', 'content': 'CONFIRM REQUIREMENTS'})
     assert not requirements_approved(messages)
+
+
+def test_initial_established_requirement_violation_allows_one_sparse_correction_round(monkeypatch):
+    equipment, arguments, _, _ = planning_case()
+    messages = [{'role': 'user', 'content': 'Plan 5-6 chest sets and do not reconfigure shared equipment during supersets.'}]
+    finding = {'severity': 'blocking', 'basis': 'established_violation', 'action': 'repair',
+        'path': '/requirements/executionRules', 'decisionId': None,
+        'message': 'The explicit superset equipment rule is missing from executionRules.',
+        'evidencePaths': ['/sourceMessages/SOURCE_0/content', '/requirements/executionRules'],
+        'repair': 'Add the typed supersetNoReconfiguration execution rule.'}
+    responses = [json.dumps({'findings': [finding]}), '{"findings":[]}']
+    calls = []
+    def review_source(client, request, **options):
+        calls.append(json.loads(request[-1]['content']))
+        return responses.pop(0), None, None
+    monkeypatch.setattr(review, 'chat_call', review_source)
+
+    first_tool = handle_function_call(None, messages, 'set_workout_requirements', arguments, equipment)
+    first = json.loads(first_tool['result'])
+    assert first['passed'] is False
+    assert 'requirementsReviewQuestion' not in first and not first_tool.get('waiting_for_user')
+    assert 'baseRequirementsId=' + first['requirementsId'] in first['instruction']
+    assert 'requirements_preview' not in first_tool
+    _record(messages, first)
+
+    repaired_rules = first['requirements']['executionRules'] + [{'kind': 'supersetNoReconfiguration', 'coverageKey': None}]
+    update = {'baseRequirementsId': first['requirementsId'], 'updates': {'executionRules': repaired_rules}}
+    second_tool = handle_function_call(None, messages, 'set_workout_requirements', update, equipment)
+    second = json.loads(second_tool['result'])
+    assert second['passed'] is True
+    assert second_tool['requirements_pending'] is True
+    assert len(calls) == 2 and calls[1]['reviewScope']['baseSourceReviewPassed'] is False
+    assert not requirements_approved(messages, second)  # The correction still needs a fresh confirmation.
+
+
+def test_automatic_requirement_correction_is_not_repeated_or_used_for_relaxation(monkeypatch):
+    equipment, arguments, approved_candidate, _ = planning_case()
+    messages = [{'role': 'user', 'content': 'Plan 5-6 chest sets.'}]
+    finding = {'severity': 'blocking', 'basis': 'established_violation', 'action': 'repair',
+        'path': '/requirements/executionRules', 'decisionId': None,
+        'message': 'A source-backed execution rule is missing.',
+        'evidencePaths': ['/sourceMessages/SOURCE_0/content'], 'repair': 'Add the source-backed rule.'}
+    calls = []
+    monkeypatch.setattr(review, 'chat_call', lambda *a, **k: (calls.append(1) or json.dumps({'findings': [finding]}), None, None))
+    first = json.loads(handle_function_call(None, messages, 'set_workout_requirements', arguments, equipment)['result'])
+    assert 'requirementsReviewQuestion' not in first
+    _record(messages, first)
+    repeated = json.loads(handle_function_call(None, messages, 'set_workout_requirements', arguments, equipment)['result'])
+    assert repeated['requirementsReviewQuestion']['kind'] == 'clarification'
+    assert len(calls) == 1  # Same failed review is reused; no repair call is made by Python.
+
+    approved_messages = requirement_messages(approved_candidate)
+    assert not review._eligible_initial_requirement_correction(
+        [finding], candidate=approved_candidate, messages=approved_messages, boundary=0, gaps=[], failure=None)
+    relaxation = {**finding, 'path': '/requirements/relaxationPermissions'}
+    assert not review._eligible_initial_requirement_correction(
+        [relaxation], candidate=approved_candidate, messages=[], boundary=0, gaps=[], failure=None)
+
+
+def test_saved_scoped_warmup_repair_routes_to_typed_update_but_mixed_clarification_stops(monkeypatch):
+    session = (Path(__file__).parents[1] / 'build' / 'workout_single_review_20261023' / 'warmup_owner_continuation3'
+        / 'workouts' / 'conversation_sessions' / '20deca57-14c9-4f60-b74b-f9b669028801' / 'messages.json')
+    messages = json.loads(session.read_text(encoding='utf-8'))
+    result_index = next(index for index in range(len(messages) - 1, -1, -1)
+        if messages[index].get('role') == 'tool'
+        and json.loads(messages[index].get('content', '{}')).get('reviewScope', {}).get('newSourceMessageIds') == ['SOURCE_4'])
+    saved = json.loads(messages[result_index]['content'])
+    source4 = next(message['content'] for message in messages[:result_index]
+        if message.get('role') == 'user' and 'APPROVE SCOPED: Resolve the native warm-up capability conflict' in message.get('content', ''))
+    assert 'hip_dominant' in source4 and len(saved['sourceReview']['findings']) == 1
+    assert saved['sourceReview']['findings'][0]['basis'] == 'established_violation'
+    assert saved['sourceReview']['findings'][0]['action'] == 'repair'
+
+    candidate = copy.deepcopy(saved)
+    for key in ('sourceReview', 'passed', 'errors', 'instruction', 'requirementsReviewQuestion', 'userQuestion'):
+        candidate.pop(key, None)
+    source_messages = copy.deepcopy(messages[:result_index])
+
+    def review_with(findings):
+        monkeypatch.setattr(review, '_review_call', lambda *args, **kwargs:
+            (json.dumps({'findings': copy.deepcopy(findings)}), None, None))
+        return review.review_requirements(None, copy.deepcopy(candidate), copy.deepcopy(source_messages))
+
+    repaired = review_with(saved['sourceReview']['findings'])
+    assert repaired['passed'] is False
+    assert 'requirementsReviewQuestion' not in repaired
+    assert 'One scoped correction attempt' in repaired['instruction']
+    assert 'fresh user confirmation' in repaired['instruction']
+    assert 'requirementsPreview' not in repaired
+
+    clarification = copy.deepcopy(saved['sourceReview']['findings'][0])
+    clarification.update(basis='uncertainty', action='clarify', message='Confirm whether this warm-up rule should also cover other exercise roles.')
+    mixed = review_with([saved['sourceReview']['findings'][0], clarification])
+    assert mixed['passed'] is False
+    assert mixed['requirementsReviewQuestion']['kind'] == 'clarification'
+    assert mixed['requirements']['executionRules'] == candidate['requirements']['executionRules']
+
+    from workout_generator_pkg.planner_context import focus_planner_context
+    equipment, _, _, _ = planning_case()
+
+    def continued_state(transcript):
+        continued = copy.deepcopy(transcript)
+        continued.append({'role': 'user', 'content': '/continue'})
+        outgoing = focus_planner_context(continued, continued, equipment)
+        state_message = next(message['content'] for message in outgoing
+            if message.get('role') == 'system' and message.get('content', '').startswith('Current planning state'))
+        return json.loads(state_message.split('\n', 1)[1])
+
+    saved_repair_state = continued_state(messages)
+    instruction = saved_repair_state['requirementsFeedback']['instruction']
+    assert 'one typed set_workout_requirements update' in instruction
+    assert 'Do not ask the user to repeat the scoped authorization' in instruction
+    assert saved_repair_state['requirementsApproved'] is False
+
+    mixed_saved_messages = copy.deepcopy(messages)
+    mixed_saved = copy.deepcopy(saved)
+    mixed_saved['sourceReview']['findings'].append(clarification)
+    mixed_saved['requirementsReviewQuestion'] = {'kind': 'clarification', 'question': clarification['message']}
+    mixed_saved_messages[result_index]['content'] = json.dumps(mixed_saved)
+    mixed_state = continued_state(mixed_saved_messages)
+    mixed_instruction = mixed_state['requirementsFeedback']['instruction']
+    assert 'one typed set_workout_requirements update' not in mixed_instruction
+    assert 'Do not ask the user to repeat the scoped authorization' not in mixed_instruction
+    assert mixed_state['requirementsApproved'] is False
+
+
+def test_scoped_source_review_receives_code_computed_field_and_source_diff():
+    equipment, arguments, stored, _ = planning_case()
+    messages = [{'role': 'user', 'content': 'Plan 5-6 chest sets.'}]
+    base = set_workout_requirements(arguments, messages, equipment)
+    prior_finding = {'severity': 'blocking', 'basis': 'uncertainty', 'path': '/sourceMessages/SOURCE_0/content',
+        'message': 'Clarify recovery expectations.', 'repair': 'Ask the user about recovery.'}
+    base['sourceReview'] = {'passed': False, 'findings': [prior_finding]}
+    _record(messages, base)
+    updated = copy.deepcopy(base)
+    updated['baseRequirementsId'] = base['requirementsId']
+    updated['requirements']['auditTargets']['weeklyEffectiveSets']['chest']['maximum'] = 7
+    updated['sourceMessages'].append({'messageIndex': 1, 'role': 'user',
+        'content': 'Raise the chest ceiling to seven sets.'})
+    scope = review._requirements_review_scope(updated, messages)
+    expected_prior = {key: prior_finding[key] for key in ('severity', 'basis', 'message', 'repair')}
+    assert scope == {'baseRequirementsId': base['requirementsId'],
+        'baseSourceReviewPassed': False, 'changedPaths': ['/auditTargets/weeklyEffectiveSets/chest/maximum'],
+        'newSourceMessageIds': ['SOURCE_1'], 'previousSourceFindings': [expected_prior]}
+
+
+def test_source_review_preserves_the_code_rendered_scoped_change_preview(monkeypatch):
+    equipment, arguments, _, _ = planning_case()
+    messages = [{'role': 'user', 'content': 'Plan 5-6 chest sets.'}]
+    candidate = set_workout_requirements(arguments, messages, equipment)
+    candidate['requirementsPreview'] += '\n\nUpdated fields:\n- Chest maximum: 7 sets'
+    monkeypatch.setattr(review, 'chat_call', lambda *a, **k: ('{"findings":[]}', None, None))
+    result = review.review_requirements(None, candidate, messages)
+    assert result['passed']
+    assert 'Updated fields:\n- Chest maximum: 7 sets' in result['requirementsPreview']
+
+
+def test_requirements_source_review_uses_one_low_effort_attempt(monkeypatch):
+    equipment, arguments, _, _ = planning_case()
+    messages = [{'role': 'user', 'content': 'Plan 5-6 chest sets.'}]
+    options_seen = []
+
+    def respond(_client, _request, **options):
+        options_seen.append(options)
+        return '{"findings":[]}', None, None
+
+    monkeypatch.setattr(review, 'chat_call', respond)
+    result = review.review_requirements(None,
+        set_workout_requirements(arguments, messages, equipment), messages)
+
+    assert result['passed'] is True
+    assert len(options_seen) == 1
+    assert options_seen[0]['reasoning_effort'] == 'low'
+    assert options_seen[0]['max_tokens'] == 8192
+    assert options_seen[0]['retry'] is False
+
+
+def test_requirements_source_review_configures_bounded_wrapper_recovery(monkeypatch):
+    equipment, arguments, _, _ = planning_case()
+    messages = [{'role': 'user', 'content': 'Plan 5-6 chest sets.'}]
+    options_seen = []
+
+    def review_call(_client, _request, **options):
+        options_seen.append(options)
+        return '{"findings":[]}', None, None
+
+    monkeypatch.setattr(review, '_review_call', review_call)
+    result = review.review_requirements(None,
+        set_workout_requirements(arguments, messages, equipment), messages)
+
+    assert result['passed'] is True
+    assert len(options_seen) == 1
+    assert options_seen[0]['reasoning_effort'] == 'low'
+    assert options_seen[0]['max_tokens'] == 8192
+    assert options_seen[0]['retry'] is True
+
+
+def test_informational_source_finding_does_not_block_or_request_reconstruction(monkeypatch):
+    equipment, arguments, _, _ = planning_case()
+    messages = [{'role': 'user', 'content': 'Plan 5-6 chest sets.'}]
+    finding = {'severity': 'warning', 'basis': 'uncertainty',
+        'path': '/sourceMessages/SOURCE_0/content', 'message': 'Recovery capacity is not known.',
+        'evidencePaths': ['/sourceMessages/SOURCE_0/content'],
+        'repair': 'Personal recovery data was not supplied.'}
+    monkeypatch.setattr(review, 'chat_call', lambda *a, **k: (json.dumps({'findings': [finding]}), None, None))
+    result = handle_function_call(None, messages, 'set_workout_requirements', arguments, equipment)
+    payload = json.loads(result['result'])
+    assert payload['passed'] is True
+    assert 'requirementsReviewQuestion' not in payload
+    assert 'Recovery capacity is not known.' in payload['requirementsPreview']
+
+
+def test_clarification_request_cannot_be_downgraded_to_a_warning(monkeypatch):
+    equipment, arguments, _, _ = planning_case()
+    messages = [{'role': 'user', 'content': 'Plan 5-6 chest sets.'}]
+    finding = {'severity': 'warning', 'basis': 'uncertainty', 'action': 'clarify',
+        'path': '/sourceMessages/SOURCE_0/content', 'message': 'Recovery capacity needs clarification.',
+        'evidencePaths': ['/sourceMessages/SOURCE_0/content'],
+        'repair': 'Ask the user about recovery capacity.'}
+    monkeypatch.setattr(review, 'chat_call', lambda *a, **k: (json.dumps({'findings': [finding]}), None, None))
+    result = handle_function_call(None, messages, 'set_workout_requirements', arguments, equipment)
+    payload = json.loads(result['result'])
+    assert payload['passed'] is False
+    assert payload['sourceReview']['findings'][0]['severity'] == 'blocking'
+    assert payload['requirementsReviewQuestion']['kind'] == 'clarification'
 
 
 def test_successful_source_review_is_cached_and_new_source_needs_confirmation(monkeypatch):
@@ -144,17 +431,22 @@ def test_invalid_source_references_fail_closed_and_execution_failure_waits_for_e
     calls = []
     finding = {'severity': 'blocking', 'path': '/sourceMessages/999', 'message': 'Unsupported.',
                'evidencePaths': ['/sourceMessages/999'], 'repair': 'Ask.'}
-    monkeypatch.setattr(review, 'chat_call', lambda *a, **k: (calls.append(1) or json.dumps({'findings': [finding]}), None, None))
+    def malformed_once(*a, **kwargs):
+        assert kwargs['retry'] is False
+        calls.append(1)
+        return json.dumps({'findings': [finding]}), None, None
+    monkeypatch.setattr(review, 'chat_call', malformed_once)
     def submit():
         return json.loads(handle_function_call(None, messages, 'set_workout_requirements', arguments, equipment)['result'])
     failed = submit()
     assert failed['errors'][0]['code'] == 'requirements_review_failed'
+    assert failed['requirementsReviewQuestion']['kind'] == 'clarification'
     _record(messages, failed)
-    assert not submit()['passed'] and len(calls) == 2  # Original and one finding repair, then cached.
+    assert not submit()['passed'] and len(calls) == 1  # Malformed review is cached; no model form-repair call.
     messages.append({'role': 'user', 'content': '/continue'})
     monkeypatch.setattr(review, 'chat_call', lambda *a, **k: (calls.append(1) or '{"findings":[]}', None, None))
     repaired = submit()
-    assert repaired['passed'] and len(calls) == 3
+    assert repaired['passed'] and len(calls) == 2
     assert 'errors' not in repaired and 'instruction' not in repaired
 
 
@@ -270,3 +562,39 @@ def test_missing_optional_restrictions_have_a_valid_review_target_without_mutati
     assert payload['errors'][0]['code'] == 'requirements_source_finding'
     assert payload['errors'][0]['repair'] == 'Restore the exclusion.'
     assert 'exerciseRestrictions' not in payload['requirements'] and arguments == before
+
+
+def test_intake_reference_error_exposes_choices_and_allows_correction():
+    from workout_generator_pkg.planning_tools import PlanningInputError, workout_requirements_tool
+    from jsonschema import ValidationError, validate
+    equipment, arguments, _, _ = planning_case()
+    arguments['requiredCoverage'] = [
+        {'key': 'elbow_flexion', 'scope': 'weekly'},
+        {'key': 'elbow_extension', 'scope': 'weekly'}]
+    arguments['executionRules'] = [{'kind': 'coverageBalance', 'first': 'biceps',
+        'second': 'triceps', 'scope': 'weekly'}]
+    original = copy.deepcopy(arguments)
+    with pytest.raises(PlanningInputError) as caught:
+        set_workout_requirements(copy.deepcopy(arguments), [], equipment)
+    error = caught.value.errors[0]
+    assert error['allowedCoverageKeys'] == ['elbow_extension', 'elbow_flexion']
+    assert error['invalidReferences'] == {'first': 'biceps', 'second': 'triceps'}
+    assert 'not declared in requiredCoverage' in error['message']
+    assert 'declare a supported role' in error['repair']
+    assert arguments == original
+    arguments['executionRules'][0].update(first='elbow_flexion', second='elbow_extension')
+    result = set_workout_requirements(arguments, [], equipment)
+    assert result['requirements']['executionRules'][0]['first'] == 'elbow_flexion'
+    assert not any(e.get('code') == 'invalid_execution_rule' for e in result.get('errors', []))
+    update_schema = workout_requirements_tool(equipment, requirement_messages(result))['function']['parameters']
+    update_rules = update_schema['properties']['updates']['properties']['executionRules']
+    first_schema = next(r for r in update_rules['items']['oneOf']
+        if r['properties']['kind']['const'] == 'coverageBalance')['properties']['first']
+    assert 'elbow_flexion' in first_schema['enum']
+    assert 'invented_role' not in first_schema['enum']
+    schema = workout_requirements_tool(equipment)['function']['parameters']
+    bad = copy.deepcopy(original)
+    bad.pop('requirementAccounting', None)
+    bad['executionRules'][0]['first'] = 'invented_role'
+    with pytest.raises(ValidationError):
+        validate(bad, schema)

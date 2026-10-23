@@ -7,6 +7,56 @@ from workout_generator_pkg.planning_tools import audit_workout_plan
 from test_workout_generator_planning_tools import planning_case, requirement_messages
 
 
+def test_optional_preparation_checks_feasibility_with_a_finite_deadline(monkeypatch):
+    from workout_generator_pkg import allocation
+    solve = allocation.milp
+    calls = []
+    def record(objective, **kwargs):
+        assert not any(objective)
+        assert 0 < kwargs['options']['time_limit'] <= 30
+        calls.append(True)
+        return solve(objective, **kwargs)
+    monkeypatch.setattr(allocation, 'milp', record)
+    sessions = [{'timesCompletedInAWeek': 1, 'exercises': [{
+        'definition_id': 'LIBRARY_0', 'numWorkSets': 1, 'superset': None,
+        'allocationBounds': {'minimum': 1, 'maximum': 20}}]}]
+    candidates = {'LIBRARY_0': {'creditsPerWorkingSet': {'chest': {'direct': 1}}}}
+    result = allocation.allocate_prepared_sets(sessions, candidates, {'auditTargets': {
+        'weeklyEffectiveSets': {'chest': {'minimum': 5, 'maximum': 6}}}}, select_movements=True)
+    assert calls and result['feasible']
+    assert 5 <= result['sessions'][0]['exercises'][0]['numWorkSets'] <= 6
+
+
+@pytest.mark.parametrize('frequency,glute_credit,glute_maximum,expected_minimum', [
+    (1, 1, 18, 12), (3, 1, 18, 12), (1, .5, 18, 5), (1, 1, 30, 0),
+])
+def test_preparation_reports_weekly_menu_dependencies_across_occurrences(
+        frequency, glute_credit, glute_maximum, expected_minimum):
+    from workout_generator_pkg.allocation import allocate_prepared_sets
+    candidates = {
+        'LIBRARY_0': {'creditsPerWorkingSet': {'quads': {'direct': 1}, 'glutes': {'direct': glute_credit}}},
+        'LIBRARY_1': {'creditsPerWorkingSet': {'hamstrings': {'direct': 1}, 'glutes': {'direct': 1}}},
+        'LIBRARY_2': {'creditsPerWorkingSet': {'hamstrings': {'direct': 1}}},
+    }
+    sessions = [{'timesCompletedInAWeek': frequency, 'exercises': [
+        {'definition_id': ref, 'numWorkSets': 1, 'superset': None,
+         'allocationBounds': {'minimum': 1, 'maximum': 20}}
+        for ref in candidates]} for _ in range(3)]
+    requirements = {'auditTargets': {'weeklyEffectiveSets': {
+        'quads': {'minimum': 15, 'maximum': 18},
+        'hamstrings': {'minimum': 15, 'maximum': 18},
+        'glutes': {'minimum': 15, 'maximum': glute_maximum}}}}
+    original = copy.deepcopy((sessions, candidates, requirements))
+    result = allocate_prepared_sets(sessions, candidates, requirements, select_movements=True)
+    assert result['feasible']
+    diagnostic = next((item for item in result['allocationDiagnostics']
+                       if item.get('definitionReference') == 'LIBRARY_2'), None)
+    assert (diagnostic['minimumRequiredSets'] if diagnostic else 0) == expected_minimum
+    if diagnostic:
+        assert diagnostic['scope'] == 'weekly' and len(diagnostic['slotIds']) == 3
+    assert (sessions, candidates, requirements) == original
+
+
 def test_selection_preflight_rejects_only_proven_relaxed_volume_conflicts():
     from workout_generator_pkg.allocation import selection_volume_conflicts
     days = [{'definition_ids':['LIBRARY_0'],'timesCompletedInAWeek':1} for _ in range(3)]
@@ -370,6 +420,21 @@ def test_coupled_infeasibility_identifies_conflicting_targets_without_relaxing_t
 def test_conflict_explanation_does_not_mislabel_integer_only_failure():
     from workout_generator_pkg.allocation import _conflicting_targets
     assert _conflicting_targets([{'lower': 1, 'upper': 4}], [(('weekly', 'chest'), 3.5, 3.5, 0, [1.0])]) == []
+
+
+def test_conflicts_report_integer_only_activation_infeasibility():
+    from workout_generator_pkg.allocation import _conflicting_targets
+    variables = [{'lower': 0, 'upper': 4, 'minimumWhenSelected': 2, 'current': [1],
+                  'members': [{'slotId': '/sessions/0/exercises/0'}]}]
+    features = [(('coverage', 'posterior_chain', 0), 1, 1, 0, [1])]
+
+    conflicts = _conflicting_targets(variables, features)
+
+    assert len(conflicts) == 1
+    assert conflicts[0]['target'] == 'coverage:posterior_chain:0'
+    assert conflicts[0]['minimum'] == conflicts[0]['maximum'] == 1
+    assert conflicts[0]['integerOnlyConflict']
+    assert not conflicts[0].get('individuallyUnreachable')
 
 
 def test_conflicts_report_all_unreachable_bounds_and_remaining_coupled_targets():

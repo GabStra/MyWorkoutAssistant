@@ -7,7 +7,7 @@ from workout_generator_pkg import plan_review
 from workout_generator_pkg.planning_tools import (
     PlanningInputError, audit_workout_plan, confirmed_draft, set_workout_requirements,
 )
-from workout_generator_pkg.programming_guidelines import GUIDELINE_POLICY
+from workout_generator_pkg.programming_guidelines import GUIDELINE_POLICY, approved_work_set_bounds
 from test_workout_generator_planning_tools import planning_case, requirement_messages
 
 
@@ -76,6 +76,25 @@ def test_execution_violations_block_preview_and_repair_with_json_patch(monkeypat
     assert repaired['audit']['executionGuidelines']['findings'] == 0
     assert repaired['requirementsId'] == stored['requirementsId']
     assert [e['numWorkSets'] for e in repaired['submittedDraft']['workouts'][0]['exercises']] == [3, 3]
+
+
+def test_fresh_two_set_policy_bounds_solver_domain_and_rejects_raw_single_set():
+    equipment, _, stored, draft = case([])
+    item = draft['workouts'][0]['exercises'][0]
+    definition = {'exerciseCategory': 'MODERATE_COMPOUND'}
+    assert approved_work_set_bounds(item, definition, stored['requirements']) == {'minimum': 2, 'maximum': 20}
+
+    item['numWorkSets'] = 1
+    with pytest.raises(PlanningInputError) as error:
+        audit_workout_plan({'requirementsId': stored['requirementsId'], 'name': 'Week',
+            'workouts': draft['workouts']}, equipment, requirement_messages(stored))
+    assert error.value.code == 'set_count_outside_allocation_bounds'
+
+    from workout_generator_pkg.programming_guidelines import audit_execution_rules
+    report = {'issues': [], 'errors': []}
+    audit_execution_rules(draft, stored['requirements'], report)
+    assert any(issue['code'] == 'execution_workSets' and issue['path'].endswith('/numWorkSets')
+               for issue in report['errors'])
 
 
 def test_superset_rules_use_actual_member_rests_and_treat_whole_group_as_one_block():
@@ -247,6 +266,10 @@ def test_no_reconfiguration_rule_requires_a_verified_common_load():
     assert check()['errors'][0]['code'] == 'execution_supersetNoReconfiguration'
     plan['exercises'][1]['targetSetPrescriptions'][0]['weight'] = 10
     assert not check()['errors']
+    plan['exercises'][0]['requiresLoadCalibration'] = True
+    assert check()['errors']  # Equal targets cannot establish independently calibrated loads.
+    plan['exercises'][0]['requiresLoadCalibration'] = False
+    assert not check()['errors']
     for item in plan['exercises']:
         del item['targetSetPrescriptions']
     assert check()['errors']
@@ -255,10 +278,15 @@ def test_no_reconfiguration_rule_requires_a_verified_common_load():
     assert check()['errors']  # Native calibration chooses each exercise's load independently.
 
 
-@pytest.mark.parametrize('kind, field, load', [('WEIGHT', 'weight', 10), ('BODY_WEIGHT', 'additionalWeight', 0)])
-def test_same_shared_load_templates_pass_after_real_plan_expansion(kind, field, load):
+@pytest.mark.parametrize('kind, field, load, adjustable, passes', [
+    ('WEIGHT', 'weight', 10, True, False), ('BODY_WEIGHT', 'additionalWeight', 0, True, False),
+    ('WEIGHT', 'weight', 10, False, True),
+])
+def test_common_load_checks_distinguish_adjustable_calibration_from_fixed_equipment(kind, field, load, adjustable, passes):
     equipment, requirements, _, draft = case([{'kind': 'supersetNoReconfiguration', 'coverageKey': None}])
-    equipment['equipments'] = [{'id': 'EQUIPMENT_0', 'name': 'Barbell', 'type': 'BARBELL', 'barWeight': 10.0, 'plates': []}]
+    equipment['equipments'] = [{'id': 'EQUIPMENT_0', 'name': 'Barbell', 'type': 'BARBELL', 'barWeight': 10.0,
+                                'sleeveLength': 100,
+                                'availablePlates': [{'weight': 5.0, 'thickness': 1.0}] * 2 if adjustable else []}]
     definition = equipment['exerciseDefinitions'][0]
     definition.update(exerciseType=kind, equipmentId='EQUIPMENT_0', bodyWeightPercentage=65 if kind == 'BODY_WEIGHT' else None)
     stored = set_workout_requirements(requirements, [{'role': 'user', 'content': 'Superset partners keep the same shared load.'}], equipment)
@@ -267,9 +295,9 @@ def test_same_shared_load_templates_pass_after_real_plan_expansion(kind, field, 
         item.update(superset='pair', restBetweenSetsSeconds=0, restAfterExerciseSeconds=0, restAfterSupersetExerciseSeconds=90 if index else 30,
                     workSetTemplate={'reps': 9, field: load})
     result = audit_workout_plan(draft, equipment, requirement_messages(stored))
-    assert result['passed'], result['errors']
-    assert all(entry['targetSetPrescriptions'] == [{'workSetIndex': i, 'reps': 9, field: load} for i in range(3)]
-               for entry in result['planIndex']['exercises'])
+    assert result['passed'] is passes, result.get('errors')
+    if not passes:
+        assert any(error['code'] == 'execution_supersetNoReconfiguration' for error in result['errors'])
 
 
 def test_history_rep_conflict_uses_requested_rir_instead_of_assuming_equal_reps():
@@ -296,14 +324,18 @@ def test_history_rep_conflict_uses_requested_rir_instead_of_assuming_equal_reps(
     assert concerns()  # This fixture is unequipped bodyweight, which has no native load mode.
 
 
-@pytest.mark.parametrize(('program_guidance', 'emitter_guidance', 'fail_guidance_write'), [
-    (None, None, False),
-    ('Use a lighter week after the next hard block.', None, False),
-    ('Use a lighter week after the next hard block.', 'Emitter guess; ignore recovery signals.', False),
-    ('Use a lighter week after the next hard block.', None, True),
+@pytest.mark.parametrize(('program_guidance', 'emitter_guidance', 'fail_guidance_write', 'final_mutation', 'alias_renumbering'), [
+    (None, None, False, None, False),
+    ('Use a lighter week after the next hard block.', None, False, None, False),
+    ('Use a lighter week after the next hard block.', 'Emitter guess; ignore recovery signals.', False, None, False),
+    ('Use a lighter week after the next hard block.', None, True, None, False),
+    (None, None, False, 'order', False),
+    (None, None, False, 'sets', False),
+    (None, None, False, 'guidance', False),
+    (None, None, False, None, True),
 ])
 def test_canonical_export_preserves_setup_timing_without_model_repairs(
-    tmp_path, monkeypatch, program_guidance, emitter_guidance, fail_guidance_write
+    tmp_path, monkeypatch, program_guidance, emitter_guidance, fail_guidance_write, final_mutation, alias_renumbering
 ):
     from dataclasses import replace
     from workout_generator_pkg import cli
@@ -311,7 +343,17 @@ def test_canonical_export_preserves_setup_timing_without_model_repairs(
     from workout_generator_pkg.generation_pipeline import execute_workout_generation
     from test_workout_generator_planning_tools import approved_messages
     equipment, requirements, _, draft = case([])
-    equipment['exerciseDefinitions'][0]['id'] = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+    selected = equipment['exerciseDefinitions'][0]
+    if alias_renumbering:
+        selected['id'] = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+        unselected = copy.deepcopy(selected)
+        unselected.update(id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', name='Unused Push-Up Variant')
+        equipment['exerciseDefinitions'].append(unselected)
+        for day in draft['workouts']:
+            for exercise in day['exercises']:
+                exercise['definition_id'] = 'LIBRARY_1'
+    else:
+        selected['id'] = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
     stored = set_workout_requirements(requirements, [], equipment)
     draft['requirementsId'] = stored['requirementsId']
     if program_guidance:
@@ -327,6 +369,19 @@ def test_canonical_export_preserves_setup_timing_without_model_repairs(
     monkeypatch.setattr(cli, 'json_call_chat_max_with_loading', forbidden)
     monkeypatch.setattr(cli, 'json_call_reasoner_only_with_loading', forbidden)
     deps = resolve_pipeline_deps()
+    if final_mutation:
+        apply_schema = deps.apply_exercise_library_schema_v2
+        def mutate_final(*args, **kwargs):
+            final = apply_schema(*args, **kwargs)
+            components = final['workouts'][0]['workoutComponents']
+            if final_mutation == 'order':
+                components.reverse()
+            elif final_mutation == 'sets':
+                components[0]['sets'][0]['reps'] += 1
+            else:
+                components[0]['notes'] += ' Unreviewed advice.'
+            return final
+        deps = replace(deps, apply_exercise_library_schema_v2=mutate_final)
     emit_workout_structure = deps.emit_workout_structure
     if emitter_guidance:
         def emit_with_unapproved_guidance(*args, **kwargs):
@@ -349,6 +404,10 @@ def test_canonical_export_preserves_setup_timing_without_model_repairs(
     exported = execute_workout_generation(None, messages, provided_equipment=equipment, script_dir=str(tmp_path),
         force_use_reasoner=False, deps=replace(deps, test_connection=lambda *a, **k: (True, None),
             validate_and_repair_placeholder_json=validate))
+    if final_mutation:
+        assert not exported['success']
+        assert 'differs from the independently reviewed artifact' in exported['error']
+        return
     if fail_guidance_write:
         assert not exported['success'] and 'sidecar write failed' in exported['error']
         return
@@ -357,22 +416,37 @@ def test_canonical_export_preserves_setup_timing_without_model_repairs(
     from pathlib import Path
     saved_workout = json.loads(Path(exported['filepath']).read_text(encoding='utf-8'))
     assert 'programGuidance' not in saved_workout
+    assert 'placementNotes' not in json.dumps(saved_workout)
+    assert 'Working-set acceptance' in json.dumps(saved_workout)
+    assert exported['guidance_filepath'] == str(Path(exported['filepath']).with_suffix('.guidance.md'))
+    guidance = Path(exported['guidance_filepath']).read_text(encoding='utf-8')
+    assert 'Code-computed credit sources:' in guidance
+    assert 'request a re-audit before changing set counts' in guidance
     if program_guidance:
-        assert exported['guidance_filepath'] == str(Path(exported['filepath']).with_suffix('.guidance.md'))
-        guidance = Path(exported['guidance_filepath']).read_text(encoding='utf-8')
-        assert program_guidance in guidance
+        assert program_guidance not in guidance
         if emitter_guidance:
             assert emitter_guidance not in guidance
         assert 'not included in the phone or watch workout data' in guidance
-    else:
-        assert exported['guidance_filepath'] is None
     from workout_generator_pkg.interactive_shell import _metadata_for_generation_result
     metadata = _metadata_for_generation_result(exported, None)
-    if program_guidance:
-        assert exported['guidance_filepath'] in metadata['generated_output_paths']
+    assert exported['guidance_filepath'] in metadata['generated_output_paths']
     reports = list(Path(tmp_path).rglob('*.audit.json')) + list(Path(tmp_path).rglob('*audit*.json'))
     report = next(json.loads(path.read_text(encoding='utf-8')) for path in reports
                   if 'setupEstimates' in path.read_text(encoding='utf-8'))
+    from workout_generator_pkg.generation_audit import render_plan_disclosures
+    assert render_plan_disclosures(report, stored['requirements']['auditTargets']['weeklyEffectiveSets'],
+        result['submittedDraft'], stored['requirements'].get('requiredCoverage', [])) in guidance
     assert report['workouts'][0]['timing']['transitionSeconds'] == 120
     # Planned time uses upper rep targets; emitted reps may take less work time.
     assert report['workouts'][0]['estimatedSeconds'] <= result['audit']['workouts'][0]['estimatedSeconds']
+
+
+def test_directional_coverage_comparison_is_rendered_as_soft_source_backed_preference():
+    from workout_generator_pkg.programming_guidelines import render_execution_rule
+
+    rendered = render_execution_rule({'kind': 'coverageBalance', 'first': 'lateral',
+        'second': 'horizontal', 'scope': 'weekly',
+        'relationship': 'first_not_less_than_second'})
+    assert 'lateral' in rendered and 'horizontal' in rendered
+    assert 'at least as much exposure' in rendered
+    assert 'not a fixed ratio or hard minimum' in rendered

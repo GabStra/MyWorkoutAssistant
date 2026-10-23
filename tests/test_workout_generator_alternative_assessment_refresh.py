@@ -73,7 +73,7 @@ def test_resume_refreshes_only_saved_alternative_assessment_without_rediagnosing
             confirmationProgress={'inputHash': 'fresh-review', 'outcomes': {'execution': {'completed': True}}})
 
     monkeypatch.setattr(interactive_shell, '_latest_result', lambda *_args: (-1, diagnosis))
-    monkeypatch.setattr(planning_tools, '_latest_result', lambda *_args: (-1, {
+    monkeypatch.setattr(planning_tools, '_latest_result', lambda _messages, name: (-1, diagnosis if name == 'propose_workout_alternatives' else {
         'requirementsId': 'REQ_ORIGINAL', 'requirements': {'auditTargets': {}}, 'restrictionPolicy': {}}))
     monkeypatch.setattr(alternative_repair, '_latest_result', lambda *_args: (-1, {
         'requirementsId': 'REQ_ORIGINAL', 'requirements': {'auditTargets': {}}, 'restrictionPolicy': {}}))
@@ -258,6 +258,122 @@ def test_planner_routes_stale_assessment_to_exact_candidate_refresh_task(review_
         'timestamp': (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=1)).isoformat()})
     state = _state(interactive_shell._messages_for_api(messages, True, provided_equipment=equipment))
     assert state['conflictDiagnosisTask']['repairCandidateId'] == candidate['repairCandidateId']
+
+
+@pytest.mark.parametrize('later_diagnosis', [None, 'empty', 'execution_failure', 'refresh_exception'])
+def test_review_timeout_resumes_only_a_fresh_review_after_explicit_continue(monkeypatch, later_diagnosis):
+    import workout_generator_pkg.cancellation as cancellation
+    import workout_generator_pkg.conflict_resolution as conflict_resolution
+    import workout_generator_pkg.joint_planning as joint_planning
+    import workout_generator_pkg.planning_tools as planning_tools
+    from workout_generator_pkg.conflict_resolution import CONFLICT_RESOLUTION_VERSION
+    from workout_generator_pkg.joint_planning import candidate_menu_fingerprint
+    from workout_generator_pkg.plan_review import REVIEW_VERSION
+    from workout_generator_pkg.planning_tools import _fingerprint, audit_workout_plan, library_fingerprint
+    from workout_generator_pkg.restriction_policy import effective_restrictions
+    from workout_generator_pkg.review_assessment import VERSION as ASSESSMENT_VERSION
+    from test_workout_generator_planner_context import _state, _tool
+    from test_workout_generator_planning_tools import planning_case, requirement_messages
+
+    equipment, _, stored, draft = planning_case()
+    messages = requirement_messages(stored)
+    audited = audit_workout_plan(draft, equipment, messages)
+    audited['reviewVersion'] = REVIEW_VERSION
+    _tool(messages, 'audit_workout_plan', draft, audited, 'timeout-source-audit')
+    menu = candidate_menu_fingerprint(draft['workouts'])
+    candidate = {'repairCandidateId': 'ALT_TIMEOUT_SOURCE',
+        'diagnosisVersion': CONFLICT_RESOLUTION_VERSION,
+        'originalRequirementsId': stored['requirementsId'],
+        'originalRequirementsHash': _fingerprint(stored['requirements']),
+        'requirementsId': 'ALT_TIMEOUT_REQUIREMENTS',
+        'requirements': copy.deepcopy(stored['requirements']),
+        'baseDraftId': audited['currentDraftId'], 'sourceDraftId': audited['currentDraftId'],
+        'reviewVersion': REVIEW_VERSION, 'changes': [],
+        'workouts': copy.deepcopy(draft['workouts']), 'candidateName': 'Timeout alternative',
+        'restrictionPolicy': effective_restrictions(stored, equipment),
+        'libraryFingerprint': library_fingerprint(equipment), 'trainingHistoryFingerprint': None,
+        'resolvedDecisions': {}, 'sourceMenuFingerprint': menu, 'candidateMenuFingerprint': menu,
+        'audit': {'errors': []}, 'review': {'version': REVIEW_VERSION, 'findings': []}}
+    _tool(messages, 'propose_workout_alternatives', {}, {'outcome': 'candidate_feasible_pending_review',
+        'requirementsId': stored['requirementsId'], 'baseDraftId': audited['currentDraftId'],
+        'diagnosisVersion': CONFLICT_RESOLUTION_VERSION,
+        'alternativeRepairCandidates': [candidate]}, 'timeout-source-diagnosis')
+
+    if later_diagnosis:
+        _tool(messages, 'propose_workout_alternatives', {}, {
+            'requirementsId': stored['requirementsId'], 'baseDraftId': audited['currentDraftId'],
+            'outcome': 'unresolved', 'diagnosisVersion': CONFLICT_RESOLUTION_VERSION,
+            'alternativeRepairCandidates': [],
+            **({'executionFailure': True} if later_diagnosis == 'execution_failure' else {})},
+            'later-nonauthoritative-diagnosis')
+
+    pending = {**copy.deepcopy(candidate), 'repairCandidateId': 'ALT_TIMEOUT_REVISION',
+        'diagnosisCandidateId': candidate['repairCandidateId'],
+        'parentRepairCandidateId': candidate['repairCandidateId'], 'reviewPending': True,
+        'reviewPendingReason': 'Review timed out.',
+        'repairContract': {'requirementsId': 'ALT_TIMEOUT_REQUIREMENTS', 'redistributions': []},
+        'jointSolve': {'status': 'optimal', 'problemFingerprint': 'saved-joint-result'}}
+    timeout_result = {'outcome': 'unresolved', 'attemptStatus': 'review_timeout',
+        'repairCandidateId': candidate['repairCandidateId'],
+        'originalRequirementsId': candidate['originalRequirementsId'],
+        'requirementsId': candidate['requirementsId'], 'candidateSnapshot': pending,
+        'jointSolve': pending['jointSolve'], 'repairContract': pending['repairContract']}
+    _tool(messages, 'repair_workout_alternative', {}, timeout_result, 'timeout-repair-result')
+
+    paused = _state(interactive_shell._messages_for_api(messages, True, provided_equipment=equipment))
+    assert 'alternativeRepairTask' not in paused
+    assert 'conflictDiagnosisTask' not in paused
+
+    messages.append({'role': 'user', 'content': '/continue',
+        'timestamp': dt.datetime.now(dt.timezone.utc).isoformat()})
+    from workout_generator_pkg.planning_tools import _latest_result
+    assert _latest_result(messages, 'propose_workout_alternatives')[1]['outcome'] == (
+        'unresolved' if later_diagnosis else 'candidate_feasible_pending_review')
+    assert _latest_result(messages, 'repair_workout_alternative')[1]['attemptStatus'] == 'review_timeout'
+    if later_diagnosis == 'refresh_exception':
+        _tool(messages, 'propose_workout_alternatives', {}, {
+            'requirementsId': stored['requirementsId'], 'baseDraftId': audited['currentDraftId'],
+            'outcome': 'unresolved', 'executionFailure': True,
+            'assessmentRefresh': {'status': 'unresolved', 'repairCandidateId': pending['repairCandidateId'],
+                'reason': 'Controlled thrown refresh failure.'}}, 'thrown-refresh-failure')
+        stopped = _state(interactive_shell._messages_for_api(messages, True, provided_equipment=equipment))
+        assert 'conflictDiagnosisTask' not in stopped
+        assert stopped['alternativeAssessmentRefreshUnresolved']['status'] == 'unresolved'
+        return
+    resumed = _state(interactive_shell._messages_for_api(messages, True, provided_equipment=equipment))
+    task = resumed.get('conflictDiagnosisTask')
+    assert task is not None, {key: resumed.get(key) for key in ('alternativeAssessmentRefreshUnresolved', 'alternativeReviewAssessmentStale', 'alternativeCandidateAuthorityStale', 'alternativeRepairCandidates', 'alternativeRepairTask', 'conflictDiagnosisTask', 'otherToolResults')}
+    assert task['staleAlternativeAssessment'] is True
+    assert task['repairCandidateId'] == pending['repairCandidateId']
+    assert 'alternativeRepairTask' not in resumed
+
+    monkeypatch.setattr(alternative_repair, '_audit_candidate',
+        lambda candidate, workouts, *args: ({'name': candidate['candidateName'],
+            'workouts': copy.deepcopy(workouts)}, {'plan': 'audited'}, {'errors': []}, {}))
+    monkeypatch.setattr(alternative_repair, '_append_hypothetical_requirements', lambda *args: [])
+    monkeypatch.setattr(planning_tools, 'render_draft', lambda *args: 'reviewed preview')
+    fresh_review = {'version': REVIEW_VERSION, 'inputHash': 'fresh-timeout-review',
+        'instructionBoundary': len(messages) - 1, 'findings': []}
+    fresh_review['assessment'] = _assessment(fresh_review, ASSESSMENT_VERSION)
+    monkeypatch.setattr(cancellation, 'run_cancellable', lambda *args, **kwargs: {
+        'passed': True, 'review': fresh_review, 'preview': 'reviewed preview', 'errors': []})
+    monkeypatch.setattr(alternative_repair, 'compile_coordinated_repair',
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('review-only resume must not compile repairs')))
+    monkeypatch.setattr(joint_planning, 'solve_prescribed_week',
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('review-only resume must not invoke the solver')))
+    monkeypatch.setattr(conflict_resolution, 'diagnose_conflict_and_propose',
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('review-only resume must not rediagnose')))
+
+    response = interactive_shell.handle_function_call(None, messages, 'propose_workout_alternatives', {
+        'staleAlternativeAssessment': True, 'repairCandidateId': pending['repairCandidateId'],
+        'requirementsId': stored['requirementsId'], 'baseDraftId': audited['currentDraftId']},
+        provided_equipment=equipment)
+    refreshed = json.loads(response['result'])
+
+    assert refreshed['assessmentRefresh']['status'] == 'proposal_ready'
+    assert refreshed['alternativeRepairCandidates'][0]['repairContract'] == pending['repairContract']
+    assert refreshed['alternativeRepairCandidates'][0]['jointSolve'] == pending['jointSolve']
+    assert refreshed['alternativeRepairCandidates'][0].get('reviewPending') is None
 
 
 def test_decision_mismatch_routes_bound_alternative_to_targeted_assessment_refresh(monkeypatch):

@@ -116,8 +116,8 @@ def _repair_scope_case(training_days=(0, 5)):
         'libraryFingerprint': 'library', 'trainingHistoryFingerprint': 'history',
         'currentDraft': {'name': 'Four day plan'},
         'workouts': [
-            {'trainingDays': [training_days[0]], 'exercises': [{'definition_id': 'LIBRARY_1'}]},
-            {'trainingDays': [training_days[1]], 'exercises': [{'definition_id': 'LIBRARY_1'}]},
+            {'trainingDays': [training_days[0]], 'exercises': [{'definition_id': 'LIBRARY_1', 'numWorkSets': 1}]},
+            {'trainingDays': [training_days[1]], 'exercises': [{'definition_id': 'LIBRARY_1', 'numWorkSets': 1}]},
         ],
         'findingsAssessment': {'groups': [
             {'findingIndexes': [0], 'disposition': 'repair', 'repairDimensions': ['ordering']},
@@ -150,16 +150,35 @@ def _stub_repair_preconditions(monkeypatch):
 
 def test_alternative_repair_passes_compiled_refs_for_cross_workout_schedule_change(monkeypatch):
     import workout_generator_pkg.alternative_repair as alternative_repair
+    from workout_generator_pkg.user_interaction import repair_workout_alternative_tool
+    from jsonschema import validate
 
     _stub_repair_preconditions(monkeypatch)
     candidate, arguments = _repair_scope_case()
+    candidate['workouts'][0]['exercises'].append({'definition_id': 'LIBRARY_2', 'numWorkSets': 1})
+    candidate['workouts'][1]['exercises'][0]['definition_id'] = 'LIBRARY_3'
+    candidate['workouts'][1]['exercises'].append({'definition_id': 'LIBRARY_4', 'numWorkSets': 1})
+    arguments = {'repairCandidateId': candidate['repairCandidateId'],
+        'originalRequirementsId': candidate['originalRequirementsId'], 'addressedFindingIndexes': [0],
+        'sessionBlocks': [
+            {'sessionReference': 'WORKOUT_0', 'blocks': [
+                {'exercises': ['EXERCISE_0']}, {'exercises': ['EXERCISE_2']}]},
+            {'sessionReference': 'WORKOUT_1', 'blocks': [
+                {'exercises': ['EXERCISE_1']}, {'exercises': ['EXERCISE_3']}]}]}
+    tool = repair_workout_alternative_tool({**candidate,
+        'currentDraft': {'workouts': copy.deepcopy(candidate['workouts'])}})['function']
+    assert 'sessionBlocks' in tool['parameters']['required']
+    assert 'edits' not in tool['parameters']['properties']
+    assert 'typed edits transaction' not in tool['description']
+    validate(arguments, tool['parameters'])
 
     def solve(sessions, requirements, equipment, restriction_policy, **kwargs):
-        assert sessions[1]['trainingDays'] == [6]
+        assert [[item['definition_id'] for item in day['exercises']] for day in sessions] == [
+            ['LIBRARY_1', 'LIBRARY_3'], ['LIBRARY_2', 'LIBRARY_4']]
         assert requirements == candidate['requirements']
         assert kwargs['preserve_source_selection'] is True
         return {'feasible': True, 'status': 'optimal', 'sessions': copy.deepcopy(sessions),
-            'occurrenceLineage': [[[0, 0]], [[1, 0]]]}
+            'occurrenceLineage': [[[0, 0], [0, 1]], [[1, 0], [1, 1]]]}
 
     monkeypatch.setattr('workout_generator_pkg.joint_planning.solve_prescribed_week', solve)
 
@@ -167,7 +186,8 @@ def test_alternative_repair_passes_compiled_refs_for_cross_workout_schedule_chan
         pass
 
     def audit_candidate(candidate, workouts, *args):
-        assert workouts[1]['trainingDays'] == [6]
+        assert [[item['definition_id'] for item in day['exercises']] for day in workouts] == [
+            ['LIBRARY_1', 'LIBRARY_3'], ['LIBRARY_2', 'LIBRARY_4']]
         raise ReachedAudit
 
     monkeypatch.setattr(alternative_repair, '_audit_candidate', audit_candidate)
@@ -517,10 +537,18 @@ def _stub_repair_materialization(monkeypatch, audit):
     monkeypatch.setattr(alternative_repair, '_append_hypothetical_requirements', lambda *args: [])
     monkeypatch.setattr(planning_tools, 'render_draft', lambda *args: 'preview')
     monkeypatch.setattr(planning_tools, 'library_fingerprint', lambda *args: 'library')
+    from workout_generator_pkg.plan_review import REVIEW_VERSION
+    from workout_generator_pkg.review_assessment import VERSION as ASSESSMENT_VERSION, assessment_hash
+    review = {'version': REVIEW_VERSION, 'inputHash': 'stub-review',
+        'findings': [{'severity': 'blocking', 'message': 'Review finding'}]}
+    review['assessment'] = {'version': ASSESSMENT_VERSION,
+        'inputHash': assessment_hash(review),
+        'groups': [{'findingIndexes': [0], 'disposition': 'repair',
+            'repairDimensions': ['session_labels'], 'reason': 'Correct the review finding.'}],
+        'repairPlan': 'Correct the review finding.'}
     monkeypatch.setattr(cancellation, 'run_cancellable', lambda function, *args, **kwargs: {
         'passed': False, 'errors': [{'code': 'semantic_issue', 'message': 'Review finding'}],
-        'review': {'version': 1, 'assessment': {'version': 1, 'groups': []},
-            'findings': [{'severity': 'blocking', 'message': 'Review finding'}]},
+        'review': review,
         'preview': 'rejected preview'})
     return candidate, arguments
 
@@ -571,6 +599,70 @@ def test_alternative_repair_review_rejection_saves_new_unapproved_revision(monke
     assert 'proposal' not in result
 
 
+def test_exercise_selection_repair_preserves_selected_placement_and_programming_evidence(monkeypatch):
+    import workout_generator_pkg.alternative_repair as alternative_repair
+
+    candidate, arguments = _stub_repair_materialization(monkeypatch, {'errors': []})
+    candidate['findingsAssessment']['groups'][0]['repairDimensions'] = ['exercise_selection']
+    patch = [{'op': 'replace', 'path': '/workouts/1/exercises/0/definition_id', 'value': 'LIBRARY_2'}]
+    monkeypatch.setattr(alternative_repair, 'compile_coordinated_repair',
+        lambda *args, **kwargs: ({'patch': patch}, [{'operationIndex': 0}]))
+    receipt = {'priorityExecution': {'status': 'ran'}, 'priorityTradeoffs': {'items': []},
+        'demandDistribution': {'status': 'available'}}
+    observed = {}
+
+    def solve(sessions, *args, **kwargs):
+        observed['preserve_source_selection'] = kwargs['preserve_source_selection']
+        return {'feasible': True, 'status': 'optimal', 'preserveSourceSelection': True,
+            'sessions': copy.deepcopy(sessions), 'occurrenceLineage': [[[0, 0]], [[1, 0]]],
+            **receipt}
+
+    monkeypatch.setattr('workout_generator_pkg.joint_planning.solve_prescribed_week', solve)
+
+    result = execute_repair(arguments, candidate, [], {}, None, True, None)
+
+    assert observed['preserve_source_selection'] is True
+    assert result['workouts'][1]['exercises'][0]['definition_id'] == 'LIBRARY_2'
+    assert result['workouts'][0]['exercises'][0]['definition_id'] == candidate['workouts'][0]['exercises'][0]['definition_id']
+    assert result['jointSolve']['preserveSourceSelection'] is True
+    assert result['jointSolve']['demandDistribution'] == receipt['demandDistribution']
+    assert result['jointSolve']['priorityExecution'] == receipt['priorityExecution']
+    assert result['jointSolve']['priorityTradeoffs'] == receipt['priorityTradeoffs']
+
+
+def test_ordering_repair_keeps_source_selection_locked(monkeypatch):
+    candidate, arguments = _stub_repair_materialization(monkeypatch, {'errors': []})
+    candidate['findingsAssessment']['groups'][0]['repairDimensions'] = ['ordering']
+
+    result = execute_repair(arguments, candidate, [], {}, None, True, None)
+
+    assert result['jointSolve']['preserveSourceSelection'] is True
+
+
+def test_alternative_repair_review_timeout_preserves_audited_pending_candidate(monkeypatch):
+    import workout_generator_pkg.alternative_repair as alternative_repair
+    import workout_generator_pkg.cancellation as cancellation
+
+    candidate, arguments = _stub_repair_materialization(monkeypatch, {'errors': []})
+    monkeypatch.setattr(cancellation, 'run_cancellable',
+        lambda *args, **kwargs: (_ for _ in ()).throw(TimeoutError('review deadline')))
+
+    result = execute_repair(arguments, candidate, [], {}, None, True, None)
+
+    snapshot = result['candidateSnapshot']
+    assert result['attemptStatus'] == 'review_timeout'
+    assert result['passed'] is False
+    assert snapshot['reviewPending'] is True
+    assert snapshot['audit']['errors'] == []
+    assert snapshot['workouts'][1]['trainingDays'] == [6]
+    assert snapshot['diagnosisCandidateId'] == 'DIAGNOSIS_1'
+    assert snapshot['parentRepairCandidateId'] == candidate['repairCandidateId']
+    assert snapshot['repairCandidateId'] != candidate['repairCandidateId']
+    assert result['jointSolve']['problemFingerprint'] == 'preserved-repair-fingerprint'
+    assert 'review' not in snapshot or snapshot['review'] == {}
+    assert 'proposal' not in result
+
+
 def test_program_guidance_survives_repair_review_and_failed_revision(monkeypatch):
     import workout_generator_pkg.alternative_repair as alternative_repair
     import workout_generator_pkg.cancellation as cancellation
@@ -591,13 +683,21 @@ def test_program_guidance_survives_repair_review_and_failed_revision(monkeypatch
     captured = {}
 
     def inspect_review(function, client, snapshot, review_messages, *args, **kwargs):
+        from workout_generator_pkg.plan_review import REVIEW_VERSION
+        from workout_generator_pkg.review_assessment import VERSION as ASSESSMENT_VERSION, assessment_hash
         captured['submittedDraft'] = copy.deepcopy(snapshot['submittedDraft'])
         captured['reviewMessages'] = copy.deepcopy(review_messages)
+        review = {'version': REVIEW_VERSION, 'inputHash': 'guidance-review',
+            'findings': [{'severity': 'blocking', 'message': 'Review finding'}]}
+        review['assessment'] = {'version': ASSESSMENT_VERSION,
+            'inputHash': assessment_hash(review),
+            'groups': [{'findingIndexes': [0], 'disposition': 'repair',
+                'repairDimensions': ['session_labels'], 'reason': 'Correct the review finding.'}],
+            'repairPlan': 'Correct the review finding.'}
         return {
             'passed': False,
             'errors': [{'code': 'semantic_issue', 'message': 'Review finding'}],
-            'review': {'version': 1, 'assessment': {'version': 1, 'groups': []},
-                'findings': [{'severity': 'blocking', 'message': 'Review finding'}]},
+            'review': review,
             'preview': 'rejected preview',
         }
 
@@ -610,6 +710,42 @@ def test_program_guidance_survives_repair_review_and_failed_revision(monkeypatch
     assert snapshot['repairCandidateId'] != original_id
     assert result['attemptStatus'] == 'repair_review_failed'
     assert result.get('proposal') is None
+
+
+def test_unrelated_alternative_repair_carries_reviewed_redistribution_into_solver_and_snapshot(monkeypatch):
+    from workout_generator_pkg.repair_contract import build_repair_contract, expand_redistributions
+
+    candidate, arguments = _stub_repair_materialization(monkeypatch, {'errors': []})
+    for workout in candidate['workouts']:
+        workout['exercises'][0]['numWorkSets'] = 5
+    _, manifest = expand_redistributions({'exerciseRedistributions': [{
+        'exerciseRefs': ['EXERCISE_0', 'EXERCISE_1'],
+        'workoutRefs': ['WORKOUT_0', 'WORKOUT_1']}]}, {'workouts': candidate['workouts']})
+    candidate['repairContract'] = build_repair_contract([], {'workouts': candidate['workouts']},
+        candidate['requirements'], manifest, requirements_id=candidate['requirementsId'])
+    arguments['edits'] = {'programGuidance': 'Keep two repetitions in reserve.'}
+    import workout_generator_pkg.alternative_repair as alternative_repair
+    monkeypatch.setattr(alternative_repair, 'compile_coordinated_repair',
+        lambda *args, **kwargs: ({'patch': [{'op': 'add', 'path': '/programGuidance',
+            'value': arguments['edits']['programGuidance']}]}, [{'operationIndex': 0}]))
+    captured = {}
+
+    def solve(sessions, *args, **kwargs):
+        captured['constraints'] = copy.deepcopy(kwargs.get('redistribution_constraints'))
+        return {'feasible': True, 'status': 'optimal', 'preserveSourceSelection': True,
+            'selectionPolicyVersion': 10, 'problemFingerprint': 'constrained-replay',
+            'redistributionOptimization': {'goal': 'minimize_total_peak_work_sets_across_target_sessions',
+                'status': 'optimal', 'optimal': True, 'totalPeakWorkSets': 5},
+            'sessions': copy.deepcopy(sessions), 'occurrenceLineage': [[[0, 0]], [[1, 0]]]}
+
+    monkeypatch.setattr('workout_generator_pkg.joint_planning.solve_prescribed_week', solve)
+    result = alternative_repair.execute_repair(arguments, candidate, [], {}, None, True, None)
+
+    assert captured['constraints'][0]['weeklyWorkSets'] == 10
+    assert captured['constraints'][0]['targetWorkoutIndexes'] == [0, 1]
+    assert result['jointSolve']['redistributionOptimization']['optimal'] is True
+    assert result['candidateSnapshot']['repairContract']['redistributions'][0]['weeklyWorkSets'] == 10
+    assert result['candidateSnapshot']['jointSolve']['redistributionOptimization']['optimal'] is True
 
 
 def test_program_guidance_owner_can_address_workout_evidence_without_occurrence_refs():

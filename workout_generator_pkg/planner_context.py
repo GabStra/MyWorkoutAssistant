@@ -4,17 +4,18 @@ import hashlib
 import json
 import re
 
-from .planning_tools import library_fingerprint, requirements_approved, latest_draft_submission, requirement_sources, source_message_context, _latest_result, AUDIT_VERSION, rejected_metadata_patch, approved_requirement_base
+from .planning_tools import library_fingerprint, requirements_approved, latest_draft_submission, requirement_sources, source_message_context, _latest_result, AUDIT_VERSION, rejected_metadata_patch, approved_requirement_base, latest_requirement_candidate
 from .json_patching import apply_json_patch
 from .training_history import compact_training_evidence, pool_execution_contexts
 from .planning_decisions import resolved_decisions, latest_decision_receipt
 from .programming_guidelines import GUIDELINE_POLICY
-from .planning_tools import is_metadata_error, description_text_contract, placement_notes_text_contract
+from .planning_tools import is_metadata_error, description_text_contract
 from .review_assessment import validate_assessment, VERSION as ASSESSMENT_VERSION
 
-_CANDIDATE_INDEX_FIELDS = ('name', 'exerciseType', 'equipmentName', 'accessoryNames',
+_CANDIDATE_INDEX_FIELDS = ('name', 'exerciseType', 'movementRef', 'equipmentName', 'accessoryNames',
                            'muscleGroups', 'secondaryMuscleGroups',
-                           'exerciseCategory', 'creditsPerWorkingSet', 'volumeAuditNote')
+                           'exerciseCategory', 'creditsPerWorkingSet', 'volumeAuditNote',
+                           'programmingDemandFacts')
 
 
 def current_unresolved_joint_candidate(candidate, requirements, equipment, messages, training_history,
@@ -52,43 +53,88 @@ def current_unresolved_joint_candidate(candidate, requirements, equipment, messa
             submission['workouts'], requirements.get('requirements', {}), equipment or {}, training_history,
             messages, restriction_policy=requirements.get('restrictionPolicy'),
             allow_educated_load_guesses=allow_educated_load_guesses,
-            preserve_source_selection=True)
+            preserve_source_selection=joint.get('preserveSourceSelection', False))
     if not valid or (expected_submission is not None and submission != expected_submission):
         return None
     return candidate
 
 
-def _current_audit_assessment(audit, draft_id):
+def _current_audit_assessment(audit, draft_id, context=None):
     review_data = audit.get('review') if isinstance(audit.get('review'), dict) else {}
     assessment = review_data.get('assessment') or audit.get('findingsAssessment')
     reviewed_id = audit.get('assessmentDraftId') or audit.get('currentDraftId')
     if not assessment or not draft_id or reviewed_id != draft_id or assessment.get('version') != ASSESSMENT_VERSION:
         return None
-    review = review_data or {
+    review = copy.deepcopy(review_data) if review_data else {
         'inputHash': audit.get('reviewInputHash'),
         'findings': audit.get('reviewFindings', []),
-        'assessment': assessment,
+        **({'requirementAssessments': audit['requirementAssessments']} if 'requirementAssessments' in audit else {}),
     }
+    # Rejected coordinated repairs may retain the verified assessment beside
+    # the review metadata rather than nested inside it. Validate that same
+    # assessment against the saved review inputs instead of dropping it.
+    review['assessment'] = assessment
+    if (context is None and any(group.get('repairObjectives')
+            for group in assessment.get('groups', []) if isinstance(group, dict))):
+        return None
     try:
         validate_assessment(review)
+        if any(group.get('repairObjectives') for group in assessment.get('groups', [])
+                if isinstance(group, dict)):
+            from .review_assessment import validate_redistribution_objective_associations
+            validate_redistribution_objective_associations(review, context)
     except (KeyError, TypeError, ValueError):
         return None
     return assessment
 
 
-def _progression_target_references(workouts):
-    return {item.get('progressionPlan', {}).get('nextDefinitionId')
-            for day in workouts for item in day.get('exercises', [])
-            if isinstance(item.get('progressionPlan'), dict)
-            and isinstance(item.get('progressionPlan', {}).get('nextDefinitionId'), str)}
+def _assessment_context(draft, requirements, equipment, restriction_policy=None):
+    if not isinstance(draft, dict) or not isinstance(requirements, dict) or not isinstance(equipment, dict):
+        return None
+    from .review_assessment import assessment_validation_context
+    return assessment_validation_context(draft, requirements, equipment, restriction_policy)
 
 
 def _movement_selection_context(state):
+    from .generation_audit import programming_demand_evidence
+    from .programming_demands import definition_demand_facts, demand_distribution_inputs
+
+    state['demandEvidence'] = programming_demand_evidence()
+    candidates = {}
+    demand_facts_by_candidate = {}
+    demand_fields = ('exerciseType', 'exerciseCategory', 'movementRef', 'equipmentName',
+        'accessoryNames', 'muscleGroups', 'secondaryMuscleGroups', 'creditsPerWorkingSet')
+    for collection in ('exerciseCandidates', 'cachedCandidateIndex', 'candidateAlternatives'):
+        for reference, entry in (state.get(collection) or {}).items():
+            if not isinstance(entry, dict):
+                continue
+            facts = {key: copy.deepcopy(entry[key]) for key in demand_fields if key in entry}
+            if facts:
+                candidates.setdefault(reference, {}).update(facts)
+            projected = entry.get('programmingDemandFacts')
+            demand_facts_by_candidate[reference] = (copy.deepcopy(projected)
+                if isinstance(projected, dict) else definition_demand_facts(entry))
+    demand_definitions = []
+    for reference, projected in demand_facts_by_candidate.items():
+        annotations = {key: {'present': fact['status'] == 'present', 'source': fact['source']}
+            for key, fact in projected.items()
+            if fact.get('status') in ('present', 'absent') and isinstance(fact.get('source'), str)}
+        demand_definitions.append({'id': reference, 'programmingDemands': annotations})
+    state['exerciseDemandEvidence'] = {
+        'scope': 'Candidate library facts available before prescription; demand properties are sourced library annotations, not fatigue classifications.',
+        'candidates': candidates,
+        'programmingDemandFacts': demand_facts_by_candidate,
+        'demandDistribution': demand_distribution_inputs(demand_definitions),
+        'policy': {
+            'meaning': 'Demand spread describes per-set exposure to sourced library properties; it does not measure fatigue or recovery capacity.',
+            'unknownEvidence': 'Unknown is not absent or safe. Do not infer properties from names, movement references, categories, or muscle roles.',
+            'residuals': 'A code-optimal residual alone is not a violation; preserve source-specific checks and assess concrete evidence.'},
+    }
     if 'progression' in state.get('requirements', {}).get('objectiveOrder', []):
-        state['progressionSelectionPolicy'] = ('Among suitable movements satisfying the approved constraints, prefer the most supported progression margin: '
-            'remaining selectable load steps, practical increments and a concrete supported next configuration. Compare within each setup, '
-            'never raw kg across exercises. Missing history is unknown headroom, not a capacity failure. Include loadable alternatives '
-            'when a proposed configuration is already capped; the joint solver cannot select recipes that were never proposed.')
+        state['progressionSelectionPolicy'] = ('Assess practical progression during movement selection and review using comparable performance and available configurations. '
+            'Selectable external-load steps describe equipment, not training quality or a working-set target. '
+            'Missing history is unknown capacity, not failure. For bodyweight work, added resistance and native load calibration do not establish unassisted ability or assistance. '
+            'The app owns progression. Include supported alternative configurations when useful; the solver cannot invent unproposed recipes.')
     else:
         state['progressionSelectionPolicy'] = ('Use load-headroom evidence to check suitability and feasibility only. Do not prefer a movement '
             'for progression margin unless progression is present in the approved optimization order.')
@@ -104,6 +150,147 @@ def _movement_selection_context(state):
                         'observedAtCurrentEquipmentMaximum', 'latestObservedLoadsNotSelectableNow', 'higherLoadOptionCount',
                         'maximumSelectableLoadKg', 'latestSessionHeaviestLoadKg', 'nextHigherSelectableLoadKg') if field in headroom}
                 entry['trainingEvidence'] = summary
+
+
+def _retrieved_replacement_definition_references(planning_state):
+    """Return the same currently retrieved IDs exposed by the menu-repair schema."""
+    references = set()
+    for reference, entry in (planning_state.get('exerciseCandidates') or {}).items():
+        if (isinstance(reference, str) and reference.startswith('LIBRARY_')
+                and reference.removeprefix('LIBRARY_').isdigit()
+                and isinstance(entry, dict) and entry.get('id') == reference):
+            references.add(reference)
+    references.update(reference for reference, entry in (planning_state.get('cachedCandidateIndex') or {}).items()
+        if isinstance(reference, str) and reference.startswith('LIBRARY_')
+        and reference.removeprefix('LIBRARY_').isdigit() and isinstance(entry, dict))
+    return sorted(references)
+
+
+def _compact_programming_selection_facts(summary):
+    """Keep only solved allocation facts that help compare movement choices."""
+    if not isinstance(summary, dict):
+        return None
+    exposures = summary.get('exposures')
+    sessions = summary.get('sessions')
+    if not isinstance(exposures, dict) or not isinstance(sessions, list):
+        return None
+    compact_exposures = []
+    for reference, exposure in sorted(exposures.items()):
+        if not isinstance(exposure, dict):
+            continue
+        occurrences = exposure.get('occurrences')
+        if not isinstance(occurrences, list):
+            continue
+        compact_exposures.append({
+            'definitionReference': reference,
+            'name': exposure.get('name'),
+            'weeklyWorkingSets': exposure.get('weeklyWorkingSets'),
+            'occurrences': [{key: occurrence[key] for key in ('exercise', 'session', 'sets', 'sessionsPerWeek',
+                'category', 'exerciseType', 'movementRef', 'equipmentId', 'requiredAccessoryEquipmentIds',
+                'programmingDemandFacts',
+                'primaryMuscles', 'secondaryMuscles', 'roles', 'prescribedReps',
+                'prescribedDurationSeconds', 'effortAcceptance', 'restBetweenSetsSeconds',
+                'restAfterExerciseSeconds', 'intraSetRestInSeconds', 'weeklyMuscleCredits',
+                'capacityEvidenceStatus', 'loadCeilingKg')
+                             if key in occurrence}
+                            for occurrence in occurrences if isinstance(occurrence, dict)],
+        })
+    return {
+        'scope': 'Descriptive facts for the saved candidate; use current audit findings separately to determine whether it qualifies.',
+        'sessions': [{key: session[key] for key in ('name', 'muscles', 'movementSets') if key in session}
+                     for session in sessions if isinstance(session, dict)],
+        'exerciseExposures': compact_exposures,
+        **({'demandEvidence': copy.deepcopy(summary['demandEvidence'])}
+            if 'demandEvidence' in summary else {}),
+        **({'demandDistribution': copy.deepcopy(summary['demandDistribution'])}
+            if 'demandDistribution' in summary else {}),
+        **({'priorityTradeoffs': copy.deepcopy(summary['priorityTradeoffs'])}
+            if 'priorityTradeoffs' in summary else {}),
+        **{key: copy.deepcopy(summary[key]) for key in (
+            'coverageRequirements', 'coverageBalanceEvidence', 'priorityExecution') if key in summary},
+        'limits': 'These facts describe only the saved candidate and its audited plan; they do not rank alternative menus or establish personal suitability.',
+    }
+
+
+def _programming_selection_facts_from_receipt(receipt, state, requirements, library_fingerprint,
+                                              history_fingerprint, equipment):
+    """Project shared audited facts only while their plan bindings are current."""
+    if (not isinstance(receipt, dict) or not isinstance(receipt.get('audit'), dict)
+            or not isinstance(receipt.get('planIndex'), dict)
+            or not isinstance(receipt.get('submittedDraft'), dict)
+            or not isinstance(receipt['audit'].get('workouts'), list)
+            or not isinstance(receipt['audit'].get('weeklyVolume'), dict)
+            or receipt.get('auditVersion') != AUDIT_VERSION
+            or receipt.get('requirementsId') != requirements.get('requirementsId')
+            or receipt.get('currentDraftId') != state.get('currentDraftId')
+            or receipt.get('libraryFingerprint') != library_fingerprint
+            or receipt.get('historyFingerprint') != history_fingerprint
+            or receipt.get('resolvedDecisions', {}) != state.get('resolvedDecisions', {})):
+        return None
+    from .generation_audit import build_programming_summary
+    plan_index = receipt['planIndex']
+    source_days = receipt['submittedDraft'].get('workouts')
+    plan_days = plan_index.get('workouts')
+    if not isinstance(source_days, list) or not isinstance(plan_days, list) or len(source_days) != len(plan_days):
+        return None
+    references = {definition['id']: f'LIBRARY_{index}' for index, definition in enumerate(sorted(
+        equipment.get('exerciseDefinitions', []), key=lambda definition: definition['id']))}
+    plan_exercises = {item['id']: item for item in plan_index.get('exercises', [])}
+    review_exercises = []
+    for source_day, plan_day in zip(source_days, plan_days, strict=True):
+        source_items = source_day.get('exercises') if isinstance(source_day, dict) else None
+        occurrence_ids = plan_day.get('exerciseIds') if isinstance(plan_day, dict) else None
+        if (not isinstance(source_items, list) or not isinstance(occurrence_ids, list)
+                or len(source_items) != len(occurrence_ids)):
+            return None
+        for source, identifier in zip(source_items, occurrence_ids, strict=True):
+            if not isinstance(source, dict) or identifier not in plan_exercises:
+                return None
+            plan_exercise = plan_exercises[identifier]
+            reference = references.get(plan_exercise.get('libraryDefinitionId'))
+            if reference != source.get('definition_id'):
+                return None
+            review_exercises.append({'id': identifier, 'libraryDefinitionId': reference})
+    review_draft = {'exercises': review_exercises}
+    targets = requirements.get('requirements', {}).get('auditTargets', {}).get('weeklyEffectiveSets', {})
+    from .recipe_contracts import progression_capability
+    evidence = {**state.get('trainingEvidenceSummary', {}), **state.get('trainingEvidence', {})}
+    selected_references = {item['libraryDefinitionId'] for item in review_exercises}
+    capabilities = {references[definition['id']]: progression_capability(definition, equipment,
+        evidence.get(references[definition['id']])) for definition in equipment.get('exerciseDefinitions', [])
+        if references[definition['id']] in selected_references}
+    joint_receipt = receipt.get('coordinatedJointPlanning') or receipt.get('automaticAllocation') or {}
+    from .programming_demands import definition_demand_facts
+    demand_facts_by_ref = {references[definition['id']]: definition_demand_facts(definition)
+        for definition in equipment.get('exerciseDefinitions', [])
+        if references[definition['id']] in selected_references}
+    summary = build_programming_summary(receipt['audit'], receipt['audit'], receipt['submittedDraft'],
+        plan_index, review_draft, capabilities, targets, requirements=requirements.get('requirements', {}),
+        priority_execution=joint_receipt.get('priorityExecution'),
+        priority_tradeoffs=joint_receipt.get('priorityTradeoffs'),
+        demand_distribution=joint_receipt.get('demandDistribution'),
+        definition_demand_facts_by_ref=demand_facts_by_ref)
+    return _compact_programming_selection_facts(summary)
+
+
+def _saved_audit_receipt(messages, draft_id, submitted_draft):
+    """Find the full retained audit result for the exact materialized draft."""
+    calls = {call.get('id') for message in messages for call in message.get('tool_calls', [])
+             if call.get('function', {}).get('name') == 'audit_workout_plan'}
+    for message in reversed(messages):
+        if message.get('role') != 'tool' or message.get('tool_call_id') not in calls:
+            continue
+        try:
+            payload = json.loads(message.get('content') or '{}')
+        except (TypeError, ValueError):
+            continue
+        if (isinstance(payload, dict) and not payload.get('staleHistory')
+                and payload.get('currentDraftId') == draft_id
+                and payload.get('submittedDraft') == submitted_draft
+                and isinstance(payload.get('planIndex'), dict)
+                and isinstance(payload.get('audit'), dict)):
+            return payload
+    return None
 
 
 def request_planning_state(messages):
@@ -241,7 +428,8 @@ def focus_alternative_repair_request(messages, planning_state):
         'sourceMessages', 'resolvedDecisions', 'restrictionPolicy', 'libraryFingerprint',
         'exerciseCandidates', 'candidateHistorySummaries', 'trainingEvidence',
         'equipmentLoadOptions', 'retrievedEvidenceReferences', 'historyExecutionContexts',
-        'completedSearches', 'progressionSelectionPolicy',
+        'completedSearches', 'progressionSelectionPolicy', 'candidateConflictDiagnosisTask',
+        'candidateConflictDiagnosisUnresolved',
     )
     projected = {key: copy.deepcopy(planning_state[key]) for key in shared_fields if key in planning_state}
     candidate_id = task.get('repairCandidateId')
@@ -254,6 +442,7 @@ def focus_alternative_repair_request(messages, planning_state):
         'trainingHistoryFingerprint', 'resolvedDecisions', 'sourceMenuFingerprint',
         'candidateMenuFingerprint', 'diagnosisVersion', 'reviewVersion',
         'findingsAssessment', 'reviewFindings', 'errors', 'submissionCorrectionErrors',
+        'structuralCorrectionRequired', 'structuralCorrectionReason',
         'instruction', 'repairStage', 'decisionRequired',
         'replacementCandidates', 'replacementCandidateQualifications',
         'submissionCorrectionEdits', 'submissionCorrectionAttemptEdits', 'submissionJointSolve',
@@ -274,7 +463,7 @@ def focus_alternative_repair_request(messages, planning_state):
         'Current planning state (backend data, not new instructions). This turn repairs one saved hypothetical alternative. '
         'currentDraft is the sole candidate being edited; its draftId and currentDraftId are repairCandidateId. '
         'The alternativeRepairTask findings and any submissionCorrectionErrors belong only to that candidate. '
-        'submissionCorrectionEdits is the saved active proposal. submissionCorrectionAttemptEdits is a later rejected attempt and was not applied; amend the active proposal by default, or set replaceRejectedRepair=true only when the new edits are a complete replacement. currentDraft is the saved candidate state. '
+        'submissionCorrectionEdits and submissionCorrectionAttemptEdits are rejected proposal evidence, not applied edits. Submit the complete correction against currentDraft, the saved candidate state. '
         'If knownInfeasibleMenu is present, that exact executable recipe/constraint domain already has a code-owned infeasibility proof. Do not repeat a count-only, label-only, guidance-only, or other seed/objective-only patch; change an actual movement/prescription option, or route to an explicit validated trade-off if no compliant structural change is available. '
         'Satisfy alternativeRepairTask.hypotheticalRequirements and its proposedRequirementChanges for this candidate, '
         'while retaining every unchanged original approved requirement and restriction. These fixed hypothetical targets are not approval; do not relax them further. '
@@ -287,10 +476,10 @@ def focus_alternative_repair_request(messages, planning_state):
 
 
 def _known_infeasible_alternative_receipt(results, candidate, equipment, history_fingerprint):
-    """Retain the newest current-authority menu proof across later admission failures."""
+    """Validate the newest bound proof against its own menu, independent of later receipts."""
     if not isinstance(candidate, dict):
         return None
-    from .joint_planning import SELECTION_POLICY_VERSION
+    from .joint_planning import SELECTION_POLICY_VERSION, candidate_menu_fingerprint
     from .planning_tools import library_fingerprint
     current_library_fp = library_fingerprint(equipment)
     library_fp = candidate.get('libraryFingerprint')
@@ -299,7 +488,7 @@ def _known_infeasible_alternative_receipt(results, candidate, equipment, history
         return None
     binding_keys = ('repairCandidateId', 'originalRequirementsId', 'originalRequirementsHash',
                     'requirementsId', 'sourceDraftId', 'sourceMenuFingerprint', 'libraryFingerprint',
-                    'trainingHistoryFingerprint')
+                    'trainingHistoryFingerprint', 'requirements', 'resolvedDecisions', 'restrictionPolicy', 'workouts')
     for index, function, payload in reversed(results):
         if (function.get('name') != 'repair_workout_alternative'
                 or payload.get('attemptStatus') != 'repair_menu_infeasible'
@@ -323,6 +512,24 @@ def _known_infeasible_alternative_receipt(results, candidate, equipment, history
                 or payload.get('libraryFingerprint') != library_fp
                 or payload.get('trainingHistoryFingerprint') != history_fp):
             continue
+        from .repair_contract import build_repair_contract, repair_contract_errors
+        menu = payload.get('workouts')
+        if not isinstance(menu, list):
+            menu_errors = [{'code': 'saved_proof_menu_missing', 'path': '/workouts',
+                'message': 'The saved infeasibility receipt has no executable menu to validate.'}]
+        elif candidate_menu_fingerprint(menu) != payload.get('submittedMenuFingerprint'):
+            menu_errors = [{'code': 'saved_proof_menu_mismatch', 'path': '/workouts',
+                'message': 'The saved menu does not match the menu fingerprint in its infeasibility receipt.'}]
+        else:
+            try:
+                contract = build_repair_contract([], {'workouts': candidate['workouts']}, candidate['requirements'], [])
+                menu_errors = repair_contract_errors(contract, {'workouts': menu})
+            except (ValueError, TypeError, KeyError) as error:
+                menu_errors = [{'code': getattr(error, 'code', 'saved_proof_menu_invalid'),
+                    'path': getattr(error, 'path', '/workouts'), 'message': str(error)}]
+        if menu_errors:
+            return {'status': 'menu_repair_required', 'sourceResultIndex': index,
+                'errors': [{**error, 'owner': 'structural_repair'} for error in menu_errors]}
         domain_fp = receipt.get('feasibilityDomainFingerprint')
         return {
             'status': 'proven_infeasible',
@@ -346,6 +553,35 @@ def _known_infeasible_alternative_receipt(results, candidate, equipment, history
                 'validated trade-off route while preserving fixed safety, equipment, and user-approved requirements.'),
         }
     return None
+
+
+def _candidate_conflict_diagnosis_task(requirements_id, candidate, proof, results, retry_after_index=-1):
+    from .conflict_resolution import CONFLICT_RESOLUTION_VERSION
+
+    if not isinstance(proof, dict) or proof.get('status') != 'proven_infeasible':
+        return None
+    task = {
+        'requirementsId': requirements_id,
+        'baseDraftId': candidate.get('sourceDraftId', candidate.get('baseDraftId')),
+        'repairCandidateId': candidate.get('repairCandidateId'),
+        'submittedMenuFingerprint': proof.get('submittedMenuFingerprint'),
+        'feasibilityDomainFingerprint': proof.get('feasibilityDomainFingerprint'),
+    }
+    if not all(isinstance(value, str) and value for value in task.values()):
+        return None
+    for index, function, payload in reversed(results):
+        source = payload.get('candidateDiagnosisSource')
+        if (function.get('name') == 'propose_workout_alternatives'
+                and isinstance(source, dict)
+                and all(source.get(key) == value for key, value in task.items())):
+            if (not payload.get('executionFailure')
+                    and payload.get('diagnosisVersion') != CONFLICT_RESOLUTION_VERSION):
+                continue
+            if index < retry_after_index and (payload.get('executionFailure')
+                    or payload.get('outcome') == 'unresolved'):
+                return task
+            return None
+    return task
 
 
 def request_repair_task(messages):
@@ -631,9 +867,9 @@ def _link_review_obligations_to_assessment(assessment, review_findings, obligati
     return linked_assessment, remaining
 
 
-def _current_assessment_obligation_ids(checklist, audit, current_draft_id):
+def _current_assessment_obligation_ids(checklist, audit, current_draft_id, context=None):
     entries = checklist.get('findings', {}) if isinstance(checklist, dict) else {}
-    assessment = _current_audit_assessment(audit, current_draft_id)
+    assessment = _current_audit_assessment(audit, current_draft_id, context)
     review_findings = (audit.get('review', {}).get('findings')
         if isinstance(audit.get('review'), dict) else audit.get('reviewFindings', []))
     if not isinstance(entries, dict) or not assessment or not isinstance(review_findings, list):
@@ -658,15 +894,22 @@ def _coordinated_receipt_matches(receipt, requirements_id, current_draft_id, lib
             or receipt.get('currentDraftId') != current_draft_id
             or 'libraryFingerprint' not in receipt or receipt.get('libraryFingerprint') != library_identity
             or 'historyFingerprint' not in receipt or receipt.get('historyFingerprint') != history_fingerprint
-            or 'resolvedDecisions' not in receipt or receipt.get('resolvedDecisions') != resolved_decision_identity
-            or not isinstance(assessment, dict)
-            or not isinstance(review_findings, list)
-            or not isinstance(receipt.get('reviewInputHash'), str)
-            or receipt.get('assessmentInputHash') != assessment.get('inputHash')):
+            or 'resolvedDecisions' not in receipt or receipt.get('resolvedDecisions') != resolved_decision_identity):
         return False
     if status == 'rejected_before_materialization' and receipt.get('baseDraftId') != current_draft_id:
         return False
     if status == 'attempted_pending_validation' and receipt.get('baseDraftId') == current_draft_id:
+        return False
+    # Pending edit ownership does not imply a semantic review has happened.
+    if assessment is None:
+        return (status == 'rejected_before_materialization'
+            and isinstance(receipt.get('submittedEdits'), dict)
+            and not review_findings
+            and all(receipt.get(key) is None for key in (
+                'assessmentInputHash', 'assessmentHash', 'reviewInputHash', 'reviewVersion')))
+    if (not isinstance(assessment, dict) or not isinstance(review_findings, list)
+            or not isinstance(receipt.get('reviewInputHash'), str)
+            or receipt.get('assessmentInputHash') != assessment.get('inputHash')):
         return False
     try:
         from .review_assessment import assessment_hash
@@ -676,6 +919,20 @@ def _coordinated_receipt_matches(receipt, requirements_id, current_draft_id, lib
     except (KeyError, TypeError):
         return False
     return True
+
+
+def _unmaterialized_menu_submission(payload, requirements_id, current_draft_id,
+                                   library_identity, history_fingerprint, decisions):
+    if payload.get('passed') is not False or payload.get('currentDraftId') != current_draft_id:
+        return False
+    receipt = payload.get('coordinatedRepairReceipt') or {}
+    if receipt.get('status') == 'rejected_before_materialization':
+        return _coordinated_receipt_matches(receipt, requirements_id, current_draft_id,
+                                            library_identity, history_fingerprint, decisions)
+    # Retain recovery of older schema failures without a typed edit receipt.
+    errors = payload.get('errors') or []
+    return bool(errors) and all(isinstance(error, dict)
+        and error.get('code') in ('invalid_arguments', 'invalid_draft_patch') for error in errors)
 
 
 def _finding_movement_references(error, draft):
@@ -718,13 +975,14 @@ def _audit_joint_receipt(payload):
 
 
 def _current_joint_problem_fingerprint(joint, workouts, requirements, equipment, training_history, messages,
-                                      allow_educated_load_guesses, history_identity_known):
+                                      allow_educated_load_guesses, history_identity_known, repair_contract=None):
     """Recompute the exact problem identity used by a saved joint-solver receipt."""
     if (not isinstance(joint, dict) or not isinstance(joint.get('problemFingerprint'), str)
             or not isinstance(equipment, dict) or not isinstance(requirements, dict)
             or not isinstance(allow_educated_load_guesses, bool) or not history_identity_known):
         return None
     from .joint_planning import joint_problem_fingerprint
+    from .repair_contract import redistribution_solver_constraints
     from .restriction_policy import effective_restrictions
     stored_requirements = {'requirements': requirements.get('requirements', {}),
                            'restrictionPolicy': requirements.get('restrictionPolicy')}
@@ -736,7 +994,8 @@ def _current_joint_problem_fingerprint(joint, workouts, requirements, equipment,
         training_history, messages, restriction_policy=restrictions,
         allow_educated_load_guesses=allow_educated_load_guesses,
         preserve_source_selection=joint.get('preserveSourceSelection',
-            joint.get('application') == 'automatic'))
+            joint.get('application') == 'automatic'),
+        redistribution_constraints=redistribution_solver_constraints(repair_contract))
 
 
 def _source_menu_audit(results, draft_id, problem_fingerprint):
@@ -831,15 +1090,14 @@ def _candidate_menu_expansion_status(results, current_audit, current_workouts, r
     if (isinstance(marker, dict) and marker.get('attempted') is True
             and current_audit.get('currentDraftId') == marker.get('sourceBaseDraftId')
             and current_audit.get('passed') is False):
-        errors = current_audit.get('errors') or []
-        retryable_codes = {'invalid_arguments', 'invalid_draft_patch'}
-        if errors and all(isinstance(error, dict) and error.get('code') in retryable_codes for error in errors):
+        if _unmaterialized_menu_submission(current_audit, requirements_id, current_audit.get('currentDraftId'),
+                library_hash, current_audit.get('historyFingerprint'), resolved_decision_identity):
             failed_corrections = sum(1 for _, function, payload in results
                 if function['name'] == 'audit_workout_plan'
                 and isinstance(payload.get('candidateMenuExpansion'), dict)
                 and payload['candidateMenuExpansion'].get('sourceProblemFingerprint') == marker.get('sourceProblemFingerprint')
-                and all(isinstance(error, dict) and error.get('code') in retryable_codes
-                        for error in payload.get('errors') or []))
+                and _unmaterialized_menu_submission(payload, requirements_id, current_audit.get('currentDraftId'),
+                    library_hash, current_audit.get('historyFingerprint'), resolved_decision_identity))
             return ('retryable' if failed_corrections <= 1 else 'unresolved'), marker
     if not isinstance(marker, dict):
         current_menu = candidate_menu_fingerprint(_audit_workouts(current_audit) or current_workouts or [])
@@ -1005,6 +1263,8 @@ def _exercise_selection_task(results, state, draft, library_hash, history_finger
 
 
 def _reopen_capped_coordinated_repair(state):
+    if state.get('savedDraftReaudit'):
+        return
     audit = state.get('lastAudit') or {}
     errors = audit.get('errors') or []
     receipt = audit.get('coordinatedRepairReceipt') or {}
@@ -1025,6 +1285,8 @@ def _reopen_capped_coordinated_repair(state):
 
 def _focus_repair(state, fresh_references, catalog=None, equipment=None, restrictions=None, fresh_evidence=(),
                   pending_review_obligations=()):
+    if not state.get('requirementsApproved'):
+        return
     audit = state.get('lastAudit') or {}
     coordinated_receipt = audit.get('coordinatedRepairReceipt')
     receipt_is_current = _coordinated_receipt_matches(
@@ -1039,7 +1301,8 @@ def _focus_repair(state, fresh_references, catalog=None, equipment=None, restric
         review = audit.get('review') if isinstance(audit.get('review'), dict) else {}
         review_version = review.get('version', audit.get('reviewVersion'))
         if review_version == REVIEW_VERSION:
-            assessment = _current_audit_assessment(audit, state.get('currentDraftId'))
+            assessment = _current_audit_assessment(audit, state.get('currentDraftId'),
+                _assessment_context(state.get('currentDraft'), state.get('requirements'), equipment or {}, restrictions))
             from .repair_capabilities import has_unresolved_capabilities
             assessment_confirms_capability = has_unresolved_capabilities(assessment)
             state['repairCapabilityUnresolved'] = {
@@ -1056,7 +1319,9 @@ def _focus_repair(state, fresh_references, catalog=None, equipment=None, restric
             }
             state.pop('repairTask', None)
             return
-    if (not state['requirementsApproved'] or not state.get('currentDraftId') or state.get('savedDraftReaudit') or state.get('decisionReaudit') or state.get('constructionTask')
+    if (not state['requirementsApproved'] or not state.get('currentDraftId')
+            or (state.get('savedDraftReaudit') and 'edits' not in state['savedDraftReaudit'])
+            or state.get('decisionReaudit') or state.get('constructionTask')
             or audit.get('passed') is not False or not errors
             or any(isinstance(error, dict) and error.get('code') in (
                 'review_execution_failed', 'requirements_review_failed', 'decision_review_failed', 'tool_execution_failed')
@@ -1123,16 +1388,6 @@ def _focus_repair(state, fresh_references, catalog=None, equipment=None, restric
         if day_index < len(draft['workouts']):
             exercises = draft['workouts'][day_index]['exercises']
             references.update(item['definition_id'] for item in exercises)
-            targets = _progression_target_references([{'exercises': exercises}])
-            if catalog and equipment:
-                from .exercise_library_tools import _selection_entry, definition_available
-                gear_names = {gear['id']: gear.get('name', '') for field in ('equipments', 'accessoryEquipments')
-                              for gear in equipment.get(field, [])}
-                for reference in targets:
-                    definition = catalog.get(reference)
-                    if definition and definition_available(definition, equipment, restrictions or {}):
-                        state['exerciseCandidates'][reference] = _selection_entry(definition, gear_names, reference)
-                        references.add(reference)
     references.update(fresh_references)
     allocation_conflict = None
     allocation = state['otherToolResults'].get('allocate_workout_sets', {})
@@ -1233,7 +1488,6 @@ def _focus_repair(state, fresh_references, catalog=None, equipment=None, restric
         for error in relevant_errors:
             history_references.update(_finding_movement_references(error, draft))
     history_references |= set(fresh_evidence)
-    history_references.update(_progression_target_references(draft.get('workouts', [])))
     for reference in history_references:
         include(reference)
     state['trainingEvidenceSummary'] = {reference: {key: entry[key] for key in (
@@ -1248,14 +1502,9 @@ def _focus_repair(state, fresh_references, catalog=None, equipment=None, restric
         'baseDraftId': state['currentDraftId'], 'findingIndex': addressed_finding_indexes[0],
         'findingIndexes': addressed_finding_indexes,
         'findingCode': primary.get('code', 'finding') if isinstance(primary, dict) else 'finding',
-        'placementNotesLimits': {f'/workouts/{i}/exercises/{j}/placementNotes': placement_notes_text_contract(item,
-                                    state['requirements'].get('workingSetRIR'))
-                                for i, day in enumerate(draft['workouts']) for j, item in enumerate(day['exercises'])},
         'instruction': 'Address lastAudit.errors at findingIndexes together. Make the smallest coordinated typed edit, including connected changes needed '
                        'to preserve the remaining constraints. Assess the complete findings list before editing and repair all actionable issues together. '
                        'Use the audit and allocation tools for calculations; do not hand-solve numerical feasibility. An allocation-tool patch resolves only allocation: combine it with the remaining assessed repairs before requesting full semantic review. Do not apply an unchanged allocation patch as if it resolves progression, order, effort acceptance or metadata. '
-                       'When correcting technique in notes, preserve already-valid progression, configuration and stop criteria in that same field. '
-                       'For a required post-ceiling step, repair progressionPlan when present; notes cannot override its route. Use legacy sourceDefined notes only when no typed plan exists. '
                        'If evidence is missing, request only the needed LIBRARY_n references; summaries are not exact performance records. '
                        'exerciseCandidates contains full current details: never call get_exercise_candidates again for an ID already listed there. Request only missing IDs needed by this repair. '
                        'Use relevant cachedCandidateIndex entries first; these are index-only, so fetch details only for an unlisted ID you choose to use. For unlisted alternatives, search the named affected muscles and use returned options; availableAlternativeCountByMuscle reports the remaining library count. '
@@ -1273,25 +1522,74 @@ def _focus_repair(state, fresh_references, catalog=None, equipment=None, restric
     review_version = current_review.get('version', audit.get('reviewVersion'))
     review_input_hash = current_review.get('inputHash', audit.get('reviewInputHash'))
     review_is_current = review_version == REVIEW_VERSION
-    if receipt_status == 'rejected_before_materialization':
-        review_is_current = (review_is_current
-            and coordinated_receipt.get('reviewInputHash') == review_input_hash)
-    assessment = (coordinated_receipt.get('findingsAssessment')
-                  if receipt_status == 'rejected_before_materialization'
-                  else None if receipt_status == 'attempted_pending_validation'
-                  else _current_audit_assessment(audit, state['currentDraftId'])) if review_is_current else None
-    if assessment and receipt_status == 'rejected_before_materialization':
+    assessment_context = _assessment_context(
+        state.get('currentDraft'), state.get('requirements'), equipment or {}, restrictions)
+    assessment = (_current_audit_assessment(audit, state['currentDraftId'], assessment_context)
+                  if review_is_current else None)
+    assessment_source = current_review if current_review else audit
+    # A fresh assessment of this draft supersedes historical rejected repair intent.
+    if (assessment is None and review_is_current and receipt_status == 'rejected_before_materialization'
+            and coordinated_receipt.get('reviewInputHash') == review_input_hash):
+        assessment_source = coordinated_receipt
+        assessment = coordinated_receipt.get('findingsAssessment')
+    if assessment and assessment_source is coordinated_receipt:
         try:
-            validate_assessment({'inputHash': coordinated_receipt.get('reviewInputHash'),
-                'findings': coordinated_receipt.get('reviewFindings', []), 'assessment': assessment})
+            receipt_review = {'inputHash': coordinated_receipt.get('reviewInputHash'),
+                'findings': coordinated_receipt.get('reviewFindings', []), 'assessment': assessment,
+                **({'requirementAssessments': coordinated_receipt['requirementAssessments']}
+                   if 'requirementAssessments' in coordinated_receipt else {})}
+            validate_assessment(receipt_review)
+            from .review_assessment import validate_redistribution_objective_associations
+            if any(group.get('repairObjectives') for group in assessment.get('groups', [])
+                    if isinstance(group, dict)):
+                validate_redistribution_objective_associations(receipt_review, assessment_context)
         except (KeyError, TypeError, ValueError):
             assessment = None
     if assessment:
+        from .repair_contract import (RepairContractError, assessed_redistributions, expand_redistributions)
+        preflight_draft = copy.deepcopy(state['currentDraft'])
+        for day in preflight_draft['workouts']:
+            day.pop('reference', None)
+            for exercise in day['exercises']:
+                exercise.pop('reference', None)
+        try:
+            objectives = assessed_redistributions({'findingsAssessment': assessment}, preflight_draft)
+            from .repair_contract import redistribution_destination_count_bounds
+            eligible = [(f'WORKOUT_{index}', day) for index, day in enumerate(preflight_draft['workouts'])
+                        if day.get('timesCompletedInAWeek', 1) == 1]
+            source_items_by_ref = {f'EXERCISE_{exercise_index}': exercise
+                for exercise_index, exercise in enumerate(exercise
+                    for day in preflight_draft['workouts'] for exercise in day.get('exercises', []))}
+            checks = []
+            for objective in objectives.values():
+                sources = [source_items_by_ref[reference] for reference in objective['exerciseRefs']]
+                domain = redistribution_destination_count_bounds(
+                    sources, len(eligible), state.get('requirements'), catalog or {})
+                target_count = max(objective['minimumSessions'], domain['minimumDestinations'])
+                if target_count > domain['maximumDestinations']:
+                    raise RepairContractError('redistribution_no_feasible_destinations',
+                        'The assessed session spread cannot be achieved while respecting the source exercise set bounds.',
+                        '/edits/redistributionTargets')
+                checks.append({'exerciseRefs': objective['exerciseRefs'],
+                    'workoutRefs': [reference for reference, _ in eligible[:target_count]]})
+            # Check an executable bounded split before asking for its destinations.
+            expand_redistributions({'exerciseRedistributions': checks}, preflight_draft,
+                requirements=state.get('requirements'), definitions=catalog or {})
+        except RepairContractError as error:
+            state['repairCapabilityUnresolved'] = {
+                'status': 'unresolved_capability', 'requirementsId': state['requirementsId'],
+                'currentDraftId': state['currentDraftId'],
+                'findingIndexes': sorted({index for group in assessment['groups']
+                    if group.get('repairObjectives') for index in group['findingIndexes']}),
+                'findingsAssessment': copy.deepcopy(assessment),
+                'reviewFindings': copy.deepcopy(current_review.get('findings', audit.get('reviewFindings', []))),
+                'errors': [{'code': error.code, 'message': str(error), 'path': error.path}],
+            }
+            state.pop('repairTask', None)
+            return
         from .repair_capabilities import has_unresolved_capabilities
         if has_unresolved_capabilities(assessment):
-            review_findings = (coordinated_receipt.get('reviewFindings', [])
-                if receipt_status == 'rejected_before_materialization'
-                else audit.get('review', {}).get('findings', audit.get('reviewFindings', [])))
+            review_findings = assessment_source.get('findings', assessment_source.get('reviewFindings', []))
             state['repairCapabilityUnresolved'] = {
                 'status': 'unresolved_capability',
                 'requirementsId': state['requirementsId'],
@@ -1305,13 +1603,14 @@ def _focus_repair(state, fresh_references, catalog=None, equipment=None, restric
             state.pop('repairTask', None)
             return
     if assessment:
-        review_findings = (coordinated_receipt.get('reviewFindings') if receipt_status == 'rejected_before_materialization'
-                           else audit.get('review', {}).get('findings', audit.get('reviewFindings', [])))
+        review_findings = assessment_source.get('findings', assessment_source.get('reviewFindings', []))
         review_findings = review_findings if isinstance(review_findings, list) else []
         assessment_for_task, remaining_obligations = _link_review_obligations_to_assessment(
             assessment, review_findings, pending_review_obligations)
         state['repairTask']['findingsAssessment'] = assessment_for_task
         state['repairTask']['reviewFindings'] = copy.deepcopy(review_findings)
+        if 'requirementAssessments' in assessment_source:
+            state['repairTask']['requirementAssessments'] = copy.deepcopy(assessment_source['requirementAssessments'])
         state['repairTask']['instruction'] = ('Submit one atomic stable-reference edits transaction with requirementsId, baseDraftId=currentDraftId and addressedFindingIndexes, '
             'correcting every actionable assessment group together. Preserve unchanged fields without repeating them. '
             'Use WORKOUT_n and EXERCISE_n references, typed field updates, exerciseMoves and relative-order sequences. Python completes the order while preserving omitted exercises in source order, compiles optional-field operations and array moves; do not emit JSON Patch or calculate array indexes. '
@@ -1320,13 +1619,10 @@ def _focus_repair(state, fresh_references, catalog=None, equipment=None, restric
     else:
         remaining_obligations = list(pending_review_obligations or [])
     if remaining_obligations:
-        state['repairTask']['pendingReviewObligations'] = [
-            {key: copy.deepcopy(value) for key, value in item.items()
-             if key != 'finding' or not item.get('obligationId')}
-            for item in remaining_obligations]
+        state['repairTask']['pendingReviewObligations'] = copy.deepcopy(remaining_obligations)
         state['repairTask']['instruction'] += (
             ' Stable-ID pendingReviewObligations preserve source identity and current mappings for independent adjudication; '
-            'they are not current repair instructions. Their full findings remain in the saved ledger. '
+            'their findings describe the source draft, not current verdicts. '
             'Repair current validation errors and assessed groups; never claim a pending obligation resolved without fresh evidence.')
         if any(not item.get('obligationId') for item in remaining_obligations):
             state['repairTask']['instruction'] += (
@@ -1339,9 +1635,9 @@ def _focus_repair(state, fresh_references, catalog=None, equipment=None, restric
                 'replacedSubmittedEdits', 'assessmentInputHash', 'assessmentHash')
             if key in coordinated_receipt}
         state['repairTask']['instruction'] = (
-            'The coordinated repair was rejected before changing the current draft. Its saved typed proposal and assessed groups remain active. '
-            'Amend the saved rejectedCoordinatedRepair proposal against the unchanged currentDraftId and submit one atomic repair. '
-            'The latest rejectedAttemptEdits were not applied. Set replaceRejectedRepair=true only if the new edits are the complete replacement proposal. '
+            'The coordinated repair was rejected before changing the current draft. Its saved typed proposal is evidence only. '
+            'Submit one complete atomic correction against the unchanged currentDraftId. '
+            'Rejected edits are not applied or merged into the new submission. '
             'Do not treat rejected edits as applied or submit a no-op. ' + state['repairTask']['instruction'])
     elif receipt_status == 'attempted_pending_validation':
         state['repairTask']['attemptedPendingValidation'] = {
@@ -1397,11 +1693,23 @@ def _focus_repair(state, fresh_references, catalog=None, equipment=None, restric
             'The week is incomplete. Repair only the existing-session blockers at findingIndexes, then resume appending sessions. '
             'Defer weekly volume and weekly coverage shortages until all requested sessions exist. '
             + state['repairTask']['instruction'])
+    from .planning_tools import repair_exercise_domain, uses_menu_selection
+    if uses_menu_selection({**state['repairTask'], 'currentDraft': draft}):
+        affected_days = set(range(len(draft['workouts'])))
+        state['repairTask']['instruction'] = (
+            'Address every actionable assessment group using the sessionBlocks choices in audit_workout_plan. '
+            'Choose replacements, grouping and order from the supplied editable occurrences. Python compiles assessed '
+            'redistributions separately and owns prescriptions, counts and timing. '
+            'Rejected proposals remain unapplied. The complete result requires numerical audit and independent review.')
     state['repairTask']['editableWorkoutReferences'] = [f'WORKOUT_{i}' for i in sorted(affected_days)]
-    state['repairTask']['editableExerciseReferences'] = [
-        exercise['reference'] for day_index in sorted(affected_days)
+    exercise_domain = repair_exercise_domain(state['repairTask'], draft)
+    affected_references = {exercise['reference'] for day_index in affected_days
         if day_index < len(draft['workouts'])
-        for exercise in draft['workouts'][day_index].get('exercises', []) if exercise.get('reference')]
+        for exercise in draft['workouts'][day_index].get('exercises', []) if exercise.get('reference')}
+    state['repairTask']['editableExerciseReferences'] = [reference for reference in exercise_domain['editable']
+        if reference in affected_references]
+    state['repairTask']['protectedExerciseReferences'] = [reference for reference in exercise_domain['protected']
+        if reference in affected_references]
     if all(is_metadata_error(error) for error in relevant_errors):
         state['repairTask']['permittedPatchPaths'] = sorted({error['path'] for error in relevant_errors})
         semantic = [error for error in state.get('currentDraftAuditErrors', [])
@@ -1414,10 +1722,10 @@ def _focus_repair(state, fresh_references, catalog=None, equipment=None, restric
         if rejected:
             state['repairTask']['rejectedSubmission'] = rejected
             state['repairTask']['instruction'] += (' No rejectedSubmission operations were applied. Re-express the intended permittedPatchPaths corrections through typed stable-reference edits. '
-                'Python binds them to the rejected proposal and validates the complete resulting draft.')
+                'Only submitted corrections are compiled against the saved candidate; rejected operations remain evidence.')
         else:
             state['repairTask']['instruction'] += ' This is a metadata-only repair: use typed edits to change only the fields in metadataFields.'
-        proposed = apply_json_patch(draft,rejected['patch']) if rejected else draft
+        proposed = draft
         fields = {}
         for path in state['repairTask']['permittedPatchPaths']:
             parts = path.split('/')
@@ -1426,11 +1734,6 @@ def _focus_repair(state, fresh_references, catalog=None, equipment=None, restric
                 fields[path] = description_text_contract(day)
                 from .recipe_contracts import solved_description
                 fields[path]['derivedReplacement'] = solved_description(day, state.get('requirements', {}))
-            else:
-                exercise = day['exercises'][int(parts[4])]
-                fields[path] = {**placement_notes_text_contract(exercise,
-                    state['requirements'].get('workingSetRIR')),
-                    'structuredFacts':{key:exercise[key] for key in ('numWorkSets','minReps','maxReps','workSetTemplate','requiresLoadCalibration') if key in exercise}}
             fields[path]['validationErrors'] = [error.get('message') or error.get('repair') or error['code']
                                                for error in relevant_errors if error['path'] == path]
             fields[path]['currentCharacters'] = len(fields[path]['text'])
@@ -1461,7 +1764,8 @@ def _focus_repair(state, fresh_references, catalog=None, equipment=None, restric
 
 def _focus_construction(state, new_user_instruction=False):
     if (not state['requirementsApproved'] or state.get('savedDraftReaudit') or state.get('decisionReaudit')
-            or state.get('planningDecisionNeeded') or state.get('unresolvedJointCandidate')):
+            or state.get('planningDecisionNeeded') or state.get('unresolvedJointCandidate')
+            or state.get('parallelSubmission')):
         return
     draft = state.get('currentDraft')
     if draft and new_user_instruction:
@@ -1494,7 +1798,7 @@ def _focus_construction(state, new_user_instruction=False):
 def planner_response_profile(state):
     """Choose response effort and output budget; requests have no planner wall-clock deadline."""
     if state.get('requirementsApproved') is False:
-        return {'reasoning_effort': 'low', 'activity': 'Accounting for requirements', 'max_tokens': 16384, 'timeout': None}
+        return {'reasoning_effort': 'low', 'activity': 'Updating requirements', 'max_tokens': 16384, 'timeout': None}
     if state.get('preparationRepairTask'):
         task = state['preparationRepairTask']
         metadata_only = bool(task.get('metadataFields')) and all(is_metadata_error(error) for error in task.get('errors', []))
@@ -1509,11 +1813,11 @@ def planner_response_profile(state):
         return {'reasoning_effort':None,'activity':activity, 'max_tokens':tokens, 'timeout':None}
     if state.get('constructionTask'):
         task = state['constructionTask']
-        if task.get('stage') in ('discover_movements', 'choose_movements') and (task.get('remainingWeeklySessions') or 0) >= 2:
+        if (task.get('stage') in ('discover_movements', 'choose_movements') or task.get('reviewAllocationBeforeDrafting')) and (task.get('remainingWeeklySessions') or 0) >= 2:
             return {'reasoning_effort': None, 'activity': 'Selecting weekly movements', 'max_tokens': 16384, 'timeout': None}
         return {'reasoning_effort': 'low', 'activity': 'Drafting session', 'max_tokens':16384, 'timeout':None}
     if state.get('editTask'):
-        return {'reasoning_effort': 'low', 'activity': 'Editing workout', 'max_tokens':16384, 'timeout':None}
+        return {'reasoning_effort': None, 'activity': 'Editing workout', 'max_tokens':16384, 'timeout':None}
     if state.get('repairTask') or state.get('savedDraftReaudit'):
         if (state.get('repairTask') or {}).get('findingsAssessment'):
             # The assessed repair plan already supplies the reasoning; reserve output for its atomic patch.
@@ -1570,11 +1874,12 @@ def _focus_discovery(state, batches, epoch):
     """Stop discovery only when a completed batch adds no information to this draft."""
     known, repeated, last_facts = set(), False, set()
     for index, facts in sorted(batches.items()):
-        if index <= epoch or not facts:
+        if not facts:
             continue
-        repeated = facts <= known
+        if index > epoch:
+            repeated = facts <= known
+            last_facts = facts
         known.update(facts)
-        last_facts = facts
     if repeated and not state.get('planningDecisionNeeded') and not (state.get('lastAudit') or {}).get('passed'):
         blocked = ['search_exercise_library', 'get_exercise_candidates']
         if any(fact[0] == 'evidence' for fact in last_facts):
@@ -1623,7 +1928,8 @@ def construction_tool_failure(name, arguments, state):
         if state.get('newInstructionPending'):
             allowed.update({'set_workout_requirements', 'record_planning_decisions'})
         shared_week = (task.get('remainingWeeklySessions') or 0) >= 2
-        if task['stage'] != 'retrieve_evidence' and not (shared_week and task['stage'] in ('discover_movements', 'choose_movements')):
+        if (task['stage'] != 'retrieve_evidence' and not task.get('reviewAllocationBeforeDrafting')
+                and not (shared_week and task['stage'] in ('discover_movements', 'choose_movements'))):
             allowed.add('audit_workout_plan')
         if task['stage'] in ('discover_movements', 'choose_movements'):
             allowed.update({'prepare_workout_sessions', 'search_exercise_library'})
@@ -1631,6 +1937,8 @@ def construction_tool_failure(name, arguments, state):
                 allowed.add('prepare_workout_session')
         if task['stage'] == 'draft_sessions':
             allowed.add('draft_workout_sessions')
+            if task.get('reviewAllocationBeforeDrafting'):
+                allowed.update({'prepare_workout_sessions', 'search_exercise_library'})
         if name in allowed:
             return None
     return {'passed': False, 'errors': [{'code': 'construction_stage_required',
@@ -1638,7 +1946,19 @@ def construction_tool_failure(name, arguments, state):
         'instruction': (task or {}).get('instruction', 'Repair or re-audit the saved draft before preparing another session.')}
 
 
-def _focus_session_preparation(state, preparation, evidence, history_enabled):
+def _selection_preview_requires_reconsideration(preview):
+    from .allocation import _TOLERANCE
+
+    if not isinstance(preview, dict) or preview.get('scope') != 'pre_prescription_count_domain':
+        return False
+    return any(item.get('relationship') == 'first_not_less_than_second'
+        and any(value > _TOLERANCE for value in (item.get('proposalDeviation')
+            if isinstance(item.get('proposalDeviation'), list) else [item.get('proposalDeviation')])
+            if isinstance(value, (int, float)) and not isinstance(value, bool))
+        for item in preview.get('roleComparisons', []) if isinstance(item, dict))
+
+
+def _focus_session_preparation(state, preparation, evidence, history_enabled, *, selection_reconsidered=False):
     task = state.get('constructionTask')
     if not task or state.get('planningDecisionNeeded'):
         return
@@ -1661,15 +1981,30 @@ def _focus_session_preparation(state, preparation, evidence, history_enabled):
         task['definition_ids'] = preparation['definition_ids']
         missing = sorted((references | set(state.get('selectedDefinitionReferences', []))) - set(evidence)) if history_enabled else []
         task.update(stage='retrieve_evidence' if missing else 'draft_sessions' if parallel else 'submit_session', missingEvidence=missing)
+    # Feasibility can force a poor menu; let selection see that evidence before paying workers.
+    allocation = (parallel or {}).get('setAllocation', {})
+    selection_preview = allocation.get('selectionPreview') if isinstance(allocation, dict) else None
+    preview_reconsideration = _selection_preview_requires_reconsideration(selection_preview)
+    task['reviewAllocationBeforeDrafting'] = bool(parallel
+        and not selection_reconsidered
+        and (preview_reconsideration
+            or any(item.get('scope') == 'weekly' for item in allocation.get('allocationDiagnostics', [])))
+        and failed_workers.get('preparationId') != parallel['preparationId'])
     task['instruction'] = (
         'Follow stage=' + task['stage'] + '. When two or more sessions remain, use prepare_workout_sessions with ordered blocks: blocks contain only movement references and coverage, without model-imposed bounds. Python solves the executable prescriptions and counts jointly; do not calculate or emit numWorkSets or invent narrow bounds. Choose the complete remaining schedule together. '
         'For a single session choose its exact movements with prepare_workout_session, '
         'Before committing, search for still-missing required coverage; reuse completed queries and candidates rather than exploring alternatives without a gap. '
         'or submit the bounded session directly if ready. Preparation returns authoritative metadata and Python retrieves '
-        'missing history automatically. During movement selection use history summaries for comparability, recency, concerns and load headroom; detailed records return after selection, before any load prescription. Once prepared, submit that session; discovery and evidence polling stay closed until '
-        'it is audited. Suitability findings are repaired after submission. Never waive a requirement or claim a preview passed. '
+        'missing history automatically. During movement selection use history summaries for comparability, recency, concerns and load headroom; detailed records return after selection, before any load prescription. '
+        + ('selectionPreview compares the selected movement-role proposal in the pre-prescription count domain. Treat it as provisional evidence: feasible may mean only an incumbent; compare objective costs only when baselineFeasibleWithinCountDomain is true; role mappings remain model-proposed until checked; and tradeoffs cover only the shown recipes and constraints. Objective cost changes describe count allocation on the same recipe, not evidence that another menu is better. Reconsider the menu only for a residual first_not_less_than_second shortfall or the existing forced-concentration finding. A nonzero balanced difference alone is not a defect. '
+            if selection_preview else '')
+        + ('Review parallelPreparation.setAllocation.allocationDiagnostics before drafting: these are menu-dependent volume lower bounds, not physiological limits or final prescriptions. Choose draft_workout_sessions, revise the menu with prepare_workout_sessions, or ask about a material capability uncertainty. '
+           if task['reviewAllocationBeforeDrafting'] and not preview_reconsideration else
+           'Review parallelPreparation.setAllocation.selectionPreview as described above and make the one authorized menu reconsideration before drafting. '
+           if task['reviewAllocationBeforeDrafting'] else 'Once prepared, submit that session; discovery and evidence polling stay closed until it is audited. ')
+        + 'Never waive a requirement or claim a preview passed. '
         + task['instruction'])
-    if references:
+    if references and not task['reviewAllocationBeforeDrafting']:
         detailed = compact_training_evidence(evidence[reference] for reference in references if reference in evidence)
     else:
         detailed = {} if (task.get('remainingWeeklySessions') or 0) >= 2 else state['trainingEvidence']
@@ -1685,9 +2020,11 @@ def _focus_session_preparation(state, preparation, evidence, history_enabled):
         state['currentDraft'] = copy.deepcopy(state['currentDraft'])
         for index, day in enumerate(state['currentDraft']['workouts']):
             state['currentDraft']['workouts'][index] = _session_summary(day, index, state['cachedCandidateIndex'])
-    if references:
+    if references and not task['reviewAllocationBeforeDrafting']:
         for key in ('completedSearches', 'unresolvedSearches', 'cachedCandidateIndex', 'trainingEvidenceSummary'):
             state.pop(key, None)
+    if task['reviewAllocationBeforeDrafting']:
+        _movement_selection_context(state)
     for day in (state.get('lastAudit') or {}).get('audit', {}).get('workouts', []):
         day.pop('contributions', None)
     if not references and (task.get('remainingWeeklySessions') or 0) >= 2:
@@ -1755,7 +2092,7 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
             'Grouping is a preference unless an approved requirement mandates it; incompatible counts produce straight sets. '
             'Use supplied alternatives only when the selected movements cannot meet the target. Ask about genuine ambiguity, never relax a goal.'},
             {'role': 'system', 'content': 'Current planning state (preparation patch data).\n' + json.dumps(state, separators=(',', ':'))}]
-    from .exercise_library_tools import _selection_entry, search_catalog
+    from .exercise_library_tools import _selection_entry
     calls = {call['id']: call['function'] for message in messages for call in message.get('tool_calls', [])}
     call_batches = {call['id']: i for i, message in enumerate(messages) for call in message.get('tool_calls', [])}
     result_batches = {}
@@ -1840,7 +2177,6 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
     excluded = set(requirements.get('restrictionPolicy', {}).get('excludedDefinitionIds', []))
     restrictions = {key: value for key, value in requirements.get('restrictionPolicy', {}).items()
                     if key not in ('excludeNameTerms', 'exceptNameTerms')}
-    _, search_identity = search_catalog(equipment, restrictions)
     completed_searches, discovery_batches = {}, {}
     latest_search = next((p.get('libraryFingerprint') for _, f, p in reversed(results)
                           if f['name'] == 'search_exercise_library' and p.get('results')), None)
@@ -1849,8 +2185,12 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
     preparation_index = -1
     latest_audit_index = max((i for i, f, p in results if f['name'] == 'audit_workout_plan'
                               and not p.get('staleHistory')), default=-1)
+    new_instruction = (last_user > max(latest_audit_index, requirements_index, decision_index)
+        and messages[last_user].get('content', '').strip() not in ('/continue', 'CONFIRM REQUIREMENTS', 'CONFIRM GENERATE'))
     rejected_feedback = None
     rejected_patch_request = None
+    rejected_selection_feedback = None
+    rejected_submission_feedback = None
     interrupted_submission = None
     prior_reviewed_audit = None
     active_alternatives, fresh_references, new_evidence_references, fresh_history_references = set(), set(), set(), set()
@@ -1888,19 +2228,44 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
                     interrupted_submission = (index, json.loads(function.get('arguments', '{}')))
                 except (ValueError, TypeError):
                     pass
+                continue  # An execution failure supplies no replacement audit verdict.
             try:
-                rejected = payload.get('rejectedSubmission') or rejected_metadata_patch(payload, json.loads(function.get('arguments', '{}')))
+                audit_arguments = json.loads(function.get('arguments', '{}'))
+            except (TypeError, ValueError):
+                audit_arguments = {}
+            owns_audited_candidate = (isinstance(payload.get('submittedDraft'), dict)
+                or isinstance(payload.get('audit'), dict) or isinstance(payload.get('planIndex'), dict)
+                or payload.get('materializedDraftId') is not None)
+            if not owns_audited_candidate:
+                if payload.get('errors') and isinstance(audit_arguments, dict):
+                    errors = copy.deepcopy(payload.get('errors', []))
+                    rejected = payload.get('rejectedSubmission') or rejected_metadata_patch(payload, audit_arguments)
+                    if rejected:
+                        rejected_feedback = (index, rejected, errors)
+                    else:
+                        rejected_submission_feedback = (index, copy.deepcopy(audit_arguments), errors)
+                    if 'sessionBlocks' in audit_arguments or 'useSolverMenu' in audit_arguments:
+                        rejected_selection_feedback = (index, copy.deepcopy(audit_arguments), errors)
+                # A rejected form submission is feedback about the attempted
+                # request, never a new audit verdict for the saved candidate.
+                continue
+            try:
+                rejected = payload.get('rejectedSubmission') or rejected_metadata_patch(payload, audit_arguments)
             except (ValueError, TypeError):
                 rejected = None
             if rejected:
                 rejected_feedback = (index, rejected, copy.deepcopy(payload['errors']))
             previous_audit = state.get('lastAudit') or {}
-            previous_assessment = _current_audit_assessment(previous_audit, previous_audit.get('currentDraftId'))
+            previous_assessment = _current_audit_assessment(previous_audit, previous_audit.get('currentDraftId'),
+                _assessment_context(previous_audit.get('submittedDraft'), state.get('requirements'), equipment, restrictions))
             if (previous_assessment and previous_audit.get('currentDraftId')
                     and (previous_audit.get('assessmentDraftId') or previous_audit.get('review', {}).get('assessment'))):
                 prior_reviewed_audit = copy.deepcopy(previous_audit)
             state['lastAudit'] = {key: copy.deepcopy(value) for key, value in payload.items()
                                   if key not in ('submittedDraft', 'planIndex', 'preview')}
+            menu_fingerprint = _audit_menu_fingerprint(payload)
+            if menu_fingerprint is not None:
+                state['lastAudit']['candidateMenuFingerprint'] = menu_fingerprint
             if (not payload.get('passed') and not state['lastAudit'].get('findingsAssessment')
                     and all(key not in payload or previous_audit.get(key) == payload.get(key) for key in
                             ('requirementsId', 'historyFingerprint', 'resolvedDecisions'))
@@ -1926,6 +2291,9 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
         elif name == 'search_exercise_library':
             if not catalog and payload.get('libraryFingerprint') != latest_search:
                 continue
+            if catalog and payload.get('libraryFingerprint') != fingerprint:
+                state['staleLibraryResults'] = True
+                continue
             for query in payload.get('results', []):
                 if query.get('error'):
                     state.setdefault('unresolvedSearches', {})[query.get('query', '')] = query
@@ -1933,8 +2301,6 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
                     state.get('unresolvedSearches', {}).pop(query.get('query', ''), None)
                 for entry in query.get('exercises', []):
                     reference = entry['id']
-                    if index > max(latest_audit_index, last_user):
-                        active_alternatives.add(reference)
                     if 'name' not in entry:
                         continue
                     if catalog:
@@ -1946,10 +2312,19 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
                             set(entry.get('accessoryNames', [])) != {gear_names.get(key, key) for key in definition.get('requiredAccessoryEquipmentIds', [])}):
                             state['staleLibraryResults'] = True
                             continue
+                        from .exercise_library_tools import definition_available
+                        try:
+                            if not definition_available(definition, equipment or {}, restrictions):
+                                state['staleLibraryResults'] = True
+                                continue
+                        except ValueError:
+                            state['staleLibraryResults'] = True
+                            continue
                         entry.update(_selection_entry(definition, gear_names, reference))
                     state['exerciseCandidates'][reference] = entry
-                if catalog and payload.get('libraryFingerprint') != search_identity:
-                    continue
+                    if index > max(latest_audit_index, last_user):
+                        active_alternatives.add(reference)
+                        fresh_references.add(reference)
                 references = [entry['id'] for entry in query.get('exercises', [])]
                 if any(reference not in state['exerciseCandidates'] for reference in references):
                     continue
@@ -2039,6 +2414,16 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
                           'prepare_workout_sessions', 'draft_workout_sessions'):
             state['otherToolResults'][name] = payload
     draft, revision_id = latest_draft_submission(original, equipment)
+    current_receipt = None
+    joint_receipt = {}
+    if rejected_submission_feedback:
+        index, arguments, errors = rejected_submission_feedback
+        state['rejectedSubmissionFeedback'] = {
+            'tool': 'audit_workout_plan',
+            'requirementsId': arguments.get('requirementsId'),
+            'baseDraftId': arguments.get('baseDraftId'),
+            'errors': errors,
+        }
     if draft:
         fingerprint_draft = copy.deepcopy(draft)
         state['currentDraft'], state['currentDraftId'] = draft, revision_id
@@ -2055,6 +2440,14 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
             if (not state['lastAudit'].get('passed') and index > last_instruction and rejected.get('baseDraftId') == revision_id
                     and rejected.get('requirementsId') == state['requirementsId']):
                 state['lastAudit'].update(passed=False, errors=errors, rejectedSubmission=rejected)
+        if rejected_selection_feedback:
+            index, arguments, errors = rejected_selection_feedback
+            if (index > last_instruction and arguments.get('requirementsId') == state['requirementsId']
+                    and arguments.get('baseDraftId') == revision_id):
+                state['rejectedSelectionSubmission'] = {
+                    'requirementsId': state['requirementsId'], 'baseDraftId': revision_id,
+                    'errors': errors,
+                }
         # A rejected request is not the receipt for the saved draft.
         state['currentDraftAudited'] = any((payload.get('audit') or payload.get('submittedDraft')
                                           or payload.get('materializedDraftId') == revision_id) and payload.get('currentDraftId') == revision_id
@@ -2068,6 +2461,18 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
                                 and payload.get('currentDraftId') == revision_id
                                 and payload.get('submittedDraft', draft) == draft), None)
         current_receipt_index, current_receipt = current_receipt_entry if current_receipt_entry else (-1, None)
+        if current_receipt is not None:
+            call_id = messages[current_receipt_index].get('tool_call_id')
+            source_message = next((message for message in reversed(original)
+                if message.get('role') == 'tool' and message.get('tool_call_id') == call_id), None)
+            if source_message is not None:
+                # Validate authority against its saved record, never its display projection.
+                try:
+                    source_receipt = json.loads(source_message.get('content', ''))
+                except (TypeError, ValueError):
+                    source_receipt = None
+                if isinstance(source_receipt, dict):
+                    current_receipt = source_receipt
         _add_occurrence_references(state['currentDraft'])
         coordinated_receipt_entry = next(((index, payload.get('coordinatedRepairReceipt'))
             for index, function, payload in reversed(results)
@@ -2076,12 +2481,14 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
             if coordinated_receipt_entry else (-1, None))
         current_history_fingerprint = current_receipt.get('historyFingerprint') if current_receipt else None
         current_resolved_decisions = current_receipt.get('resolvedDecisions', {}) if current_receipt else None
-        current_assessment = _current_audit_assessment(current_receipt, revision_id) if current_receipt else None
-        if (coordinated_receipt and current_assessment and current_receipt_index > coordinated_receipt_index
-                and coordinated_receipt.get('assessmentInputHash') != current_assessment.get('inputHash')):
-            # A newer independent audit may review the same draft with a different
-            # assessment. Do not let an older rejected repair restore its findings.
+        current_assessment = (_current_audit_assessment(current_receipt, revision_id,
+            _assessment_context(fingerprint_draft, state.get('requirements'), equipment, restrictions))
+            if current_receipt else None)
+        if coordinated_receipt and current_assessment and current_receipt_index >= coordinated_receipt_index:
+            # A completed review can share its tool result with the earlier admission receipt.
+            # That receipt must not replace or discard the current independent assessment.
             coordinated_receipt = None
+            state['lastAudit'].pop('coordinatedRepairReceipt', None)
         effort_contract_errors = {'missing_effort_acceptance', 'invalid_effort_acceptance',
                                   'effort_acceptance_conflicts_with_requirement'}
         latest_audit = next(((function, payload) for _, function, payload in reversed(results)
@@ -2172,7 +2579,8 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
             state['lastAudit']['coordinatedRepairReceipt'] = copy.deepcopy(coordinated_receipt)
             state['lastAudit']['historyFingerprint'] = coordinated_receipt['historyFingerprint']
             state['lastAudit']['resolvedDecisions'] = copy.deepcopy(coordinated_receipt['resolvedDecisions'])
-            if coordinated_receipt['status'] == 'rejected_before_materialization':
+            if (coordinated_receipt['status'] == 'rejected_before_materialization'
+                    and isinstance(coordinated_receipt.get('findingsAssessment'), dict)):
                 state['lastAudit']['findingsAssessment'] = copy.deepcopy(coordinated_receipt['findingsAssessment'])
                 if not isinstance(state['lastAudit'].get('review'), dict):
                     state['lastAudit']['review'] = {}
@@ -2181,11 +2589,15 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
                 if coordinated_receipt.get('reviewInputHash'):
                     state['lastAudit']['review']['inputHash'] = coordinated_receipt['reviewInputHash']
                 state['lastAudit']['review']['findings'] = copy.deepcopy(coordinated_receipt['reviewFindings'])
-            else:
+                if 'requirementAssessments' in coordinated_receipt:
+                    state['lastAudit'].setdefault('review', {})['requirementAssessments'] = copy.deepcopy(coordinated_receipt['requirementAssessments'])
+            elif coordinated_receipt['status'] == 'attempted_pending_validation':
                 state['lastAudit'].pop('findingsAssessment', None)
                 if isinstance(state['lastAudit'].get('review'), dict):
                     state['lastAudit']['review'].pop('assessment', None)
                     state['lastAudit']['review']['findings'] = copy.deepcopy(coordinated_receipt['reviewFindings'])
+                if 'requirementAssessments' in coordinated_receipt:
+                    state['lastAudit'].setdefault('review', {})['requirementAssessments'] = copy.deepcopy(coordinated_receipt['requirementAssessments'])
         if current_receipt and not effort_contract_preflight_failure:
             state['currentDraftAuditErrors'] = current_receipt.get('errors', [])
         elif effort_contract_preflight_failure:
@@ -2200,7 +2612,8 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
         audit = state['lastAudit'] or {}
         review_stale = audit.get('reviewVersion') not in (None, REVIEW_VERSION)
         raw_assessment = ((audit.get('review') or {}).get('assessment') or audit.get('findingsAssessment'))
-        assessment = _current_audit_assessment(audit, revision_id)
+        assessment = _current_audit_assessment(audit, revision_id,
+            _assessment_context(draft, requirements.get('requirements'), equipment, restrictions))
         if assessment:
             review_stale |= assessment.get('version') != ASSESSMENT_VERSION
         elif raw_assessment or (audit.get('review') or {}).get('findings'):
@@ -2219,12 +2632,46 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
                     for error in current_receipt.get('errors', []) if isinstance(error, dict))
                 or bool(current_receipt.get('previousReviewFindings'))
                 or any(group.get('disposition') == 'repair' for group in (
-                    _current_audit_assessment(current_receipt, current_receipt.get('currentDraftId')) or {}).get('groups', []))))
+                    _current_audit_assessment(current_receipt, current_receipt.get('currentDraftId'),
+                        _assessment_context(current_receipt.get('submittedDraft'), requirements.get('requirements'), equipment, restrictions)) or {}).get('groups', []))))
         review_error_codes = {'independent_review_finding', 'review_execution_failed', 'review_source_changed',
                               'independent_review_pending', 'requirements_review_failed', 'decision_review_failed',
                               'coordinated_joint_pending', 'tool_execution_failed', 'unresolved_review_capability'}
         candidate_validation_errors = [error for error in audit.get('errors', [])
             if isinstance(error, dict) and error.get('code') not in review_error_codes]
+        from .planning_tools import latest_draft_audit
+        rendered_draft = fingerprint_draft
+        _, rendered_audit = latest_draft_audit(original, rendered_draft)
+        reviewed_guidance = (rendered_audit.get('review') or {}).get('reviewedArtifact', {}).get('programGuidance')
+        if (state['requirementsApproved'] and rendered_audit.get('currentDraftId') == revision_id
+                and isinstance(reviewed_guidance, str) and isinstance(rendered_audit.get('audit'), dict)):
+            from .generation_audit import render_program_guidance
+            current_guidance = render_program_guidance(rendered_audit['audit'],
+                requirements['requirements']['auditTargets']['weeklyEffectiveSets'], rendered_draft,
+                requirements['requirements'].get('requiredCoverage', []))
+            if current_guidance != reviewed_guidance:
+                # Reuse the unchanged-draft path when code-owned output changed.
+                state['savedDraftReaudit'] = {'requirementsId': requirements['requirementsId'],
+                    'baseDraftId': revision_id, 'patch': []}
+        if (state['requirementsApproved'] and current_receipt
+                and current_receipt.get('coordinatedCandidatePending')
+                and current_receipt.get('passed') is False
+                and current_receipt.get('currentDraftId') == revision_id
+                and current_receipt.get('requirementsId') == requirements.get('requirementsId')
+                and not state.get('savedDraftReaudit')):
+            from .planning_tools import _normalize_definition_dependent_fields
+            from .json_patching import collect_changed_json_paths
+            normalized_draft = copy.deepcopy(draft)
+            _normalize_definition_dependent_fields(normalized_draft, equipment or {}, requirements['requirements'])
+            normalized_paths = collect_changed_json_paths(draft, normalized_draft)
+            if normalized_paths:
+                # Definition-derived fields belong to code. Re-audit that corrected
+                # candidate once before asking the model to make another decision.
+                state['savedDraftReaudit'] = {
+                    'requirementsId': requirements['requirementsId'],
+                    'baseDraftId': revision_id, 'patch': [],
+                    '_internalAuditAction': 'definition_dependent_normalization',
+                }
         joint_receipt = _audit_joint_receipt(audit)
         expected_joint_fingerprint = None
         if (current_receipt and audit.get('requirementsId') == requirements.get('requirementsId')
@@ -2232,9 +2679,21 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
                 and isinstance((draft or {}).get('workouts'), list)):
             expected_joint_fingerprint = _current_joint_problem_fingerprint(
                 joint_receipt, fingerprint_draft['workouts'], requirements, equipment, training_history, original,
-                audit.get('allowEducatedLoadGuesses'), history_identity_known)
+                audit.get('allowEducatedLoadGuesses'), history_identity_known, audit.get('repairContract'))
         stale_joint_receipt = (expected_joint_fingerprint is not None
             and expected_joint_fingerprint != joint_receipt.get('problemFingerprint'))
+        if stale_joint_receipt and joint_receipt.get('feasible') is True:
+            from .allocation import reusable_joint_receipt
+            from .repair_contract import redistribution_solver_constraints
+            from .restriction_policy import effective_restrictions
+            # A successful solve changes its input; validate its saved output identity instead.
+            stale_joint_receipt = reusable_joint_receipt(audit, requirements['requirementsId'],
+                fingerprint_draft['workouts'], requirements['requirements'], equipment, original,
+                training_history, effective_restrictions(requirements, equipment),
+                audit.get('allowEducatedLoadGuesses'),
+                preserve_source_selection=joint_receipt.get('preserveSourceSelection',
+                    joint_receipt.get('application') == 'automatic'),
+                redistribution_constraints=redistribution_solver_constraints(audit.get('repairContract'))) is None
         if stale_joint_receipt:
             # The prior solver proof belongs to different planning inputs (for example, an
             # older selection-policy version). Re-run the deterministic audit on the saved
@@ -2250,7 +2709,20 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
             state['lastAudit'].pop('automaticAllocation', None)
             state['lastAudit'].pop('coordinatedJointPlanning', None)
             state['lastAudit']['instruction'] = 'Recompute the saved draft under current joint-planning policy before deriving repair or conflict tasks.'
-        if state['requirementsApproved'] and (state['draftRequiresReaudit'] or state['lastAuditStale'] or stale_history_audit
+        supersedes_pending_review = bool(new_instruction and current_receipt
+            and current_receipt.get('passed') is False
+            and current_receipt.get('requirementsId') == requirements.get('requirementsId')
+            and current_receipt.get('currentDraftId') == revision_id
+            and current_receipt.get('libraryFingerprint') == fingerprint
+            and current_receipt.get('historyFingerprint') == current_history_fingerprint
+            and current_receipt.get('resolvedDecisions', {}) == state['resolvedDecisions']
+            and audit.get('errors')
+            and all(isinstance(error, dict) and error.get('code') == 'independent_review_pending'
+                    for error in audit['errors'])
+            and not candidate_validation_errors and not state['draftRequiresReaudit'] and not state['lastAuditStale']
+            and not stale_history_audit and not audit_stale and not review_stale and not stale_joint_receipt
+            and decision_index < last_instruction and not state.get('evidenceReaudit'))
+        if state['requirementsApproved'] and not supersedes_pending_review and (state['draftRequiresReaudit'] or state['lastAuditStale'] or stale_history_audit
                 or audit_stale or review_stale or review_retry or (audit.get('passed') and audit.get('reviewVersion') != REVIEW_VERSION)) and not candidate_validation_errors and not (
                     prior_candidate_feedback and not (audit_stale or review_stale or review_retry)):
             state['savedDraftReaudit'] = {'requirementsId': requirements['requirementsId'], 'baseDraftId': revision_id, 'patch': []}
@@ -2281,11 +2753,6 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
                 and ('patch' not in submission or submission.get('baseDraftId') == revision_id)):
             state['savedDraftReaudit'] = submission
     selected = {e.get('definition_id') for day in (draft or {}).get('workouts', []) for e in day.get('exercises', [])}
-    progression_targets = _progression_target_references((draft or {}).get('workouts', []))
-    if progression_targets and catalog and equipment:
-        from .exercise_library_tools import definition_available
-        progression_targets = {reference for reference in progression_targets if reference in catalog
-            and definition_available(catalog[reference], equipment, restrictions)}
     if (preparation.get('baseDraftId') != (revision_id if draft else None)
             or preparation.get('requirementsId') != state['requirementsId']
             or (last_user > preparation_index and messages[last_user].get('content', '').strip()
@@ -2297,7 +2764,7 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
     for reference in selected | prepared:
         if reference not in state['exerciseCandidates'] and reference in catalog and catalog[reference]['id'] not in excluded:
             state['exerciseCandidates'][reference] = _selection_entry(catalog[reference], gear_names, reference)
-    relevant = selected | prepared | progression_targets if preparation else selected | active_alternatives | progression_targets if draft else set(state['exerciseCandidates'])
+    relevant = selected | prepared if preparation else selected | active_alternatives if draft else set(state['exerciseCandidates'])
     latest_history = next((f for _, f, _ in reversed(results) if f['name'] == 'get_training_evidence'), None)
     if latest_history and not draft:
         try:
@@ -2309,12 +2776,20 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
         state['cachedCandidateIndex'] = {ref: {key: entry[key] for key in _CANDIDATE_INDEX_FIELDS if key in entry}
             for ref, entry in state['exerciseCandidates'].items() if ref not in relevant}
         state['exerciseCandidates'] = {ref: entry for ref, entry in state['exerciseCandidates'].items() if ref in relevant}
-    findings = (state.get('lastAudit') or {}).get('errors', []) + (state.get('lastAudit') or {}).get('previousReviewFindings', [])
-    new_instruction = (last_user > max(latest_audit_index, requirements_index, decision_index)
-        and messages[last_user].get('content', '').strip() not in ('/continue', 'CONFIRM REQUIREMENTS', 'CONFIRM GENERATE'))
+    audit = state.get('lastAudit') or {}
+    assessment = _current_audit_assessment(audit, state.get('currentDraftId'),
+        _assessment_context(state.get('currentDraft'), state.get('requirements'), equipment, restrictions)) or {}
+    adjudicated = {index for group in assessment.get('groups', [])
+                  if group.get('disposition') in ('repair', 'advisory', 'withdrawn_review_error')
+                  for index in group.get('findingIndexes', [])}
+    findings = audit.get('errors', []) + ([] if assessment else audit.get('previousReviewFindings', []))
     state['newInstructionPending'] = new_instruction
-    state['planningDecisionNeeded'] = any(isinstance(finding, dict) and (finding.get('action') == 'clarify'
-                  or 'record_planning_decisions' in finding.get('repair', '')) for finding in findings)
+    # A current assessment owns disposition; unassessed clarification still needs its user gate.
+    state['planningDecisionNeeded'] = any(isinstance(finding, dict)
+        and (finding.get('action') == 'clarify' or 'record_planning_decisions' in finding.get('repair', ''))
+        and not (finding.get('code') == 'independent_review_finding'
+                 and finding.get('findingIndex') in adjudicated)
+        for finding in findings)
     if completed_searches:
         summaries = {}
         for item in completed_searches.values():
@@ -2361,8 +2836,17 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
     if current_unresolved:
         state['unresolvedJointCandidate'] = copy.deepcopy(current_unresolved)
     _focus_construction(state, new_instruction)
-    if not new_instruction:
-        if (last_user >= 0 and messages[last_user].get('content', '').strip() == '/continue'):
+    continue_current_infeasible_menu = bool(
+        state.get('requirementsApproved') and current_receipt
+        and current_receipt.get('requirementsId') == state['requirementsId']
+        and current_receipt.get('currentDraftId') == state.get('currentDraftId')
+            and (state.get('lastAudit') or {}).get('currentDraftId') == state.get('currentDraftId')
+        and not state.get('savedDraftReaudit')
+        and not state.get('staleJointPlanningReceipt')
+        and joint_receipt.get('status') == 'infeasible'
+        and isinstance(joint_receipt.get('problemFingerprint'), str))
+    if not new_instruction or continue_current_infeasible_menu:
+        if last_user >= 0 and messages[last_user].get('content', '').strip() == '/continue':
             _reopen_capped_coordinated_repair(state)
         audit_errors = (state.get('lastAudit') or {}).get('errors') or []
         if (state.get('savedDraftReaudit') and any(isinstance(error, dict)
@@ -2379,7 +2863,8 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
         if isinstance(review_checklist, dict) and isinstance(review_checklist.get('findings'), dict):
             ledger_entries = review_checklist['findings']
             current_obligation_ids = _current_assessment_obligation_ids(
-                review_checklist, current_audit, state.get('currentDraftId'))
+                review_checklist, current_audit, state.get('currentDraftId'),
+                _assessment_context(state.get('currentDraft'), state.get('requirements'), equipment, restrictions))
             pending_obligations = _review_checklist_obligations(
                 review_checklist, original, state['currentDraft'], catalog)
             state['reviewLedgerSummary'] = {
@@ -2392,14 +2877,16 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
             # same historical findings a second time as current verdicts.
             current_audit.pop('reviewChecklist', None)
             current_audit.pop('previousReviewFindings', None)
-            if not _current_audit_assessment(current_audit, state.get('currentDraftId')):
+            if not _current_audit_assessment(current_audit, state.get('currentDraftId'),
+                    _assessment_context(state.get('currentDraft'), state.get('requirements'), equipment, restrictions)):
                 for key in ('reviewFindings', 'reviewInputHash', 'assessmentDraftId'):
                     current_audit.pop(key, None)
         else:
             pending_obligations = []
         if (pending_findings and not pending_obligations
                 and not isinstance(review_checklist, dict)
-                and not _current_audit_assessment(current_audit, state.get('currentDraftId'))):
+                and not _current_audit_assessment(current_audit, state.get('currentDraftId'),
+                    _assessment_context(state.get('currentDraft'), state.get('requirements'), equipment, restrictions))):
             pending_obligations = _pending_review_obligations(
                 pending_findings, results, state['currentDraft'], state['requirementsId'],
                 state.get('currentDraftId'), fingerprint,
@@ -2423,18 +2910,18 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
         correction_errors = None
         current_joint = _audit_joint_receipt(expansion_audit)
         latest_errors = current_audit.get('errors') or []
-        retryable_codes = {'invalid_arguments', 'invalid_draft_patch'}
+        def unmaterialized(payload):
+            return _unmaterialized_menu_submission(payload, state['requirementsId'], state.get('currentDraftId'),
+                fingerprint, current_audit.get('historyFingerprint'), state['resolvedDecisions'])
         if (not authoritative_reaudit_pending and current_joint.get('status') != 'infeasible' and latest_errors
-                and all(isinstance(error, dict) and error.get('code') in retryable_codes for error in latest_errors)
+                and unmaterialized(current_audit)
                 and state['requirementsApproved'] and state.get('currentDraftId')):
             source = _latest_infeasible_source_for_draft(results, state['requirementsId'], state['currentDraftId'])
             if source:
                 source_index, source_audit = source
                 correction_count = sum(1 for index, function, payload in results
                     if index > source_index and function['name'] == 'audit_workout_plan'
-                    and payload.get('errors')
-                    and all(isinstance(error, dict) and error.get('code') in retryable_codes
-                            for error in payload['errors']))
+                    and unmaterialized(payload))
                 if correction_count == 1:
                     expansion_audit = source_audit
                     current_joint = _audit_joint_receipt(source_audit)
@@ -2459,11 +2946,15 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
                 fingerprint, state['resolvedDecisions'], original, state.get('requirements'))
             if menu_status in ('not_attempted', 'retryable'):
                 from .joint_planning import candidate_menu_fingerprint
-                source_workouts = _audit_workouts(expansion_audit) or state['currentDraft']['workouts']
-                source_menu_fingerprint = candidate_menu_fingerprint(source_workouts)
+                source_menu_fingerprint = (_audit_menu_fingerprint(expansion_audit)
+                    or candidate_menu_fingerprint(state['currentDraft']['workouts']))
                 blockers = [copy.deepcopy(error) for error in expansion_audit.get('errors', [])
                     if isinstance(error, dict) and error.get('code') == 'required_coverage_missing']
                 expansion = {
+                    'proofScope': 'exercise_selection_repair',
+                    'stage': ('choose_candidate' if set(_retrieved_replacement_definition_references(state))
+                        - {exercise.get('definition_id') for day in state['currentDraft']['workouts']
+                           for exercise in day.get('exercises', [])} else 'discover_candidates'),
                     'requirementsId': state['requirementsId'],
                     'sourceBaseDraftId': expansion_audit.get('currentDraftId'),
                     'sourceProblemFingerprint': current_joint['problemFingerprint'],
@@ -2487,14 +2978,14 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
                     expansion['sourceErrors'] = copy.deepcopy(expansion_audit.get('errors', []))
                     expansion['instruction'] = ('Correct the previous invalid patch using submissionCorrectionErrors, then continue this same bounded expansion pass. '
                         'Do not count the invalid request as a candidate change. ' + expansion['instruction'])
-                    state.pop('repairTask', None)
+                    if not (state.get('repairTask') or {}).get('rejectedCoordinatedRepair'):
+                        state.pop('repairTask', None)
                 if current_joint.get('status') == 'infeasible':
                     state['candidateMenuExpansionTask'] = expansion
                     state.pop('conflictDiagnosisTask', None)
                     if state.get('repairTask'):
                         state['repairTask']['candidateMenuExpansionTask'] = copy.deepcopy(expansion)
-                        state['repairTask']['instruction'] = (expansion['instruction'] + ' Address the existing assessed repair groups together with this selection change, then run the full audit and independent review. '
-                            + state['repairTask'].get('instruction', ''))
+                        state['repairTask']['instruction'] = expansion['instruction']
             elif menu_status == 'expanded':
                 state.pop('candidateMenuExpansionTask', None)
                 state.pop('menuExpansionUnresolved', None)
@@ -2535,11 +3026,16 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
                     'reason': 'The bounded candidate-menu expansion was attempted, but no current, authority-matched expanded menu and proof were recorded. Numeric relaxations cannot establish that this request is impossible.',
                     'blockers': copy.deepcopy(current_audit.get('errors', [])),
                 }
+        rejected_selection = state.get('rejectedSelectionSubmission')
+        if (state.get('candidateMenuExpansionTask') and isinstance(rejected_selection, dict)
+                and rejected_selection.get('requirementsId') == state['requirementsId']
+                and rejected_selection.get('baseDraftId') == state.get('currentDraftId')):
+            task = state['candidateMenuExpansionTask']
+            task['selectionAttemptFeedback'] = {'errors': copy.deepcopy(rejected_selection['errors'])}
+            task['instruction'] = ('The previous typed selection request was rejected before changing the saved candidate. Correct it using the exact selectionAttemptFeedback errors; keep this bounded, choice-only menu repair. '
+                + task['instruction'])
     allocation_conflict = state.get('currentAllocationConflict')
-    actionable_groups = (state.get('repairTask') or {}).get('findingsAssessment', {}).get('groups', [])
     selection_repair_needed = (allocation_conflict is not None
-        or any(group.get('disposition') == 'repair' and 'exercise_selection' in group.get('repairDimensions', [])
-            for group in actionable_groups)
         or any(isinstance(error, dict) and error.get('code') in (
             'required_coverage_missing', 'candidate_reassessment_unresolved', 'training_load_suitability_unresolved')
             for error in (state.get('lastAudit') or {}).get('errors', [])))
@@ -2557,21 +3053,9 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
     if (not authoritative_reaudit_pending and state['requirementsApproved'] and not state.get('candidateMenuExpansionTask')
             and (not state.get('menuExpansionUnresolved') or state.get('currentAllocationConflict'))
             and (state.get('currentDraft') or {}).get('workouts')):
-        diagnosis_index, diagnosis = _latest_result(original, 'propose_workout_alternatives')
-        if diagnosis.get('executionFailure'):
-            from .conflict_resolution import CONFLICT_RESOLUTION_VERSION
-            # A failed duplicate diagnosis call has no candidate authority. Retain the
-            # newest completed same-source candidate result; its normal binding checks
-            # below decide whether its work can still be resumed.
-            prior_candidate_result = next(((index, payload) for index, function, payload in reversed(results)
-                if function['name'] == 'propose_workout_alternatives'
-                and payload.get('requirementsId') == state['requirementsId']
-                and payload.get('baseDraftId') == state.get('currentDraftId')
-                and payload.get('diagnosisVersion') == CONFLICT_RESOLUTION_VERSION
-                and isinstance(payload.get('alternativeRepairCandidates'), list)
-                and payload['alternativeRepairCandidates']), None)
-            if prior_candidate_result:
-                diagnosis_index, diagnosis = prior_candidate_result
+        from .conflict_resolution import latest_candidate_diagnosis
+        diagnosis_index, diagnosis = latest_candidate_diagnosis(
+            original, state['requirementsId'], state.get('currentDraftId'))
         if state.get('menuExpansionUnresolved') and state.get('currentAllocationConflict'):
             from .requirement_accounting import relaxation_paths
             blockers = state['menuExpansionUnresolved'].get('blockers', [])
@@ -2610,6 +3094,9 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
             # their complete proposal is carried separately in submittedEdits.
             resumable_attempts = {'repair_failed', 'repair_review_failed', 'deadline_expired'}
             completed_attempt_status = completed_repair.get('attemptStatus')
+            explicit_review_retry = (completed_attempt_status in ('review_timeout', 'review_pending')
+                and last_user_index > completed_index
+                and last_user_message.get('content', '').strip() == '/continue')
             explicit_joint_retry = (completed_attempt_status == 'joint_repair_unresolved'
                 and last_user_index > completed_index and last_user_message.get('content', '').strip() == '/continue')
             unresolved_joint_candidate = None
@@ -2627,6 +3114,14 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
                     candidates_to_repair = []
             if completed_attempt_status == 'repair_menu_infeasible' or explicit_joint_retry:
                 resumable_attempts.add(completed_attempt_status)
+            if explicit_review_retry:
+                resumable_attempts.add(completed_attempt_status)
+            elif completed_attempt_status in ('review_timeout', 'review_pending'):
+                candidates_to_repair = []
+                state['alternativeAssessmentRefreshUnresolved'] = {
+                    'status': 'awaiting_continue',
+                    'repairCandidateId': completed_repair.get('candidateSnapshot', {}).get('repairCandidateId'),
+                    'reason': 'Independent review did not complete. The audited candidate is preserved; type /continue to request a fresh review.'}
             # A later rejected submission can be the newest repair receipt without
             # being a materialized candidate. Recover the newest independently
             # reviewed revision from this diagnosis lineage, while keeping the
@@ -2662,7 +3157,7 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
                     and latest_snapshot.get('sourceMenuFingerprint') == source_candidate.get('sourceMenuFingerprint')
                     and latest_snapshot.get('libraryFingerprint') == source_candidate.get('libraryFingerprint')
                     and latest_snapshot.get('trainingHistoryFingerprint') == source_candidate.get('trainingHistoryFingerprint'))
-                if snapshot_identity_matches and completed_attempt_status == 'repair_review_failed':
+                if snapshot_identity_matches and completed_attempt_status in ('repair_review_failed', 'review_timeout', 'review_pending'):
                     resumed_candidate = copy.deepcopy(latest_snapshot)
                     resumed_candidate['baseDraftId'] = resumed_candidate.get('sourceDraftId', source_candidate['baseDraftId'])
                     resumed_candidate.setdefault('diagnosisCandidateId', lineage_id)
@@ -2670,9 +3165,12 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
                         else item for item in candidates_to_repair]
             stale_candidate = None
             diagnosis_is_current = diagnosis.get('diagnosisVersion') == CONFLICT_RESOLUTION_VERSION
-            refresh_attempt = diagnosis.get('assessmentRefresh', {})
+            refresh_index, refresh_result = _latest_result(original, 'propose_workout_alternatives')
+            refresh_attempt = (refresh_result.get('assessmentRefresh', {})
+                if refresh_result.get('requirementsId') == state['requirementsId']
+                and refresh_result.get('baseDraftId') == state.get('currentDraftId') else {})
             refresh_failed_this_turn = (refresh_attempt.get('status') == 'unresolved'
-                and diagnosis_index > last_user_index)
+                and refresh_index > last_user_index)
             unresolved_capability_candidate = None
             for candidate in candidates_to_repair:
                 candidate_version = candidate.get('diagnosisVersion')
@@ -2691,6 +3189,12 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
                 assessment = review.get('assessment')
                 try:
                     validate_assessment(review)
+                    if any(group.get('repairObjectives') for group in assessment.get('groups', [])
+                            if isinstance(group, dict)):
+                        from .review_assessment import validate_redistribution_objective_associations
+                        validate_redistribution_objective_associations(review, _assessment_context(
+                            candidate, candidate.get('requirements'), equipment,
+                            candidate.get('restrictionPolicy', restrictions)))
                 except (KeyError, TypeError, ValueError):
                     assessment = None
                 decisions_current = candidate.get('resolvedDecisions', {}) == state['resolvedDecisions']
@@ -2710,7 +3214,26 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
                     and review.get('version') == REVIEW_VERSION and not review.get('failure'))
                 valid_binding = valid_binding_without_decisions and decisions_current
                 if not valid_binding:
-                    if (valid_binding_without_decisions and not decisions_current):
+                    review_pending_binding = (
+                        candidate.get('reviewPending') is True
+                        and candidate.get('originalRequirementsId') == state['requirementsId']
+                        and candidate.get('originalRequirementsHash') == _fingerprint(state['requirements'])
+                        and candidate.get('sourceDraftId', candidate.get('baseDraftId')) == state.get('currentDraftId')
+                        and candidate.get('libraryFingerprint') == fingerprint
+                        and candidate.get('trainingHistoryFingerprint') == (state.get('lastAudit') or {}).get('historyFingerprint')
+                        and candidate.get('sourceMenuFingerprint') == current_menu
+                        and candidate.get('candidateMenuFingerprint') == candidate_menu_fingerprint(candidate.get('workouts', []))
+                        and candidate_authority_current
+                        and isinstance(candidate.get('requirements'), dict)
+                        and isinstance(candidate.get('workouts'), list)
+                        and isinstance(candidate.get('audit'), dict) and not candidate['audit'].get('errors'))
+                    if review_pending_binding:
+                        # A timed-out review leaves an audited but semantically unreviewed
+                        # candidate. Route it through review refresh only; do not expose it
+                        # to repair admission or treat missing findings as a clean review.
+                        state['alternativeReviewAssessmentStale'] = True
+                        stale_candidate = candidate
+                    elif (valid_binding_without_decisions and not decisions_current):
                         # The alternative's prescriptions still bind to the current source,
                         # but the recorded review used a different user decision set. Keep
                         # the candidate and refresh its audit/review under current decisions.
@@ -2742,8 +3265,17 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
                 replacement_candidates, replacement_qualifications = _available_alternative_replacements(
                     state.get('cachedCandidateIndex', {}), catalog, equipment, restrictions, gear_names,
                     fingerprint, set(state.get('exerciseCandidates', {})) | candidate_exercises)
-                known_infeasible_menu = _known_infeasible_alternative_receipt(
+                retained_proof = _known_infeasible_alternative_receipt(
                     results, candidate, equipment, candidate.get('trainingHistoryFingerprint'))
+                prior_structural_errors = (retained_proof.get('errors', []) if retained_proof
+                    and retained_proof.get('status') == 'menu_repair_required' else [])
+                known_infeasible_menu = retained_proof if retained_proof and not prior_structural_errors else None
+                correction_source = completed_repair if same_resumable_candidate else {}
+                if retained_proof:
+                    proof_source = next(payload for index, _, payload in results
+                        if index == retained_proof['sourceResultIndex'])
+                    if not correction_source or completed_index < retained_proof['sourceResultIndex']:
+                        correction_source = proof_source
                 state['alternativeRepairTask'] = {
                     **copy.deepcopy(candidate),
                     'sourceDraftId': candidate.get('sourceDraftId', candidate['baseDraftId']),
@@ -2761,30 +3293,57 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
                     **({'repairStage': known_infeasible_menu['stage'],
                         'decisionRequired': known_infeasible_menu['decisionRequired']}
                         if known_infeasible_menu else {}),
-                        **({'submissionCorrectionErrors': copy.deepcopy(completed_repair.get('errors', [])),
-                            'submissionCorrectionEdits': copy.deepcopy(completed_repair.get('submittedEdits', {})),
-                            **({'submissionCorrectionAttemptEdits': copy.deepcopy(completed_repair['rejectedAttemptEdits'])}
-                                if isinstance(completed_repair.get('rejectedAttemptEdits'), dict) else {}),
-                            **({'submissionJointSolve': {key: completed_repair['jointSolve'][key] for key in (
+                    **({'submissionCorrectionErrors': copy.deepcopy(prior_structural_errors
+                            or correction_source.get('errors', [])),
+                        **({'structuralCorrectionRequired': True,
+                            'structuralCorrectionReason': ('The saved menu that received an infeasibility result violates approved '
+                                'menu evidence or approved session structure. Correct the menu before reusing that receipt or diagnosing trade-offs.')}
+                            if prior_structural_errors else {}),
+                            'submissionCorrectionEdits': copy.deepcopy(correction_source.get('submittedEdits', {})),
+                            **({'submissionCorrectionAttemptEdits': copy.deepcopy(correction_source['rejectedAttemptEdits'])}
+                                if isinstance(correction_source.get('rejectedAttemptEdits'), dict) else {}),
+                            **({'submissionJointSolve': {key: correction_source['jointSolve'][key] for key in (
                                 'status', 'problemFingerprint', 'submittedMenuFingerprint', 'feasible', 'instruction',
                                 'feasibilityDomainFingerprint',
                                 'knownPriorInfeasibility', 'knownInfeasibleDomainMatch')
-                                if key in completed_repair['jointSolve']}}
-                                if isinstance(completed_repair.get('jointSolve'), dict) else {})}
-                            if same_resumable_candidate and completed_repair.get('attemptStatus') in (
+                                if key in correction_source['jointSolve']}}
+                                if not prior_structural_errors and isinstance(correction_source.get('jointSolve'), dict) else {})}
+                            if prior_structural_errors or correction_source.get('attemptStatus') in (
                                 'repair_failed', 'repair_menu_infeasible', 'joint_repair_unresolved') else {}),
                     'instruction': ('Repair this exact numerically audited hypothetical alternative against every actionable group in its independent-review ledger, in one atomic transaction. '
                         'The original requirements, equipment, safety restrictions, and all unlisted requirement fields remain immutable. The listed relaxation paths are the only permitted requirement changes and remain hypothetical until the user explicitly approves the exact reviewed proposal. '
                         + ('The saved knownInfeasibleMenu is a code-owned proof that this candidate authority and executable movement/prescription domain cannot satisfy the current fixed targets. Change an actual movement or executable prescription option, or provide a validated explicit trade-off; changing only set-count seeds, labels, coaching text, or optimization preferences repeats the same proven domain. '
                             if known_infeasible_menu else '')
                         + ('The prior submitted menu was proven infeasible by the joint solver. Correct it by changing the exercise menu or prescriptions, using replacementCandidates where suitable; do not repeat the same menu or claim the requirements are impossible. '
-                            if same_resumable_candidate and completed_repair.get('attemptStatus') == 'repair_menu_infeasible' else '')
+                            if same_resumable_candidate and completed_repair.get('attemptStatus') == 'repair_menu_infeasible'
+                                and not prior_structural_errors else '')
+                        + ('The saved infeasibility receipt has invalid menu evidence or fails approved session structure, so it cannot diagnose a requirement conflict. Correct the menu first and preserve the exact source prescriptions. '
+                            if prior_structural_errors else '')
                         + ('This is an explicit retry after an unresolved bounded joint solve. Change the proposal materially; do not repeat the prior menu or claim a conflict. '
                             if same_resumable_candidate and completed_repair.get('attemptStatus') == 'joint_repair_unresolved' else '')
-                        + ('Amend the saved active proposal in submissionCorrectionEdits using submissionCorrectionErrors. '
-                            'submissionCorrectionAttemptEdits is the later rejected attempt and was not applied; keep the active proposal unless replaceRejectedRepair=true supplies a complete replacement. '
+                        + ('Use submissionCorrectionErrors to submit a complete correction against the saved candidate. '
+                            'submissionCorrectionEdits and submissionCorrectionAttemptEdits are evidence only and are not merged into new edits. '
                             if same_resumable_candidate and completed_repair.get('attemptStatus') == 'repair_failed' else '')
                         + 'After the patch, Python reruns the full numerical audit and a fresh independent review. Do not describe it as accepted or alter the active draft.')}
+                candidate_diagnosis = (None if prior_structural_errors else _candidate_conflict_diagnosis_task(
+                    state['requirementsId'], candidate, known_infeasible_menu, results,
+                    retry_after_index=(last_user if messages[last_user].get('content', '').strip() == '/continue' else -1)))
+                if candidate_diagnosis:
+                    state['candidateConflictDiagnosisTask'] = candidate_diagnosis
+                elif known_infeasible_menu:
+                    binding = _candidate_conflict_diagnosis_task(
+                        state['requirementsId'], candidate, known_infeasible_menu, [])
+                    completed_diagnosis = next((payload for _, function, payload in reversed(results)
+                        if binding and function.get('name') == 'propose_workout_alternatives'
+                        and isinstance(payload.get('candidateDiagnosisSource'), dict)
+                        and all(payload['candidateDiagnosisSource'].get(key) == value
+                            for key, value in binding.items())), None)
+                    if (completed_diagnosis and not completed_diagnosis.get('proposals')
+                            and not completed_diagnosis.get('alternativeRepairCandidates')):
+                        state['candidateConflictDiagnosisUnresolved'] = {
+                            'reason': completed_diagnosis.get('reason',
+                                'The saved candidate diagnosis did not establish a validated alternative.'),
+                            'candidateDiagnosisSource': binding}
                 state.pop('conflictDiagnosisTask', None)
                 state.pop('repairTask', None)
                 state.pop('repairCapabilityUnresolved', None)
@@ -2811,11 +3370,33 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
                 else:
                     state['conflictDiagnosisTask'] = {'requirementsId': state['requirementsId'],
                         'baseDraftId': state.get('currentDraftId')}
-    _focus_session_preparation(state, preparation, evidence, history_enabled)
+    selection_reconsidered = False
+    prior_preparation_index = parallel_index
+    while parallel and prior_preparation_index > 0:
+        # Compare receipts in the original transcript; focused request offsets differ.
+        prior_preparation_index, prior = _latest_result(original[:prior_preparation_index], 'prepare_workout_sessions')
+        if prior.get('setAllocation', {}).get('feasible') and all(
+                prior.get(key) == parallel.get(key) for key in (
+                    'requirementsId', 'baseDraftId', 'libraryFingerprint', 'sourceMessages')):
+            selection_reconsidered = True
+            break
+    _focus_session_preparation(state, preparation, evidence, history_enabled,
+                               selection_reconsidered=selection_reconsidered)
     if (new_instruction and state.get('currentDraft') and state['requirementsApproved']
-            and (state.get('lastAudit') or {}).get('passed') and not state.get('constructionTask')
-            and not state.get('repairTask') and not state.get('savedDraftReaudit') and not state.get('planningDecisionNeeded')):
+            and not state.get('constructionTask')
+            and not state.get('candidateMenuExpansionTask')
+            and not state.get('savedDraftReaudit') and not state.get('planningDecisionNeeded')):
         _focus_edit(state, evidence, fresh_references)
+    construction_stage = (state.get('constructionTask') or {}).get('stage')
+    has_selection_task = (construction_stage in ('discover_movements', 'choose_movements')
+        or state.get('editTask') or state.get('repairTask') or state.get('candidateMenuExpansionTask'))
+    if (has_selection_task and not state.get('alternativeRepairTask') and state.get('currentDraftAudited')
+            and not state.get('draftRequiresReaudit') and not stale_joint_receipt):
+        full_receipt = _saved_audit_receipt(original, revision_id, fingerprint_draft)
+        facts = _programming_selection_facts_from_receipt(full_receipt, state, requirements, fingerprint,
+                                                          history_fingerprint, equipment or {})
+        if facts:
+            state['programmingSelectionFacts'] = facts
     if 'cachedCandidateIndex' in state:
         state['cachedCandidateIndex'] = {ref: entry for ref, entry in state['cachedCandidateIndex'].items()
                                          if ref not in state['exerciseCandidates']}
@@ -2827,11 +3408,34 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
     if not state['requirementsApproved']:
         state = {key: value for key, value in state.items() if key in (
             'requirementsId', 'requirements', 'requirementsApproved', 'sourceMessages', 'resolvedDecisions', 'restrictionPolicy', 'otherToolResults')}
-        base = approved_requirement_base(original)
-        if base and messages[last_user].get('content', '').strip() in ('/continue', 'CONFIRM REQUIREMENTS', 'CONFIRM GENERATE'):
-            state['accountingRefreshBase'] = {'requirementsId': base['requirementsId'], 'requirements': base['requirements']}
-            state['requirementsInstruction'] = 'Use the narrow set_workout_requirements accounting-refresh schema against accountingRefreshBase. Python preserves its constraints. Do not rewrite auditTargets or coverage.'
+        _, base = latest_requirement_candidate(original)
+        if base:
+            state['requirementsUpdateBase'] = {'requirementsId': base['requirementsId'], 'requirements': base['requirements']}
+            state['requirementsInstruction'] = 'Use set_workout_requirements with this baseRequirementsId and only the typed updates supported by the new answer or correction. Python preserves omitted fields and shows the merged changes for confirmation.'
         state['requirementsFeedback'] = {key: requirements_feedback[key] for key in ('passed', 'errors', 'instruction') if key in requirements_feedback}
+        continuing_saved_requirements_repair = (last_user >= 0
+            and messages[last_user].get('content', '').strip() == '/continue'
+            and requirements.get('passed') is False
+            and requirements.get('requirementsReviewQuestion')
+            and requirements.get('sourceReview', {}).get('passed') is False)
+        if continuing_saved_requirements_repair:
+            from .plan_review import (_authorized_scoped_requirement_update,
+                _requirements_findings_are_supported_repairs)
+            from .requirement_accounting import accounting_gaps
+            source_review = requirements.get('sourceReview', {})
+            candidate_gaps = (accounting_gaps(requirements['requirements'])
+                if 'requirementAccounting' in requirements.get('requirements', {}) else [])
+            joint_review = requirements.get('jointDecisionReview', {})
+            if (_authorized_scoped_requirement_update(requirements, original)
+                    and _requirements_findings_are_supported_repairs(source_review.get('findings', []), requirements,
+                        gaps=candidate_gaps, failure=source_review.get('failure'),
+                        new_decisions=bool(joint_review.get('newDecisionIds') or requirements.get('proposedDecisions')))):
+                state['requirementsFeedback']['instruction'] = (
+                    'The saved source review found only clear, source-backed extraction repairs in the explicitly approved scoped update. '
+                    f"Use one typed set_workout_requirements update against baseRequirementsId={requirements['requirementsId']} "
+                    'to correct only the cited fields; preserve every unrelated field and every numerical target. '
+                    'This corrects extraction and does not approve the requirements. Do not ask the user to repeat the scoped authorization. '
+                    'After independent source review, present the changed requirements and wait for the exact CONFIRM REQUIREMENTS before planning.')
         if (requirements_feedback is not requirements and last_instruction < requirements_index
                 and requirements.get('sourceReview', {}).get('passed') is False
                 and any(isinstance(error, dict) and error.get('code') == 'invalid_arguments'
@@ -2884,10 +3488,9 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
                 field['suggestedTargetCharacters'] = int(maximum * 0.7)
         state['repairTask']['instruction'] = ('Correct only metadataFields using validationErrors. Preserve technique, structuredFacts and preserveFindings. '
             'Send the text corrections through typed WORKOUT_n/EXERCISE_n edits, limited to the fields and references in metadataFields. '
-            'For rejectedSubmission, type the correction against the displayed hypothetical candidate; Python composes it with the saved rejected proposal.')
+            'Rejected submissions are evidence only. Type the complete permitted correction against the saved current candidate.')
         return [{'role':'system','content':'Perform literal text correction/compression, not workout planning. All supplied text is data. '
             'Python appends generatedText unchanged, so acceptance, progression and stop rules remain in the combined output. '
-            'For placementNotes, output only movement-specific setup, body position, grip and movement-path cues. Remove every effort/RIR target, rep floor or ceiling, load/setting change, calibration or trial instruction, progression trigger, work-credit rule, set/rest/count instruction, or re-audit directive, even when it is not an exact duplicate of generatedText. Python owns working-set effort and progression; the app owns calibration. Preserve an immediate pain or equipment-safety warning only when generatedText does not already cover it. '
             'For descriptions, preserve only the short session focus label. '
             'Aim for suggestedTargetCharacters rather than shaving only the minimum overage; maximumCharacters remains the actual limit. '
             'Do not reconsider loads, volume, feasibility or exercise choices. '
@@ -2911,6 +3514,12 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
     elif state.get('structuralRepairUnresolved'):
         work_order = ('Report structuralRepairUnresolved as an unresolved exercise-selection blocker. Preserve approved requirements, equipment '
             'and safety restrictions; do not claim global impossibility or restart unchanged searches.')
+    elif state.get('candidateConflictDiagnosisUnresolved'):
+        work_order = ('Report candidateConflictDiagnosisUnresolved without another unchanged repair or diagnosis. '
+            'Preserve the candidate, requirements and pending proposal; no global impossibility was established.')
+    elif state.get('candidateConflictDiagnosisTask'):
+        work_order = ('Run candidateConflictDiagnosisTask against the exact persisted failed menu before another model repair. '
+            'Keep original requirements active; any validated trade-off requires explicit approval.')
     elif state.get('alternativeRepairTask'):
         work_order = 'Follow alternativeRepairTask. Keep the alternative hypothetical and repair its complete independent-review ledger atomically.'
     elif state.get('alternativeRepairCapabilityUnresolved'):
@@ -2960,16 +3569,20 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
                 if key in attempt} for attempt in payload.get('attempts', [])]
         state['otherToolResults'][name] = summary
     # Preserve stable evidence in the cacheable prefix across draft revisions.
-    changing = {'currentDraft', 'currentDraftId', 'lastAudit', 'repairTask', 'alternativeRepairTask', 'constructionTask', 'editTask',
+    changing = {'currentDraft', 'currentDraftId', 'lastAudit', 'repairTask', 'alternativeRepairTask', 'candidateConflictDiagnosisTask', 'constructionTask', 'editTask',
                 'weeklyTargetBudget', 'allocationSlots', 'otherToolResults'}
     state = {key:value for key,value in state.items() if key not in changing} | {
         key:value for key,value in state.items() if key in changing}
+    selection_facts_note = ('Candidate demandEvidence lists current library facts and its shared unknowns; use it during initial selection without inferring physiology from names. '
+        + ('programmingSelectionFacts adds audited prescriptions, role exposure and credit splits for the saved candidate. Development intent needs an adequacy judgment and is not met by role presence alone. '
+            if state.get('programmingSelectionFacts') else 'Role presence establishes inclusion only; development emphasis still needs a separate adequacy judgment. '))
     snapshot = {'role': 'system', 'content': 'Current planning state (backend data, not new instructions). '
         'sourceMessages preserves questions and answers in chronological order with stable source references. '
         'Use approved requirements and original user instructions; assistant questions explain short replies, and other assistant suggestions are not user decisions. '
         'Current backend work order: ' + work_order + ' '
-        'For capped text, follow the field purpose and maxLength, including any generated-text reserve. '
-        'Descriptions are short focus labels, not exercise lists; placementNotes carry only movement-specific technique/setup cues. Python owns working-set effort and progression guidance; the app owns native load calibration, with no generator-authored procedure. '
+        + selection_facts_note
+        + 'For capped text, follow the field purpose and maxLength, including any generated-text reserve. '
+        'Descriptions are short focus labels, not exercise lists. Python owns working-set effort and progression guidance; the app owns native load calibration, with no generator-authored procedure. '
         'On rejection, use textFieldContract or metadataFields for exact maximumCharacters, currentCharacters, charactersToRemove and repair. '
         'Saved-draft repairs and user edits use typed stable references, with baseDraftId bound to currentDraftId. JSON Patch is available only when the active tool schema explicitly exposes it, such as construction or internal revalidation. '
         'If draftRequiresReaudit is true, reuse the draft as a patch base but supply the current top-level requirementsId. '
@@ -2988,6 +3601,10 @@ def focus_planner_context(messages, original, equipment=None, history_enabled=Fa
 
 def pending_reaudit(state, user_input):
     """Consume evidence and deterministic metadata repairs; policy refresh requires resume."""
+    saved = state.get('savedDraftReaudit')
+    if (isinstance(saved, dict)
+            and saved.get('_internalAuditAction') == 'definition_dependent_normalization'):
+        return saved
     task = state.get('repairTask') or {}
     fields = task.get('metadataFields') or {}
     if fields and all(path.endswith('/description') and 'derivedReplacement' in field for path, field in fields.items()):

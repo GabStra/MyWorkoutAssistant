@@ -5,31 +5,24 @@ REPAIR_DIMENSIONS = {
     'session_labels': 'Edit workout name and description.',
     'exercise_selection': 'Propose adding, removing, or replacing library exercises; Python qualifies entries and validates the complete plan.',
     'prescription': 'Edit sets, repetitions, load, rest, and duration within approved bounds.',
-    'progression': 'Edit typed progression plans and supported post-ceiling routes.',
     'ordering': 'Reorder exercises and workouts.',
     'superset': 'Edit supported superset membership and rest structure.',
     'coverage': 'Edit assignments to approved coverage requirements.',
     'session_timing': 'Edit setup and timing estimates; Python recalculates total duration.',
-    'guidance': 'Edit local movement technique and setup cues only.',
-    'program_guidance': 'Edit plan-level manual coaching guidance shown with the workout; it does not alter app behavior.',
 }
 
 # Keep this inventory aligned with the existing typed repair-path classifier.
 FIELD_REPAIR_DIMENSIONS = {
     'name': {'session_labels'},
     'description': {'session_labels'},
-    'programGuidance': {'program_guidance'},
     'definition_id': {'exercise_selection'},
     'numWorkSets': {'prescription', 'session_timing'},
     'minReps': {'prescription', 'session_timing'},
     'maxReps': {'prescription', 'session_timing'},
     'workSetTemplate': {'prescription', 'session_timing'},
     'targetSetPrescriptions': {'prescription', 'session_timing'},
-    'progressionPlan': {'progression'},
-    'progressionMethod': {'progression'},
     'generateWarmUpSets': {'session_timing'},
     'effortAcceptance': {'prescription'},
-    'placementNotes': {'guidance'},
     'satisfiesCoverage': {'coverage'},
     'setupSeconds': {'session_timing', 'prescription'},
     'restBetweenSetsSeconds': {'session_timing', 'prescription'},
@@ -43,30 +36,60 @@ FIELD_REPAIR_DIMENSIONS = {
     'trainingDays': {'ordering', 'session_timing'},
 }
 
+REPAIR_OBJECTIVE_DIMENSIONS = {
+    # This objective preserves the selected recipes and their set prescriptions;
+    # only exercise placement and order are editable. The solver recalculates timing.
+    'redistribute_work': {'exercise_selection', 'ordering'},
+}
+
 
 def repair_field_dimensions(field):
     return set(FIELD_REPAIR_DIMENSIONS.get(field, ()))
 
-WORKING_SET_UNDERPERFORMANCE_GUIDANCE = (
-    'For normal working sets, if prescribed reps or duration cannot be completed within accepted effort/technical criteria, '
-    'stop the set and stop the affected prescription; do not change load, equipment, or configuration. Re-audit before '
-    'continuing. A failed target is not a successfully completed set.')
+
+def repair_objective_dimensions(objective):
+    """Return code-owned edit scope implied by a supported typed objective."""
+    if not isinstance(objective, dict):
+        return set()
+    return set(REPAIR_OBJECTIVE_DIMENSIONS.get(objective.get('kind'), ()))
+
+
+def repair_group_dimensions(group):
+    """Combine supported semantic fields with the effects of selected operations."""
+    if not isinstance(group, dict):
+        return set()
+    dimensions = set(group.get('repairDimensions') or [])
+    for objective in (group or {}).get('repairObjectives', []):
+        dimensions.update(repair_objective_dimensions(objective))
+    return dimensions
+
+RECOVERY_ADJUSTMENT_GUIDANCE = (
+    'If recovery is inadequate, request a re-audit before changing set counts. Any proposed reduction '
+    'must preserve approved per-exercise floors and weekly or per-session minimums; the audit rejects reductions '
+    'that breach them. Changing approved targets requires a human decision. The app owns progression.'
+)
 
 CODE_OWNED_BEHAVIORS = {
+    'hypothetical_alternative_evaluation': (
+        'Python binds the exact source-authorized numerical proposal for candidate evaluation. Listed changes '
+        'are hypothetical exceptions to only those clauses, including older decisions. All unlisted requirements '
+        'remain binding. Pending approval is workflow state, not missing execution behavior.'),
+    'alternative_acceptance': (
+        'Explicit selection is enforced after the alternative passes numerical audit and independent review. '
+        'Preparing accurate proposed guidance does not accept an alternative or change active requirements.'),
     'working_set_effort_acceptance': (
         'Python renders the approved working-set RIR target or the plan-authored typed acceptance and stop criteria. '
-        'Local placementNotes cannot replace or override these criteria.'),
+        'The typed prescription owns these criteria.'),
     'native_load_calibration': (
         'The app-native requiresLoadCalibration flag is code-owned and derived from exercise type, equipment, and '
         'available load history. It is not a model-editable per-exercise calibration protocol.'),
-    'typed_progression_rendering': (
-        'Python renders a validated typed progression plan or supported progression method. Local placementNotes '
-        'cannot replace or override its progression triggers.'),
-    'working_set_underperformance_stop_reaudit': {
-        'guidance': WORKING_SET_UNDERPERFORMANCE_GUIDANCE,
-        'authority': 'Python',
-        'editable': False,
-    },
+    'app_native_rep_load_progression': (
+        'finalArtifact.progressionMode is authoritative: DOUBLE_PROGRESSION and AUTO_REGULATION use app double progression; AUTO_REGULATION adds per-set RIR except the last work set; OFF has none. Do not require a generator method or prose.'),
+    'execution_instructions': (
+        'Python renders setup time estimates, straight-set and superset order/rest instructions, and warm-up '
+        'generation availability from the final prescription. Exact app-generated ramp-ups depend on runtime '
+        'load/equipment; unweighted configurations do not supply a lighter loaded ramp-up protocol.'),
+    'recovery_adjustment': RECOVERY_ADJUSTMENT_GUIDANCE,
 }
 
 UNSUPPORTED_REPAIR_CAPABILITIES = {
@@ -84,3 +107,10 @@ def repair_capability_contract():
 def has_unresolved_capabilities(assessment):
     return any(group.get('disposition') == 'unresolved_capability'
                for group in (assessment or {}).get('groups', []))
+
+
+def preserve_source_selection_for_repair(previous_joint_solve=None, *, valid_carried_domain=False):
+    """Keep the submitted menu fixed unless continuing a validated solver domain."""
+    return not (valid_carried_domain is True
+                and isinstance(previous_joint_solve, dict)
+                and previous_joint_solve.get('preserveSourceSelection') is False)

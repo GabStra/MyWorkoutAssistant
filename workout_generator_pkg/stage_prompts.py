@@ -156,7 +156,6 @@ EXERCISE_EXAMPLE = {
             "enabled": True,
             "name": "Warm Up",
             "notes": "",
-            "placementNotes": "",
             "sets": [
                 {
                     "id": "SET_WARMUP",
@@ -186,7 +185,6 @@ EXERCISE_EXAMPLE = {
             "enabled": True,
             "name": "Back Squat",
             "notes": "",
-            "placementNotes": "",
             "sets": [
                 {
                     "id": "SET_0",
@@ -223,8 +221,7 @@ EXERCISE_EXAMPLE = {
             "type": "Exercise",
             "enabled": True,
             "name": "Ring Rows",
-            "notes": "Pause briefly at the top and control the lowering phase",
-            "placementNotes": "",
+            "notes": "",
             "sets": [
                 {
                     "id": "SET_2",
@@ -311,8 +308,7 @@ EXERCISE_SYSTEM_PROMPT = (
     "Timed exercise rule:\n"
     "- For COUNTDOWN exercises, emit exactly one TimedDurationSet, no RestSet, and showCountDownTimer=true.\n\n"
     "Other required behavior:\n"
-    "- Use notes only for workout-occurrence placement notes; do not generate shared movement instructions.\n"
-    "- Use placementNotes for workout- or phase-specific execution/progression guidance (max 500 characters for local cues; generated guidance is separate; preserve all required instructions); emit an empty string when none is needed.\n"
+    "- Preserve the supplied code-generated notes exactly; do not author technique or placement notes.\n"
     "- Set exerciseCategory for WEIGHT/BODY_WEIGHT (HEAVY_COMPOUND, MODERATE_COMPOUND, ISOLATION); null for COUNTUP/COUNTDOWN.\n"
     "- Set generateWarmUpSets explicitly to true or false for every exercise.\n"
     "- Set generateWarmUpSets=true for exercises that should normally ramp into work sets, especially heavy or technically demanding compound lifts with meaningful external load.\n"
@@ -480,7 +476,7 @@ PLAN_INDEX_SYSTEM_PROMPT = (
     "Exercise entries in the PlanIndex are workout-specific prescriptions, not reusable identity records.\n"
     "When an exercise-library catalog is supplied, every exercise must include a listed libraryDefinitionId.\n"
     "Never create a movement outside that catalog. nameOverride may provide a workout-local alias.\n"
-    "Warm-up mobility and ramp-up instructions belong in placementNotes and generateWarmUpSets. Do not invent a standalone generic Warm Up or EXERCISE_WARMUP. An explicitly selected library warm-up exercise still needs a unique numeric EXERCISE_X prescription per occurrence.\n"
+    "Use generateWarmUpSets for app-generated ramp-up sets. Do not invent a standalone generic Warm Up or EXERCISE_WARMUP. An explicitly selected library warm-up exercise still needs a unique numeric EXERCISE_X prescription per occurrence.\n"
     "For periodized or versioned programming, emit a separate EXERCISE_X prescription for each "
     "independently programmed occurrence, even when multiple occurrences share the same movement.\n"
     "Shared movement identity fields (name, exerciseType, equipmentId, body-weight semantics, muscles, "
@@ -512,7 +508,6 @@ PLAN_INDEX_SYSTEM_PROMPT = (
     "- For accessory-dependent exercises, use requiredAccessoryEquipmentIds with ACCESSORY_X IDs; use [] when none.\n"
     f"- Use valid MuscleGroup enum values only: {MUSCLE_GROUP_ENUM_VALUES}.\n"
     "- If user provided sets/reps/rest structure, copy exact work-set counts and exact rest values into numWorkSets and restBetweenSetsSeconds for any exercise type when they are known.\n"
-    "- Carry workout-specific execution, RIR, progression and warm-up guidance in exercise.placementNotes (max 500 characters for local cues; generated guidance is separate; preserve all required instructions). Preserve generateWarmUpSets and progressionMode when specified. Do not discard these instructions during emission.\n"
     "- Unilateral intent must be encoded explicitly via intraSetRestInSeconds.\n"
     "- intraSetRestInSeconds means the exact rest in whole seconds between the two sides of one logical unilateral set, for example left side, then rest, then right side.\n"
     "- CRITICAL: Every unilateral or single-side exercise (for example single-arm row, split squat, lunge, step-up, single-leg calf raise) MUST include an LLM-chosen exact positive integer intraSetRestInSeconds. null, 0, and omission are invalid; never rely on a generator default.\n"

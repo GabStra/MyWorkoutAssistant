@@ -30,7 +30,7 @@ def usage_events(lines):
             event = json.loads(match.group(1))
         except (ValueError, TypeError):
             continue
-        if isinstance(event, dict) and event.get('event') in ('api_request', 'api_request_started'):
+        if isinstance(event, dict) and event.get('event') in ('api_request', 'api_request_started', 'submission_rejected'):
             yield event
 
 
@@ -87,6 +87,7 @@ def quote_cost(event):
 
 
 def summarize_usage(events):
+    events = list(events)
     started, completed, legacy = {}, {}, []
     for event in events:
         identifier = event.get('requestId')
@@ -136,7 +137,60 @@ def summarize_usage(events):
             'complete':exact_usage and len(priced)==len(rows),
             'basis':'Published model-token rate card, not an invoice or balance deduction.',
             'rateCardVerifiedAt':PRICE_VERIFIED,'source':PRICE_SOURCE,'holidaySource':HOLIDAY_SOURCE},
-        'requestsDetail':rows}
+        'requestsDetail':rows, 'stageRejections': summarize_rejections(events)}
+
+
+def summarize_rejections(events):
+    """Count rejected calls once, even when multiple validators reject their output."""
+    requests, submissions, responses, rejections, tracked = {}, {}, {}, [], set()
+    for index, event in enumerate(events):
+        kind = event.get('event')
+        if kind in ('api_request', 'api_request_started'):
+            identifier = event.get('requestId') or f'legacy_{index}'
+            requests[identifier] = event.get('stage', 'unscoped')
+            if event.get('rejectionTracking'):
+                tracked.add(identifier)
+            for submission in event.get('submissionIds', []):
+                submissions[submission] = identifier
+            if event.get('responseFingerprint'):
+                responses[(event.get('stage'), event['responseFingerprint'])] = identifier
+        elif kind == 'submission_rejected':
+            identifier = (event.get('requestId')
+                          or responses.get((event.get('stage'), event.get('responseFingerprint')))
+                          or submissions.get(event.get('submissionId')))
+            rejections.append((event, identifier))
+    stages = {stage: {'calls': 0, 'callsWithRejectionTracking': 0, 'rejectedCalls': 0, 'rejectedSubmissions': 0,
+                     'reasonClasses': {key: 0 for key in ('schema', 'reference-ID', 'numerical', 'other')}}
+              for stage in requests.values()}
+    for identifier, stage in requests.items():
+        stages[stage]['calls'] += 1
+        stages[stage]['callsWithRejectionTracking'] += identifier in tracked
+    rejected_calls, seen, seen_submissions, unmatched = set(), set(), set(), 0
+    for event, identifier in rejections:
+        if identifier not in requests:
+            unmatched += 1
+            continue
+        stage = requests[identifier]
+        reason = event['reasonClass']
+        key = (identifier, event.get('submissionId'), reason)
+        if key in seen:
+            continue
+        seen.add(key)
+        submission = (identifier, event.get('submissionId'))
+        if submission not in seen_submissions:
+            stages[stage]['rejectedSubmissions'] += 1
+            seen_submissions.add(submission)
+        stages[stage]['reasonClasses'][reason] += 1
+        rejected_calls.add(identifier)
+    for identifier in rejected_calls:
+        stages[requests[identifier]]['rejectedCalls'] += 1
+    for row in stages.values():
+        row['rejectionRate'] = (row['rejectedCalls'] / row['calls']
+            if row['calls'] and row['callsWithRejectionTracking'] == row['calls'] else None)
+    top = sorted((stage for stage in stages if stages[stage]['rejectedCalls']),
+                 key=lambda stage: (-stages[stage]['rejectedCalls'], stage))[:2]
+    return {'stages': stages, 'topTwoStages': top, 'unmatchedRejectionEvents': unmatched,
+            'measurement': 'Explicit validation rejections; semantic review findings and provider failures are not rejections.'}
 
 
 def report_usage(logger):

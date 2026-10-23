@@ -2007,6 +2007,17 @@ def test_exercise_definition_rejects_missing_unilateral_intra_set_rest():
     assert "intraSetRestInSeconds mismatch: expected 30, got None" in str(exc_info.value)
 
 
+def test_bilateral_symmetry_cue_does_not_imply_unilateral_execution():
+    from workout_generator_pkg.plan_contract import _exercise_requires_unilateral_rest
+
+    assert not _exercise_requires_unilateral_rest({
+        "name": "Dumbbell Incline Row",
+        "notes": ("Chest stays in contact with the bench while both dumbbells reach the same controlled height. "
+                  "Stop if the chest lifts off the bench, one arm lags, or the range shortens."),
+    })
+    assert _exercise_requires_unilateral_rest({"name": "Single-Arm Dumbbell Row", "notes": ""})
+
+
 def test_sync_exercises_from_plan_index_does_not_apply_reps_to_countdown():
     """COUNTDOWN/COUNTUP ignore minReps/maxReps in PlanIndex; sanitizer drops keys (including null)."""
     from workout_generator_pkg.domain_ops import strip_rep_range_fields_for_timed_exercises_in_workout_store

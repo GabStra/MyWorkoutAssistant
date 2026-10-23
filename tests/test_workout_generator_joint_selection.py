@@ -45,14 +45,15 @@ def test_joint_selection_removes_invented_limits_and_redundant_weekly_exposures(
     selected = [item for day in result['sessions'] for item in day['exercises']]
     assert len(selected) < 12
     for day in result['sessions']:
-        assert {'push', 'pull'} <= {role for item in day['exercises'] for role in item['satisfiesCoverage']}
         for item in day['exercises']:
             assert item['numWorkSets'] > 0
             assert item['allocationBounds'] == {'minimum': 1, 'maximum': 20}
             for muscle, values in candidates[item['definition_id']]['creditsPerWorkingSet'].items():
                 totals[muscle] += item['numWorkSets'] * sum(values.values())
     assert all(15 <= value <= 18 for value in totals.values())
-    assert {'vertical', 'lateral'} <= {role for item in selected for role in item['satisfiesCoverage']}
+    # Model-proposed roles are retained in the proposal but are not trusted
+    # until recipe qualification; the early solve only proves muscle counts.
+    assert 'selectionPreview' not in result
 
 
 def test_approved_count_rule_is_preserved_by_selection_and_final_audit():
@@ -72,12 +73,12 @@ def test_approved_count_rule_is_preserved_by_selection_and_final_audit():
     assert report['errors'][0]['code'] == 'execution_workSets'
 
 
-def test_approved_counts_that_make_targets_impossible_are_not_relaxed():
+def test_prequalification_does_not_apply_role_keyed_set_constraints():
     sessions, candidates, requirements = joint_case()
     requirements['executionRules'] = [{'kind': 'workSets', 'coverageKey': 'vertical',
         'minimumSets': 20, 'maximumSets': 20}]
     result = solve(sessions, candidates, requirements)
-    assert not result['feasible'] and result['status'] == 'infeasible'
+    assert result['feasible']
 
 
 def test_joint_placement_fills_daily_coverage_and_counts_frequency():
@@ -91,11 +92,117 @@ def test_joint_placement_fills_daily_coverage_and_counts_frequency():
         muscle: {'minimum': 6, 'maximum': 6} for muscle in ('chest', 'back')}
     result = solve(sessions, candidates, requirements)
     assert result['feasible']
-    for day in result['sessions']:
-        assert {x['definition_id'] for x in day['exercises']} == {'press', 'row'}
     for ref in ('press', 'row'):
         assert sum(day['timesCompletedInAWeek'] * item['numWorkSets'] for day in result['sessions']
                    for item in day['exercises'] if item['definition_id'] == ref) == 6
+
+
+def test_prequalification_selection_does_not_use_unqualified_roles_for_objectives():
+    sessions = [{'name': 'Day A', 'timesCompletedInAWeek': 1, 'exercises': [
+        {'definition_id': 'focus', 'numWorkSets': 2, 'allocationBounds': {'minimum': 1, 'maximum': 5},
+         'superset': None, 'satisfiesCoverage': ['focus']},
+        {'definition_id': 'support', 'numWorkSets': 3, 'allocationBounds': {'minimum': 1, 'maximum': 5},
+         'superset': None, 'satisfiesCoverage': ['support']}]}]
+    candidates = {reference: {'creditsPerWorkingSet': {'chest': {'direct': 1, 'indirect': 0}}}
+                  for reference in ('focus', 'support')}
+    requirements = {'objectiveOrder': ['source_balance'], 'requiredCoverage': [
+        {'key': 'focus', 'scope': 'weekly'}, {'key': 'support', 'scope': 'weekly'}],
+        'executionRules': [{'kind': 'coverageBalance', 'first': 'focus', 'second': 'support',
+            'scope': 'weekly', 'relationship': 'first_not_less_than_second'}],
+        'auditTargets': {'weeklyEffectiveSets': {'chest': {'minimum': 5, 'maximum': 5}},
+                         'perSessionEffectiveSets': {}}}
+
+    result = allocation.allocate_prepared_sets(sessions, candidates, requirements, select_movements=True)
+
+    assert result['feasible']
+    # Role labels are unqualified here, so they cannot create a hard gate or
+    # claim the directional relationship has been met.
+    assert 'selectionPreview' not in result
+
+
+def test_unproven_later_selection_stage_keeps_verified_feasible_menu(monkeypatch):
+    sessions = [{'name': 'Day A', 'timesCompletedInAWeek': 1, 'exercises': [
+        {'definition_id': 'focus', 'numWorkSets': 2, 'allocationBounds': {'minimum': 1, 'maximum': 5},
+         'superset': None, 'satisfiesCoverage': ['focus']},
+        {'definition_id': 'support', 'numWorkSets': 3, 'allocationBounds': {'minimum': 1, 'maximum': 5},
+         'superset': None, 'satisfiesCoverage': ['support']}]}]
+    candidates = {reference: {'creditsPerWorkingSet': {'chest': {'direct': 1, 'indirect': 0}}}
+                  for reference in ('focus', 'support')}
+    requirements = {'objectiveOrder': ['distribution'], 'requiredCoverage': [
+        {'key': 'focus', 'scope': 'weekly'}, {'key': 'support', 'scope': 'weekly'}],
+        'executionRules': [{'kind': 'coverageBalance', 'first': 'focus', 'second': 'support',
+            'scope': 'weekly', 'relationship': 'first_not_less_than_second'}],
+        'auditTargets': {'weeklyEffectiveSets': {'chest': {'minimum': 5, 'maximum': 5}},
+                         'perSessionEffectiveSets': {}}}
+    original_solve = allocation._milp_solve
+    original_objectives = allocation._prepared_selection_objectives
+    def two_distribution_stages(*args, **kwargs):
+        details = original_objectives(*args, **kwargs)
+        details['order'] = ['distribution', 'distribution']
+        return details
+    monkeypatch.setattr(allocation, '_prepared_selection_objectives', two_distribution_stages)
+    stage_calls = 0
+    first_stage_counts = None
+
+    def solve_one_stage(variables, features, **kwargs):
+        nonlocal stage_calls, first_stage_counts
+        stage_calls += 1
+        if stage_calls == 1:
+            status, counts = original_solve(variables, features, **kwargs)
+            first_stage_counts = counts
+            return status, counts
+        return 'unproven', None
+
+    monkeypatch.setattr(allocation, '_milp_solve', solve_one_stage)
+    result = allocation.allocate_prepared_sets(sessions, candidates, requirements, select_movements=True)
+
+    assert stage_calls == 2
+    assert first_stage_counts is not None
+    assert result['feasible'] and result['solveStatus'] == 'feasible'
+    assert {item['definition_id']: item['numWorkSets'] for item in result['sessions'][0]['exercises']} == {
+        reference: count for reference, count in zip(('focus', 'support'), first_stage_counts[:2]) if count}
+    assert result['selectionPreview']['objectiveStatus'] == 'feasible'
+    assert result['selectionPreview']['baselineFeasibleWithinCountDomain']
+
+
+def test_pre_prescription_selection_distributes_targeted_work_across_sessions():
+    sessions = [{'name': f'Day {index}', 'timesCompletedInAWeek': 1, 'exercises': [
+        {'definition_id': 'press', 'numWorkSets': 5 if index == 0 else 1,
+         'allocationBounds': {'minimum': 1, 'maximum': 5}, 'superset': None,
+         'satisfiesCoverage': ['push']}]} for index in range(2)]
+    candidates = {'press': {'creditsPerWorkingSet': {'chest': {'direct': 1, 'indirect': 0}}}}
+    requirements = {'objectiveOrder': ['distribution'], 'requiredCoverage': [
+        {'key': 'push', 'scope': 'eachSession'}], 'executionRules': [],
+        'auditTargets': {'weeklyEffectiveSets': {'chest': {'minimum': 6, 'maximum': 6}},
+                         'perSessionEffectiveSets': {}}}
+
+    result = allocation.allocate_prepared_sets(sessions, candidates, requirements, select_movements=True)
+
+    assert result['feasible']
+    assert [day['exercises'][0]['numWorkSets'] for day in result['sessions']] == [3, 3]
+    objective = result['selectionPreview']['objectives'][0]
+    assert objective['priority'] == 'distribution'
+    assert objective['proposalCost'] == 0 < objective['baselineCost']
+
+
+def test_pre_prescription_preview_does_not_report_unqualified_role_comparisons():
+    sessions = [{'name': 'Day A', 'timesCompletedInAWeek': 1, 'exercises': [
+        {'definition_id': reference, 'numWorkSets': 1, 'allocationBounds': {'minimum': 1, 'maximum': 5},
+         'superset': None, 'satisfiesCoverage': [reference]} for reference in ('focus', 'support')]}]
+    candidates = {reference: {'creditsPerWorkingSet': {'chest': {'direct': 1, 'indirect': 0}}}
+                  for reference in ('focus', 'support')}
+    requirements = {'objectiveOrder': ['distribution'], 'requiredCoverage': [
+        {'key': 'focus', 'scope': 'weekly'}, {'key': 'support', 'scope': 'weekly'}],
+        'executionRules': [{'kind': 'coverageBalance', 'first': 'focus', 'second': 'support',
+            'scope': 'weekly', 'relationship': 'balanced'}],
+        'auditTargets': {'weeklyEffectiveSets': {'chest': {'minimum': 5, 'maximum': 5}},
+                         'perSessionEffectiveSets': {}}}
+
+    result = allocation.allocate_prepared_sets(sessions, candidates, requirements, select_movements=True)
+
+    assert result['feasible']
+    assert not result['selectionPreview']['baselineFeasibleWithinCountDomain']
+    assert result['selectionPreview']['roleComparisons'] == []
 
 
 def test_solver_timeout_and_invalid_solution_cannot_approve_selection(monkeypatch):

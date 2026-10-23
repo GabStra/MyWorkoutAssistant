@@ -181,7 +181,8 @@ def test_allocator_identifies_forced_counts_and_releases_them_when_placement_cha
     sessions[1]['exercises'].append(copy.deepcopy(item))
     spread = allocation.allocate_prepared_sets(sessions, candidates, requirements)
     assert sorted(day['exercises'][0]['numWorkSets'] for day in spread['sessions']) == [7, 8]
-    assert not spread['allocationDiagnostics']
+    assert all(item.get('scope') == 'weekly' for item in spread['allocationDiagnostics'])
+    assert spread['allocationDiagnostics'][0]['minimumRequiredSets'] == 15
     assert sessions[0] == before[0]
 
 
@@ -269,6 +270,28 @@ def test_shell_advertises_structural_patches_for_mixed_repairs(monkeypatch, tmp_
     else:
         with pytest.raises(ValidationError):
             validate(patch, schema)
+
+
+def test_retained_candidate_allocation_repair_hides_question_but_uncertainty_keeps_it():
+    from pathlib import Path
+    from workout_generator_pkg.interactive_shell import _preparation_repair_tools
+
+    root = Path(__file__).resolve().parents[1]
+    saved = next((root / 'build/workout_joint_priority_solver_20261023/fresh_e2e_role_keys'
+        / 'workouts/conversation_sessions').glob('*/messages.json'))
+    messages = json.loads(saved.read_text(encoding='utf-8'))
+    task = session_drafting.preparation_repair_task(messages)
+    assert task and len(task['errors']) == 1
+    assert task['errors'][0]['code'] == 'infeasible_set_allocation'
+    assert task['errors'][0]['owner'] == 'candidate'
+    assert 'ask_user' not in [tool['function']['name'] for tool in _preparation_repair_tools(task)]
+
+    uncertain = copy.deepcopy(task)
+    uncertain['errors'] = [{
+        'code': 'prepared_design_finding', 'sourceCode': 'training_load_suitability_unresolved',
+        'basis': 'uncertainty', 'action': 'change', 'check': 'load_suitability',
+    }]
+    assert 'ask_user' in [tool['function']['name'] for tool in _preparation_repair_tools(uncertain)]
 
 
 @pytest.mark.parametrize('mode, expected_calls', [('progress', 2), ('changing', 3), ('unchanged', 1)])
