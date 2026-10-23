@@ -3,6 +3,7 @@ from __future__ import annotations
 from exercise_motion_pkg.reconstruction_compat import loads_reconstruction_metadata
 
 import json
+import hashlib
 import threading
 import time
 import traceback
@@ -27,6 +28,7 @@ from exercise_motion_pkg.bake_and_rank import (
     require_current_source_contract,
     SourceCandidateRejected,
     ExerciseMotionContractRejected,
+    ExerciseDefinitionReviewRequired,
     SOURCE_SELECTION_POLICY_VERSION,
     bake_progress_activity,
     build_exercise_motion_contract_resolver,
@@ -56,6 +58,12 @@ from exercise_motion_pkg.source_review_preflight import SourceReviewIncomplete, 
 from exercise_motion_pkg.source_review_authority import retained_source_attempt_keys
 from exercise_motion_pkg.process_lock import exclusive_workspace_lease
 from exercise_motion_pkg.storage import is_storage_failure, require_storage_reserve
+from exercise_motion_pkg.gpu_lock import exclusive_gpu_device
+from exercise_motion_pkg.source_turn_budget import (
+    _SourceTurnBudget,
+    _source_turn_exercise_identity,
+    source_turn_budget_readiness,
+)
 
 
 STAGED_SOURCE_PORTFOLIO_MAX_SIZE = 3
@@ -204,10 +212,12 @@ def artifact_disposition(manifest: dict[str, Any]) -> str:
     ):
         return "manual_review"
     diagnostics = final_processing_diagnostics(manifest).get("candidateDiagnostics", [])
+    if any(item.get("status") == "needs_definition_review" for item in diagnostics):
+        return "retryable"
     if any(item.get("status") == "needs_motion_processing" for item in diagnostics):
         return "processing_incomplete"
     if any(
-        item.get("status") in {"failed", "needs_source_review", "needs_manual_review"}
+        item.get("status") in {"failed", "needs_source_review", "needs_definition_review", "needs_manual_review"}
         for item in diagnostics
     ):
         return "retryable"
@@ -223,6 +233,11 @@ def final_validation_outcome_status(manifest: dict[str, Any]) -> str:
         return "needs_manual_review"
     if disposition == "processing_incomplete":
         return "incomplete_processing"
+    if any(
+        item.get("status") == "needs_definition_review"
+        for item in final_processing_diagnostics(manifest).get("candidateDiagnostics", [])
+    ):
+        return "needs_definition_review"
     return "no_selection"
 
 
@@ -231,11 +246,32 @@ def wave_retry_disposition(state: dict[str, Any]) -> str:
         return "export_manual_review" if _item_artifact_state(state) == "manual_review" else "export_selected"
     if state.get("source", {}).get("failureReason") == "exercise_contract_invalid":
         return "repair_contract"
+    if state.get("source", {}).get("failureReason") == "needs_definition_review":
+        return "needs_definition_review"
     if state.get("source", {}).get("failureReason") == "source_review_incomplete":
         return "retry_review"
+    if state.get("source", {}).get("failureReason") == "source_turn_deferred":
+        return "continue_source"
     final = state.get("finalValidation", {})
+    diagnostics = final.get("candidateDiagnostics", [])
+    if final.get("status") == "needs_definition_review" or any(
+        item.get("status") == "needs_definition_review" for item in diagnostics
+    ):
+        return "needs_definition_review"
     if final.get("status") in {"no_selection", "incomplete_processing"}:
-        diagnostics = final.get("candidateDiagnostics", [])
+        reasons = {
+            reason
+            for item in diagnostics
+            for reason in item.get("reasons", [])
+        }
+        if "source_support_contact_evidence_unavailable" in reasons:
+            return "retry_review"
+        if reasons.intersection({
+            "source_confirmed_support_unrepaired",
+            "source_confirmed_baseline_support_drift",
+            "support_lock_baseline_safety_failed",
+        }):
+            return "retry_processing"
         if any(item.get("status") == "needs_motion_processing" for item in diagnostics):
             return "retry_processing"
         if any(item.get("status") == "failed" for item in diagnostics):
@@ -246,9 +282,12 @@ def wave_retry_disposition(state: dict[str, Any]) -> str:
             return "retry_review"
         return "next_source"
     attempts = state.get("reconstruction", {}).get("attempts", [])
-    if attempts and all(item.get("status") in {"rejected_raw_reconstruction_validation", "rejected_tracking_preflight", "rejected_incomplete_reconstruction_tracking"}
+    if attempts and all(item.get("status") in {"rejected_tracking_preflight", "rejected_incomplete_reconstruction_tracking"}
                         for item in attempts):
         return "next_source"
+    if attempts and all(item.get("status") == "rejected_raw_reconstruction_validation" for item in attempts):
+        # The source passed approval; keep this in the local motion-processing lane.
+        return "retry_processing"
     if state.get("source", {}).get("failureReason") in {
         "no_source_passed_exact_window_validation", "source_turn_deferred",
         "no_reconstruction_ready_source", "no_approved_discovery_candidates",
@@ -613,6 +652,12 @@ def source_attempt_log_context(candidate: RankedCandidate, number: int, total: i
     return f"attempt {number}/{total} this turn | candidate window {window}"
 
 
+def _set_source_turn_deadline(session: object, deadline: float | None) -> None:
+    setter = getattr(session, "set_candidate_deadline", None)
+    if callable(setter):
+        setter(deadline)
+
+
 def generation_status(attempts: list[dict[str, Any]], expected_count: int) -> str:
     if len(attempts) < expected_count:
         return "pending"
@@ -734,7 +779,23 @@ def effective_wave_final_output_rejection_limit(
     return max(configured_limit, ready_source_count)
 
 
+def _wave_uses_separate_gpu_residency(items: list[StagedWaveItem]) -> bool:
+    """Keep the supervised vision server warm only for the explicit split lane."""
+    if not exclusive_gpu_device():
+        return False
+    return bool(items) and all(
+        getattr(item.request, "shared_llama_server", False)
+        for item in items
+    )
+
+
 def _stop_warm_reconstruction_worker_before_vlm(items: list[StagedWaveItem]) -> dict[str, Any]:
+    if _wave_uses_separate_gpu_residency(items):
+        return {
+            "requested": False,
+            "stopped": False,
+            "skippedForSeparateGpuResidency": True,
+        }
     session_dirs = set()
     shared_session_dir: Path | None = None
     for item in items:
@@ -807,7 +868,9 @@ def _record_wave_source_rejections(
         source = state.get("source") if isinstance(state.get("source"), dict) else {}
         rejected_results: list[dict[str, Any]] = []
         for attempt in source.get("attempts") or []:
-            if not isinstance(attempt, dict) or attempt.get("status") in {"prepared", "blocked_contract", "needs_source_review"}:
+            if not isinstance(attempt, dict) or attempt.get("status") in {
+                "prepared", "blocked_contract", "needs_definition_review", "needs_source_review",
+            }:
                 continue
             candidate = candidate_by_key.get(str(attempt.get("candidateKey") or ""))
             candidate_payload = dict(candidate.candidate) if candidate is not None else {
@@ -1190,18 +1253,21 @@ def _run_staged_bake_wave(
         tuple[StagedWaveItem, list[tuple[RankedCandidate, Path]]],
     ] = {}
     ready_source_ids: set[str] = set()
+    source_yield_threshold = 1
     prepared_contracts: dict[str, dict[str, Any] | None] = {}
+    separate_gpu_residency = _wave_uses_separate_gpu_residency(items)
     metrics["cpuRenderPrefetch"] = {}
-    unavailable_source_ids: set[str] = set()
     with accelerator_phase(wave_id, "source_and_generation") if accelerator_phase else nullcontext():
         _stop_warm_reconstruction_worker_before_vlm(items)
-        if getattr(items[0].request, "shared_llama_server", False):
+        if getattr(items[0].request, "shared_llama_server", False) and not separate_gpu_residency:
             clear_generation_holder_marker(resolve_shared_llama_session_dir(
                 getattr(items[0].request, "shared_llama_server_session_dir", None),
                 base_url=items[0].request.llama_cpp_base_url,
             ))
         source_session = LazyLlamaCppVisionSession(items[0].request)
         source_phase_started = time.perf_counter()
+        source_phase_completed = False
+        source_session_retained_for_empty_handoff = False
         metrics["acceleratorTransitions"].append(
             {"stage": "source_vlm_and_exact_validation", "at": _utc_now()}
         )
@@ -1216,6 +1282,7 @@ def _run_staged_bake_wave(
                 list[tuple[RankedCandidate, Path]],
                 list[dict[str, Any]],
             ]:
+                item_source_started_at = time.perf_counter()
                 with checkpoint_lock:
                     item_states[item.exercise_id]["sourceActivity"] = {
                         "startedAt": _utc_now(),
@@ -1236,11 +1303,33 @@ def _run_staged_bake_wave(
                     preferred_keys=previous_selected_candidate_keys.get(item.exercise_id, []),
                 )
                 resume_path = item.request.workspace / "source_turn_resume.json"
+                budget_path = item.request.workspace / "source_turn_budget.json"
+                exercise_identity = _source_turn_exercise_identity(
+                    item.exercise_id,
+                    item.exercise_name,
+                    item.request.authoritative_exercise_motion_context,
+                )
                 prior_attempt_keys: list[str] = []
+                prior_attempt_video_ids_from_resume: list[str] = []
+                resume: dict[str, Any] = {}
+                budget_ledger: dict[str, Any] = {}
+                try:
+                    budget_ledger = loads_reconstruction_metadata(
+                        budget_path.read_text(encoding="utf-8")
+                    )
+                except (OSError, ValueError):
+                    pass
                 try:
                     resume = loads_reconstruction_metadata(resume_path.read_text(encoding="utf-8"))
-                    if resume.get("sourceSelectionPolicyVersion") == SOURCE_SELECTION_POLICY_VERSION:
+                    if (
+                        resume.get("sourceSelectionPolicyVersion") == SOURCE_SELECTION_POLICY_VERSION
+                        and resume.get("sourceTurnExerciseIdentity") == exercise_identity
+                    ):
                         prior_attempt_keys = [str(key) for key in resume.get("attemptedCandidateKeys", [])]
+                        prior_attempt_video_ids_from_resume = [
+                            str(video_id) for video_id in resume.get("attemptedVideoIds", [])
+                            if str(video_id).strip()
+                        ]
                         prior_attempt_keys = retained_source_attempt_keys(prior_attempt_keys, {
                             _candidate_key(candidate): item.request.workspace / candidate.workspace_slug
                             for candidate in candidates
@@ -1251,27 +1340,70 @@ def _run_staged_bake_wave(
                         )
                 except (OSError, ValueError):
                     pass
+                retained_candidate_by_key = {
+                    _candidate_key(candidate): candidate for candidate in candidates
+                }
+                prior_attempt_video_ids = list(dict.fromkeys([
+                    *prior_attempt_video_ids_from_resume,
+                    *(
+                        candidate.video_id
+                        for key in prior_attempt_keys
+                        if (candidate := retained_candidate_by_key.get(key)) is not None
+                        and candidate.video_id
+                    ),
+                ]))
+                source_turn_budget = _SourceTurnBudget(
+                    item.request,
+                    budget_ledger or resume,
+                    started_at=item_source_started_at,
+                    exercise_identity=exercise_identity,
+                )
+                source_turn_budget.attempts_used = max(
+                    source_turn_budget.attempts_used,
+                    len(prior_attempt_keys),
+                )
+                source_turn_incomplete = False
+                source_turn_stop_reason: str | None = None
+                resume_candidate_key: str | None = None
+                with checkpoint_lock:
+                    item_states[item.exercise_id]["source"]["sourceSelectionPolicyVersion"] = SOURCE_SELECTION_POLICY_VERSION
+                    item_states[item.exercise_id]["source"]["priorAttemptedCandidateKeys"] = list(prior_attempt_keys)
+                    item_states[item.exercise_id]["source"]["priorAttemptedVideoIds"] = prior_attempt_video_ids
                 for candidate_number, candidate in enumerate(candidates, start=1):
+                    resume_candidate_key = _candidate_key(candidate)
+                    stop_reason = source_turn_budget.stop_reason()
+                    if stop_reason is not None:
+                        source_turn_incomplete = True
+                        source_turn_stop_reason = stop_reason
+                        source_event(
+                            f"Source review: {item.exercise_name} | needs review: "
+                            f"{stop_reason}; retaining source evidence for continuation."
+                        )
+                        break
                     source_identity = _candidate_source_identity(candidate)
                     if source_identity in selected_source_identities:
                         continue
                     with checkpoint_lock:
-                        # Failed/exhausted entries cannot help fill this wave.
-                        # Still count queued and active entries, and always let an
-                        # exercise finish its first attempt before yielding.
-                        available_count = len(items) - len(unavailable_source_ids)
-                        source_yield_threshold = max(1, (available_count + 1) // 2)
+                        # A single approved source is enough to hand off to the
+                        # GPU stage. Active workers finish their current attempt;
+                        # queued source turns yield before spending another VLM
+                        # decision, including when they have not started yet.
                         yield_source_turn = (
-                            bool(attempts) and not selected_sources
+                            not selected_sources
                             and len(ready_source_ids) >= source_yield_threshold
                         )
                     if yield_source_turn:
                         _write_json_atomic(resume_path, {
                             "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
+                            "sourceTurnExerciseIdentity": exercise_identity,
                             "nextCandidateKey": _candidate_key(candidate),
                             "attemptedCandidateKeys": list(dict.fromkeys([
                                 *prior_attempt_keys, *[attempt["candidateKey"] for attempt in attempts],
                             ])),
+                            "attemptedVideoIds": list(dict.fromkeys([
+                                *prior_attempt_video_ids, *[attempt["videoId"] for attempt in attempts if attempt.get("videoId")],
+                            ])),
+                            **source_turn_budget.resume_fields(),
                         })
                         with checkpoint_lock:
                             item_states[item.exercise_id]["source"]["deferred"] = True
@@ -1289,6 +1421,7 @@ def _run_staged_bake_wave(
                         "firstAttemptReadiness": readiness,
                     }
                     attempts.append(attempt)
+                    source_turn_budget.begin_attempt()
                     if not bool(readiness.get("eligible")):
                         attempt["status"] = "rejected_first_attempt_readiness"
                         attempt["reasons"] = readiness.get("reasons", [])
@@ -1298,6 +1431,7 @@ def _run_staged_bake_wave(
                         attempt["status"] = "rejected_source_gate"
                         attempt["reasons"] = source_gate.get("reasons", [])
                         continue
+                    _set_source_turn_deadline(source_session, source_turn_budget.deadline)
                     try:
                         contract = resolver(candidate) if resolver is not None else None
                         if resolver is not None:
@@ -1320,22 +1454,96 @@ def _run_staged_bake_wave(
                         # Contact semantics must be available before the CPU-only
                         # prefetch, otherwise it fits once without them and again
                         # after the final stage acquires its visual model.
-                        from .body_support_observation import source_support_observation_needed, observe_body_support
+                        from .body_support_observation import (
+                            POLICY_VERSION as BODY_SUPPORT_POLICY_VERSION,
+                            source_support_observation_needed,
+                            observe_body_support,
+                        )
                         from .bake_and_rank import load_pre_reconstruction_exact_source_phase_metrics, load_verified_source_pose_reference
                         candidate_workspace = item.request.workspace / candidate.workspace_slug
                         phase_metrics = load_pre_reconstruction_exact_source_phase_metrics(candidate_workspace) or {}
                         source_pose = load_verified_source_pose_reference(
                             candidate_workspace/'segment_detection/exact_source_pose_reference.json', selected_video)
-                        if source_support_observation_needed(source_pose, phase_metrics.get('sourceFootSupportEvidence')):
-                            observe_body_support(selected_video, source_session.caption_images,
-                                                 candidate_workspace/'segment_detection/body_support')
+                        source_support_evidence = phase_metrics.get('sourceFootSupportEvidence')
+                        if isinstance(source_support_evidence, dict):
+                            source_support_evidence = dict(source_support_evidence)
+                            existing_observation = source_support_evidence.get('bodySupportObservation')
+                            if (source_support_observation_needed(source_pose, source_support_evidence)
+                                    or isinstance(existing_observation, dict)):
+                                source_digest = hashlib.sha256(selected_video.read_bytes()).hexdigest()
+                                if not (
+                                    isinstance(existing_observation, dict)
+                                    and existing_observation.get('sourceVideoSha256') == source_digest
+                                    and existing_observation.get('policyVersion') == BODY_SUPPORT_POLICY_VERSION
+                                ):
+                                    existing_observation = observe_body_support(
+                                        selected_video, source_session.caption_images,
+                                        candidate_workspace/'segment_detection/body_support')
+                                source_support_evidence['bodySupportObservation'] = existing_observation
+                            from .support_geometry import pre_reconstruction_source_support_readiness
+                            readiness = pre_reconstruction_source_support_readiness(source_support_evidence)
+                            if not readiness.get('passed') and source_pose is not None:
+                                # The retained phase cache may have been classified
+                                # with an older foot-patch policy. Reclassify the
+                                # exact selected cut once with the active CPU model
+                                # before spending a GPU reconstruction attempt.
+                                from .foot_contact_observation import (
+                                    POLICY_VERSION as FOOT_PATCH_POLICY_VERSION,
+                                    add_observed_foot_contacts,
+                                    observe_foot_landmarks,
+                                )
+                                patch = source_support_evidence.get('footPatchEvidence') or {}
+                                if patch.get('policyVersion') != FOOT_PATCH_POLICY_VERSION:
+                                    landmarks = observe_foot_landmarks(
+                                        selected_video,
+                                    )
+                                    source_support_evidence = add_observed_foot_contacts(
+                                        source_support_evidence, landmarks, source_pose)
+                                    readiness = pre_reconstruction_source_support_readiness(
+                                        source_support_evidence)
+                            if not readiness.get('passed'):
+                                attempt['status'] = 'needs_source_review'
+                                attempt['error'] = 'Source support evidence is unresolved.'
+                                attempt['failureOwner'] = 'source_evidence'
+                                attempt['reasonTags'] = list(readiness.get('rejectionReasons') or [])
+                                attempt['sourceContactReadiness'] = readiness
+                                source_turn_incomplete = True
+                                source_turn_stop_reason = 'source_support_readiness_incomplete'
+                                source_event(
+                                    f"Source attempt: {item.exercise_name} | video {candidate.video_id} | "
+                                    f"needs review for unresolved source support: {attempt['reasonTags']}"
+                                )
+                                break
                     except Exception as exc:
                         if is_storage_failure(exc):
                             raise
                         if isinstance(exc, SourceReviewIncomplete):
                             attempt["status"] = "needs_source_review"
                             attempt["error"] = str(exc)
+                            source_turn_incomplete = True
+                            source_turn_stop_reason = "source_review_incomplete"
                             source_event(f"Source review: {item.exercise_name} | needs review: {exc}")
+                            break
+                        if isinstance(exc, ExerciseDefinitionReviewRequired):
+                            attempt["status"] = "needs_definition_review"
+                            attempt["reason"] = str(exc)
+                            attempt["failureOwner"] = "definition"
+                            contract = getattr(exc, "contract", None)
+                            if isinstance(contract, dict):
+                                attempt["actionDefinition"] = {
+                                    key: contract.get(key)
+                                    for key in (
+                                        "actionDefinitionStatus",
+                                        "actionDefinitionAuthority",
+                                        "definingAction",
+                                        "requiredPhases",
+                                        "completionMode",
+                                    )
+                                    if contract.get(key) is not None
+                                }
+                            source_event(
+                                f"Definition review: {item.exercise_name} | target action needs clarification: {exc}"
+                            )
                             break
                         if isinstance(exc, ExerciseMotionContractRejected):
                             attempt["status"] = "blocked_contract"
@@ -1343,6 +1551,26 @@ def _run_staged_bake_wave(
                             source_event(f"Source review: {item.exercise_name} | blocked: {exc}")
                             break
                         vlm_error = critical_vlm_interaction_error(exc)
+                        if source_turn_budget.stop_reason() == "source_turn_deadline":
+                            attempt["status"] = "needs_source_review"
+                            attempt["error"] = f"{type(exc).__name__}: {exc}"
+                            source_turn_incomplete = True
+                            source_turn_stop_reason = "source_turn_deadline"
+                            source_event(
+                                f"Source review: {item.exercise_name} | needs review: "
+                                "source-turn deadline expired during model work; source retained."
+                            )
+                            break
+                        if vlm_error is not None:
+                            attempt["status"] = "needs_source_review"
+                            attempt["error"] = f"{type(vlm_error).__name__}: {vlm_error}"
+                            source_turn_incomplete = True
+                            source_turn_stop_reason = "source_review_vlm_timeout"
+                            source_event(
+                                f"Source review: {item.exercise_name} | needs review: "
+                                f"model request was inconclusive ({type(vlm_error).__name__}); source retained."
+                            )
+                            break
                         if isinstance(exc, SourceCandidateRejected):
                             attempt["status"] = (
                                 "needs_source_review" if {"source_cut_review_required", "source_cut_boundary_review_required"}.intersection(exc.reason_tags)
@@ -1350,9 +1578,6 @@ def _run_staged_bake_wave(
                             )
                             attempt["reasonTags"] = list(exc.reason_tags)
                             attempt["error"] = f"{type(exc).__name__}: {exc}"
-                        elif vlm_error is not None:
-                            attempt["status"] = "rejected_vlm_timeout"
-                            attempt["error"] = f"{type(vlm_error).__name__}: {vlm_error}"
                         event_prefix = (
                             f"Source attempt: {item.exercise_name} | video {candidate.video_id} | "
                             f"{source_attempt_log_context(candidate, candidate_number, len(candidates))}"
@@ -1371,25 +1596,94 @@ def _run_staged_bake_wave(
                         source_event(event)
                         continue
                     finally:
+                        _set_source_turn_deadline(source_session, None)
+                        _write_json_atomic(budget_path, source_turn_budget.resume_fields())
                         with checkpoint_lock:
                             item_states[item.exercise_id].pop("sourceActivity", None)
                     attempt["status"] = "prepared"
                     prepared_contracts[_candidate_key(candidate)] = contract
                     attempt["selectedVideoPath"] = str(selected_video)
                     selected_sources.append((candidate, selected_video))
+                    next_candidate = next(
+                        (
+                            remaining
+                            for remaining in candidates[candidate_number:]
+                            if _candidate_source_identity(remaining) not in selected_source_identities
+                        ),
+                        None,
+                    )
                     with checkpoint_lock:
                         ready_source_ids.add(item.exercise_id)
+                        item_states[item.exercise_id]["source"]["nextCandidateKey"] = (
+                            _candidate_key(next_candidate) if next_candidate is not None else None
+                        )
                     selected_source_identities.add(source_identity)
                     if requested_portfolio_size is None:
                         requested_portfolio_size = staged_source_portfolio_size(
                             item.request, readiness
                         )
-                    if len(selected_sources) >= requested_portfolio_size:
-                        break
-                if not item_states[item.exercise_id]["source"].get("deferred"):
+                    # Keep the validated source as this handoff's candidate;
+                    # do not wait for optional portfolio members before GPU work.
+                    break
+                if (
+                    not selected_sources
+                    and not source_turn_incomplete
+                ):
+                    source_turn_stop_reason = source_turn_budget.stop_reason()
+                    if source_turn_stop_reason is not None:
+                        source_turn_incomplete = True
+                if source_turn_incomplete:
+                    attempted_keys = [
+                        attempt["candidateKey"] for attempt in attempts
+                        if attempt.get("status") != "needs_source_review"
+                    ]
+                    attempted_video_ids = [
+                        attempt["videoId"] for attempt in attempts
+                        if attempt.get("status") != "needs_source_review" and attempt.get("videoId")
+                    ]
+                    _write_json_atomic(resume_path, {
+                        "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
+                        "sourceTurnExerciseIdentity": exercise_identity,
+                        "nextCandidateKey": resume_candidate_key,
+                        "attemptedCandidateKeys": list(dict.fromkeys([*prior_attempt_keys, *attempted_keys])),
+                        "attemptedVideoIds": list(dict.fromkeys([*prior_attempt_video_ids, *attempted_video_ids])),
+                        **source_turn_budget.resume_fields(),
+                    })
+                    with checkpoint_lock:
+                        source_state = item_states[item.exercise_id]["source"]
+                        source_state["turn"] = source_turn_budget.report(stop_reason=source_turn_stop_reason)
+                        source_state["status"] = "needs_source_review"
+                        source_state["failureReason"] = "source_review_incomplete"
+                elif not selected_sources and not item_states[item.exercise_id]["source"].get("deferred"):
+                    attempted_keys = [attempt["candidateKey"] for attempt in attempts]
+                    attempted_video_ids = [
+                        attempt["videoId"] for attempt in attempts if attempt.get("videoId")
+                    ]
+                    _write_json_atomic(resume_path, {
+                        "sourceSelectionPolicyVersion": SOURCE_SELECTION_POLICY_VERSION,
+                        "sourceTurnExerciseIdentity": exercise_identity,
+                        "nextCandidateKey": None,
+                        "attemptedCandidateKeys": list(dict.fromkeys([*prior_attempt_keys, *attempted_keys])),
+                        "attemptedVideoIds": list(dict.fromkeys([*prior_attempt_video_ids, *attempted_video_ids])),
+                        **source_turn_budget.resume_fields(),
+                    })
+                elif selected_sources:
                     resume_path.unlink(missing_ok=True)
                 for attempt in attempts:
                     attempt.setdefault("requestedPortfolioSize", requested_portfolio_size)
+                with checkpoint_lock:
+                    source_state = item_states[item.exercise_id]["source"]
+                    source_state.setdefault(
+                        "turn",
+                        source_turn_budget.report(
+                            stop_reason=(
+                                source_turn_stop_reason
+                                or ("source_turn_deferred" if source_state.get("deferred") else None)
+                            )
+                        ),
+                    )
+                    source_state["turn"]["budgetLedgerPath"] = str(budget_path)
+                _write_json_atomic(budget_path, source_turn_budget.resume_fields())
                 return item, selected_sources, attempts
 
             configured_parallelism = max(
@@ -1426,8 +1720,6 @@ def _run_staged_bake_wave(
                             "error": f"{type(exc).__name__}: {exc}",
                         }
                         state["status"] = "retry_required"
-                        with checkpoint_lock:
-                            unavailable_source_ids.add(submitted_item.exercise_id)
                         source_message = state["source"]["error"]
                         if isinstance(exc, ValueError) and str(exc) == (
                             "No fully identity-reviewed recommended YouTube candidate found."
@@ -1461,9 +1753,8 @@ def _run_staged_bake_wave(
                         state["source"]["actualPortfolioSize"] = len(selected_sources)
                         prepared[item.exercise_id] = (item, selected_sources)
                     else:
-                        state["source"]["status"] = "failed"
-                        with checkpoint_lock:
-                            unavailable_source_ids.add(item.exercise_id)
+                        if state["source"].get("status") != "needs_source_review":
+                            state["source"]["status"] = "failed"
                         eligible_attempts = [
                             attempt
                             for attempt in attempts
@@ -1471,8 +1762,10 @@ def _run_staged_bake_wave(
                                 (attempt.get("firstAttemptReadiness") or {}).get("eligible")
                             )
                         ]
-                        state["source"]["failureReason"] = (
-                            "exercise_contract_invalid"
+                        state["source"].setdefault("failureReason", (
+                            "needs_definition_review"
+                            if any(attempt.get("status") == "needs_definition_review" for attempt in attempts)
+                            else "exercise_contract_invalid"
                             if any(attempt.get("status") == "blocked_contract" for attempt in attempts)
                             else "source_review_incomplete"
                             if any(attempt.get("status") == "needs_source_review" for attempt in attempts)
@@ -1483,7 +1776,7 @@ def _run_staged_bake_wave(
                             else "no_reconstruction_ready_source"
                             if not eligible_attempts
                             else "no_source_passed_exact_window_validation"
-                        )
+                        ))
                         state["source"]["noNewWork"] = not attempts
                         state["status"] = "retry_required"
                     outcome = (
@@ -1498,10 +1791,16 @@ def _run_staged_bake_wave(
                     state = item_states[item.exercise_id]
                     state["source"]["status"] = "failed"
                     state["status"] = "retry_required"
+            source_phase_completed = True
         finally:
-            # RECONSTRUCTION owns the GPU in the next stage, so this must release the model
-            # even when the configured llama.cpp server is normally kept alive.
-            source_session.close(force_stop_server=True)
+            # Only a nonempty reconstruction stage conflicts with this model's GPU
+            # residency. Keep one owner through empty reconstruction/final phases;
+            # exceptions and real reconstruction still release it here.
+            source_session_retained_for_empty_handoff = (
+                source_phase_completed and not prepared
+            )
+            if not source_session_retained_for_empty_handoff:
+                source_session.close(force_stop_server=not separate_gpu_residency)
             metrics["sourceVisionSession"] = _session_timing_manifest(source_session)
             metrics["phaseTimings"]["sourceValidationSeconds"] = round(
                 time.perf_counter() - source_phase_started,
@@ -1521,7 +1820,11 @@ def _run_staged_bake_wave(
         if getattr(items[0].request, "shared_llama_server", False)
         else None
     )
-    generation_session = LazyLlamaCppVisionSession(items[0].request)
+    generation_session = (
+        source_session
+        if source_session_retained_for_empty_handoff
+        else LazyLlamaCppVisionSession(items[0].request)
+    )
 
     def cached_source_only(*_args: Any, **_kwargs: Any) -> str:
         raise RuntimeError("A staged RECONSTRUCTION pass attempted an uncached source VLM request.")
@@ -1537,7 +1840,8 @@ def _run_staged_bake_wave(
         nonlocal generation_gpu_operation_count
         with accelerator_phase(wave_id, "reconstruction") if accelerator_phase else nullcontext():
             if shared_llama_session_dir is not None:
-                write_generation_holder_marker(shared_llama_session_dir, holder=wave_id)
+                if not separate_gpu_residency:
+                    write_generation_holder_marker(shared_llama_session_dir, holder=wave_id)
             generation_gpu_operation_count += 1
             return generation_gpu_operation(operation)
 
@@ -1557,7 +1861,7 @@ def _run_staged_bake_wave(
                 with accelerator_phase(wave_id, _stage, **deadline_kwargs):
                     with warm_worker_handoff_lock:
                         _stop_warm_reconstruction_worker_before_vlm(items)
-                        if shared_llama_session_dir is not None:
+                        if shared_llama_session_dir is not None and not separate_gpu_residency:
                             clear_generation_holder_marker(shared_llama_session_dir)
                     return _original(*args, **kwargs)
 
@@ -2036,10 +2340,14 @@ def _run_staged_bake_wave(
                 checkpoint("final_validation", item.exercise_name)
         finally:
             final_executor.shutdown(wait=True)
-            # Keep the VLM server hot only when the next useful stage is another
-            # source wave. A retry needs RECONSTRUCTION again, so release VLM first.
+            # A source-only retry stays in VLM work; it is not a reason to evict
+            # a keepalive server. Force-stop only after reconstruction actually
+            # ran and a retry may need that GPU again.
             retry_pending = any(state["status"] != "completed" for state in item_states.values())
-            final_session.close(force_stop_server=retry_pending if accelerator_phase is None else False)
+            reconstruction_conflicted = generation_gpu_operation_count > 0
+            final_session.close(force_stop_server=(
+                reconstruction_conflicted and retry_pending and accelerator_phase is None
+            ))
             metrics["finalVisionSession"] = _session_timing_manifest(final_session)
             metrics["phaseTimings"]["finalValidationSeconds"] = round(
                 time.perf_counter() - final_phase_started,
@@ -2091,7 +2399,7 @@ def _run_staged_bake_wave(
         reconstruction_release = _stop_warm_reconstruction_worker_before_vlm(
             [item for item, _sources in prepared.values()]
         )
-        if shared_llama_session_dir is not None:
+        if shared_llama_session_dir is not None and not separate_gpu_residency:
             clear_generation_holder_marker(shared_llama_session_dir)
     for state in item_states.values():
         state["reconstructionWorkerRelease"] = reconstruction_release

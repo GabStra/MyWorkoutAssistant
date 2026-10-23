@@ -2,6 +2,7 @@ from copy import deepcopy
 import pytest
 
 from exercise_motion_pkg import bake_and_rank as bake
+from exercise_motion_pkg.contact_constraints import is_observed_ground_contact, motion_space_support_evidence
 from exercise_motion_pkg.body_support_observation import (
     _confirmed_observed_ground_sole_sides,
     materialize_body_support,
@@ -23,6 +24,80 @@ def test_stationary_unobserved_sole_is_not_promoted_to_ground_contact():
                     'right': {'states': ['unknown'] * 4 + ['full_sole'] * 4 + ['unknown'] * 4}}}}
     names = [f'{side}_{joint}' for side in ('left', 'right') for joint in ('knee', 'ankle', 'foot')]
     assert _confirmed_observed_ground_sole_sides(evidence, pose, names) == {'right'}
+
+
+def test_pre_reconstruction_source_gate_matches_final_contact_requirements():
+    from exercise_motion_pkg.support_geometry import (
+        pre_reconstruction_source_support_readiness,
+        support_contact_readiness,
+    )
+
+    evidence = {
+        'bodySupportObservation': {'status': 'observed', 'observation': {
+            'leftFoot': 'moving', 'rightFoot': 'stationary_full_sole',
+        }},
+        'footPatchEvidence': {'available': True, 'policyVersion': 16, 'feet': {
+            'left': {'states': ['unknown'] * 8},
+            'right': {'states': ['unknown'] * 8},
+        }},
+        'contacts': [],
+    }
+    early = pre_reconstruction_source_support_readiness(evidence)
+    final = support_contact_readiness({'sourceFootSupportEvidence': evidence})
+    assert early == final
+    assert early['rejectionReasons'] == ['source_support_contact_evidence_unavailable']
+    assert early['unresolvedSides'] == ['right']
+
+    # Traveling or unresolved contacts are not converted into a blanket stance
+    # requirement by the pre-reconstruction check.
+    evidence['bodySupportObservation']['observation']['rightFoot'] = 'unknown'
+    assert pre_reconstruction_source_support_readiness(evidence)['passed']
+
+    # A retained full-clip bodySupport claim can look usable before temporal
+    # materialization, then be removed because the active patch track is unknown.
+    stale_anchor = deepcopy(evidence)
+    stale_anchor['bodySupportObservation']['observation']['rightFoot'] = 'stationary_full_sole'
+    stale_anchor['bodySupport'] = {
+        'required': True, 'status': 'confirmed',
+        'source': 'exact_source_contacts_and_stationary_pose_tracks',
+        'stationaryJoints': ['right_ankle', 'right_foot'],
+        'coplanarGroups': [], 'soleContacts': [], 'nonPenetrationChains': [],
+    }
+    raw_only = support_contact_readiness(
+        {'sourceFootSupportEvidence': stale_anchor}, evidence=stale_anchor)
+    materialized = support_contact_readiness({'sourceFootSupportEvidence': stale_anchor})
+    assert raw_only['passed']
+    assert not materialized['passed']
+    assert pre_reconstruction_source_support_readiness(stale_anchor) == materialized
+
+
+def test_explicit_observed_raised_foot_surface_overrides_legacy_shared_ground_plane():
+    payload = {
+        'sourcePoseCameraReference': {'camera': {'bilateralAssignment': 'swapped'}},
+        'sourceFootSupportEvidence': {
+            'sharedSupportPlaneY': 0.8,
+            'bodySupportObservation': {
+                'status': 'observed',
+                'observation': {
+                    'leftFootSurface': 'ground',
+                    'rightFootSurface': 'raised_surface',
+                },
+            },
+        },
+    }
+    mapped = motion_space_support_evidence(payload)
+
+    assert is_observed_ground_contact({
+        'jointName': 'left_foot', 'supportKind': 'observed_foot_patch',
+    }, mapped) is False
+    assert is_observed_ground_contact({
+        'jointName': 'right_foot', 'supportKind': 'observed_foot_patch',
+    }, mapped) is True
+    # Per-contact surface classification remains the most local evidence.
+    assert is_observed_ground_contact({
+        'jointName': 'left_foot', 'supportKind': 'observed_foot_patch',
+        'surfaceKind': 'ground',
+    }, mapped) is True
 
 
 def test_hinged_torso_does_not_reuse_a_cached_rigid_torso_support_plane():

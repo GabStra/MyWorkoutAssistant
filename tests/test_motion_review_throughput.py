@@ -91,58 +91,45 @@ def test_question_retry_reuses_conclusive_negative_but_not_missing_answer(tmp_pa
     assert calls[-1] == "identity"
 
 
-def test_source_gate_parallelizes_independent_questions_and_retries_only_missing_evidence(tmp_path, monkeypatch):
-    from collections import Counter
-    from test_two_scale_source_validation import make_review_item, topology_response
-    sheet = tmp_path / "sheet.jpg"
-    sheet.write_bytes(b"image")
-    monkeypatch.setattr(bake, "final_output_motion_contact_sheets", lambda *args, **kwargs: [sheet])
-    barrier = threading.Barrier(6, timeout=5)
+def test_source_gate_retries_unresolved_structured_evidence_then_reuses_exact_approval(tmp_path, monkeypatch):
+    from test_source_evidence import contract, make_sheet, supported
+    from exercise_motion_pkg.source_evidence import evidence_inventory, source_requirements
+    uniform, motion = make_sheet(tmp_path, "uniform"), make_sheet(tmp_path, "motion")
+    video = tmp_path / "source.mp4"
+    video.write_bytes(b"source video")
+    target = contract()
+    item = SimpleNamespace(exercise_name="Clean Grip High Pull", candidate_workspace=tmp_path, candidate={})
+    monkeypatch.setattr(bake, "final_output_source_video_window", lambda item: (video, bake.DetectionWindow(0, 0, 3)))
+    monkeypatch.setattr(bake, "final_output_motion_contact_sheets", lambda *a, **k: [motion])
+    monkeypatch.setattr(bake, "resolve_two_scale_exercise_motion_contract", lambda *a, **k: (target, None, None))
     calls = []
-    first_attempt = [True]
-    lock = threading.Lock()
     class Session:
         settings = SimpleNamespace(llama_cpp_model="model")
-        _max_active_calls = 6
-        _candidate_deadlines = threading.local()
         def caption_images(self, **kwargs):
-            prompt = kwargs["prompt"]
-            if "Audit only the consistency" in prompt:
-                with lock:
-                    assert len(calls) >= 6
-                    calls.append("consistency")
-                return json.dumps({"corroboratedConflict": False, "targetIdentitySupported": "true",
-                    "requiredEquipmentSupported": "true", "completeExecutionSupported": "true",
-                    "corroboratedContradictions": []})
-            if "verify only exercise identity" in prompt:
-                name, answer = "identity", {"verdict": "match", "visibleEquipment": ["dumbbell"]}
-            elif "one uniformly sampled" in prompt:
-                name, answer = "uniform", {"unrelatedActionVisible": False, "unrelatedTileNumbers": []}
-            elif "one motion-focused chronological" in prompt:
-                name, answer = "motion", {"targetExerciseActionVisible": True, "namedEquipmentEngagedStatus": "engaged"}
-            elif "Verify an exact exercise-specific movement topology" in prompt:
-                name, answer = "topology", topology_response()
-            else:
-                name = "observation" if "These sheets emphasize" in prompt else "completeness"
-                answer = {"visibleEquipment": ["dumbbell"], "orderedPhases": ["raise", "lower"],
-                    "startStateVisible": True, "actionPhaseVisible": True, "turningPointVisible": True,
-                    "returnOrFinishVisible": True, "complete": True}
-                if name == "observation" and first_attempt[0]:
-                    answer.pop("complete")
-            with lock:
-                calls.append(name)
-            if first_attempt[0]:
-                barrier.wait()
-            return json.dumps(answer)
+            calls.append(kwargs)
+            requirements = source_requirements(target, bake.two_scale_equipment_role_requirements(item.exercise_name, target))
+            inventory = evidence_inventory({"uniform": [uniform], "motion": [motion]})
+            result = supported(requirements, inventory)
+            if len(calls) == 1:
+                result['observations'][0].update(verdict='unresolved', evidenceFrameIds=[])
+            return json.dumps(result)
     session = Session()
     def run():
-        return bake.validate_two_scale_source_with_caption_images(make_review_item(tmp_path),
-            uniform_sheet_paths=[sheet], output_dir=tmp_path / "review", caption_images=session.caption_images)
+        return bake.validate_two_scale_source_with_caption_images(item, uniform_sheet_paths=[uniform],
+            output_dir=tmp_path / "review", caption_images=session.caption_images, exercise_motion_contract=target)
     assert run()["reviewStatus"] == "incomplete"
-    first_attempt[0] = False
     assert run()["passed"] is True
-    assert Counter(calls) == {"identity": 1, "uniform": 1, "motion": 1, "topology": 1,
-                             "completeness": 1, "observation": 2, "consistency": 2}
+    assert run()["sourceReviewCache"]["cacheHit"] is True
+    assert len(calls) == 2
+    manifest = uniform.parent / "contact_sheet_evidence.json"
+    metadata = json.loads(manifest.read_text())
+    metadata['sheets'][uniform.name]['frames'][-1]['timestampSeconds'] = 2.1
+    manifest.write_text(json.dumps(metadata))
+    assert run()["passed"] is True
+    assert len(calls) == 3
+    uniform.write_bytes(b"different images without matching evidence")
+    assert run()["reviewStatus"] == "incomplete"
+    assert len(calls) == 3
 
 
 def test_repaired_source_verdict_is_reused_with_provenance(tmp_path, monkeypatch):

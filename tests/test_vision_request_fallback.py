@@ -6,6 +6,25 @@ from exercise_motion_pkg.segment_detection import LlamaCppVisionClient
 from exercise_motion_pkg.vlm_errors import CriticalVlmInteractionError
 
 
+def test_vision_sends_source_evidence_schema(monkeypatch):
+    from exercise_motion_pkg.bake_and_rank import call_caption_images_json
+    client = LlamaCppVisionClient("http://127.0.0.1:8090", "test", max_recovery_retries=0)
+    schema = {"type": "object", "additionalProperties": False, "properties": {}}
+    requests = []
+    def post(**kwargs):
+        requests.append(kwargs['json'])
+        return httpx.Response(200, json={"choices": [{"message": {"content": '{}'}}]})
+    monkeypatch.setattr(client, '_post_chat_completion', post)
+    try:
+        assert call_caption_images_json(client.caption_images, frame_paths=[], prompt='Evidence only.',
+            response_schema=schema, disable_reasoning=True) == '{}'
+        assert requests[0]['response_format'] == {'type': 'json_schema', 'json_schema': {
+            'name': 'source_evidence', 'strict': True, 'schema': schema}}
+        assert requests[0]['chat_template_kwargs'] == {'enable_thinking': False}
+    finally:
+        client.close()
+
+
 @pytest.mark.parametrize("status,body,removed", [
     (400, "unsupported response_format", "response_format"),
     (422, "unknown reasoning_format parameter", "reasoning_format"),

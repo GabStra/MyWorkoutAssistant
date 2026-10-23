@@ -175,6 +175,10 @@ def pin_stationary_contact_chains(
 
         before_points = [_contact_point(frame) for frame in interval_frames]
         before_ratio = _chain_range_ratio(before_points, body_span)
+        interval_slide_threshold = slide_threshold_ratio
+        configured_threshold = interval.get("slideThresholdRatio")
+        if isinstance(configured_threshold, (int, float)) and math.isfinite(float(configured_threshold)):
+            interval_slide_threshold = max(0.0, float(configured_threshold))
         floor_error_ratio = None
         if (
             support_plane_y is not None
@@ -187,13 +191,14 @@ def pin_stationary_contact_chains(
                 # anchor it there rather than at its floating observed height.
                 anchor = [anchor[0], float(support_plane_y), anchor[2]]
         if (
-            before_ratio <= slide_threshold_ratio
+            before_ratio <= interval_slide_threshold
             and (floor_error_ratio is None or floor_error_ratio <= floor_threshold_ratio)
         ):
             report.setdefault(joint_name, []).append({
                 "applied": False,
                 "reason": "already_stationary",
                 "rangeRatio": round(before_ratio, 4),
+                "slideThresholdRatio": round(interval_slide_threshold, 6),
                 "floorErrorBodyRatio": (
                     round(floor_error_ratio, 4) if floor_error_ratio is not None else None
                 ),
@@ -268,6 +273,7 @@ def pin_stationary_contact_chains(
             "endFrame": end,
             "rangeRatioBefore": round(before_ratio, 4),
             "rangeRatioAfter": round(_chain_range_ratio(after_points, body_span), 6),
+            "slideThresholdRatio": round(interval_slide_threshold, 6),
             "floorErrorBodyRatioBefore": (
                 round(floor_error_ratio, 4) if floor_error_ratio is not None else None
             ),

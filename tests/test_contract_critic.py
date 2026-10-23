@@ -119,12 +119,16 @@ def test_definition_contract_does_not_promote_guessed_video_details() -> None:
     assert contract["handRelationship"] == "single"
     assert contract["implementSupportMode"] == "none"
     assert not youtube.exercise_motion_contract_has_specific_topology(contract)
+    assert contract["requiredPhases"] == [
+        "Pause with one knee on the bench", "Pull the dumbbell", "Return to start: Lower it",
+    ]
+    assert contract["actionDefinitionAuthority"] == "unresolved"
     assert all(key not in contract for key in (
-        "validStartState", "validEndState", "requiredPhases", "startPoseConstraints",
-        "endPoseConstraints", "movementTopology",
+        "validStartState", "validEndState", "startPoseConstraints", "endPoseConstraints", "movementTopology",
     ))
     assert "seated" not in json.dumps(contract).lower()
-    assert "pause" not in json.dumps(contract).lower()
+    assert contract["actionDefinitionStatus"] == "defined"
+    assert contract["actionDefinitionAuthority"] == "unresolved"
     prompt = youtube.exercise_motion_contract_prompt_body(
         youtube.exercise_motion_contract_for_prompt(contract)
     )
@@ -217,7 +221,7 @@ def test_previous_definition_cache_is_migrated_without_placeholder_states(tmp_pa
         "contract": previous,
     }), encoding="utf-8")
     from exercise_motion_pkg.revalidation_contracts import RevalidationContractCache
-    assert RevalidationContractCache(tmp_path).resolve(exercise.name, {})["contractPolicyVersion"] == 35
+    assert RevalidationContractCache(tmp_path).resolve(exercise.name, {})["contractPolicyVersion"] == youtube.EXERCISE_MOTION_CONTRACT_POLICY_VERSION
 
     migrated = youtube.load_cached_exercise_motion_contract(exercise, settings)
 
@@ -225,7 +229,7 @@ def test_previous_definition_cache_is_migrated_without_placeholder_states(tmp_pa
     assert migrated["contractPolicyVersion"] == youtube.EXERCISE_MOTION_CONTRACT_POLICY_VERSION
     assert migrated["observableMotionSpec"]["primaryAxis"] == contract["observableMotionSpec"]["primaryAxis"]
     assert "validStartState" not in migrated
-    assert "requiredPhases" not in migrated
+    assert migrated["requiredPhases"] == ["Return to start: Perform one execution"]
     assert "startPoseConstraints" not in migrated
     assert youtube.exercise_motion_contract_cache_path(exercise, settings).is_file()
 
@@ -244,22 +248,17 @@ def test_definition_source_review_does_not_queue_topology_question(monkeypatch, 
     monkeypatch.setattr(bake_and_rank, "source_equipment_detail_frames",
                         lambda *_args, **_kwargs: [])
 
-    class QuestionsInspected(Exception):
-        pass
+    def unexpected_questions(*_args, **_kwargs):
+        raise AssertionError("Unresolved target semantics stop before source review questions")
 
-    def inspect_questions(jobs, _caption_images):
-        assert "identity" in jobs
-        assert "completeness" in jobs
-        assert "topology" not in jobs
-        raise QuestionsInspected
-
-    monkeypatch.setattr(review_questions, "run_questions", inspect_questions)
+    monkeypatch.setattr(review_questions, "run_questions", unexpected_questions)
     item = SimpleNamespace(exercise_name=exercise.name, candidate={}, candidate_workspace=tmp_path)
-    with pytest.raises(QuestionsInspected):
-        bake_and_rank._validate_two_scale_source_uncached(
-            item, uniform_sheet_paths=[Path("uniform.jpg")], output_dir=tmp_path,
-            caption_images=lambda **_kwargs: None, exercise_motion_contract=contract,
-        )
+    result = bake_and_rank._validate_two_scale_source_uncached(
+        item, uniform_sheet_paths=[Path("uniform.jpg")], output_dir=tmp_path,
+        caption_images=lambda **_kwargs: None, exercise_motion_contract=contract,
+    )
+    assert result["reviewStatus"] == "incomplete"
+    assert "two_scale_source_action_definition_unresolved" in result["missingEvidenceReasons"]
 
 
 def test_reference_region_does_not_become_required_lower_body_motion() -> None:
@@ -301,7 +300,65 @@ def test_definition_contract_keeps_only_explicit_boundaries(name: str, mode: str
     assert contract["completionMode"] == mode
     assert "validStartState" not in contract
     assert "startPoseConstraints" not in contract
-    assert "requiredPhases" not in contract
+    assert contract["requiredPhases"] == ["lower into the squat", "stand back upright"]
+    if mode in {"return_to_start", "distinct_end_state", "alternating_pair"}:
+        assert youtube.exercise_motion_action_definition_review_reason(contract) == "target_action_definition_unresolved"
+
+
+def test_definition_only_contract_roundtrip_preserves_nested_observable_motion_identity() -> None:
+    motion_context = {"primaryEquipment": {"type": "BARBELL"}}
+    exercise = ExerciseEntry(
+        exercise_id="squat",
+        name="Barbell Back Squat",
+        slug="barbell-back-squat",
+        motion_context=motion_context,
+    )
+    observable_spec = {
+        "schemaVersion": 1,
+        "primaryMovingRegions": ["hips", "knees"],
+        "referenceRegions": ["feet", "torso"],
+        "primaryAxis": "vertical",
+        "motionPattern": "joint_flex_extend",
+        "requiresReturnToStart": True,
+        "oneWayPartialIsInvalid": True,
+        "mustShowFullCycle": True,
+        "mustBeVisibleRegions": ["hips", "knees", "feet", "torso"],
+    }
+    payload = {
+        "contractScope": "definition_only",
+        "contractPolicyVersion": youtube.EXERCISE_MOTION_CONTRACT_POLICY_VERSION,
+        "exerciseName": exercise.name,
+        "motionContext": motion_context,
+        "movementType": "repetition",
+        "groundContactMode": "continuous",
+        "implementSupportMode": "body_supported",
+        "handRelationship": "rigid_pair",
+        "completionMode": "return_to_start",
+        "requiresReturnToStart": True,
+        "definingAction": "Lower by bending the hips and knees, then rise to standing.",
+        "requiredPhases": ["lower into the squat", "stand back upright"],
+        "actionDefinitionStatus": "defined",
+        "actionDefinitionAuthority": "structured_definition",
+        "primaryMovingRegions": ["hips", "knees"],
+        "referenceRegions": ["feet", "torso"],
+        "mustBeVisibleRegions": ["hips", "knees", "feet", "torso"],
+        "observableMotionSpec": observable_spec,
+    }
+    payload["advisoryText"] = youtube.synthesize_exercise_motion_advisory_text(payload)
+    raw_prompt_sha = youtube.exercise_motion_contract_prompt_sha256(payload)
+
+    normalized = youtube.normalize_exercise_motion_contract(
+        payload, exercise=exercise, source="reused_candidate_contract",
+    )
+    normalized_again = youtube.normalize_exercise_motion_contract(
+        normalized, exercise=exercise, source="reused_candidate_contract",
+    )
+
+    assert normalized["observableMotionSpec"] == observable_spec
+    assert normalized_again["observableMotionSpec"] == observable_spec
+    assert youtube.exercise_motion_contract_prompt_sha256(normalized) == raw_prompt_sha
+    assert youtube.exercise_motion_contract_prompt_sha256(normalized_again) == raw_prompt_sha
+    assert youtube.normalize_observable_motion_spec(["vertical"]) is None
 
 
 def test_parse_drops_whitelist_stale_and_non_enum_ops() -> None:
@@ -599,7 +656,7 @@ def test_unverified_critic_cannot_rewrite_a_usable_contract_or_trigger_repair():
     assert result['completionMode'] == original['completionMode']
     assert result['contractScope'] == original['contractScope']
     assert 'validEndState' not in result
-    assert 'requiredPhases' not in result
+    assert result['requiredPhases'] == original['requiredPhases']
     assert result['criticIssues'] == advice[:1]
     assert 'criticAdjustments' not in result
 

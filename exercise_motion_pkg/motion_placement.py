@@ -50,6 +50,7 @@ def register_contact_placement(points, pinned, root_index, fps, root_reference, 
     for episode, (joint, start, stop) in enumerate(episodes):
         for frame in range(start, stop):
             append_row([frame, count+episode], [100., -100.], -100.*points[frame, joint])
+    temporal_row_start = len(rhs)
     for order, stencil in ((2, np.array([1., -2., 1.])), (3, np.array([-1., 3., -3., 1.]))):
         weight = 20.*(fps/30.)**order
         target = np.diff(reference_correction, n=order, axis=0)*weight
@@ -57,50 +58,74 @@ def register_contact_placement(points, pinned, root_index, fps, root_reference, 
             append_row(list(range(frame, frame+order+1)), (stencil*weight).tolist(), value)
     matrix = coo_matrix((coefficients, (rows, columns)), shape=(len(rhs), count+len(episodes))).tocsr()
     rhs = np.asarray(rhs)
-    # Solve r + A x = b, A.T r = 0 with one sparse factorization for all axes.
-    # Long free-flight intervals make iterative least squares converge slowly.
-    # The augmented system preserves the same objective without explicitly
-    # forming A.T A (which squares the matrix's condition number).
-    system = bmat([[eye(matrix.shape[0]), matrix], [matrix.T, None]], format='csc')
-    system_rhs = np.vstack([rhs, np.zeros((matrix.shape[1], 3))])
-    try:
-        solved = splu(system).solve(system_rhs)
-    except RuntimeError:
-        return points.copy(), {'applied': False, 'reason': 'placement_registration_did_not_converge',
-                               'solver': 'sparse_augmented_lu', 'solverFailure': 'factorization_failed'}
-    residual = system @ solved-system_rhs
-    scale = float(abs(system).sum(axis=1).max())*np.max(abs(solved))+np.max(abs(system_rhs))
-    backward_error = float(np.max(abs(residual))/max(float(scale), np.finfo(float).tiny))
-    if not np.isfinite(solved).all() or not np.isfinite(backward_error) or backward_error > 1e-10:
-        return points.copy(), {'applied': False, 'reason': 'placement_registration_did_not_converge',
-                               'solver': 'sparse_augmented_lu', 'solverFailure': 'residual_check_failed'}
-    translation = solved[matrix.shape[0]:matrix.shape[0]+count]
-    if ground_episodes:
-        # Eliminate known anchor heights from the vertical solve. A stationary
-        # point on an observed floor cannot acquire an arbitrary height after
-        # each release. Horizontal anchors and free-flight frames remain free.
-        known = np.asarray([count+i for i in ground_episodes])
-        free = np.ones(matrix.shape[1], dtype=bool)
-        free[known] = False
-        reduced = matrix[:, free]
-        vertical_rhs = rhs[:, 1]-np.asarray(matrix[:, known].sum(axis=1)).ravel()*float(floor)
-        vertical_system = bmat([[eye(matrix.shape[0]), reduced], [reduced.T, None]], format='csc')
-        vertical_target = np.r_[vertical_rhs, np.zeros(reduced.shape[1])]
+    base_matrix, base_rhs = matrix, rhs
+    source_jerk = (float(np.sqrt(np.mean(np.diff(root_reference, n=3, axis=0)**2)))
+                   if count > 3 else 0.)
+    jerk_limit = source_jerk * 1.05 + 1e-7
+    # Contact accuracy belongs to the kinematic fit; registration must not
+    # buy better anchor alignment by introducing root jitter first.
+    for attempt in range(8):
+        row_weights = np.ones(len(base_rhs))
+        row_weights[temporal_row_start:] = 4. ** attempt
+        matrix = base_matrix.multiply(row_weights[:, None]).tocsr()
+        rhs = base_rhs * row_weights[:, None]
+        # Solve r + A x = b, A.T r = 0 with one sparse factorization for all axes.
+        # Long free-flight intervals make iterative least squares converge slowly.
+        # The augmented system preserves the same objective without explicitly
+        # forming A.T A (which squares the matrix's condition number).
+        system = bmat([[eye(matrix.shape[0]), matrix], [matrix.T, None]], format='csc')
+        system_rhs = np.vstack([rhs, np.zeros((matrix.shape[1], 3))])
         try:
-            vertical_solution = splu(vertical_system).solve(vertical_target)
+            solved = splu(system).solve(system_rhs)
         except RuntimeError:
             return points.copy(), {'applied': False, 'reason': 'placement_registration_did_not_converge',
-                                   'solverFailure': 'ground_factorization_failed'}
-        vertical_residual = vertical_system@vertical_solution-vertical_target
-        vertical_scale = float(abs(vertical_system).sum(axis=1).max())*np.max(abs(vertical_solution))+np.max(abs(vertical_target))
-        vertical_error = float(np.max(abs(vertical_residual))/max(float(vertical_scale), np.finfo(float).tiny))
-        if not np.isfinite(vertical_solution).all() or not np.isfinite(vertical_error) or vertical_error > 1e-10:
+                                   'solver': 'sparse_augmented_lu', 'solverFailure': 'factorization_failed'}
+        residual = system @ solved-system_rhs
+        scale = float(abs(system).sum(axis=1).max())*np.max(abs(solved))+np.max(abs(system_rhs))
+        backward_error = float(np.max(abs(residual))/max(float(scale), np.finfo(float).tiny))
+        if not np.isfinite(solved).all() or not np.isfinite(backward_error) or backward_error > 1e-10:
             return points.copy(), {'applied': False, 'reason': 'placement_registration_did_not_converge',
-                                   'solverFailure': 'ground_residual_check_failed'}
-        translation[:, 1] = vertical_solution[matrix.shape[0]:matrix.shape[0]+count]
-        backward_error = max(backward_error, vertical_error)
+                                   'solver': 'sparse_augmented_lu', 'solverFailure': 'residual_check_failed'}
+        translation = solved[matrix.shape[0]:matrix.shape[0]+count]
+        if ground_episodes:
+            # Eliminate known anchor heights from the vertical solve. A stationary
+            # point on an observed floor cannot acquire an arbitrary height after
+            # each release. Horizontal anchors and free-flight frames remain free.
+            known = np.asarray([count+i for i in ground_episodes])
+            free = np.ones(matrix.shape[1], dtype=bool)
+            free[known] = False
+            reduced = matrix[:, free]
+            vertical_rhs = rhs[:, 1]-np.asarray(matrix[:, known].sum(axis=1)).ravel()*float(floor)
+            vertical_system = bmat([[eye(matrix.shape[0]), reduced], [reduced.T, None]], format='csc')
+            vertical_target = np.r_[vertical_rhs, np.zeros(reduced.shape[1])]
+            try:
+                vertical_solution = splu(vertical_system).solve(vertical_target)
+            except RuntimeError:
+                return points.copy(), {'applied': False, 'reason': 'placement_registration_did_not_converge',
+                                       'solverFailure': 'ground_factorization_failed'}
+            vertical_residual = vertical_system@vertical_solution-vertical_target
+            vertical_scale = float(abs(vertical_system).sum(axis=1).max())*np.max(abs(vertical_solution))+np.max(abs(vertical_target))
+            vertical_error = float(np.max(abs(vertical_residual))/max(float(vertical_scale), np.finfo(float).tiny))
+            if not np.isfinite(vertical_solution).all() or not np.isfinite(vertical_error) or vertical_error > 1e-10:
+                return points.copy(), {'applied': False, 'reason': 'placement_registration_did_not_converge',
+                                       'solverFailure': 'ground_residual_check_failed'}
+            translation[:, 1] = vertical_solution[matrix.shape[0]:matrix.shape[0]+count]
+            backward_error = max(backward_error, vertical_error)
+        root_jerk = (float(np.sqrt(np.mean(np.diff(
+            points[:, root_index] + translation, n=3, axis=0)**2))) if count > 3 else 0.)
+        if root_jerk <= jerk_limit:
+            break
+    if root_jerk > jerk_limit:
+        return points.copy(), {
+            'applied': False, 'reason': 'placement_registration_temporal_conflict',
+            'sourceRootJerk': source_jerk, 'registeredRootJerk': root_jerk,
+            'rootJerkLimit': jerk_limit, 'temporalSolvePasses': attempt + 1,
+        }
     return points+translation[:, None, :], {
-        'applied': True, 'policy': 'joint_stance_anchor_registration_v3',
+        'applied': True, 'policy': 'joint_stance_anchor_registration_v4',
+        'temporalSolvePasses': attempt + 1,
+        'sourceRootJerk': source_jerk, 'registeredRootJerk': root_jerk,
+        'rootJerkLimit': jerk_limit, 'rootTemporalPreserved': root_jerk <= jerk_limit,
         'observedGroundEpisodes': len(ground_episodes),
         'observedEpisodes': len(episodes), 'solver': 'sparse_augmented_lu',
         'solverBackwardError': backward_error,
@@ -108,17 +133,20 @@ def register_contact_placement(points, pinned, root_index, fps, root_reference, 
     }
 
 
-def contact_consistent_target(target, pinned, anchors):
+def contact_consistent_target(target, pinned, anchors, *, root_index=0, root_reference=None):
     """Align each supported pose by translation, using only explicit contacts.
 
-    The common displacement preserves articulation. During releases, interpolate
+    Reuse a registered root when supplied; contact membership cannot reposition it.
+    Otherwise the common displacement preserves articulation. During releases, interpolate
     that displacement rather than constraining the airborne body or adding a
     contact. Contacted points use their independent stance anchors as targets.
     """
     target = np.asarray(target, dtype=float)
     supported = pinned.any(axis=1)
     shift = np.zeros((len(target), 3))
-    if supported.any():
+    if root_reference is not None:
+        shift = np.asarray(root_reference, dtype=float) - target[:, root_index]
+    elif supported.any():
         delta = np.sum((anchors-target)*pinned[:, :, None], axis=1)
         shift[supported] = delta[supported]/pinned.sum(axis=1)[supported, None]
         indices = np.arange(len(target))
@@ -128,7 +156,8 @@ def contact_consistent_target(target, pinned, anchors):
     disagreement = np.linalg.norm((grounded-anchors)[pinned], axis=-1)
     grounded[pinned] = anchors[pinned]
     return grounded, shift, {
-        'policy': 'explicit_contact_translation_target_v1',
+        'policy': ('registered_root_contact_target_v2' if root_reference is not None
+                   else 'explicit_contact_translation_target_v1'),
         'supportedFrames': int(supported.sum()),
         'maximumPlacementCorrectionMeters': float(np.max(np.linalg.norm(shift, axis=-1), initial=0.)),
         'maximumContactDisagreementAfterTranslationMeters': float(np.max(disagreement, initial=0.)),

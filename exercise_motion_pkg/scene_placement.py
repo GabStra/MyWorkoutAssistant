@@ -74,6 +74,11 @@ def normalize_scene_placement(payload):
         for name, value in frame.get('boneSides', {}).items():
             frame['boneSides'][name] = rotation.apply(value).tolist()
     rig = result['fixedRig']
+    for side in ('left', 'right'):
+        track = (rig.get('contactFootTracks') or {}).get(side)
+        if track is not None:
+            track['toes'] = (rotation.apply(track['toes']) - origin).tolist()
+            track['directions'] = rotation.apply(track['directions']).tolist()
     coordinates = np.asarray(rig['coordinates'])
     coordinates[:, :3] = rotation.apply(coordinates[:, :3]) - origin
     root = rig['jointNames'][rig['parents'].index(-1)]

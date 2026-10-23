@@ -24,7 +24,7 @@ def test_baked_contacts_are_rebased_to_selected_frames_without_changing_source()
         "jointName": "left_ankle", "startRatio": 0., "endRatio": .7,
         "startFrame": 0, "endFrame": 35,
     }]
-    assert result["footPatchEvidence"]["feet"]["left"]["states"] == list(range(25, 76))
+    assert result["footPatchEvidence"]["feet"]["left"]["states"] == list(range(101))
     assert evidence == original
     payload["sourceFootSupportEvidence"] = result
     assert b.baked_source_support_evidence(payload) is result  # Do not slice twice.

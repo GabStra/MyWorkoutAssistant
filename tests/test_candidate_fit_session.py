@@ -3,10 +3,19 @@ from pathlib import Path
 from time import monotonic
 
 import numpy as np
+import pytest
 
 from exercise_motion_pkg import controlled_motion as motion
 from exercise_motion_pkg import anatomical_repair as anatomy
 from exercise_motion_pkg import fit_runtime
+
+
+@pytest.fixture(autouse=True)
+def admitted_cycle_geometry(monkeypatch):
+    # Scheduling fixtures have no skeleton; geometry admission has its own regressions.
+    from exercise_motion_pkg import loop_cycles
+    monkeypatch.setattr(loop_cycles, 'cycle_boundary_motion_metrics',
+                        lambda *_args, **_kwargs: {'passed': True})
 
 
 def test_source_confirmed_cycle_precedes_full_interval_with_shared_budget(monkeypatch):
@@ -59,6 +68,10 @@ def test_source_incomplete_cycle_preflight_skips_optimizer(monkeypatch):
                 'reason': 'source_pose_no_complete_repetition_cycle',
             },
             'outputPhase': {'required': True, 'passed': True},
+            'proposalDiagnostics': {'boundaryMotion': {
+                'passed': False, 'failureOwner': 'source',
+                'rejectionReasons': ['source_boundary_tangents_incompatible'],
+            }},
         }],
     }
 
@@ -73,6 +86,7 @@ def test_source_incomplete_cycle_preflight_skips_optimizer(monkeypatch):
     assert report['retainedIntervalFit'] is False
     assert report['cycleSelectionAttempts'] == []
     assert report['sourceCyclePreflight'] == payload['sourceCyclePreflight']
+    assert report['boundaryMotion']['failureOwner'] == 'source'
 
 
 def test_repeated_unreachable_support_conflict_reserves_retained_interval(monkeypatch):

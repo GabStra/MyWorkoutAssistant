@@ -1,9 +1,15 @@
+$script:ReconstructionJsonSupportsDateKind = (Get-Command ConvertFrom-Json).Parameters.ContainsKey('DateKind')
+
 function ConvertFrom-ReconstructionJson {
     [CmdletBinding()]
     param([Parameter(Mandatory, ValueFromPipeline)][string]$InputObject)
 
     process {
-        $payload = ConvertFrom-Json -InputObject $InputObject -ErrorAction $ErrorActionPreference
+        if ($script:ReconstructionJsonSupportsDateKind) {
+            $payload = ConvertFrom-Json -InputObject $InputObject -DateKind String -ErrorAction $ErrorActionPreference
+        } else {
+            $payload = ConvertFrom-Json -InputObject $InputObject -ErrorAction $ErrorActionPreference
+        }
         # Escaped ASCII letters can conceal legacy keys; keep the old converter for those too.
         if ($null -ne $payload -and $InputObject -cmatch 'WHAM|Wham|wham|\\u00(?:57|77|48|68|41|61|4[dD]|6[dD])') {
             Convert-ReconstructionMetadata -InputObject $payload

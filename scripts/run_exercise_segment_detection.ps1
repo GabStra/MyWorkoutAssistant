@@ -196,7 +196,8 @@ function Resolve-LlamaCppServerProcess {
     $args += if ($MmprojOffload) { "--mmproj-offload" } else { "--no-mmproj-offload" }
     $args += if ($ContBatching) { "--cont-batching" } else { "--no-cont-batching" }
     if ($Backend -eq "gpu") {
-        $args += @("--gpu-layers", "all")
+        $gpuLayers = if ($Fit -eq "off") { "all" } else { "auto" }
+        $args += @("--gpu-layers", $gpuLayers)
     }
     else {
         $args += @("--gpu-layers", "0")

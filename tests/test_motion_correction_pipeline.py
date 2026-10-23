@@ -5,7 +5,51 @@ import pytest
 
 from exercise_motion_pkg import bake_and_rank as bake
 from exercise_motion_pkg import wave_pipeline as wave
+from exercise_motion_pkg.artifact_state import (
+    CYCLIC_REBAKE, FULL_CLIP_BAKE, build_artifact_state, baked_payload_identity,
+)
 from exercise_motion_pkg.contact_pinning import pin_stationary_contact_chains
+
+
+def test_contact_corrected_cycle_rebinds_full_clip_lineage_to_materialized_source_interval():
+    parent_frames = [
+        {"sourceFrameIndex": index, "sourceTimeSec": index / 3., "timeSec": index / 3.,
+         "joints": {"pelvis": [0., float(index), 0.]}}
+        for index in range(10)
+    ]
+    parent = {
+        "jointNames": ["pelvis"], "frames": parent_frames, "frameCount": 10,
+        "fps": 3.,
+        "loop": {"enabled": False, "sourceStartFrame": 0, "sourceEndFrame": 9,
+                 "sourceStartTimeSec": 0., "sourceEndTimeSec": 3.},
+    }
+    child_frames = copy.deepcopy(parent_frames[2:8])
+    child = {
+        "jointNames": ["pelvis"], "frames": child_frames, "frameCount": len(child_frames),
+        "fps": 3.,
+        "loop": {"enabled": True, "sourceStartFrame": 2, "sourceEndFrame": 7,
+                 "sourceStartTimeSec": 2 / 3., "sourceEndTimeSec": 7 / 3.,
+                 "startFrame": 0, "endFrame": 5},
+    }
+
+    evidence = bake.corrected_contact_selection_lineage(
+        parent_selection_evidence={"fullClipBake": baked_payload_identity(parent)},
+        movement_payload=child,
+        selection_class=FULL_CLIP_BAKE,
+        source_parent_payload=parent,
+    )
+    state = build_artifact_state(
+        artifact_class=CYCLIC_REBAKE,
+        selection_class=FULL_CLIP_BAKE,
+        required_class=CYCLIC_REBAKE,
+        selection_evidence={**evidence, "cyclicRebake": baked_payload_identity(child)},
+    )
+
+    assert evidence["cycleSelection"]["interval"]["startFrame"] == 2
+    assert evidence["cycleSelection"]["interval"]["endFrame"] == 7
+    assert child["loop"]["sourceStartFrame"] == 2
+    assert child["loop"]["sourceEndFrame"] == 7
+    assert state["lineageComplete"] is True
 
 
 def test_yaw_translation_track_fills_unconstrained_frame_translations():
@@ -64,6 +108,44 @@ def test_contact_pinning_fully_pins_confirmed_interval_at_clip_boundaries():
 
     assert report["joints"]["left_foot"][0]["applied"]
     assert all(frame["joints"]["left_foot"] == pytest.approx(anchor) for frame in frames)
+
+
+def test_contact_pinning_uses_patch_threshold_below_ankle_proxy_allowance():
+    frames = []
+    for index in range(9):
+        shift = index / 8 * 0.02
+        frames.append({
+            "timeSec": index / 30,
+            "joints": {
+                "left_hip": [shift, 1.0, 0.0],
+                "left_knee": [shift + 0.1, 0.55, 0.0],
+                "left_ankle": [shift, 0.2, 0.0],
+                "left_foot": [shift, 0.1, 0.0],
+            },
+        })
+
+    report = pin_stationary_contact_chains(
+        frames,
+        [{
+            "jointName": "left_foot",
+            "evaluatedJointName": "left_foot",
+            "supportKind": "observed_foot_patch",
+            "startFrame": 0,
+            "endFrame": len(frames) - 1,
+            "anchor": [0.01, 0.1, 0.0],
+            "isObservedGroundContact": True,
+            "slideThresholdRatio": 0.005,
+        }],
+        body_span=1.0,
+        slide_threshold_ratio=0.055,
+        joint_names=["left_hip", "left_knee", "left_ankle", "left_foot"],
+        support_plane_y=0.1,
+    )
+
+    result = report["joints"]["left_foot"][0]
+    assert result["applied"] is True
+    assert result["rangeRatioBefore"] > 0.005
+    assert result["slideThresholdRatio"] == pytest.approx(0.005)
 
 
 def test_confirmed_body_support_replaces_sparse_foot_contacts_with_full_clip_intervals():
@@ -319,15 +401,20 @@ def test_source_contact_correction_preserves_artifact_interval_and_baseline(
         def evaluate(self, script, args=None):
             if args is None:
                 return {"motionTuningEnabled": True}
-            if selection_class == bake.FULL_CLIP_BAKE:
+            is_full_clip_seed = args["loopIndex"] == -1
+            if is_full_clip_seed:
+                assert args["explicitTimeRange"] is False
+                assert (args["startSeconds"], args["endSeconds"]) == (0.0, 0.0)
+            elif selection_class == bake.FULL_CLIP_BAKE:
                 # Synthetic exact-source clips have no corresponding detected loop.
                 assert args["explicitTimeRange"] is True
                 assert "? window.exerciseMotionAutomation.bakeTimeRange" in script
             else:
                 assert args["explicitTimeRange"] is False
                 assert args["explicitFrameRange"] is False
-            assert (args["startSeconds"], args["endSeconds"]) == (2.0, 5.0)
-            calls.append(args["options"])
+            if not is_full_clip_seed:
+                assert (args["startSeconds"], args["endSeconds"]) == (2.0, 5.0)
+                calls.append(args["options"])
             result = copy.deepcopy(baseline)
             if selection_class == bake.BOUNDED_MOVEMENT_SELECTION:
                 result["loop"] = {
@@ -364,6 +451,8 @@ def test_source_contact_correction_preserves_artifact_interval_and_baseline(
     def record_fit_payload(payload, **kwargs):
         if payload.get("corrected"):
             fit_payload_states.append(copy.deepcopy(payload.get("artifactState")))
+        elif selection_class == bake.FULL_CLIP_BAKE:
+            payload["controlledMotionFit"] = {"applied": True}
         return payload, {}
 
     monkeypatch.setattr(bake, "constrain_baked_payload_to_source_articulation", record_fit_payload)
@@ -412,7 +501,9 @@ def test_source_contact_correction_preserves_artifact_interval_and_baseline(
     )
     assert len(calls) == (1 if rigid_passes else 2)
     assert artifacts[0].settings_variant_id == "adaptive-baseline"
-    assert len(artifacts) == (1 if loop_required else 2)
+    assert len(artifacts) == (
+        1 if loop_required or (rigid_passes and selection_class == bake.FULL_CLIP_BAKE) else 2
+    )
     if not rigid_passes:
         assert calls[-1]["contactSequenceCorrection"] is True
         if selection_class == bake.BOUNDED_MOVEMENT_SELECTION:

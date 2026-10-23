@@ -1,10 +1,14 @@
-﻿[CmdletBinding(PositionalBinding = $false)]
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [Parameter(Mandatory = $true)]
     [string]$WorkoutPlanJson,
 
     [string]$EquipmentJson,
     [string]$WorkspaceRoot = "build/exercise_motion/workout-plan",
+    [string]$ApprovedExerciseDefinitionsJson,
+    [string]$InvocationRunId = "",
+    [string]$LibraryRunId = "",
+    [string]$InputIdentitySha256 = "",
     [string]$MobilePackageOutputJson = "",
     [string]$IncrementalMobilePackageOutputJson = "",
     [ValidateSet("quality", "fast", "max")]
@@ -72,6 +76,7 @@ param(
     [Nullable[int]]$BakeWorkers,
     [int]$StagedWaveSize = 0,
     [ValidateRange(1, 86400)]
+    # Retained for wrapper compatibility; ready work is dispatched as soon as it arrives.
     [int]$StagedWaveMaxWaitSeconds = 300,
     # Wave-overlap pipelining: how many staged waves may run at once. 1 is
     # exactly the serialized behavior (one wave at a time, nothing else in
@@ -539,6 +544,19 @@ function Get-ObjectProperty {
     return $null
 }
 
+function Resolve-WaveSourceSelectionPolicyVersion {
+    param([object]$Source)
+
+    $reportedVersion = Get-ObjectProperty -Object $Source -Name 'sourceSelectionPolicyVersion'
+    if ($null -ne $reportedVersion -and [int]$reportedVersion -gt 0) {
+        return [int]$reportedVersion
+    }
+    if ([int]$SourceSelectionPolicyVersion -gt 0) {
+        return [int]$SourceSelectionPolicyVersion
+    }
+    throw 'Cannot persist a source-turn cursor without a valid source-selection policy version.'
+}
+
 function Get-OptionalDouble {
     param([object]$Value)
     if ($null -eq $Value) {
@@ -592,6 +610,18 @@ function Get-CandidateManifestCounts {
         return $counts
     }
     return $counts
+}
+
+function Get-DefinitionReviewReason {
+    param([object]$Payload)
+    $entry = @($Payload.exercises | Where-Object { $_.status -eq "needs_definition_review" } | Select-Object -First 1)
+    if ($entry.Count -eq 0 -and $Payload.status -eq "needs_definition_review") {
+        $entry = @($Payload)
+    }
+    if ($entry.Count -eq 0) { return $null }
+    $reason = [string]$entry[0].reason
+    if ([string]::IsNullOrWhiteSpace($reason)) { return "Target action definition is unresolved." }
+    return $reason
 }
 
 function Get-SchedulerTimelineTimestamp {
@@ -831,7 +861,7 @@ function New-OneExercisePlanJson {
         id = [string]($Exercise.exerciseId ?? $Exercise.id ?? $Exercise.slug ?? $Exercise.exerciseName ?? "exercise")
         name = [string]($Exercise.exerciseName ?? $Exercise.name ?? $Exercise.id ?? "exercise")
     }
-    foreach ($propertyName in @("sourceExerciseName", "equipmentQualifiedExerciseName", "exerciseNameRewrite", "motionContext")) {
+    foreach ($propertyName in @("sourceExerciseName", "equipmentQualifiedExerciseName", "exerciseNameRewrite", "motionContext", "definitionReadiness")) {
         if ($Exercise.PSObject.Properties.Name -contains $propertyName) {
             $exerciseRecord[$propertyName] = $Exercise.$propertyName
         }
@@ -2111,6 +2141,9 @@ function Start-SharedLlamaServer {
     $ubatchSize = if ($null -ne $LlamaCppUBatchSize) { [int]$LlamaCppUBatchSize } else { 512 }
     $threadsHttp = if ($null -ne $LlamaCppThreadsHttp) { [int]$LlamaCppThreadsHttp } else { 8 }
     $reasoningBudget = if ($null -ne $LlamaCppReasoningBudget) { [int]$LlamaCppReasoningBudget } else { 64 }
+    $gpuLayers = if ($LlamaCppFit -eq "off") { "all" } else { "auto" }
+    $fitCtx = if ($null -ne $LlamaCppFitCtx) { [int]$LlamaCppFitCtx } else { $ctxSize }
+    $fitTarget = if ($null -ne $LlamaCppFitTarget) { [int]$LlamaCppFitTarget } else { 2048 }
     $serverArgs = @(
         "-m", $LlamaCppModel,
         "--host", $host_, "--port", "$port",
@@ -2122,17 +2155,31 @@ function Start-SharedLlamaServer {
         "--flash-attn", $LlamaCppFlashAttn,
         "--cache-type-k", $LlamaCppCacheTypeK,
         "--cache-type-v", $LlamaCppCacheTypeV,
-        "--fit", $LlamaCppFit,
+        "--fit", $LlamaCppFit, "--fit-ctx", "$fitCtx", "--fit-target", "$fitTarget",
         "--threads-http", "$threadsHttp",
         "--reasoning", "on", "--reasoning-format", "deepseek", "--reasoning-budget", "$reasoningBudget",
         "--cont-batching",
-        "--gpu-layers", "all",
+        "--gpu-layers", $gpuLayers,
         "--split-mode", "layer"
     )
     $launchId = "$(Get-Date -Format 'yyyyMMdd-HHmmss-fff')-$([guid]::NewGuid().ToString('N'))"
     $logPath = Join-Path $SessionDir "server-$launchId.log"
     $errorLogPath = Join-Path $SessionDir "server-$launchId.err.log"
     $baseUrl = "http://${host_}:${port}"
+    $serverEnvironment = @{}
+    $exclusiveGpuDevice = "$env:EXERCISE_MOTION_EXCLUSIVE_GPU_DEVICE".Trim()
+    if ($exclusiveGpuDevice -match '^[1-9]\d*$') {
+        $gpuRows = @(& nvidia-smi --query-gpu=index,uuid --format=csv,noheader,nounits 2>$null)
+        $gpuUuids = @{}
+        foreach ($gpuRow in $gpuRows) {
+            $parts = $gpuRow.Split(',', 2)
+            if ($parts.Count -eq 2) { $gpuUuids[$parts[0].Trim()] = $parts[1].Trim() }
+        }
+        if ($LASTEXITCODE -ne 0 -or -not $gpuUuids.ContainsKey('0') -or -not $gpuUuids.ContainsKey($exclusiveGpuDevice)) {
+            throw "Cannot pin the shared llama.cpp server away from exclusive GPU ${exclusiveGpuDevice}: nvidia-smi did not confirm both physical GPU UUIDs."
+        }
+        $serverEnvironment['CUDA_VISIBLE_DEVICES'] = $gpuUuids['0']
+    }
     # Persist an unknown process owner before spawn. If the wrapper is
     # interrupted between process creation and PID recording, a later run must
     # retain this session instead of assuming it is safe to start another one.
@@ -2155,6 +2202,7 @@ function Start-SharedLlamaServer {
             -ArgumentList (@($serverArgs | ForEach-Object { if ($_ -match '\s') { '"{0}"' -f $_ } else { $_ } })) `
             -RedirectStandardOutput $logPath `
             -RedirectStandardError $errorLogPath `
+            -Environment $serverEnvironment `
             -WindowStyle Hidden `
             -PassThru
     } catch {
@@ -3149,6 +3197,75 @@ function Resume-YieldedDiscovery {
     return $true
 }
 
+function Set-DiscoveryArgumentValue {
+    param([string[]]$Arguments, [string]$Name, [string]$Value)
+    $updated = [System.Collections.Generic.List[string]]::new()
+    $replaced = $false
+    for ($index = 0; $index -lt $Arguments.Count; $index += 1) {
+        if ($Arguments[$index] -eq $Name) {
+            $updated.Add($Name)
+            $updated.Add($Value)
+            $replaced = $true
+            $index += 1
+            continue
+        }
+        $updated.Add($Arguments[$index])
+    }
+    if (-not $replaced) { $updated.Add($Name); $updated.Add($Value) }
+    return [string[]]$updated.ToArray()
+}
+
+function Set-BoundedSourceRecoveryDiscovery {
+    param([object]$WorkItem, [object]$WaveState, [int]$CandidateBudget)
+
+    $retryCount = if ($WorkItem.PSObject.Properties.Name -contains 'sourceDiscoveryRetryCount') {
+        [int]$WorkItem.sourceDiscoveryRetryCount
+    } else { 0 }
+    if ($retryCount -ge 1) { return $false }
+
+    $source = Get-ObjectProperty -Object $WaveState -Name 'source'
+    $attemptedCandidateKeys = @(
+        @($source.priorAttemptedCandidateKeys) +
+        @($source.attempts | ForEach-Object { $_.candidateKey })
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique
+    $attemptedVideoIds = @(
+        @($source.priorAttemptedVideoIds) +
+        @($source.attempts | ForEach-Object { $_.videoId })
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique
+    # Candidate keys include the exact source window. Keep these keys out of
+    # the next ranked manifest without excluding other windows from the same
+    # video, which may still contain usable evidence.
+    $sourceTurnResume = [ordered]@{
+        sourceSelectionPolicyVersion = Resolve-WaveSourceSelectionPolicyVersion -Source $source
+        nextCandidateKey = $null
+        attemptedCandidateKeys = @($attemptedCandidateKeys)
+        attemptedVideoIds = @($attemptedVideoIds)
+    }
+    $resumePath = Join-Path $WorkItem.bakeWorkspace 'source_turn_resume.json'
+    New-Item -ItemType Directory -Path (Split-Path -Parent $resumePath) -Force | Out-Null
+    [System.IO.File]::WriteAllText(
+        $resumePath,
+        ($sourceTurnResume | ConvertTo-Json -Depth 8),
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $arguments = [string[]]$WorkItem.discoveryArgs
+    $recoveryCandidateBudget = if ($CandidateBudget -gt 0) {
+        $CandidateBudget
+    } else {
+        [Math]::Max(1, $attemptedCandidateKeys.Count + 1)
+    }
+    $arguments = Set-DiscoveryArgumentValue -Arguments $arguments -Name '--discovery-candidate-budget' -Value "$recoveryCandidateBudget"
+    $WorkItem.discoveryArgs = $arguments
+    $WorkItem.discoveryArgumentsSha256 = Get-ArgumentArraySha256 -Arguments $arguments
+    $WorkItem.candidateReviewTargetSuitableCount = 1
+    if ($WorkItem.PSObject.Properties.Name -contains 'sourceDiscoveryRetryCount') {
+        $WorkItem.sourceDiscoveryRetryCount = $retryCount + 1
+    } else {
+        $WorkItem | Add-Member -NotePropertyName sourceDiscoveryRetryCount -NotePropertyValue ($retryCount + 1)
+    }
+    return $true
+}
+
 function Start-InitialDiscoveryJob {
     param([object]$WorkItem)
 
@@ -3235,6 +3352,7 @@ function Start-InitialDiscoveryJob {
         $maxTransientServerAttempts = 3
         $discoveryAttempts = @()
         $discoverySeconds = 0.0
+        $definitionReviewReason = $null
         for ($attemptIndex = 1; $attemptIndex -le $maxTransientServerAttempts; $attemptIndex += 1) {
             "[$(Get-Date -Format o)] initial discovery attempt $attemptIndex started; target suitable candidates $targetSuitableCount" | Add-Content -LiteralPath $LogPath -Encoding UTF8
             $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
@@ -3243,6 +3361,12 @@ function Start-InitialDiscoveryJob {
             if ($exitCode -eq 0 -and (Test-Path -LiteralPath $CandidatesPath)) {
                 try {
                     $candidatePayload = Get-Content -LiteralPath $CandidatesPath -Raw | ConvertFrom-ReconstructionJson
+                    $definitionEntry = @($candidatePayload.exercises | Where-Object { $_.status -eq "needs_definition_review" } | Select-Object -First 1)
+                    if ($definitionEntry.Count -gt 0) {
+                        $definitionReviewReason = [string]$definitionEntry[0].reason
+                    } elseif ($candidatePayload.status -eq "needs_definition_review") {
+                        $definitionReviewReason = [string]$candidatePayload.reason
+                    }
                     $candidatePayload | Add-Member -NotePropertyName wrapperDiscoverySignature -NotePropertyValue ([pscustomobject]@{
                         schemaVersion = 1
                         policyVersion = $StagePolicyVersion
@@ -3303,6 +3427,7 @@ function Start-InitialDiscoveryJob {
             logPath = $LogPath
             candidateCount = $counts.candidateCount
             recommendedCount = $counts.recommendedCount
+            definitionReviewReason = $definitionReviewReason
             discoverySeconds = $discoverySeconds
             attempts = $discoveryAttempts
             attemptIndex = $discoveryAttempts.Count
@@ -3489,6 +3614,14 @@ function Test-DiscoveryStageReady {
         $signature = $payload.wrapperDiscoverySignature
         if ($null -eq $signature -or [int]$signature.schemaVersion -ne 1) {
             return $false
+        }
+        if ($null -ne (Get-DefinitionReviewReason -Payload $Payload)) {
+            return (
+                [int]$signature.policyVersion -eq $discoveryStagePolicyVersion -and
+                "$($signature.argumentsSha256)".ToLowerInvariant() -eq $WorkItem.discoveryArgumentsSha256 -and
+                "$($signature.exercisePlanSha256)".ToLowerInvariant() -eq $WorkItem.exercisePlanSha256 -and
+                "$($signature.equipmentSha256)".ToLowerInvariant() -eq $WorkItem.equipmentSha256
+            )
         }
         # The owner's naming convention changes target identity, so even an
         # old recommended source needs review under the explicit one-arm rule.
@@ -5044,6 +5177,7 @@ function Ensure-StagedBakeQueueService {
         if ($stoppedService.matchingProcess) {
             throw "Staged-wave service process $($existingService.state.pid) did not stop after its source identity changed; refusing to launch a duplicate worker."
         }
+        $existingService = $stoppedService
     }
     if ($existingService.matchingProcess -and [string]$existingService.state.status -ne "stopped") {
         throw "Staged-wave service process $($existingService.state.pid) is alive but its heartbeat is stale or invalid; refusing to launch a second worker."
@@ -6042,6 +6176,7 @@ function Complete-BakeJob {
         $outcomeLabel = switch ($status) {
             'needs_manual_review' { 'Needs review' }
             'needs_source_review' { 'Needs review' }
+            'needs_definition_review' { 'Needs definition review' }
             'no_selection' { 'No suitable movement' }
             default { 'Failed' }
         }
@@ -6053,7 +6188,7 @@ function Complete-BakeJob {
         exerciseName = $workItem.exerciseName
         status = $status
         error = $errorMessage
-        stage = if ($status -eq "failed" -and -not [string]::IsNullOrWhiteSpace($failureStage)) { $failureStage } elseif ($status -eq "no_selection") { "bake_no_selection" } elseif ($status -eq "needs_manual_review") { "manual_review" } else { $null }
+        stage = if ($status -eq "failed" -and -not [string]::IsNullOrWhiteSpace($failureStage)) { $failureStage } elseif ($status -eq "needs_definition_review") { "exercise_definition" } elseif ($status -eq "no_selection") { "bake_no_selection" } elseif ($status -eq "needs_manual_review") { "manual_review" } else { $null }
         candidateCount = $candidateCount
         recommendedCandidateCount = $recommendedCandidateCount
         excludeCandidateJsonPaths = $workItem.excludeCandidateJsonPaths
@@ -6454,6 +6589,25 @@ function Get-FlaggedJobCount {
 # Trivial staged completion jobs never block admission; they run in their own
 # bounded lane. With a cap of 1 this reduces to today's serialized behavior
 # except that in-flight completion jobs no longer hold back the next wave.
+function Test-VerifiedExclusiveGpuSplitPlacement {
+    param([string]$Device, [string[]]$GpuRows)
+
+    if ($Device -notmatch '^[1-9]\d*$') { return $false }
+    $gpuUuids = @{}
+    foreach ($gpuRow in $GpuRows) {
+        $parts = ([string]$gpuRow).Split(',', 2)
+        if ($parts.Count -eq 2) {
+            $index = $parts[0].Trim()
+            $uuid = $parts[1].Trim()
+            if (-not [string]::IsNullOrWhiteSpace($uuid)) { $gpuUuids[$index] = $uuid }
+        }
+    }
+    return (
+        $gpuUuids.ContainsKey('0') -and $gpuUuids.ContainsKey($Device) -and
+        $gpuUuids['0'] -ne $gpuUuids[$Device]
+    )
+}
+
 function Test-StagedWaveOverlapAdmission {
     param(
         [object[]]$BakeRunningJobs,
@@ -6771,11 +6925,99 @@ $hasExerciseFilter = (
     $onlyExerciseIdSet.Count -gt 0 -or
     $onlyExerciseNameSet.Count -gt 0
 )
+
+# Resolve target definitions before creating workspace state or starting any
+# GPU-backed service. The per-exercise plans below are emitted from this
+# enriched list; sourcePlanPath and package export still point at the original.
+$resolvedApprovedExerciseDefinitionsJson = $null
+if (-not [string]::IsNullOrWhiteSpace($ApprovedExerciseDefinitionsJson)) {
+    $resolvedApprovedExerciseDefinitionsJson = Resolve-StrictPath $ApprovedExerciseDefinitionsJson
+}
+$definitionPreflightDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ("exercise-motion-definition-preflight-" + [guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Force -Path $definitionPreflightDirectory | Out-Null
+$definitionPreflightListPath = Join-Path $definitionPreflightDirectory "workout_plan_exercises.json"
+$definitionPreflightEffectivePlanPath = Join-Path $definitionPreflightDirectory "effective_workout_plan.json"
+$definitionPreflightReportPath = Join-Path $definitionPreflightDirectory "definition_readiness_report.json"
+$listArgs = @(
+    "-m", "exercise_motion_pkg.cli",
+    "list-workout-plan-exercises",
+    "--workout-plan-json", $resolvedWorkoutPlanJson,
+    "--definition-effective-plan-json", $definitionPreflightEffectivePlanPath,
+    "--definition-readiness-report-json", $definitionPreflightReportPath,
+    "--source-budget-workspace-root", ([System.IO.Path]::GetFullPath($WorkspaceRoot)),
+    "--source-review-timeout-seconds", "$SourceReviewTimeoutSeconds",
+    "--exercise-timeout-seconds", "$ExerciseTimeoutSeconds",
+    "--max-source-window-attempts", "$MaxSourceWindowAttempts",
+    "--out-json", $definitionPreflightListPath
+)
+if (-not [string]::IsNullOrWhiteSpace($EquipmentJson)) {
+    $listArgs += @("--equipment-json", $EquipmentJson)
+}
+if ($IncludeDisabled) {
+    $listArgs += "--include-disabled"
+}
+if ($resolvedApprovedExerciseDefinitionsJson) {
+    $listArgs += @("--approved-exercise-definitions-json", $resolvedApprovedExerciseDefinitionsJson)
+}
+Invoke-PythonModule -Arguments $listArgs
+$exerciseList = Get-Content -LiteralPath $definitionPreflightListPath -Raw | ConvertFrom-Json
+if (-not $exerciseList.exercises -or $exerciseList.exercises.Count -eq 0) {
+    throw "No exercises were found in the workout plan: $resolvedWorkoutPlanJson"
+}
+
+$selectedDefinitionExerciseCount = 0
+$readyDefinitionExerciseCount = 0
+$readySourceReviewBudgetExerciseCount = 0
+$preflightSlugCounts = @{}
+foreach ($exercise in $exerciseList.exercises) {
+    $exerciseName = [string]($exercise.exerciseName ?? $exercise.name ?? $exercise.id ?? "exercise")
+    $exerciseId = [string]($exercise.exerciseId ?? $exercise.id ?? (ConvertTo-Slug $exerciseName))
+    $sourceExerciseName = [string]($exercise.sourceExerciseName ?? "")
+    $equipmentQualifiedExerciseName = [string]($exercise.equipmentQualifiedExerciseName ?? "")
+    $exerciseSlug = ConvertTo-Slug ([string]($exercise.slug ?? $exerciseId ?? $exerciseName))
+    if ($preflightSlugCounts.ContainsKey($exerciseSlug)) {
+        $preflightSlugCounts[$exerciseSlug] += 1
+        $exerciseSlug = "$exerciseSlug-$($preflightSlugCounts[$exerciseSlug])"
+    } else {
+        $preflightSlugCounts[$exerciseSlug] = 1
+    }
+    $matchesFilter = -not $hasExerciseFilter
+    if ($hasExerciseFilter) {
+        $nameKeys = @($exerciseName, $sourceExerciseName, $equipmentQualifiedExerciseName) |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            ForEach-Object { $_.Trim().ToLowerInvariant() }
+        $slugKeys = @($exerciseSlug)
+        foreach ($slugName in @($sourceExerciseName, $equipmentQualifiedExerciseName)) {
+            if (-not [string]::IsNullOrWhiteSpace($slugName)) { $slugKeys += ConvertTo-Slug $slugName }
+        }
+        $matchesFilter = $onlyExerciseIdSet.ContainsKey($exerciseId.Trim().ToLowerInvariant()) -or
+            (@($nameKeys | Where-Object { $onlyExerciseNameSet.ContainsKey($_) }).Count -gt 0) -or
+            (@($slugKeys | Where-Object { $onlyExerciseSlugSet.ContainsKey($_) }).Count -gt 0)
+    }
+    if (-not $matchesFilter) { continue }
+    $selectedDefinitionExerciseCount += 1
+    if ($exercise.definitionReadiness.status -eq "ready") {
+        $readyDefinitionExerciseCount += 1
+        if ($exercise.sourceReviewBudgetReadiness.ready -eq $true) {
+            $readySourceReviewBudgetExerciseCount += 1
+        }
+    }
+}
+if ($selectedDefinitionExerciseCount -eq 0) {
+    if ($hasExerciseFilter) {
+        throw "No exercises matched the supplied OnlyExerciseSlug/OnlyExerciseId/OnlyExerciseName filters."
+    }
+    throw "No exercises were queued for movement generation."
+}
+$hasSelectedReadyDefinitionTargets = $readyDefinitionExerciseCount -gt 0
+$hasSelectedReadySourceReviewTargets = $readySourceReviewBudgetExerciseCount -gt 0
+$definitionReadinessReport = $exerciseList.definitionReadiness
+
 if ($ExerciseWorkers -lt 1) {
     throw "ExerciseWorkers must be at least 1."
 }
 $posePrefilterEnabled = $PosePrefilter -or -not $SkipPosePrefilter
-if ($posePrefilterEnabled) {
+if ($posePrefilterEnabled -and $hasSelectedReadySourceReviewTargets) {
     $PosePrefilterDevice = Resolve-CudaPosePrefilterDevice $PosePrefilterDevice
 }
 $posePrefilterUsesGpu = $posePrefilterEnabled
@@ -6798,11 +7040,24 @@ if ($llamaCppDiscoveryUsesGpu) {
 $discoveryUsesGpu = $gpuDiscoveryStages.Count -gt 0
 $gpuLockSetting = "$env:EXERCISE_MOTION_GPU_LOCK".Trim().ToLowerInvariant()
 $globalGpuLockEnabled = [string]::IsNullOrWhiteSpace($gpuLockSetting) -or $gpuLockSetting -notin @("0", "false", "off", "no")
+$exclusiveGpuDevice = "$env:EXERCISE_MOTION_EXCLUSIVE_GPU_DEVICE".Trim()
+$verifiedExclusiveGpuSplit = $false
+if (
+    $hasSelectedReadyDefinitionTargets -and $SharedLlamaServer -and $StagedWaveSize -gt 0 -and $globalGpuLockEnabled -and
+    $exclusiveGpuDevice -match '^[1-9]\d*$'
+) {
+    $placementRows = @(& nvidia-smi --query-gpu=index,uuid --format=csv,noheader,nounits 2>$null)
+    $verifiedExclusiveGpuSplit = Test-VerifiedExclusiveGpuSplitPlacement `
+        -Device $exclusiveGpuDevice -GpuRows $placementRows
+}
 $effectiveGpuDiscoveryBakeOverlap = if (
-    $SharedLlamaServer -and $StagedWaveSize -gt 0 -and $MaxConcurrentStagedWaves -gt 1 -and
+    $SharedLlamaServer -and $StagedWaveSize -gt 0 -and
+    ($MaxConcurrentStagedWaves -gt 1 -or $verifiedExclusiveGpuSplit) -and
     $GpuDiscoveryBakeOverlap -ne 'avoid'
 ) {
     # Shared discovery coordinates CUDA prefilter handoffs and counts VLM calls.
+    # A verified exclusive lane also separates discovery/llama GPU 0 from
+    # reconstruction GPU N, even when staged-wave concurrency remains one.
     'allow'
 } elseif ($discoveryUsesGpu -and $globalGpuLockEnabled) {
     # The shared GPU lock serializes CUDA model residency across processes.
@@ -7149,9 +7404,85 @@ New-Item -ItemType Directory -Force -Path $WorkspaceRoot | Out-Null
 $resolvedWorkspaceRoot = (Resolve-Path -LiteralPath $WorkspaceRoot).Path
 $script:MotionWorkspaceLease = Acquire-MotionWorkspaceLease -WorkspaceRoot $resolvedWorkspaceRoot
 try {
+$movementRunId = if ([string]::IsNullOrWhiteSpace($InvocationRunId)) { [guid]::NewGuid().ToString("N") } else { $InvocationRunId }
+$movementRunStartedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+$script:MotionRunOutcome = "running"
+$summaryPath = Join-Path $resolvedWorkspaceRoot "workout_motion_generation_summary.json"
+$earlyRunTargetCount = [int]$selectedDefinitionExerciseCount
+$exerciseListPath = Join-Path $resolvedWorkspaceRoot "workout_plan_exercises.json"
+$definitionReadinessReportPath = Join-Path $resolvedWorkspaceRoot "definition_readiness_report.json"
+$definitionEffectivePlanPath = Join-Path $resolvedWorkspaceRoot "effective_workout_plan.json"
+Copy-Item -LiteralPath $definitionPreflightListPath -Destination $exerciseListPath -Force
+Copy-Item -LiteralPath $definitionPreflightEffectivePlanPath -Destination $definitionEffectivePlanPath -Force
+$definitionReadinessReport | Add-Member -NotePropertyName effectivePlanPath -NotePropertyValue $definitionEffectivePlanPath -Force
+$definitionReadinessReport | Add-Member -NotePropertyName effectivePlanSha256 -NotePropertyValue (Get-FileHash -LiteralPath $definitionEffectivePlanPath -Algorithm SHA256).Hash -Force
+$definitionReadinessReport | ConvertTo-Json -Depth 32 | Set-Content -LiteralPath $definitionReadinessReportPath -Encoding UTF8
+$definitionPreflightReportPersisted = $true
+$workoutPlanInputSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $resolvedWorkoutPlanJson).Hash
+$effectiveWorkoutPlanInputSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $definitionEffectivePlanPath).Hash
+$equipmentInputSha256 = if ([string]::IsNullOrWhiteSpace($EquipmentJson)) { "none" } else { (Get-FileHash -Algorithm SHA256 -LiteralPath $EquipmentJson).Hash }
+$definitionsInputSha256 = if ($resolvedApprovedExerciseDefinitionsJson) { (Get-FileHash -Algorithm SHA256 -LiteralPath $resolvedApprovedExerciseDefinitionsJson).Hash } else { "none" }
+$computedInputIdentityBytes = [System.Text.Encoding]::UTF8.GetBytes("$workoutPlanInputSha256`n$definitionsInputSha256`n$effectiveWorkoutPlanInputSha256`n$equipmentInputSha256")
+$computedInputIdentitySha256 = [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData($computedInputIdentityBytes))
+$inputIdentitySha256 = if ([string]::IsNullOrWhiteSpace($InputIdentitySha256)) { $computedInputIdentitySha256 } else { $InputIdentitySha256 }
+$progressCheckpointPath = Join-Path $resolvedWorkspaceRoot "workout_motion_generation_checkpoint.json"
+$script:StagedWaveServiceQueueRoot = Join-Path (Join-Path $resolvedWorkspaceRoot "staged-wave-services") "v1"
 $script:MotionServiceSessionLeases = @{}
 $sharedLlamaServerInstance = $null
 $warmGvhmrWorkerInstance = $null
+
+function Write-EarlyMotionRunOutcomeSummary {
+    param([string]$Outcome)
+
+    $existingSummary = $null
+    if (Test-Path -LiteralPath $summaryPath) {
+        try { $existingSummary = Get-Content -LiteralPath $summaryPath -Raw | ConvertFrom-Json -ErrorAction Stop } catch {}
+    }
+    if ((Test-Path -LiteralPath $summaryPath) -and (
+        -not $existingSummary -or
+        $existingSummary.runId -ne $movementRunId -or
+        $existingSummary.inputIdentitySha256 -ne $inputIdentitySha256
+    )) {
+        $oldSummaryHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $summaryPath).Hash.Substring(0, 12)
+        $archiveStamp = (Get-Item -LiteralPath $summaryPath).LastWriteTimeUtc.ToString("yyyyMMddTHHmmssZ")
+        $archivePath = "{0}.previous-{1}-{2}.json" -f $summaryPath, $archiveStamp, $oldSummaryHash
+        $archiveIndex = 1
+        while (Test-Path -LiteralPath $archivePath) {
+            $archivePath = "{0}.previous-{1}-{2}-{3}.json" -f $summaryPath, $archiveStamp, $oldSummaryHash, $archiveIndex
+            $archiveIndex += 1
+        }
+        Copy-Item -LiteralPath $summaryPath -Destination $archivePath
+    }
+    $nowUtc = (Get-Date).ToUniversalTime().ToString("o")
+    $summary = [ordered]@{
+        schemaVersion = 2
+        runId = $movementRunId
+        libraryRunId = if ([string]::IsNullOrWhiteSpace($LibraryRunId)) { $null } else { $LibraryRunId }
+        outcome = $Outcome
+        startedAtUtc = $movementRunStartedAtUtc
+        completedAtUtc = if ($Outcome -eq "completed") { $nowUtc } else { $null }
+        stoppedAtUtc = if ($Outcome -eq "stopped") { $nowUtc } else { $null }
+        failedAtUtc = if ($Outcome -eq "failed") { $nowUtc } else { $null }
+        generatedAt = $nowUtc
+        inputIdentitySha256 = $inputIdentitySha256
+        approvedDefinitionsSha256 = $definitionsInputSha256
+        effectiveDefinitionPlanSha256 = $effectiveWorkoutPlanInputSha256
+        motionSourceIdentity = $script:MotionSourceIdentity
+        sourceWorkoutPlanPath = $resolvedWorkoutPlanJson
+        workspaceRoot = $resolvedWorkspaceRoot
+        totalExerciseCount = $earlyRunTargetCount
+        terminalExerciseCount = 0
+        successfulExerciseCount = 0
+        unsuccessfulExerciseCount = 0
+        pendingExerciseCount = $earlyRunTargetCount
+        exercises = @()
+    }
+    $temporaryPath = "$summaryPath.$movementRunId.early.tmp"
+    $summary | ConvertTo-Json -Depth 64 | Set-Content -LiteralPath $temporaryPath -Encoding UTF8
+    Move-Item -Force -LiteralPath $temporaryPath -Destination $summaryPath
+}
+
+Write-EarlyMotionRunOutcomeSummary -Outcome "running"
 $script:SchedulerTimelinePath = Join-Path $resolvedWorkspaceRoot "scheduler_timeline.json"
 $script:MotionSourceIdentityPath = Join-Path $resolvedWorkspaceRoot "motion_source_identity.json"
 $priorSourceIdentity = $null
@@ -7210,6 +7541,7 @@ New-Item -ItemType Directory -Force -Path (Split-Path -Parent $resolvedSourceOut
 # The persistent RECONSTRUCTION worker imports RECONSTRUCTION's demo/network directly, and the
 # persistent GVHMR worker keeps preprocessing and prediction models resident.
 $effectiveWarmGvhmrWorker = (
+    $hasSelectedReadyDefinitionTargets -and
     $WarmGvhmrWorker -and
     -not $SkipWarmGvhmrWorker -and
     -not $RequireReconstructionCache
@@ -7244,6 +7576,7 @@ if ($effectiveWarmGvhmrWorker) {
 # through the client recovery path - publishing discovery counters is a
 # follow-up). Disabled entirely when vision ranking is off.
 $effectiveSharedLlamaServer = (
+    $hasSelectedReadySourceReviewTargets -and
     $SharedLlamaServer -and
     -not $SkipVisionRanking
 )
@@ -7295,28 +7628,10 @@ $sharedSourceCachePath = if ([string]::IsNullOrWhiteSpace($YouTubeSourceCacheDir
 New-Item -ItemType Directory -Force -Path $sharedSourceCachePath | Out-Null
 $exerciseMotionContractCachePath = Join-Path $resolvedWorkspaceRoot "exercise-motion-contract-cache"
 New-Item -ItemType Directory -Force -Path $exerciseMotionContractCachePath | Out-Null
-$exerciseListPath = Join-Path $resolvedWorkspaceRoot "workout_plan_exercises.json"
-$summaryPath = Join-Path $resolvedWorkspaceRoot "workout_motion_generation_summary.json"
-
-$listArgs = @(
-    "-m", "exercise_motion_pkg.cli",
-    "list-workout-plan-exercises",
-    "--workout-plan-json", $resolvedWorkoutPlanJson,
-    "--out-json", $exerciseListPath
-)
-if (-not [string]::IsNullOrWhiteSpace($EquipmentJson)) {
-    $listArgs += @("--equipment-json", $EquipmentJson)
+foreach ($preflightArtifactPath in @($definitionPreflightListPath, $definitionPreflightEffectivePlanPath, $definitionPreflightReportPath)) {
+    Remove-Item -LiteralPath $preflightArtifactPath -Force -ErrorAction SilentlyContinue
 }
-if ($IncludeDisabled) {
-    $listArgs += "--include-disabled"
-}
-Invoke-PythonModule -Arguments $listArgs
-
-$exerciseList = Get-Content -LiteralPath $exerciseListPath -Raw | ConvertFrom-Json
-if (-not $exerciseList.exercises -or $exerciseList.exercises.Count -eq 0) {
-    throw "No exercises were found in the workout plan: $resolvedWorkoutPlanJson"
-}
-
+Remove-Item -LiteralPath $definitionPreflightDirectory -Force -ErrorAction SilentlyContinue
 $youtubeBaseArgs = @(
     "-m", "exercise_motion_pkg.cli",
     "find-youtube-videos",
@@ -7432,8 +7747,6 @@ if ($PosePrefilter -or -not $SkipPosePrefilter) {
 }
 
 $workItems = @()
-$movementRunId = [guid]::NewGuid().ToString("N")
-$script:StagedWaveServiceQueueRoot = Join-Path (Join-Path $resolvedWorkspaceRoot "staged-wave-services") "v1"
 $usedSlugs = @{}
 $exerciseIndex = 0
 foreach ($exercise in $exerciseList.exercises) {
@@ -7488,6 +7801,7 @@ foreach ($exercise in $exerciseList.exercises) {
     $exercisePlanPath = Join-Path $exerciseWorkspace "exercise_plan.json"
     $exerciseCandidatesPath = Join-Path $exerciseWorkspace "youtube_candidates.json"
     $prefetchPath = Join-Path $exerciseWorkspace "youtube_candidate_prefetch.json"
+    $exerciseDefinitionReadinessReportPath = Join-Path $exerciseWorkspace "definition_readiness_report.json"
     $sourceDownloadReportPath = Join-Path $exerciseWorkspace "youtube_source_prefetch.json"
     $fallbackSourceDownloadReportPath = Join-Path $exerciseWorkspace "youtube_source_fallback_prefetch.json"
     $primarySourceDownloadLogPath = Join-Path $exerciseWorkspace "source_download.primary.log"
@@ -7506,6 +7820,7 @@ foreach ($exercise in $exerciseList.exercises) {
         '--discovery-time-budget-seconds', "$DiscoveryTimeBudgetSeconds")
     $discoveryArgs += @(
         "--workout-plan-json", $exercisePlanPath,
+        "--definition-readiness-report-json", $exerciseDefinitionReadinessReportPath,
         "--out-json", $exerciseCandidatesPath,
         "--youtube-preview-cache-dir", $previewCachePath,
         "--source-outcome-index", $resolvedSourceOutcomeIndexJson
@@ -7722,6 +8037,11 @@ foreach ($exercise in $exerciseList.exercises) {
         exerciseId = $exerciseId
         exerciseName = $exerciseName
         exerciseSlug = $exerciseSlug
+        definitionReadinessReportPath = $exerciseDefinitionReadinessReportPath
+        definitionReadinessStatus = if ($exercise.definitionReadiness.status -eq "ready") { "ready" } else { "needs_definition_review" }
+        definitionReadinessReason = if ($exercise.definitionReadiness.reason) { [string]$exercise.definitionReadiness.reason } else { "readiness_missing" }
+        sourceReviewBudgetReadiness = $exercise.sourceReviewBudgetReadiness
+        sourceReviewBudgetReady = ($exercise.sourceReviewBudgetReadiness.ready -eq $true)
         candidateCount = $null
         exerciseWorkspace = $exerciseWorkspace
         exercisePlanPath = $exercisePlanPath
@@ -7812,9 +8132,10 @@ if (-not $NoExerciseMotionContract -and -not $SkipVisionRanking -and -not $SkipE
     $retainedContractWorkItems = @()
     $newContractWorkItems = @()
     foreach ($workItem in $workItems) {
+        if ($workItem.definitionReadinessStatus -ne "ready") { continue }
         if ($ReuseExistingSelected -and $null -ne (Get-SelectedOutputArtifacts -WorkItem $workItem)) {
             $retainedContractWorkItems += $workItem
-        } else {
+        } elseif ($workItem.sourceReviewBudgetReady) {
             $newContractWorkItems += $workItem
         }
     }
@@ -7829,7 +8150,7 @@ if (-not $NoExerciseMotionContract -and -not $SkipVisionRanking -and -not $SkipE
     if ($contractPrefetchWorkItems.Count -gt 0) {
         $contractPrefetchArgs = [string[]](@(
             $youtubeBaseArgs
-            "--workout-plan-json", $resolvedWorkoutPlanJson,
+            "--workout-plan-json", $definitionEffectivePlanPath,
             "--out-json", $contractPrefetchReportPath,
             "--contract-prefetch-only",
             "--contract-prefetch-workers", "$llamaParallelSlots"
@@ -7837,6 +8158,8 @@ if (-not $NoExerciseMotionContract -and -not $SkipVisionRanking -and -not $SkipE
         if (-not [string]::IsNullOrWhiteSpace($EquipmentJson)) {
             $contractPrefetchArgs = [string[]](@($contractPrefetchArgs) + @("--equipment-json", $EquipmentJson))
         }
+        $contractReadinessReportPath = Join-Path $resolvedWorkspaceRoot "contract_prefetch_definition_readiness_report.json"
+        $contractPrefetchArgs += @("--definition-readiness-report-json", $contractReadinessReportPath)
         foreach ($workItem in $contractPrefetchWorkItems) {
             $contractPrefetchArgs = [string[]](@($contractPrefetchArgs) + @("--only-exercise-id", $workItem.exerciseId))
         }
@@ -7865,7 +8188,7 @@ $existingSelectedSummaryChecked = @{}
 if ($ReuseExistingSelected) {
     $policyReauditSlugs = [string[]]@(
         $workItems |
-            Where-Object { Test-SelectionNeedsPolicyReaudit -WorkItem $_ } |
+            Where-Object { $_.definitionReadinessStatus -eq "ready" -and (Test-SelectionNeedsPolicyReaudit -WorkItem $_) } |
             ForEach-Object { "$($_.exerciseSlug)" }
     )
     if ($policyReauditSlugs.Count -gt 0) {
@@ -7882,7 +8205,6 @@ if ($ReuseExistingSelected) {
     }
 }
 $summaryByIndex = @{}
-$progressCheckpointPath = Join-Path $resolvedWorkspaceRoot "workout_motion_generation_checkpoint.json"
 $script:LastIncrementalMobilePackageSuccessfulCount = -1
 $script:NextIncrementalMobilePackageAttemptAt = [datetime]::MinValue
 
@@ -7926,6 +8248,13 @@ function Update-IncrementalMobilePackage {
     Write-Host ("Mobile package updated: {0} approved movement(s) at {1}" -f $SuccessfulCount, $resolvedIncrementalOutputJson)
 }
 
+function Write-JsonAtomically {
+    param([string]$Path, [object]$Value, [int]$Depth = 64)
+    $temporaryPath = "$Path.$movementRunId.tmp"
+    $Value | ConvertTo-Json -Depth $Depth | Set-Content -LiteralPath $temporaryPath -Encoding UTF8
+    Move-Item -Force -LiteralPath $temporaryPath -Destination $Path
+}
+
 function Write-ProgressCheckpoint {
     $checkpointItems = @(
         $summaryByIndex.Keys |
@@ -7936,6 +8265,13 @@ function Write-ProgressCheckpoint {
     $unsuccessfulItems = @($checkpointItems | Where-Object { "$($_.status)" -ne "completed" })
     $checkpoint = [ordered]@{
         schemaVersion = 2
+        runId = $movementRunId
+        libraryRunId = if ([string]::IsNullOrWhiteSpace($LibraryRunId)) { $null } else { $LibraryRunId }
+        startedAtUtc = $movementRunStartedAtUtc
+        outcome = $script:MotionRunOutcome
+        inputIdentitySha256 = $inputIdentitySha256
+        approvedDefinitionsSha256 = $definitionsInputSha256
+        effectiveDefinitionPlanSha256 = $effectiveWorkoutPlanInputSha256
         updatedAt = (Get-Date).ToUniversalTime().ToString("o")
         sourceWorkoutPlanPath = $resolvedWorkoutPlanJson
         workspaceRoot = $resolvedWorkspaceRoot
@@ -7989,18 +8325,89 @@ function Write-ProgressCheckpoint {
     }
     Update-IncrementalMobilePackage -SuccessfulCount $successfulItems.Count
 }
+
+function Write-RunOutcomeArtifacts {
+    param([string]$Outcome)
+    if (-not (Get-Command Write-ProgressCheckpoint -ErrorAction SilentlyContinue)) { return }
+    $script:MotionRunOutcome = $Outcome
+    Write-ProgressCheckpoint
+    $existingSummary = $null
+    if (Test-Path -LiteralPath $summaryPath) {
+        try { $existingSummary = Get-Content -LiteralPath $summaryPath -Raw | ConvertFrom-Json -ErrorAction Stop } catch {}
+    }
+    $items = @($summaryByIndex.Keys | Sort-Object | ForEach-Object { $summaryByIndex[$_] })
+    $successes = @($items | Where-Object status -eq "completed").Count
+    if ($existingSummary -and $existingSummary.runId -eq $movementRunId) {
+        $existingSummary.exercises = $items
+        $existingSummary.totalExerciseCount = $workItems.Count
+        $existingSummary.terminalExerciseCount = $items.Count
+        $existingSummary.successfulExerciseCount = $successes
+        $existingSummary.unsuccessfulExerciseCount = $items.Count - $successes
+        $existingSummary.pendingExerciseCount = [Math]::Max(0, $workItems.Count - $items.Count)
+        $existingSummary.outcome = $Outcome
+        $outcomeAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+        $existingSummary.completedAtUtc = if ($Outcome -eq "completed") { $outcomeAtUtc } else { $null }
+        $existingSummary.stoppedAtUtc = if ($Outcome -eq "stopped") { $outcomeAtUtc } else { $null }
+        $existingSummary.failedAtUtc = if ($Outcome -eq "failed") { $outcomeAtUtc } else { $null }
+        Write-JsonAtomically -Path $summaryPath -Value $existingSummary
+        return
+    }
+    if ($existingSummary) {
+        $oldSummaryHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $summaryPath).Hash.Substring(0, 12)
+        $archiveBase = "{0}.previous-{1}-{2}.json" -f $summaryPath, (Get-Item -LiteralPath $summaryPath).LastWriteTimeUtc.ToString("yyyyMMddTHHmmssZ"), $oldSummaryHash
+        $archivePath = $archiveBase
+        $archiveIndex = 1
+        while (Test-Path -LiteralPath $archivePath) {
+            $archivePath = "{0}.previous-{1}-{2}-{3}.json" -f $summaryPath, (Get-Item -LiteralPath $summaryPath).LastWriteTimeUtc.ToString("yyyyMMddTHHmmssZ"), $oldSummaryHash, $archiveIndex
+            $archiveIndex += 1
+        }
+        Copy-Item -LiteralPath $summaryPath -Destination $archivePath
+    }
+    $partial = [ordered]@{
+        schemaVersion = 2
+        runId = $movementRunId
+        libraryRunId = if ([string]::IsNullOrWhiteSpace($LibraryRunId)) { $null } else { $LibraryRunId }
+        outcome = $Outcome
+        startedAtUtc = $movementRunStartedAtUtc
+        completedAtUtc = if ($Outcome -eq "completed") { (Get-Date).ToUniversalTime().ToString("o") } else { $null }
+        stoppedAtUtc = if ($Outcome -eq "stopped") { (Get-Date).ToUniversalTime().ToString("o") } else { $null }
+        failedAtUtc = if ($Outcome -eq "failed") { (Get-Date).ToUniversalTime().ToString("o") } else { $null }
+        generatedAt = (Get-Date).ToUniversalTime().ToString("o")
+        inputIdentitySha256 = $inputIdentitySha256
+        approvedDefinitionsSha256 = $definitionsInputSha256
+        effectiveDefinitionPlanSha256 = $effectiveWorkoutPlanInputSha256
+        sourceWorkoutPlanPath = $resolvedWorkoutPlanJson
+        workspaceRoot = $resolvedWorkspaceRoot
+        totalExerciseCount = $workItems.Count
+        terminalExerciseCount = $items.Count
+        successfulExerciseCount = $successes
+        unsuccessfulExerciseCount = $items.Count - $successes
+        pendingExerciseCount = [Math]::Max(0, $workItems.Count - $items.Count)
+        exercises = $items
+    }
+    Write-JsonAtomically -Path $summaryPath -Value $partial
+}
 $completedCount = 0
 $pendingPrefetchItems = [System.Collections.Queue]::new()
 $pendingDiscoveryItems = [System.Collections.Queue]::new()
 $pendingSourceDownloadItems = [System.Collections.Queue]::new()
 $pendingFallbackSourceDownloadItems = [System.Collections.Queue]::new()
 $pendingBakeItems = [System.Collections.Queue]::new()
-$readyWaveSince = $null
 $pendingLegacyBakeItems = [System.Collections.Queue]::new()
 $pendingCompletionItems = [System.Collections.Queue]::new()
 foreach ($workItem in $workItems) {
     $indexKey = [string]$workItem.index
     Exit-IfMotionRunInterrupted
+    if ($workItem.definitionReadinessStatus -eq "needs_definition_review") {
+        Add-SchedulerTimelineItemEvent -WorkItem $workItem -FinalStatus "failed"
+        $reason = if ([string]::IsNullOrWhiteSpace($workItem.definitionReadinessReason)) {
+            "Target action definition is unresolved."
+        } else { $workItem.definitionReadinessReason }
+        $summaryByIndex[$workItem.index] = New-TerminalExerciseSummary -WorkItem $workItem -Status "needs_definition_review" -ErrorMessage $reason -Stage "exercise_definition" -ExitCode 0
+        $completedCount += 1
+        Write-Host ("Needs definition review: {0} - clarify the target action before source selection." -f $workItem.exerciseName)
+        continue
+    }
     $existingSummary = if ($ReuseExistingSelected -and $existingSelectedSummaryChecked.ContainsKey($indexKey)) {
         $existingSelectedSummaryByIndex[$indexKey]
     } elseif ($ReuseExistingSelected) {
@@ -8061,6 +8468,15 @@ foreach ($workItem in $workItems) {
         $workItem.discoveryReused = $true
         $candidateCounts = Get-CandidateManifestCounts -Path $workItem.exerciseCandidatesPath -Payload $resumeCandidates
         $workItem.candidateCount = $candidateCounts.candidateCount
+        $definitionReviewReason = Get-DefinitionReviewReason -Payload $resumeCandidates
+        if ($null -ne $definitionReviewReason) {
+            Add-SchedulerTimelineItemEvent -WorkItem $workItem -FinalStatus "failed"
+            $summaryByIndex[$workItem.index] = New-TerminalExerciseSummary -WorkItem $workItem -Status "needs_definition_review" -ErrorMessage $definitionReviewReason -Stage "exercise_definition" -ExitCode 0
+            $completedCount += 1
+            Write-Host ("Needs definition review: {0} - clarify the target action before source selection." -f $workItem.exerciseName)
+            Write-ProgressCheckpoint
+            continue
+        }
         $workItem.hasFallbackSourceDownloads = (
             $workItem.hasFallbackSourceDownloads -and
             $candidateCounts.recommendedCount -gt 1
@@ -8087,6 +8503,17 @@ foreach ($workItem in $workItems) {
         }
         continue
     }
+    if (-not $workItem.sourceReviewBudgetReady) {
+        $budgetReason = [string]$workItem.sourceReviewBudgetReadiness.stopReason
+        if ([string]::IsNullOrWhiteSpace($budgetReason)) { $budgetReason = "source_turn_budget_unavailable" }
+        $message = "Source review budget is exhausted ($budgetReason); retained source/reconstruction work remains resumable, but no new discovery was started."
+        Add-SchedulerTimelineItemEvent -WorkItem $workItem -FinalStatus "failed"
+        $summaryByIndex[$workItem.index] = New-TerminalExerciseSummary -WorkItem $workItem -Status "needs_source_review" -ErrorMessage $message -Stage "source_review" -ExitCode 0
+        $completedCount += 1
+        Write-Host ("Needs source review: {0} - {1}" -f $workItem.exerciseName, $budgetReason)
+        Write-ProgressCheckpoint
+        continue
+    }
     if ($CpuPrefetchDuringBake) {
         if (-not $DisableStageResume -and (Test-CandidatePrefetchReady -WorkItem $workItem)) {
             $workItem.prefetchReused = $true
@@ -8101,6 +8528,7 @@ foreach ($workItem in $workItems) {
 }
 Optimize-PendingBakeQueue -Queue $pendingBakeItems
 Write-ProgressCheckpoint
+Write-RunOutcomeArtifacts -Outcome "running"
 
 $overallStartedAt = Get-Date
 $runningStagedWaveHighWater = 0
@@ -8221,8 +8649,6 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                 $warmGvhmrWorkerInstance = $null
             }
 
-            if ($pendingBakeItems.Count -eq 0) { $readyWaveSince = $null }
-            elseif ($null -eq $readyWaveSince) { $readyWaveSince = Get-Date }
             $discoveryAndDownloadDrained = (
                 $pendingDiscoveryItems.Count -eq 0 -and
                 $discoveryRunningJobs.Count -eq 0 -and
@@ -8230,24 +8656,22 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                 $pendingFallbackSourceDownloadItems.Count -eq 0 -and
                 $sourceDownloadRunningJobs.Count -eq 0
             )
-            # A partial (sub-batch-size) wave runs the final-validation lanes at
-            # reduced width for its whole duration. Only fire it once the
-            # upstream lanes that could still fill it have drained, with a hard
-            # valve at twice the wait so a slow discovery turn cannot stall a
-            # ready exercise indefinitely. Full-size waves fire regardless.
-            $readyWaveWaitSeconds = if ($null -ne $readyWaveSince) { ((Get-Date) - $readyWaveSince).TotalSeconds } else { 0 }
-            $partialWaveDue = (
-                $null -ne $readyWaveSince -and
-                $readyWaveWaitSeconds -ge $StagedWaveMaxWaitSeconds -and
-                ($discoveryAndDownloadDrained -or $readyWaveWaitSeconds -ge (2 * $StagedWaveMaxWaitSeconds))
+            $stagedWaveAdmission = Test-StagedWaveOverlapAdmission `
+                -BakeRunningJobs $bakeRunningJobs `
+                -PendingLegacyBakeItemCount $pendingLegacyBakeItems.Count `
+                -MaxConcurrentStagedWaves $effectiveMaxConcurrentStagedWaves
+            if ($stagedWaveAdmission.runningStagedWaveCount -gt $runningStagedWaveHighWater) {
+                $runningStagedWaveHighWater = $stagedWaveAdmission.runningStagedWaveCount
+            }
+            # StagedWaveSize caps each handoff; the first ready item can start
+            # while discovery and CPU-only source downloads continue.
+            $stagedWaveReady = $stagedWavesEnabled -and $pendingBakeItems.Count -gt 0
+            $shouldYieldDiscoveryForStagedWave = (
+                $stagedWaveReady -and
+                $stagedWaveAdmission.admitted -and
+                $avoidGpuDiscoveryBakeOverlap
             )
-            $stagedWaveReady = $stagedWavesEnabled -and $pendingBakeItems.Count -gt 0 -and (
-                $pendingBakeItems.Count -ge $StagedWaveSize -or $partialWaveDue -or
-                ($stagedWaveIndex -eq 0 -and @($pendingBakeItems | Where-Object {
-                    $_.primarySourceDownloadReused -or $_.motionProcessingResumed
-                }).Count -gt 0)
-            )
-            if ($stagedWaveReady) {
+            if ($shouldYieldDiscoveryForStagedWave) {
                 foreach ($discoveryJob in $discoveryRunningJobs) {
                     $yieldRequestPath = Join-Path (Split-Path -Parent $discoveryJob.WorkItem.exerciseCandidatesPath) 'discovery_yield.request'
                     if (-not (Test-Path -LiteralPath $yieldRequestPath)) {
@@ -8257,7 +8681,7 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                 }
             }
             # Do not launch work that the ready-wave yield above will immediately pause.
-            $canLaunchDiscovery = -not $stagedWaveReady -and -not (
+            $canLaunchDiscovery = -not $shouldYieldDiscoveryForStagedWave -and -not (
                 $avoidGpuDiscoveryBakeOverlap -and
                 ($bakeRunningJobs.Count -gt 0 -or $pendingLegacyBakeItems.Count -gt 0)
             )
@@ -8290,13 +8714,6 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
             # completion jobs no longer block the next wave; they run in
             # their own bounded lane below. The discovery mutual exclusion
             # ($canLaunchBake) and wave readiness conditions are unchanged.
-            $stagedWaveAdmission = Test-StagedWaveOverlapAdmission `
-                -BakeRunningJobs $bakeRunningJobs `
-                -PendingLegacyBakeItemCount $pendingLegacyBakeItems.Count `
-                -MaxConcurrentStagedWaves $effectiveMaxConcurrentStagedWaves
-            if ($stagedWaveAdmission.runningStagedWaveCount -gt $runningStagedWaveHighWater) {
-                $runningStagedWaveHighWater = $stagedWaveAdmission.runningStagedWaveCount
-            }
             $canStartStagedWave = (
                 $stagedWavesEnabled -and
                 $canLaunchBake -and
@@ -8341,8 +8758,8 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                     "overlap_admission"
                 } elseif ($stagedWaveReady -and $pendingBakeItems.Count -ge $StagedWaveSize) {
                     "full_wave_ready"
-                } elseif ($partialWaveDue) {
-                    "partial_wave_wait_elapsed"
+                } elseif ($stagedWaveReady) {
+                    "ready_item_available"
                 } elseif ($stagedWaveIndex -eq 0 -and @($pendingBakeItems | Where-Object {
                     $_.primarySourceDownloadReused -or $_.motionProcessingResumed
                 }).Count -gt 0) {
@@ -8533,6 +8950,12 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                         $summaryByIndex[$workItem.index] = New-TerminalExerciseSummary -WorkItem $workItem -Status "failed" -ErrorMessage $errorMessage -Stage "initial_discovery" -ExitCode $discoveryExitCode
                         $completedCount += 1
                         Write-ProgressCheckpoint
+                    } elseif ($jobResult -and -not [string]::IsNullOrWhiteSpace([string]$jobResult.definitionReviewReason)) {
+                        Add-SchedulerTimelineItemEvent -WorkItem $workItem -FinalStatus "failed"
+                        $summaryByIndex[$workItem.index] = New-TerminalExerciseSummary -WorkItem $workItem -Status "needs_definition_review" -ErrorMessage ([string]$jobResult.definitionReviewReason) -Stage "exercise_definition" -ExitCode 0
+                        $completedCount += 1
+                        Write-Host ("Needs definition review: {0} - clarify the target action before source selection." -f $workItem.exerciseName)
+                        Write-ProgressCheckpoint
                     } else {
                         $recommendedCount = [int](Get-ObjectProperty -Object $jobResult -Name "recommendedCount")
                         $workItem.hasFallbackSourceDownloads = (
@@ -8543,7 +8966,11 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                             Write-Host ("Paused: {0} - discovery will resume after reconstruction with its remaining allowance." -f $workItem.exerciseName)
                             Write-ProgressCheckpoint
                             continue
-                        } elseif ($recommendedCount -eq 0 -and ($DiscoveryCandidateBudget -gt 0 -or $DiscoveryTimeBudgetSeconds -gt 0)) {
+                        } elseif ($recommendedCount -eq 0 -and (
+                            $DiscoveryCandidateBudget -gt 0 -or
+                            $DiscoveryTimeBudgetSeconds -gt 0 -or
+                            [int](Get-ObjectProperty -Object $workItem -Name 'sourceDiscoveryRetryCount') -gt 0
+                        )) {
                             Write-Host ("Deferred: {0} - no suitable source in this discovery turn; saved reviews will be reused." -f $workItem.exerciseName)
                             $summaryByIndex[$workItem.index] = New-TerminalExerciseSummary -WorkItem $workItem -Status "no_selection" -ErrorMessage "No suitable source within this discovery turn." -Stage "initial_discovery" -ExitCode 0
                             $completedCount += 1
@@ -8719,6 +9146,9 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                             if ($job.PSObject.Properties.Name -contains 'CompletedExerciseIds' -and
                                 $job.CompletedExerciseIds.ContainsKey("$($waveItem.exerciseId)")) { continue }
                             $waveState = $waveStates["$($waveItem.exerciseId)"]
+                            # A dispatched staged wave is one real bake attempt
+                            # even when it exits without returning an item state.
+                            $waveItem.bakeAttemptCount = [int]$waveItem.bakeAttemptCount + 1
                             $reuseStagedResult = (
                                 $waveResult -and
                                 $waveResult.exitCode -eq 0 -and
@@ -8743,16 +9173,45 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                                 $pendingCompletionItems.Enqueue($waveItem)
                             } elseif ($waveState -and (Get-ObjectProperty -Object $waveState -Name 'retryDisposition') -eq 'retry_processing') {
                                 Add-SchedulerTimelineItemEvent -WorkItem $waveItem -FinalStatus "failed"
-                                $summaryByIndex[$waveItem.index] = New-TerminalExerciseSummary -WorkItem $waveItem -Status "needs_motion_processing" -ErrorMessage "Motion fitting did not finish; resume processing the retained source and reconstruction." -Stage "motion_processing" -ExitCode 0
+                                $summaryByIndex[$waveItem.index] = New-TerminalExerciseSummary -WorkItem $waveItem -Status "needs_motion_processing" -ErrorMessage "Local motion or support processing remains unresolved; resume with the retained approved source and reconstruction." -Stage "motion_processing" -ExitCode 0
                                 $completedCount += 1
                                 $bakeCompletedCount += 1
-                                Write-Host ("Needs processing: {0} - fitting incomplete; source retained for resume." -f $waveItem.exerciseName)
+                                Write-Host ("Needs local processing: {0} - approved source and reconstruction retained for resume." -f $waveItem.exerciseName)
+                            } elseif ($waveState -and @(
+                                (Get-ObjectProperty -Object (Get-ObjectProperty -Object $waveState -Name 'finalValidation') -Name 'candidateDiagnostics') |
+                                    ForEach-Object { $_.reasons }
+                            ) -contains 'source_support_contact_evidence_unavailable') {
+                                Add-SchedulerTimelineItemEvent -WorkItem $waveItem -FinalStatus "failed"
+                                $supportSummary = New-TerminalExerciseSummary -WorkItem $waveItem -Status "needs_motion_processing" -ErrorMessage "Final support-contact validation failed: source_support_contact_evidence_unavailable. Retain the approved source and reconstruction for local support-evidence repair." -Stage "final_output_validation" -ExitCode 0
+                                $reconstructionAttempts = @((Get-ObjectProperty -Object (Get-ObjectProperty -Object $waveState -Name 'reconstruction') -Name 'attempts'))
+                                $finalValidation = Get-ObjectProperty -Object $waveState -Name 'finalValidation'
+                                $diagnostics = @(Get-ObjectProperty -Object $finalValidation -Name 'candidateDiagnostics')
+                                $supportSummary.timings.stagedWaveId = [string]$job.WaveId
+                                $supportSummary.timings.stagedWaveElapsedSeconds = [Math]::Round([double]$waveResult.elapsedSeconds, 3)
+                                $supportSummary.timings.sourceAttemptCount = @((Get-ObjectProperty -Object (Get-ObjectProperty -Object $waveState -Name 'source') -Name 'attempts')).Count
+                                $supportSummary.timings.reconstructionGeneratedCount = @($reconstructionAttempts | Where-Object { $_.status -eq 'prepared' -and $_.cacheStatus -eq 'generated' }).Count
+                                $supportSummary.timings.reconstructionSeconds = [Math]::Round((@($reconstructionAttempts | ForEach-Object { [double]$_.elapsedSeconds } | Measure-Object -Sum).Sum), 3)
+                                $supportSummary.timings.finalValidationSeconds = [Math]::Round([double]$finalValidation.elapsedSeconds, 3)
+                                $supportSummary.timings.finalValidationDiagnosticSeconds = [Math]::Round((@($diagnostics | ForEach-Object { [double]$_.timings.totalSeconds } | Measure-Object -Sum).Sum), 3)
+                                $supportSummary.finalValidationRejectionReasons = @($diagnostics | ForEach-Object { $_.reasons } | Select-Object -Unique)
+                                $summaryByIndex[$waveItem.index] = $supportSummary
+                                $completedCount += 1
+                                $bakeCompletedCount += 1
+                                Write-Host ("Needs local support-evidence repair: {0}; approved source and reconstruction retained." -f $waveItem.exerciseName)
                             } elseif ($waveState -and (Get-ObjectProperty -Object $waveState -Name 'retryDisposition') -eq 'retry_review') {
                                 Add-SchedulerTimelineItemEvent -WorkItem $waveItem -FinalStatus "failed"
                                 $summaryByIndex[$waveItem.index] = New-TerminalExerciseSummary -WorkItem $waveItem -Status "needs_source_review" -ErrorMessage "Review evidence remains incomplete after a bounded retry; cached source and motion retained." -Stage "source_review" -ExitCode 0
                                 $completedCount += 1
                                 $bakeCompletedCount += 1
                                 Write-Host ("Needs review: {0} - review evidence incomplete; resume cached review work." -f $waveItem.exerciseName)
+                            } elseif ($waveState -and (Get-ObjectProperty -Object $waveState -Name 'retryDisposition') -eq 'needs_definition_review') {
+                                Add-SchedulerTimelineItemEvent -WorkItem $waveItem -FinalStatus "failed"
+                                $definitionAttempts = @($waveState.source.attempts | Where-Object { $_.status -eq 'needs_definition_review' })
+                                $definitionReason = @($definitionAttempts | ForEach-Object { $_.reason }) -join '; '
+                                $summaryByIndex[$waveItem.index] = New-TerminalExerciseSummary -WorkItem $waveItem -Status "needs_definition_review" -ErrorMessage $definitionReason -Stage "exercise_definition" -ExitCode 0
+                                $completedCount += 1
+                                $bakeCompletedCount += 1
+                                Write-Host ("Needs definition review: {0} - clarify the target action before source selection." -f $waveItem.exerciseName)
                             } elseif ($waveState -and (Get-ObjectProperty -Object $waveState -Name 'retryDisposition') -eq 'repair_contract') {
                                 Add-SchedulerTimelineItemEvent -WorkItem $waveItem -FinalStatus "failed"
                                 $contractErrors = @($waveState.source.attempts | Where-Object { $_.status -eq 'blocked_contract' } | ForEach-Object { $_.error })
@@ -8760,18 +9219,51 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                                 $completedCount += 1
                                 $bakeCompletedCount += 1
                                 Write-Host ("Deferred: {0} - contract regeneration failed: {1}. No source retry until the next contract pass." -f $waveItem.exerciseName, ($contractErrors -join '; '))
+                            } elseif ($waveState -and (
+                                (Get-ObjectProperty -Object $waveState -Name 'retryDisposition') -eq 'continue_source' -or
+                                $waveState.source.failureReason -eq 'source_turn_deferred'
+                            )) {
+                                Add-SchedulerTimelineItemEvent -WorkItem $waveItem -ReadyReason "source_turn_deferred" -MarkEnqueued
+                                $pendingBakeItems.Enqueue($waveItem)
+                                Write-Host ("Continuing source review: {0} - remaining approved-source attempts resume from the saved candidate cursor." -f $waveItem.exerciseName)
                             } elseif ($waveState -and (Get-ObjectProperty -Object $waveState -Name 'retryDisposition') -eq 'next_source') {
-                                Add-SchedulerTimelineItemEvent -WorkItem $waveItem -FinalStatus "failed"
-                                $summaryByIndex[$waveItem.index] = New-TerminalExerciseSummary -WorkItem $waveItem -Status "no_selection" -ErrorMessage "Reviewed source or movement rejected; next round will consider remaining candidates." -Stage "source_or_motion_quality" -ExitCode 0
-                                $completedCount += 1
-                                $bakeCompletedCount += 1
-                                Write-Host ("Deferred: {0} - quality rejection; remaining candidates saved for the next round." -f $waveItem.exerciseName)
-                            } elseif ($waveState -and $waveState.source.failureReason -eq 'source_turn_deferred') {
-                                Add-SchedulerTimelineItemEvent -WorkItem $waveItem -FinalStatus "failed"
-                                $summaryByIndex[$waveItem.index] = New-TerminalExerciseSummary -WorkItem $waveItem -Status "no_selection" -ErrorMessage "Remaining source attempts deferred while ready movements are processed." -Stage "source_review" -ExitCode 0
-                                $completedCount += 1
-                                $bakeCompletedCount += 1
-                                Write-Host ("Deferred: {0} - remaining source attempts saved for the next library round." -f $waveItem.exerciseName)
+                                $nextCandidateKey = Get-ObjectProperty -Object $waveState.source -Name 'nextCandidateKey'
+                                if (-not [string]::IsNullOrWhiteSpace([string]$nextCandidateKey)) {
+                                    $attemptedKeys = @(
+                                        @($waveState.source.priorAttemptedCandidateKeys) +
+                                        @($waveState.source.attempts | ForEach-Object { $_.candidateKey })
+                                    ) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique
+                                    $attemptedVideoIds = @(
+                                        @($waveState.source.priorAttemptedVideoIds) +
+                                        @($waveState.source.attempts | ForEach-Object { $_.videoId })
+                                    ) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique
+                                    $sourceTurnResume = [ordered]@{
+                                        sourceSelectionPolicyVersion = Resolve-WaveSourceSelectionPolicyVersion -Source $waveState.source
+                                        nextCandidateKey = [string]$nextCandidateKey
+                                        attemptedCandidateKeys = @($attemptedKeys)
+                                        attemptedVideoIds = @($attemptedVideoIds)
+                                    }
+                                    $resumePath = Join-Path $waveItem.bakeWorkspace 'source_turn_resume.json'
+                                    New-Item -ItemType Directory -Path (Split-Path -Parent $resumePath) -Force | Out-Null
+                                    [System.IO.File]::WriteAllText(
+                                        $resumePath,
+                                        ($sourceTurnResume | ConvertTo-Json -Depth 8),
+                                        [System.Text.UTF8Encoding]::new($false)
+                                    )
+                                    Add-SchedulerTimelineItemEvent -WorkItem $waveItem -ReadyReason "next_source_candidate" -MarkEnqueued
+                                    $pendingBakeItems.Enqueue($waveItem)
+                                    Write-Host ("Continuing source review: {0} - failed candidate/window skipped; next retained candidate resumes from its cursor." -f $waveItem.exerciseName)
+                                } elseif (Set-BoundedSourceRecoveryDiscovery -WorkItem $waveItem -WaveState $waveState -CandidateBudget $DiscoveryCandidateBudget) {
+                                    Add-SchedulerTimelineItemEvent -WorkItem $waveItem -ReadyReason "bounded_source_discovery_retry" -MarkEnqueued
+                                    $pendingDiscoveryItems.Enqueue($waveItem)
+                                    Write-Host ("Returning {0} to one bounded discovery turn; exact attempted windows will be skipped while alternate windows remain eligible." -f $waveItem.exerciseName)
+                                } else {
+                                    Add-SchedulerTimelineItemEvent -WorkItem $waveItem -FinalStatus "failed"
+                                    $summaryByIndex[$waveItem.index] = New-TerminalExerciseSummary -WorkItem $waveItem -Status "no_selection" -ErrorMessage "Retained source candidates and the single bounded discovery recovery turn were exhausted." -Stage "source_or_motion_quality" -ExitCode 0
+                                    $completedCount += 1
+                                    $bakeCompletedCount += 1
+                                    Write-Host ("Deferred: {0} - bounded source recovery exhausted." -f $waveItem.exerciseName)
+                                }
                             } else {
                                 $pendingLegacyBakeItems.Enqueue($waveItem)
                             }
@@ -8903,7 +9395,17 @@ for ($index = 0; $index -lt $workItems.Count; $index += 1) {
 }
 
 $summary = [ordered]@{
-    schemaVersion = 1
+    schemaVersion = 2
+    runId = $movementRunId
+    libraryRunId = if ([string]::IsNullOrWhiteSpace($LibraryRunId)) { $null } else { $LibraryRunId }
+    outcome = "running"
+    startedAtUtc = $movementRunStartedAtUtc
+    completedAtUtc = $null
+    stoppedAtUtc = $null
+    failedAtUtc = $null
+    inputIdentitySha256 = $inputIdentitySha256
+    approvedDefinitionsSha256 = $definitionsInputSha256
+    effectiveDefinitionPlanSha256 = $effectiveWorkoutPlanInputSha256
     generatedAt = (Get-Date).ToUniversalTime().ToString("o")
     motionSourceIdentity = $script:MotionSourceIdentity
     stageResumeDisabledForSourceIdentityMismatch = $false
@@ -8983,9 +9485,14 @@ $summary = [ordered]@{
         maxFinalOutputRejections = $MaxFinalOutputRejections
     }
     maxSelectedResults = $MaxSelectedResults
+    totalExerciseCount = $workItems.Count
+    terminalExerciseCount = $summaryItems.Count
+    successfulExerciseCount = @($summaryItems | Where-Object status -eq "completed").Count
+    unsuccessfulExerciseCount = @($summaryItems | Where-Object status -ne "completed").Count
+    pendingExerciseCount = [Math]::Max(0, $workItems.Count - $summaryItems.Count)
     exercises = $summaryItems
 }
-$summary | ConvertTo-Json -Depth 64 | Set-Content -LiteralPath $summaryPath -Encoding UTF8
+Write-JsonAtomically -Path $summaryPath -Value $summary
 
 Write-Host "Workout plan JSON: $resolvedWorkoutPlanJson"
 Write-Host "Workout-plan exercises JSON: $exerciseListPath"
@@ -9022,6 +9529,7 @@ if (-not [string]::IsNullOrWhiteSpace($MobilePackageOutputJson)) {
     $resolvedMobilePackageOutputJson = (Resolve-Path -LiteralPath $resolvedRequestedMobilePackageOutputJson).Path
     Write-Host "Mobile workout-plan package: $resolvedMobilePackageOutputJson"
 }
+$script:MotionRunOutcome = "completed"
 } finally {
     if (-not $script:MotionServiceShutdownUnconfirmed) {
         $stagedWorkerStopped = Stop-StagedBakeQueueService -Cancel
@@ -9040,6 +9548,14 @@ if (-not [string]::IsNullOrWhiteSpace($MobilePackageOutputJson)) {
             $script:MotionServiceShutdownUnconfirmed = $true
         }
     }
+    $finalOutcome = if (Test-MotionRunCancelRequested) { "stopped" } elseif ($script:MotionRunOutcome -eq "completed") { "completed" } else { "failed" }
+    try {
+        if (Get-Command Write-RunOutcomeArtifacts -ErrorAction SilentlyContinue) {
+            Write-RunOutcomeArtifacts -Outcome $finalOutcome
+        } else {
+            Write-EarlyMotionRunOutcomeSummary -Outcome $finalOutcome
+        }
+    } catch { Write-Warning "Could not persist final motion-run status: $($_.Exception.Message)" }
     Release-MotionWorkspaceLease -Lease $script:MotionWorkspaceLease
     $script:MotionWorkspaceLease = $null
     if (Test-MotionRunCancelRequested) {

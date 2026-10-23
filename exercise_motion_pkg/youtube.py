@@ -36,7 +36,11 @@ from exercise_motion_pkg.ffmpeg_utils import (
     resolve_ffmpeg_path,
     retry_h264_codec_args,
 )
-from exercise_motion_pkg.gpu_lock import GlobalGpuLock, exclusive_gpu_device
+from exercise_motion_pkg.gpu_lock import (
+    GlobalGpuLock,
+    exclusive_gpu_device,
+    resolve_llama_server_cuda_visibility,
+)
 from exercise_motion_pkg.shared_llama_server import (
     detach_shared_llama_request_publisher,
     install_shared_llama_request_publisher,
@@ -4402,12 +4406,18 @@ def build_exercise_motion_contract_prompt(exercise: ExerciseEntry) -> str:
         "and implement relationship. Preserve named variants and required accessories. "
         "Do not describe or guess exact start/end posture, support contacts, stance, "
         "joint angles, pauses, phase timing, or duration; those require source footage. "
-        "Do not emit validStartState, validEndState, startPoseConstraints, "
-        "endPoseConstraints, requiredPhases, or singleExecutionDurationSeconds.\n"
-        "Return one minified JSON object with exactly these keys: movementType, "
+        "Define the exercise action separately from its return or stopping boundary. "
+        "Return one concise definingAction sentence and actionDefinitionStatus as defined only when the action is "
+        "clear from the target name and supplied context; otherwise return uncertain and an empty definingAction. "
+        "Model-proposed definitions and phases are provisional evidence checklists, never authoritative definitions by themselves. "
+        "The exercise name alone does not establish authority. For a discrete action, include its defining lift, press, pull, transition, or "
+        "other target action even when it does not return to its start. Do not describe support contacts as action phases. "
+        "Do not emit validStartState, validEndState, startPoseConstraints, endPoseConstraints, or "
+        "singleExecutionDurationSeconds.\n"
+        "Return one minified JSON object with exactly these keys: definingAction, variantQualifiers, movementType, "
         "groundContactMode, implementSupportMode, handRelationship, completionMode, "
-        "primaryMovingRegions, referenceRegions, primaryAxis, motionPattern, "
-        "mustBeVisibleRegions.\n"
+        "requiredPhases, actionDefinitionStatus, primaryMovingRegions, referenceRegions, "
+        "primaryAxis, motionPattern, mustBeVisibleRegions.\n"
         "movementType: repetition|cyclic|hold|carry|transition_sequence. "
         "completionMode: return_to_start|distinct_end_state|stable_hold|active_travel|"
         "representative_cycle|alternating_pair. A movement ending after a distinct "
@@ -4422,7 +4432,10 @@ def build_exercise_motion_contract_prompt(exercise: ExerciseEntry) -> str:
         "lower_limb. primaryAxis: vertical|horizontal|depth|any. motionPattern: "
         "joint_travel|body_toward_anchor|body_away_from_anchor|limb_toward_body|"
         "limb_away_from_body|distal_limb_vertical|joint_flex_extend|other. "
-        "Use the smallest region set that identifies the action. No explanation."
+        "Use the smallest region set that identifies the action. definingAction is one concise description of what "
+        "the athlete does; variantQualifiers lists only named target distinctions such as grip or implement variant. "
+        "requiredPhases is an optional short ordered evidence checklist, not a prescribed pose sequence. Use an empty "
+        "definingAction, [] phases, and actionDefinitionStatus uncertain when the defining action is unclear. No explanation."
     )
 
 
@@ -4794,17 +4807,79 @@ def normalize_definition_exercise_motion_contract_response(
     definition = {
         key: raw[key]
         for key in (
-            "movementType", "groundContactMode", "implementSupportMode", "handRelationship",
-            "completionMode", "primaryMovingRegions", "referenceRegions", "primaryAxis",
-            "motionPattern", "mustBeVisibleRegions",
+            "definingAction", "variantQualifiers", "movementType", "groundContactMode", "implementSupportMode", "handRelationship",
+            "completionMode", "requiredPhases", "actionDefinitionStatus", "primaryMovingRegions",
+            "referenceRegions", "primaryAxis", "motionPattern", "mustBeVisibleRegions",
         )
         if key in raw
     }
     definition.update({
         "contractScope": "definition_only",
         "requiresReturnToStart": completion_mode == "return_to_start",
+        "actionDefinitionAuthority": "structured_definition"
+        if exercise_motion_context_has_action_definition(exercise.motion_context)
+        else "unresolved",
     })
+    trusted_definition = exercise_motion_context_action_definition(exercise.motion_context)
+    if trusted_definition is not None:
+        definition.update(trusted_definition)
+        definition["requiresReturnToStart"] = trusted_definition["completionMode"] == "return_to_start"
     return normalize_exercise_motion_contract(definition, exercise=exercise, source=source)
+
+
+def exercise_motion_context_action_definition(context: Any) -> dict[str, Any] | None:
+    """Read only an explicitly structured target definition supplied with the exercise."""
+    if not isinstance(context, dict):
+        return None
+    definition = context.get("exerciseDefinition")
+    if not isinstance(definition, dict):
+        return None
+    defining_action = explicit_contract_text_value(definition.get("definingAction"))
+    completion_mode = normalize_exercise_completion_mode(definition.get("completionMode"))
+    if not defining_action or completion_mode is None:
+        return None
+    result: dict[str, Any] = {
+        "definingAction": complete_contract_description(defining_action, 512),
+        "completionMode": completion_mode,
+        "actionDefinitionStatus": "defined",
+    }
+    result["variantQualifiers"] = cleaned_contract_string_list(
+        definition.get("variantQualifiers"), limit=6, item_limit=120,
+    )
+    result["requiredPhases"] = normalize_required_phase_labels(definition.get("requiredPhases")) or [
+        result["definingAction"]
+    ]
+    return result
+
+
+def exercise_motion_context_has_action_definition(context: Any) -> bool:
+    return exercise_motion_context_action_definition(context) is not None
+
+
+def exercise_motion_action_definition_review_reason(contract: dict[str, Any] | None) -> str | None:
+    """Return a review reason when a known discrete target lacks trusted action semantics."""
+    if not isinstance(contract, dict):
+        return None
+    completion_mode = normalize_exercise_completion_mode(contract.get("completionMode"))
+    if completion_mode not in {"return_to_start", "distinct_end_state", "alternating_pair"}:
+        return None
+    trusted = exercise_motion_action_definition_is_trusted(contract)
+    action = explicit_contract_text_value(contract.get("definingAction"))
+    phases = normalize_required_phase_labels(contract.get("requiredPhases"))
+    status = str(contract.get("actionDefinitionStatus") or "").strip().casefold()
+    complete = bool(action or phases) and status != "uncertain"
+    return None if trusted and complete else "target_action_definition_unresolved"
+
+
+def exercise_motion_action_definition_is_trusted(contract: dict[str, Any] | None) -> bool:
+    if not isinstance(contract, dict):
+        return False
+    return bool(
+        contract.get("actionDefinitionAuthority") in {"structured_definition", "trusted"}
+        or str(contract.get("authority") or "").casefold() == "explicit"
+        or str(contract.get("source") or "").casefold()
+        in {"exercise_definition", "user", "manual", "library"}
+    )
 
 
 def exercise_motion_contract_uses_candidate_evidence(contract: dict[str, Any]) -> bool:
@@ -4836,8 +4911,10 @@ def normalize_exercise_motion_contract(
         definition_keys = {
             "contractScope", "advisoryText", "movementType", "groundContactMode",
             "implementSupportMode", "handRelationship", "completionMode",
-            "requiresReturnToStart", "primaryMovingRegions", "referenceRegions",
-            "primaryAxis", "motionPattern", "mustBeVisibleRegions",
+            "requiresReturnToStart", "definingAction", "variantQualifiers", "requiredPhases", "actionDefinitionStatus",
+            "actionDefinitionAuthority",
+            "primaryMovingRegions", "referenceRegions",
+            "primaryAxis", "motionPattern", "mustBeVisibleRegions", "observableMotionSpec",
         }
         payload = {key: value for key, value in payload.items() if key in definition_keys}
         payload["advisoryText"] = f"Target exercise: {exercise.name}"
@@ -5251,6 +5328,7 @@ def normalized_exercise_motion_contract_fields(payload: dict[str, Any]) -> dict[
                 constraints["supportMode"] = "any"
 
     string_fields = {
+        "definingAction": ("definingAction", "actionDefinition", "movementAction"),
         "validStartState": ("validStartState", "requiredStartPosture", "startState"),
         "validEndState": ("validEndState", "requiredEndPosture", "endState", "finishState"),
         "boundaryRule": ("boundaryRule", "boundary"),
@@ -5289,6 +5367,23 @@ def normalized_exercise_motion_contract_fields(payload: dict[str, Any]) -> dict[
     required_phases = normalize_required_phase_labels(
         first_contract_value(payload, "requiredPhases", "phases", "completePhases")
     )
+    variant_qualifiers = cleaned_contract_string_list(
+        first_contract_value(payload, "variantQualifiers", "requiredVariantQualifiers"),
+        limit=6,
+        item_limit=120,
+    )
+    if variant_qualifiers:
+        fields["variantQualifiers"] = variant_qualifiers
+    action_definition_status = str(payload.get("actionDefinitionStatus") or "").strip().casefold()
+    if action_definition_status not in {"defined", "uncertain"}:
+        action_definition_status = "defined" if required_phases or fields.get("definingAction") else "uncertain"
+    if not required_phases and fields.get("definingAction"):
+        required_phases = [fields["definingAction"]]
+    if not required_phases:
+        action_definition_status = "uncertain"
+    fields["actionDefinitionStatus"] = action_definition_status
+    if payload.get("actionDefinitionAuthority") in {"structured_definition", "trusted", "unresolved"}:
+        fields["actionDefinitionAuthority"] = payload["actionDefinitionAuthority"]
     duration_hint = normalize_single_execution_duration_hint(
         first_contract_value(
             payload,
@@ -5299,7 +5394,7 @@ def normalized_exercise_motion_contract_fields(payload: dict[str, Any]) -> dict[
     )
     if duration_hint is not None:
         fields["singleExecutionDurationSeconds"] = duration_hint
-    if requires_return is True and required_phases and not any(
+    if requires_return is True and not fields.get("definingAction") and required_phases and not any(
         re.search(r"\b(?:return|returns|returned|back)\b", phase.casefold())
         for phase in required_phases
     ):
@@ -5377,8 +5472,8 @@ def normalized_exercise_motion_contract_fields(payload: dict[str, Any]) -> dict[
     return fields
 
 
-EXERCISE_MOTION_CONTRACT_POLICY_VERSION = 35
-EXERCISE_MOTION_CONTRACT_CACHE_VERSION = 14
+EXERCISE_MOTION_CONTRACT_POLICY_VERSION = 37
+EXERCISE_MOTION_CONTRACT_CACHE_VERSION = 16
 
 
 def exercise_motion_contract_cache_key_payload(
@@ -5775,11 +5870,15 @@ EXERCISE_MOTION_CONTRACT_PROMPT_FIELD_KEYS = (
     "groundContactMode",
     "completionMode",
     "requiresReturnToStart",
+    "definingAction",
+    "variantQualifiers",
     "validStartState",
     "validEndState",
     "startPoseConstraints",
     "endPoseConstraints",
     "requiredPhases",
+    "actionDefinitionStatus",
+    "actionDefinitionAuthority",
     "primaryMovingRegions",
     "referenceRegions",
     "mustBeVisibleRegions",
@@ -5824,6 +5923,9 @@ def validate_contract_text_shapes(payload: dict[str, Any]) -> None:
             )
 
     phases = first_contract_value(payload, "requiredPhases", "phases", "completePhases")
+    action = first_contract_value(payload, "definingAction", "actionDefinition", "movementAction")
+    if action is not None and explicit_contract_text_value(action) is None:
+        raise ValueError("definingAction must be a string or an object with a string label or description.")
     if phases is None or isinstance(phases, str):
         return
     if not isinstance(phases, list):
@@ -8366,6 +8468,37 @@ def discover_and_rank_youtube_candidates(
                     exercise_motion_contract["motionContext"] = exercise.motion_context
             review_motion_contract = exercise_motion_contract
 
+            definition_review_reason = exercise_motion_action_definition_review_reason(
+                review_motion_contract
+            )
+            if definition_review_reason is not None:
+                exercise_payloads.append({
+                    "exerciseId": exercise.exercise_id,
+                    "exerciseName": exercise.name,
+                    "sourceExerciseName": exercise.source_name,
+                    "equipmentQualifiedExerciseName": exercise.equipment_qualified_name,
+                    "motionContext": exercise.motion_context,
+                    "exerciseNameRewrite": exercise_name_rewrite_payload,
+                    "slug": exercise.slug,
+                    "status": "needs_definition_review",
+                    "reason": definition_review_reason,
+                    "failureStage": "exercise_definition",
+                    "queries": [],
+                    "exerciseMotionContract": exercise_motion_contract,
+                    "searchErrors": [],
+                    "searchAttempts": [],
+                    "candidates": [],
+                    "debugCandidates": [],
+                })
+                append_youtube_discovery_progress(
+                    progress_path,
+                    event="exercise_definition_review_required",
+                    started_at=run_started,
+                    exercise=exercise,
+                    reason=definition_review_reason,
+                )
+                continue
+
             review_budget = None
             if settings.discovery_candidate_budget > 0 or settings.discovery_time_budget_seconds > 0:
                 signature_settings = {
@@ -9548,7 +9681,8 @@ class LlamaCppVisionRanker:
         args.append("--cont-batching" if self.settings.llama_cpp_cont_batching else "--no-cont-batching")
         if self.settings.llama_cpp_backend == "gpu":
             # Split layers/KV across all visible GPUs using llama.cpp's free-memory weights.
-            args.extend(["--gpu-layers", "all", "--split-mode", "layer"])
+            gpu_layers = "all" if self.settings.llama_cpp_fit == "off" else "auto"
+            args.extend(["--gpu-layers", gpu_layers, "--split-mode", "layer"])
         else:
             args.extend(["--gpu-layers", "0"])
         args_without_mtp: list[str] | None = None
@@ -9580,12 +9714,11 @@ class LlamaCppVisionRanker:
             self.server_log_path = log_directory / f"llama-server-{os.getpid()}-{time.time_ns()}.log"
             server_env = os.environ.copy()
             exclusive_device = exclusive_gpu_device()
-            if exclusive_device is not None:
+            llama_cuda_visibility = resolve_llama_server_cuda_visibility(exclusive_device)
+            if llama_cuda_visibility is not None:
                 # Keep the resident server off the exclusive stages' device;
                 # pinning also beats layer-splitting both cards on decode speed.
-                server_env["CUDA_VISIBLE_DEVICES"] = (
-                    "1" if exclusive_device == "1" else "0"
-                )
+                server_env["CUDA_VISIBLE_DEVICES"] = llama_cuda_visibility
             with self.server_log_path.open("w", encoding="utf-8", errors="replace") as server_log:
                 self.process = subprocess.Popen(
                     active_args,

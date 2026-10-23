@@ -448,6 +448,7 @@ def test_exclusive_gpu_device_parsing(monkeypatch: pytest.MonkeyPatch) -> None:
         EXCLUSIVE_GPU_DEVICE_ENV_VAR,
         exclusive_gpu_device,
         resolve_docker_gpu_selection,
+        resolve_llama_server_cuda_visibility,
         resolve_stage_cuda_device,
     )
 
@@ -458,6 +459,7 @@ def test_exclusive_gpu_device_parsing(monkeypatch: pytest.MonkeyPatch) -> None:
         assert exclusive_gpu_device() is None
     monkeypatch.setattr(gpu_lock, "visible_gpu_count", lambda: 2)
     monkeypatch.setenv(EXCLUSIVE_GPU_DEVICE_ENV_VAR, "1")
+    monkeypatch.setattr(gpu_lock, "gpu_device_uuid", lambda index: f"GPU-test-{index}")
     assert exclusive_gpu_device() == "1"
     monkeypatch.setenv(EXCLUSIVE_GPU_DEVICE_ENV_VAR, "3")
     assert exclusive_gpu_device() is None
@@ -469,14 +471,60 @@ def test_exclusive_gpu_device_parsing(monkeypatch: pytest.MonkeyPatch) -> None:
         exclusive_gpu_device()
 
     monkeypatch.setenv(EXCLUSIVE_GPU_DEVICE_ENV_VAR, "1")
-    assert resolve_docker_gpu_selection("all") == "device=1"
-    assert resolve_docker_gpu_selection(" device=0 ") == " device=0 "
+    assert resolve_docker_gpu_selection("all") == "device=GPU-test-1"
+    assert resolve_llama_server_cuda_visibility("1") == "GPU-test-0"
+    assert resolve_docker_gpu_selection("device=1") == "device=GPU-test-1"
+    assert resolve_docker_gpu_selection("device=GPU-test-1") == "device=GPU-test-1"
+    with pytest.raises(ValueError, match="conflicts with exclusive GPU 1"):
+        resolve_docker_gpu_selection("device=0")
     assert resolve_stage_cuda_device("cuda") == "cuda:1"
     assert resolve_stage_cuda_device("cpu") == "cpu"
-    assert resolve_stage_cuda_device("cuda:0") == "cuda:0"
+    assert resolve_stage_cuda_device("cuda:1") == "cuda:1"
+    with pytest.raises(ValueError, match="conflicts with exclusive GPU 1"):
+        resolve_stage_cuda_device("cuda:0")
     monkeypatch.delenv(EXCLUSIVE_GPU_DEVICE_ENV_VAR)
     assert resolve_docker_gpu_selection("all") == "all"
+    assert resolve_llama_server_cuda_visibility(None) is None
     assert resolve_stage_cuda_device("cuda") == "cuda"
+
+
+def test_gvhmr_command_masks_cuda_to_exclusive_physical_gpu_uuid(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import exercise_motion_pkg.gvhmr_runner as gvhmr_runner
+    import exercise_motion_pkg.gpu_lock as gpu_lock
+
+    monkeypatch.setattr(gvhmr_runner, "exclusive_gpu_device", lambda: "1")
+    monkeypatch.setattr(gvhmr_runner, "gpu_device_uuid", lambda index: f"GPU-test-{index}")
+    monkeypatch.setattr(gpu_lock, "exclusive_gpu_device", lambda: "1")
+    monkeypatch.setattr(gpu_lock, "gpu_device_uuid", lambda index: f"GPU-test-{index}")
+
+    command = gvhmr_runner.build_gvhmr_command(
+        input_video=tmp_path / "input.mp4",
+        output_root=tmp_path / "output",
+        export_script=Path("gvhmr_pkl_export.py"),
+        docker_image="gvhmr:test",
+        docker_gpus="all",
+        docker_shm_size="8g",
+        docker_container_name="smoke",
+        static_camera=True,
+    )
+
+    assert command[command.index("--gpus") + 1] == "device=GPU-test-1"
+    assert command[command.index("--env") + 1] == "CUDA_VISIBLE_DEVICES=GPU-test-1"
+
+    with pytest.raises(ValueError, match="conflicts with exclusive GPU 1"):
+        gvhmr_runner.build_gvhmr_command(
+            input_video=tmp_path / "input.mp4",
+            output_root=tmp_path / "output",
+            export_script=Path("gvhmr_pkl_export.py"),
+            docker_image="gvhmr:test",
+            docker_gpus="device=GPU-test-0",
+            docker_shm_size="8g",
+            docker_container_name="smoke",
+            static_camera=True,
+        )
 
 
 def test_per_device_lock_lanes_are_independent(

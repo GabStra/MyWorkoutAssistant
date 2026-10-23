@@ -69,6 +69,132 @@ def test_grounded_toe_recalibrates_overlapping_ankle_before_fitting():
     np.testing.assert_allclose(playback, targets)
 
 
+def test_materialized_body_support_moves_pinned_ankle_toe_as_pair_to_forefoot_plane():
+    from exercise_motion_pkg.rig_playback import rig_contact_targets
+
+    rig = rig_payload(8)
+    names = rig['jointNames']
+    points = decode_rig(rig, rig['coordinates'])
+    ankle, toe = (names.index(f'right_{part}') for part in ('ankle', 'foot'))
+    pinned = np.zeros(points.shape[:2], dtype=bool)
+    pinned[:, [ankle, toe]] = True
+    plane_y = .13
+    evidence = {'bodySupport': {
+        'soleContacts': [{'joints': ['right_knee', 'right_ankle', 'right_foot'],
+                          'normal': [0., 1., 0.]}],
+        'coplanarGroups': [{'joints': ['right_foot'], 'normal': [0., 1., 0.],
+                            'planeOffsetMeters': plane_y}],
+    }}
+
+    targets, _ = rig_contact_targets(points, names, pinned, np.asarray(rig['offsets']),
+                                     evidence=evidence)
+    source_vector = points[:, toe] - points[:, ankle]
+    target_vector = targets[:, toe] - targets[:, ankle]
+    np.testing.assert_allclose(targets[:, toe, 1], plane_y, atol=1e-12)
+    np.testing.assert_allclose(target_vector, source_vector, atol=1e-12)
+
+
+def test_contact_targets_use_calibrated_material_pitch_only_on_mapped_full_sole_rows():
+    from exercise_motion_pkg.contact_constraints import motion_space_support_evidence
+    from exercise_motion_pkg.rig_playback import rig_contact_targets
+
+    rig = rig_payload(8)
+    names = rig['jointNames']
+    points = decode_rig(rig, rig['coordinates'])
+    ankle, toe = (names.index(f'right_{part}') for part in ('ankle', 'foot'))
+    # Make the source pair's aggregate pitch differ from the neutral material pitch.
+    points[:, toe, 1] += np.linspace(-.025, .015, len(points))
+    patch = {
+        'available': True, 'sourceTimeBasis': 'absolute_source_video', 'sourceFps': 30.,
+        'sourceTimesSec': [90. + index / 30. for index in range(len(points))],
+        'feet': {'right': {'states': ['full_sole'] * 4 + ['unknown', 'airborne', 'heel_only', 'toe_only']}},
+    }
+    payload = {
+        'sourceFootSupportEvidence': {'footPatchEvidence': patch},
+        'frames': [{'sourceTimeSec': value} for value in patch['sourceTimesSec']],
+    }
+    evidence = motion_space_support_evidence(payload)
+    np.testing.assert_array_equal(evidence['_fitFrameStateIndices'], np.arange(len(points)))
+    pinned = np.zeros(points.shape[:2], dtype=bool)
+    pinned[:, [ankle, toe]] = True
+    floor = float(np.min(points[:, toe, 1]))
+    rest_pitch = -.30
+
+    uncalibrated, _ = rig_contact_targets(
+        points, names, pinned, np.asarray(rig['offsets']), evidence=evidence, floor=floor)
+    calibrated, _ = rig_contact_targets(
+        points, names, pinned, np.asarray(rig['offsets']), evidence=evidence,
+        floor=floor, rest_pitches={'right': rest_pitch})
+
+    vector = calibrated[:4, toe] - calibrated[:4, ankle]
+    pitch = np.arcsin(vector[:, 1] / np.linalg.norm(vector, axis=1))
+    np.testing.assert_allclose(pitch, rest_pitch, atol=1e-12)
+    np.testing.assert_allclose(
+        np.linalg.norm(vector, axis=1), np.linalg.norm(rig['offsets'][toe]), atol=1e-12)
+    horizontal_before = uncalibrated[:4, toe][:, (0, 2)] - uncalibrated[:4, ankle][:, (0, 2)]
+    horizontal_after = calibrated[:4, toe][:, (0, 2)] - calibrated[:4, ankle][:, (0, 2)]
+    horizontal_before /= np.linalg.norm(horizontal_before, axis=1, keepdims=True)
+    horizontal_after /= np.linalg.norm(horizontal_after, axis=1, keepdims=True)
+    np.testing.assert_allclose(horizontal_after, horizontal_before, atol=1e-12)
+    np.testing.assert_allclose(calibrated[:4, toe], uncalibrated[:4, toe], atol=1e-12)
+    np.testing.assert_array_equal(calibrated[4:, [ankle, toe]], uncalibrated[4:, [ankle, toe]])
+
+
+@pytest.mark.parametrize('state_indices', [None, [0, 1]])
+def test_contact_targets_do_not_infer_full_sole_rows_without_complete_clock_map(state_indices):
+    from exercise_motion_pkg.contact_constraints import motion_space_support_evidence
+    from exercise_motion_pkg.rig_playback import rig_contact_targets
+
+    rig = rig_payload(8)
+    names = rig['jointNames']
+    points = decode_rig(rig, rig['coordinates'])
+    ankle, toe = (names.index(f'right_{part}') for part in ('ankle', 'foot'))
+    patch = {
+        'available': True, 'sourceTimeBasis': 'absolute_source_video', 'sourceFps': 30.,
+        'sourceTimesSec': [90. + index / 30. for index in range(8)],
+        'feet': {'right': {'states': ['full_sole'] * 8}},
+    }
+    payload = {
+        'sourceFootSupportEvidence': {'footPatchEvidence': patch},
+        'frames': [{'sourceTimeSec': value} for value in patch['sourceTimesSec']],
+    }
+    evidence = motion_space_support_evidence(payload)
+    evidence['_fitFrameStateIndices'] = state_indices
+    pinned = np.zeros(points.shape[:2], dtype=bool)
+    pinned[:, [ankle, toe]] = True
+
+    expected, _ = rig_contact_targets(
+        points, names, pinned, np.asarray(rig['offsets']), evidence=evidence)
+    calibrated, _ = rig_contact_targets(
+        points, names, pinned, np.asarray(rig['offsets']), evidence=evidence,
+        rest_pitches={'right': -.30})
+
+    np.testing.assert_array_equal(calibrated, expected)
+
+
+def test_contact_targets_keep_equal_length_clockless_legacy_identity_mapping():
+    from exercise_motion_pkg.rig_playback import rig_contact_targets
+
+    rig = rig_payload(8)
+    names = rig['jointNames']
+    points = decode_rig(rig, rig['coordinates'])
+    ankle, toe = (names.index(f'right_{part}') for part in ('ankle', 'foot'))
+    evidence = {'footPatchEvidence': {
+        'available': True,
+        'feet': {'right': {'states': ['full_sole'] * len(points)}},
+    }}
+    pinned = np.zeros(points.shape[:2], dtype=bool)
+    pinned[:, [ankle, toe]] = True
+
+    calibrated, _ = rig_contact_targets(
+        points, names, pinned, np.asarray(rig['offsets']), evidence=evidence,
+        rest_pitches={'right': -.30})
+
+    vector = calibrated[:, toe] - calibrated[:, ankle]
+    pitch = np.arcsin(vector[:, 1] / np.linalg.norm(vector, axis=1))
+    np.testing.assert_allclose(pitch, -.30, atol=1e-12)
+
+
 @pytest.mark.parametrize('same_stance', [True, False])
 def test_observed_stance_identity_prevents_false_ankle_loop_jump(same_stance):
     from exercise_motion_pkg.rig_playback import rig_contact_targets
@@ -353,6 +479,29 @@ def test_scene_placement_preserves_fractional_articulation_travel_and_reuse():
     assert validate_rig_playback(placed)['passed']
 
 
+def test_scene_placement_transforms_contact_foot_tracks_with_the_rig():
+    from exercise_motion_pkg.contact_interpolation import build_contact_foot_tracks
+    from exercise_motion_pkg.scene_placement import normalize_scene_placement
+    rig = rig_payload()
+    points = decode_rig(rig, np.asarray(rig['coordinates']))
+    pinned = np.ones(points.shape[:2], dtype=bool)
+    rig['contactFootTracks'] = build_contact_foot_tracks(rig, points, pinned)
+    original = export(rig)
+    original['renderFloorY'] = -10.
+    placed = normalize_scene_placement(original)
+    assert placed is not original
+    origin = np.asarray(placed['scenePlacement']['originAfterRotation'])
+    for side in ('left', 'right'):
+        before = rig['contactFootTracks'][side]
+        after = placed['fixedRig']['contactFootTracks'][side]
+        np.testing.assert_allclose(after['toes'], np.asarray(before['toes']) - origin)
+        np.testing.assert_allclose(after['directions'], before['directions'])
+    queries = np.array([.5, 15.25, 28.75])
+    np.testing.assert_allclose(
+        sample_rig(placed['fixedRig'], queries), sample_rig(rig, queries) - origin,
+        atol=1e-10)
+
+
 def test_scene_placement_respects_explicit_floor_and_digest():
     from exercise_motion_pkg.scene_placement import normalize_scene_placement
     from exercise_motion_pkg.sequence_stabilization import pose_digest
@@ -459,6 +608,50 @@ def test_final_physical_gate_rejects_unsafe_loop_without_fade_exception():
     assert 'unsafe_loop_transition' in report['reasons']
 
 
+def test_subframe_knee_reference_is_time_interpolated_independently_of_anatomy_authority():
+    from exercise_motion_pkg.physical_validation import validate_physical_motion
+    from exercise_motion_pkg.rig_playback import playback_reference_samples
+
+    rig = rig_payload(2)
+    names = rig['jointNames']
+    points = decode_rig(rig, rig['coordinates'])
+    index = {name: i for i, name in enumerate(names)}
+    reference = points.copy()
+
+    hip, knee, ankle, foot = (index[f'left_{joint}']
+                              for joint in ('hip', 'knee', 'ankle', 'foot'))
+    parent_axis = points[1, hip] - points[1, knee]
+    parent_axis /= np.linalg.norm(parent_axis)
+    ankle_direction = points[1, ankle] - points[1, knee]
+    ankle_length = np.linalg.norm(ankle_direction)
+    bend_axis = ankle_direction - np.dot(ankle_direction, parent_axis) * parent_axis
+    bend_axis /= np.linalg.norm(bend_axis)
+    knee_angle = np.deg2rad(40.)
+    new_direction = (np.cos(knee_angle) * parent_axis
+                     + np.sin(knee_angle) * bend_axis)
+    displaced_ankle = points[1, knee] + ankle_length * new_direction
+    ankle_delta = displaced_ankle - points[1, ankle]
+    reference[1, ankle] = displaced_ankle
+    reference[1, foot] += ankle_delta
+
+    interpolated, anatomy = playback_reference_samples(
+        reference, np.array([0]), np.array([1]), np.array([.5]), names)
+    np.testing.assert_allclose(interpolated[0], .5 * (reference[0] + reference[1]))
+    np.testing.assert_array_equal(anatomy[0], reference[0])
+
+    actual = points[0:1]
+    playback_check = validate_physical_motion(
+        actual, names, reference=interpolated, anatomy_reference=anatomy)
+    endpoint_check = validate_physical_motion(
+        actual, names, reference=reference[0:1], anatomy_reference=anatomy)
+    assert any(event.get('reason') == 'repair_articulation_distortion'
+               and event.get('joint') == 'left_knee'
+               for event in playback_check['events'])
+    assert not any(event.get('reason') == 'repair_articulation_distortion'
+                   and event.get('joint') == 'left_knee'
+                   for event in endpoint_check['events'])
+
+
 def test_final_physical_gate_allows_intentional_open_loop_seam():
     from copy import deepcopy
     from exercise_motion_pkg.controlled_motion import CONTROLLED_MOTION_STRATEGY, REQUIRED_FIT_CHECKS
@@ -530,3 +723,81 @@ def test_contact_validation_cannot_move_the_source_anchor_with_the_repaired_pose
     report=validate_rig_playback(payload)
     assert not report['passed']
     assert abs(report['maximumContactErrorMeters']-.01)<1e-10
+
+
+def test_supported_playback_uses_the_validated_support_anatomy_reference(monkeypatch):
+    from types import SimpleNamespace
+
+    from exercise_motion_pkg import body_support_observation, equipment_constraints
+    from exercise_motion_pkg import foot_geometry, heel_contacts, loop_seam
+    from exercise_motion_pkg import rig_playback, support_alignment, support_geometry
+    from exercise_motion_pkg.physical_validation import validate_physical_motion
+    from test_controlled_motion_pipeline import accepted_payload
+
+    payload = accepted_payload()
+    names = payload['jointNames']
+    supported = decode_rig(payload['fixedRig'], payload['fixedRig']['coordinates'])
+    raw = supported.copy()
+    raw[:, names.index('neck'), 0] += .04
+    for frame, controlled in zip(payload['frames'], raw):
+        frame['controlledSourceJoints'] = dict(zip(names, controlled.tolist()))
+        frame['controlledArticulationReferenceJoints'] = dict(zip(names, controlled.tolist()))
+
+    keyframe_gate = validate_physical_motion(
+        supported, names, reference=supported, anatomy_reference=supported, fps=30.)
+    assert keyframe_gate['passed'], keyframe_gate
+
+    monkeypatch.setattr(body_support_observation, 'materialize_stationary_sole_support',
+                        lambda _: {'bodySupport': {'required': True}})
+    monkeypatch.setattr(support_geometry, 'validated_support_reference',
+                        lambda _: (supported, None))
+    monkeypatch.setattr(rig_playback, 'contact_mask',
+                        lambda *_args, **_kwargs: np.zeros((len(payload['frames']), len(names)), dtype=bool))
+    monkeypatch.setattr(heel_contacts, 'heel_contact_tracks', lambda *_args, **_kwargs:
+                        SimpleNamespace(pairs=[], residual=lambda *_a: np.empty((0, 3))))
+    monkeypatch.setattr(loop_seam, 'seam_quality_metrics',
+                        lambda *_args, **_kwargs: {'seamContinuous': True})
+    monkeypatch.setattr(equipment_constraints, 'validate_grip', lambda *_: {'passed': True})
+    monkeypatch.setattr(support_geometry, 'validate_support_geometry', lambda *_: {'passed': True})
+    monkeypatch.setattr(support_geometry, 'validate_supported_shoe_orientation', lambda *_: {'passed': True})
+    monkeypatch.setattr(foot_geometry, 'validate_material_shoes', lambda *_args, **_kwargs: {'passed': True})
+    monkeypatch.setattr(support_alignment, 'validate_payload_alignment', lambda *_: {'passed': True})
+
+    observed = {}
+
+    def validate_with_capture(points, joint_names, *, reference=None, anatomy_reference=None,
+                              fps=30., support_mask=None):
+        observed['reference'] = reference
+        observed['anatomy_reference'] = anatomy_reference
+        return validate_physical_motion(
+            points, joint_names, reference=reference, anatomy_reference=anatomy_reference,
+            fps=fps, support_mask=support_mask)
+
+    monkeypatch.setattr(rig_playback, 'validate_physical_motion', validate_with_capture)
+    report = rig_playback.validate_rig_playback(payload)
+
+    assert report['passed'], report
+    np.testing.assert_allclose(observed['reference'][::4], supported)
+    np.testing.assert_allclose(observed['anatomy_reference'][::4], supported)
+    assert not np.allclose(observed['reference'][::4], raw)
+
+
+@pytest.mark.parametrize(('reference', 'reference_error', 'expected_reason'), [
+    (None, 'support_corrected_reference_unavailable', 'support_corrected_reference_unavailable'),
+    (np.zeros((1, 1)), None, 'support_corrected_reference_invalid'),
+])
+def test_supported_playback_fails_closed_when_validated_reference_is_unavailable(
+        monkeypatch, reference, reference_error, expected_reason):
+    from exercise_motion_pkg import body_support_observation, support_geometry
+
+    payload = export(rig_payload(8))
+    monkeypatch.setattr(body_support_observation, 'materialize_stationary_sole_support',
+                        lambda _: {'bodySupport': {'required': True}})
+    monkeypatch.setattr(support_geometry, 'validated_support_reference',
+                        lambda _: (reference, reference_error))
+
+    report = validate_rig_playback(payload)
+
+    assert not report['passed']
+    assert report['reason'] == expected_reason
+    assert report['physicalReasons'] == [expected_reason]

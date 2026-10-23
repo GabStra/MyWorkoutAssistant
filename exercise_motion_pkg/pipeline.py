@@ -1138,7 +1138,6 @@ def _run_generation_pipeline_uncached(
                 enforce_rigid_bone_lengths,
                 enforce_socket_centering,
                 enforce_spine_axis_alignment,
-                stabilize_stationary_contact_wobble,
             )
 
             joint_names = list(cleaned_clip.joint_names)
@@ -1157,12 +1156,6 @@ def _run_generation_pipeline_uncached(
             # deviation bound; the fit enforces the same bound on fitted
             # artifacts, so the no-fit bake path gets the identical repair.
             corrected, spine_report = enforce_spine_axis_alignment(corrected, joint_names)
-            # Wobble-dominated planted feet (returns to start, small total
-            # range) are reconstruction jitter; smooth them. Traveling feet
-            # keep their trajectory.
-            corrected, wobble_report = stabilize_stationary_contact_wobble(
-                corrected, joint_names, fps=float(getattr(cleaned_clip, "fps", 30.0) or 30.0)
-            )
             # Final rigidity: the joint regressor's pose-dependent bone drift
             # (and any residual from the passes above) is rescaled away along
             # each bone's own direction, parents first.
@@ -1171,8 +1164,7 @@ def _run_generation_pipeline_uncached(
             )
             symmetry_report = {**symmetry_report, 'secondPass': symmetry_pass2}
             span_report = {**span_report, 'secondPass': span_pass2, 'socketCentering': socket_report,
-                           'spineAxisAlignment': spine_report,
-                           'stationaryContactStabilization': wobble_report}
+                           'spineAxisAlignment': spine_report}
             span_report = {**span_report, 'bilateralChains': symmetry_report}
             cleaned_clip = replace(
                 cleaned_clip,
@@ -1367,7 +1359,7 @@ def crop_motion_clip_to_input_window(
     retained = [
         frame
         for frame in clip.frames
-        if frame.time_sec + 1e-6 >= start and frame.time_sec <= end + 1e-6
+        if frame.time_sec + 1e-6 >= start and frame.time_sec < end
     ]
     if not retained:
         raise ValueError(

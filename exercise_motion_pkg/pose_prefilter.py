@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import gc
 import json
 import math
+import operator
 import os
 from pathlib import Path
 import shutil
@@ -143,6 +144,7 @@ class PosePrefilterSettings:
     device: str | None = "cuda"
     target_exercise_name: str | None = None
     target_motion_contract: dict[str, Any] | None = None
+    sample_frame_indices: tuple[int, ...] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "device", normalize_yolo_cuda_device(self.device))
@@ -358,7 +360,17 @@ def construct_yolo_pose_model(model_path: str) -> Any:
 def resolve_yolo_device(configured_device: str | None) -> str | None:
     device = normalize_yolo_cuda_device(configured_device)
     if torch_cuda_available():
-        return "0" if device == "cuda" else device
+        lane = exclusive_gpu_device()
+        if device == "cuda":
+            return lane or "0"
+        if lane is not None:
+            explicit_device = device[5:] if device.lower().startswith("cuda:") else device
+            if explicit_device != lane:
+                raise ValueError(
+                    f"YOLO device {device!r} conflicts with exclusive GPU {lane}; "
+                    f"use cuda:{lane} or disable the exclusive GPU lane."
+                )
+        return device
     raise YoloDeviceUnavailableError(
         "YOLO pose prefilter requires a CUDA-capable Torch environment. "
         "The selected Python environment cannot see CUDA. Use a CUDA Torch Python, "
@@ -803,8 +815,38 @@ def build_pose_sample_plan(
     *,
     settings: PosePrefilterSettings,
 ) -> tuple[list[int], list[dict[str, float]]]:
-    sample_step = pose_sample_frame_step(metadata, settings=settings)
     duration_seconds = max(0.0, metadata.duration_seconds)
+    if settings.sample_frame_indices is not None:
+        frame_indices_set: set[int] = set()
+        for index in settings.sample_frame_indices:
+            if isinstance(index, bool):
+                raise ValueError("Explicit pose sample frame indices must be integers.")
+            try:
+                frame_indices_set.add(operator.index(index))
+            except TypeError as exc:
+                raise ValueError(
+                    "Explicit pose sample frame indices must be integers."
+                ) from exc
+        frame_indices = sorted(frame_indices_set)
+        if frame_indices and metadata.fps <= 0.0:
+            raise ValueError("Explicit pose sample frame indices require a positive source FPS.")
+        if any(index < 0 or index >= metadata.frame_count for index in frame_indices):
+            raise ValueError("Explicit pose sample frame index is outside the source video.")
+        if settings.max_seconds > 0.0:
+            max_frames = max(1, int(math.ceil(settings.max_seconds * metadata.fps)))
+            if len(frame_indices) > max_frames:
+                raise ValueError("Explicit pose sample frames exceed the configured time budget.")
+        sampled_windows = (
+            [{
+                "startSeconds": round(frame_indices[0] / metadata.fps, 6),
+                "endSeconds": round(frame_indices[-1] / metadata.fps, 6),
+            }]
+            if frame_indices and metadata.fps > 0.0
+            else []
+        )
+        return frame_indices, sampled_windows
+
+    sample_step = pose_sample_frame_step(metadata, settings=settings)
     strategy = normalize_pose_scan_strategy(settings.scan_strategy)
     if strategy == "full":
         frames = list(range(0, max(0, metadata.frame_count), sample_step))

@@ -39,6 +39,39 @@ def test_release_preserves_jump_and_no_contact_preserves_travel():
     assert root_motion_quality(result[:, 0], 30., .8)['passed']
 
 
+def test_registered_root_is_preserved_across_contact_membership_changes():
+    target = np.zeros((30, 3, 3))
+    target[:, 0, 0] = np.linspace(0., .1, len(target))
+    anchors = target.copy()
+    anchors[:, 1, 0] += .1
+    anchors[:, 2, 0] -= .1
+    pinned = np.zeros(target.shape[:2], dtype=bool)
+    pinned[:15, 1:] = True
+    pinned[15:, 1] = True
+    reference = target[:, 0] + [0., .03, 0.]
+    result, shift, _ = contact_consistent_target(
+        target, pinned, anchors, root_reference=reference)
+    np.testing.assert_allclose(result[:, 0], reference)
+    np.testing.assert_allclose(shift, np.tile([0., .03, 0.], (30, 1)))
+    np.testing.assert_array_equal(result[pinned], anchors[pinned])
+
+
+def test_registration_preserves_root_jerk_with_conflicting_contact_motion():
+    count = 90
+    points = np.tile([[0., 1., 0.], [-.2, 0., 0.], [.2, 0., 0.]], (count, 1, 1))
+    points[:, 0, 1] += .05 * np.sin(np.arange(count) / 15.)
+    points[:, 1, 0] += .03 * np.sin(np.arange(count) / 2.)
+    pinned = np.zeros(points.shape[:2], dtype=bool)
+    pinned[:, 1:] = True
+    pinned[35:45, 1] = False
+    reference = points[:, 0].copy()
+    result, report = register_contact_placement(points, pinned, 0, 30., reference)
+    assert report['rootTemporalPreserved']
+    assert report['registeredRootJerk'] <= report['rootJerkLimit']
+    np.testing.assert_allclose(result-result[:, :1], points-points[:, :1], atol=1e-12)
+    assert np.ptp(result[:, 0, 1]) >= .99 * np.ptp(reference[:, 1])
+
+
 def test_root_continuity_rejects_teleport_but_allows_fast_travel():
     root = np.column_stack([np.arange(60)*.25, np.zeros(60), np.zeros(60)])
     assert root_motion_quality(root, 30., .8)['passed']

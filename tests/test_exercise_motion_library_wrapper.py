@@ -4,8 +4,39 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).parents[1]
+
+
+@pytest.mark.parametrize("exclusive_gpu_device, shared_server", [("", False), ("1", True)])
+def test_library_wrapper_shares_vision_for_split_gpu_with_one_wave(
+    monkeypatch, exclusive_gpu_device, shared_server
+):
+    monkeypatch.setenv("EXERCISE_MOTION_EXCLUSIVE_GPU_DEVICE", exclusive_gpu_device)
+    result = subprocess.run(
+        ["pwsh", "-NoProfile", "-Command", r'''
+$errors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile(
+    (Join-Path (Get-Location) 'scripts/run_exercise_motion_library.ps1'), [ref]$null, [ref]$errors)
+if ($errors.Count) { throw ($errors | Out-String) }
+$nodes = $ast.FindAll({ param($node)
+    ($node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+        $node.Left.Extent.Text -in @('$exclusiveGpuIndex', '$hasExclusiveGpuLane')) -or
+    ($node -is [System.Management.Automation.Language.IfStatementAst] -and
+        $node.Clauses[0].Item1.Extent.Text.Contains('$hasExclusiveGpuLane'))
+}, $true)
+if ($nodes.Count -ne 3) { throw 'Missing library GPU residency forwarding branch.' }
+$MaxConcurrentStagedWaves = 1
+$DisableStagedWaves = $false
+$code = '$runnerArguments = @()' + "`n" + (($nodes | ForEach-Object { $_.Extent.Text }) -join "`n")
+$code += "`n" + 'ConvertTo-Json -InputObject @($runnerArguments) -Compress'
+& ([scriptblock]::Create($code))
+'''],
+        cwd=REPO_ROOT, check=True, capture_output=True, text=True, timeout=30,
+    )
+    assert ("-SharedLlamaServer" in json.loads(result.stdout)) is shared_server
 
 
 def _copy_library_wrapper_scripts(scripts_dir: Path) -> None:
@@ -56,6 +87,8 @@ def test_library_wrapper_runs_bounded_then_deferred_and_resumes_phase(tmp_path):
     [int]$PrefetchWorkers,
     [int]$PrefetchQueueDepth,
     [int]$StagedWaveSize,
+    [int]$DiscoveryCandidateBudget,
+    [int]$DiscoveryTimeBudgetSeconds,
     [string]$GpuDiscoveryBakeOverlap,
     [bool]$WarmGvhmrWorker,
     [bool]$KeepLlamaCppServer,
@@ -70,6 +103,8 @@ $call = [ordered]@{
     prefetchWorkers = $PrefetchWorkers
     prefetchQueueDepth = $PrefetchQueueDepth
     stagedWaveSize = $StagedWaveSize
+    discoveryCandidateBudget = $DiscoveryCandidateBudget
+    discoveryTimeBudgetSeconds = $DiscoveryTimeBudgetSeconds
     gpuDiscoveryBakeOverlap = $GpuDiscoveryBakeOverlap
     warmGvhmrWorker = $WarmGvhmrWorker
     keepLlamaCppServer = $KeepLlamaCppServer
@@ -126,8 +161,8 @@ Copy-Item -Force -LiteralPath $MotionSummaryJson -Destination $OutputJson
 
     calls = [json.loads(line) for line in (workspace / "calls.jsonl").read_text().splitlines()]
     assert calls == [
-        {"defer": True, "reuse": True, "cpuPrefetch": True, "prefetchWorkers": 8, "prefetchQueueDepth": 40, "stagedWaveSize": 8, "gpuDiscoveryBakeOverlap": "auto", "warmGvhmrWorker": True, "keepLlamaCppServer": True, "incrementalMobilePackageOutputJson": str(output_path)},
-        {"defer": False, "reuse": True, "cpuPrefetch": True, "prefetchWorkers": 8, "prefetchQueueDepth": 40, "stagedWaveSize": 8, "gpuDiscoveryBakeOverlap": "auto", "warmGvhmrWorker": True, "keepLlamaCppServer": True, "incrementalMobilePackageOutputJson": str(output_path)},
+        {"defer": True, "reuse": True, "cpuPrefetch": True, "prefetchWorkers": 8, "prefetchQueueDepth": 40, "stagedWaveSize": 8, "discoveryCandidateBudget": 24, "discoveryTimeBudgetSeconds": 300, "gpuDiscoveryBakeOverlap": "auto", "warmGvhmrWorker": True, "keepLlamaCppServer": True, "incrementalMobilePackageOutputJson": str(output_path)},
+        {"defer": True, "reuse": True, "cpuPrefetch": True, "prefetchWorkers": 8, "prefetchQueueDepth": 40, "stagedWaveSize": 8, "discoveryCandidateBudget": 96, "discoveryTimeBudgetSeconds": 900, "gpuDiscoveryBakeOverlap": "auto", "warmGvhmrWorker": True, "keepLlamaCppServer": True, "incrementalMobilePackageOutputJson": str(output_path)},
     ]
     first_pass = json.loads((workspace / "exercise_library_first_pass_summary.json").read_text())
     assert first_pass["exercises"][0]["status"] == "postponed"
@@ -142,12 +177,14 @@ Copy-Item -Force -LiteralPath $MotionSummaryJson -Destination $OutputJson
         json.loads(line) for line in (workspace / "calls.jsonl").read_text().splitlines()
     ]
     assert resumed_calls[-1] == {
-        "defer": False,
+        "defer": True,
         "reuse": True,
         "cpuPrefetch": True,
         "prefetchWorkers": 8,
         "prefetchQueueDepth": 40,
         "stagedWaveSize": 8,
+        "discoveryCandidateBudget": 96,
+        "discoveryTimeBudgetSeconds": 900,
         "gpuDiscoveryBakeOverlap": "auto",
         "warmGvhmrWorker": True,
         "keepLlamaCppServer": True,

@@ -12,7 +12,7 @@ from time import monotonic
 from types import SimpleNamespace
 import numpy as np
 from scipy.ndimage import gaussian_filter1d
-from scipy.optimize import least_squares
+from scipy.optimize import brentq, least_squares
 from scipy.optimize._numdiff import approx_derivative, group_columns
 from scipy.sparse import coo_matrix, csr_matrix, eye, kron, lil_matrix, vstack
 from scipy.spatial.transform import Rotation
@@ -21,6 +21,7 @@ from .sequence_stabilization import contact_mask, frame_basis, pose_digest, unit
 from .contact_constraints import (
     _airborne_epoch_track,
     _airborne_scoped_anchor_id,
+    observed_ground_contact_mask,
     vertical_only_contact_mask,
     vertical_only_contact_targets,
 )
@@ -33,7 +34,11 @@ from .temporal_quality import (
 )
 from .motion_placement import contact_consistent_target, root_motion_quality, register_contact_placement, align_registered_contacts_above_floor
 from .rig_interpolation import INTERPOLATION
-from .rig_playback import PLAYBACK_CONTACT_LIMIT_METERS, PLAYBACK_FLOOR_LIMIT_METERS
+from .rig_playback import (
+    PLAYBACK_CONTACT_LIMIT_METERS,
+    PLAYBACK_FLOOR_LIMIT_METERS,
+    playback_reference_samples,
+)
 
 KEYFRAME_CONTACT_LIMIT_METERS = .0005
 ROOT_TRAVEL_PRESERVATION_TOLERANCE_METERS = .001
@@ -51,12 +56,159 @@ def contact_iterate_is_feasible(keyframe_error, playback_error, floor_penetratio
             and maximum_anatomy_residual <= 1e-6)
 
 
+def contact_iterate_is_preferred(candidate_cost, candidate_heel_passed,
+                                 best_cost, best_heel_passed):
+    """Rank contact-feasible iterates by heel acceptance before soft cost."""
+    if candidate_heel_passed != best_heel_passed:
+        return candidate_heel_passed
+    return candidate_cost < best_cost
+
+
+def contact_iterate_can_challenge_best(candidate_cost, best_cost, *, has_best,
+                                       heel_evidence_required, best_heel_passed):
+    """Admit any feasible candidate that can improve heel quality or cost."""
+    return (not has_best
+            or (heel_evidence_required and not best_heel_passed)
+            or candidate_cost < best_cost)
+
+
+def fit_anatomy_constraint_reference(source_reference, support_corrected_reference=None):
+    """Choose the same anatomy reference the final fixed-rig gate will use."""
+    if support_corrected_reference is None:
+        return source_reference
+    source = np.asarray(source_reference, dtype=float)
+    supported = np.asarray(support_corrected_reference, dtype=float)
+    if source.shape != supported.shape or not np.isfinite(supported).all():
+        raise ValueError('support-corrected anatomy reference is incompatible')
+    return supported
+
+
+def support_initialization_articulation_regressions(
+        reference, candidate, names, *, fps=30., ankle_excursion_masks=None,
+        ankle_evidence_masks=None):
+    """Reject support initialization that changes observed leg or foot articulation."""
+    source = np.asarray(reference, dtype=float)
+    corrected = np.asarray(candidate, dtype=float)
+    if source.shape != corrected.shape or source.ndim != 3 or source.shape[1:] != (len(names), 3):
+        return [{'feature': 'shape', 'reason': 'incompatible_support_articulation'}]
+    if not np.isfinite(source).all() or not np.isfinite(corrected).all():
+        return [{'feature': 'coordinates', 'reason': 'nonfinite_support_articulation'}]
+
+    regressions = []
+    for label, a, b, c, tolerance in ARTICULATIONS:
+        if not label.endswith(('_knee', '_ankle')) or not {a, b, c}.issubset(names):
+            continue
+        indices = [names.index(joint) for joint in (a, b, c)]
+        delta = np.abs(angles(*(corrected[:, index] for index in indices))
+                       - angles(*(source[:, index] for index in indices)))
+        percentile = float(np.percentile(np.rad2deg(delta), 95))
+        if percentile > tolerance:
+            regressions.append({
+                'feature': label, 'p95ChangeDegrees': percentile,
+                'toleranceDegrees': float(tolerance),
+            })
+        source_angles = angles(*(source[:, index] for index in indices))
+        corrected_angles = angles(*(corrected[:, index] for index in indices))
+        side = label.split('_', 1)[0]
+        episode_mask = (ankle_excursion_masks or {}).get(side) if label.endswith('_ankle') else None
+        if episode_mask is not None:
+            episode_mask = np.asarray(episode_mask, dtype=bool)
+            evidence_mask = np.asarray(
+                (ankle_evidence_masks or {}).get(side, np.ones(len(source), dtype=bool)),
+                dtype=bool)
+            if episode_mask.shape != (len(source),):
+                regressions.append({
+                    'feature': f'{label}_excursion',
+                    'reason': 'incompatible_full_sole_excursion_mask',
+                })
+                continue
+            if evidence_mask.shape != (len(source),):
+                regressions.append({
+                    'feature': f'{label}_excursion',
+                    'reason': 'incompatible_source_evidence_mask',
+                })
+                continue
+            for authority, intervals in (
+                    ('full_sole', episode_mask & evidence_mask),
+                    ('raw_contact_state', ~episode_mask & evidence_mask)):
+                edges = np.diff(np.r_[False, intervals, False].astype(np.int8))
+                for start, stop in zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)):
+                    source_range = float(np.ptp(source_angles[start:stop]))
+                    if source_range <= np.deg2rad(20.):
+                        continue
+                    range_ratio = float(np.ptp(corrected_angles[start:stop]) / source_range)
+                    if not support_joint_range_preserved({label: range_ratio}):
+                        regressions.append({
+                            'feature': f'{label}_{authority}_episode_excursion',
+                            'startFrame': int(start), 'endFrame': int(stop - 1),
+                            'preservedRatio': range_ratio,
+                            'minimumPreservedRatio': .85,
+                        })
+        else:
+            source_range = float(np.ptp(source_angles))
+            if source_range > np.deg2rad(20.):
+                range_ratio = float(np.ptp(corrected_angles) / source_range)
+                if not support_joint_range_preserved({label: range_ratio}):
+                    regressions.append({
+                        'feature': f'{label}_excursion',
+                        'preservedRatio': range_ratio,
+                        'minimumPreservedRatio': .85,
+                    })
+
+    from .physical_validation import hinge_direction_events
+    regressions.extend(
+        {**event, 'feature': event['joint'] + '_bend_direction'}
+        for event in hinge_direction_events(corrected, names, source, fps=fps)
+        if event['joint'].endswith('_knee'))
+
+    # Compare foot direction in each pose's pelvis basis so a rigid scene
+    # rotation does not look like lost ankle or heel articulation.
+    from .temporal_quality import body_orientation_axes
+    for side in ('left', 'right'):
+        ankle, foot = f'{side}_ankle', f'{side}_foot'
+        if ankle not in names or foot not in names:
+            continue
+        orientation_tolerance = next(
+            tolerance for label, _, _, _, tolerance in ARTICULATIONS
+            if label == f'{side}_ankle')
+        source_vector = source[:, names.index(foot)] - source[:, names.index(ankle)]
+        corrected_vector = corrected[:, names.index(foot)] - corrected[:, names.index(ankle)]
+        source_axes = body_orientation_axes(source, names)
+        corrected_axes = body_orientation_axes(corrected, names)
+        if source_axes.shape != corrected_axes.shape or source_axes.shape[1] < 2:
+            continue
+        source_basis = frame_basis(source_axes[:, 1], source_axes[:, 0])
+        corrected_basis = frame_basis(corrected_axes[:, 1], corrected_axes[:, 0])
+        source_local = np.einsum('fji,fj->fi', source_basis, source_vector)
+        corrected_local = np.einsum('fji,fj->fi', corrected_basis, corrected_vector)
+        source_heading = np.arctan2(source_local[:, 2], source_local[:, 0])
+        corrected_heading = np.arctan2(corrected_local[:, 2], corrected_local[:, 0])
+        heading_delta = np.abs(np.arctan2(
+            np.sin(corrected_heading - source_heading),
+            np.cos(corrected_heading - source_heading)))
+        heading_p95 = float(np.percentile(np.rad2deg(heading_delta), 95))
+        if heading_p95 > orientation_tolerance:
+            regressions.append({
+                'feature': f'{side}_foot_heading', 'p95ChangeDegrees': heading_p95,
+                'toleranceDegrees': float(orientation_tolerance),
+            })
+        source_pitch = np.arctan2(source_local[:, 1], np.linalg.norm(source_local[:, [0, 2]], axis=1))
+        corrected_pitch = np.arctan2(corrected_local[:, 1], np.linalg.norm(corrected_local[:, [0, 2]], axis=1))
+        pitch_p95 = float(np.percentile(np.rad2deg(np.abs(corrected_pitch - source_pitch)), 95))
+        if pitch_p95 > orientation_tolerance:
+            regressions.append({
+                'feature': f'{side}_heel_pitch', 'p95ChangeDegrees': pitch_p95,
+                'toleranceDegrees': float(orientation_tolerance),
+            })
+    return regressions
+
+
 SUPPORT_REFERENCE_CONTACT_LIMIT_METERS = min(
     0.001,
     PLAYBACK_CONTACT_LIMIT_METERS * 0.5,
 )
 
-CONTROLLED_MOTION_STRATEGY = 'fixed_rig_controlled_motion_v80_observed_stationary_toe_support'
+CONTROLLED_MOTION_STRATEGY = 'fixed_rig_controlled_motion_v116_native_clock_target'
 # Feasibility pre-flight threshold, calibrated from fit reports: every
 # successful fit's target bones matched the rig within ~0.002m, while
 # structurally conflicted fits measured 0.05-0.15m before burning their
@@ -72,6 +224,15 @@ FLOOR_FIT_WEIGHT = 10. / (.8 * PLAYBACK_FLOOR_LIMIT_METERS)
 COLLISION_FIT_MARGIN_RATIO = .0025
 ANATOMY_FIT_MARGIN = .0001
 ANATOMY_FIT_WEIGHT = 10000.
+
+
+def fit_anatomy_structure_residuals(points, names, reference):
+    """Return the solver's anatomy rows using its selected hard-gate reference."""
+    return anatomical_structure_residuals(
+        points, names, pose_only=True, margin=ANATOMY_FIT_MARGIN,
+        reference=reference)[0]
+
+
 # Keep pre-solve stages from consuming the whole candidate fit budget, while
 # still allowing hard anatomy/support repairs enough wall-clock to finish well.
 ANATOMY_REPAIR_TIME_FRACTION = .35
@@ -110,6 +271,9 @@ POLISH_RESERVE_FRACTION = .18
 POLISH_RESERVE_MAX_SECONDS = 25.
 POLISH_RESERVE_MIN_SECONDS = 12.
 SOURCE_PROJECTION_FIT_WEIGHT = 2.0
+# Native toe-only phase is direct source evidence; keep its fit row at the
+# existing hard articulation scale while relaxing only the local 3D phase prior.
+SOURCE_FOOT_PHASE_FIT_WEIGHT = 500.0
 SOURCE_SUPPORT_RELATIVE_FIT_MULTIPLIER = 6.0
 SOURCE_SUPPORT_RELATIVE_MIN_CONFIDENCE = .35
 SOURCE_SUPPORT_RELATIVE_MIN_OBSERVATIONS = 3
@@ -168,11 +332,118 @@ def controlled_fit_processing_incomplete(report):
     return (report.get('reason') in {
                 'fit_timeout', 'fit_evaluation_limit',
                 'retained_interval_skipped_insufficient_validation_budget',
+                'source_cycle_parent_phase_coverage_unresolved',
             }
             or report.get('optimizerTermination') in {'time_budget', 'evaluation_limit'}) or any(
         controlled_fit_processing_incomplete(attempt.get('fitReport', attempt))
         for attempt in report.get('cycleSelectionAttempts', [])
     )
+
+
+def trajectory_fit_evidence(
+        candidate, target, names, scale, *, root_index, pinned,
+        support_evidence, source_projection_constraint, source_camera):
+    """Choose placement-invariant fit evidence only with observed anchors and camera authority.
+
+    Absolute XYZ RMS remains the compatibility fallback and is always reported.
+    When retained camera projection, bilateral mapping, and genuine observed
+    ground anchors establish the placement authority, root travel and free
+    articulation are compared independently without recentering either track.
+    """
+    candidate = np.asarray(candidate, dtype=float)
+    target = np.asarray(target, dtype=float)
+    pinned = np.asarray(pinned, dtype=bool)
+    limit = .025 * float(scale)
+    compatible = (
+        candidate.shape == target.shape
+        and candidate.ndim == 3
+        and candidate.shape[1:] == (len(names), 3)
+        and pinned.shape == candidate.shape[:2]
+        and 0 <= int(root_index) < len(names)
+        and len(candidate) > 0
+    )
+    if not compatible:
+        return {
+            'policy': 'absolute_xyz_rms_v1', 'eligible': False,
+            'eligibilityReasons': ['incompatible_fit_geometry'],
+            'absoluteRmsMeters': float('inf'), 'limitMeters': limit,
+            'rootDisplacementRmsMeters': None,
+            'freeRelativeArticulationRmsMeters': None,
+            'freeJointCoverage': {'frameCount': 0, 'coveredFrameCount': 0,
+                                  'coverageRatio': 0., 'minimumFreeJointCountPerFrame': 0,
+                                  'freeSampleCount': 0},
+            'observedGroundAnchorSampleCount': 0,
+            'passed': False,
+            'finalSourceCameraPoseFidelityRequired': False,
+        }
+
+    absolute_rms = float(np.sqrt(np.mean((candidate - target) ** 2)))
+    free_mask = ~pinned.copy()
+    free_mask[:, int(root_index)] = False
+    free_per_frame = np.count_nonzero(free_mask, axis=1)
+    covered_frames = int(np.count_nonzero(free_per_frame > 0))
+    free_samples = int(np.count_nonzero(free_mask))
+    coverage = {
+        'frameCount': int(len(candidate)),
+        'coveredFrameCount': covered_frames,
+        'coverageRatio': float(covered_frames / len(candidate)),
+        'minimumFreeJointCountPerFrame': int(free_per_frame.min()),
+        'freeSampleCount': free_samples,
+    }
+    root_error = ((candidate[:, int(root_index)] - candidate[0, int(root_index)])
+                  - (target[:, int(root_index)] - target[0, int(root_index)]))
+    root_displacement_rms = float(np.sqrt(np.mean(root_error ** 2)))
+    relative_error = ((candidate - candidate[:, int(root_index):int(root_index)+1])
+                      - (target - target[:, int(root_index):int(root_index)+1]))
+    free_relative_rms = (float(np.sqrt(np.mean(relative_error[free_mask] ** 2)))
+                         if free_samples else None)
+    observed_ground = observed_ground_contact_mask(
+        support_evidence, names, len(candidate)) & pinned
+    anchor_sample_count = int(np.count_nonzero(observed_ground))
+
+    mapping = source_projection_constraint.get('sourceFootRaySideMapping') or {}
+    bilateral_assignment = (source_camera or {}).get('bilateralAssignment')
+    expected_mapping = ({'left': 'right', 'right': 'left'}
+                        if bilateral_assignment == 'swapped'
+                        else {'left': 'left', 'right': 'right'})
+    mapping_resolved = (
+        bilateral_assignment in {'identity', 'swapped'}
+        and mapping == expected_mapping
+    )
+    reasons = []
+    if (source_projection_constraint.get('available') is not True
+            or source_projection_constraint.get('cameraAuthority')
+            != 'retained_source_correction_camera'):
+        reasons.append('retained_source_camera_authority_unavailable')
+    if not mapping_resolved:
+        reasons.append('source_to_motion_side_mapping_unresolved')
+    if anchor_sample_count == 0:
+        reasons.append('observed_ground_contact_anchor_unavailable')
+    if covered_frames != len(candidate):
+        reasons.append('free_joint_coverage_incomplete')
+    eligible = not reasons
+    passed = (
+        root_displacement_rms < limit and free_relative_rms is not None
+        and free_relative_rms < limit
+        if eligible else absolute_rms < limit
+    )
+    return {
+        'policy': ('observed_anchor_root_and_free_relative_rms_v1'
+                   if eligible else 'absolute_xyz_rms_v1'),
+        'eligible': bool(eligible),
+        'eligibilityReasons': reasons,
+        'absoluteRmsMeters': absolute_rms,
+        'limitMeters': limit,
+        'rootDisplacementRmsMeters': root_displacement_rms,
+        'freeRelativeArticulationRmsMeters': free_relative_rms,
+        'freeJointCoverage': coverage,
+        'observedGroundAnchorSampleCount': anchor_sample_count,
+        'sourceCameraAuthority': source_projection_constraint.get('cameraAuthority'),
+        'bilateralAssignment': bilateral_assignment,
+        'sourceToMotionSideMapping': mapping,
+        'finalSourceCameraPoseFidelityRequired': bool(eligible),
+        'passed': bool(passed),
+    }
 
 
 def hard_trajectory_and_root_failure(checks):
@@ -333,6 +604,17 @@ def failed_check_names(checks):
     return [key for key, passed in checks.items() if not passed]
 
 
+def deferred_fit_update_ready(report, remaining_seconds):
+    deferred = report.get('deferredStageCOptimizerBlock') or {}
+    return (
+        report.get('optimizerTermination') == 'solve_phase_budget'
+        and (report.get('boundedRefinement') or {}).get(
+            'fitUpdateDeferredToEvaluationContinuation') is True
+        and deferred.get('reason') == 'deferred_to_outer_fit_continuation'
+        and remaining_seconds >= 5. + float(deferred.get('minimumUpdateSeconds', float('inf')))
+    )
+
+
 def fit_report_improves_acceptance(previous_report, trial_report):
     """Keep a continuation only when it passes or strictly reduces failures."""
     if not isinstance(trial_report, dict):
@@ -483,11 +765,26 @@ def support_reference_can_be_polished(report):
     )
 
 
+def support_reference_equipment_can_be_deferred(report, strategy):
+    """Defer only the grip gate for a joint-plant seed with all support gates sound."""
+    if strategy != 'bounded_joint_root_and_closed_chain_legs':
+        return False
+    equipment = report.get('supportReferenceEquipment')
+    if not isinstance(equipment, dict) or equipment.get('passed') is not False:
+        return False
+    return all(
+        isinstance(report.get(key), dict) and report[key].get('passed') is True
+        for key in ('supportReferenceGeometry', 'supportReferenceAlignment',
+                    'supportReferenceAnatomy', 'supportReferenceContacts')
+    )
+
+
 POLISH_STAGE_A = frozenset({'contacts', 'equipment', 'bodySupport', 'supportAlignment'})
 POLISH_STAGE_B = frozenset({'playback', 'loopSeam'})
 POLISH_STAGE_C = frozenset({
     'jerk', 'jointShake', 'relativeJointShake', 'settling',
     'rootContinuity', 'rootTravel', 'motionDiscontinuity', 'sourceSupportTrajectory',
+    'sourceFootContactArticulation',
 })
 # Stage-A soft LS otherwise loses to seam/temporal terms on supported cycles.
 STAGE_A_CONTACT_POLISH_WEIGHT = 8.
@@ -541,6 +838,10 @@ def prioritize_fit_before_broad_temporal_smoothing(
     """
     failed = set(failed_checks or ())
     contact_error = float(contact_error_meters or 0.)
+    if ('sourceFootContactArticulation' in failed
+            and bool(playback_passed)
+            and contact_error < 0.0005):
+        return True
     if failed == {'jerk'}:
         return bool(playback_passed) and contact_error < 0.0005
     return (
@@ -565,14 +866,25 @@ def stage_fit_refinement_budget(
     if minimum_update_seconds <= 0:
         return default_budget
 
-    # Every stage must afford a measured update; prioritized Stage C reserves
-    # twice that estimate before deferring to the outer continuation.
-    update_allowance = 2.0 if prioritize_fit and stage == 'C' else 1.0
-    required_budget = update_allowance * float(minimum_update_seconds) + 0.5
+    required_budget = stage_fit_refinement_minimum_remaining_seconds(
+        minimum_update_seconds, stage=stage,
+        prioritize_fit=prioritize_fit,
+    ) - 0.5
     available_budget = max(0.0, remaining - 0.5)
     if required_budget > available_budget:
         return None
     return min(available_budget, max(default_budget, required_budget))
+
+
+def stage_fit_refinement_minimum_remaining_seconds(
+        minimum_update_seconds, *, stage, prioritize_fit):
+    """Smallest remaining window the bounded fitter will admit for a measured update."""
+    if minimum_update_seconds <= 0:
+        return 0.0
+    # The stage budget reserves an extra half second outside its returned
+    # block budget; include it here so outer scheduling uses the same contract.
+    update_allowance = 2.0 if prioritize_fit and stage == 'C' else 1.0
+    return update_allowance * float(minimum_update_seconds) + 1.0
 
 
 def timed_out_stage_c_fit_is_stalled(failed_checks, hard_stage_c_tried):
@@ -742,6 +1054,7 @@ def controlled_fit_unusable_for_more_preview_work(report):
         'fit_validation_failed',
         'no_validated_loop_cycle',
         'source_cycle_preflight_rejected',
+        'source_cycle_parent_phase_coverage_unresolved',
         'pre_fit_source_articulation_fidelity_failed',
         # Cycle attempts have already failed, and the full interval was
         # skipped because its retained anatomy is persistently folded. This
@@ -782,7 +1095,8 @@ def can_reuse_controlled_motion(payload):
     from .support_geometry import validate_support_geometry, validate_supported_shoe_orientation
     from .support_alignment import validate_payload_alignment
     from .contact_constraints import source_support_mapping_unresolved
-    if source_support_mapping_unresolved(payload):
+    if (source_support_mapping_unresolved(payload)
+            or source_foot_patch_clock_failure(payload)):
         return False
     report = payload.get('controlledMotionFit') or {}
     checks = report.get('checks') or {}
@@ -811,6 +1125,74 @@ def can_reuse_controlled_motion(payload):
                 and report.get('outputPoseDigest') == pose_digest(payload))
 
 
+def source_foot_patch_clock_failure(payload, evidence=None):
+    """Reject malformed declared source-patch clocks before they erase support.
+
+    Foot-patch states and timestamps are native source evidence. A selected
+    cycle may change the fit-frame subset, but must not leave those arrays at
+    different lengths or make every overlapping real source frame unmap.
+    """
+    source_evidence = evidence if isinstance(evidence, dict) else (
+        payload.get('sourceFootSupportEvidence') or {})
+    patch = source_evidence.get('footPatchEvidence') or {}
+    if patch.get('available') is not True:
+        return None
+    if patch.get('sourceTimeBasis') != 'absolute_source_video':
+        if (patch.get('sourceTimeBasis') is not None
+                or patch.get('sourceTimesSec') is not None):
+            return {'reason': 'source_foot_patch_clock_invalid',
+                    'detail': 'unsupported_source_time_basis'}
+        return None
+    native_times = patch.get('sourceTimesSec')
+    feet = patch.get('feet') or {}
+    if not isinstance(native_times, list) or not native_times:
+        return {'reason': 'source_foot_patch_clock_invalid',
+                'detail': 'absolute_source_times_missing'}
+    state_counts = {
+        side: len(record.get('states'))
+        for side, record in feet.items()
+        if isinstance(record, dict) and isinstance(record.get('states'), list)
+    }
+    if (not state_counts or any(count != len(native_times)
+                                for count in state_counts.values())):
+        return {'reason': 'source_foot_patch_clock_invalid',
+                'detail': 'state_timestamp_count_mismatch',
+                'sourceTimestampCount': len(native_times),
+                'stateCountsBySide': state_counts}
+    frames = [frame for frame in (payload.get('frames') or [])
+              if isinstance(frame, dict)]
+    frame_times = [None if frame.get('syntheticLoopBridge')
+                   else frame.get('sourceTimeSec') for frame in frames]
+    real_times = []
+    for value in frame_times:
+        try:
+            time_value = float(value)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if np.isfinite(time_value):
+            real_times.append(time_value)
+    if not real_times:
+        return None
+    try:
+        native_clock = np.asarray(native_times, dtype=float)
+    except (TypeError, ValueError, OverflowError):
+        return {'reason': 'source_foot_patch_clock_invalid',
+                'detail': 'invalid_absolute_source_times'}
+    if (not np.isfinite(native_clock).all()
+            or np.any(np.diff(native_clock) <= 0.)):
+        return {'reason': 'source_foot_patch_clock_invalid',
+                'detail': 'nonmonotonic_or_nonfinite_absolute_source_times'}
+    from .contact_constraints import mapped_foot_patch_state_indices
+    mapped = mapped_foot_patch_state_indices(source_evidence, frame_times, len(frames))
+    if real_times and not np.any(mapped >= 0):
+        return {'reason': 'source_foot_patch_clock_unmapped',
+                'detail': 'real_source_frames_all_unmapped',
+                'realSourceFrameCount': len(real_times),
+                'sourceTimestampCount': len(native_times),
+                'stateCountsBySide': state_counts}
+    return None
+
+
 def controlled_motion_fit_source_evidence(payload):
     """Return source and support inputs that can change fit constraints or acceptance."""
     frames = payload.get('frames') or []
@@ -818,9 +1200,13 @@ def controlled_motion_fit_source_evidence(payload):
     motion_space_evidence = None
     if isinstance(source_support_evidence, dict):
         from .body_support_observation import materialize_stationary_sole_support
+        from .contact_constraints import _without_fit_local_timing_metadata
         # Bind the same derived rig-side constraints consumed by fitting while
-        # preserving the canonical source labels and their mapping digest.
-        motion_space_evidence = materialize_stationary_sole_support(payload)
+        # preserving canonical source labels and its mapping digest. The fit
+        # clock view is deterministic from frame provenance and is ephemeral.
+        motion_space_evidence = _without_fit_local_timing_metadata(
+            materialize_stationary_sole_support(payload)
+        )
     selected_interval = _fit_source_interval_selection(payload)
     if (
         not selected_interval.get('available')
@@ -834,7 +1220,8 @@ def controlled_motion_fit_source_evidence(payload):
     source_frame_provenance = [
         {
             key: frame[key]
-            for key in ('sourceFrameIndex', 'sourceTimeSec', 'cycleSourceFrameIndex', 'cycleSourceTimeSec')
+            for key in ('sourceFrameIndex', 'sourceTimeSec', 'cycleSourceFrameIndex',
+                        'cycleSourceTimeSec', 'syntheticLoopBridge')
             if key in frame
         }
         for frame in frames
@@ -870,6 +1257,7 @@ def controlled_motion_fit_source_evidence(payload):
         'renderFloorY': payload.get('renderFloorY'),
         'elevatedSupportSurfaces': payload.get('elevatedSupportSurfaces'),
         'equipmentConstraints': payload.get('equipmentConstraints'),
+        'footRestPitchRadians': payload.get('footRestPitchRadians'),
         'postBakeForefootContactConstraint': payload.get('postBakeForefootContactConstraint'),
     }
     fit_context = {
@@ -1451,6 +1839,73 @@ def support_joint_range_preserved(articulation_ratios):
             if articulation_ratios else True)
 
 
+def contact_heel_repair_eligible(checks, joint_range_ratios):
+    """Admit coupled foot repair when its only range failure is at the foot."""
+    if not isinstance(checks, dict):
+        return False
+    failed = set(failed_check_names(checks))
+    if failed == {'sourceFootContactArticulation'}:
+        return True
+    if failed != {'sourceFootContactArticulation', 'jointRange'}:
+        return False
+    if not isinstance(joint_range_ratios, dict) or not joint_range_ratios:
+        return False
+    try:
+        ratios = [(str(name), float(ratio))
+                  for name, ratio in joint_range_ratios.items()]
+    except (TypeError, ValueError, OverflowError):
+        return False
+    if not ratios or any(not np.isfinite(ratio) for _, ratio in ratios):
+        return False
+    below_limit = [(name, ratio) for name, ratio in ratios if ratio < .85]
+    # The heel repair owns foot pitch and the coupled ankle excursion. It must
+    # not be used to admit unrelated range failures elsewhere in the body.
+    return bool(below_limit) and all(
+        np.isfinite(ratio) and name in {
+            'left_ankle', 'right_ankle', 'left_foot', 'right_foot'}
+        for name, ratio in below_limit
+    )
+
+
+def supported_ankle_episode_range_ratios(reference, candidate, names, masks, evidence_masks):
+    """Measure ankle excursion separately on full-sole and raw-evidence spans."""
+    source = np.asarray(reference, dtype=float)
+    result = np.asarray(candidate, dtype=float)
+    ratios, episodes = {}, {}
+    for side, mask in (masks or {}).items():
+        ankle, foot = f'{side}_ankle', f'{side}_foot'
+        knee = f'{side}_knee'
+        if not {knee, ankle, foot}.issubset(names):
+            continue
+        mask = np.asarray(mask, dtype=bool)
+        observed = np.asarray((evidence_masks or {}).get(side, np.zeros(len(source), dtype=bool)),
+                              dtype=bool)
+        if mask.shape != (len(source),) or observed.shape != (len(source),):
+            continue
+        joints = [names.index(knee), names.index(ankle), names.index(foot)]
+        source_angles = angles(*(source[:, joint] for joint in joints))
+        result_angles = angles(*(result[:, joint] for joint in joints))
+        side_ratios, side_episodes = [], []
+        for authority, interval_mask in (
+                ('full_sole', mask & observed), ('raw_contact_state', ~mask & observed)):
+            edges = np.diff(np.r_[False, interval_mask, False].astype(np.int8))
+            for start, stop in zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)):
+                source_range = float(np.ptp(source_angles[start:stop]))
+                if source_range <= np.deg2rad(20.):
+                    continue
+                ratio = float(np.ptp(result_angles[start:stop]) / source_range)
+                side_ratios.append(ratio)
+                side_episodes.append({
+                    'authority': authority, 'startFrame': int(start),
+                    'endFrame': int(stop - 1), 'preservedRatio': ratio,
+                })
+        if side_ratios:
+            label = f'{side}_ankle'
+            ratios[label] = min(side_ratios)
+            episodes[label] = side_episodes
+    return ratios, episodes
+
+
 def smooth_extremity_coordinates(coordinates, rig, names, *, cyclic, sigma=1.5,
                                  pinned=None, include_knees=False):
     """Temporally smooth extremity local rotations (discontinuity owners).
@@ -1653,6 +2108,28 @@ def polish_worsened_jerk(report, previous_jerk):
     return float(after) > float(previous_jerk) * 1.05 + 1e-12
 
 
+def stage_c_temporal_smoothing_rejection_reasons(
+        *, contact_after, playback_contact_after, failed_checks, previous_failed_checks,
+        previous_jerk, report, previous_nested, nested_after):
+    """Reject temporal smoothing only when it breaks an acceptance constraint."""
+    reasons = []
+    if contact_after >= KEYFRAME_CONTACT_LIMIT_METERS:
+        reasons.append('keyframe_contact_limit_exceeded')
+    if playback_contact_after >= PLAYBACK_CONTACT_LIMIT_METERS:
+        reasons.append('playback_contact_limit_exceeded')
+    if 'jerk' in set(failed_checks):
+        reasons.append('jerk_not_cleared')
+    introduced = ({'anatomy', 'sourceArticulation', 'contacts'}
+                  & set(failed_checks)) - set(previous_failed_checks)
+    if introduced:
+        reasons.extend(f'new_{check}_failure' for check in sorted(introduced))
+    if polish_worsened_jerk(report, previous_jerk):
+        reasons.append('jerk_worsened')
+    if 'velocity' not in previous_nested and 'velocity' in nested_after:
+        reasons.append('playback_velocity_regressed')
+    return reasons
+
+
 def polish_reserve_seconds(timeout_seconds, *, cyclic):
     """Wall-clock reserved at the end of the outer budget for Stage-B/C polish."""
     if timeout_seconds is None or timeout_seconds <= 0:
@@ -1676,6 +2153,16 @@ def fit_validation_reserve_seconds(frame_count, timeout_seconds):
     timeout = max(0., float(timeout_seconds or 0.))
     frames = max(0, int(frame_count or 0))
     return min(25., 0.20 * frames, 0.25 * timeout)
+
+
+def joint_plant_initialization_deadline(
+        fit_started, timeout_seconds, *, polish_reserve_seconds,
+        validation_reserve_seconds):
+    """Give plant initialization the available fit time while protecting later stages."""
+    return (float(fit_started) + max(0., float(timeout_seconds))
+            - max(0., float(polish_reserve_seconds))
+            - max(0., float(validation_reserve_seconds))
+            - MIN_USEFUL_FIT_SECONDS)
 
 
 def fit_soft_solve_deadline(
@@ -1926,7 +2413,8 @@ def playback_contact_repair_needed(coordinates, rig, pinned, contact_targets, *,
 
 
 def _playback_vertical_contact_sample_error(
-        coordinates, rig, vertical_mask, vertical_targets, *, cyclic=False):
+        coordinates, rig, vertical_mask, vertical_targets, *, cyclic=False,
+        contact_foot_tracks=None):
     """Peak height-only contact error at the production playback subframes."""
     coords = np.asarray(coordinates, dtype=float)
     targets = np.asarray(vertical_targets, dtype=float)
@@ -1941,7 +2429,10 @@ def _playback_vertical_contact_sample_error(
     active = vertical_mask[first] & vertical_mask[last]
     if not np.any(active):
         return 0.
-    sampled = sample_rig(_sampling_payload(rig, coords), cursors, wrap=cyclic)
+    sampling_payload = _sampling_payload(rig, coords)
+    if contact_foot_tracks is not None:
+        sampling_payload['contactFootTracks'] = contact_foot_tracks
+    sampled = sample_rig(sampling_payload, cursors, wrap=cyclic)
     return float(np.max(np.abs(sampled[:, :, 1][active] - targets[first, :, 1][active]), initial=0.))
 
 
@@ -1970,6 +2461,12 @@ def _playback_floor_penetration(coordinates, rig, *, cyclic=False, floor=None):
     cursors = (np.arange(interval_count)[:, None] + np.array([.25, .5, .75])).ravel()
     sampled = sample_rig(_sampling_payload(rig, coordinates), cursors, wrap=cyclic)
     return max(0., float(floor) - float(sampled[:, :, 1].min()))
+
+
+def _playback_interval_for_sample(sample_index, cursors, frame_count):
+    cursor = float(cursors[int(sample_index)])
+    first = min(int(np.floor(cursor)), frame_count - 1)
+    return cursor, first, (first + 1) % frame_count
 
 
 def _playback_failing_intervals(coordinates, rig, pinned, contact_targets, *,
@@ -2005,10 +2502,422 @@ def _playback_failing_intervals(coordinates, rig, pinned, contact_targets, *,
         floor_err = 0. if floor is None else max(
             0., float(floor) - float(sampled[rows, :, 1].min()))
         if (play_err >= PLAYBACK_CONTACT_LIMIT_METERS
-                or key_err >= PLAYBACK_CONTACT_LIMIT_METERS
+                or key_err >= KEYFRAME_CONTACT_LIMIT_METERS
                 or floor_err > PLAYBACK_FLOOR_LIMIT_METERS):
             failing.append(int(start))
     return failing
+
+
+def project_reliable_knee_hinge_planes(coordinates, rig, source_references, *,
+                                       playback_reference=None, fps=30., cyclic=False,
+                                       deadline=None, max_passes=3):
+    """Restore failed reliable knee planes by rotating the exact 2-bone pole.
+
+    Root, hip sockets, ankles, feet, both segment lengths, and knee flexion stay
+    fixed by construction. Keyframes use each supplied independent source
+    reference; playback samples use the same more-flexed endpoint reference as
+    ``validate_rig_playback``. Existing hinge tolerances remain authoritative,
+    with a half-degree interior margin for numerical/interpolation stability.
+    """
+    from .foot_kinematics import _source_knee_poles, _transport_knee_poles
+    from .structural_refinement import _source_branch_is_temporally_supported
+    from .rig_playback import sample_rig
+
+    coords = np.asarray(coordinates, dtype=float).copy()
+    original_coords = coords.copy()
+    points = rig.decode(coords)
+    names = rig.names
+    name_index = {name: i for i, name in enumerate(names)}
+    refs = []
+    for reference in source_references:
+        if reference is None:
+            continue
+        candidate = np.asarray(reference, dtype=float)
+        if candidate.shape == points.shape and np.isfinite(candidate).all():
+            if not any(np.array_equal(candidate, existing) for existing in refs):
+                refs.append(candidate)
+    if not refs or not np.isfinite(points).all():
+        return original_coords, {'attempted': False, 'reason': 'no_compatible_source_reference'}
+    if playback_reference is None:
+        playback_reference = refs[0]
+    playback_reference = np.asarray(playback_reference, dtype=float)
+    if playback_reference.shape != points.shape or not np.isfinite(playback_reference).all():
+        playback_reference = refs[0]
+    if deadline is not None and monotonic() >= deadline:
+        return original_coords, {'attempted': False, 'reason': 'deadline_expired'}
+
+    knee_specs = [(label, a, h, b, tolerance)
+                  for label, a, h, b, tolerance in ARTICULATIONS
+                  if label.endswith('_knee') and all(n in name_index for n in (
+                      a, h, b, f"{label.split('_', 1)[0]}_foot"))]
+    knee_sides = tuple(dict.fromkeys(spec[0].split('_', 1)[0] for spec in knee_specs))
+    if not knee_specs:
+        return original_coords, {'attempted': False, 'reason': 'no_supported_knee_chain'}
+    hinge_specs = [spec for spec in ARTICULATIONS
+                   if spec[0].endswith(('_knee', '_elbow'))]
+    hinge_column = {spec[0]: i for i, spec in enumerate(hinge_specs)}
+    def make_source_info(reference, sample_fps):
+        parent, bend, strength = hinge_coordinates(reference, names)
+        reliability = {}
+        poles = {}
+        for label, *_parts, _tolerance in knee_specs:
+            column = hinge_column[label]
+            track = list(zip(parent[:, column], bend[:, column]))
+            branch = np.asarray([
+                _source_branch_is_temporally_supported(
+                    track, frame, max(1, round(float(sample_fps)*.1)))
+                for frame in range(len(reference))], dtype=bool)
+            reliability[label] = branch & (strength[:, column] > np.sin(np.deg2rad(15.)))
+        for side in knee_sides:
+            hip_i, knee_i, ankle_i = (name_index[f'{side}_{part}']
+                                       for part in ('hip', 'knee', 'ankle'))
+            poles[side] = _source_knee_poles(
+                reference[:, hip_i], reference[:, knee_i], reference[:, ankle_i])
+        return {'source': reference, 'parent': parent, 'bend': bend, 'strength': strength,
+                'reliability': reliability, 'poles': poles}
+
+    reference_info = [make_source_info(ref, fps) for ref in refs]
+
+    def events_from_info(current, infos, *, reference_ids=None):
+        current_parent, current_bend, current_strength = hinge_coordinates(current, names)
+        events = []
+        for ref_id, info in enumerate(infos):
+            if reference_ids is not None:
+                ref_id = reference_ids[ref_id]
+            for label, *_parts, tolerance in knee_specs:
+                column = hinge_column[label]
+                active = info['reliability'][label] & (
+                    current_strength[:, column] > np.sin(np.deg2rad(15.)))
+                if not np.any(active):
+                    continue
+                dots = transported_hinge_dots(
+                    info['parent'], info['bend'], current_parent, current_bend)[:, column]
+                for frame in np.flatnonzero(active & (dots < np.cos(np.deg2rad(tolerance)))):
+                    events.append({'reason': 'repair_hinge_direction_distortion',
+                                   'joint': label, 'frameIndex': int(frame),
+                                   'changeDegrees': float(np.rad2deg(np.arccos(
+                                       np.clip(dots[frame], -1., 1.)))),
+                                   'toleranceDegrees': float(tolerance),
+                                   '_referenceIndex': int(ref_id)})
+        return events
+
+    def key_events(current):
+        return events_from_info(current, reference_info)
+
+    def source_reliable(ref_id, label, frame):
+        return bool(reference_info[int(ref_id)]['reliability'][label][frame])
+
+    def world_matrices(frame, values):
+        local = Rotation.from_rotvec(values[frame, 3:].reshape(-1, 3)).as_matrix()
+        matrices = {}
+        for joint in rig.order:
+            slot = rig.slots.get(joint)
+            rotation = local[(slot - 3)//3] if slot is not None else np.eye(3)
+            parent = rig.parents[joint]
+            matrices[joint] = rotation if parent < 0 else matrices[parent] @ rotation
+        return matrices
+
+    def alignment_rotation(source, target):
+        return Rotation.from_rotvec(align_vectors(
+            np.asarray(source, dtype=float)[None, :],
+            np.asarray(target, dtype=float)[None, :])[0])
+
+    def knee_from_pole(frame, side, theta, current):
+        hip_i, knee_i, ankle_i = (name_index[f'{side}_{part}']
+                                   for part in ('hip', 'knee', 'ankle'))
+        hip, knee, ankle = current[frame, hip_i], current[frame, knee_i], current[frame, ankle_i]
+        leg = ankle - hip
+        distance = float(np.linalg.norm(leg))
+        if distance < 1e-10:
+            return None
+        axis = leg / distance
+        thigh = knee - hip
+        lower = ankle - knee
+        upper_length, lower_length = float(np.linalg.norm(thigh)), float(np.linalg.norm(lower))
+        along = (upper_length**2 - lower_length**2 + distance**2)/(2.*distance)
+        radius_sq = upper_length**2 - along**2
+        if radius_sq < -1e-10:
+            return None
+        pole = thigh - axis*np.dot(thigh, axis)
+        pole_length = float(np.linalg.norm(pole))
+        if pole_length < 1e-10:
+            return None
+        pole /= pole_length
+        pole = Rotation.from_rotvec(axis*float(theta)).apply(pole)
+        return hip + along*axis + np.sqrt(max(0., radius_sq))*pole
+
+    def source_direction(frame, side, info):
+        hip_i, knee_i, ankle_i = (name_index[f'{side}_{part}']
+                                   for part in ('hip', 'knee', 'ankle'))
+        axis = unit(points[frame:frame+1, ankle_i]-points[frame:frame+1, hip_i])[0]
+        thigh = points[frame, knee_i]-points[frame, hip_i]
+        pole = unit((thigh-axis*np.dot(thigh, axis))[None, :])[0]
+        source_poles = info['poles'][side]
+        target = _transport_knee_poles(
+            source_poles[frame:frame+1],
+            info['source'][frame:frame+1, ankle_i]-info['source'][frame:frame+1, hip_i],
+            points[frame:frame+1, ankle_i]-points[frame:frame+1, hip_i],
+        )[0]
+        target = unit((target-axis*np.dot(target, axis))[None, :])[0]
+        signed = float(np.arctan2(np.dot(axis, np.cross(pole, target)), np.dot(pole, target)))
+        return float(np.sign(signed)) if abs(signed) > 1e-8 else 1.
+
+    def reencode_leg(frame, side, old_knee, new_knee, values, current):
+        hip, knee, ankle, foot = (name_index[f'{side}_{part}']
+                                  for part in ('hip', 'knee', 'ankle', 'foot'))
+        world = world_matrices(frame, values)
+        parent = rig.parents[knee]
+        delta_knee = alignment_rotation(old_knee-current[frame, hip], new_knee-current[frame, hip])
+        new_world_knee = delta_knee.as_matrix() @ world[knee]
+        old_calf = current[frame, ankle]-old_knee
+        new_calf = current[frame, ankle]-new_knee
+        delta_ankle = alignment_rotation(old_calf, new_calf)
+        new_world_ankle = delta_ankle.as_matrix() @ world[ankle]
+        new_local_knee = world[parent].T @ new_world_knee
+        new_local_ankle = new_world_knee.T @ new_world_ankle
+        new_local_foot = new_world_ankle.T @ world[foot]
+        for joint, local in ((knee, new_local_knee), (ankle, new_local_ankle),
+                             (foot, new_local_foot)):
+            slot = rig.slots.get(joint)
+            if slot is None:
+                return False
+            values[frame, slot:slot+3] = Rotation.from_matrix(local).as_rotvec()
+        return True
+
+    def event_map(events):
+        return {(e['joint'], int(e['frameIndex']), e['_referenceIndex']): float(e['changeDegrees'])
+                for e in events}
+
+    def preserves_leg_manifold(current, before, movable_knees):
+        allowed = np.zeros(current.shape[:2], dtype=bool)
+        for frame, knee_index in movable_knees:
+            allowed[frame, knee_index] = True
+        if np.max(np.abs(current[~allowed]-before[~allowed]), initial=0.) > 1e-9:
+            return False
+        for frame, knee in movable_knees:
+            side = names[knee].split('_', 1)[0]
+            hip, ankle = name_index[f'{side}_hip'], name_index[f'{side}_ankle']
+            upper = np.linalg.norm(current[frame, knee]-current[frame, hip])
+            lower = np.linalg.norm(current[frame, ankle]-current[frame, knee])
+            before_upper = np.linalg.norm(before[frame, knee]-before[frame, hip])
+            before_lower = np.linalg.norm(before[frame, ankle]-before[frame, knee])
+            before_angle = angles(before[frame:frame+1, hip], before[frame:frame+1, knee], before[frame:frame+1, ankle])
+            after_angle = angles(current[frame:frame+1, hip], current[frame:frame+1, knee], current[frame:frame+1, ankle])
+            if (abs(upper-before_upper) > 1e-9 or abs(lower-before_lower) > 1e-9
+                    or np.max(np.abs(after_angle-before_angle), initial=0.) > 1e-9):
+                return False
+        return True
+
+    baseline_key = key_events(points)
+    key_before = event_map(baseline_key)
+    margin_by_joint = {label: max(0., min(tolerance, 10.)-.5)
+                       for label, *_parts, tolerance in knee_specs}
+    key_corrections = []
+
+    # Correct only keyframes that have a reliable source branch and a final
+    # hinge-plane failure. Each update is an exact circle rotation, then all
+    # independent source references are rechecked before the next update.
+    for event in sorted(baseline_key, key=lambda e: -e['changeDegrees']):
+        if deadline is not None and monotonic() >= deadline:
+            break
+        side = event['joint'].split('_', 1)[0]
+        frame = int(event['frameIndex'])
+        current_event = next((current for current in key_events(points)
+                              if current.get('joint') == event['joint']
+                              and int(current.get('frameIndex', -1)) == frame
+                              and current.get('_referenceIndex') == event['_referenceIndex']), None)
+        if current_event is None:
+            continue
+        event = current_event
+        ref = refs[int(event['_referenceIndex'])]
+        if not source_reliable(event['_referenceIndex'], event['joint'], frame):
+            continue
+        tolerance = float(event['toleranceDegrees'])
+        required_dot = np.cos(np.deg2rad(max(0., min(tolerance, 10.)-.5)))
+        hip_i, knee_i, ankle_i = (name_index[f'{side}_{part}'] for part in ('hip', 'knee', 'ankle'))
+        source_parent, source_bend, _ = hinge_coordinates(ref[frame:frame+1], names)
+        baseline_values = coords.copy()
+
+        def key_margin(theta):
+            knee = knee_from_pole(frame, side, theta, points)
+            if knee is None:
+                return -np.inf
+            trial = points[frame:frame+1].copy()
+            trial[0, knee_i] = knee
+            cp, cb, _ = hinge_coordinates(trial, names)
+            dots = transported_hinge_dots(source_parent, source_bend, cp, cb)[0, hinge_column[event['joint']]]
+            return float(dots-required_dot)
+
+        direction = source_direction(frame, side, reference_info[int(event['_referenceIndex'])])
+        root = None
+        for sign in (direction, -direction):
+            previous, previous_value = 0., key_margin(0.)
+            for magnitude in np.deg2rad(np.arange(.25, 180.01, .25)):
+                value = key_margin(sign*float(magnitude))
+                if previous_value < 0. <= value:
+                    root = sign * float(brentq(
+                        lambda theta: key_margin(sign*theta), previous, float(magnitude),
+                        xtol=1e-11, rtol=1e-11))
+                    break
+                previous, previous_value = float(magnitude), value
+            if root is not None:
+                break
+        if root is None or abs(root) < 1e-12:
+            continue
+        old_knee = points[frame, knee_i].copy()
+        new_knee = knee_from_pole(frame, side, root, points)
+        trial_coords = coords.copy()
+        if not reencode_leg(frame, side, old_knee, new_knee, trial_coords, points):
+            continue
+        trial_points = rig.decode(trial_coords)
+        if not preserves_leg_manifold(trial_points, points, [(frame, knee_i)]):
+            continue
+        current_events = key_events(trial_points)
+        current_map = event_map(current_events)
+        # No new failures or worsened independent references are allowed.
+        if any(signature not in key_before or value > key_before[signature]+1e-6
+               for signature, value in current_map.items()):
+            continue
+        coords, points = trial_coords, trial_points
+        key_corrections.append({'frameIndex': frame, 'joint': event['joint'],
+                                'poleRotationDegrees': float(np.rad2deg(root)),
+                                'hingeDegreesBefore': float(event['changeDegrees']),
+                                'hingeDegreesAfter': float(current_map.get(
+                                    (event['joint'], frame, int(event['_referenceIndex'])), 0.))})
+
+    def playback_reference_samples():
+        count = len(points)
+        interval_count = count if cyclic else count-1
+        cursors = (np.arange(interval_count)[:, None]+np.array([.25, .5, .75])).ravel()
+        first = np.floor(cursors).astype(int)
+        last = (first+1) % count
+        source = playback_reference[first].copy()
+        if all(n in name_index for n in ('left_hip', 'right_hip', 'spine1', 'neck')):
+            def torso_angles(track):
+                hips = .5*(track[:, name_index['left_hip']]+track[:, name_index['right_hip']])
+                return angles(hips, track[:, name_index['spine1']], track[:, name_index['neck']])
+            choose_last = torso_angles(playback_reference[last]) < torso_angles(playback_reference[first])
+            source = np.where(choose_last[:, None, None], playback_reference[last], source)
+        return cursors, source
+
+    playback_cursors, playback_refs = playback_reference_samples()
+    from .rig_playback import sample_rig
+    playback_info = make_source_info(playback_refs, float(fps)*4)
+
+    def playback_events(values):
+        sampled = sample_rig(_sampling_payload(rig, values), playback_cursors, wrap=cyclic)
+        return events_from_info(sampled, [playback_info])
+
+    playback_before = playback_events(original_coords)
+    if not baseline_key and not playback_before:
+        return original_coords, {'attempted': False, 'reason': 'no_knee_hinge_failures'}
+    quarter_corrections = []
+    for pass_index in range(max(0, min(3, int(max_passes)))):
+        handled = set()
+        while True:
+            if deadline is not None and monotonic() >= deadline:
+                break
+            events = playback_events(coords)
+            event_interval = lambda e: _playback_interval_for_sample(
+                e['frameIndex'], playback_cursors, len(points))[1:]
+            event = next((e for e in events if event_interval(e) not in handled), None)
+            if event is None:
+                break
+            sample_index = int(event['frameIndex'])
+            cursor, lo, hi = _playback_interval_for_sample(
+                sample_index, playback_cursors, len(points))
+            interval = (lo, hi)
+            if not cyclic and hi >= len(points):
+                break
+            handled.add(interval)
+            side = event['joint'].split('_', 1)[0]
+            reference_sample = playback_refs[sample_index]
+            target_dot = np.cos(np.deg2rad(max(0., min(float(event['toleranceDegrees']), 10.)-.5)))
+            directions = (source_direction(lo, side, reference_info[0]),
+                          source_direction(hi, side, reference_info[0]))
+
+            def propose_pair(degrees, signs):
+                proposed = coords.copy()
+                for frame, sign in zip((lo, hi), signs):
+                    old_knee = points[frame, name_index[f'{side}_knee']].copy()
+                    new_knee = knee_from_pole(frame, side, np.deg2rad(degrees)*sign, points)
+                    if new_knee is None or not reencode_leg(
+                            frame, side, old_knee, new_knee, proposed, points):
+                        return None
+                return proposed
+
+            def quarter_margin(proposed):
+                sampled = sample_rig(_sampling_payload(rig, proposed), np.asarray([cursor]), wrap=cyclic)
+                source_parent, source_bend, _ = hinge_coordinates(reference_sample[None, ...], names)
+                current_parent, current_bend, _ = hinge_coordinates(sampled, names)
+                return float(transported_hinge_dots(
+                    source_parent, source_bend, current_parent, current_bend
+                )[0, hinge_column[event['joint']]]-target_dot)
+
+            choices = (directions, (directions[0], -directions[1]),
+                       (-directions[0], directions[1]), (-directions[0], -directions[1]))
+            solution = None
+            for signs in choices:
+                previous, previous_value = 0., quarter_margin(coords)
+                for degrees in np.arange(.1, 6.001, .1):
+                    proposed = propose_pair(float(degrees), signs)
+                    value = -np.inf if proposed is None else quarter_margin(proposed)
+                    if previous_value < 0. <= value:
+                        root = float(brentq(
+                            lambda amount: quarter_margin(propose_pair(float(amount), signs)),
+                            previous, float(degrees), xtol=1e-7, rtol=1e-9))
+                        solution = (root, signs)
+                        break
+                    previous, previous_value = float(degrees), value
+                if solution is not None:
+                    break
+            if solution is None:
+                continue
+            degrees, signs = solution
+            trial_coords = propose_pair(degrees, signs)
+            if trial_coords is None:
+                continue
+            trial_points = rig.decode(trial_coords)
+            knee_index = name_index[f'{side}_knee']
+            if not preserves_leg_manifold(trial_points, points,
+                                          [(lo, knee_index), (hi, knee_index)]):
+                continue
+            trial_key = key_events(trial_points)
+            trial_key_map = event_map(trial_key)
+            if any(signature not in key_before or value > key_before[signature]+1e-6
+                   for signature, value in trial_key_map.items()):
+                continue
+            coords, points = trial_coords, trial_points
+            quarter_corrections.append({'sampleIndex': sample_index,
+                                        'sampleCursor': cursor,
+                                        'keyFrames': [lo, hi],
+                                        'poleRotationDegrees': [degrees*sign for sign in signs]})
+
+    key_after = key_events(points)
+    playback_after = playback_events(coords)
+    before_key_excess = sum(max(0., value-10.) for value in key_before.values())
+    after_key_excess = sum(max(0., value-10.) for value in event_map(key_after).values())
+    before_play_excess = sum(max(0., float(e['changeDegrees'])-10.) for e in playback_before)
+    after_play_excess = sum(max(0., float(e['changeDegrees'])-10.) for e in playback_after)
+    improved = (after_key_excess + after_play_excess < before_key_excess + before_play_excess-1e-7)
+    if not improved:
+        coords = original_coords
+        key_after = baseline_key
+        playback_after = playback_before
+    diag = {
+        'attempted': True, 'applied': bool(improved),
+        'strategy': 'reliable_2bone_knee_pole_projection_v2_cursor_mapping',
+        'keyframeFailuresBefore': len(baseline_key), 'keyframeFailuresAfter': len(key_after),
+        'quarterFrameFailuresBefore': len(playback_before), 'quarterFrameFailuresAfter': len(playback_after),
+        'keyframeExcessDegreesBefore': float(before_key_excess),
+        'keyframeExcessDegreesAfter': float(after_key_excess),
+        'quarterFrameExcessDegreesBefore': float(before_play_excess),
+        'quarterFrameExcessDegreesAfter': float(after_play_excess),
+        'keyframeCorrections': key_corrections,
+        'quarterFrameCorrections': quarter_corrections,
+        'stopReason': 'complete' if not key_after and not playback_after else 'bounded_best_improvement',
+    }
+    return coords, diag
 
 
 def _root_shift_failing_playback_intervals(coordinates, rig, pinned, contact_targets, *,
@@ -2434,17 +3343,43 @@ def project_interval_playback_plants(coordinates, rig, pinned, contact_targets, 
     hermite context so neighbor tangents and sparse seams stop fighting each other.
     """
     coords = np.asarray(coordinates, dtype=float).copy()
+    original_coordinates = coords.copy()
+    original_points = rig.decode(coords)
+    reference_points = original_points if spike_reference is None else np.asarray(spike_reference)
+    from .physical_validation import hinge_direction_events
+
+    def jerk(points):
+        return float(np.sqrt(np.mean(np.diff(points, n=3, axis=0)**2))) if len(points) > 3 else 0.
+
+    jerk_bound = max(jerk(original_points), jerk(reference_points) * 1.05 + 1e-7)
+    previous_knee_errors = {
+        (event['joint'], event['frameIndex']): event['changeDegrees']
+        for event in hinge_direction_events(original_points, rig.names, reference_points)
+        if event['reason'] == 'repair_hinge_direction_distortion'
+    }
+
+    def retain_safe_projection(proposed):
+        result = rig.decode(proposed)
+        if not np.isfinite(result).all() or jerk(result) > jerk_bound + 1e-12:
+            return original_coordinates.copy()
+        for event in hinge_direction_events(result, rig.names, reference_points):
+            if event['reason'] == 'repair_hinge_direction_distortion' and event['changeDegrees'] > max(
+                    event['toleranceDegrees'], previous_knee_errors.get(
+                        (event['joint'], event['frameIndex']), 0.)) + 1e-7:
+                return original_coordinates.copy()
+        return proposed
+
     targets = np.asarray(contact_targets, dtype=float)
     count = len(coords)
     if count < 2 or not np.any(pinned) or (deadline is not None and monotonic() >= deadline):
-        return coords
+        return retain_safe_projection(coords)
     failing = _playback_failing_intervals(
         coords, rig, pinned, targets, cyclic=cyclic, floor=floor)
     if not failing or (deadline is not None and monotonic() >= deadline):
-        return coords
+        return retain_safe_projection(coords)
     key_peak = float(np.max(np.linalg.norm(
         (rig.decode(coords) - targets)[pinned], axis=-1), initial=0.))
-    endpoints_hold = key_peak < PLAYBACK_CONTACT_LIMIT_METERS
+    endpoints_hold = key_peak < KEYFRAME_CONTACT_LIMIT_METERS
     if not endpoints_hold:
         coords = _root_shift_failing_playback_intervals(
             coords, rig, pinned, targets, cyclic=cyclic, floor=floor, failing=failing,
@@ -2452,7 +3387,7 @@ def project_interval_playback_plants(coordinates, rig, pinned, contact_targets, 
         failing = _playback_failing_intervals(
             coords, rig, pinned, targets, cyclic=cyclic, floor=floor)
         if not failing:
-            return coords
+            return retain_safe_projection(coords)
         leftover_frames = sorted({f for start in failing for f in (start, (start + 1) % count)})
         frame_mask = np.zeros(count, dtype=bool)
         frame_mask[leftover_frames] = True
@@ -2466,10 +3401,10 @@ def project_interval_playback_plants(coordinates, rig, pinned, contact_targets, 
             failing = _playback_failing_intervals(
                 coords, rig, pinned, targets, cyclic=cyclic, floor=floor)
             if not failing:
-                return coords
+                return retain_safe_projection(coords)
             key_peak = float(np.max(np.linalg.norm(
                 (rig.decode(coords) - targets)[pinned], axis=-1), initial=0.))
-            endpoints_hold = key_peak < PLAYBACK_CONTACT_LIMIT_METERS
+            endpoints_hold = key_peak < KEYFRAME_CONTACT_LIMIT_METERS
         chain = _plant_chain_slots(rig, pinned)
         for start in failing:
             if deadline is not None and monotonic() >= deadline:
@@ -2486,12 +3421,12 @@ def project_interval_playback_plants(coordinates, rig, pinned, contact_targets, 
         failing = _playback_failing_intervals(
             coords, rig, pinned, targets, cyclic=cyclic, floor=floor)
         if not failing:
-            return coords
+            return retain_safe_projection(coords)
         key_peak = float(np.max(np.linalg.norm(
             (rig.decode(coords) - targets)[pinned], axis=-1), initial=0.))
-        endpoints_hold = key_peak < PLAYBACK_CONTACT_LIMIT_METERS
+        endpoints_hold = key_peak < KEYFRAME_CONTACT_LIMIT_METERS
     if not failing:
-        return coords
+        return retain_safe_projection(coords)
     # Preserve the source temporal evidence across every local contact solve.
     # Otherwise root corrections can close plants by introducing pelvis/limb
     # acceleration spikes, including during velocity-continuity repair.
@@ -2519,12 +3454,12 @@ def project_interval_playback_plants(coordinates, rig, pinned, contact_targets, 
             if (_playback_contact_sample_error(
                     coords, rig, pinned, targets, cyclic=cyclic)
                     < PLAYBACK_CONTACT_LIMIT_METERS):
-                return coords
+                return retain_safe_projection(coords)
             failing = _playback_failing_intervals(
                 coords, rig, pinned, targets, cyclic=cyclic, floor=floor)
         for _ in range(8):
             if not failing:
-                return coords
+                return retain_safe_projection(coords)
             if deadline is not None and monotonic() >= deadline:
                 break
             before = _playback_contact_sample_error(
@@ -2544,13 +3479,13 @@ def project_interval_playback_plants(coordinates, rig, pinned, contact_targets, 
                 if (_playback_contact_sample_error(
                         coords, rig, pinned, targets, cyclic=cyclic)
                         < PLAYBACK_CONTACT_LIMIT_METERS):
-                    return coords
+                    return retain_safe_projection(coords)
             failing = _playback_failing_intervals(
                 coords, rig, pinned, targets, cyclic=cyclic, floor=floor)
             after = _playback_contact_sample_error(
                 coords, rig, pinned, targets, cyclic=cyclic)
             if after < PLAYBACK_CONTACT_LIMIT_METERS:
-                return coords
+                return retain_safe_projection(coords)
             if after >= before * 0.995 and after >= PLAYBACK_CONTACT_LIMIT_METERS:
                 # Distal TRF often stalls ~0.05 mm over the gate; a cheap
                 # root-only coupled pass on the leftover gaps closes that gap
@@ -2564,7 +3499,7 @@ def project_interval_playback_plants(coordinates, rig, pinned, contact_targets, 
                     if (_playback_contact_sample_error(
                             coords, rig, pinned, targets, cyclic=cyclic)
                             < PLAYBACK_CONTACT_LIMIT_METERS):
-                        return coords
+                        return retain_safe_projection(coords)
                     failing = _playback_failing_intervals(
                         coords, rig, pinned, targets, cyclic=cyclic, floor=floor)
                 if deadline is not None and deadline - monotonic() < 2.0:
@@ -2576,7 +3511,7 @@ def project_interval_playback_plants(coordinates, rig, pinned, contact_targets, 
                 if (_playback_contact_sample_error(
                         coords, rig, pinned, targets, cyclic=cyclic)
                         < PLAYBACK_CONTACT_LIMIT_METERS):
-                    return coords
+                    return retain_safe_projection(coords)
                 break
         # Final near-gate root pass if distal iterations left a sub-mm miss.
         after = _playback_contact_sample_error(
@@ -2590,7 +3525,7 @@ def project_interval_playback_plants(coordinates, rig, pinned, contact_targets, 
                     coords, leftover, rig, pinned, targets, [],
                     cyclic=cyclic, floor=floor, max_nfev=max(6, int(max_nfev)),
                     deadline=deadline)
-        return coords
+        return retain_safe_projection(coords)
     window = 6
     for run_start, run_end in _contiguous_interval_runs(failing):
         if deadline is not None and monotonic() >= deadline:
@@ -2606,11 +3541,11 @@ def project_interval_playback_plants(coordinates, rig, pinned, contact_targets, 
             if (_playback_contact_sample_error(
                     coords, rig, pinned, targets, cyclic=cyclic)
                     < PLAYBACK_CONTACT_LIMIT_METERS):
-                return coords
+                return retain_safe_projection(coords)
             if chunk_end >= run_end:
                 break
             cursor = chunk_end
-    return coords
+    return retain_safe_projection(coords)
 
 
 def apply_supported_floor_clearance(coordinates, rig, pinned, contact_targets, floor, *,
@@ -2631,7 +3566,7 @@ def apply_supported_floor_clearance(coordinates, rig, pinned, contact_targets, f
     def plants_hold(values):
         key = float(np.max(np.linalg.norm((rig.decode(values) - contact_targets)[pinned], axis=-1), initial=0.))
         play = _playback_contact_sample_error(values, rig, pinned, contact_targets, cyclic=cyclic)
-        return key < PLAYBACK_CONTACT_LIMIT_METERS and play < PLAYBACK_CONTACT_LIMIT_METERS
+        return key < KEYFRAME_CONTACT_LIMIT_METERS and play < PLAYBACK_CONTACT_LIMIT_METERS
 
     for freeze_root in (True, False):
         trial = coords.copy()
@@ -2772,7 +3707,7 @@ def project_contact_plant_coordinates(coordinates, rig, pinned, contact_targets,
     use_per_frame = deadline is not None or count > 24
     if use_per_frame:
         frame_nfev = min(max(int(max_nfev), 25), 40)
-        gate = PLAYBACK_CONTACT_LIMIT_METERS
+        gate = KEYFRAME_CONTACT_LIMIT_METERS
         for _pass in range(3):
             if deadline is not None and monotonic() >= deadline:
                 break
@@ -3406,34 +4341,16 @@ def close_loop_seam_coordinates(coordinates, rig, pinned, *, scale, fps=30., pas
     return best
 
 
-def _boundary_source_fit_constraints(constraint, boundary, free_frames):
-    """Keep source rows affected by repair, including their fixed context."""
-    if not constraint or not constraint.get('available'):
-        return {}, list(boundary)
-    free_frames = set(free_frames)
-
-    def touches_free_frame(link):
-        return ((link['leftFrame'] in free_frames and link['alpha'] < 1.)
-                or (link['rightFrame'] in free_frames and link['alpha'] > 0.))
-
-    observations = [row for row in constraint['observations'] if touches_free_frame(row)]
-    endpoint_rows = [row for row in constraint.get('endpointPostureObservations', [])
-                     if any(link['weight'] != 0. and touches_free_frame(link)
-                            for link in row['fitLinks'])]
-    context = set(boundary)
-    for link in [*observations, *(link for row in endpoint_rows for link in row['fitLinks'])]:
-        context.update((link['leftFrame'], link['rightFrame']))
-    context = sorted(context)
-    indices = {frame: index for index, frame in enumerate(context)}
-
-    def remap(link):
-        return {**link, 'leftFrame': indices[link['leftFrame']],
-                'rightFrame': indices[link['rightFrame']]}
-
-    return {**constraint, 'observations': [remap(row) for row in observations],
-            'endpointPostureObservations': [
-                {**row, 'fitLinks': [remap(link) for link in row['fitLinks']]}
-                for row in endpoint_rows]}, context
+def _source_fit_points_with_boundary_update(source_template, boundary, boundary_points):
+    """Apply a local repair in the original source-fit frame-index domain."""
+    source_points = np.asarray(source_template, dtype=float).copy()
+    indexes = np.asarray(boundary, dtype=int)
+    points = np.asarray(boundary_points, dtype=float)
+    if (source_points.ndim != 3 or points.shape != (len(indexes), *source_points.shape[1:])
+            or np.any(indexes < 0) or np.any(indexes >= len(source_points))):
+        raise ValueError('boundary source update does not match the original fit-frame domain')
+    source_points[indexes] = points
+    return source_points
 
 
 def project_loop_seam_coordinates(coordinates, rig, pinned, *, scale, fps, max_nfev=50,
@@ -3510,12 +4427,12 @@ def project_loop_seam_coordinates(coordinates, rig, pinned, *, scale, fps, max_n
 
     boundary_template = coords[list(boundary)]
     boundary_indices = {frame: index for index, frame in enumerate(boundary)}
-    boundary_source, source_context = _boundary_source_fit_constraints(
-        source_projection_constraint, boundary, free_frames)
+    boundary_source = source_projection_constraint or {}
     if boundary_source.get('available'):
-        source_template = rig.decode(coords[source_context])
-        source_indices = {frame: index for index, frame in enumerate(source_context)}
-        source_boundary_indices = [source_indices[frame] for frame in boundary]
+        # Keep every source observation, event and renderer-geometry record in
+        # the original fit-frame domain. Only boundary rows change per residual;
+        # compacting selected rows would require rebasing every nested family.
+        source_template = rig.decode(coords)
 
     def unpack(values, *, boundary_only=False):
         trial = boundary_template.copy() if boundary_only else coords.copy()
@@ -3571,8 +4488,8 @@ def project_loop_seam_coordinates(coordinates, rig, pinned, *, scale, fps, max_n
             0.02 * (values - original),
         ]
         if boundary_source.get('available'):
-            source_points = source_template.copy()
-            source_points[source_boundary_indices] = points
+            source_points = _source_fit_points_with_boundary_update(
+                source_template, boundary, points)
             result = np.r_[result,
                 _source_projection_fit_rows(source_points, boundary_source),
                 _source_endpoint_posture_fit_rows(source_points, boundary_source)]
@@ -3718,10 +4635,12 @@ def project_track_to_reference_bone_lengths(track, index, bones, reference_lengt
 
 
 def controlled_target(points, names, fps):
-    """Positive-kernel smoothing plus bounded local deviation attenuation.
+    """Preserve native timing while attenuating subordinate local jitter.
 
-    Local PCA acts after removing linear travel, in a fixed body basis. It
-    never locks a world axis, mirrors limbs, or uses an exercise label.
+    Local PCA acts on the original native-clock tracks after removing linear
+    travel, in a fixed body basis. Dominant travel components are left intact;
+    only small subordinate deviations are attenuated. This never locks a
+    world axis, mirrors limbs, or uses an exercise label.
     """
     scale = body_scale(points, names)
     root = names.index('pelvis')
@@ -3729,7 +4648,7 @@ def controlled_target(points, names, fps):
     rotation = frame_basis(basis[:1, 1], basis[:1, 0])[0]
     local = (points-points[:, root:root+1])@rotation
     tracks = np.concatenate([points[:, root:root+1]@rotation, local], axis=1)
-    smooth = gaussian_filter1d(tracks, max(.5, fps*.08), axis=0, mode='nearest')
+    smooth = tracks
     radius = max(3, round(fps*.6))
     target = smooth.copy()
     corrections = []
@@ -3767,7 +4686,8 @@ def controlled_target(points, names, fps):
         holds[frame] = np.clip(1.-span/(.02*scale),0.,1.)*(1.-np.clip((progress-.4)/.4,0.,1.))
     holds[:, root] = 0.
     return target, holds, {'maximumMinorDeviationCorrectionMeters': float(max(corrections, default=0.)),
-                            'smoothingSeconds': .08, 'localWindowSeconds': 1.2}
+                            'smoothingSeconds': 0., 'localWindowSeconds': 1.2,
+                            'denoisingPolicy': 'native_clock_subordinate_deviation_only'}
 
 
 def excursion_constraints(target, root, scale):
@@ -3842,6 +4762,59 @@ def _support_cache_key(evidence, points, names):
     return (stationary, groups, digest)
 
 
+def support_range_episode_tracks(reference, names, full_sole_masks, evidence_masks):
+    """Return the final ankle-excursion gate's per-episode fit targets."""
+    from .physical_validation import ARTICULATIONS
+
+    reference = np.asarray(reference, dtype=float)
+    tracks = []
+    for side, full_sole in (full_sole_masks or {}).items():
+        label = f'{side}_ankle'
+        articulation = next((entry for entry in ARTICULATIONS if entry[0] == label), None)
+        if articulation is None or not set(articulation[1:4]).issubset(names):
+            continue
+        _, a, b, c, _ = articulation
+        joints = [names.index(joint) for joint in (a, b, c)]
+        full_sole = np.asarray(full_sole, dtype=bool)
+        observed = np.asarray((evidence_masks or {}).get(side, np.zeros(len(reference), dtype=bool)),
+                              dtype=bool)
+        if full_sole.shape != (len(reference),) or observed.shape != (len(reference),):
+            continue
+        source_angles = angles(*(reference[:, joint] for joint in joints))
+        for mask in (full_sole & observed, ~full_sole & observed):
+            edges = np.diff(np.r_[False, mask, False].astype(np.int8))
+            for start, stop in zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)):
+                source = source_angles[start:stop]
+                if np.ptp(source) > np.deg2rad(20.):
+                    tracks.append((label, joints, source.copy(), np.arange(start, stop)))
+    return tuple(tracks)
+
+
+def support_range_residuals(candidate, tracks):
+    """Fit existing 0.92 range margin on whole tracks and owned episodes."""
+    errors = []
+    for _, joints, source, *frame_range in tracks:
+        frames = frame_range[0] if frame_range else np.arange(len(candidate))
+        fitted = angles(*(candidate[frames, joint] for joint in joints))
+        errors.append(12000. * max(0., .92 * float(np.ptp(source)) - float(np.ptp(fitted))))
+    return np.asarray(errors, dtype=float)
+
+
+def support_range_sparsity(rig, frame_count, tracks):
+    rows = []
+    for _, joints, _, *frame_range in tracks:
+        frames = frame_range[0] if frame_range else np.arange(frame_count)
+        dependencies = np.max(rig.dependencies[
+            np.ravel([[joint * 3 + axis for axis in range(3)] for joint in joints])
+        ], axis=0)
+        row = np.zeros((frame_count, rig.width), dtype=np.int8)
+        row[frames] = dependencies
+        rows.append(row.reshape(-1))
+    if not rows:
+        return csr_matrix((0, frame_count * rig.width), dtype=np.int8)
+    return csr_matrix(np.asarray(rows, dtype=np.int8).reshape(len(rows), frame_count * rig.width))
+
+
 def support_range_jacobian(values, rig, tracks):
     """Differentiate range floors at their extrema without recoloring the clip.
 
@@ -3852,23 +4825,72 @@ def support_range_jacobian(values, rig, tracks):
     points = rig.decode(coordinates)
     rows, columns, derivatives = [], [], []
     step = np.sqrt(np.finfo(float).eps)
-    for row, (_, joints, source) in enumerate(tracks):
-        track = angles(*(points[:, joint] for joint in joints))
+    for row, track_spec in enumerate(tracks):
+        _, joints, source, *frame_range = track_spec
+        frames = (np.asarray(frame_range[0], dtype=int) if frame_range
+                  else np.arange(len(points)))
+        track = angles(*(points[frames, joint] for joint in joints))
         if np.ptp(track) >= .92 * float(np.ptp(source)):
             continue
         dependencies = np.flatnonzero(np.max(
             rig.dependencies[[joint * 3 + axis for joint in joints for axis in range(3)]],
             axis=0))
-        for frame, sign in ((int(np.argmin(track)), 1.), (int(np.argmax(track)), -1.)):
+        for local_frame, sign in ((int(np.argmin(track)), 1.), (int(np.argmax(track)), -1.)):
+            frame = int(frames[local_frame])
             probes = np.repeat(coordinates[frame:frame + 1], len(dependencies), axis=0)
             probes[np.arange(len(dependencies)), dependencies] += step
             moved = rig.decode(probes)
             derivative = sign * 12000. * (
-                angles(*(moved[:, joint] for joint in joints)) - track[frame]) / step
+                angles(*(moved[:, joint] for joint in joints)) - track[local_frame]) / step
             rows.extend([row] * len(dependencies))
             columns.extend(frame * rig.width + dependencies)
             derivatives.extend(derivative)
     return csr_matrix((derivatives, (rows, columns)), shape=(len(tracks), len(values)))
+
+
+def timed_foot_articulation_residuals(
+    current_angles, specs, tracks, weight, source_foot_coverage=None,
+    source_foot_phase_coverage=None, *, fps=30., cyclic=False,
+):
+    """Track leg-motion phase while timed foot contacts are owned.
+
+    Knee rows compare source-relative angular increments, allowing a constant
+    pose correction within the unchanged physical gates. Other articulation
+    tracks retain their existing absolute-angle objective.
+    """
+    columns = {label: index for index, (label, _, _) in enumerate(specs)}
+    current_angles = np.asarray(current_angles, dtype=float)
+    frame_count = len(current_angles)
+    phase_scale = np.sqrt(max(float(fps), 1e-9) / 30.)
+
+    def residual_for_track(label, source):
+        source = np.asarray(source, dtype=float)
+        weights = np.full(len(current_angles), weight, dtype=float)
+        if source_foot_coverage and label.endswith('_ankle'):
+            coverage = np.asarray(source_foot_coverage.get(label, 0.))
+            weights = np.where(
+                coverage > 0., min(weight, SOURCE_PROJECTION_FIT_WEIGHT), weights,
+            )
+        phase_coverage = (source_foot_phase_coverage or {}).get(label)
+        if phase_coverage is not None and label.endswith('_ankle'):
+            weights = np.where(
+                np.asarray(phase_coverage) > 0.,
+                min(weight, SOURCE_PROJECTION_FIT_WEIGHT), weights,
+            )
+        angle_error = current_angles[:, columns[label]] - source
+        if label.endswith('_knee'):
+            previous = (np.roll(angle_error, 1) if cyclic
+                        else np.r_[angle_error[:1], angle_error[:-1]])
+            increment_error = angle_error - previous
+            if not cyclic and frame_count:
+                increment_error[0] = 0.
+            return weights * phase_scale * increment_error
+        return weights * angle_error
+
+    return np.stack([
+        residual_for_track(label, source)
+        for label, _, source in tracks if label in columns
+    ], axis=1) if tracks else np.empty((len(current_angles), 0))
 
 
 def solve_trajectory(residual, initial, pattern, max_evaluations, *,
@@ -3947,6 +4969,54 @@ def root_travel_preservation_jacobian(
             -ROOT_TRAVEL_FIT_WEIGHT * component / body_scale,
         ))
     return csr_matrix((values, ([0] * len(columns), columns)), shape=shape)
+
+
+def world_jerk_fit_target(jerk_before, jerk_limit):
+    """Use native jerk as the target, with only existing gate headroom as margin."""
+    jerk_limit = float(jerk_limit)
+    jerk_before = float(jerk_before)
+    if (jerk_limit <= 0. or not np.isfinite(jerk_limit)
+            or not np.isfinite(jerk_before)):
+        return jerk_limit
+    return min(jerk_limit, max(jerk_before, TEMPORAL_FIT_TARGET_RATIO * jerk_limit))
+
+
+def world_jerk_feasibility_residual(points, world_d3, fit_target):
+    """Penalize only candidates above the source-relative interior fit target."""
+    fit_target = float(fit_target)
+    point_jerk = np.asarray(world_d3 @ np.asarray(points).reshape(len(points), -1), dtype=float)
+    if (fit_target <= 0. or point_jerk.size == 0
+            or not np.isfinite(fit_target) or not np.isfinite(point_jerk).all()):
+        return float(ANATOMY_FIT_WEIGHT)
+    rms_jerk = float(np.sqrt(np.mean(point_jerk ** 2)))
+    return ANATOMY_FIT_WEIGHT * max(0., rms_jerk / fit_target - 1.)
+
+
+def world_jerk_profile_rows(points, reference, world_d3, jerk_limit):
+    """Track changes from the observed jerk profile, not a slower zero-jerk pose."""
+    points = np.asarray(points, dtype=float)
+    reference = np.asarray(reference, dtype=float)
+    delta_jerk = world_d3 @ (points - reference).reshape(len(points), -1)
+    return (10. * np.asarray(delta_jerk).ravel() /
+            (TEMPORAL_FIT_TARGET_RATIO * float(jerk_limit) * np.sqrt(delta_jerk.size)))
+
+
+def world_jerk_feasibility_jacobian(coordinates, rig, world_d3, fit_target):
+    """Analytic one-row RMS-jerk hinge derivative, chained through the rig FK."""
+    coordinates = np.asarray(coordinates, dtype=float).reshape(-1, rig.width)
+    points = rig.decode(coordinates)
+    point_jerk = np.asarray(world_d3 @ points.reshape(len(points), -1), dtype=float)
+    rms_jerk = (float(np.sqrt(np.mean(point_jerk ** 2)))
+                if point_jerk.size and np.isfinite(point_jerk).all() else 0.)
+    fit_target = float(fit_target)
+    if (fit_target <= 0. or not np.isfinite(fit_target)
+            or not np.isfinite(rms_jerk) or rms_jerk <= fit_target or rms_jerk <= 1e-15):
+        return csr_matrix((1, coordinates.size))
+    point_gradient = (
+        ANATOMY_FIT_WEIGHT * (world_d3.T @ point_jerk).reshape(-1)
+        / (point_jerk.size * rms_jerk * fit_target)
+    )
+    return csr_matrix(point_gradient.reshape(1, -1)) @ rig.fk_jacobian(coordinates)
 
 
 def _stationary_source_anchor_groups(payload, names, count):
@@ -4241,12 +5311,37 @@ def _source_projection_constraint_report(constraint):
             'cycleBoundaryCoverage', 'cycleBoundaryObservationCount',
             'cycleBoundaryFitMultiplier',
             'supportAnchorObservationCount', 'supportAnchorProjectionOmittedCount',
+            'sourceFootRayObservationCount', 'sourceFootRaySideMapping',
+            'sourceFootHeelPhaseObservationCount',
+            'sourceFootHeelImageObservationCount',
+            'sourceFootHeelTrajectoryObservationCount',
+            'sourceFootHeelUnresolvedToeOnlyObservationCount',
+            'sourceFootHeelCalibrationBySide',
+            'sourceFootPointObservationCount', 'sourceFootPointOffsetBySide',
             'endpointPostureObservationCount', 'endpointPostureCoverage',
             'endpointPostureWindowHalfWidthSeconds', 'endpointPostureFitMultiplier',
             'selectedIntervalKind', 'selectedIntervalEvidenceSource', 'selectedIntervalReason',
         )
     }
     diagnostics.update({
+        'sourceFootRayObservationCount': len(
+            constraint.get('sourceFootRayObservations') or []),
+        'sourceFootHeelPhaseObservationCount': len(
+            _source_foot_phase_observations(constraint)),
+        'sourceFootHeelImageObservationCount': len(
+            constraint.get('sourceFootHeelImageObservations') or []),
+        'sourceFootHeelTrajectoryObservationCount': len(
+            constraint.get('sourceFootHeelTrajectoryObservations') or []),
+        'sourceFootHeelTrajectoryEventCount': len(
+            constraint.get('sourceFootHeelTrajectoryEvents') or []),
+        'sourceFootHeelUnresolvedToeOnlyObservationCount': int(
+            constraint.get('sourceFootHeelUnresolvedToeOnlyObservationCount', 0)),
+        'sourceFootHeelCalibrationBySide': constraint.get(
+            'sourceFootHeelTrajectoryCalibrationBySide') or {},
+        'sourceFootRaySideMapping': constraint.get('sourceFootRaySideMapping') or {},
+        'sourceFootPointObservationCount': len(
+            constraint.get('sourceFootPointObservations') or []),
+        'sourceFootPointOffsetBySide': constraint.get('sourceFootPointOffsetBySide') or {},
         'supportRelativeObservationCount': len(
             constraint.get('supportRelativeObservations') or []
         ),
@@ -4577,6 +5672,16 @@ def _prepare_source_projection_fit_constraints(payload, frames, names, points, p
     ])
 
     observations = []
+    source_foot_ray_observations = []
+    source_foot_point_observations = []
+    source_foot_point_offset_by_side = {}
+    source_foot_ray_side_mapping = {}
+    source_foot_heel_trajectory_observations = []
+    source_foot_heel_trajectory_events = []
+    source_foot_heel_image_observations = []
+    source_foot_heel_calibration_by_side = {}
+    source_foot_heel_calibration_observations = []
+    source_foot_heel_unresolved_toe_only_count = 0
     fit_joint_index = {name: index for index, name in enumerate(names)}
     from .contact_constraints import motion_space_support_evidence
     body_support = motion_space_support_evidence(payload).get('bodySupport') or {}
@@ -4698,6 +5803,351 @@ def _prepare_source_projection_fit_constraints(payload, frames, names, points, p
                     source_time < times[0] - 1e-9 or source_time > times[-1] + 1e-9
                 ),
             })
+    patch_feet = (((payload.get('sourceFootSupportEvidence') or {}).get(
+        'footPatchEvidence') or {}).get('feet') or {})
+    for source_side in ('left', 'right'):
+        motion_ankle_name = _bilateral_name(f'{source_side}_ankle', swap=swap)
+        motion_side = motion_ankle_name[:-6]
+        motion_foot_name = f'{motion_side}_foot'
+        ankle_index = fit_joint_index.get(motion_ankle_name)
+        foot_index = fit_joint_index.get(motion_foot_name)
+        source_foot_ray_side_mapping[source_side] = motion_side
+        if ankle_index is None or foot_index is None:
+            continue
+        foot_data = patch_feet.get(source_side) or {}
+        side_rays = []
+        for ray in foot_data.get('rayObservations') or []:
+            try:
+                source_time = float(ray['sourceTimeSec'])
+                source_ray = np.asarray(ray['ankleToToeImageRay'], dtype=float)
+                confidence_value = float(ray['confidence'])
+            except (KeyError, TypeError, ValueError, OverflowError):
+                continue
+            try:
+                toe_image_point = np.asarray(ray.get('toeImagePoint'), dtype=float)
+            except (TypeError, ValueError, OverflowError):
+                toe_image_point = np.empty(0, dtype=float)
+            if toe_image_point.shape != (2,) or not np.isfinite(toe_image_point).all():
+                toe_image_point = None
+            if (not np.isfinite(source_time) or source_ray.shape != (2,)
+                    or not np.isfinite(source_ray).all() or np.linalg.norm(source_ray) < 1e-8
+                    or not np.isfinite(confidence_value) or confidence_value < .8
+                    or source_time < times[0] - projection_source_time_tolerance
+                    or source_time > times[-1] + projection_source_time_tolerance):
+                continue
+            right = int(np.searchsorted(times, source_time, side='left'))
+            if right <= 0:
+                left, right, alpha = 0, 0, 0.
+            elif right >= len(times):
+                left, right, alpha = len(times) - 1, len(times) - 1, 0.
+            else:
+                left = right - 1
+                span = float(times[right] - times[left])
+                alpha = 0. if span <= 1e-12 else float((source_time - times[left]) / span)
+            source_ray = source_ray / np.linalg.norm(source_ray)
+            source_angle = float(np.arctan2(source_ray[1], source_ray[0]))
+            side_rays.append({
+                'leftFrame': left, 'rightFrame': right, 'alpha': alpha,
+                'ankleJointIndex': ankle_index, 'footJointIndex': foot_index,
+                'sourceRay': source_ray, 'sourceAngle': source_angle,
+                'toeImagePoint': toe_image_point,
+                'confidenceWeight': float(np.sqrt(np.clip(confidence_value, 0., 1.))),
+                'sourceTime': source_time,
+                'state': str(ray.get('state', 'unknown')),
+                'stationaryAnchorGroupId': ray.get('stationaryAnchorGroupId'),
+                'sourceSide': source_side, 'motionSide': motion_side,
+            })
+        if len(side_rays) < 3:
+            continue
+        full_sole_angles = [ray['sourceAngle'] for ray in side_rays
+                            if ray['state'] == 'full_sole']
+        stance_source_angle = None
+        stance_angle_noise = None
+        if len(full_sole_angles) >= 3:
+            stance_center = float(np.arctan2(
+                np.mean(np.sin(full_sole_angles)), np.mean(np.cos(full_sole_angles)),
+            ))
+            stance_offsets_from_native = np.asarray([
+                np.arctan2(np.sin(angle - stance_center), np.cos(angle - stance_center))
+                for angle in full_sole_angles
+            ])
+            stance_source_angle = float(stance_center + np.median(stance_offsets_from_native))
+            stance_residuals = np.asarray([
+                np.arctan2(np.sin(angle - stance_source_angle),
+                           np.cos(angle - stance_source_angle))
+                for angle in full_sole_angles
+            ])
+            stance_angle_noise = float(max(
+                np.deg2rad(8),
+                3 * 1.4826 * np.median(np.abs(stance_residuals)),
+            ))
+        # Remove only a robust constant rest-heading bias, calibrated from
+        # independently observed full-sole frames when available. This leaves
+        # each frame's source angular change intact and adds no contact pins.
+        stance_offsets = []
+        stance_toe_offsets = []
+        stationary_toe_points_by_anchor = {}
+        for ray in side_rays:
+            anchor_group = ray.get('stationaryAnchorGroupId')
+            if anchor_group is not None and ray['toeImagePoint'] is not None:
+                stationary_toe_points_by_anchor.setdefault(anchor_group, []).append(
+                    ray['toeImagePoint'])
+            if ray['state'] != 'full_sole' or ray['toeImagePoint'] is None:
+                continue
+            left, right, alpha = ray['leftFrame'], ray['rightFrame'], ray['alpha']
+            source_ankle = (points[left, ankle_index] * (1. - alpha)
+                            + points[right, ankle_index] * alpha)
+            source_foot = (points[left, foot_index] * (1. - alpha)
+                           + points[right, foot_index] * alpha)
+            fitted_ray = projection @ (source_foot - source_ankle)
+            if np.linalg.norm(fitted_ray) < 1e-8:
+                continue
+            fitted_angle = float(np.arctan2(fitted_ray[1], fitted_ray[0]))
+            stance_offsets.append(float(np.arctan2(
+                np.sin(fitted_angle - ray['sourceAngle']),
+                np.cos(fitted_angle - ray['sourceAngle']),
+            )))
+            projected_foot = projection @ source_foot + offset
+            stance_toe_offsets.append(projected_foot - ray['toeImagePoint'])
+        heading_offset = 0.
+        if stance_offsets:
+            circular_center = float(np.arctan2(
+                np.mean(np.sin(stance_offsets)), np.mean(np.cos(stance_offsets)),
+            ))
+            unwrapped_offsets = [circular_center + float(np.arctan2(
+                np.sin(value - circular_center), np.cos(value - circular_center),
+            )) for value in stance_offsets]
+            heading_offset = float(np.median(unwrapped_offsets))
+        cosine, sine = np.cos(heading_offset), np.sin(heading_offset)
+        heading_rotation = np.asarray([[cosine, -sine], [sine, cosine]])
+        for ray in side_rays:
+            ray['targetRay'] = heading_rotation @ ray['sourceRay']
+            ray['headingOffsetRadians'] = heading_offset
+            if stance_source_angle is not None and ray['state'] == 'toe_only':
+                native_phase = float(np.arctan2(
+                    np.sin(ray['sourceAngle'] - stance_source_angle),
+                    np.cos(ray['sourceAngle'] - stance_source_angle),
+                ))
+                if abs(native_phase) > stance_angle_noise:
+                    ray['heelPhasePreservation'] = {
+                        'nativePhaseRadians': native_phase,
+                        'stanceTargetAngleRadians': stance_source_angle + heading_offset,
+                        'noiseThresholdRadians': stance_angle_noise,
+                        'fitMinimumRatio': .92,
+                        'acceptanceMinimumRatio': .85,
+                    }
+            source_foot_ray_observations.append(ray)
+        if len(stance_toe_offsets) >= 3:
+            toe_offset = np.median(np.asarray(stance_toe_offsets), axis=0)
+            source_foot_point_offset_by_side[source_side] = toe_offset.tolist()
+            stationary_toe_targets = {
+                anchor_group: np.median(np.asarray(points, dtype=float), axis=0)
+                for anchor_group, points in stationary_toe_points_by_anchor.items()
+            }
+            for ray in side_rays:
+                if ray['toeImagePoint'] is None:
+                    continue
+                anchor_group = ray.get('stationaryAnchorGroupId')
+                source_toe_point = stationary_toe_targets.get(
+                    anchor_group, ray['toeImagePoint'])
+                source_foot_point_observations.append({
+                    'leftFrame': ray['leftFrame'],
+                    'rightFrame': ray['rightFrame'],
+                    'alpha': ray['alpha'],
+                    'jointIndex': foot_index,
+                    'sourcePoint': source_toe_point + toe_offset,
+                    'confidenceWeight': ray['confidenceWeight'],
+                    'fitConfidenceWeight': ray['confidenceWeight'],
+                    'sourceTime': ray['sourceTime'],
+                    'sourceSide': source_side,
+                    'motionSide': motion_side,
+                    'sourceEvidence': 'native_foot_landmark_toe',
+                    'stationaryAnchorGroupId': anchor_group,
+                    'sourcePointAggregation': (
+                        'stationary_anchor_median' if anchor_group is not None
+                        else 'per_frame_native'),
+                })
+        # Calibrate the rendered material heel-to-toe image vector once from
+        # reliable full-sole samples. Toe-only samples preserve the observed
+        # heel trajectory without inferring a 3D height or adding contact pins.
+        from .foot_geometry import sample_material_foot_points
+        native_heel_rows = []
+        for heel_row in foot_data.get('heelImageObservations') or []:
+            try:
+                source_time = float(heel_row['sourceTimeSec'])
+                heel_image = np.asarray(heel_row['heelImagePoint'], dtype=float)
+                toe_image = np.asarray(heel_row['toeImagePoint'], dtype=float)
+                heel_confidence = float(heel_row['heelConfidence'])
+                toe_confidence = float(heel_row['toeConfidence'])
+            except (KeyError, TypeError, ValueError, OverflowError):
+                continue
+            confidence = min(heel_confidence, toe_confidence)
+            if (not np.isfinite(source_time) or heel_image.shape != (2,)
+                    or toe_image.shape != (2,) or not np.isfinite(heel_image).all()
+                    or not np.isfinite(toe_image).all() or confidence < .8
+                    or source_time < times[0] - projection_source_time_tolerance
+                    or source_time > times[-1] + projection_source_time_tolerance):
+                continue
+            right = int(np.searchsorted(times, source_time, side='left'))
+            if right <= 0:
+                left, right, alpha = 0, 0, 0.
+            elif right >= len(times):
+                left, right, alpha = len(times) - 1, len(times) - 1, 0.
+            else:
+                left = right - 1
+                span = float(times[right] - times[left])
+                alpha = 0. if span <= 1e-12 else float((source_time - times[left]) / span)
+            native_heel_rows.append({
+                'leftFrame': left, 'rightFrame': right, 'alpha': alpha,
+                'ankleJointIndex': ankle_index, 'footJointIndex': foot_index,
+                'sourceHeelToToeVector': heel_image - toe_image,
+                'confidenceWeight': float(np.sqrt(np.clip(confidence, 0., 1.))),
+                'sourceTime': source_time,
+                'state': str(heel_row.get('state', 'unknown')),
+                'stationaryAnchorGroupId': heel_row.get('stationaryAnchorGroupId'),
+                'sourceSide': source_side, 'motionSide': motion_side,
+            })
+        fullsole_rows = [row for row in native_heel_rows
+                         if row['state'] == 'full_sole'
+                         and row.get('stationaryAnchorGroupId') is not None]
+        if len(fullsole_rows) >= 3:
+            lift_direction = projection @ np.asarray([0., 1., 0.])
+            lift_direction /= max(float(np.linalg.norm(lift_direction)), 1e-12)
+            cursors = [row['leftFrame'] + row['alpha'] for row in fullsole_rows]
+            material = sample_material_foot_points(payload, cursors, points=points)[motion_side]
+            predicted = np.asarray([
+                projection @ (heel - toe)
+                for heel, toe in zip(material['heel'], material['toe'])
+            ])
+            observed = np.asarray([row['sourceHeelToToeVector'] for row in fullsole_rows])
+            image_offset = np.median(predicted - observed, axis=0)
+            grouped_baselines = {}
+            for group_id in {row['stationaryAnchorGroupId'] for row in fullsole_rows}:
+                group_indices = [index for index, row in enumerate(fullsole_rows)
+                                 if row['stationaryAnchorGroupId'] == group_id]
+                if len(group_indices) < 3:
+                    continue
+                source_vector = observed[group_indices]
+                source_lift_samples = source_vector @ lift_direction
+                grouped_baselines[group_id] = {
+                    'sourceVector': np.median(source_vector, axis=0),
+                    'fitVector': np.median(predicted[group_indices], axis=0),
+                    'sourceNoiseImageUnits': float(max(
+                        1. / max(float(source_pose.get('imageHeight') or 1000), 1.),
+                        3 * 1.4826 * np.median(np.abs(
+                            source_lift_samples - np.median(source_lift_samples))),
+                    )),
+                    'observationCount': len(group_indices),
+                }
+            source_foot_heel_calibration_by_side[source_side] = {
+                'imageOffset': image_offset.tolist(),
+                'observationCount': len(fullsole_rows),
+                'groupBaselineCount': len(grouped_baselines),
+                'toeOnlyWithoutEpisodeBaselineCount': sum(
+                    row['state'] == 'toe_only'
+                    and row.get('stationaryAnchorGroupId') not in grouped_baselines
+                    for row in native_heel_rows),
+                'unknownStateObservationCount': sum(
+                    row['state'] == 'unknown' for row in native_heel_rows),
+                'medianAbsoluteCalibrationResidualPixels': float(np.median(np.linalg.norm(
+                    predicted - observed - image_offset, axis=1)
+                    * max(float(source_pose.get('imageHeight') or 1.), 1.))),
+            }
+            source_foot_heel_calibration_observations.extend(fullsole_rows)
+            source_foot_heel_unresolved_toe_only_count += sum(
+                row['state'] == 'toe_only'
+                and row.get('stationaryAnchorGroupId') not in grouped_baselines
+                for row in native_heel_rows)
+            side_noise = float(np.median([
+                baseline['sourceNoiseImageUnits']
+                for baseline in grouped_baselines.values()
+            ])) if grouped_baselines else 1. / max(
+                float(source_pose.get('imageHeight') or 1000), 1.)
+            row_baselines = {}
+            for row in native_heel_rows:
+                baseline = grouped_baselines.get(row.get('stationaryAnchorGroupId'))
+                row_baselines[id(row)] = baseline
+                image_row = {
+                    **row,
+                    'imageOffset': image_offset,
+                    'sourceNoiseImageUnits': (
+                        baseline['sourceNoiseImageUnits'] if baseline else side_noise),
+                }
+                source_foot_heel_image_observations.append(image_row)
+
+            # Episodes follow the classifier's toe-only state and anchor identity.
+            # A state change or missing native sample closes an episode; timestamps
+            # are retained as-is, so the fit never shifts or warps the source curve.
+            native_intervals = np.diff(sorted(row['sourceTime'] for row in native_heel_rows))
+            native_intervals = native_intervals[native_intervals > 1e-6]
+            max_episode_gap = (2.5 * float(np.median(native_intervals))
+                               if native_intervals.size else 0.)
+            toe_episodes = []
+            active_episode = []
+            previous = None
+            for row in native_heel_rows:
+                baseline = row_baselines[id(row)]
+                contiguous = (
+                    previous is not None
+                    and row['state'] == 'toe_only'
+                    and previous['state'] == 'toe_only'
+                    and row.get('stationaryAnchorGroupId')
+                    == previous.get('stationaryAnchorGroupId')
+                    and row['sourceTime'] - previous['sourceTime'] <= max_episode_gap
+                    and baseline is not None
+                )
+                if not contiguous and active_episode:
+                    toe_episodes.append(active_episode)
+                    active_episode = []
+                if row['state'] == 'toe_only' and baseline is not None:
+                    active_episode.append(row)
+                previous = row
+            if active_episode:
+                toe_episodes.append(active_episode)
+            image_row_by_time = {
+                (row['sourceSide'], round(float(row['sourceTime']), 8)): row
+                for row in source_foot_heel_image_observations
+            }
+            for episode_index, episode in enumerate(toe_episodes):
+                baseline = row_baselines[id(episode[0])]
+                source_curve = np.asarray([
+                    float((row['sourceHeelToToeVector'] - baseline['sourceVector'])
+                          @ lift_direction)
+                    for row in episode
+                ])
+                source_amplitude = float(max(0., np.quantile(source_curve, .9)))
+                if source_amplitude <= baseline['sourceNoiseImageUnits']:
+                    continue
+                event_id = (source_side, episode[0].get('stationaryAnchorGroupId'),
+                            episode_index)
+                event_observations = []
+                for row in episode:
+                    image_row = image_row_by_time[
+                        (row['sourceSide'], round(float(row['sourceTime']), 8))]
+                    trajectory_row = {
+                        **image_row,
+                        'baselineSourceVector': baseline['sourceVector'],
+                        'baselineFitVector': baseline['fitVector'],
+                        'sourceNoiseImageUnits': baseline['sourceNoiseImageUnits'],
+                        'liftDirection': lift_direction,
+                        'episodeId': event_id,
+                    }
+                    source_foot_heel_trajectory_observations.append(trajectory_row)
+                    event_observations.append(trajectory_row)
+                source_foot_heel_trajectory_events.append({
+                    'episodeId': event_id,
+                    'sourceSide': source_side,
+                    'motionSide': motion_side,
+                    'stationaryAnchorGroupId': episode[0].get('stationaryAnchorGroupId'),
+                    'observationTimes': [row['sourceTime'] for row in event_observations],
+                    'sourceExcursionImageUnits': source_amplitude,
+                    'sourceNoiseImageUnits': baseline['sourceNoiseImageUnits'],
+                    'fitMinimumRatio': .92,
+                    'acceptanceMinimumRatio': .85,
+                })
+        else:
+            source_foot_heel_unresolved_toe_only_count += sum(
+                row['state'] == 'toe_only' for row in native_heel_rows)
     support_relative_observations = []
     support_relative_joint_names = []
     if (body_support.get('required') is True
@@ -4860,6 +6310,23 @@ def _prepare_source_projection_fit_constraints(payload, frames, names, points, p
     return {
         'available': True,
         'observations': observations,
+        'sourceFootRayObservations': source_foot_ray_observations,
+        'sourceFootRaySideMapping': source_foot_ray_side_mapping,
+        'sourceFootRayWeight': SOURCE_PROJECTION_FIT_WEIGHT,
+        'sourceFootPointObservations': source_foot_point_observations,
+        'sourceFootHeelTrajectoryObservations': source_foot_heel_trajectory_observations,
+        'sourceFootHeelTrajectoryEvents': source_foot_heel_trajectory_events,
+        'sourceFootHeelImageObservations': source_foot_heel_image_observations,
+        'sourceFootHeelUnresolvedToeOnlyObservationCount': (
+            source_foot_heel_unresolved_toe_only_count),
+        'sourceFootHeelTrajectoryCalibrationBySide': source_foot_heel_calibration_by_side,
+        'sourceFootHeelCalibrationObservations': source_foot_heel_calibration_observations,
+        # Bind heel baselines to the shoe calibration used to measure them.
+        'footGeometryPayload': {
+            **payload,
+            'footRestPitchRadians': dict(payload.get('footRestPitchRadians') or {}),
+        },
+        'sourceFootPointOffsetBySide': source_foot_point_offset_by_side,
         'supportRelativeObservations': support_relative_observations,
         'supportRelativeMaterialMotion': support_relative_material_motion,
         'supportRelativeJointNames': sorted(set(support_relative_joint_names)),
@@ -5010,7 +6477,8 @@ def _source_projection_fit_rows(candidate, constraint):
     normalization = constraint['normalization']
     weight = constraint['weight']
     rows = []
-    for observation in constraint['observations']:
+    point_observations = _source_projection_point_observations(constraint)
+    for observation in point_observations:
         left = observation['leftFrame']
         right = observation['rightFrame']
         alpha = observation['alpha']
@@ -5020,7 +6488,423 @@ def _source_projection_fit_rows(candidate, constraint):
         confidence_weight = observation.get(
             'fitConfidenceWeight', observation['confidenceWeight'])
         rows.extend((weight * confidence_weight * error / normalization).tolist())
+    rows.extend(_source_foot_ray_fit_rows(candidate, constraint).tolist())
+    rows.extend(_source_foot_material_heel_fit_rows(candidate, constraint).tolist())
     return np.asarray(rows, dtype=float)
+
+
+def _source_projection_point_observations(constraint):
+    return [
+        *(constraint.get('observations') or []),
+        *(constraint.get('sourceFootPointObservations') or []),
+    ]
+
+
+def _source_foot_ray_fit_rows(candidate, constraint):
+    """Preserve observed ankle-to-toe heading changes without adding contact pins."""
+    observations = constraint.get('sourceFootRayObservations') or []
+    if not observations:
+        return np.empty(0, dtype=float)
+    projection = constraint['projection']
+    weight = constraint.get('sourceFootRayWeight', constraint['weight'])
+    rows = []
+    for observation in observations:
+        left, right, alpha = (
+            observation['leftFrame'], observation['rightFrame'], observation['alpha'],
+        )
+        ankle_index = observation['ankleJointIndex']
+        foot_index = observation['footJointIndex']
+        ankle = (candidate[left, ankle_index] * (1. - alpha)
+                 + candidate[right, ankle_index] * alpha)
+        foot = (candidate[left, foot_index] * (1. - alpha)
+                + candidate[right, foot_index] * alpha)
+        fitted_ray = projection @ (foot - ankle)
+        length = float(np.linalg.norm(fitted_ray))
+        if length <= 1e-9:
+            rows.append(0.)
+            continue
+        target = observation['targetRay']
+        cross = float(target[0] * fitted_ray[1] - target[1] * fitted_ray[0])
+        rows.append(weight * observation['confidenceWeight'] * cross / length)
+    return np.asarray(rows, dtype=float)
+
+
+def _source_foot_phase_observations(constraint):
+    return [
+        observation for observation in constraint.get('sourceFootRayObservations') or []
+        if observation.get('heelPhasePreservation')
+    ]
+
+
+def _source_foot_phase_frame_coverage(constraint, names, frame_count):
+    coverage = {}
+    for observation in _source_foot_phase_observations(constraint):
+        ankle_name = f"{observation['motionSide']}_ankle"
+        if ankle_name not in names:
+            continue
+        covered = coverage.setdefault(ankle_name, np.zeros(frame_count))
+        if observation['alpha'] < 1.:
+            covered[observation['leftFrame']] = 1.
+        if observation['alpha'] > 0.:
+            covered[observation['rightFrame']] = 1.
+    return coverage
+
+
+def _source_foot_phase_fit_rows(candidate, constraint):
+    """Keep clear native toe-only heel pivots above their observed phase floor."""
+    observations = _source_foot_phase_observations(constraint)
+    if not observations:
+        return np.empty(0, dtype=float)
+    projection = constraint['projection']
+    rows = []
+    for observation in observations:
+        left, right, alpha = (
+            observation['leftFrame'], observation['rightFrame'], observation['alpha'],
+        )
+        ankle = (candidate[left, observation['ankleJointIndex']] * (1. - alpha)
+                 + candidate[right, observation['ankleJointIndex']] * alpha)
+        foot = (candidate[left, observation['footJointIndex']] * (1. - alpha)
+                + candidate[right, observation['footJointIndex']] * alpha)
+        fitted_ray = projection @ (foot - ankle)
+        if np.linalg.norm(fitted_ray) <= 1e-9:
+            rows.append(0.)
+            continue
+        phase = float(np.arctan2(fitted_ray[1], fitted_ray[0])
+                      - observation['heelPhasePreservation']['stanceTargetAngleRadians'])
+        phase = float(np.arctan2(np.sin(phase), np.cos(phase)))
+        native_phase = observation['heelPhasePreservation']['nativePhaseRadians']
+        signed_fitted_phase = np.sign(native_phase) * phase
+        minimum_fit_phase = .92 * abs(native_phase)
+        rows.append(SOURCE_FOOT_PHASE_FIT_WEIGHT
+                    * max(0., minimum_fit_phase - signed_fitted_phase))
+    return np.asarray(rows, dtype=float)
+
+
+def _source_foot_material_heel_vectors(candidate, constraint, observations):
+    if not observations:
+        return np.empty((0, 2), dtype=float)
+    from .foot_geometry import sample_material_foot_points
+    cursors = [row['leftFrame'] + row['alpha'] for row in observations]
+    material_by_side = sample_material_foot_points(
+        constraint['footGeometryPayload'], cursors, points=candidate)
+    projection = constraint['projection']
+    return np.asarray([
+        projection @ (material_by_side[row['motionSide']]['heel'][index]
+                      - material_by_side[row['motionSide']]['toe'][index])
+        for index, row in enumerate(observations)
+    ])
+
+
+def _source_foot_material_heel_fit_rows(candidate, constraint):
+    """Fit observed heel-to-toe image motion against renderer material geometry."""
+    observations = constraint.get('sourceFootHeelImageObservations') or []
+    if not observations:
+        return np.empty(0, dtype=float)
+    fitted_vectors = _source_foot_material_heel_vectors(
+        candidate, constraint, observations)
+    vector_rows = []
+    for fitted, observation in zip(fitted_vectors, observations):
+        confidence = observation['confidenceWeight']
+        target = observation['sourceHeelToToeVector']
+        offset = observation['imageOffset']
+        # imageOffset is calibrated as fitted source-frame vector minus the
+        # observed vector, so compare against source + offset.
+        error = fitted - offset - target
+        uncertainty = float(observation.get('sourceNoiseImageUnits', 0.))
+        vector_rows.extend((SOURCE_PROJECTION_FIT_WEIGHT * confidence
+                            * np.sign(error) * np.maximum(0., np.abs(error) - uncertainty)).tolist())
+    observation_index = {
+        (row['sourceSide'], round(float(row['sourceTime']), 8)): index
+        for index, row in enumerate(observations)
+    }
+    trajectory_by_time = {
+        (row['sourceSide'], round(float(row['sourceTime']), 8)): row
+        for row in constraint.get('sourceFootHeelTrajectoryObservations') or []
+    }
+    event_rows = []
+    for event in constraint.get('sourceFootHeelTrajectoryEvents') or []:
+        indices = [observation_index[(event['sourceSide'], round(float(time), 8))]
+                   for time in event['observationTimes']
+                   if (event['sourceSide'], round(float(time), 8)) in observation_index]
+        if not indices:
+            event_rows.append(0.)
+            continue
+        lifts = []
+        for index in indices:
+            key = (event['sourceSide'], round(float(observations[index]['sourceTime']), 8))
+            trajectory = trajectory_by_time[key]
+            lifts.append(max(0., float((fitted_vectors[index]
+                                        - trajectory['baselineFitVector'])
+                                       @ trajectory['liftDirection'])))
+        lifts = np.asarray(lifts)
+        fitted_amplitude = float(np.quantile(lifts, .9))
+        event_rows.append(SOURCE_FOOT_PHASE_FIT_WEIGHT
+                          * max(0., event['fitMinimumRatio']
+                                * event['sourceExcursionImageUnits'] - fitted_amplitude))
+    return np.r_[np.asarray(vector_rows), np.asarray(event_rows)]
+
+
+def _source_foot_material_heel_fit_evidence(payload, constraint):
+    observations = constraint.get('sourceFootHeelTrajectoryObservations') or []
+    calibration_rows = constraint.get('sourceFootHeelCalibrationObservations') or []
+    unresolved_toe_only = int(constraint.get(
+        'sourceFootHeelUnresolvedToeOnlyObservationCount', 0))
+    required = bool(observations or unresolved_toe_only)
+    if not constraint.get('available') or not observations or not calibration_rows:
+        return {
+            'available': False, 'passed': not required,
+            'reason': 'reliable_native_material_heel_trajectory_unavailable',
+            'observationCount': len(observations), 'calibrationObservationCount': len(calibration_rows),
+            'unresolvedToeOnlyObservationCount': unresolved_toe_only,
+            'minimumPreservedRatio': .85, 'worstPreservedRatio': None,
+        }
+    from .foot_geometry import sample_material_foot_points
+    projection = constraint['projection']
+    placement = payload.get('scenePlacement') or {}
+    try:
+        placement_rotation = Rotation.from_rotvec(np.asarray(
+            placement.get('rotationVector', [0., 0., 0.]), dtype=float)).as_matrix()
+    except (TypeError, ValueError):
+        placement_rotation = np.eye(3)
+    if placement_rotation.shape == (3, 3):
+        # normalize_scene_placement rotates serialized geometry after the fit.
+        # Transport its rendered vectors back into the fit camera basis.
+        projection = projection @ placement_rotation.T
+
+    def rendered_vectors(rows):
+        cursors = [row['leftFrame'] + row['alpha'] for row in rows]
+        geometry = sample_material_foot_points(payload, cursors)
+        return {
+            id(row): projection @ (
+                geometry[row['motionSide']]['heel'][index]
+                - geometry[row['motionSide']]['toe'][index])
+            for index, row in enumerate(rows)
+        }
+
+    calibration_vectors = rendered_vectors(calibration_rows)
+    baseline_by_group = {}
+    side_for_group = {}
+    for row in calibration_rows:
+        group_id = row.get('stationaryAnchorGroupId')
+        if group_id is None:
+            continue
+        baseline_by_group.setdefault((row['sourceSide'], group_id), []).append(
+            (row['sourceHeelToToeVector'], calibration_vectors[id(row)]))
+        side_for_group[(row['sourceSide'], group_id)] = row['motionSide']
+    baselines = {}
+    for key, values in baseline_by_group.items():
+        if len(values) < 3:
+            continue
+        baselines[key] = {
+            'source': np.median(np.asarray([item[0] for item in values]), axis=0),
+            'fit': np.median(np.asarray([item[1] for item in values]), axis=0),
+            'count': len(values),
+        }
+    image_row_by_time = {
+        (row['sourceSide'], round(float(row['sourceTime']), 8)): row
+        for row in observations
+    }
+    fitted_vectors = rendered_vectors(observations)
+    source_pose = ((payload.get('sourcePoseCameraReference') or {}).get('sourcePose') or {})
+    height = float(source_pose.get('imageHeight') or 1.)
+    events = []
+    for event in constraint.get('sourceFootHeelTrajectoryEvents') or []:
+        key = (event['sourceSide'], event.get('stationaryAnchorGroupId'))
+        baseline = baselines.get(key)
+        if baseline is None:
+            continue
+        rows = [image_row_by_time[(event['sourceSide'], round(float(time), 8))]
+                for time in event['observationTimes']
+                if (event['sourceSide'], round(float(time), 8)) in image_row_by_time]
+        if not rows:
+            continue
+        source_lifts = np.asarray([
+            float((row['sourceHeelToToeVector'] - baseline['source'])
+                  @ row['liftDirection'])
+            for row in rows
+        ])
+        rendered_lifts = np.asarray([
+            float((fitted_vectors[id(row)] - baseline['fit']) @ row['liftDirection'])
+            for row in rows
+        ])
+        source_amplitude = float(max(0., np.quantile(source_lifts, .9)))
+        rendered_amplitude = float(max(0., np.quantile(rendered_lifts, .9)))
+        ratio = rendered_amplitude / max(source_amplitude, 1e-9)
+        trajectory_errors = rendered_lifts - source_lifts
+        noise = float(event['sourceNoiseImageUnits'])
+        source_times = np.asarray([row['sourceTime'] for row in rows], dtype=float)
+        source_peak_time = float(source_times[int(np.argmax(source_lifts))])
+        rendered_peak_time = float(source_times[int(np.argmax(rendered_lifts))])
+        rms_error = float(np.sqrt(np.mean(np.square(trajectory_errors))))
+        max_error = float(np.max(np.abs(trajectory_errors)))
+        events.append({
+            'episodeId': list(event['episodeId']),
+            'sourceSide': event['sourceSide'],
+            'motionSide': event['motionSide'],
+            'stationaryAnchorGroupId': event.get('stationaryAnchorGroupId'),
+            'observationCount': len(rows),
+            'sourceExcursionImageUnits': source_amplitude,
+            'renderedExcursionImageUnits': rendered_amplitude,
+            'amplitudeRatio': ratio,
+            'minimumPreservedRatio': event['acceptanceMinimumRatio'],
+            'trajectoryRmsErrorImageUnits': rms_error,
+            'trajectoryMaxErrorImageUnits': max_error,
+            'sourceNoiseImageUnits': noise,
+            'trajectoryRmsErrorPixels': rms_error * height,
+            'trajectoryMaxErrorPixels': max_error * height,
+            'sourceNoisePixels': noise * height,
+            'trajectoryRmsWithinNoise': rms_error <= noise,
+            'sourcePeakTimeSec': source_peak_time,
+            'renderedPeakTimeSec': rendered_peak_time,
+            'peakTimeOffsetSec': rendered_peak_time - source_peak_time,
+            'calibrationObservationCount': baseline['count'],
+        })
+    if not events:
+        return {
+            'available': False, 'passed': not required,
+            'reason': 'native_material_heel_baseline_unavailable',
+            'observationCount': len(observations),
+            'calibrationObservationCount': len(calibration_rows),
+            'calibrationGroupCount': len(baselines),
+            'unresolvedToeOnlyObservationCount': unresolved_toe_only,
+            'minimumPreservedRatio': .85, 'eventCount': 0,
+        }
+    unresolved_passed = unresolved_toe_only == 0
+    worst = min(events, key=lambda item: item['amplitudeRatio'])
+    amplitude_passed = all(
+        event['amplitudeRatio'] >= event['minimumPreservedRatio'] for event in events)
+    trajectory_passed = all(event['trajectoryRmsWithinNoise'] for event in events)
+    return {
+        'available': True,
+        'passed': bool(amplitude_passed and trajectory_passed and unresolved_passed),
+        'reason': ('unresolved_toe_only_heel_baseline' if not unresolved_passed else
+                   'material_heel_excursion_not_preserved' if not amplitude_passed else
+                   'native_time_heel_trajectory_exceeds_measurement_uncertainty'
+                   if not trajectory_passed else None),
+        'observationCount': len(observations),
+        'eventCount': len(events),
+        'events': events,
+        'amplitudePreservationPassed': amplitude_passed,
+        'nativeTimeTrajectoryPassed': trajectory_passed,
+        'calibrationObservationCount': len(calibration_rows),
+        'calibrationGroupCount': len(baselines),
+        'unresolvedToeOnlyObservationCount': unresolved_toe_only,
+        'minimumPreservedRatio': .85,
+        'fitMinimumRatio': .92,
+        'worstPreservedRatio': float(worst['amplitudeRatio']),
+        'worstSourceTimeSec': worst['sourcePeakTimeSec'],
+        'worstSourceSide': worst['sourceSide'],
+        'worstMotionSide': worst['motionSide'],
+        'worstEvent': worst,
+        'sourceExcursionPixels': float(worst['sourceExcursionImageUnits'] * height),
+        'renderedExcursionPixels': float(worst['renderedExcursionImageUnits'] * height),
+        'noisePixels': float(worst['sourceNoiseImageUnits'] * height),
+        'minimumPassingRatio': .85,
+        'gateApplied': True,
+    }
+
+
+def _source_foot_ray_fit_evidence(candidate, constraint):
+    observations = constraint.get('sourceFootRayObservations') or []
+    if not constraint.get('available') or not observations:
+        return {
+            'available': False, 'passed': True,
+            'reason': 'independent_source_foot_ray_unavailable',
+            'observationCount': 0,
+        }
+    errors = []
+    for observation in observations:
+        left, right, alpha = (
+            observation['leftFrame'], observation['rightFrame'], observation['alpha'],
+        )
+        ankle = (candidate[left, observation['ankleJointIndex']] * (1. - alpha)
+                 + candidate[right, observation['ankleJointIndex']] * alpha)
+        foot = (candidate[left, observation['footJointIndex']] * (1. - alpha)
+                + candidate[right, observation['footJointIndex']] * alpha)
+        fitted = constraint['projection'] @ (foot - ankle)
+        if np.linalg.norm(fitted) <= 1e-9:
+            continue
+        angle = np.arctan2(
+            observation['targetRay'][0] * fitted[1] - observation['targetRay'][1] * fitted[0],
+            float(np.dot(observation['targetRay'], fitted)),
+        )
+        errors.append(float(np.degrees(angle)))
+    errors = np.asarray(errors, dtype=float)
+    return {
+        'available': bool(len(errors)),
+        'passed': True,
+        'reason': None if len(errors) else 'projected_foot_ray_degenerate',
+        'observationCount': int(len(errors)),
+        'sourceSideMapping': constraint.get('sourceFootRaySideMapping') or {},
+        'headingOffsetDegreesBySide': {
+            side: float(np.degrees(np.median([
+                row['headingOffsetRadians'] for row in observations
+                if row['sourceSide'] == side
+            ])))
+            for side in ('left', 'right')
+            if any(row['sourceSide'] == side for row in observations)
+        },
+        'absoluteAngularResidualRmsDegrees': (
+            float(np.sqrt(np.mean(errors ** 2))) if len(errors) else None),
+        'absoluteAngularResidualMedianDegrees': (
+            float(np.median(np.abs(errors))) if len(errors) else None),
+        'gateApplied': False,
+    }
+
+
+def _source_foot_phase_fit_evidence(candidate, constraint):
+    observations = _source_foot_phase_observations(constraint)
+    if not constraint.get('available') or not observations:
+        return {
+            'available': False, 'passed': True,
+            'reason': 'no_reliable_native_toe_only_heel_phase',
+            'observationCount': 0, 'minimumAcceptanceRatio': .85,
+            'worstPreservedRatio': None, 'worstSourceTimeSec': None,
+        }
+    projection = constraint['projection']
+    ratios = []
+    for observation in observations:
+        left, right, alpha = (
+            observation['leftFrame'], observation['rightFrame'], observation['alpha'],
+        )
+        ankle = (candidate[left, observation['ankleJointIndex']] * (1. - alpha)
+                 + candidate[right, observation['ankleJointIndex']] * alpha)
+        foot = (candidate[left, observation['footJointIndex']] * (1. - alpha)
+                + candidate[right, observation['footJointIndex']] * alpha)
+        fitted_ray = projection @ (foot - ankle)
+        if np.linalg.norm(fitted_ray) <= 1e-9:
+            ratio = float('-inf')
+        else:
+            phase_data = observation['heelPhasePreservation']
+            phase = float(np.arctan2(fitted_ray[1], fitted_ray[0])
+                          - phase_data['stanceTargetAngleRadians'])
+            phase = float(np.arctan2(np.sin(phase), np.cos(phase)))
+            ratio = float(np.sign(phase_data['nativePhaseRadians']) * phase
+                          / abs(phase_data['nativePhaseRadians']))
+        ratios.append({
+            'ratio': ratio,
+            'sourceTimeSec': float(observation['sourceTime']),
+            'sourceSide': observation['sourceSide'],
+            'motionSide': observation['motionSide'],
+        })
+    worst = min(ratios, key=lambda item: item['ratio'])
+    finite_ratios = [item['ratio'] for item in ratios if np.isfinite(item['ratio'])]
+    return {
+        'available': True,
+        'passed': bool(worst['ratio'] >= .85),
+        'reason': None if worst['ratio'] >= .85 else 'observed_heel_phase_not_preserved',
+        'observationCount': len(observations),
+        'minimumAcceptanceRatio': .85,
+        'fitTargetRatio': .92,
+        'worstPreservedRatio': (float(worst['ratio'])
+                                if np.isfinite(worst['ratio']) else None),
+        'worstSourceTimeSec': worst['sourceTimeSec'],
+        'worstSourceSide': worst['sourceSide'],
+        'worstMotionSide': worst['motionSide'],
+        'preservedRatioMedian': (float(np.median(finite_ratios))
+                                 if finite_ratios else None),
+        'sourceSideMapping': constraint.get('sourceFootRaySideMapping') or {},
+    }
 
 
 def _source_support_relative_fit_rows(candidate, constraint):
@@ -5256,7 +7140,8 @@ def _source_projection_fit_jacobian(
     projection = constraint['projection']
     normalization = constraint['normalization']
     weight = constraint['weight']
-    for observation_index, observation in enumerate(constraint['observations']):
+    point_observations = _source_projection_point_observations(constraint)
+    for observation_index, observation in enumerate(point_observations):
         joint = observation['jointIndex']
         alpha = observation['alpha']
         confidence_weight = observation.get(
@@ -5279,10 +7164,246 @@ def _source_projection_fit_jacobian(
                     values.append(value)
     point_jacobian = csr_matrix(
         (values, (rows, columns)),
-        shape=(len(constraint['observations']) * 2, frame_count * joint_count * 3),
+        shape=(len(point_observations) * 2, frame_count * joint_count * 3),
+    )
+    ray_observations = constraint.get('sourceFootRayObservations') or []
+    # The ankle-to-toe proxy remains diagnostic. Its angle can be met by yaw
+    # while the rendered heel stays down, so only material-heel rows own lift.
+    phase_observations = []
+    ray_rows, ray_columns, ray_values = [], [], []
+    ray_weight = constraint.get('sourceFootRayWeight', weight)
+    ray_points = rig.decode(coordinates) if ray_observations else None
+    for observation_index, observation in enumerate(ray_observations):
+        left, right, alpha = (
+            observation['leftFrame'], observation['rightFrame'], observation['alpha'],
+        )
+        ankle_index = observation['ankleJointIndex']
+        foot_index = observation['footJointIndex']
+        ankle = (ray_points[left, ankle_index] * (1. - alpha)
+                 + ray_points[right, ankle_index] * alpha)
+        foot = (ray_points[left, foot_index] * (1. - alpha)
+                + ray_points[right, foot_index] * alpha)
+        fitted_ray = projection @ (foot - ankle)
+        length = float(np.linalg.norm(fitted_ray))
+        if length <= 1e-9:
+            continue
+        target = observation['targetRay']
+        cross = float(target[0] * fitted_ray[1] - target[1] * fitted_ray[0])
+        gradient = np.asarray([-target[1], target[0]]) / length
+        gradient -= cross * fitted_ray / (length ** 3)
+        gain = ray_weight * observation['confidenceWeight']
+        for frame_index, interpolation_weight in (
+            (left, 1. - alpha), (right, alpha),
+        ):
+            if interpolation_weight == 0.:
+                continue
+            for coordinate in range(3):
+                component = gain * interpolation_weight * float(
+                    gradient @ projection[:, coordinate])
+                if component == 0.:
+                    continue
+                row = len(point_observations) * 2 + observation_index
+                ray_rows.extend((row, row))
+                ray_columns.extend((
+                    (frame_index * joint_count + foot_index) * 3 + coordinate,
+                    (frame_index * joint_count + ankle_index) * 3 + coordinate,
+                ))
+                ray_values.extend((component, -component))
+    phase_points = rig.decode(coordinates) if phase_observations else None
+    phase_rows, phase_columns, phase_values = [], [], []
+    phase_row_offset = len(point_observations) * 2 + len(ray_observations)
+    for observation_index, observation in enumerate(phase_observations):
+        left, right, alpha = (
+            observation['leftFrame'], observation['rightFrame'], observation['alpha'],
+        )
+        ankle_index = observation['ankleJointIndex']
+        foot_index = observation['footJointIndex']
+        ankle = (phase_points[left, ankle_index] * (1. - alpha)
+                 + phase_points[right, ankle_index] * alpha)
+        foot = (phase_points[left, foot_index] * (1. - alpha)
+                + phase_points[right, foot_index] * alpha)
+        fitted_ray = projection @ (foot - ankle)
+        squared_length = float(np.dot(fitted_ray, fitted_ray))
+        if squared_length <= 1e-18:
+            continue
+        phase_data = observation['heelPhasePreservation']
+        phase = float(np.arctan2(fitted_ray[1], fitted_ray[0])
+                      - phase_data['stanceTargetAngleRadians'])
+        phase = float(np.arctan2(np.sin(phase), np.cos(phase)))
+        native_phase = phase_data['nativePhaseRadians']
+        signed_fitted_phase = np.sign(native_phase) * phase
+        if signed_fitted_phase >= .92 * abs(native_phase):
+            continue
+        angle_gradient = np.asarray([-fitted_ray[1], fitted_ray[0]]) / squared_length
+        gain = -SOURCE_FOOT_PHASE_FIT_WEIGHT * np.sign(native_phase)
+        for frame_index, interpolation_weight in ((left, 1. - alpha), (right, alpha)):
+            if interpolation_weight == 0.:
+                continue
+            for coordinate in range(3):
+                component = gain * interpolation_weight * float(
+                    angle_gradient @ projection[:, coordinate])
+                if component == 0.:
+                    continue
+                row = phase_row_offset + observation_index
+                phase_rows.extend((row, row))
+                phase_columns.extend((
+                    (frame_index * joint_count + foot_index) * 3 + coordinate,
+                    (frame_index * joint_count + ankle_index) * 3 + coordinate,
+                ))
+                phase_values.extend((component, -component))
+    ray_point_jacobian = csr_matrix(
+        (ray_values, (ray_rows, ray_columns)),
+        shape=(len(point_observations) * 2 + len(ray_observations) + len(phase_observations),
+               frame_count * joint_count * 3),
+    )
+    phase_point_jacobian = csr_matrix(
+        (phase_values, (phase_rows, phase_columns)),
+        shape=(len(point_observations) * 2 + len(ray_observations) + len(phase_observations),
+               frame_count * joint_count * 3),
+    )
+    heel_observations = constraint.get('sourceFootHeelImageObservations') or []
+    heel_events = constraint.get('sourceFootHeelTrajectoryEvents') or []
+    heel_rows, heel_columns, heel_values = [], [], []
+    if heel_observations:
+        from .foot_geometry import sample_material_foot_points
+        heel_points = rig.decode(coordinates)
+        cursors = np.asarray([
+            row['leftFrame'] + row['alpha'] for row in heel_observations
+        ], dtype=float)
+        rendered_geometry = sample_material_foot_points(
+            constraint['footGeometryPayload'], cursors, points=heel_points)
+        heel_base_vectors = np.asarray([
+            projection @ (rendered_geometry[row['motionSide']]['heel'][index]
+                          - rendered_geometry[row['motionSide']]['toe'][index])
+            for index, row in enumerate(heel_observations)
+        ])
+        trajectory_by_time = {
+            (row['sourceSide'], round(float(row['sourceTime']), 8)): row
+            for row in constraint.get('sourceFootHeelTrajectoryObservations') or []
+        }
+        observation_indices = {
+            (row['sourceSide'], round(float(row['sourceTime']), 8)): index
+            for index, row in enumerate(heel_observations)
+        }
+        event_jacobian_rows = {}
+        for event_index, event in enumerate(heel_events):
+            keys = [(event['sourceSide'], round(float(time), 8))
+                    for time in event['observationTimes']]
+            indices = [observation_indices[key] for key in keys if key in observation_indices]
+            trajectories = [trajectory_by_time[key] for key in keys if key in trajectory_by_time]
+            if not indices:
+                continue
+            lifts = np.asarray([
+                max(0., float((heel_base_vectors[index] - trajectory['baselineFitVector'])
+                              @ trajectory['liftDirection']))
+                for index, trajectory in zip(indices, trajectories)
+            ])
+            order = np.argsort(lifts)
+            quantile_position = .9 * (len(lifts) - 1)
+            lower_order = int(np.floor(quantile_position))
+            upper_order = int(np.ceil(quantile_position))
+            upper_weight = quantile_position - lower_order
+            selected = [(int(order[lower_order]), 1. - upper_weight)]
+            if upper_order != lower_order:
+                selected.append((int(order[upper_order]), upper_weight))
+            fitted_amplitude = float(np.quantile(lifts, .9))
+            if fitted_amplitude < event['fitMinimumRatio'] * event['sourceExcursionImageUnits']:
+                event_jacobian_rows[event_index] = [
+                    (indices[local_index], trajectories[local_index], quantile_weight)
+                    for local_index, quantile_weight in selected
+                    if quantile_weight > 0. and lifts[local_index] > 0.
+                ]
+        epsilon = 1e-6
+        sides = {row['motionSide'] for row in heel_observations}
+        heel_joint_indices = {
+            side: (heel_observations[next(
+                i for i, row in enumerate(heel_observations)
+                if row['motionSide'] == side)]['ankleJointIndex'],
+                heel_observations[next(
+                    i for i, row in enumerate(heel_observations)
+                    if row['motionSide'] == side)]['footJointIndex'])
+            for side in sides
+        }
+        # The rendered lateral axis is transported from each frame's stored
+        # bone side. Holding it fixed while perturbing ankle/toe positions
+        # drops that transport derivative (material at nonzero rest pitch).
+        # Perturb both bilateral tracks together and extract each side's rows;
+        # the two shoes are independent, so six sampler calls cover both sides.
+        local_vector_derivatives = {}
+        for kind in range(2):
+            for coordinate in range(3):
+                perturbed_points = heel_points.copy()
+                for side, joint_indices in heel_joint_indices.items():
+                    perturbed_points[:, joint_indices[kind], coordinate] += epsilon
+                perturbed_geometry = sample_material_foot_points(
+                    constraint['footGeometryPayload'], cursors, points=perturbed_points)
+                for side in sides:
+                    side_indices = [index for index, row in enumerate(heel_observations)
+                                    if row['motionSide'] == side]
+                    moved_vectors = np.asarray([
+                        projection @ (heel - toe)
+                        for heel, toe in zip(
+                            perturbed_geometry[side]['heel'][side_indices],
+                            perturbed_geometry[side]['toe'][side_indices])
+                    ])
+                    derivatives = np.zeros((len(heel_observations), 2), dtype=float)
+                    derivatives[side_indices] = (
+                        moved_vectors - heel_base_vectors[side_indices]) / epsilon
+                    local_vector_derivatives[(side, kind, coordinate)] = derivatives
+        for observation_index, observation in enumerate(heel_observations):
+            side = observation['motionSide']
+            ankle_index, foot_index = heel_joint_indices[side]
+            endpoints = [(observation['leftFrame'], 1. - observation['alpha'])]
+            if observation['rightFrame'] != observation['leftFrame']:
+                endpoints.append((observation['rightFrame'], observation['alpha']))
+            for kind, joint_index in enumerate((ankle_index, foot_index)):
+                for coordinate in range(3):
+                    derivative = local_vector_derivatives[(
+                        side, kind, coordinate)][observation_index]
+                    for frame_index, interpolation_weight in endpoints:
+                        if interpolation_weight == 0.:
+                            continue
+                        column = (frame_index * joint_count + joint_index) * 3 + coordinate
+                        weighted_derivative = derivative * interpolation_weight
+                        for axis in range(2):
+                            error = (heel_base_vectors[observation_index, axis]
+                                     - observation['imageOffset'][axis]
+                                     - observation['sourceHeelToToeVector'][axis])
+                            noise = float(observation.get('sourceNoiseImageUnits', 0.))
+                            if abs(error) <= noise:
+                                continue
+                            value = (SOURCE_PROJECTION_FIT_WEIGHT
+                                     * observation['confidenceWeight']
+                                     * weighted_derivative[axis])
+                            if value != 0.:
+                                heel_rows.append(observation_index * 2 + axis)
+                                heel_columns.append(column)
+                                heel_values.append(float(value))
+                        for event_index, contributions in event_jacobian_rows.items():
+                            for selected_index, trajectory, quantile_weight in contributions:
+                                if selected_index != observation_index:
+                                    continue
+                                value = (SOURCE_FOOT_PHASE_FIT_WEIGHT * quantile_weight
+                                         * float(-weighted_derivative
+                                                 @ trajectory['liftDirection']))
+                                if value != 0.:
+                                    heel_rows.append(2 * len(heel_observations) + event_index)
+                                    heel_columns.append(column)
+                                    heel_values.append(value)
+    heel_point_jacobian = csr_matrix(
+        (heel_values, (heel_rows, heel_columns)),
+        shape=(2 * len(heel_observations) + len(heel_events),
+               frame_count * joint_count * 3),
     )
     if fk_jacobian is None:
         fk_jacobian = rig.fk_jacobian(coordinates)
+    if ray_observations or phase_observations or heel_observations:
+        return vstack([
+            point_jacobian,
+            ray_point_jacobian[len(point_observations) * 2:, :]
+            + phase_point_jacobian[len(point_observations) * 2:, :],
+            heel_point_jacobian,
+        ], format='csr') @ fk_jacobian
     return point_jacobian @ fk_jacobian
 
 
@@ -5337,6 +7458,80 @@ def joint_dependencies(rig, names):
     return np.max(rig.dependencies[[rig.names.index(name)*3 for name in names]],axis=0)
 
 
+def _source_foot_direction_fit_evidence(points, target_directions, authority_mask,
+                                        joint_names, *, tolerance_degrees=None):
+    """Measure source-owned ankle-to-toe direction error without adding pins."""
+    points = np.asarray(points, dtype=float)
+    targets = np.asarray(target_directions, dtype=float)
+    authority = np.asarray(authority_mask, dtype=bool)
+    names = list(joint_names)
+    if (points.ndim != 3 or targets.shape != (len(points), 2, 3)
+            or authority.shape != (len(points), 2)):
+        raise ValueError('source foot direction evidence arrays have incompatible shapes')
+    if tolerance_degrees is None:
+        ankle_limits = [limit for label, _, _, _, limit in ARTICULATIONS
+                        if label.endswith('_ankle')]
+        tolerance_degrees = min(10., *ankle_limits) if ankle_limits else 10.
+    sides = {}
+    all_errors = []
+    for side_index, side in enumerate(('left', 'right')):
+        ankle_name, toe_name = f'{side}_ankle', f'{side}_foot'
+        mask = authority[:, side_index]
+        if ankle_name not in names or toe_name not in names:
+            sides[side] = {
+                'observationCount': 0,
+                'invalidObservationCount': int(np.count_nonzero(mask)),
+                'maximumErrorDegrees': None,
+                'p95ErrorDegrees': None,
+                'passed': not bool(np.any(mask)),
+            }
+            continue
+        if not np.any(mask):
+            sides[side] = {'observationCount': 0, 'maximumErrorDegrees': None,
+                           'p95ErrorDegrees': None, 'passed': True}
+            continue
+        ankle, toe = names.index(ankle_name), names.index(toe_name)
+        bone = points[:, toe] - points[:, ankle]
+        lengths = np.linalg.norm(bone, axis=1)
+        valid = mask & (lengths > 1e-9)
+        predicted = bone / np.maximum(lengths[:, None], 1e-12)
+        desired = targets[:, side_index].copy()
+        target_lengths = np.linalg.norm(desired, axis=1)
+        valid &= np.isfinite(points[:, ankle]).all(axis=1)
+        valid &= np.isfinite(points[:, toe]).all(axis=1)
+        valid &= np.isfinite(desired).all(axis=1) & (target_lengths > 1e-9)
+        desired /= np.maximum(np.linalg.norm(desired, axis=1, keepdims=True), 1e-12)
+        errors = np.rad2deg(np.arccos(np.clip(np.sum(predicted * desired, axis=1), -1., 1.)))
+        errors = errors[valid]
+        if not len(errors):
+            sides[side] = {'observationCount': 0,
+                           'invalidObservationCount': int(np.count_nonzero(mask)),
+                           'maximumErrorDegrees': None,
+                           'p95ErrorDegrees': None, 'passed': False}
+            continue
+        maximum = float(np.max(errors))
+        p95 = float(np.percentile(errors, 95.))
+        all_errors.extend(errors.tolist())
+        sides[side] = {
+            'observationCount': int(len(errors)),
+            'invalidObservationCount': int(np.count_nonzero(mask) - len(errors)),
+            'maximumErrorDegrees': maximum,
+            'p95ErrorDegrees': p95,
+            'passed': (len(errors) == int(np.count_nonzero(mask))
+                       and maximum <= float(tolerance_degrees)),
+        }
+    available = bool(all_errors)
+    return {
+        'available': available,
+        'passed': bool(all(side['passed'] for side in sides.values())),
+        'authoritySampleCount': int(sum(side['observationCount'] for side in sides.values())),
+        'toleranceDegrees': float(tolerance_degrees),
+        'maximumErrorDegrees': float(max(all_errors)) if all_errors else None,
+        'p95ErrorDegrees': float(np.percentile(all_errors, 95.)) if all_errors else None,
+        'bySide': sides,
+    }
+
+
 def rotation_prior_dependencies(width):
     # SO(3) logarithm components couple the three coordinates of each rotation.
     pattern=np.zeros((width-3,width))
@@ -5347,6 +7542,15 @@ def rotation_prior_dependencies(width):
 
 def fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=None):
     """Schedule numerical fitting separately from concurrent browser/review work."""
+    patch_clock_failure = source_foot_patch_clock_failure(payload)
+    if patch_clock_failure:
+        return payload, {
+            "applied": False,
+            "strategy": CONTROLLED_MOTION_STRATEGY,
+            "reason": patch_clock_failure['reason'],
+            "failureStage": 'source_support_contact_readiness',
+            "sourceFootPatchClock": patch_clock_failure,
+        }
     from .contact_constraints import source_support_mapping_unresolved
     if source_support_mapping_unresolved(payload):
         return payload, {
@@ -5499,12 +7703,49 @@ def _fit_observed_cycles(payload, *, max_evaluations=None, timeout_seconds=None)
                 'selectedIntervalSourcePhasePreflight': selected_phase_preflight,
                 'elapsedSeconds': 0.,
             }
+        if (timeout_seconds > 0 and (payload.get('loop') or {}).get('enabled')
+                and not payload.get('fixedRig')):
+            from .loop_cycles import cycle_boundary_motion_metrics
+            boundary = cycle_boundary_motion_metrics(payload)
+            if not boundary['passed']:
+                return payload, {
+                    'applied': False, 'strategy': CONTROLLED_MOTION_STRATEGY,
+                    'reason': 'source_cycle_preflight_rejected',
+                    'retainedIntervalFit': False, 'boundaryMotion': boundary,
+                    'cycleSelectionAttempts': [],
+                    'sourceCyclePreflight': payload.get('sourceCyclePreflight', []),
+                    'elapsedSeconds': 0.,
+                }
         return _fit_controlled_motion(payload, max_evaluations=max_evaluations,
                                       timeout_seconds=timeout_seconds)
-    from .loop_cycles import rank_loop_cycles, slice_loop_cycle
+    from .loop_cycles import cycle_boundary_motion_metrics, rank_loop_cycles, slice_loop_cycle
     started = monotonic()
+    boundary_ranking = {}
     choices = (payload['observedCycleProposals'] if 'observedCycleProposals' in payload
-               else rank_loop_cycles(payload, max_candidates=3))
+               else rank_loop_cycles(payload, max_candidates=3, diagnostics=boundary_ranking))
+    boundary_rejections = []
+    admitted_choices = []
+    for choice in choices:
+        boundary = cycle_boundary_motion_metrics(payload, choice)
+        if boundary['passed']:
+            admitted_choices.append(choice)
+        else:
+            boundary_rejections.append({'selection': choice, 'boundaryMotion': boundary})
+    choices = admitted_choices
+    if not choices:
+        boundary = cycle_boundary_motion_metrics(payload)
+        if boundary['passed'] and boundary_ranking.get('boundaryMotion'):
+            boundary = boundary_ranking['boundaryMotion']
+        if not boundary['passed']:
+            return payload, {
+                'applied': False, 'strategy': CONTROLLED_MOTION_STRATEGY,
+                'reason': 'source_cycle_preflight_rejected',
+                'retainedIntervalFit': False, 'boundaryMotion': boundary,
+                'cycleBoundaryRejections': boundary_rejections,
+                'cycleSelectionAttempts': [],
+                'sourceCyclePreflight': payload.get('sourceCyclePreflight', []),
+                'elapsedSeconds': monotonic() - started,
+            }
     shared_support = {}
     attempts = []
     open_cycle_fallback = None
@@ -5536,6 +7777,22 @@ def _fit_observed_cycles(payload, *, max_evaluations=None, timeout_seconds=None)
         and isinstance(entry.get('proposalDiagnostics'), dict)
         for entry in source_preflight
     )
+    unresolved_parent_phase_coverage = any(
+        entry.get('needsReview') is True
+        and entry.get('reason') == 'parent_phase_coverage_unresolved'
+        for entry in source_preflight
+    )
+    if not choices and unresolved_parent_phase_coverage:
+        return payload, {
+            'applied': False,
+            'strategy': CONTROLLED_MOTION_STRATEGY,
+            'reason': 'source_cycle_parent_phase_coverage_unresolved',
+            'reviewRequired': True,
+            'retainedIntervalFit': False,
+            'cycleSelectionAttempts': attempts,
+            'sourceCyclePreflight': source_preflight,
+            'elapsedSeconds': monotonic() - started,
+        }
     if not choices and (
         rejected_source_cycle_preflight
         or (required_source_phases and all(
@@ -5547,6 +7804,12 @@ def _fit_observed_cycles(payload, *, max_evaluations=None, timeout_seconds=None)
         # cycle failed the source phase/range/wrap constraints. Avoid spending
         # the remaining fit budget on an open-seam interval that cannot satisfy
         # the required loop contract.
+        rejected_boundary = next((
+            entry['proposalDiagnostics']['boundaryMotion']
+            for entry in source_preflight
+            if isinstance(entry.get('proposalDiagnostics'), dict)
+            and isinstance(entry['proposalDiagnostics'].get('boundaryMotion'), dict)
+        ), None)
         return payload, {
             'applied': False,
             'strategy': CONTROLLED_MOTION_STRATEGY,
@@ -5554,18 +7817,54 @@ def _fit_observed_cycles(payload, *, max_evaluations=None, timeout_seconds=None)
             'retainedIntervalFit': False,
             'cycleSelectionAttempts': attempts,
             'sourceCyclePreflight': source_preflight,
+            **({'boundaryMotion': rejected_boundary} if rejected_boundary is not None else {}),
             'elapsedSeconds': monotonic() - started,
         }
     source_confirmed_first = bool(choices) and any(
         entry.get('passed') is True and entry.get('selection') == choices[0]
         for entry in source_preflight)
+    first_is_full_interval = bool(choices) and (
+        int(choices[0].get('startFrame', -1)) == 0
+        and int(choices[0].get('stopFrameExclusive', -1)) == len(payload.get('frames') or [])
+    )
     retained_interval_minimum_budget = (
         RETAINED_INTERVAL_VALIDATION_RESERVE_SECONDS + MIN_USEFUL_FIT_SECONDS
     )
     preserve_retained_interval = (
         timeout_seconds >= retained_interval_minimum_budget + MIN_USEFUL_FIT_SECONDS
     )
-    if (source_confirmed_first
+    if (source_confirmed_first and first_is_full_interval
+            and timeout_seconds >= SOURCE_CONFIRMED_CYCLE_MINIMUM_BUDGET_SECONDS):
+        # The complete interval is itself the retained source movement. Fund
+        # its bounded cyclic fit before optional crops; reserving a second
+        # retained-interval attempt here lets minor overhead starve this route.
+        choice, choices = choices[0], choices[1:]
+        remaining = max(0., timeout_seconds - (monotonic() - started))
+        source_confirmed_budget = min(
+            120., max(
+                SOURCE_CONFIRMED_CYCLE_MINIMUM_BUDGET_SECONDS,
+                .3 * float(timeout_seconds),
+            ),
+            remaining,
+        )
+        candidate, report, attempt_elapsed = fit_attempt(
+            slice_loop_cycle(payload, choice), source_confirmed_budget)
+        attempts.append({'selection': choice, 'reason': report.get('reason'),
+                         'checks': report.get('checks', {}),
+                         'elapsedSeconds': attempt_elapsed,
+                         'reportedFitElapsedSeconds': report.get('elapsedSeconds'),
+                         'fitReport': deepcopy(report), 'sourceConfirmedFirst': True,
+                         'completeIntervalFirst': True})
+        if report.get('applied'):
+            if (report.get('loopSeamOpen') or report.get('checks', {}).get('loopSeam') is False
+                    or report.get('reason') == 'validated_controlled_motion_open_seam'):
+                open_cycle_fallback = candidate, report
+            else:
+                report['cycleSelectionAttempts'] = attempts
+                report['elapsedSeconds'] = monotonic() - started
+                report['sourceCyclePreflight'] = payload.get('sourceCyclePreflight', [])
+                return candidate, report
+    elif (source_confirmed_first
             and timeout_seconds >= (
                 SOURCE_CONFIRMED_CYCLE_MINIMUM_BUDGET_SECONDS
                 + retained_interval_minimum_budget
@@ -5865,13 +8164,19 @@ def _fit_controlled_motion(payload, *, max_evaluations=None, timeout_seconds=Non
             max_evaluations=max_evaluations,
             timeout_seconds=timeout_seconds,
             shared_support=shared_support,
+            fit_support_evidence=fit_support_evidence,
         )
-        if report.get('applied'):
-            report['fitSourceEvidenceDigest'] = controlled_motion_fit_source_evidence_digest(result)
+    # Bind the persisted fit to canonical evidence after the scoped fit-only
+    # materialization has been removed. The scope can contain transient support
+    # edits made while solving; those are not source authority and must not
+    # poison the reusable fit identity.
+    if report.get('applied'):
+        report['fitSourceEvidenceDigest'] = controlled_motion_fit_source_evidence_digest(result)
     return result, report
 
 
-def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_seconds=None, shared_support=None):
+def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_seconds=None,
+                                shared_support=None, fit_support_evidence=None):
     """Return only a validated fit; otherwise retain the input with a report."""
     allow_refinement = max_evaluations is None
     if max_evaluations is None:
@@ -5890,8 +8195,17 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
     plant_polish = 0.
     post_validation_polish_reserve = max(float(reserved_polish), 12.)
     optimization_deadline = started + timeout_seconds
-    from .contact_constraints import motion_space_support_evidence
-    fit_support_evidence = motion_space_support_evidence(payload)
+    if fit_support_evidence is None:
+        from .body_support_observation import materialize_stationary_sole_support
+        fit_support_evidence = materialize_stationary_sole_support(payload)
+    patch_clock_failure = source_foot_patch_clock_failure(payload, fit_support_evidence)
+    if patch_clock_failure:
+        return payload, {
+            **report,
+            'reason': patch_clock_failure['reason'],
+            'failureStage': 'source_support_contact_readiness',
+            'sourceFootPatchClock': patch_clock_failure,
+        }
     if can_reuse_controlled_motion(payload):
         from .scene_placement import normalize_scene_placement
         payload = normalize_scene_placement(payload)
@@ -5914,9 +8228,13 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
     reference = np.asarray([[f.get('controlledArticulationReferenceJoints',f['joints'])[n] for n in names] for f in frames],dtype=float)
     if not np.isfinite(reference).all():
         return payload, {**report, 'reason': 'nonfinite_articulation_reference'}
-    # ``reference`` may later become a repaired/support-projected fit target.
-    # Anatomy limits keep using the original observed source pose.
+    # Keep the original source pose for articulation-preservation targets.
     anatomical_reference = reference.copy()
+    # Source articulation and the hard anatomical gate have separate owners.
+    # Supported fitting can later replace ``reference`` with a feasible
+    # support-corrected pose; the final artifact gate uses that same pose for
+    # anatomy checks, while articulation preservation still uses the source.
+    fit_anatomy_reference = fit_anatomy_constraint_reference(anatomical_reference)
     # Keep temporal evidence immutable across camera/contact/anatomy variants.
     temporal_reference = reference.copy()
     # Match the final renderer's immutable before-processing spike evidence.
@@ -5929,6 +8247,12 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
     pinned = contact_mask(payload, names, len(frames))
     if pinned is None:
         return payload, {**report, 'reason': 'unrepresented_heel_contact'}
+    source_contact_pinned = pinned.copy()
+    foot_contact_indices = [names.index(name) for name in
+                            ('left_ankle', 'left_foot', 'right_ankle', 'right_foot')
+                            if name in names]
+    pinned_foot_contact_owned = bool(foot_contact_indices and
+                                     np.any(pinned[:, foot_contact_indices]))
     if (payload.get('postBakeForefootContactConstraint') or {}).get('requiresReconstruction'):
         return payload, {**report, 'reason': 'upstream_contacts_unresolved'}
     # Missing observed endpoints cannot be recovered by anatomy or support solves.
@@ -5977,7 +8301,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
     points, registration = register_contact_placement(points, pinned, root_index, fps, root_reference,
                                                      ground_contacts=ground_contacts, floor=payload.get('renderFloorY'))
     registration['reference'] = placement_reference
-    if registration.get('reason') == 'placement_registration_did_not_converge':
+    if registration.get('reason') in {
+            'placement_registration_did_not_converge', 'placement_registration_temporal_conflict'}:
         return payload, {**report, 'reason': registration['reason'], 'placementRegistration': registration}
     height_shift = 0.
     if not registration.get('observedGroundEpisodes'):
@@ -5985,6 +8310,16 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             points, pinned, [names.index(n) for n in ('left_foot', 'right_foot')], payload.get('renderFloorY'))
     registration['floorHeightGaugeCorrectionMeters'] = height_shift
     report['placementRegistration'] = registration
+    pre_contact_articulation_reference = points.copy()
+    # Calibrate the material sole once from immutable, motion-space source
+    # evidence before support targets are materialized; every later stage uses
+    # this same rig-side pitch rather than recalibrating from edited anchors.
+    from .foot_geometry import calibrated_foot_rest_pitches
+    payload['footRestPitchRadians'] = calibrated_foot_rest_pitches(
+        pre_contact_articulation_reference, names, fit_support_evidence,
+        frame_times=[frame.get('sourceTimeSec') for frame in frames])
+    fit_support_evidence['materialFootRestPitchRadians'] = deepcopy(
+        payload['footRestPitchRadians'])
     rig = FixedRig(points, names)
     from .anatomical_repair import (
         ANATOMICAL_REPAIR_INPUT_REASONS,
@@ -6059,10 +8394,83 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
     from .contact_constraints import InfeasibleContactCorrection
     try:
         contact_targets, ankle_anchor_calibration = rig_contact_targets(
-            points,names,pinned,rig.offsets,evidence=fit_support_evidence, floor=payload.get('renderFloorY'))
+            points,names,pinned,rig.offsets,evidence=fit_support_evidence,
+            floor=payload.get('renderFloorY'), rest_pitches=payload.get('footRestPitchRadians'))
     except InfeasibleContactCorrection as error:
         return payload, {**report, 'reason': 'incompatible_stationary_contact_anchors',
                          'contactConstraintError': str(error)}
+    # The early coverage constraint owns only source-interval completeness. It
+    # was prepared before rig-side foot-rest pitch calibration, so its material
+    # heel baseline is stale for inversion. Prepare the foot-direction evidence
+    # once against the registered rig, calibrated rest pitch, and exact contact
+    # targets; reuse it in the fitter while these inputs remain unchanged.
+    source_foot_projection_points = points.copy()
+    source_foot_projection_rest_pitch = deepcopy(payload.get('footRestPitchRadians'))
+    source_foot_projection_constraint = _prepare_source_projection_fit_constraints(
+        payload, frames, names, points, pinned, body_scale(points, names))
+    from .contact_heel_pitch import propose_source_heel_pitch
+    source_heel_deadline = joint_plant_initialization_deadline(
+        started, timeout_seconds, polish_reserve_seconds=reserved_polish,
+        validation_reserve_seconds=validation_reserve)
+    try:
+        desired_world_foot_directions, source_heel_initialization = propose_source_heel_pitch(
+            rig, rig.initial.copy(), payload, source_foot_projection_constraint, pinned, fps,
+            deadline=source_heel_deadline, contact_targets=contact_targets)
+    except TimeoutError:
+        return payload, {**report, 'reason': 'source_heel_direction_timed_out',
+                         'sourceHeelDirectionTimedOut': True,
+                         'elapsedSeconds': monotonic() - started}
+    pitch_authority_mask_by_side = {
+        side: np.asarray(mask, dtype=bool) for side, mask in (
+            source_heel_initialization.get('pitchAuthorityMaskBySide') or {}).items()
+    }
+    pitch_trajectory_mask_by_side = {
+        side: np.asarray(mask, dtype=bool) for side, mask in (
+            source_heel_initialization.get('pitchTrajectoryMaskBySide') or {}).items()
+    }
+    report['sourceHeelPitchInitialization'] = {
+        key: source_heel_initialization.get(key)
+        for key in ('available', 'passed', 'method', 'eventCount',
+                    'inversionFailureCount', 'inversionFailures', 'sides')
+    }
+    report['sourceHeelPitchInitialization'].update(
+        pitchAuthorityFrameCountBySide={
+            side: int(mask.sum()) for side, mask in pitch_authority_mask_by_side.items()},
+        pitchTrajectoryFrameCountBySide={
+            side: int(mask.sum()) for side, mask in pitch_trajectory_mask_by_side.items()},
+    )
+    from .joint_plant_initialization import (
+        contact_conditioned_articulation_reference,
+        source_conditioned_foot_direction_reference,
+    )
+    (support_articulation_reference, full_sole_excursion_masks,
+     ankle_evidence_masks, conditioning_report) = (
+        contact_conditioned_articulation_reference(
+            pre_contact_articulation_reference, source_contact_pinned,
+            contact_targets, names, fit_support_evidence,
+            [frame.get('sourceTimeSec') for frame in frames],
+        )
+    )
+    support_articulation_reference, source_direction_reference_counts = (
+        source_conditioned_foot_direction_reference(
+            support_articulation_reference, source_contact_pinned, names,
+            desired_world_foot_directions, pitch_trajectory_mask_by_side)
+    )
+    conditioning_report['sourceTimedFootDirectionReferenceFrameCountBySide'] = (
+        source_direction_reference_counts)
+    report['supportArticulationReference'] = conditioning_report
+    unresolved_source_contact_sides = []
+    for side, details in (conditioning_report.get('sides') or {}).items():
+        ankle, toe = names.index(f'{side}_ankle'), names.index(f'{side}_foot')
+        if (details.get('reason') == 'source_patch_clock_unresolved'
+                and np.any(source_contact_pinned[:, ankle] & source_contact_pinned[:, toe])):
+            unresolved_source_contact_sides.append(side)
+    if unresolved_source_contact_sides:
+        return payload, {
+            **report, 'reason': 'source_support_contact_clock_unresolved',
+            'unresolvedSides': unresolved_source_contact_sides,
+            'elapsedSeconds': monotonic() - started,
+        }
     from .equipment_constraints import calibrated_grip_constraint, grip_residual, validate_grip
     equipment = calibrated_grip_constraint(payload, points, names)
     from .support_geometry import support_evidence, calibrate_support_pose, validate_support_geometry, geometry_errors, geometry_dependencies
@@ -6076,16 +8484,95 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         alignment_source = (initialized_points if anatomy_initialization.get('sourceViolations') else points).copy()
     source_alignment = alignment_features(alignment_source, names, body_support)
     support_range_reference = initialized_points.copy()
+    plant_only = not body_support.get('required')
+
+    def run_joint_plant_initializer(initialization_coordinates, stage_started):
+        strategy = 'bounded_joint_root_and_closed_chain_legs'
+        report['supportInitializationStrategy'] = strategy
+        plant_deadline = joint_plant_initialization_deadline(
+            started, timeout_seconds, polish_reserve_seconds=reserved_polish,
+            validation_reserve_seconds=validation_reserve)
+        if plant_deadline <= monotonic():
+            report['supportInitializationTimedOut'] = True
+            report['supportInitializationSeconds'] = monotonic() - stage_started
+            return None, 'timed_out'
+        from .joint_plant_initialization import initialize_joint_plant_coordinates
+        try:
+            initialized_coordinates, initialization_report = initialize_joint_plant_coordinates(
+                rig, initialization_coordinates, pinned, contact_targets,
+                articulation_reference=support_articulation_reference,
+                fps=fps, cyclic=bool((payload.get('loop') or {}).get('enabled')),
+                deadline=plant_deadline,
+                desired_world_foot_directions=desired_world_foot_directions,
+                pitch_authority_mask_by_side=pitch_authority_mask_by_side,
+                pitch_trajectory_mask_by_side=pitch_trajectory_mask_by_side,
+            )
+        except TimeoutError:
+            report['supportInitializationTimedOut'] = True
+            report['supportInitializationSeconds'] = monotonic() - stage_started
+            return None, 'timed_out'
+        report['supportInitializationSolver'] = initialization_report
+        report['supportInitializationSeconds'] = monotonic() - stage_started
+        if initialized_coordinates is None:
+            return None, 'infeasible'
+        return initialized_coordinates, None
+
+    def record_support_articulation_guard(initialized):
+        regressions = (
+            support_initialization_articulation_regressions(
+                support_articulation_reference, initialized, names, fps=fps,
+                ankle_excursion_masks=full_sole_excursion_masks,
+                ankle_evidence_masks=ankle_evidence_masks)
+            if pinned_foot_contact_owned else [])
+        report['supportInitializationArticulationGuard'] = {
+            'passed': not bool(regressions),
+            'reference': 'source_shin_with_observed_full_sole_foot_vector',
+            'regressions': regressions,
+        }
+        return not bool(regressions)
+
+    if not body_support.get('required') and pinned_foot_contact_owned:
+        # Timed foot contacts still need root/leg initialization when no torso
+        # support plane is required; otherwise they enter the soft fit unplanted.
+        support_started = monotonic()
+        initialized_coordinates, failure = run_joint_plant_initializer(
+            rig.initial.copy(), support_started)
+        if failure:
+            reason = ('support_initialization_timed_out' if failure == 'timed_out'
+                      else 'support_initialization_joint_plant_infeasible')
+            return payload, {**report, 'reason': reason,
+                             'elapsedSeconds': monotonic() - started}
+        rig.initial[:] = initialized_coordinates
+        initialized_points = rig.decode(rig.initial)
+        report['supportInitializationAdmission'] = 'timed_foot_contacts_without_body_support'
+        if not record_support_articulation_guard(initialized_points):
+            # Feasible contact seeds may need the main fit's free knee planes;
+            # the immutable source reference and final articulation gate still apply.
+            report['supportInitializationArticulationGuard']['needsArticulationRefinement'] = True
     if body_support.get('required'):
         support_started = monotonic()
-        support_key = _support_cache_key(body_support, points, names)
+        from .support_geometry import plant_only_body_support
+        plant_only = plant_only_body_support(body_support)
+        # A static body-pose solve has no objective to preserve foot heading.
+        # For plant-only clips, derive support from the registered source
+        # contact evidence and let the bounded root/leg initializer solve it.
+        # Keep torso/body support on its existing calibrated-pose path.
+        support_key = None if plant_only else _support_cache_key(body_support, points, names)
         reused_pose = (
-            isinstance(shared_support, dict)
+            not plant_only
+            and isinstance(shared_support, dict)
             and support_key is not None
             and shared_support.get('supportKey') == support_key
             and shared_support.get('supportPose') is not None
         )
-        if reused_pose:
+        if plant_only:
+            support_pose = points[0].copy()
+            support_calibration = {
+                'strategy': 'source_contact_anchor_initialization',
+                'staticPoseCalibrationSkipped': True,
+                'elapsedSeconds': 0.,
+            }
+        elif reused_pose:
             support_pose = np.asarray(shared_support['supportPose'], dtype=float)
             support_calibration = {
                 **deepcopy(shared_support.get('supportCalibration') or {}),
@@ -6103,48 +8590,71 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         for name in body_support.get('stationaryJoints', []):
             index = names.index(name)
             pinned[:, index] = True
+        source_authoritative_foot_joints = set()
+        for side in ('left', 'right'):
+            ankle, toe = f'{side}_ankle', f'{side}_foot'
+            if ankle not in names or toe not in names:
+                continue
+            ankle_index, toe_index = names.index(ankle), names.index(toe)
+            if np.any(source_contact_pinned[:, ankle_index]
+                      & source_contact_pinned[:, toe_index]):
+                source_authoritative_foot_joints.update((ankle, toe))
+        stationary_positions = {
+            name: support_pose[names.index(name)]
+            for name in body_support.get('stationaryJoints', [])
+            if name not in source_authoritative_foot_joints
+        }
+        support_calibration['sourceContactAnchorJointsPreserved'] = sorted(
+            source_authoritative_foot_joints)
+        support_calibration['stationaryPositionOverrideJoints'] = (
+            [] if plant_only else sorted(stationary_positions))
+        pinned_foot_contact_owned = bool(foot_contact_indices and
+                                         np.any(pinned[:, foot_contact_indices]))
         # Apply observed anchors before calibrating linked toe/ankle targets.
         # Replacing a toe afterward leaves an overlapping ankle stance pinned
         # to a different, physically incompatible foot segment.
         try:
             contact_targets, ankle_anchor_calibration = rig_contact_targets(
                 points, names, pinned, rig.offsets,
-                stationary_positions={name: support_pose[names.index(name)]
-                                      for name in body_support.get('stationaryJoints', [])},
-                evidence=fit_support_evidence, floor=payload.get('renderFloorY'))
+                stationary_positions=(None if plant_only else stationary_positions),
+                evidence=fit_support_evidence, floor=payload.get('renderFloorY'),
+                rest_pitches=payload.get('footRestPitchRadians'))
         except InfeasibleContactCorrection as error:
             return payload, {**report, 'reason': 'incompatible_stationary_contact_anchors',
                              'contactConstraintError': str(error)}
-        from .support_geometry import initialize_supported_motion, plant_only_body_support
+        (support_articulation_reference, full_sole_excursion_masks,
+         ankle_evidence_masks, conditioning_report) = (
+            contact_conditioned_articulation_reference(
+                pre_contact_articulation_reference, source_contact_pinned,
+                contact_targets, names, fit_support_evidence,
+                [frame.get('sourceTimeSec') for frame in frames],
+            )
+        )
+        report['supportArticulationReference'] = conditioning_report
+        from .support_geometry import initialize_supported_motion
         # Reuse compatible static support calibration, never another interval's
         # trajectory. Resizing a full-clip rig to a crop stretches its movement
         # phases and then makes those altered poses the articulation reference.
-        if plant_only_body_support(body_support):
-            # Standing/planted-foot clips do not need torso support LS. Apply the
-            # calibrated plant placement with a cheap root snap; leave articulation
-            # and interpolated plants to the main trajectory fit.
-            indices = [names.index(n) for n in body_support.get('stationaryJoints', [])]
-            source_points = rig.decode(rig.initial)
-            placement_shift = np.mean(support_pose[indices] - source_points[:, indices], axis=1)
-            rig.initial[:, :3] += placement_shift
+        if plant_only:
+            # Use registered source coordinates as the solver baseline. A
+            # framewise shift toward static supportPose is an unbounded second
+            # root correction outside the joint solver's contact/temporal
+            # constraints; the solver owns the complete XYZ adjustment.
+            initialization_coordinates = rig.initial.copy()
             if np.any(pinned):
-                # Root snap first, then a short per-frame plant TRF. Always run the
-                # plant pass — root snap alone often leaves one-sided plants above
-                # gate and forces a long soft LS that plant_projection cannot use.
-                rig.initial[:] = project_contact_root_translation(
-                    rig.initial, rig, pinned, contact_targets, passes=3, smooth_fps=fps)
-                plant_budget = min(14., max(5., 0.09 * float(timeout_seconds)))
-                plant_deadline = min(
-                    started + timeout_seconds - 45.,
-                    monotonic() + plant_budget)
-                if plant_deadline > monotonic():
-                    rig.initial[:] = project_contact_plant_coordinates(
-                        rig.initial, rig, pinned, contact_targets, max_nfev=18,
-                        preserve_root_posture=True, deadline=plant_deadline)
+                initialized_coordinates, failure = run_joint_plant_initializer(
+                    initialization_coordinates, support_started)
+                if failure:
+                    reason = ('support_initialization_timed_out' if failure == 'timed_out'
+                              else 'support_initialization_joint_plant_infeasible')
+                    return payload, {**report, 'reason': reason,
+                                     'elapsedSeconds': monotonic() - started}
+                initialization_coordinates = initialized_coordinates
+            rig.initial[:] = initialization_coordinates
             initialized_points = rig.decode(rig.initial)
             report['supportInitializationSeconds'] = monotonic() - support_started
-            report['supportInitializationStrategy'] = 'plant_projection'
-            support_calibration['strategy'] = 'plant_projection'
+            report['supportInitializationStrategy'] = 'bounded_joint_root_and_closed_chain_legs'
+            support_calibration['strategy'] = 'bounded_joint_root_and_closed_chain_legs'
         else:
             # Support projection is LS-heavy and scales with frames × evals. A flat
             # 90s ceiling aborted finishable 129-frame cold inits (~146s). Scale the
@@ -6181,6 +8691,12 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 # Watchdog ends this stage's LS, not the fit. Keep the last
                 # placement and let the main solve / plant projection judge it.
                 initialized_points = rig.decode(rig.initial)
+        if not record_support_articulation_guard(initialized_points):
+            return payload, {
+                **report,
+                'reason': 'support_initialization_articulation_conflict',
+                'elapsedSeconds': monotonic() - started,
+            }
         if isinstance(shared_support, dict) and support_key is not None:
             shared_support['supportKey'] = support_key
             shared_support['supportPose'] = np.asarray(support_pose, dtype=float).copy()
@@ -6238,19 +8754,27 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                     # the support-reference contact gate.
                     # Plant-only already deferred plant-chain TRF to the main fit —
                     # another full-clip plant here reintroduces the same stall.
-                    if report.get('supportInitializationStrategy') == 'plant_projection':
-                        planted = project_contact_root_translation(
-                            rig.initial, rig, pinned, contact_targets,
-                            passes=3, smooth_fps=fps)
+                    if report.get('supportInitializationStrategy') == (
+                            'bounded_joint_root_and_closed_chain_legs'):
+                        report['supportReferenceContactPolish'] = {
+                            'applied': False,
+                            'reason': 'preserve_initializer_articulation',
+                            'maximumErrorMetersBefore': reference_contact_error,
+                        }
                     else:
-                        planted = project_contact_plant_coordinates(
-                            rig.initial, rig, pinned, contact_targets, max_nfev=40)
-                    rig.initial[:] = planted
-                    initialized_points = rig.decode(planted)
-                    report['supportReferenceContactPolish'] = {
-                        'applied': True,
-                        'maximumErrorMetersBefore': reference_contact_error,
-                    }
+                        if report.get('supportInitializationStrategy') == 'plant_projection':
+                            planted = project_contact_root_translation(
+                                rig.initial, rig, pinned, contact_targets,
+                                passes=3, smooth_fps=fps)
+                        else:
+                            planted = project_contact_plant_coordinates(
+                                rig.initial, rig, pinned, contact_targets, max_nfev=40)
+                        rig.initial[:] = planted
+                        initialized_points = rig.decode(planted)
+                        report['supportReferenceContactPolish'] = {
+                            'applied': True,
+                            'maximumErrorMetersBefore': reference_contact_error,
+                        }
                     projected_errors, _ = repair_residuals(
                         initialized_points, names, reference=anatomical_reference)
                     if np.any(projected_errors > 1e-6):
@@ -6300,8 +8824,22 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             }
             report['checks'] = failed_support_gates
             return payload, {**report, 'applied': False, 'reason': 'fit_validation_failed'}
+        if (report.get('supportInitializationStrategy') ==
+                'bounded_joint_root_and_closed_chain_legs'
+                and not report['supportReferenceContacts']['passed']):
+            # The joint initializer promises a feasible contact reference. Do
+            # not defer its unresolved pins to the main fit, which would trade
+            # source articulation against an unreachable support target.
+            return payload, {
+                **report,
+                'applied': False,
+                'reason': 'support_reference_projection_incomplete',
+            }
         if not all(report[key]['passed'] for key in support_gates):
-            if (report.get('supportInitializationTimedOut')
+            if support_reference_equipment_can_be_deferred(
+                    report, report.get('supportInitializationStrategy')):
+                report['supportReferenceEquipmentDeferred'] = True
+            elif (report.get('supportInitializationTimedOut')
                     or report.get('supportInitializationStrategy') == 'plant_projection'):
                 # Light plant init / timed-out torso LS leave near-miss contacts for
                 # the main trajectory fit and playback plant projection to finish.
@@ -6362,6 +8900,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         # evidence unchanged, but compare articulation to the feasible supported
         # pose rather than requiring reproduction of the unsupported geometry.
         reference = initialized_points.copy()
+        fit_anatomy_reference = fit_anatomy_constraint_reference(
+            anatomical_reference, reference)
         # Estimated rigid-pair spacing must follow the supported geometry. A
         # pre-support reconstruction distance becomes an unreachable target once
         # support rewrites hand placement, and the main solve then fails equipment.
@@ -6383,7 +8923,9 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             gripped = project_rigid_pair_grip_coordinates(
                 rig.initial, rig, names, equipment, pinned=pinned, max_nfev=25,
                 deadline=grip_deadline)
-            if np.any(pinned):
+            if (np.any(pinned)
+                    and report.get('supportInitializationStrategy') !=
+                    'bounded_joint_root_and_closed_chain_legs'):
                 # Distal arm projection should not move plants; re-snap anyway in
                 # case collar/shoulder coupling nudged a foot sample.
                 gripped = project_contact_root_translation(
@@ -6420,6 +8962,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             if grip_projection_metrics['passed']:
                 rig.initial[:] = gripped
                 reference = gripped_reference
+                fit_anatomy_reference = fit_anatomy_constraint_reference(
+                    anatomical_reference, reference)
                 initialized_points = reference
                 report['supportReferenceAnatomy'] = grip_projection_metrics['anatomy']
                 report['supportReferenceGeometry'] = grip_projection_metrics['geometry']
@@ -6428,6 +8972,14 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 report['supportReferenceContacts'] = grip_projection_metrics['contacts']
             else:
                 rig.initial[:] = before_grip_coordinates
+        if (report.get('supportInitializationStrategy') ==
+                'bounded_joint_root_and_closed_chain_legs'
+                and not report['supportReferenceEquipment'].get('passed')):
+            return payload, {
+                **report,
+                'applied': False,
+                'reason': 'support_reference_equipment_projection_incomplete',
+            }
         # One playback-plant pass after keyframe plants (+ optional grip). Soft LS
         # cannot close mid-sample bows; do not pay for this twice around grip.
         if (report.get('supportInitializationStrategy') == 'plant_projection'
@@ -6476,17 +9028,55 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                     report['supportPlaybackPlantsApplied'] = False
             else:
                 report['supportPlaybackPlantsApplied'] = False
+        if pinned_foot_contact_owned:
+            post_polish_regressions = support_initialization_articulation_regressions(
+                support_articulation_reference, initialized_points, names, fps=fps,
+                ankle_excursion_masks=full_sole_excursion_masks,
+                ankle_evidence_masks=ankle_evidence_masks)
+            report['supportInitializationArticulationGuard'] = {
+                'passed': not bool(post_polish_regressions),
+                'reference': 'source_shin_with_observed_full_sole_foot_vector',
+                'checkpoint': 'after_support_reference_polish',
+                'regressions': post_polish_regressions,
+            }
+            if post_polish_regressions:
+                return payload, {
+                    **report,
+                    'reason': 'support_initialization_articulation_conflict',
+                    'elapsedSeconds': monotonic() - started,
+                }
         report['supportReferenceCorrection'] = {'source': body_support.get('source'),
             'maximumCorrectionMeters': float(np.max(np.linalg.norm(reference-points, axis=-1)))}
     # Under support, jointRange accepts articulation excursion (not world-space
     # spans that also encode placement). Fit the same metric so soft targets
     # cannot quietly shrink free-chain ROM below the acceptance floor.
-    support_articulation_tracks = ()
-    if body_support.get('required'):
+    support_articulation_tracks_by_label = {}
+    timed_foot_articulation_tracks = ()
+    if body_support.get('required') or pinned_foot_contact_owned:
         from .support_geometry import moving_support_articulations
-        support_articulation_tracks = tuple(moving_support_articulations(
+    if body_support.get('required'):
+        for track in moving_support_articulations(
             support_range_reference, names, body_support, support_corrected_points=reference,
-            constraint_endpoints=[names[j] for j in np.flatnonzero(np.any(pinned, axis=0))]))
+            constraint_endpoints=[names[j] for j in np.flatnonzero(np.any(pinned, axis=0))]):
+            support_articulation_tracks_by_label[track[0]] = track
+    if pinned_foot_contact_owned:
+        # Timed foot pins still move the leg chain even when no torso-level
+        # bodySupport model is present. On observed full-sole rows, use the
+        # contact-conditioned foot vector with the immutable source shin; raw
+        # angles remain authoritative outside those timed rows.
+        timed_foot_articulation_tracks = tuple(
+            track for track in moving_support_articulations(
+                support_articulation_reference, names, {})
+            if track[0].endswith(('_knee', '_ankle'))
+        )
+        for track in timed_foot_articulation_tracks:
+            support_articulation_tracks_by_label[track[0]] = track
+    support_articulation_tracks = tuple(support_articulation_tracks_by_label.values())
+    support_ankle_episode_tracks = support_range_episode_tracks(
+        support_articulation_reference, names,
+        full_sole_excursion_masks, ankle_evidence_masks,
+    ) if pinned_foot_contact_owned else ()
+    support_range_fit_tracks = support_articulation_tracks + support_ankle_episode_tracks
     height_only_mask = vertical_only_contact_mask(
         fit_support_evidence, names, len(frames),
     ) & ~pinned
@@ -6506,6 +9096,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
     from .physical_validation import SOCKET_ALIGNMENT_MAX_LATERAL_RATIO
     rig.project_neck_attachment(
         maximum_lateral_ratio=SOCKET_ALIGNMENT_MAX_LATERAL_RATIO - ANATOMY_FIT_MARGIN)
+    registered_root = rig.decode(rig.initial)[:, rig.root].copy()
     target, _, evidence = controlled_target(rig.decode(rig.initial), names, fps)
     settling_basis = settling_hold_basis(temporal_reference, reference, body_support)
     _, holds, _ = controlled_target(settling_basis, names, fps)
@@ -6522,6 +9113,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
     jerk_basis = settling_basis if body_support.get('required') else temporal_reference
     jerk_before = float(np.sqrt(np.mean(np.diff(jerk_basis, n=3, axis=0)**2)))
     jerk_limit = jerk_before * 1.05 + 1e-7
+    jerk_fit_target = world_jerk_fit_target(jerk_before, jerk_limit)
     hold_weights = np.minimum(holds[1:], holds[:-1])[:, :, None]
     settling_before = weighted_settling_speed(settling_basis, names, fps, hold_weights)
     settling_limit = max(settling_before * 1.1, .003)
@@ -6529,7 +9121,9 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
     report['settlingReference'] = (
         'supported_reference' if body_support.get('required') else 'source_articulation_before_repairs')
     report['settlingLimit'] = settling_limit
-    target, _, placement_report = contact_consistent_target(target, pinned, contact_targets)
+    target, _, placement_report = contact_consistent_target(
+        target, pinned, contact_targets, root_index=rig.root,
+        root_reference=registered_root)
     evidence['placement'] = placement_report
     evidence['placementRegistration'] = registration
     # Distinguish the three ways a fit can become unsatisfiable: a bent input
@@ -6587,7 +9181,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             target, _index, _bones, reference_lengths
         )
         target, _, placement_report = contact_consistent_target(
-            target, pinned, contact_targets
+            target, pinned, contact_targets, root_index=rig.root,
+            root_reference=registered_root
         )
         evidence['placement'] = placement_report
         projected_bones = _bone_medians(target)
@@ -6603,17 +9198,90 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             projectedToRigBones=True,
             mismatchAfterProjectionMeters=round(float(projected_mismatch), 6),
         )
-    # Initialize placement from the same contact evidence, retaining all local
-    # rotations and the immutable original source used for articulation checks.
-    _, initial_shift, _ = contact_consistent_target(initialized_points, pinned, contact_targets)
-    if not body_support.get('required'):
-        rig.initial[:, :3] += initial_shift
+    # Registration owns root placement; a second contact-average translation
+    # would introduce jumps whenever the active contact set changes.
     scale = body_scale(points, names)
     count, joints, _ = points.shape
     cyclic = bool((payload.get("loop") or {}).get("enabled"))
-    source_projection_constraint = _prepare_source_projection_fit_constraints(
-        payload, frames, names, points, pinned, scale,
+    source_projection_inputs_unchanged = (
+        np.array_equal(points, source_foot_projection_points)
+        and payload.get('footRestPitchRadians') == source_foot_projection_rest_pitch
     )
+    if source_projection_inputs_unchanged:
+        source_projection_constraint = source_foot_projection_constraint
+        report['sourceFootProjectionConstraintReused'] = True
+    else:
+        source_projection_constraint = _prepare_source_projection_fit_constraints(
+            payload, frames, names, points, pinned, scale,
+        )
+        report['sourceFootProjectionConstraintReused'] = False
+    # Independently observed foot phase supersedes its reconstructed ankle
+    # phase locally. Missing observations retain the reconstruction prior.
+    source_foot_coverage = {}
+    for observation in source_projection_constraint.get('sourceFootRayObservations', []):
+        label = names[observation['ankleJointIndex']]
+        covered = source_foot_coverage.setdefault(label, np.zeros(count))
+        if observation['alpha'] < 1.:
+            covered[observation['leftFrame']] = 1.
+        if observation['alpha'] > 0.:
+            covered[observation['rightFrame']] = 1.
+    source_foot_phase_coverage = _source_foot_phase_frame_coverage(
+        source_projection_constraint, names, count,
+    )
+    source_foot_direction_authority = {
+        side: np.asarray(pitch_authority_mask_by_side.get(side, np.zeros(count)), dtype=bool)
+        for side in ('left', 'right')
+    }
+    source_foot_direction_targets = np.asarray(
+        desired_world_foot_directions, dtype=float).copy()
+    if source_foot_direction_targets.shape != (count, 2, 3):
+        raise ValueError('source heel pitch directions must match the fitted frame count')
+    source_foot_direction_targets /= np.maximum(
+        np.linalg.norm(source_foot_direction_targets, axis=2, keepdims=True), 1e-12)
+    source_foot_direction_targets[~np.isfinite(source_foot_direction_targets)] = 0.
+    source_foot_direction_masks = np.column_stack([
+        source_foot_direction_authority[side] for side in ('left', 'right')
+    ])
+    source_foot_direction_trajectory_masks = np.column_stack([
+        np.asarray(pitch_trajectory_mask_by_side.get(side, np.zeros(count)), dtype=bool)
+        for side in ('left', 'right')
+    ])
+
+    def source_foot_direction_targets_at(first, last, alpha, *, authority_masks=True):
+        alpha = np.asarray(alpha, dtype=float).reshape(-1)
+        first = np.asarray(first, dtype=int).reshape(-1)
+        last = np.asarray(last, dtype=int).reshape(-1)
+        targets = (source_foot_direction_targets[first] * (1. - alpha[:, None, None])
+                   + source_foot_direction_targets[last] * alpha[:, None, None])
+        targets /= np.maximum(np.linalg.norm(targets, axis=2, keepdims=True), 1e-12)
+        fit_masks = (source_foot_direction_masks if authority_masks
+                     else source_foot_direction_trajectory_masks)
+        masks = fit_masks[first] & fit_masks[last]
+        return targets, masks
+
+    def source_foot_direction_residuals(candidate, targets, masks):
+        residuals = np.zeros((len(candidate), 6), dtype=float)
+        for side_index, side in enumerate(('left', 'right')):
+            if f'{side}_ankle' not in names or f'{side}_foot' not in names:
+                continue
+            ankle_index, toe_index = names.index(f'{side}_ankle'), names.index(f'{side}_foot')
+            bone = candidate[:, toe_index] - candidate[:, ankle_index]
+            lengths = np.linalg.norm(bone, axis=1)
+            valid = np.asarray(masks[:, side_index], dtype=bool) & (lengths > 1e-9)
+            unit = bone / np.maximum(lengths[:, None], 1e-12)
+            residuals[valid, side_index * 3:(side_index + 1) * 3] = (
+                SOURCE_FOOT_PHASE_FIT_WEIGHT * (unit[valid] - targets[valid, side_index]))
+        return residuals
+
+    # Reuse the exact initializer reference, including bounded same-anchor
+    # geometric interpolation through unknown gaps. Only measured authority
+    # contributes to acceptance; bounded interpolation remains a fit prior.
+    source_conditioned_articulation_reference = support_articulation_reference
+    report['independentFootPhaseFrames'] = {
+        label: int(np.count_nonzero(covered)) for label, covered in source_foot_coverage.items()}
+    report['independentHeelPhaseFramesByAnkle'] = {
+        label: int(np.count_nonzero(covered))
+        for label, covered in source_foot_phase_coverage.items()}
     report['sourceProjectionConstraint'] = _source_projection_constraint_report(source_projection_constraint)
     source_interval_coverage_gaps = _selected_interval_source_fit_coverage_gaps(
         payload, source_projection_constraint,
@@ -6633,7 +9301,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
     )
     if source_anchor_adjustment['adjustedGroupCount']:
         target, _, placement_report = contact_consistent_target(
-            target, pinned, contact_targets,
+            target, pinned, contact_targets, root_index=rig.root,
+            root_reference=registered_root,
         )
         evidence['placement'] = placement_report
         source_projection_constraint['anchorAdjustment'] = source_anchor_adjustment
@@ -6641,7 +9310,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
     report['sourceProjectionConstraint']['sharedAnchorAdjustment'] = source_anchor_adjustment
     specs = [(label, [names.index(n) for n in (a,b,c)], tolerance)
              for label,a,b,c,tolerance in ARTICULATIONS]
-    reference_angles = np.stack([angles(*(reference[:,i] for i in cols)) for _,cols,_ in specs], axis=1)
+    reference_angles = np.stack([angles(*(source_conditioned_articulation_reference[:,i]
+                                          for i in cols)) for _,cols,_ in specs], axis=1)
     acceleration_fit_scale, rotation_fit_scale = temporal_fit_scales(
         settling_basis if body_support.get('required') else temporal_reference, names, fps)
     source_parent, source_bend, source_hinge_sine = hinge_coordinates(reference,names)
@@ -6660,8 +9330,26 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             high[:,column] = np.minimum(high[:,column], np.deg2rad(164.9))
     # Every residual frame depends only on that frame's rig; temporal blocks
     # share those dependencies across adjacent frames, not the full sequence.
+    from .foot_geometry import foot_scale_from_pose, material_floor_heights
+    foot_rest_pitches = payload['footRestPitchRadians']
+    material_foot_scale = foot_scale_from_pose(points[0], names)
+    floor_pattern = rig.dependencies[1::3].copy()
+    for side in foot_rest_pitches:
+        floor_pattern[names.index(f'{side}_ankle')] = joint_dependencies(
+            rig, (f'{side}_ankle', f'{side}_foot'))
     angle_pattern = np.stack([np.max(rig.dependencies[np.ravel([[j*3+k for k in range(3)] for j in cols])],axis=0)
                               for _,cols,_ in specs])
+    timed_foot_articulation_pattern = np.stack([
+        np.max(rig.dependencies[np.ravel([[j*3+k for k in range(3)] for j in cols])], axis=0)
+        for _, cols, _ in timed_foot_articulation_tracks
+    ]) if timed_foot_articulation_tracks else np.empty((0, rig.width))
+    source_foot_direction_pattern = np.vstack([
+        (np.tile(joint_dependencies(rig, (f'{side}_ankle', f'{side}_foot')),
+                 (3, 1))
+         if f'{side}_ankle' in names and f'{side}_foot' in names
+         else np.zeros((3, rig.width)))
+        for side in ('left', 'right')
+    ])
     collision_pattern = np.stack([np.max(rig.dependencies[np.ravel([[names.index(n)*3+k for k in range(3)] for n in (*a,*b)])],axis=0)
                                   for _,a,b,_,_ in collision_specs(names)])
     body_dependencies = joint_dependencies(rig,('pelvis','left_hip','right_hip','neck'))
@@ -6703,7 +9391,9 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                                for label,a,h,b,_ in ARTICULATIONS if label.endswith(('_knee','_elbow'))])
     settling_pattern = np.maximum(rig.dependencies,body_dependencies[None,:])
     frame_pattern = np.vstack([rig.dependencies,rig.dependencies,rig.dependencies[1::3],
-                               angle_pattern,rig.dependencies[1::3],head_pattern,rotation_prior_dependencies(rig.width),collision_pattern,
+                               angle_pattern,timed_foot_articulation_pattern,
+                               source_foot_direction_pattern,
+                               floor_pattern,head_pattern,rotation_prior_dependencies(rig.width),collision_pattern,
                                rig.dependencies[::3],branch_pattern])
     structure_pattern = np.vstack([
         anatomical_structure_dependencies(rig, points, names), span_dependencies,
@@ -6716,7 +9406,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
     frame_pattern = np.vstack([frame_pattern, support_pattern])
     from .heel_contacts import heel_contact_tracks
     heel_contacts = heel_contact_tracks(points, names, fit_support_evidence,
-                                       floor=payload.get('renderFloorY'), fps=fps)
+                                       floor=payload.get('renderFloorY'), fps=fps,
+                                       rest_pitches=payload['footRestPitchRadians'])
     heel_pattern = np.vstack([
         np.tile(joint_dependencies(rig, (names[ankle], names[toe])), (3, 1))
         for ankle, toe in heel_contacts.pairs
@@ -6734,7 +9425,27 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         cyclic_first = csr_matrix(np.roll(np.eye(count),-1,axis=0)-np.eye(count))
         d2 = cyclic_first@cyclic_first
         d3 = d2@cyclic_first
-    pattern = vstack([kron(eye(count),csr_matrix(frame_pattern)),
+    keyframe_pattern = kron(eye(count), csr_matrix(frame_pattern)).tolil()
+    # Knee phase rows are first differences, so each row also depends on the
+    # previous frame's knee chain. Add those exact temporal neighbors to the
+    # per-frame sparsity pattern used by the hybrid Jacobian.
+    if timed_foot_articulation_tracks:
+        phase_row_offset = 7 * joints + len(specs)
+        previous_frames = (np.roll(np.arange(count), 1) if cyclic
+                           else np.r_[-1, np.arange(max(count - 1, 0))])
+        for track_index, (label, _, _) in enumerate(timed_foot_articulation_tracks):
+            if not label.endswith('_knee'):
+                continue
+            dependencies = np.flatnonzero(timed_foot_articulation_pattern[track_index])
+            if not dependencies.size:
+                continue
+            for frame_index, previous_frame in enumerate(previous_frames):
+                if previous_frame < 0:
+                    continue
+                row = frame_index * frame_pattern.shape[0] + phase_row_offset + track_index
+                columns = previous_frame * rig.width + dependencies
+                keyframe_pattern[row, columns] = 1
+    pattern = vstack([keyframe_pattern.tocsr(),
                      kron(abs(d2),temporal_pattern), kron(abs(d3),temporal_pattern),
                      kron(abs(d1),csr_matrix(settling_pattern)),
                      kron(abs(d2),root_pattern),
@@ -6756,11 +9467,52 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
     subframe_height_pinned = height_only_mask[subframe_first] & height_only_mask[subframe_last]
     subframe_height_targets = height_only_targets[subframe_first, :, 1]
     subframe_alpha = (subframe_cursors-subframe_first)[:, None, None]
+    # Keep knee/elbow articulation phase aligned with playback's linear
+    # reference. Structural anatomy alone uses the enclosing torso reference.
+    playback_articulation_reference = source_conditioned_articulation_reference
+    subframe_articulation_reference, _ = playback_reference_samples(
+        playback_articulation_reference, subframe_first, subframe_last,
+        subframe_alpha[:, 0, 0], names)
+    _, subframe_anatomy_reference = playback_reference_samples(
+        fit_anatomy_reference, subframe_first, subframe_last,
+        subframe_alpha[:, 0, 0], names)
+    subframe_reference_angles = np.stack([
+        angles(*(subframe_articulation_reference[:, joint] for joint in columns))
+        for _, columns, _ in specs
+    ], axis=1)
+    subframe_angle_tolerance = np.deg2rad([min(tolerance, 10.) - .5
+                                          for _, _, tolerance in specs])
+    subframe_direction_targets, subframe_direction_masks = source_foot_direction_targets_at(
+        subframe_first, subframe_last, subframe_alpha[:, 0, 0], authority_masks=False)
+    subframe_reference_parent, subframe_reference_bend, subframe_reference_sine = hinge_coordinates(
+        subframe_articulation_reference, names)
+    from .structural_refinement import _source_branch_is_temporally_supported
+    subframe_hinge_specs = [spec for spec in ARTICULATIONS
+                            if spec[0].endswith(('_knee', '_elbow'))]
+    knee_hinge_indices = [i for i, spec in enumerate(subframe_hinge_specs)
+                          if spec[0].endswith('_knee')]
+    subframe_branch_supported = np.zeros(
+        (subframe_count, len(subframe_hinge_specs)), dtype=bool)
+    branch_support_radius = max(1, round(fps * 4 * .1))
+    for hinge in range(len(subframe_hinge_specs)):
+        source_track = list(zip(subframe_reference_parent[:, hinge],
+                                subframe_reference_bend[:, hinge]))
+        subframe_branch_supported[:, hinge] = [
+            _source_branch_is_temporally_supported(source_track, sample, branch_support_radius)
+            for sample in range(subframe_count)
+        ]
+    subframe_branch_supported &= subframe_reference_sine > np.sin(np.deg2rad(15.))
     subframe_alignment = alignment_features(
         alignment_source[subframe_first]*(1.-subframe_alpha)+alignment_source[subframe_last]*subframe_alpha,
         names, body_support)
+    subframe_knee_branch_pattern = np.stack([
+        np.maximum(branch_basis, joint_dependencies(rig, (a, h, b)))
+        for label, a, h, b, _ in subframe_hinge_specs if label.endswith('_knee')
+    ])
     subframe_pattern = np.vstack([rig.dependencies,rig.dependencies[1::3],
-                                  rig.dependencies[1::3],collision_pattern])
+                                  floor_pattern,angle_pattern,
+                                  subframe_knee_branch_pattern,
+                                  source_foot_direction_pattern,collision_pattern])
     subframe_pattern = np.vstack([subframe_pattern, equipment_pattern])
     subframe_pattern = np.vstack([subframe_pattern, support_pattern])
     subframe_pattern = np.vstack([subframe_pattern, heel_pattern])
@@ -6791,7 +9543,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         pattern = vstack([pattern, kron(csr_matrix(seam_pattern), csr_matrix(excess_dependencies))], format='csr')
     pattern = vstack([pattern, kron(abs(world_d3), temporal_pattern)], format='csr')
     if source_projection_constraint.get('available'):
-        source_observations = source_projection_constraint['observations']
+        source_observations = _source_projection_point_observations(
+            source_projection_constraint)
         source_pattern = lil_matrix(
             (len(source_observations) * 2, count * rig.width), dtype=np.int8,
         )
@@ -6810,7 +9563,103 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 columns = frame_index * rig.width + active_columns
                 source_pattern[observation_index * 2, columns] = 1
                 source_pattern[observation_index * 2 + 1, columns] = 1
-        pattern = vstack([pattern, source_pattern.tocsr()], format='csr')
+        source_ray_observations = (
+            source_projection_constraint.get('sourceFootRayObservations') or [])
+        source_ray_pattern = lil_matrix(
+            (len(source_ray_observations), count * rig.width), dtype=np.int8,
+        )
+        for observation_index, observation in enumerate(source_ray_observations):
+            joint_indices = (observation['ankleJointIndex'], observation['footJointIndex'])
+            active_columns = np.unique(np.concatenate([
+                np.flatnonzero(np.max(
+                    rig.dependencies[joint * 3:joint * 3 + 3], axis=0) > 0)
+                for joint in joint_indices
+            ]))
+            endpoints = [(observation['leftFrame'], 1. - observation['alpha'])]
+            if observation['rightFrame'] != observation['leftFrame']:
+                endpoints.append((observation['rightFrame'], observation['alpha']))
+            for frame_index, interpolation_weight in endpoints:
+                if interpolation_weight <= 0.:
+                    continue
+                columns = frame_index * rig.width + active_columns
+                source_ray_pattern[observation_index, columns] = 1
+        # Native ankle-to-toe angle remains report-only; rendered material
+        # heel rows below own observed lift preservation.
+        source_phase_observations = []
+        source_phase_pattern = lil_matrix(
+            (len(source_phase_observations), count * rig.width), dtype=np.int8,
+        )
+        for observation_index, observation in enumerate(source_phase_observations):
+            joint_indices = (observation['ankleJointIndex'], observation['footJointIndex'])
+            active_columns = np.unique(np.concatenate([
+                np.flatnonzero(np.max(
+                    rig.dependencies[joint * 3:joint * 3 + 3], axis=0) > 0)
+                for joint in joint_indices
+            ]))
+            endpoints = [(observation['leftFrame'], 1. - observation['alpha'])]
+            if observation['rightFrame'] != observation['leftFrame']:
+                endpoints.append((observation['rightFrame'], observation['alpha']))
+            for frame_index, interpolation_weight in endpoints:
+                if interpolation_weight <= 0.:
+                    continue
+                source_phase_pattern[observation_index,
+                                     frame_index * rig.width + active_columns] = 1
+        pattern = vstack([
+            pattern, source_pattern.tocsr(), source_ray_pattern.tocsr(),
+            source_phase_pattern.tocsr(),
+        ], format='csr')
+        source_heel_observations = (
+            source_projection_constraint.get('sourceFootHeelImageObservations') or [])
+        source_heel_events = (
+            source_projection_constraint.get('sourceFootHeelTrajectoryEvents') or [])
+        if source_heel_observations:
+            source_heel_pattern = lil_matrix(
+                (2 * len(source_heel_observations) + len(source_heel_events),
+                 count * rig.width), dtype=np.int8,
+            )
+            heel_index_by_key = {
+                (row['sourceSide'], round(float(row['sourceTime']), 8)): index
+                for index, row in enumerate(source_heel_observations)
+            }
+            for observation_index, observation in enumerate(source_heel_observations):
+                joint_indices = (observation['ankleJointIndex'], observation['footJointIndex'])
+                active_columns = np.unique(np.concatenate([
+                    np.flatnonzero(np.max(
+                        rig.dependencies[joint * 3:joint * 3 + 3], axis=0) > 0)
+                    for joint in joint_indices
+                ]))
+                endpoints = [(observation['leftFrame'], 1. - observation['alpha'])]
+                if observation['rightFrame'] != observation['leftFrame']:
+                    endpoints.append((observation['rightFrame'], observation['alpha']))
+                for frame_index, interpolation_weight in endpoints:
+                    if interpolation_weight <= 0.:
+                        continue
+                    columns = frame_index * rig.width + active_columns
+                    source_heel_pattern[observation_index * 2, columns] = 1
+                    source_heel_pattern[observation_index * 2 + 1, columns] = 1
+            for event_index, event in enumerate(source_heel_events):
+                for source_time in event['observationTimes']:
+                    observation_index = heel_index_by_key.get((
+                        event['sourceSide'], round(float(source_time), 8)))
+                    if observation_index is None:
+                        continue
+                    observation = source_heel_observations[observation_index]
+                    joint_indices = (observation['ankleJointIndex'],
+                                     observation['footJointIndex'])
+                    active_columns = np.unique(np.concatenate([
+                        np.flatnonzero(np.max(
+                            rig.dependencies[joint * 3:joint * 3 + 3], axis=0) > 0)
+                        for joint in joint_indices
+                    ]))
+                    endpoints = [(observation['leftFrame'], 1. - observation['alpha'])]
+                    if observation['rightFrame'] != observation['leftFrame']:
+                        endpoints.append((observation['rightFrame'], observation['alpha']))
+                    row = 2 * len(source_heel_observations) + event_index
+                    for frame_index, interpolation_weight in endpoints:
+                        if interpolation_weight > 0.:
+                            columns = frame_index * rig.width + active_columns
+                            source_heel_pattern[row, columns] = 1
+            pattern = vstack([pattern, source_heel_pattern.tocsr()], format='csr')
         support_relative_pairs = _source_support_relative_fit_pairs(source_projection_constraint)
         if support_relative_pairs:
             support_relative_pattern = lil_matrix(
@@ -6857,13 +9706,10 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                         endpoint_pattern[observation_index * 2, columns] = 1
                         endpoint_pattern[observation_index * 2 + 1, columns] = 1
             pattern = vstack([pattern, endpoint_pattern.tocsr()], format='csr')
-    if support_articulation_tracks:
-        articulation_rows = []
-        for _, cols, _ in support_articulation_tracks:
-            dep = np.max(rig.dependencies[np.ravel([[j * 3 + k for k in range(3)] for j in cols])],
-                         axis=0)
-            articulation_rows.append(np.tile(dep, count))
-        pattern = vstack([pattern, csr_matrix(np.asarray(articulation_rows))], format='csr')
+    if support_range_fit_tracks:
+        pattern = vstack([
+            pattern, support_range_sparsity(rig, count, support_range_fit_tracks),
+        ], format='csr')
     root_travel_columns = (
         np.arange(count)[:, None] * rig.width + np.arange(3)
     ).reshape(-1)
@@ -6872,6 +9718,11 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         (np.zeros(len(root_travel_columns), dtype=int), root_travel_columns),
     ), shape=(1, count * rig.width))
     pattern = vstack([pattern, root_travel_pattern], format='csr')
+    jerk_feasibility_pattern = csr_matrix((
+        np.ones(count * rig.width, dtype=np.int8),
+        (np.zeros(count * rig.width, dtype=int), np.arange(count * rig.width)),
+    ), shape=(1, count * rig.width))
+    pattern = vstack([pattern, jerk_feasibility_pattern], format='csr')
     initial_rotations = Rotation.from_rotvec(rig.initial[:,3:].reshape(-1,3))
     floor = payload.get('renderFloorY')
     source_head = body_local_head_direction(reference,names)
@@ -6882,6 +9733,10 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
     best_cost = float('inf')
     best_feasible_coordinates = None
     best_feasible_cost = float('inf')
+    source_heel_evidence_required = bool(
+        source_projection_constraint.get('sourceFootHeelTrajectoryObservations')
+        or source_projection_constraint.get('sourceFootHeelUnresolvedToeOnlyObservationCount'))
+    best_feasible_heel_passed = not source_heel_evidence_required
     seam_polish_weight = 1.
     contact_polish_weight = 1.
     equipment_polish_weight = 1.
@@ -6901,7 +9756,20 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         current_angles = np.stack([angles(*(candidate[:,i] for i in cols)) for _,cols,_ in specs],axis=1)
         artic_weight = (SUPPORT_ARTICULATION_FIT_WEIGHT if body_support.get('required') else 500.)
         articulation = artic_weight*(np.minimum(current_angles-low,0.)+np.maximum(current_angles-high,0.))
-        floor_error = np.zeros((count,joints)) if floor is None else FLOOR_FIT_WEIGHT*np.minimum(candidate[:,:,1]-float(floor),0.)
+        if timed_foot_articulation_tracks:
+            articulation = np.concatenate([
+                articulation,
+                timed_foot_articulation_residuals(
+                    current_angles, specs, timed_foot_articulation_tracks, artic_weight,
+                    source_foot_coverage=source_foot_coverage,
+                    source_foot_phase_coverage=source_foot_phase_coverage,
+                    fps=fps, cyclic=cyclic,
+                ),
+            ], axis=1)
+        source_direction = source_foot_direction_residuals(
+            candidate, source_foot_direction_targets, source_foot_direction_trajectory_masks)
+        floor_error = np.zeros((count,joints)) if floor is None else FLOOR_FIT_WEIGHT*np.minimum(
+            material_floor_heights(candidate, names, foot_rest_pitches, material_foot_scale)-float(floor),0.)
         current_head = body_local_head_direction(candidate,names)
         head_angle = np.arccos(np.clip(np.sum(source_head*current_head,axis=1),-1.,1.))
         head_weight = (SUPPORT_HEAD_ARTICULATION_FIT_WEIGHT if body_support.get('required')
@@ -6914,7 +9782,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                                (contact_weight*(candidate-contact_targets)*pinned[:,:,None]).reshape(count,-1),
                                (contact_weight*(candidate[:,:,1]-height_only_targets[:,:,1])
                                 * height_only_mask).reshape(count,-1),
-                               articulation, floor_error, head_penalty],axis=1)
+                               articulation, source_direction, floor_error,
+                               head_penalty],axis=1)
 
     def keyframe_mid_rows(candidate):
         excursion_projection = np.sum((candidate-candidate[:,rig.root:rig.root+1]-excursion_center)*excursion_direction,axis=-1)
@@ -6922,14 +9791,21 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         current_parent, current_bend, current_sine = hinge_coordinates(candidate,names)
         branch_dot = transported_hinge_dots(source_parent,source_bend,current_parent,current_bend)
         branch_penalty = 20.*np.minimum(branch_dot-.2,0.)*branch_supported*np.clip(current_sine/np.sin(np.deg2rad(15.)),0.,1.)
+        for column, (label, _, _, _, tolerance) in enumerate(
+                spec for spec in ARTICULATIONS if spec[0].endswith(('_knee', '_elbow'))):
+            if label.endswith('_knee'):
+                reliable = branch_supported[:, column] * np.clip(
+                    current_sine[:, column] / np.sin(np.deg2rad(15.)), 0., 1.)
+                deviation = np.arccos(np.clip(branch_dot[:, column], -1., 1.))
+                branch_penalty[:, column] = 500. * np.maximum(
+                    deviation - np.deg2rad(tolerance - .5), 0.) * reliable
         return np.concatenate([
             100.*np.minimum(collision_clearances(candidate,names,scale)[0]/scale-COLLISION_FIT_MARGIN_RATIO,0.),
             excursion_penalty,branch_penalty],axis=1)
 
     def anatomy_rows(unconstrained_candidate):
-        structure = anatomical_structure_residuals(
-            unconstrained_candidate,names,pose_only=True,margin=ANATOMY_FIT_MARGIN,
-            reference=anatomical_reference)[0]
+        structure = fit_anatomy_structure_residuals(
+            unconstrained_candidate, names, fit_anatomy_reference)
         spans, _ = span_rigidity_fit_residuals(
             unconstrained_candidate, names, span_targets, body_scale_m=scale)
         return np.concatenate([ANATOMY_FIT_WEIGHT * structure,
@@ -6972,18 +9848,48 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                      root_temporal_rows(candidate),orientation_rows(candidate)]
 
     def world_jerk_rows(candidate):
-        world_jerk = world_d3 @ candidate.reshape(count, -1)
-        # Normalize by the same RMS bound used at acceptance, independently of
-        # clip size or the amount of noise introduced by a preview variant.
-        return (10. * world_jerk / (
-            TEMPORAL_FIT_TARGET_RATIO * jerk_limit * np.sqrt(world_jerk.size))).ravel()
+        return world_jerk_profile_rows(candidate, jerk_basis, world_d3, jerk_limit)
+
+    def subframe_articulation_sections(subframe):
+        current_angles = np.stack([
+            angles(*(subframe[:, joint] for joint in columns))
+            for _, columns, _ in specs
+        ], axis=1)
+        articulation_weight = (SUPPORT_ARTICULATION_FIT_WEIGHT
+                               if body_support.get('required') else 500.)
+        angle_residual = articulation_weight * (
+            np.minimum(current_angles - subframe_reference_angles + subframe_angle_tolerance, 0.)
+            + np.maximum(current_angles - subframe_reference_angles - subframe_angle_tolerance, 0.)
+        )
+        current_parent, current_bend, current_sine = hinge_coordinates(subframe, names)
+        transported_dot = transported_hinge_dots(
+            subframe_reference_parent, subframe_reference_bend,
+            current_parent, current_bend,
+        )[:, knee_hinge_indices]
+        source_reliable = subframe_branch_supported[:, knee_hinge_indices]
+        candidate_reliable = current_sine[:, knee_hinge_indices] > np.sin(np.deg2rad(15.))
+        reliable = source_reliable & candidate_reliable
+        hinge_tolerances = np.deg2rad([
+            tolerance - .5 for label, _, _, _, tolerance in subframe_hinge_specs
+            if label.endswith('_knee')
+        ])
+        branch_deviation = np.arccos(np.clip(transported_dot, -1., 1.))
+        branch_residual = 500. * np.maximum(
+            branch_deviation - hinge_tolerances[None, :], 0.
+        ) * reliable
+        return angle_residual, branch_residual
 
     def subframe_point_sections(subframe, contact_weight, grip_weight):
         subframe_contacts = contact_weight*(subframe-subframe_targets)*subframe_pinned[:,:,None]
         subframe_height = (contact_weight * (subframe[:, :, 1] - subframe_height_targets)
                            * subframe_height_pinned)
-        subframe_floor = np.zeros((subframe_count,joints)) if floor is None else FLOOR_FIT_WEIGHT*np.minimum(subframe[:,:,1]-float(floor),0.)
+        subframe_floor = np.zeros((subframe_count,joints)) if floor is None else FLOOR_FIT_WEIGHT*np.minimum(
+            material_floor_heights(subframe, names, foot_rest_pitches, material_foot_scale)-float(floor),0.)
+        subframe_angles, subframe_knee_branches = subframe_articulation_sections(subframe)
+        subframe_directions = source_foot_direction_residuals(
+            subframe, subframe_direction_targets, subframe_direction_masks)
         return [subframe_contacts.reshape(subframe_count,-1),subframe_height,subframe_floor,
+                subframe_angles,subframe_knee_branches,subframe_directions,
                 100.*np.minimum(collision_clearances(subframe,names,scale)[0]/scale-COLLISION_FIT_MARGIN_RATIO,0.),
                 grip_weight*grip_residual(subframe,names,equipment)/scale,
                 2000.*geometry_errors(subframe,names,body_support)/scale,
@@ -6995,13 +9901,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         return np.concatenate(subframe_point_sections(subframe, contact_weight, grip_weight), axis=1)
 
     def subframe_anatomy_rows(unconstrained_subframe):
-        interpolated_anatomy_reference = (
-            anatomical_reference[subframe_first] * (1. - subframe_alpha)
-            + anatomical_reference[subframe_last] * subframe_alpha
-        )
-        structure = anatomical_structure_residuals(
-            unconstrained_subframe,names,pose_only=True,margin=ANATOMY_FIT_MARGIN,
-            reference=interpolated_anatomy_reference)[0]
+        structure = fit_anatomy_structure_residuals(
+            unconstrained_subframe, names, subframe_anatomy_reference)
         spans, _ = span_rigidity_fit_residuals(
             unconstrained_subframe, names, span_targets, body_scale_m=scale)
         return np.concatenate([ANATOMY_FIT_WEIGHT * structure,
@@ -7061,9 +9962,28 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         if fit_should_yield_for_priority() or monotonic() >= optimization_deadline:
             raise TimeoutError
 
+    def candidate_heel_evidence(values):
+        geometry_payload = deepcopy(
+            source_projection_constraint.get('footGeometryPayload') or payload)
+        geometry_payload.pop('scenePlacement', None)
+        geometry_payload['fixedRig'] = {
+            'version': 1, 'jointNames': names, 'parents': rig.parents,
+            'order': rig.order, 'offsets': rig.offsets.tolist(),
+            'interpolation': INTERPOLATION,
+            'rotationJointNames': [names[joint] for joint in rig.active],
+            'coordinates': np.asarray(values, dtype=float).reshape(count, rig.width).tolist(),
+        }
+        candidate_points = rig.decode(np.asarray(values, dtype=float).reshape(count, rig.width))
+        for frame, frame_points in zip(geometry_payload['frames'], candidate_points):
+            frame['joints'] = dict(zip(names, frame_points.tolist()))
+        transport_corrected_bone_sides(frames, geometry_payload)
+        return _source_foot_material_heel_fit_evidence(
+            geometry_payload, source_projection_constraint)
+
     def residual(values):
         nonlocal last_residual_state
         nonlocal best_coordinates, best_cost, best_feasible_coordinates, best_feasible_cost
+        nonlocal best_feasible_heel_passed
         check_optimizer_budget()
         coordinates = values.reshape(count,rig.width)
         candidate = rig.decode(coordinates)
@@ -7112,19 +10032,17 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         errors = np.r_[errors, _source_projection_fit_rows(candidate, source_projection_constraint)]
         errors = np.r_[errors, _source_support_relative_fit_rows(candidate, source_projection_constraint)]
         errors = np.r_[errors, _source_endpoint_posture_fit_rows(candidate, source_projection_constraint)]
-        if support_articulation_tracks:
+        ratios = {}
+        if support_range_fit_tracks:
             # Soft floor slightly above the 0.85 acceptance ratio so the solver
             # has margin instead of landing on the hard fail boundary. Weight
             # must compete with contact/seam terms; 5k left retained fits at
             # ~0.80 hip/shoulder ratios that still failed jointRange.
-            support_range_errors = np.asarray([
-                12000. * max(0., .92 * float(np.ptp(track))
-                          - float(np.ptp(angles(*(candidate[:, j] for j in cols)))))
-                for _, cols, track in support_articulation_tracks
-            ], dtype=float)
-            errors = np.r_[errors, support_range_errors]
+            errors = np.r_[errors, support_range_residuals(candidate, support_range_fit_tracks)]
         errors = np.r_[errors, root_travel_preservation_residual(
             candidate[:, rig.root], target[:, rig.root], body_scale=scale)]
+        errors = np.r_[errors, world_jerk_feasibility_residual(
+            candidate, world_d3, jerk_fit_target)]
         cost = float(errors@errors)
         if np.isfinite(cost) and cost < best_cost:
             best_cost, best_coordinates = cost, values.copy()
@@ -7141,24 +10059,40 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             play_err = max(play_err, float(np.max(np.linalg.norm(
                 heel_contacts.residual(subframe, subframe_first, subframe_last), axis=-1), initial=0.)))
             floor_pen = 0. if floor is None else max(
-                0., float(floor) - float(min(candidate[:,:,1].min(), subframe[:,:,1].min())))
+                0., float(floor) - float(min(
+                    material_floor_heights(candidate, names, foot_rest_pitches,
+                                           material_foot_scale).min(),
+                    material_floor_heights(subframe, names, foot_rest_pitches,
+                                           material_foot_scale).min())))
             if (contact_iterate_is_feasible(contact_err, play_err, floor_pen)
-                    and cost < best_feasible_cost):
+                    and contact_iterate_can_challenge_best(
+                        cost, best_feasible_cost,
+                        has_best=best_feasible_coordinates is not None,
+                        heel_evidence_required=source_heel_evidence_required,
+                        best_heel_passed=best_feasible_heel_passed)):
                 # Contact-only selection can replace a valid supported spine
                 # with a cheaper iterate just beyond the final anatomy gate.
                 anatomy_max = max(
                     float(np.max(anatomical_structure_residuals(
-                        candidate, names, reference=anatomical_reference)[0], initial=0.)),
+                        candidate, names, reference=fit_anatomy_reference)[0], initial=0.)),
                     float(np.max(anatomical_structure_residuals(
                         subframe, names,
-                        reference=(anatomical_reference[subframe_first] * (1. - subframe_alpha)
-                                   + anatomical_reference[subframe_last] * subframe_alpha)
+                        reference=subframe_anatomy_reference
                     )[0], initial=0.)),
                 )
                 if contact_iterate_is_feasible(
                         contact_err, play_err, floor_pen,
                         maximum_anatomy_residual=anatomy_max):
-                    best_feasible_cost, best_feasible_coordinates = cost, values.copy()
+                    heel_passed = not source_heel_evidence_required
+                    if source_heel_evidence_required:
+                        heel_passed = bool(candidate_heel_evidence(values).get('passed'))
+                    if (best_feasible_coordinates is None
+                            or contact_iterate_is_preferred(
+                                cost, heel_passed, best_feasible_cost,
+                                best_feasible_heel_passed)):
+                        best_feasible_cost = cost
+                        best_feasible_coordinates = values.copy()
+                        best_feasible_heel_passed = heel_passed
         return errors
     hybrid_jacobian_enabled = _hybrid_jacobian_enabled()
 
@@ -7260,7 +10194,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             return masks
 
         def colored_composite_probe(evaluate, base_rows, bases, ownership, shifts,
-                                    col_offsets, row0, stride):
+                                    col_offsets, row0, stride,
+                                    previous_sample_rows=None):
             """FD of a per-sample section composite w.r.t. decoded points.
 
             ``bases`` are the point arrays the sections read (constrained and
@@ -7313,9 +10248,45 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                                 hit = np.nonzero(np.where(sup[j], diff, 0.))[0]
                                 if not hit.size:
                                     continue
-                                rows.append(hit)
-                                columns.append((hit // width_total * joints + j) * 3 + comp)
-                                entries.append(diff[hit])
+                                output_frames = hit // width_total
+                                ordinary_hits = []
+                                ordinary_frames = []
+                                ordinary_entries = []
+                                for hit_index, output_frame in zip(hit, output_frames):
+                                    candidates = [int(output_frame)]
+                                    if previous_sample_rows is not None:
+                                        previous = int(previous_sample_rows.flat[hit_index])
+                                        if previous >= 0:
+                                            candidates.append(previous)
+                                    selected = [frame for frame in candidates
+                                                if frame % shifts == c]
+                                    if len(selected) == 1:
+                                        ordinary_hits.append(hit_index)
+                                        ordinary_frames.append(selected[0])
+                                        ordinary_entries.append(diff[hit_index])
+                                    elif len(selected) > 1:
+                                        # A cyclic seam on an odd frame count
+                                        # can put both neighbors in one color.
+                                        # Probe only these colliding rows/frame
+                                        # pairs separately instead of assigning
+                                        # their summed derivative to one frame.
+                                        for frame in selected:
+                                            exact_probes = list(bases)
+                                            exact_probes[array_index] = bases[array_index].copy()
+                                            exact_probes[array_index][frame, j, comp] += fd_step
+                                            exact_diff = (
+                                                evaluate(*exact_probes).ravel()[hit_index]
+                                                - base_rows.reshape(-1)[hit_index]
+                                            ) / fd_step
+                                            if exact_diff:
+                                                ordinary_hits.append(hit_index)
+                                                ordinary_frames.append(frame)
+                                                ordinary_entries.append(exact_diff)
+                                if ordinary_hits:
+                                    rows.append(np.asarray(ordinary_hits, dtype=int))
+                                    columns.append((np.asarray(ordinary_frames) * joints + j)
+                                                   * 3 + comp)
+                                    entries.append(np.asarray(ordinary_entries))
             return sparse_from(entries, rows, columns,
                                (n_frames * width_total, n_frames * joints * 3))
 
@@ -7360,15 +10331,31 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                     else keyframe_composite(candidate, unconstrained_candidate))
         wrp = 3 * len(rig.active)
         wp_stride = w_key + wan + wrp
+        keyframe_phase_previous = None
+        if timed_foot_articulation_tracks:
+            keyframe_phase_previous = np.full(base_key.shape, -1, dtype=int)
+            phase_start = 7 * joints + len(specs)
+            for track_index, (label, _, _) in enumerate(timed_foot_articulation_tracks):
+                if not label.endswith('_knee'):
+                    continue
+                for frame_index in range(count):
+                    if cyclic:
+                        previous_frame = (frame_index - 1) % count
+                    elif frame_index:
+                        previous_frame = frame_index - 1
+                    else:
+                        continue
+                    keyframe_phase_previous[frame_index, phase_start + track_index] = previous_frame
         J_key_mixed = colored_composite_probe(
             keyframe_composite, base_key, [candidate, unconstrained_candidate],
-            [(0, w_key, 0), (w_key, w_key_total, 1)], 1,
+            [(0, w_key, 0), (w_key, w_key_total, 1)],
+            2 if keyframe_phase_previous is not None else 1,
             # residual per-frame layout: [pre | rotation_prior | mid | anatomy | post]
             np.concatenate([np.arange(w_pre),
                             w_pre + wrp + np.arange(w_mid),
                             w_pre + wrp + w_mid + wan + np.arange(w_post),
                             w_pre + wrp + w_mid + np.arange(wan)]),
-            0, wp_stride)
+            0, wp_stride, previous_sample_rows=keyframe_phase_previous)
         keyframe_samples = base_key.shape[0]
         sample_rows = np.arange(keyframe_samples * w_key_total).reshape(keyframe_samples, w_key_total)
         # Chain constrained-decode rows through fk and unconstrained rows
@@ -7709,12 +10696,14 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         report['hybridJacobian'] = True
     def fit_tail_jacobian(values):
         parts = []
-        if support_articulation_tracks:
-            parts.append(support_range_jacobian(values, rig, support_articulation_tracks))
+        if support_range_fit_tracks:
+            parts.append(support_range_jacobian(values, rig, support_range_fit_tracks))
         coordinates = np.asarray(values).reshape(count, rig.width)
         parts.append(root_travel_preservation_jacobian(
             coordinates[:, :3], target[:, rig.root], body_scale=scale,
             coordinate_width=rig.width))
+        parts.append(world_jerk_feasibility_jacobian(
+            coordinates, rig, world_d3, jerk_fit_target))
         return vstack(parts, format='csr')
 
     solver_options['tail_jacobian'] = fit_tail_jacobian
@@ -7808,84 +10797,55 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                     if proposed_error@proposed_error <= initial_error@initial_error:
                         solve_start = proposal
                         report['resumedTrajectory'] = True
-            # Evidence-first main solve: short LS blocks until cost stalls.
-            # Outer timeout is only a watchdog — do not require burning it.
-            block = 5
-            total_nfev = 0
-            stall_blocks = 0
-            previous_best = float('inf')
+            # Keep one trust-region lifecycle for this fixed objective. Restarting
+            # least_squares in short blocks can repeat rejected trials at the same x.
             current = solve_start
             solved = SimpleNamespace(x=current, nfev=0, status=1)
             minimum_update_seconds = 0.
-            previous_jacobian = None
-            while total_nfev < int(max_evaluations) and monotonic() < optimization_deadline:
-                solve_remaining = optimization_deadline - monotonic()
-                if minimum_update_seconds > solve_remaining:
-                    # A fresh LS call pays for its starting Jacobian before it
-                    # can evaluate an update. Do not spend the remaining solve
-                    # allowance initializing a block that cannot make progress.
-                    report['optimizerTermination'] = 'solve_phase_budget'
-                    report['deferredOptimizerBlock'] = {
-                        'minimumUpdateSeconds': float(minimum_update_seconds),
-                        'remainingSolveSeconds': float(max(0., solve_remaining)),
-                    }
-                    polish_left += max(0., solve_remaining)
-                    break
-                # Do not start another dense chunk inside the polish fence.
-                if monotonic() >= optimization_deadline - 1.0:
-                    report['optimizerTermination'] = 'solve_phase_budget'
-                    break
-                chunk = min(block, int(max_evaluations) - total_nfev)
-                if chunk < 1:
-                    break
-                block_started = monotonic()
-                if previous_jacobian is None:
-                    solved = trajectory_solver(residual, current, pattern, chunk)
-                else:
-                    solved = trajectory_solver(
-                        residual, current, pattern, chunk,
-                        initial_jacobian=previous_jacobian)
-                block_evaluations = int(solved.nfev or chunk)
-                minimum_update_seconds = 2. * (monotonic() - block_started) / max(1, block_evaluations)
-                total_nfev += block_evaluations
-                solved.nfev = total_nfev
-                current = solved.x
-                # SciPy returns the Jacobian and residual at its terminal x.
-                # Reuse them across chunks with the same fixed objective; test
-                # doubles without these fields still take the explicit fallback.
-                candidate_jacobian = getattr(solved, 'jac', None)
-                previous_jacobian = (
-                    candidate_jacobian
-                    if getattr(candidate_jacobian, 'shape', None) == pattern.shape
-                    else None
-                )
-                chunk_errors = np.asarray(getattr(solved, 'fun', ()), dtype=float)
-                if chunk_errors.shape != (pattern.shape[0],):
-                    # Stubs and early-return adapters may not expose SciPy's
-                    # terminal residual, so retain the correctness fallback.
-                    chunk_errors = residual(current)
-                chunk_cost = float(chunk_errors @ chunk_errors)
-                improved = (
-                    not np.isfinite(previous_best)
-                    or previous_best - chunk_cost > max(1e-12, abs(previous_best) * 1e-6)
-                )
-                if chunk_cost < previous_best:
-                    previous_best = chunk_cost
-                if improved:
-                    stall_blocks = 0
-                else:
-                    stall_blocks += 1
-                    if stall_blocks >= 2 and total_nfev >= block:
-                        report['optimizerTermination'] = 'objective_stalled'
-                        break
-                # least_squares status > 0 means local convergence.
-                if getattr(solved, 'status', 0) > 0:
-                    report.setdefault('optimizerTermination', 'converged')
-                    break
+            if int(max_evaluations) <= 0:
+                report['optimizerTermination'] = 'evaluation_limit'
+            elif monotonic() >= optimization_deadline - 1.0:
+                report['optimizerTermination'] = 'solve_phase_budget'
+                polish_left += max(0., optimization_deadline - monotonic())
             else:
-                if report.get('optimizerTermination') is None:
+                block_started = monotonic()
+                solved = trajectory_solver(
+                    residual, current, pattern, int(max_evaluations))
+                block_evaluations = int(solved.nfev or max_evaluations)
+                minimum_update_seconds = 2. * (monotonic() - block_started) / max(1, block_evaluations)
+                if allow_refinement and minimum_update_seconds > 0.:
+                    stage_c_minimum_remaining = stage_fit_refinement_minimum_remaining_seconds(
+                        minimum_update_seconds, stage='C', prioritize_fit=True,
+                    )
+                    outer_remaining_after_block = max(
+                        0., started + timeout_seconds - monotonic())
+                    available_post_validation = max(
+                        0., outer_remaining_after_block - validation_reserve)
+                    requested_post_validation_reserve = max(
+                        post_validation_polish_reserve, stage_c_minimum_remaining)
+                    post_validation_polish_reserve = min(
+                        requested_post_validation_reserve, available_post_validation)
+                    polish_left = min(
+                        max(float(polish_left), stage_c_minimum_remaining),
+                        available_post_validation,
+                    )
+                    unfunded_stage_c_reserve = max(
+                        0., stage_c_minimum_remaining - post_validation_polish_reserve)
+                    report['stageCMinimumPostValidationSeconds'] = float(
+                        stage_c_minimum_remaining)
+                    report['stageCUnfundedPostValidationSeconds'] = float(
+                        unfunded_stage_c_reserve)
+                    report['polishReserveRemainingSeconds'] = float(polish_left)
+                    report['postValidationPolishReserveSeconds'] = float(
+                        post_validation_polish_reserve)
+                    if unfunded_stage_c_reserve > 1e-6:
+                        report['stageCPolishReservationStatus'] = 'unfunded_within_outer_budget'
+                solved.nfev = block_evaluations
+                if getattr(solved, 'status', 0) > 0:
+                    report['optimizerTermination'] = 'converged'
+                else:
                     report['optimizerTermination'] = (
-                        'time_budget' if monotonic() >= optimization_deadline
+                        'solve_phase_budget' if monotonic() >= optimization_deadline
                         else 'evaluation_limit')
             preferred = (
                 best_feasible_coordinates
@@ -7895,7 +10855,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                         and best_coordinates is not None
                         and best_feasible_coordinates is not best_coordinates):
                     report['selectedContactFeasibleIterate'] = True
-                solved = SimpleNamespace(x=preferred, nfev=total_nfev,
+                solved = SimpleNamespace(x=preferred, nfev=getattr(solved, 'nfev', 0),
                                          status=getattr(solved, 'status', 0))
     except TimeoutError:
         # A budget ends optimization, not validation. Prefer the best soft-LS
@@ -7925,12 +10885,15 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             else 'solve_phase_budget')
     finally:
         if fit_session is not None and best_coordinates is not None:
-            fit_session.trajectories[trajectory_key] = best_coordinates.tolist()
+            fit_session.trajectories[trajectory_key] = (
+                best_feasible_coordinates if best_feasible_coordinates is not None
+                else best_coordinates).tolist()
     if getattr(solved, 'status', 1) == 0:
         report.setdefault('optimizerTermination', 'evaluation_limit')
     spike_projection_inputs = set()
 
-    def validate_solution(solved, *, project_playback_plants=True, repair_deadline=None):
+    def validate_solution(solved, *, project_playback_plants=True, repair_deadline=None,
+                          contact_foot_tracks=None):
         # A finite soft-constrained solve can cross the socket boundary again after
         # initialization. Enforce its analytic attachment on the exported coordinates
         # too, then validate geometry, temporal quality and interpolated playback.
@@ -7955,7 +10918,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             rig.initial[:] = project_playback_neck_clearance(
                 rig.initial, rig, cyclic=cyclic, deadline=repair_deadline)
             numerical_errors, _ = repair_residuals(
-                rig.decode(rig.initial), names, reference=anatomical_reference)
+                rig.decode(rig.initial), names, reference=fit_anatomy_reference)
             largest_error = float(np.max(numerical_errors, initial=0.))
             if 1e-6 < largest_error <= ANATOMY_FIT_MARGIN and monotonic() < repair_deadline:
                 previous_coordinates, previous_offsets = rig.initial.copy(), rig.offsets.copy()
@@ -7963,7 +10926,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 try:
                     _, polish = repair_rig_anatomy(
                         rig, rig.decode(rig.initial), deadline=repair_deadline,
-                        reference=anatomical_reference)
+                        reference=fit_anatomy_reference)
                 except TimeoutError:
                     polish = {'passed': False, 'reason': 'time_budget'}
                 polish['elapsedSeconds'] = monotonic()-polish_started
@@ -7978,6 +10941,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                              'offsets':rig.offsets.tolist(),'interpolation':INTERPOLATION,
                              'rotationJointNames':[names[j] for j in rig.active],
                              'coordinates':rig.initial.tolist()}
+        if contact_foot_tracks is not None:
+            fixed_rig_payload['contactFootTracks'] = deepcopy(contact_foot_tracks)
         if (project_playback_plants and monotonic() < repair_deadline
                 and np.any(pinned) and _playback_failing_intervals(
                 rig.initial, rig, pinned, contact_targets, cyclic=cyclic, floor=floor)):
@@ -7999,7 +10964,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             report['validatePlaybackPlantsApplied'] = True
         spike_projection_digest = hashlib.sha256(
             np.ascontiguousarray(result).tobytes()).hexdigest()
-        if (spike_projection_digest not in spike_projection_inputs
+        if (contact_foot_tracks is None and spike_projection_digest not in spike_projection_inputs
                 and monotonic() < repair_deadline):
             spikes = relative_motion_quality(
                 result, result, names, fps, spike_reference=spike_reference)['introducedSpikes']
@@ -8034,7 +10999,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         # accepted or the pass budget ends.
         from .temporal_quality import body_orientation_noise as _body_noise
         _rotation_noise = _body_noise(result, names, spike_reference, fps)
-        if _rotation_noise.get('severe'):
+        if contact_foot_tracks is None and _rotation_noise.get('severe'):
             _original = result.copy()
             _noise_before_smoothing = _rotation_noise
             _pinned_joints = [names.index(n) for n in
@@ -8080,9 +11045,22 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                     'rmsBefore': round(float(_noise_before_smoothing.get('outputRmsDegreesAt30Hz') or 0.), 4),
                     'attempts': _attempt_reports,
                 }
+        if contact_foot_tracks is None and monotonic() < repair_deadline:
+            knee_projected, knee_projection_report = project_reliable_knee_hinge_planes(
+                rig.initial, rig,
+                (reference, pre_contact_articulation_reference, anatomical_reference),
+                playback_reference=anatomical_reference, fps=fps, cyclic=cyclic,
+                deadline=repair_deadline, max_passes=3)
+            report['kneeHingePlaneProjection'] = knee_projection_report
+            if knee_projection_report.get('applied'):
+                rig.initial[:] = knee_projected
+                result = rig.decode(rig.initial)
+                solved.x = rig.initial.ravel().copy()
+                fixed_rig_payload['coordinates'] = rig.initial.tolist()
         bilateral_support = np.all(pinned[:,[names.index(n) for n in ('left_ankle','left_foot','right_ankle','right_foot')]],axis=1)
         physical = validate_physical_motion(
-            result, names, reference=reference, anatomy_reference=anatomical_reference,
+            result, names, reference=source_conditioned_articulation_reference,
+            anatomy_reference=fit_anatomy_reference,
             fps=fps, support_mask=bilateral_support)
         # Fixed-rig lengths are checked directly below; source per-frame length
         # fidelity is intentionally superseded, not anatomical/branch checks.
@@ -8098,11 +11076,20 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         ), initial=0.))
         playback_height_contact_error = _playback_vertical_contact_sample_error(
             rig.initial, rig, height_only_mask, height_only_targets, cyclic=cyclic,
+            contact_foot_tracks=contact_foot_tracks,
         )
         change = np.max(abs(np.stack([angles(*(result[:,i] for i in cols)) for _,cols,_ in specs],axis=1)-reference_angles))
         travel_before = np.linalg.norm(np.ptp(target[:,rig.root],axis=0))
         travel_after = np.linalg.norm(np.ptp(result[:,rig.root],axis=0))
         fit_error = float(np.sqrt(np.mean((result-target)**2)))
+        source_camera = ((payload.get('sourcePoseCameraReference') or {}).get('camera') or {})
+        trajectory_fit = trajectory_fit_evidence(
+            result, target, names, scale, root_index=rig.root, pinned=pinned,
+            support_evidence=fit_support_evidence,
+            source_projection_constraint=source_projection_constraint,
+            source_camera=source_camera,
+        )
+        report['trajectoryFitEvidence'] = trajectory_fit
         jerk_after = float(np.sqrt(np.mean(np.diff(result,n=3,axis=0)**2)))
         if jerk_after > jerk_limit:
             source_times = np.asarray([
@@ -8119,14 +11106,24 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         target_span = np.linalg.norm(np.ptp(target-target[:,rig.root:rig.root+1],axis=0),axis=-1)
         result_span = np.linalg.norm(np.ptp(result-result[:,rig.root:rig.root+1],axis=0),axis=-1)
         moving = target_span > .1*scale
-        if body_support.get('required'):
+        if support_articulation_tracks:
             # Preserve articulation excursion independently of the fitted target.
             # Positional spans also encode torso placement/orientation, which the
             # observed support is explicitly allowed to correct.
             ratios = {label: float(np.ptp(angles(*(result[:, j] for j in cols)))/np.ptp(track))
                       for label, cols, track in support_articulation_tracks}
-            range_preserved = support_joint_range_preserved(ratios)
+            episode_ratios, episode_details = supported_ankle_episode_range_ratios(
+                support_articulation_reference, result, names,
+                full_sole_excursion_masks, ankle_evidence_masks)
+            for side in full_sole_excursion_masks:
+                label = f'{side}_ankle'
+                ratios.pop(label, None)
+            ratios.update(episode_ratios)
             report['supportArticulationRangeRatios'] = ratios
+            if episode_details:
+                report['supportAnkleExcursionEpisodes'] = episode_details
+        if body_support.get('required'):
+            range_preserved = support_joint_range_preserved(ratios)
         else:
             range_preserved = bool(np.all(result_span[moving] >= .85*target_span[moving]))
         # Same authority as settling/jerk: under support, shake baselines belong
@@ -8160,18 +11157,77 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             result, source_projection_constraint,
         )
         report['sourceSupportTrajectory'] = source_support_trajectory
+        report['sourceFootRay'] = _source_foot_ray_fit_evidence(result, source_projection_constraint)
+        source_foot_phase = _source_foot_phase_fit_evidence(
+            result, source_projection_constraint,
+        )
+        report['sourceFootHeelPhase'] = source_foot_phase
+        report['sourceFootHeelTrajectory'] = {
+            'available': bool(source_projection_constraint.get(
+                'sourceFootHeelTrajectoryObservations')),
+            'passed': True,
+            'evaluation': 'pending_serialized_candidate',
+            'observationCount': len(source_projection_constraint.get(
+                'sourceFootHeelTrajectoryObservations') or []),
+            'eventCount': len(source_projection_constraint.get(
+                'sourceFootHeelTrajectoryEvents') or []),
+        }
+        foot_contact_owned = pinned_foot_contact_owned or bool(
+            foot_contact_indices and np.any(height_only_mask[:, foot_contact_indices]))
+        foot_articulation_regressions = (
+            support_initialization_articulation_regressions(
+                support_articulation_reference, result, names, fps=fps,
+                ankle_excursion_masks=full_sole_excursion_masks,
+                ankle_evidence_masks=ankle_evidence_masks)
+            if foot_contact_owned else [])
+        fit_subframe_coordinates = sample_rig_coordinates(
+            {**playback_rig, 'coordinates': rig.initial}, subframe_cursors, wrap=cyclic)
+        fit_subframe_points = rig.decode(fit_subframe_coordinates)
+        fit_subframe_directions, fit_subframe_direction_masks = source_foot_direction_targets_at(
+            subframe_first, subframe_last, subframe_alpha[:, 0, 0])
+        source_foot_direction_evidence = _source_foot_direction_fit_evidence(
+            np.concatenate([result, fit_subframe_points], axis=0),
+            np.concatenate([source_foot_direction_targets, fit_subframe_directions], axis=0),
+            np.concatenate([source_foot_direction_masks, fit_subframe_direction_masks], axis=0),
+            names,
+        )
+        source_foot_direction_evidence['samplePolicy'] = 'fit_keys_and_quarterframes'
+        if (source_projection_constraint.get('sourceFootHeelTrajectoryObservations')
+                and not source_foot_direction_evidence['available']):
+            source_foot_direction_evidence['passed'] = False
+            source_foot_direction_evidence['reason'] = 'source_foot_direction_authority_unavailable'
+        report['sourceFootContactArticulation'] = {
+            'available': foot_contact_owned,
+            'passed': (not bool(foot_articulation_regressions)
+                       and source_foot_direction_evidence['passed']),
+            'reference': 'source_shin_with_independently_observed_foot_direction',
+            'fullSoleEpisodeMasks': {
+                side: int(np.count_nonzero(mask))
+                for side, mask in full_sole_excursion_masks.items()
+            },
+            'regressions': foot_articulation_regressions,
+            'nativeHeelPhase': source_foot_phase,
+            'sourceFootDirection': source_foot_direction_evidence,
+        }
+        patch_clock_failure = source_foot_patch_clock_failure(
+            payload, fit_support_evidence)
+        report['sourceFootPatchClock'] = patch_clock_failure or {
+            'passed': True, 'reason': None}
         checks = {'anatomy':physical['passed'], 'contacts':contact_error<KEYFRAME_CONTACT_LIMIT_METERS,
                   'heightOnlyContacts': (
                       height_contact_error <= PLAYBACK_FLOOR_LIMIT_METERS
                       and playback_height_contact_error <= PLAYBACK_FLOOR_LIMIT_METERS),
-                  'sourceArticulation':bool(change<np.deg2rad(20.)), 'trajectoryFit':fit_error<.025*scale,
+                  'sourceArticulation':bool(change<np.deg2rad(20.)),
+                  'trajectoryFit':trajectory_fit['passed'],
                   'rootTravel': root_travel_small or root_travel_preserved,
                   'jointRange':range_preserved, 'jointShake':no_new_shake, 'settling':settling_preserved,
                   'jerk':jerk_after<=jerk_limit,
                   'fixedRig':bool(np.max(np.ptp(lengths,axis=1))<1e-9),
                   'relativeJointShake':relative_quality['relativeJointShake'],
                   'bodyRotation':relative_quality['bodyRotation'],
-                  'rootContinuity':root_quality['passed']}
+                  'rootContinuity':root_quality['passed'],
+                  'sourceFootPatchClock': patch_clock_failure is None,
+                  'sourceFootContactArticulation': report['sourceFootContactArticulation']['passed']}
         equipment_report = validate_grip(result,names,equipment)
         checks['equipment'] = equipment_report['passed']
         report['bodySupport'] = validate_support_geometry(payload, result, names)
@@ -8242,20 +11298,70 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 frame['controlledSourceJoints']={n:v.tolist() for n,v in zip(names,registered_source)}
             # Same articulation reference keyframe anatomy acceptance uses.
             frame['controlledArticulationReferenceJoints'] = {
-                n: v.tolist() for n, v in zip(names, anatomical_reference[index])}
+                n: v.tolist() for n, v in zip(
+                    names, source_conditioned_articulation_reference[index])}
             frame['joints']={n:v.tolist() for n,v in zip(names,values)}
             # Preserve source-projection anchor adjustments in playback authority.
             frame['supportContactReferenceJoints'] = dict(zip(names, contact_targets[index].tolist()))
             if body_support.get('required'):
                 frame['supportAlignmentReferenceJoints'] = dict(zip(names, alignment_source[index].tolist()))
                 frame['supportCorrectedReferenceJoints'] = dict(zip(names, reference[index].tolist()))
-                for name in body_support.get('stationaryJoints', []):
-                    frame['supportContactReferenceJoints'][name] = support_pose[names.index(name)].tolist()
+                if not plant_only:
+                    for name in body_support.get('stationaryJoints', []):
+                        frame['supportContactReferenceJoints'][name] = support_pose[names.index(name)].tolist()
         candidate['fixedRig'] = fixed_rig_payload
         transport_corrected_bone_sides(frames,candidate)
         refresh_motion_bounds(candidate)
         from .scene_placement import normalize_scene_placement
         candidate = normalize_scene_placement(candidate)
+        from .rig_playback import sample_rig as sample_playback_rig
+        from scipy.spatial.transform import Rotation
+        placement_rotation = np.asarray(
+            (candidate.get('scenePlacement') or {}).get('rotationVector', [0., 0., 0.]),
+            dtype=float)
+        direction_rotation = Rotation.from_rotvec(placement_rotation)
+        final_direction_targets = direction_rotation.apply(
+            source_foot_direction_targets.reshape(-1, 3)).reshape(count, 2, 3)
+        final_subframe_direction_targets, final_subframe_direction_masks = (
+            source_foot_direction_targets_at(
+                subframe_first, subframe_last, subframe_alpha[:, 0, 0]))
+        final_subframe_direction_targets = direction_rotation.apply(
+            final_subframe_direction_targets.reshape(-1, 3)).reshape(-1, 2, 3)
+        direction_cursors = np.concatenate([
+            np.arange(count, dtype=float), subframe_cursors])
+        final_direction_points = sample_playback_rig(
+            candidate['fixedRig'], direction_cursors, wrap=cyclic)
+        final_direction_targets = np.concatenate([
+            final_direction_targets, final_subframe_direction_targets], axis=0)
+        final_direction_masks = np.concatenate([
+            source_foot_direction_masks, final_subframe_direction_masks], axis=0)
+        serialized_direction_evidence = _source_foot_direction_fit_evidence(
+            final_direction_points, final_direction_targets, final_direction_masks,
+            names)
+        serialized_direction_evidence['samplePolicy'] = (
+            'serialized_renderer_keys_and_quarterframes')
+        if (source_projection_constraint.get('sourceFootHeelTrajectoryObservations')
+                and not serialized_direction_evidence['available']):
+            serialized_direction_evidence['passed'] = False
+            serialized_direction_evidence['reason'] = 'source_foot_direction_authority_unavailable'
+        report['sourceFootDirection'] = serialized_direction_evidence
+        report['sourceFootContactArticulation']['sourceFootDirection'] = (
+            serialized_direction_evidence)
+        report['sourceFootContactArticulation']['passed'] = bool(
+            report['sourceFootContactArticulation']['passed']
+            and serialized_direction_evidence['passed'])
+        report['checks']['sourceFootContactArticulation'] = report[
+            'sourceFootContactArticulation']['passed']
+        material_heel_evidence = _source_foot_material_heel_fit_evidence(
+            candidate, source_projection_constraint)
+        report['sourceFootHeelTrajectory'] = material_heel_evidence
+        report['sourceFootContactArticulation']['materialHeelTrajectory'] = (
+            material_heel_evidence)
+        report['sourceFootContactArticulation']['passed'] = bool(
+            report['sourceFootContactArticulation']['passed']
+            and material_heel_evidence['passed'])
+        report['checks']['sourceFootContactArticulation'] = report[
+            'sourceFootContactArticulation']['passed']
         candidate.setdefault('loop',{'enabled':False})
         from .rig_playback import validate_rig_playback
         playback = validate_rig_playback(candidate)
@@ -8283,7 +11389,6 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         return candidate,report
 
     validation_started = monotonic()
-    post_validation_polish_reserve = max(float(polish_left), 12.)
     validation_repair_deadline = min(
         started + timeout_seconds - post_validation_polish_reserve,
         validation_started + validation_reserve,
@@ -8304,6 +11409,69 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
     )
     report['initialValidationSeconds'] = monotonic() - validation_started
     report['polishUntilSeconds'] = float(polish_until - started)
+    contact_heel_repair_attempted = False
+
+    def attempt_contact_heel_repair():
+        nonlocal solved, candidate, report, contact_heel_repair_attempted
+        if (contact_heel_repair_attempted
+                or not allow_refinement
+        or not contact_heel_repair_eligible(
+            report.get('checks'), report.get('jointRangeRatios'))
+                or not source_projection_constraint.get('sourceFootHeelTrajectoryObservations')
+                or monotonic() >= started + timeout_seconds
+                or fit_should_yield_for_priority()):
+            return
+        contact_heel_repair_attempted = True
+        from .contact_heel_repair import propose_contact_heel_repair
+        previous_coordinates = rig.initial.copy()
+        previous_offsets = rig.offsets.copy()
+        previous_candidate, previous_report = candidate, deepcopy(report)
+        previous_solved = solved
+        local_started = monotonic()
+        local_deadline = min(started + timeout_seconds, local_started + 45.)
+        local_report = {'attempted': True, 'accepted': False}
+        proposal_failure = {}
+        try:
+            proposal = propose_contact_heel_repair(
+                rig, previous_coordinates, payload=payload,
+                source_projection_constraint=source_projection_constraint,
+                anatomical_reference=support_articulation_reference, pinned=pinned,
+                fps=fps, cyclic=cyclic,
+                deadline=local_deadline,
+                jerk_reference=jerk_basis, shake_reference=shake_basis,
+                jerk_limit=jerk_limit, body_scale=scale,
+                failure_report=proposal_failure)
+            if proposal is not None:
+                if monotonic() >= local_deadline:
+                    raise TimeoutError('contact heel proposal exhausted its validation budget')
+                coordinates, tracks, details = proposal
+                local_report.update(details)
+                trial = SimpleNamespace(x=np.asarray(coordinates).ravel().copy(),
+                                        nfev=solved.nfev, status=1)
+                trial_candidate, trial_report = validate_solution(
+                    trial, project_playback_plants=False,
+                    contact_foot_tracks=tracks, repair_deadline=local_deadline)
+                local_report['failedChecksAfter'] = failed_check_names(trial_report.get('checks'))
+                if trial_report.get('applied'):
+                    solved, candidate, report = trial, trial_candidate, trial_report
+                    local_report['accepted'] = True
+                    if fit_session is not None:
+                        fit_session.trajectories[trajectory_key] = trial.x.tolist()
+            else:
+                if proposal_failure:
+                    local_report.update(proposal_failure)
+                else:
+                    local_report['reason'] = 'no_feasible_proposal'
+        except (ValueError, TimeoutError) as error:
+            local_report.update(reason=type(error).__name__, detail=str(error))
+        finally:
+            if not local_report['accepted']:
+                rig.initial[:], rig.offsets[:] = previous_coordinates, previous_offsets
+                solved, candidate, report = previous_solved, previous_candidate, previous_report
+            local_report['elapsedSeconds'] = monotonic() - local_started
+            report['contactHeelRepair'] = local_report
+
+    attempt_contact_heel_repair()
     anatomy_projection_attempted = False
 
     def attempt_bounded_anatomy_projection():
@@ -8345,7 +11513,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             rig.initial[:] = baseline_coordinates.reshape(count, rig.width)
             observed = rig.decode(rig.initial)
             _, repair_report = repair_rig_anatomy(
-                rig, observed, reference=anatomical_reference,
+                rig, observed, reference=fit_anatomy_reference,
                 deadline=min(started + timeout_seconds,
                              monotonic() + repair_budget))
             projection['repair'] = repair_report
@@ -8651,7 +11819,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                         _, polish = repair_rig_anatomy(
                             rig, rig.decode(rig.initial),
                             deadline=min(path_deadline, monotonic() + 8.),
-                            reference=anatomical_reference)
+                            reference=fit_anatomy_reference)
                         if polish.get('passed'):
                             anatomy_trial = rig.initial.copy()
                             if np.any(pinned):
@@ -8787,22 +11955,32 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                     False if keep_path else ('playback' in failed_checks)))
             refinement['temporalJerkSmooth'] = True
             block_failed = failed_check_names(report.get('checks'))
-            refinement['blocks'].append({
-                'costBefore': None, 'costAfter': None, 'method': 'temporal_smooth',
-                'stage': 'C', 'failedChecks': block_failed})
-            if report.get('applied'):
-                return candidate, report
             contact_after = float(report.get('maximumContactErrorMeters') or 0.)
             play_after = float((report.get('playback') or {}).get('maximumContactErrorMeters') or 0.)
             nested_after = _playback_nested_failures(report.get('playback'))
-            # Keep a partial jerk improvement; only revert when plants/anatomy break
-            # or jerk gets worse.
-            if (contact_after >= 0.0005
-                    or play_after >= PLAYBACK_CONTACT_LIMIT_METERS
-                    or contact_after > previous_contact * 1.05 + 1e-9
-                    or ({'anatomy', 'sourceArticulation', 'contacts'} & set(block_failed)) - previous_failed
-                    or polish_worsened_jerk(report, previous_jerk)
-                    or ('velocity' not in previous_nested and 'velocity' in nested_after)):
+            block = {
+                'costBefore': None, 'costAfter': None, 'method': 'temporal_smooth',
+                'stage': 'C', 'failedChecks': block_failed,
+                'contactBeforeMeters': previous_contact,
+                'contactAfterMeters': contact_after,
+                'contactLimitMeters': KEYFRAME_CONTACT_LIMIT_METERS,
+                'playbackContactBeforeMeters': previous_play,
+                'playbackContactAfterMeters': play_after,
+            }
+            refinement['blocks'].append(block)
+            if report.get('applied'):
+                block['retained'] = True
+                return candidate, report
+            rejection_reasons = stage_c_temporal_smoothing_rejection_reasons(
+                contact_after=contact_after, playback_contact_after=play_after,
+                failed_checks=block_failed, previous_failed_checks=previous_failed,
+                previous_jerk=previous_jerk, report=report,
+                previous_nested=previous_nested, nested_after=nested_after)
+            block['retained'] = not bool(rejection_reasons)
+            block['rejectionReasons'] = rejection_reasons
+            # Contact error may rise within the unchanged hard gate; reject only
+            # when smoothing crosses a validator boundary or breaks other gates.
+            if rejection_reasons:
                 solved = SimpleNamespace(x=previous_coordinates, nfev=solved.nfev, status=0)
                 candidate, report = validate_solution(
                     solved, project_playback_plants=not keep_path)
@@ -8834,7 +12012,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 cyclic=cyclic, sigma=2.5,
                 deadline=min(started + timeout_seconds, monotonic() + min(18., max(6., started + timeout_seconds - monotonic()))),
                 floor=floor, fps=fps, spike_reference=spike_reference,
-                reference=anatomical_reference)
+                reference=fit_anatomy_reference)
             solved = SimpleNamespace(
                 x=strong.ravel(), nfev=solved.nfev, status=getattr(solved, 'status', 1))
             candidate, report = validate_solution(solved, project_playback_plants=False)
@@ -8954,6 +12132,15 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                     'remainingPolishSeconds': float(remaining),
                     'reason': 'deferred_to_outer_fit_continuation',
                 }
+                required_stage_window = stage_fit_refinement_minimum_remaining_seconds(
+                    minimum_update_seconds, stage=stage,
+                    prioritize_fit=prioritize_fit,
+                )
+                if stage == 'C':
+                    report['stageCUnfundedPostValidationSeconds'] = float(
+                        max(0., required_stage_window - remaining)
+                    )
+                    report['stageCPolishReservationStatus'] = 'unfunded_after_validation'
                 refinement['fitUpdateDeferredToEvaluationContinuation'] = True
                 break
             optimization_deadline = monotonic() + block_budget
@@ -9006,22 +12193,39 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             previous_coordinates = solved.x.copy()
             previous_failed = set(failed_checks)
             previous_contact = float(report.get('maximumContactErrorMeters') or 0.)
+            previous_play = float((report.get('playback') or {}).get('maximumContactErrorMeters') or 0.)
+            previous_jerk = report.get('jerkAfter')
+            previous_nested = _playback_nested_failures(report.get('playback'))
             smoothed = temporal_coordinate_smooth(
                 solved.x.reshape(count, rig.width), cyclic=cyclic).ravel()
             solved = SimpleNamespace(x=smoothed, nfev=solved.nfev, status=getattr(solved, 'status', 1))
             candidate, report = validate_solution(solved)
             refinement['temporalJerkSmooth'] = True
             block_failed = failed_check_names(report.get('checks'))
-            refinement['blocks'].append({
-                'costBefore': None, 'costAfter': None, 'method': 'temporal_smooth', 'stage': stage,
-                'failedChecks': block_failed})
-            if report.get('applied'):
-                break
             contact_after = float(report.get('maximumContactErrorMeters') or 0.)
-            if ('jerk' in block_failed
-                    or contact_after >= 0.0005
-                    or contact_after > previous_contact * 1.05 + 1e-9
-                    or ({'anatomy', 'sourceArticulation', 'contacts'} & set(block_failed)) - previous_failed):
+            play_after = float((report.get('playback') or {}).get('maximumContactErrorMeters') or 0.)
+            nested_after = _playback_nested_failures(report.get('playback'))
+            block = {
+                'costBefore': None, 'costAfter': None, 'method': 'temporal_smooth', 'stage': stage,
+                'failedChecks': block_failed,
+                'contactBeforeMeters': previous_contact,
+                'contactAfterMeters': contact_after,
+                'contactLimitMeters': KEYFRAME_CONTACT_LIMIT_METERS,
+                'playbackContactBeforeMeters': previous_play,
+                'playbackContactAfterMeters': play_after,
+            }
+            refinement['blocks'].append(block)
+            if report.get('applied'):
+                block['retained'] = True
+                break
+            rejection_reasons = stage_c_temporal_smoothing_rejection_reasons(
+                contact_after=contact_after, playback_contact_after=play_after,
+                failed_checks=block_failed, previous_failed_checks=previous_failed,
+                previous_jerk=previous_jerk, report=report,
+                previous_nested=previous_nested, nested_after=nested_after)
+            block['retained'] = not bool(rejection_reasons)
+            block['rejectionReasons'] = rejection_reasons
+            if rejection_reasons:
                 solved = SimpleNamespace(x=previous_coordinates, nfev=solved.nfev, status=0)
                 candidate, report = validate_solution(solved)
             continue
@@ -9143,6 +12347,10 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         if (stage == 'A' and 'contacts' in failed_checks
                 and not refinement.get('contactRootProjection')):
             previous_coordinates = solved.x.copy()
+            previous_report = deepcopy(report)
+            previous_candidate = candidate
+            previous_rig_initial = rig.initial.copy()
+            previous_rig_offsets = rig.offsets.copy()
             previous_failed = set(failed_checks)
             previous_contact = float(report.get('maximumContactErrorMeters') or 0.)
             projected = project_contact_root_translation(
@@ -9159,15 +12367,24 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             if report.get('applied'):
                 break
             new_contact = float(report.get('maximumContactErrorMeters') or 0.)
-            if (new_contact > previous_contact * 1.01 + 1e-9
-                    or ({'anatomy', 'sourceArticulation'} & set(block_failed)) - previous_failed):
+            regression = (new_contact > previous_contact * 1.01 + 1e-9
+                    or set(block_failed) - previous_failed
+                    or polish_worsened_jerk(report, previous_report.get('jerkAfter')))
+            refinement['blocks'][-1]['retained'] = not bool(regression)
+            if regression:
                 solved = SimpleNamespace(x=previous_coordinates, nfev=solved.nfev, status=0)
-                candidate, report = validate_solution(solved)
+                rig.initial[:], rig.offsets[:] = previous_rig_initial, previous_rig_offsets
+                candidate, report = previous_candidate, previous_report
+                report['boundedRefinement'] = refinement
             continue
         if (stage == 'A' and 'contacts' in failed_checks
                 and refinement.get('contactRootProjection')
                 and not refinement.get('contactPlantProjection')):
             previous_coordinates = solved.x.copy()
+            previous_report = deepcopy(report)
+            previous_candidate = candidate
+            previous_rig_initial = rig.initial.copy()
+            previous_rig_offsets = rig.offsets.copy()
             previous_failed = set(failed_checks)
             previous_contact = float(report.get('maximumContactErrorMeters') or 0.)
             plant_budget = min(12., max(1., remaining - 1.))
@@ -9187,10 +12404,15 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             if report.get('applied'):
                 break
             new_contact = float(report.get('maximumContactErrorMeters') or 0.)
-            if (new_contact > previous_contact * 1.01 + 1e-9
-                    or ({'anatomy', 'sourceArticulation'} & set(block_failed)) - previous_failed):
+            regression = (new_contact > previous_contact * 1.01 + 1e-9
+                    or set(block_failed) - previous_failed
+                    or polish_worsened_jerk(report, previous_report.get('jerkAfter')))
+            refinement['blocks'][-1]['retained'] = not bool(regression)
+            if regression:
                 solved = SimpleNamespace(x=previous_coordinates, nfev=solved.nfev, status=0)
-                candidate, report = validate_solution(solved)
+                rig.initial[:], rig.offsets[:] = previous_rig_initial, previous_rig_offsets
+                candidate, report = previous_candidate, previous_report
+                report['boundedRefinement'] = refinement
             continue
         # Stage-A: hard arm projection onto rigid_pair spacing once plants hold.
         if (stage == 'A' and 'equipment' in failed_checks
@@ -9292,8 +12514,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 new_ratios = seam_over_limit_ratios(report.get('playback') or {})
                 new_score = max(new_ratios) if new_ratios else None
                 nudge_failed = failed_check_names(report.get('checks'))
-                if ((previous_score is not None and new_score is not None
-                     and float(new_score) > float(previous_score) * 1.01)
+                if ((previous_score is not None
+                     and (new_score is None or float(new_score) > float(previous_score) + 1e-9))
                         or (nudge_failed and not set(nudge_failed) <= POLISH_STAGE_B)):
                     solved = SimpleNamespace(x=previous_coordinates, nfev=solved.nfev, status=0)
                     candidate, report = validate_solution(solved)
@@ -9346,8 +12568,8 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                                        max(polish_until, monotonic() + 16.))
                     continue
                 # Revert if wrap score worsened or body checks regressed.
-                if ((previous_score is not None and new_score is not None
-                     and float(new_score) > float(previous_score) * 1.01)
+                if ((previous_score is not None
+                     and (new_score is None or float(new_score) > float(previous_score) + 1e-9))
                         or (block_failed and not set(block_failed) <= POLISH_STAGE_B)):
                     solved = SimpleNamespace(x=previous_coordinates, nfev=solved.nfev, status=0)
                     candidate, report = validate_solution(solved)
@@ -9362,7 +12584,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 # inside the original episode and candidate deadlines.
                 if (block_failed and set(block_failed) <= POLISH_STAGE_B
                         and previous_score is not None and new_ratios
-                        and max(new_ratios) < previous_score * .8
+                        and max(new_ratios) < previous_score - 1e-4
                         and seam_repair_deadline - monotonic() >= 5.):
                     refinement['seamProjectionRetryPending'] = True
                     polish_until = min(seam_repair_deadline,
@@ -9417,7 +12639,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                     cyclic=cyclic, sigma=free_sigma,
                     deadline=min(started + timeout_seconds, monotonic() + min(16., max(5., remaining))),
                     floor=floor, fps=fps, spike_reference=spike_reference,
-                    reference=anatomical_reference)
+                    reference=fit_anatomy_reference)
                 solved = SimpleNamespace(
                     x=smoothed.ravel(), nfev=solved.nfev, status=getattr(solved, 'status', 1))
                 candidate, report = validate_solution(solved, project_playback_plants=False)
@@ -9502,7 +12724,9 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             contact_polish_weight = 1.
             equipment_polish_weight = 1.
         if fit_session is not None and best_coordinates is not None:
-            fit_session.trajectories[trajectory_key] = best_coordinates.tolist()
+            fit_session.trajectories[trajectory_key] = (
+                best_feasible_coordinates if best_feasible_coordinates is not None
+                else best_coordinates).tolist()
         candidate, report = validate_solution(solved)
         block_failed = failed_check_names(report.get('checks'))
         contact_after = float(report.get('maximumContactErrorMeters') or 0.)
@@ -9615,6 +12839,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
                 (report.get('reason') == 'fit_evaluation_limit'
                  and refinement_improved_acceptance(refinement))
                 or polishable_only
+                or deferred_fit_update_ready(report, remaining)
             )
             and refinement.get('stopReason') not in EVIDENCE_TERMINATIONS
             and not fit_should_yield_for_priority()):
@@ -9623,11 +12848,12 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             'extraEvaluations': int(max_evaluations),
             'stage': polish_stage_for_failures(failed_now),
         }
+        continuation_started = monotonic()
         previous_coordinates = solved.x.copy()
         previous_nfev = solved.nfev
         previous_status = getattr(solved, 'status', 0)
         previous_candidate = candidate
-        previous_report = report
+        previous_report = deepcopy(report)
         previous_rig_initial = rig.initial.copy()
         previous_rig_offsets = rig.offsets.copy()
         previous_failed = set(failed_check_names(previous_report.get('checks')))
@@ -9641,13 +12867,18 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         except TimeoutError:
             report['optimizerTermination'] = 'time_budget'
             solved = SimpleNamespace(
-                x=best_coordinates if best_coordinates is not None else previous_coordinates,
+                x=(best_feasible_coordinates if best_feasible_coordinates is not None
+                   else best_coordinates if best_coordinates is not None
+                   else previous_coordinates),
                 nfev=None, status=0)
         if fit_session is not None and best_coordinates is not None:
-            fit_session.trajectories[trajectory_key] = best_coordinates.tolist()
+            fit_session.trajectories[trajectory_key] = (
+                best_feasible_coordinates if best_feasible_coordinates is not None
+                else best_coordinates).tolist()
         candidate, report = validate_solution(solved)
         retained = fit_report_improves_acceptance(previous_report, report)
         continuation.update({
+            'elapsedSeconds': monotonic() - continuation_started,
             'applied': bool(report.get('applied')),
             'reason': report.get('reason'),
             'retained': retained,
@@ -9667,6 +12898,7 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
             if fit_session is not None:
                 fit_session.trajectories[trajectory_key] = previous_coordinates.tolist()
         report['evaluationContinuation'] = continuation
+        report['elapsedSeconds'] = monotonic() - started
     elif (not report.get('applied')
           and report.get('reason') in {'fit_evaluation_limit', 'fit_timeout', 'fit_validation_failed'}
           and report.get('checks')
@@ -9678,11 +12910,13 @@ def _fit_controlled_motion_impl(payload, *, max_evaluations=None, timeout_second
         report['reason'] = 'fit_validation_failed'
         if report.get('optimizerTermination') == 'objective_stalled':
             report['termination'] = 'objective_stalled'
+    attempt_contact_heel_repair()
     # Final safety: completed checks must never leave an incomplete fit_timeout
     # label just because the soft LS burned its watchdog.
     if (not report.get('applied') and report.get('checks')
             and report.get('reason') in {'fit_timeout', 'fit_evaluation_limit'}):
         report['reason'] = 'fit_validation_failed'
+    report['elapsedSeconds'] = monotonic() - started
     return candidate, report
 
 

@@ -87,7 +87,10 @@ from exercise_motion_pkg.foot_contact_observation import (
 from exercise_motion_pkg.foot_kinematics import HEEL_BEHIND_ANKLE_RATIO, source_knee_angle_bounds
 from exercise_motion_pkg.kinematic_cut import (
     DEFAULT_SPAN_PAD_SECONDS,
+    MAX_POSE_OBSERVATION_GAP_SECONDS,
+    MIN_KEYPOINT_CONFIDENCE,
     contract_completion_mode as kinematic_contract_completion_mode,
+    parse_dominant_pose_samples,
     propose_source_cut,
 )
 from exercise_motion_pkg.kinematic_policy import (
@@ -143,7 +146,7 @@ from exercise_motion_pkg.pipeline import (
     run_generation_pipeline,
 )
 from exercise_motion_pkg.pose_fidelity import source_to_motion_pose_fidelity_metrics, source_pose_reference_for_motion
-from exercise_motion_pkg.repetition_phase import complete_repetition, major_phase_sequence
+from exercise_motion_pkg.repetition_phase import complete_repetition, major_phase_runs, major_phase_sequence
 from exercise_motion_pkg.pose_prefilter import (
     FRAME_EDGE_CUT_JUMP_THRESHOLD,
     FRAME_EDGE_HARD_CUT_JUMP_THRESHOLD,
@@ -187,6 +190,7 @@ from exercise_motion_pkg.source_frame_cache import (
 )
 from exercise_motion_pkg.source_outcomes import (
     candidate_result_is_accepted,
+    candidate_result_has_incomplete_source_validation,
     load_source_outcome_index,
     rejection_tags_from_candidate_result,
     source_outcome_prior,
@@ -236,9 +240,12 @@ from exercise_motion_pkg.youtube import (
     exercise_contract_llama_cpp_settings,
     exercise_motion_contract_has_specific_topology,
     exercise_motion_contract_is_usable,
+    exercise_motion_action_definition_review_reason,
+    exercise_motion_action_definition_is_trusted,
     exercise_motion_contract_unusable_reason,
     exercise_motion_contract_uses_candidate_evidence,
     exercise_motion_contract_for_prompt,
+    exercise_motion_contract_prompt_sha256,
     exercise_motion_contract_prompt_body,
     exercise_motion_contract_quality_issues,
     contract_pose_support_mode,
@@ -554,7 +561,7 @@ SOURCE_CUT_MIN_ESTIMATED_DURATION_RATIO = 1.0
 SOURCE_CUT_ROBUST_MIN_SECONDS = 1.5
 SOURCE_CUT_ROBUST_MIN_ESTIMATED_DURATION_RATIO = 1.0
 ACTIVE_TRAVEL_SOURCE_CUT_MIN_SECONDS = 2.0
-SOURCE_SELECTION_POLICY_VERSION = 64
+SOURCE_SELECTION_POLICY_VERSION = 68
 SOURCE_SELECTION_CLEARANCE_POLICY_VERSION = 2
 
 SOURCE_OVERLAY_VISIBILITY_INSTRUCTIONS = (
@@ -594,8 +601,8 @@ CUT_CANDIDATE_VLM_TEMPERATURE = 0.0
 CUT_CANDIDATE_VLM_TOP_P = 1.0
 CUT_CANDIDATE_VLM_DISABLE_REASONING = True
 CUT_CANDIDATE_VLM_REQUEST_TIMEOUT_SECONDS = DEFAULT_SOURCE_REVIEW_TIMEOUT_SECONDS
-SOURCE_CUT_CANDIDATE_VLM_BASE_MAX_TOKENS = 256
-SOURCE_CUT_CANDIDATE_VLM_TOKENS_PER_PHASE = 64
+SOURCE_CUT_CANDIDATE_VLM_BASE_MAX_TOKENS = 384
+SOURCE_CUT_CANDIDATE_VLM_TOKENS_PER_PHASE = 96
 SOURCE_CUT_CANDIDATE_VLM_DISABLE_REASONING = True
 SOURCE_CUT_CANDIDATE_VLM_REQUEST_TIMEOUT_SECONDS = CUT_CANDIDATE_VLM_REQUEST_TIMEOUT_SECONDS
 SOURCE_CUT_MAX_VLM_WORKERS = 6
@@ -611,14 +618,15 @@ SOURCE_CUT_BOUNDARY_AUDIT_FRAME_COUNT = 12
 SOURCE_CUT_BOUNDARY_AUDIT_TILE_WIDTH = 480
 SOURCE_CUT_BOUNDARY_AUDIT_JPEG_QUALITY = 92
 DEFAULT_FINAL_OUTPUT_VALIDATION_MIN_SCORE = 0.90
-SELECTION_VALIDATION_POLICY_VERSION = 132
+SELECTION_VALIDATION_POLICY_VERSION = 136
 FINAL_OUTPUT_VALIDATION_POLICY_VERSION = 82
-RETAINED_SELECTED_REVALIDATION_VERSION = 18
+RETAINED_SELECTED_REVALIDATION_VERSION = 21
 # These policy versions isolate source-review caches from unrelated edits to
 # this large pipeline module. Prompt text and image bytes are already part of
 # each question key; bump the aggregate version when verdict semantics change.
-SOURCE_REVIEW_AGGREGATE_CACHE_POLICY_VERSION = 4
-SOURCE_REVIEW_QUESTION_CACHE_POLICY_VERSION = 1
+SOURCE_REVIEW_AGGREGATE_CACHE_POLICY_VERSION = 7
+SOURCE_REVIEW_QUESTION_CACHE_POLICY_VERSION = 4
+SOURCE_CUT_APPROVAL_CACHE_POLICY_VERSION = 3
 SOURCE_OUTPUT_TARGET_MOTION_REJECTION_REASON = (
     "materialized_target_motion_not_preserved_from_source"
 )
@@ -1331,6 +1339,9 @@ def load_previous_terminal_candidate_results(workspace: Path) -> dict[str, dict[
         Path(__file__),
         Path(__file__).with_name("youtube.py"),
         Path(__file__).with_name("pose_prefilter.py"),
+        Path(__file__).with_name("kinematic_cut.py"),
+        Path(__file__).with_name("source_evidence.py"),
+        Path(__file__).with_name("segment_detection.py"),
         Path(__file__).with_name("pipeline.py"),
         Path(__file__).with_name("pose_fidelity.py"),
         Path(__file__).with_name("preview.py"),
@@ -1347,10 +1358,15 @@ def load_previous_terminal_candidate_results(workspace: Path) -> dict[str, dict[
         Path(__file__).with_name("whole_body_repair.py"),
         Path(__file__).with_name("sequence_stabilization.py"),
         Path(__file__).with_name("controlled_motion.py"),
+        Path(__file__).with_name("contact_heel_pitch.py"),
+        Path(__file__).with_name("contact_heel_repair.py"),
+        Path(__file__).with_name("contact_interpolation.py"),
+        Path(__file__).with_name("joint_plant_initialization.py"),
         Path(__file__).with_name("artifact_state.py"),
         Path(__file__).with_name("motion_placement.py"),
         Path(__file__).with_name("scene_placement.py"),
         Path(__file__).with_name("rig_playback.py"),
+        Path(__file__).with_name("foot_geometry.py"),
         Path(__file__).with_name("rig_interpolation.py"),
         Path(__file__).with_name("loop_cycles.py"),
         Path(__file__).with_name("loop_seam.py"),
@@ -3012,6 +3028,15 @@ class CutCandidateReviewResult:
 
 class ExerciseMotionContractRejected(RuntimeError):
     """Required exercise semantics are unavailable; this is not a source defect."""
+
+
+class ExerciseDefinitionReviewRequired(ExerciseMotionContractRejected):
+    """The target action needs clarification before spending work on footage."""
+
+    def __init__(self, reason: str, contract: dict[str, Any]) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.contract = contract
 
 
 class SourceCandidateRejected(RuntimeError):
@@ -6759,7 +6784,7 @@ def two_scale_source_validation_needs_repair(validation: dict[str, Any]) -> bool
     structured observation is malformed. A consistently negative observation
     is evidence, not a reason to sample the same model repeatedly.
     """
-    if validation.get("passed") is True:
+    if validation.get("passed") is True or validation.get("sourceEvidencePolicyVersion") is not None:
         return False
     gates = validation.get("gates")
     if not isinstance(gates, dict):
@@ -8350,6 +8375,7 @@ def build_two_scale_topology_verification_prompt(
 ) -> str:
     topology = movement_topology_from_contract(contract)
     ongoing_action_interval = movement_topology_accepts_ongoing_action_interval(topology)
+    endpoint_evidence_required = bool(topology and topology.get("endpointEvidenceRequired", True))
     return (
         "Verify an exact exercise-specific movement topology in chronological contact sheets. Judge only visible "
         "frames and ignore titles, captions, diagrams, and written labels.\n"
@@ -8363,8 +8389,13 @@ def build_two_scale_topology_verification_prompt(
         + "\nFor every mandatory phase, return its exact phaseId once, visible true only when that distinct phase is "
         "actually shown, and its chronological position from 0.0 to 1.0. Do not infer a phase from the exercise name. "
         "Do not return timestamps or frame or tile numbers; position is the only permitted temporal reference. "
-        "Positions for visible phases must increase. Set startStateMatch and endStateMatch to uncertain when the exact "
-        "contract posture is not visible. Set requiredEquipmentMatch=match only when every role condition in the "
+        "Positions for visible phases must increase. "
+        + (
+            "Start and finish posture evidence is not part of this action-only contract; report both state matches as uncertain. "
+            if not endpoint_evidence_required else
+            "Set startStateMatch and endStateMatch to uncertain when the exact contract posture is not visible. "
+        )
+        + "Set requiredEquipmentMatch=match only when every role condition in the "
         "equipment policy is visibly supported, mismatch only for a clear contradiction, and uncertain when any role "
         "is not established. A setup fixture is not required to be contacted during the repetition, but presence alone "
         "does not prove appropriate setup use. Set requiredEquipmentMatch to not_applicable only when no equipment roles are listed. "
@@ -8372,7 +8403,11 @@ def build_two_scale_topology_verification_prompt(
             "For this ongoing-action topology, complete is true when every required sustained-action phase is visibly "
             "proven; startStateMatch and endStateMatch may be uncertain, but never mismatch.\n"
             if ongoing_action_interval
-            else "complete is true only when the start, every phase in order, and the required finish are visibly proven.\n"
+            else (
+                "complete is true only when every required action phase is visibly proven in order.\n"
+                if not endpoint_evidence_required else
+                "complete is true only when the start, every phase in order, and the required finish are visibly proven.\n"
+            )
         )
         + "Return JSON only with exactly: "
         '{"startStateMatch":"match|mismatch|uncertain","phaseEvidence":['
@@ -8447,7 +8482,7 @@ def two_scale_topology_verification_passed(
     expected_phase_ids = [str(phase["id"]) for phase in topology["phases"]]
     required_ids = (
         expected_phase_ids
-        if phase_evidence_hard_gate
+        if phase_evidence_hard_gate or topology.get("actionPhaseEvidenceRequired")
         else None
     )
     normalized = normalize_two_scale_topology_positions(
@@ -8493,12 +8528,19 @@ def two_scale_topology_verification_passed(
     )
     ongoing_action_interval = movement_topology_accepts_ongoing_action_interval(topology)
     advisory_contract = not phase_evidence_hard_gate
+    endpoint_evidence_required = bool(topology.get("endpointEvidenceRequired", True))
     start_state_passed = (
+        True
+        if not endpoint_evidence_required
+        else
         payload.get("startStateMatch") in {"match", "uncertain"}
         if ongoing_action_interval or advisory_contract
         else payload.get("startStateMatch") == "match"
     )
     end_state_passed = (
+        True
+        if not endpoint_evidence_required
+        else
         payload.get("endStateMatch") in {"match", "uncertain"}
         if ongoing_action_interval or advisory_contract
         else payload.get("endStateMatch") == "match"
@@ -8537,6 +8579,7 @@ def validate_two_scale_source_with_caption_images(
 ) -> dict[str, Any]:
     """Reuse complete source evidence across render variants and pipeline stages."""
     from exercise_motion_pkg.stage_cache import cache_key, load_stage, save_stage, stage_lock
+    from exercise_motion_pkg.source_evidence import POLICY_VERSION as SOURCE_EVIDENCE_POLICY_VERSION
 
     output_dir.mkdir(parents=True, exist_ok=True)
     source = final_output_source_video_window(item)
@@ -8546,7 +8589,8 @@ def validate_two_scale_source_with_caption_images(
     if source is None or model_settings is None:
         return _validate_two_scale_source_uncached(item, uniform_sheet_paths=uniform_sheet_paths,
             output_dir=output_dir, caption_images=caption_images, exercise_motion_contract=exercise_motion_contract,
-            source_pose_endpoint_features=source_pose_endpoint_features, source_phase_metrics=source_phase_metrics)
+            source_pose_endpoint_features=source_pose_endpoint_features, source_phase_metrics=source_phase_metrics,
+            source_interval=None)
     video, window = source
     candidate_payload = getattr(item, "candidate", None)
     candidate_contract = (
@@ -8558,10 +8602,12 @@ def validate_two_scale_source_with_caption_images(
     key = cache_key({"exercise": item.exercise_name, "contract": effective_contract,
         "model": model_settings, "window": [window.start_seconds, window.end_seconds],
         "reviewPolicyVersion": SOURCE_REVIEW_AGGREGATE_CACHE_POLICY_VERSION,
+        "sourceEvidencePolicyVersion": SOURCE_EVIDENCE_POLICY_VERSION,
         "endpoints": source_pose_endpoint_features,
         "phase": {k: v for k, v in (source_phase_metrics or {}).items()
                   if k in {"required", "passed", "hasSingleMajorCycle", "hasCompleteMajorCycle"}}},
-        [video, *uniform_sheet_paths, *source_equipment_detail_frames(uniform_sheet_paths)])
+        [video, *uniform_sheet_paths, *source_equipment_detail_frames(uniform_sheet_paths),
+         *(path.parent / "contact_sheet_evidence.json" for path in uniform_sheet_paths)])
     directory = item.candidate_workspace / "source-review-cache" / key
     checkpoint = directory / "checkpoint.json"
     with stage_lock(checkpoint):
@@ -8578,7 +8624,8 @@ def validate_two_scale_source_with_caption_images(
             return cached_result
         result = _validate_two_scale_source_uncached(item, uniform_sheet_paths=uniform_sheet_paths,
             output_dir=directory, caption_images=caption_images, exercise_motion_contract=effective_contract,
-            source_pose_endpoint_features=source_pose_endpoint_features, source_phase_metrics=source_phase_metrics)
+            source_pose_endpoint_features=source_pose_endpoint_features, source_phase_metrics=source_phase_metrics,
+            source_interval=window)
         result["sourceReviewCache"] = {
             "checkpoint": str(checkpoint),
             "key": key,
@@ -8595,12 +8642,19 @@ def validate_two_scale_source_with_caption_images(
         ):
             outputs = [Path(path) for name in ("uniformContactSheetPaths", "motionContactSheetPaths")
                        for path in result.get(name, [])]
+            if result.get("sourceEvidencePolicyVersion") is not None:
+                outputs.extend(dict.fromkeys(Path(path).parent / "contact_sheet_evidence.json"
+                    for name in ("uniformContactSheetPaths", "motionContactSheetPaths")
+                    for path in result.get(name, [])))
             save_stage(checkpoint, key, result, outputs)
         return result
 
 
 def cache_repaired_source_review(validation: dict[str, Any], repair: dict[str, Any]) -> bool:
     """Persist an adjudicated source verdict with its original evidence intact."""
+    # Legacy prose adjudication cannot override frame-grounded observations.
+    if validation.get("sourceEvidencePolicyVersion") is not None:
+        return False
     if repair.get("valid") is not True or repair.get("resolved") is not True:
         return False
     contract = validation.get("exerciseMotionContract")
@@ -8648,6 +8702,7 @@ def _validate_two_scale_source_uncached(
     exercise_motion_contract: dict[str, Any] | None = None,
     source_pose_endpoint_features: dict[str, Any] | None = None,
     source_phase_metrics: dict[str, Any] | None = None,
+    source_interval: DetectionWindow | None = None,
 ) -> dict[str, Any]:
     try:
         motion_sheet_paths = final_output_motion_contact_sheets(
@@ -8673,440 +8728,108 @@ def _validate_two_scale_source_uncached(
         }
     exercise_name = item.exercise_name
     candidate_contract = exercise_motion_contract or exercise_motion_contract_from_candidate(item.candidate)
-    required_equipment = two_scale_required_equipment_names(exercise_name, candidate_contract)
-    equipment = ", ".join(required_equipment) if required_equipment else "none"
-    equipment_detail_frames = source_equipment_detail_frames(uniform_sheet_paths) if equipment != "none" else []
     specific_contract, raw_generated_contract, contract_error = resolve_two_scale_exercise_motion_contract(
         item,
         contract=candidate_contract,
         caption_images=caption_images,
     )
     completion_mode = (specific_contract or {}).get("completionMode")
-    action_guidance = (
-        "Target-exercise action means the prescribed hold posture, support and effort are visibly sustained "
-        "across time. Do not require joint travel or reject the active hold as idle. "
-        if completion_mode == "stable_hold" else
-        "Target-exercise action means its defining body action visibly changes across tiles, not merely a static pose. "
-    )
-    hold_content_guidance = (
-        "The prescribed active hold itself is exercise content, not waiting or setup. "
-        if completion_mode == "stable_hold" else ""
-    )
-    prompts = {
-        "identity": (
-            "You verify only exercise identity in chronological motion-focused contact sheets.\n"
-            f"Target exercise: {exercise_name}\n"
-            "Required equipment role policy:\n"
-            + two_scale_equipment_role_policy(exercise_name, candidate_contract)
-            + "\n"
-            + two_scale_contract_authority_guidance(specific_contract)
-            + f"Movement guidance: {(specific_contract or {}).get('advisoryText') or 'Not supplied'}\n"
-            "Inspect every visible frame. Judge visible body action and visibly used equipment, not titles. "
-            "Compare the observed action with the explicit requirements: implement count, holding limbs, moving "
-            "limbs, stance and support are separate properties. A qualifier about the holding arm does not by "
-            "itself impose a particular working leg or an additional loading relationship. Do not invent an "
-            "extra variant requirement from the exercise name. A mismatch requires a concrete visible conflict "
-            "with an explicit target requirement; an unproved requirement is uncertain. "
-            "When required named equipment is none, there is no named-implement restriction; visible support surfaces "
-            "or equipment do not by themselves imply a mismatch. When a named implement is required, a different "
-            "implement cannot substitute for it. Judge support geometry through the visible body action. "
-            "Use uncertain when the frames do "
-            "not visibly prove the answer. Do not invent timestamps or frame numbers. Return JSON only with exactly:\n"
-            '{"verdict":"match|mismatch|uncertain","visibleEquipment":["normalized equipment"],'
-            '"observedAction":"short visible description","evidence":"short visible evidence"}'
-        ),
-        "uniform": (
-            "You inspect one uniformly sampled chronological contact sheet.\n"
-            f"Target exercise: {exercise_name}\n"
-            "Inspect every numbered tile. Unrelated action means talking, pointing, instruction gestures, setup, "
-            "cleanup, waiting, equipment handling, or a different exercise. A normal phase or transition within a "
-            "repetition is not unrelated. "
-            f"{hold_content_guidance}"
-            "Return JSON only with exactly:\n"
-            '{"unrelatedActionVisible":false,"unrelatedTileNumbers":[],"evidence":"short visible evidence"}'
-        ),
-        "motion": (
-            "You inspect one motion-focused chronological contact sheet.\n"
-            f"Target exercise: {exercise_name}\nNamed equipment to check: {equipment}\n"
-            + two_scale_equipment_role_policy(exercise_name, candidate_contract)
-            + "\n"
-            f"{action_guidance}"
-            "Return namedEquipmentEngagedStatus=engaged only when every listed equipment role is visibly established; "
-            "use absent only for a clearly false required condition, unclear when any required role is unverified, and "
-            "not_applicable only when the role policy lists no equipment. A rack/setup fixture does not need contact "
-            "during the repetition; its visible presence alone does not establish appropriate setup use. Return JSON only with exactly:\n"
-            '{"targetExerciseActionVisible":false,"namedEquipmentEngagedStatus":"engaged|absent|unclear|not_applicable","evidence":"short visible evidence"}'
-        ),
-        "completeness": build_target_blind_source_observation_prompt(completion_mode=completion_mode),
+    discrete_action = completion_mode in {
+        "return_to_start", "distinct_end_state", "alternating_pair",
     }
-    from exercise_motion_pkg.review_questions import answer_question, run_questions
-
-    question_settings = getattr(getattr(caption_images, "__self__", None), "settings", None)
-    cache_questions = question_settings is not None
-    question_identity = None
-    if cache_questions:
-        from exercise_motion_pkg.stage_cache import cache_key
-        question_model = source_review_model_identity(question_settings)
-        # Keep parser/prompt policy and contract changes isolated even if a
-        # particular target-blind question happens to have an unchanged prompt.
-        question_identity = cache_key({"model": question_model,
-            "reviewPolicyVersion": SOURCE_REVIEW_QUESTION_CACHE_POLICY_VERSION,
-            "contract": candidate_contract, "resolvedContract": specific_contract},
-            [])
-
-    def question(name: str, frames: list[Path], prompt: str, *, max_tokens: int = 256,
-                 reusable: Callable[[Any], bool]) -> tuple[str, Any]:
-        def operation() -> tuple[str, Any]:
-            return call_two_scale_source_gate(caption_images, frame_paths=frames, prompt=prompt, max_tokens=max_tokens)
-        if not cache_questions:
-            return operation()
-        return answer_question(directory=item.candidate_workspace / "source-question-cache", name=name, frames=frames,
-            prompt=prompt, max_tokens=max_tokens, operation=operation, reusable=reusable,
-            identity=question_identity)
-
-    raw_equipment_detail, equipment_detail = (None, None)
-    detail_guidance = ""
-    if equipment_detail_frames:
-        raw_equipment_detail, equipment_detail = question("equipment-detail", equipment_detail_frames,
-            build_source_equipment_detail_prompt(), max_tokens=256, reusable=source_equipment_detail_is_clear)
-        detail_guidance = (
-            "\nIndependent target-blind observation of original full-resolution frames from this same interval: "
-            + json.dumps(equipment_detail, ensure_ascii=True)
-            + "\nUse this only as implement detail evidence. It cannot prove action or completion. "
-            "If uncertain or in conflict with clear visual evidence, retain that uncertainty or conflict; "
-            "do not automatically replace the visible evidence.\n"
-        )
-    jobs = {
-        "identity": lambda: question("identity", motion_sheet_paths,
-            prompts["identity"] + detail_guidance,
-            reusable=lambda p: isinstance(p, dict) and p.get("verdict") in {"match", "mismatch"}
-            and isinstance(p.get("visibleEquipment"), list)),
-    }
-    for index, sheet_path in enumerate(uniform_sheet_paths):
-        name = f"uniform-{index}"
-        jobs[name] = lambda name=name, path=sheet_path: question(name, [path], prompts["uniform"],
-            reusable=lambda p: isinstance(p, dict) and isinstance(p.get("unrelatedActionVisible"), bool)
-            and isinstance(p.get("unrelatedTileNumbers"), list))
-    for index, sheet_path in enumerate(motion_sheet_paths):
-        name = f"motion-{index}"
-        jobs[name] = lambda name=name, path=sheet_path: question(name, [path], prompts["motion"],
-            reusable=lambda p: isinstance(p, dict) and isinstance(p.get("targetExerciseActionVisible"), bool)
-            and p.get("namedEquipmentEngagedStatus") in {"engaged", "absent", "not_applicable"})
-    jobs["completeness"] = lambda: question("completeness", uniform_sheet_paths, prompts["completeness"],
-        max_tokens=512, reusable=two_scale_observation_fields_consistent)
-    jobs["observation"] = lambda: question("observation", motion_sheet_paths,
-        build_target_blind_source_observation_prompt(motion_focused=True, completion_mode=completion_mode), max_tokens=512,
-        reusable=two_scale_observation_fields_consistent)
-    topology_required = movement_topology_from_contract(specific_contract) is not None
-    if topology_required:
-        jobs["topology"] = lambda: question("topology", [*uniform_sheet_paths, *motion_sheet_paths],
-            build_two_scale_topology_verification_prompt(exercise_name=exercise_name, equipment=equipment,
-                contract=specific_contract) + detail_guidance, max_tokens=768,
-            reusable=lambda p: two_scale_topology_verification_passed(p, contract=specific_contract, equipment=equipment))
-    answers = run_questions(jobs, caption_images)
-    raw_identity, identity = answers["identity"]
-    uniform_raw = [answers[f"uniform-{index}"][0] for index in range(len(uniform_sheet_paths))]
-    uniform_results = [answers[f"uniform-{index}"][1] for index in range(len(uniform_sheet_paths))]
-    motion_raw = [answers[f"motion-{index}"][0] for index in range(len(motion_sheet_paths))]
-    motion_results = [answers[f"motion-{index}"][1] for index in range(len(motion_sheet_paths))]
-    raw_completeness, completeness = answers["completeness"]
-    raw_motion_observation, motion_observation = answers["observation"]
-    raw_topology_validation: str | None = None
-    topology_validation: dict[str, Any] | None = None
-    topology_passed = specific_contract is not None and not topology_required
-    if topology_required:
-        raw_topology_validation, topology_validation = answers["topology"]
-        normalized_topology = normalize_two_scale_topology_positions(
-            topology_validation,
-            required_phase_ids=(
-                [
-                    str(phase["id"])
-                    for phase in (movement_topology_from_contract(specific_contract) or {}).get("phases", [])
-                ]
-                if bool((movement_topology_from_contract(specific_contract) or {}).get("phaseEvidenceHardGate", True))
-                else None
-            ),
-        )
-        if normalized_topology is not None:
-            topology_validation = normalized_topology
-        topology_passed = bool(
-            two_scale_topology_verification_passed(
-                topology_validation,
-                contract=specific_contract,
-                equipment=equipment,
-            )
-        )
-    consistency_prompt = build_two_scale_evidence_consistency_prompt(
-        exercise_name=exercise_name,
-        equipment=equipment,
-        contract=specific_contract,
-        identity=identity,
-        uniform_results=uniform_results,
-        motion_results=motion_results,
-        completeness=completeness,
-        motion_observation=motion_observation,
-        equipment_detail=equipment_detail,
-    )
-    raw_consistency, consistency = call_two_scale_source_gate(
-        caption_images,
-        frame_paths=[],
-        prompt=consistency_prompt,
-        max_tokens=384,
-    )
-    identity_passed = bool(
-        isinstance(identity, dict)
-        and identity.get("verdict") == "match"
-    )
-    uniform_passed = bool(uniform_results) and all(
-        isinstance(result, dict)
-        and result.get("unrelatedActionVisible") is False
-        and result.get("unrelatedTileNumbers") == []
-        for result in uniform_results
-    )
-    motion_votes = [
-        result
-        for result in motion_results
-        if isinstance(result, dict)
-        and result.get("namedEquipmentEngagedStatus") in {"engaged", "not_applicable", "absent"}
-        and isinstance(result.get("targetExerciseActionVisible"), bool)
-    ]
-    motion_positive_votes = sum(
-        result["targetExerciseActionVisible"] is True
-        and result["namedEquipmentEngagedStatus"] in {"engaged", "not_applicable"}
-        for result in motion_votes
-    )
-    motion_negative_votes = sum(
-        result["targetExerciseActionVisible"] is False
-        or result["namedEquipmentEngagedStatus"] == "absent"
-        for result in motion_votes
-    )
-    motion_passed = motion_positive_votes > motion_negative_votes
-    completeness_keys = (
-        "startStateVisible",
-        "actionPhaseVisible",
-        "turningPointVisible",
-        "returnOrFinishVisible",
-        "complete",
-    )
-    completeness_fields_consistent = two_scale_observation_fields_consistent(completeness)
-    completeness_passed = bool(
-        completeness_fields_consistent
-        and isinstance(completeness, dict)
-        and all(completeness.get(key) is True for key in completeness_keys)
-    )
-    blind_required_equipment_observed = two_scale_required_equipment_observed(
-        completeness,
-        motion_observation,
-        equipment=equipment,
-    )
-    equipment_role_requirements = two_scale_equipment_role_requirements(
-        exercise_name, candidate_contract
-    )
-    equipment_quantity_observed, equipment_quantity_unverified = (
-        two_scale_required_equipment_quantity_evidence(
-            equipment_detail, equipment_role_requirements
-        )
-    )
-    target_aware_equipment_support_count = (
-        two_scale_target_aware_equipment_support_count(motion_results)
-    )
-    topology_equipment_match = bool(
-        isinstance(topology_validation, dict)
-        and topology_validation.get("requiredEquipmentMatch") == "match"
-    )
-    corroborated_target_aware_equipment_observed = bool(
-        equipment != "none"
-        and target_aware_equipment_support_count >= 2
-        and topology_equipment_match
-    )
-    required_equipment_observed = bool(
-        equipment == "none"
-        or blind_required_equipment_observed
-        or corroborated_target_aware_equipment_observed
-    ) and equipment_quantity_observed
-    detail_equipment_observed = bool(
-        source_equipment_detail_is_clear(equipment_detail)
-        and equipment_quantity_observed
-        and two_scale_required_equipment_observed(
-            {"visibleEquipment": equipment_detail["heldEquipment"]}, equipment=equipment)
-    )
-    # Detail establishes equipment only. Identity, motion, completeness and topology
-    # still have to pass independently; conflicting detail must be adjudicated.
-    if (
-        detail_equipment_observed
-        and isinstance(consistency, dict)
-        and parse_optional_bool(consistency.get("requiredEquipmentSupported")) is True
-        and consistency.get("corroboratedConflict") is False
-        and consistency.get("corroboratedContradictions") == []
-    ):
-        required_equipment_observed = True
-    consistency_passed = two_scale_evidence_consistency_passed(
-        consistency,
-        equipment=equipment,
-    )
-    consistency_rejection_reasons = two_scale_evidence_consistency_rejection_reasons(
-        consistency,
-        equipment=equipment,
-    )
-    endpoint_contract_validation = validate_source_pose_endpoints_against_contract(
-        source_pose_endpoint_features,
-        specific_contract,
-        phase_metrics=(
-            source_phase_metrics
-            if isinstance(source_phase_metrics, dict)
-            else (
-                {
+    if discrete_action and exercise_motion_action_definition_review_reason(specific_contract) is not None:
+        reason = "two_scale_source_action_definition_unresolved"
+        return {
+            "enabled": True,
+            "passed": False,
+            "reviewStatus": "incomplete",
+            "missingEvidenceReasons": [reason],
+            "rejectionReasons": [reason],
+            "uniformContactSheetPaths": [str(path) for path in uniform_sheet_paths],
+            "motionContactSheetPaths": [str(path) for path in motion_sheet_paths],
+            "exerciseMotionContract": specific_contract,
+            "generatedExerciseMotionContractRawResponse": raw_generated_contract,
+            "exerciseMotionContractError": contract_error,
+            "gates": {
+                "actionDefinition": {
                     "required": True,
-                    "passed": True,
-                    "hasCompleteMajorCycle": True,
-                    "hasSingleMajorCycle": True,
-                    "corroborationSource": "two_scale_semantic_consensus",
-                }
-                if (
-                    identity_passed
-                    and uniform_passed
-                    and motion_passed
-                    and completeness_passed
-                    and required_equipment_observed
-                    and topology_passed
-                )
-                else None
-            )
-        ),
+                    "passed": False,
+                    "status": (specific_contract or {}).get("actionDefinitionStatus", "missing"),
+                    "definingAction": (specific_contract or {}).get("definingAction"),
+                    "requiredPhases": (specific_contract or {}).get("requiredPhases", []),
+                },
+            },
+        }
+    from exercise_motion_pkg.source_evidence import (
+        POLICY_VERSION as EVIDENCE_POLICY_VERSION, aggregate_evidence, evidence_inventory,
+        evidence_prompt, evidence_response_token_budget, evidence_schema, source_requirements,
     )
-    motion_observation_available = bool(
-        two_scale_observation_fields_consistent(motion_observation)
-    )
-    unsupported_precise_reference_gates = [
-        gate_name
-        for gate_name, payload in (
-            ("identity", identity),
-            ("completeness", completeness),
-            ("targetBlindMotionObservation", motion_observation),
-            ("topology", topology_validation),
-        )
-        if two_scale_payload_invents_precise_frame_references(payload)
-    ]
-    rejection_reasons = []
-    if not identity_passed:
-        rejection_reasons.append("two_scale_source_identity_failed")
-        if not isinstance(identity, dict) or identity.get("verdict") not in {"match", "mismatch"}:
-            rejection_reasons.append("two_scale_source_identity_review_incomplete")
-    if not uniform_passed:
-        rejection_reasons.append("two_scale_source_contamination_detected")
-    if not motion_passed:
-        rejection_reasons.append("two_scale_source_motion_not_verified")
-    if not completeness_passed:
-        rejection_reasons.append("two_scale_source_incomplete_movement")
-        if not completeness_fields_consistent:
-            rejection_reasons.append("two_scale_source_completeness_observation_inconsistent")
-    if not required_equipment_observed:
-        rejection_reasons.append("two_scale_source_required_equipment_not_observed")
-    if equipment_quantity_unverified:
-        rejection_reasons.append("two_scale_source_required_equipment_count_unverified")
-    if not motion_observation_available:
-        rejection_reasons.append(
-            "two_scale_source_target_blind_motion_observation_inconsistent"
-            if isinstance(motion_observation, dict) and motion_observation
-            else "two_scale_source_target_blind_motion_observation_missing"
-        )
-    if specific_contract is None:
-        rejection_reasons.append("two_scale_source_specific_contract_missing")
-    elif topology_required and not topology_passed:
-        rejection_reasons.append("two_scale_source_topology_not_verified")
-    if (
-        endpoint_contract_validation.get("available")
-        and not endpoint_contract_validation.get("passed", True)
-    ):
-        rejection_reasons.append("two_scale_source_pose_contract_mismatch")
-    rejection_reasons.extend(consistency_rejection_reasons)
-    rejection_reasons = dedupe_text(rejection_reasons)
-    missing_evidence = missing_validation_evidence_reasons(rejection_reasons)
-    corroborated_negative_motion = bool(
-        motion_negative_votes >= 2
-        and motion_negative_votes > motion_positive_votes
-        and isinstance(completeness, dict)
-        and (completeness.get("actionPhaseVisible") is False or completeness.get("complete") is False)
-    )
-    resolved_missing_evidence = missing_evidence if corroborated_negative_motion else []
-    if corroborated_negative_motion:
-        rejection_reasons = [reason for reason in rejection_reasons if reason not in missing_evidence]
-        missing_evidence = []
+    from exercise_motion_pkg.review_questions import answer_question
     result = {
-        "enabled": True,
-        "passed": not rejection_reasons,
-        "reviewStatus": "incomplete" if missing_evidence else ("rejected" if rejection_reasons else "passed"),
-        "missingEvidenceReasons": missing_evidence,
-        "resolvedMissingEvidenceReasons": resolved_missing_evidence,
-        "originalRejectionReasons": (
-            [*rejection_reasons, *resolved_missing_evidence]
-            if corroborated_negative_motion
-            else []
-        ),
-        "rejectionReasons": rejection_reasons,
+        "enabled": True, "sourceEvidencePolicyVersion": EVIDENCE_POLICY_VERSION,
+        "sourceIntervalSeconds": ([source_interval.start_seconds, source_interval.end_seconds]
+                                  if source_interval is not None else None),
         "uniformContactSheetPaths": [str(path) for path in uniform_sheet_paths],
         "motionContactSheetPaths": [str(path) for path in motion_sheet_paths],
-        "equipmentDetailFramePaths": [str(path) for path in equipment_detail_frames],
         "exerciseMotionContract": specific_contract,
         "generatedExerciseMotionContractRawResponse": raw_generated_contract,
         "exerciseMotionContractError": contract_error,
-        "warningReasons": (
-            ["two_scale_source_unsupported_precise_references"]
-            if unsupported_precise_reference_gates
-            else []
-        ),
-        "unsupportedPreciseReferenceGates": unsupported_precise_reference_gates,
-        "gates": {
-            "targetBlindEquipmentDetail": {
-                "clear": source_equipment_detail_is_clear(equipment_detail),
-                "requiredEquipmentObserved": detail_equipment_observed,
-                "requiredEquipmentQuantityObserved": equipment_quantity_observed,
-                "response": equipment_detail,
-                "rawResponse": raw_equipment_detail,
-            },
-            "identity": {
-                "passed": identity_passed,
-                "response": identity,
-                "rawResponse": raw_identity,
-            },
-            "uniform": {"passed": uniform_passed, "responses": uniform_results, "rawResponses": uniform_raw},
-            "motion": {"passed": motion_passed, "responses": motion_results, "rawResponses": motion_raw},
-            "completeness": {
-                "passed": completeness_passed,
-                "responseFieldsConsistent": completeness_fields_consistent,
-                "requiredEquipmentObserved": required_equipment_observed,
-                "blindRequiredEquipmentObserved": blind_required_equipment_observed,
-                "targetAwareEquipmentSupportCount": target_aware_equipment_support_count,
-                "topologyEquipmentMatch": topology_equipment_match,
-                "corroboratedTargetAwareEquipmentObserved": (
-                    corroborated_target_aware_equipment_observed
-                ),
-                "response": completeness,
-                "rawResponse": raw_completeness,
-            },
-            "targetBlindMotionObservation": {
-                "response": motion_observation,
-                "rawResponse": raw_motion_observation,
-            },
-            "topology": {
-                "required": topology_required,
-                "passed": topology_passed,
-                "response": topology_validation,
-                "rawResponse": raw_topology_validation,
-            },
-            "deterministicPoseEndpoints": endpoint_contract_validation,
-            "evidenceConsistency": {
-                "passed": consistency_passed,
-                "response": consistency,
-                "rawResponse": raw_consistency,
-            },
-        },
     }
+    try:
+        requirements = source_requirements(specific_contract or {},
+            two_scale_equipment_role_requirements(exercise_name, specific_contract))
+        frames = evidence_inventory({"uniform": uniform_sheet_paths, "motion": motion_sheet_paths})
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        result.update({"passed": False, "reviewStatus": "incomplete",
+            "missingEvidenceReasons": ["two_scale_source_structured_evidence_incomplete"],
+            "rejectionReasons": ["two_scale_source_structured_evidence_incomplete"],
+            "error": str(exc)})
+    else:
+        prompt = evidence_prompt(requirements, frames)
+        schema = evidence_schema(requirements, frames)
+        response_token_budget = evidence_response_token_budget(requirements, frames)
+        images = [*uniform_sheet_paths, *motion_sheet_paths]
+        def operation() -> tuple[str, Any]:
+            raw = call_caption_images_json(caption_images, frame_paths=images, prompt=prompt,
+                max_tokens=response_token_budget, disable_reasoning=True, json_response=True,
+                response_schema=schema, temperature=0.0, top_p=1.0, top_k=1)
+            return raw, extract_json_object(raw)
+        settings = getattr(getattr(caption_images, "__self__", None), "settings", None)
+        if settings is not None and source_interval is not None:
+            raw, payload = answer_question(directory=item.candidate_workspace / "source-question-cache",
+                name="structured-evidence", frames=images, prompt=prompt, max_tokens=response_token_budget,
+                operation=operation,
+                reusable=lambda value: aggregate_evidence(value, requirements, frames)["reviewStatus"] != "incomplete",
+                identity={"model": source_review_model_identity(settings),
+                          "policy": SOURCE_REVIEW_QUESTION_CACHE_POLICY_VERSION,
+                          "sourceEvidencePolicyVersion": EVIDENCE_POLICY_VERSION,
+                          "contract": specific_contract,
+                          "window": [source_interval.start_seconds, source_interval.end_seconds]})
+        else:
+            raw, payload = operation()
+        evidence = aggregate_evidence(payload, requirements, frames)
+        endpoint_validation = validate_source_pose_endpoints_against_contract(
+            source_pose_endpoint_features, specific_contract, phase_metrics=source_phase_metrics)
+        reasons = []
+        if evidence["reviewStatus"] == "incomplete":
+            reasons.append("two_scale_source_structured_evidence_incomplete")
+        elif evidence["reviewStatus"] == "rejected":
+            reasons.append("two_scale_source_structured_evidence_contradicted")
+        if endpoint_validation.get("available") and not endpoint_validation.get("passed", True):
+            reasons.append("two_scale_source_pose_contract_mismatch")
+        result.update({"passed": not reasons,
+            "reviewStatus": "incomplete" if evidence["reviewStatus"] == "incomplete" else "rejected" if reasons else "passed",
+            "missingEvidenceReasons": missing_validation_evidence_reasons(reasons),
+            "rejectionReasons": reasons,
+            "requirements": requirements, "frameInventory": frames,
+            "evidenceResponseTokenBudget": response_token_budget,
+            "gates": {"structuredEvidence": {**evidence, "response": payload, "rawResponse": raw},
+                      "deterministicPoseEndpoints": endpoint_validation}})
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "source_evidence_prompt.txt").write_text(prompt, encoding="utf-8")
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "two_scale_source_validation.json").write_text(
-        json.dumps(result, indent=2),
-        encoding="utf-8",
-    )
+        json.dumps(result, indent=2), encoding="utf-8")
     return result
 
 
@@ -10977,11 +10700,13 @@ def authoritative_source_foot_support_evidence(
             # Fresh pixel analysis runs independently of reconstruction, so it
             # initially lacks the measured camera ground plane. Apply that
             # plane before fresh evidence supersedes the grounded cached path.
-            raw_path = item.candidate_workspace / "raw" / "motion.raw.json"
             video_value = source_video_phase_metrics.get("sourceVideoPath")
+            video_path = Path(str(video_value)) if video_value else (
+                item.candidate_workspace / "input" / "selected_segment.mp4"
+            )
+            raw_path = item.candidate_workspace / "raw" / "motion.raw.json"
             pose = source_pose_reference_from_phase_metrics(source_video_phase_metrics)
             if raw_path.is_file() and video_value and isinstance(pose, dict):
-                video_path = Path(str(video_value))
                 raw = loads_reconstruction_metadata(raw_path.read_text(encoding="utf-8"))
                 alignment = raw.get("metadata", {}).get("videoWorldAlignment", {})
                 normal = alignment.get("cameraGroundPlane", {}).get("normal")
@@ -10991,6 +10716,10 @@ def authoritative_source_foot_support_evidence(
                     )
                     # Do not pass parent per-frame depth observations: this
                     # exact video may be a cropped child with different timing.
+            fresh_evidence = _attach_matching_cached_body_support_observation(
+                fresh_evidence, video_path,
+                item.candidate_workspace / "segment_detection" / "body_support",
+            )
             return dict(fresh_evidence), "exact_selected_source_video"
 
     cached_evidence = pre_reconstruction_source_foot_support_evidence(item.candidate_workspace)
@@ -11005,6 +10734,28 @@ def authoritative_source_foot_support_evidence(
     if isinstance(settings_evidence, dict):
         return dict(settings_evidence), "retained_preview_settings"
     return None, None
+
+
+def _attach_matching_cached_body_support_observation(
+    fresh_evidence: dict[str, Any],
+    source_video_path: Path,
+    cache_dir: Path,
+) -> dict[str, Any]:
+    """Carry only source-reviewed contact semantics across a landmark refresh."""
+    if not source_video_path.is_file():
+        return fresh_evidence
+    from .body_support_observation import POLICY_VERSION, observe_body_support
+
+    observed = observe_body_support(source_video_path, None, cache_dir)
+    expected_digest = hashlib.sha256(source_video_path.read_bytes()).hexdigest()
+    if (not isinstance(observed, dict)
+            or observed.get("status") != "observed"
+            or observed.get("policyVersion") != POLICY_VERSION
+            or observed.get("sourceVideoSha256") != expected_digest):
+        return fresh_evidence
+    result = dict(fresh_evidence)
+    result["bodySupportObservation"] = observed
+    return result
 
 
 def source_reconstruction_view_quality_for_review_item(
@@ -13532,10 +13283,11 @@ def source_confirmed_support_stationarity_metrics(
             # Ankle-only evidence is different: the ankle may articulate about
             # the contact patch, so retain that allowance only for an ankle.
             if interval.get("supportKind") == "observed_foot_patch":
-                from .support_geometry import TOLERANCE_METERS
-                interval_range_threshold = min(interval_range_threshold, TOLERANCE_METERS / body_span)
-                interval_endpoint_threshold = min(interval_endpoint_threshold, TOLERANCE_METERS / body_span)
-                support_plane_range_threshold = min(support_plane_range_threshold, TOLERANCE_METERS / body_span)
+                from .support_geometry import observed_foot_patch_stationarity_threshold
+                patch_threshold = observed_foot_patch_stationarity_threshold(body_span)
+                interval_range_threshold = min(interval_range_threshold, patch_threshold)
+                interval_endpoint_threshold = min(interval_endpoint_threshold, patch_threshold)
+                support_plane_range_threshold = min(support_plane_range_threshold, patch_threshold)
             stationary = bool(
                 vertical_range_ratio <= support_plane_range_threshold
                 and (
@@ -16393,7 +16145,10 @@ def compute_kinematic_plausibility_metrics_from_payload(
         if controlled_fit_processing_incomplete(controlled_report):
             processing_reasons.append("controlled_motion_processing_incomplete")
         elif controlled_report.get('reason') == 'source_cycle_preflight_rejected':
-            processing_reasons.append("controlled_motion_cycle_proposal_unavailable")
+            if (controlled_report.get('boundaryMotion') or {}).get('failureOwner') == 'source':
+                reasons.append('source_cycle_boundary_incompatible')
+            else:
+                processing_reasons.append("controlled_motion_cycle_proposal_unavailable")
         elif not can_reuse_controlled_motion(payload):
             controlled_fit_fallback = controlled_motion_fit_raw_fallback(payload)
             if controlled_fit_fallback is None:
@@ -17973,6 +17728,7 @@ def call_caption_images_json(
     request_timeout_seconds: float | None = None,
     disable_reasoning: bool | None = None,
     json_response: bool | None = None,
+    response_schema: dict[str, Any] | None = None,
     temperature: float | None = None,
     top_p: float | None = None,
     top_k: int | None = None,
@@ -17995,6 +17751,8 @@ def call_caption_images_json(
         kwargs["disable_reasoning"] = bool(disable_reasoning)
     if json_response is not None and callable_accepts_keyword(caption_images, "json_response"):
         kwargs["json_response"] = bool(json_response)
+    if response_schema is not None and callable_accepts_keyword(caption_images, "response_schema"):
+        kwargs["response_schema"] = response_schema
     if temperature is not None and callable_accepts_keyword(caption_images, "temperature"):
         kwargs["temperature"] = max(0.0, float(temperature))
     if top_p is not None and callable_accepts_keyword(caption_images, "top_p"):
@@ -18676,6 +18434,9 @@ def mark_parallel_candidate_final_selection_statuses(
         if result.get("status") == "needs_motion_processing":
             result["finalSelectionStatus"] = "processing_incomplete"
             continue
+        if result.get("status") == "needs_definition_review":
+            result["finalSelectionStatus"] = "definition_review_required"
+            continue
         if result.get("status") == "needs_source_review":
             result["finalSelectionStatus"] = "review_incomplete"
             continue
@@ -18746,6 +18507,7 @@ def candidate_result_used_pre_reconstruction_child_source_cut(result: dict[str, 
 
 def missing_validation_evidence_reasons(reasons: Iterable[str]) -> list[str]:
     return sorted(set(reasons).intersection({
+        "two_scale_source_structured_evidence_incomplete",
         "two_scale_source_identity_review_incomplete",
         "two_scale_source_completeness_observation_inconsistent",
         "two_scale_source_specific_contract_missing",
@@ -18753,6 +18515,8 @@ def missing_validation_evidence_reasons(reasons: Iterable[str]) -> list[str]:
         "two_scale_source_target_blind_motion_observation_inconsistent",
         "two_scale_source_evidence_consistency_incomplete",
         "two_scale_source_required_equipment_count_unverified",
+        "two_scale_source_action_definition_unresolved",
+        "two_scale_source_action_phase_evidence_unresolved",
     }))
 
 
@@ -21600,6 +21364,11 @@ def process_ranked_candidates_until_final_selection(
             **source_window_attempt_manifest(ranked_candidate),
         }
         selection_attempts.append(attempt_payload)
+        if result.get("status") == "needs_definition_review":
+            result["finalSelectionStatus"] = "definition_review_required"
+            timings["stopReason"] = "needs_definition_review"
+            timings["terminalOutcome"] = "definition_review_required"
+            break
         if not local_review_items:
             if result.get("status") != "failed":
                 result["finalSelectionStatus"] = "not_reviewable"
@@ -21791,6 +21560,8 @@ def process_ranked_candidates_until_final_selection(
             (local_rejected_best[1].payload or {}).get("acceptanceDecision") or {}
             if local_rejected_best is not None and local_rejected_best[1] is not None else {}
         )
+        if acceptance_decision.get("failure_owner"):
+            result["failureOwner"] = acceptance_decision["failure_owner"]
         missing_evidence = (
             list(acceptance_decision.get("reasons") or ["review_unresolved"])
             if acceptance_decision.get("status") == "needs_manual_review"
@@ -21956,7 +21727,9 @@ def process_ranked_candidates_until_final_selection(
     )
     timings["newCandidateAttemptCount"] = processed_new_candidate_count
     timings["finalOutputRejectionCount"] = final_output_rejection_count
-    if accepted_results or accepted_best is not None:
+    if timings.get("stopReason") == "needs_definition_review":
+        timings["terminalOutcome"] = "definition_review_required"
+    elif accepted_results or accepted_best is not None:
         timings["terminalOutcome"] = "accepted"
     elif timings.get("stopReason") in {
         "exercise_timeout",
@@ -22345,6 +22118,7 @@ def incomplete_controlled_fit_diagnostics(baked_artifacts):
                 for key in (
                     "applied",
                     "reason",
+                    "reviewRequired",
                     "candidateFitBudget",
                     "cycleSelectionAttempts",
                     "elapsedSeconds",
@@ -22795,8 +22569,28 @@ def process_ranked_candidate(
                 )
         record_timing_seconds(result_payload, "reviewItemsSeconds", review_item_started)
         has_review_item = any(item.candidate_workspace == candidate_workspace for item in review_items)
+        controlled_fit = result_payload.get("controlledMotionFit")
         if has_review_item:
             result_payload["status"] = "ready_for_selection"
+        elif (isinstance(controlled_fit, dict)
+                and controlled_fit.get('reason') == 'source_cycle_preflight_rejected'
+                and (controlled_fit.get('boundaryMotion') or {}).get('failureOwner') == 'source'):
+            result_payload.update(status='rejected_source_validation',
+                                  failureStage='source_cycle_selection', failureOwner='source')
+            result_payload['failures'].append({
+                'reason': 'source_cycle_boundary_incompatible', 'failureOwner': 'source',
+                'evidence': controlled_fit['boundaryMotion'],
+            })
+        elif isinstance(controlled_fit, dict) and controlled_fit.get("reviewRequired") is True:
+            result_payload.update(
+                status="needs_source_review",
+                reviewRequired=True,
+                failureOwner="review",
+            )
+            result_payload["failures"].append({
+                "reason": str(controlled_fit.get("reason") or "source_phase_coverage_unresolved"),
+                "failureOwner": "review",
+            })
         elif processing_incomplete or any("controlled_motion_processing_incomplete" in item.get("rejectionReasons", [])
                  for item in result_payload["rejectedSourceClips"]):
             result_payload["status"] = "needs_motion_processing"
@@ -22808,6 +22602,7 @@ def process_ranked_candidate(
         elif any(item.get("reason") == "baked_motion_too_static" for item in result_payload["rejectedSourceClips"]):
             result_payload["status"] = "skipped_no_usable_baked_motion"
             result_payload["failureStage"] = "baked_motion_validation"
+            result_payload["failureOwner"] = "motion_output"
             result_payload["failures"].append({
                 "reason": "baked_motion_too_static",
                 "rejectionReasons": ["baked_motion_too_static"],
@@ -22829,6 +22624,7 @@ def process_ranked_candidate(
                 # "skipped_no_baked_clip" umbrella used when no review clip remains.
                 result_payload["status"] = "rejected_baked_motion_validation"
                 result_payload["failureStage"] = "baked_motion_validation"
+                result_payload["failureOwner"] = "motion_output"
                 result_payload["failures"].append({
                     "reason": "baked_motion_validation_failed",
                     "rejectionReasons": rejection_codes,
@@ -22840,18 +22636,34 @@ def process_ranked_candidate(
         record_timing_seconds(result_payload, "totalSeconds", candidate_started)
         write_candidate_bake_manifest(candidate_workspace, result_payload)
         return result_payload
+    except ExerciseDefinitionReviewRequired as exc:
+        result_payload.update(
+            status="needs_definition_review",
+            reviewRequired=True,
+            failureOwner="definition",
+            failureStage="exercise_definition",
+            exerciseMotionContract=exc.contract,
+        )
+        result_payload["failures"].append({"reason": exc.reason, "failureOwner": "definition"})
+        record_timing_seconds(result_payload, "totalSeconds", candidate_started)
+        write_candidate_bake_manifest(candidate_workspace, result_payload)
+        return result_payload
     except SourceCandidateRejected as exc:
-        needs_review = bool({"source_cut_boundary_review_required", "source_cut_review_required"}.intersection(exc.reason_tags))
-        result_payload["status"] = "needs_source_review" if needs_review else "skipped_pre_reconstruction_source_validation"
-        result_payload["reviewRequired"] = needs_review
         failure: dict[str, Any] = {
-            "reason": "source_review_required" if needs_review else "pre_reconstruction_source_validation_rejected",
+            "reason": "pre_reconstruction_source_validation_rejected",
             "message": str(exc),
         }
         if exc.reason_tags:
             failure["reasonTags"] = exc.reason_tags
         if exc.evidence:
             failure["evidence"] = exc.evidence
+        needs_review = bool(
+            {"source_cut_boundary_review_required", "source_cut_review_required"}.intersection(exc.reason_tags)
+            or candidate_result_has_incomplete_source_validation({"failures": [failure]})
+        )
+        result_payload["status"] = "needs_source_review" if needs_review else "skipped_pre_reconstruction_source_validation"
+        result_payload["reviewRequired"] = needs_review
+        failure["reason"] = "source_review_required" if needs_review else "pre_reconstruction_source_validation_rejected"
         result_payload["failures"].append(failure)
         record_timing_seconds(result_payload, "totalSeconds", candidate_started)
         write_candidate_bake_manifest(candidate_workspace, result_payload)
@@ -23091,6 +22903,10 @@ def generate_candidate_motion(
     else:
         # Staged waves already own source preparation and independent review
         # before releasing their source model and entering reconstruction.
+        if request.pre_reconstruction_source_validation and request.exercise_motion_contract_enabled:
+            require_current_source_contract(
+                exercise_motion_contract_from_candidate(ranked_candidate.candidate), ranked_candidate,
+            )
         video_path = prepared_video_path.expanduser().resolve()
         candidate_workspace = candidate_workspace.resolve()
         if not path_is_relative_to(video_path, candidate_workspace):
@@ -24043,6 +23859,9 @@ def classify_support_dominance_for_review_loop(
 
 
 def require_current_source_contract(contract: dict[str, Any] | None, candidate: RankedCandidate) -> None:
+    definition_issue = exercise_motion_action_definition_review_reason(contract)
+    if definition_issue is not None:
+        raise ExerciseDefinitionReviewRequired(definition_issue, contract)
     exercise = ExerciseEntry(exercise_id=candidate.exercise_id,
         name=candidate.exercise_name, slug=candidate.exercise_slug)
     if (
@@ -24064,6 +23883,15 @@ def prepare_candidate_input_video(
     clef_exclusive_runner: Callable[[Callable[[], Any]], Any] | None = None,
 ) -> Path:
     candidate_workspace = request.workspace / ranked_candidate.workspace_slug
+    pre_reconstruction_validation_enabled = request.pre_reconstruction_source_validation and source_cut_caption_images is not None
+    pre_reconstruction_caption_images = source_cut_caption_images if request.pre_reconstruction_source_validation else None
+    exercise_motion_contract = (
+        exercise_motion_contract_resolver(ranked_candidate)
+        if pre_reconstruction_caption_images is not None and exercise_motion_contract_resolver is not None
+        else exercise_motion_contract_from_candidate(ranked_candidate.candidate)
+    )
+    if pre_reconstruction_validation_enabled and request.exercise_motion_contract_enabled:
+        require_current_source_contract(exercise_motion_contract, ranked_candidate)
     source_dir = candidate_workspace / "source"
     source_video_path = copy_or_download_candidate_source(
         ranked_candidate,
@@ -24074,8 +23902,6 @@ def prepare_candidate_input_video(
     )
     cached_selected_segment = candidate_workspace / "input" / "selected_segment.mp4"
     cached_segment_selection = candidate_workspace / "segment_detection" / "segment_selection.json"
-    pre_reconstruction_validation_enabled = request.pre_reconstruction_source_validation and source_cut_caption_images is not None
-    pre_reconstruction_caption_images = source_cut_caption_images if request.pre_reconstruction_source_validation else None
     if (
         request.reuse_reconstruction_cache
         and cached_selected_segment.exists()
@@ -24086,6 +23912,7 @@ def prepare_candidate_input_video(
             exercise_motion_contract_enabled=request.exercise_motion_contract_enabled,
             exercise=ExerciseEntry(exercise_id=ranked_candidate.exercise_id,
                 name=ranked_candidate.exercise_name, slug=ranked_candidate.exercise_slug),
+            expected_contract=exercise_motion_contract,
         )
     ):
         cached_exercise_motion_contract = exercise_motion_contract_from_segment_selection(
@@ -24125,13 +23952,6 @@ def prepare_candidate_input_video(
                 stale_input_path.unlink(missing_ok=True)
             except OSError:
                 pass
-    exercise_motion_contract = (
-        exercise_motion_contract_resolver(ranked_candidate)
-        if pre_reconstruction_caption_images is not None and exercise_motion_contract_resolver is not None
-        else None
-    )
-    if pre_reconstruction_validation_enabled and request.exercise_motion_contract_enabled:
-        require_current_source_contract(exercise_motion_contract, ranked_candidate)
     source_chunk_hint = ranked_candidate.source_chunk_hint
     use_parent_source_window_fallback = (
         parse_optional_bool(ranked_candidate.candidate.get("sourceWindowParentFallback")) is True
@@ -24505,6 +24325,7 @@ def cached_source_selection_matches_validation_mode(
     pre_reconstruction_source_validation: bool,
     exercise_motion_contract_enabled: bool,
     exercise: ExerciseEntry | None = None,
+    expected_contract: dict[str, Any] | None = None,
 ) -> bool:
     if not pre_reconstruction_source_validation:
         return True
@@ -24529,6 +24350,11 @@ def cached_source_selection_matches_validation_mode(
             not isinstance(contract, dict)
             or not exercise_motion_contract_is_usable(contract, exercise=exercise)
             or exercise_motion_contract_uses_candidate_evidence(contract)
+        ):
+            return False
+        if expected_contract is not None and (
+            exercise_motion_contract_prompt_sha256(contract)
+            != exercise_motion_contract_prompt_sha256(expected_contract)
         ):
             return False
     exact_validation = payload.get("exactSourcePhaseValidation")
@@ -24762,6 +24588,8 @@ SOURCE_CUT_SCORECARD_COMPLETENESS_ONLY_REJECT_REASONS = frozenset((
 SOURCE_CUT_SCORECARD_LOW_CONFIDENCE_REJECT_REASONS = frozenset((
     "source_cut_scorecard_reject_low_confidence",
     "source_cut_low_confidence",
+    "source_cut_scorecard_action_phase_evidence_unresolved",
+    "source_cut_action_definition_unresolved",
 ))
 
 
@@ -25168,6 +24996,11 @@ def exact_source_phase_validation_rejection_reasons(
     if bool(validation.get("required")) and not phase_is_complete:
         if phase_reason in incomplete_phase_reasons or not phase_is_unresolved:
             reasons.append("source_cut_incomplete_repetition_phase")
+    support_readiness = validation.get("sourceBodySupportReadiness")
+    if (isinstance(support_readiness, dict)
+            and support_readiness.get("required") is True
+            and support_readiness.get("ready") is False):
+        reasons.append("source_cut_supported_body_stationarity_unresolved")
     reasons.extend(
         str(reason)
         for reason in validation.get("rejectionReasons") or []
@@ -25450,6 +25283,86 @@ def source_cut_authorized_parent_for_candidate(
     return min(containing, key=lambda entry: entry[0])[1] if containing else None
 
 
+def source_cut_child_timing_coverage(
+    ranking: LoopRanking, candidate: dict[str, Any],
+) -> dict[str, Any]:
+    """A derived source cut must retain its explicitly reviewed parent's evidence."""
+    parent_id = next((normalize_source_cut_candidate_id(candidate.get(key))
+                      for key in ('exactCycleRefinementParentId', 'exactContractTrimParentId',
+                                  'exactBoundaryExpansionParentId')
+                      if candidate.get(key)), None)
+    if not parent_id and isinstance(candidate.get('chunking'), dict):
+        parent_id = normalize_source_cut_candidate_id(candidate['chunking'].get('parentCandidateId'))
+    if not parent_id:
+        return {'required': False, 'eligible': True}
+    payload = ranking.payload if isinstance(ranking.payload, dict) else {}
+    parent = next((row for row in payload.get('sourceCutCandidates', [])
+                   if isinstance(row, dict)
+                   and normalize_source_cut_candidate_id(row.get('candidateId')) == parent_id), None)
+    rows = [*(payload.get('sourceCutScorecardCandidates') or []), payload.get('selectedScorecard')]
+    scorecard = next((row for row in rows if isinstance(row, dict)
+                      and normalize_source_cut_candidate_id(row.get('id')) == parent_id), None)
+    unresolved = {'required': True, 'eligible': False, 'parentCandidateId': parent_id,
+                  'reason': 'parent_timing_evidence_unresolved'}
+    if parent is None or scorecard is None:
+        return unresolved
+    parent_start = parse_optional_float(parent.get('startSeconds'))
+    parent_end = parse_optional_float(parent.get('endSeconds'))
+    start = parse_optional_float(candidate.get('startSeconds'))
+    end = parse_optional_float(candidate.get('endSeconds'))
+    if None in (parent_start, parent_end, start, end) or not parent_start <= start < end <= parent_end:
+        return unresolved
+    topology = scorecard.get('movementTopologyEvidence')
+    phase = topology.get('phaseTimingEvidence') if isinstance(topology, dict) else None
+    if not isinstance(phase, dict) or phase.get('candidateId') != parent_id:
+        return unresolved
+    window = phase.get('candidateWindowSourceSeconds')
+    if not isinstance(window, dict):
+        return unresolved
+    absolute_start = parse_optional_float(window.get('start'))
+    absolute_end = parse_optional_float(window.get('end'))
+    if (absolute_start is None or absolute_end is None
+            or abs((absolute_end - absolute_start) - (parent_end - parent_start)) > .001):
+        return unresolved
+    offset = absolute_start - parent_start
+    from .source_evidence import evidence_inventory, temporal_evidence_covers_candidate
+    try:
+        inventory = evidence_inventory({parent_id: [Path(path) for path in parent.get('framePaths', [])]})
+    except (OSError, ValueError, KeyError, TypeError):
+        return unresolved
+    frames = {frame['id']: frame for frame in inventory}
+    evidence = {'phases': phase}
+    equipment = scorecard.get('equipmentTimingEvidence')
+    if str(scorecard.get('requiredEquipment') or 'none').lower() != 'none':
+        if not isinstance(equipment, dict):
+            return unresolved
+        evidence['equipment'] = equipment
+    coverage = {}
+    for kind, timing in evidence.items():
+        if timing.get('candidateId') != parent_id:
+            return unresolved
+        bins = timing.get('sampleBinsById')
+        if not isinstance(bins, dict):
+            return unresolved
+        for row in bins.values():
+            if not isinstance(row, dict) or not isinstance(row.get('sampleBins'), list):
+                return unresolved
+            for sample in row['sampleBins']:
+                if not isinstance(sample, dict):
+                    return unresolved
+                frame = frames.get(sample.get('frameId'))
+                timestamp = parse_optional_float(sample.get('sourceTimestampSeconds'))
+                if (frame is None or sample.get('sheetSha256') != frame['sheetSha256']
+                        or timestamp is None or abs(timestamp - frame['timestampSeconds'] - offset) > .001):
+                    return unresolved
+        coverage[kind] = temporal_evidence_covers_candidate(
+            timing, start_seconds=start + offset, end_seconds=end + offset)
+    eligible = all(item['eligible'] for item in coverage.values())
+    return {'required': True, 'eligible': eligible, 'parentCandidateId': parent_id,
+            'reason': None if eligible else 'child_does_not_preserve_reviewed_evidence',
+            'coverage': coverage}
+
+
 def source_cut_return_phase_expansion_candidates(
     candidate: dict[str, Any],
     validation: dict[str, Any],
@@ -25664,6 +25577,7 @@ def select_exact_pose_confirmed_source_cut(
     candidate_queue = list(candidates)
     duplicate_window_count = 0
     parent_fallback_enqueued = False
+    child_timing_skips: list[dict[str, Any]] = []
     while True:
         # Repair arm for fragmented scorecard windows: when every fragment
         # failed confirmation, give the complete parent window one exact-
@@ -25710,6 +25624,10 @@ def select_exact_pose_confirmed_source_cut(
         if not candidate_queue or len(attempts) >= SOURCE_CUT_MAX_CONFIRMATION_ATTEMPTS:
             break
         candidate = candidate_queue.pop(0)
+        timing_coverage = source_cut_child_timing_coverage(ranking, candidate)
+        if not timing_coverage['eligible']:
+            child_timing_skips.append({'candidateId': candidate.get('candidateId'), **timing_coverage})
+            continue
         if source_cut_repeats_failed_window(candidate, attempts):
             duplicate_window_count += 1
             continue
@@ -25963,6 +25881,7 @@ def select_exact_pose_confirmed_source_cut(
             ),
             "sourceCutDeterministicConfirmationAttempts": attempts,
             "sourceCutDuplicateConfirmationWindowCount": duplicate_window_count,
+            "sourceCutChildTimingCoverageSkips": child_timing_skips,
             "sourceCutDeterministicConfirmationPassed": selected_candidate is not None,
         }
     )
@@ -25980,7 +25899,8 @@ def select_exact_pose_confirmed_source_cut(
                 score=0.0,
                 model_score=0.0,
                 reasons=dedupe_text(
-                    [*ranking.reasons, "source_cut_deterministic_confirmation_failed"]
+                    [*ranking.reasons, "source_cut_deterministic_confirmation_failed",
+                     *(["source_cut_review_required"] if child_timing_skips else [])]
                 ),
                 payload=payload,
             ),
@@ -26367,6 +26287,9 @@ def choose_pre_reconstruction_source_cut_or_reject(
         exercise_motion_contract=exercise_motion_contract,
         source_pose_prefilter_payload=source_pose_prefilter_payload,
         source_pose_offset_seconds=detection_source_offset_seconds,
+        shared_pose_cache_dir=(
+            candidate_workspace.parent / "source-review-cache" / "native-boundary-pose"
+        ),
         max_vlm_workers=max_vlm_workers,
         request_timeout_seconds=request_timeout_seconds,
         visual_decision_backend=visual_decision_backend,
@@ -27019,6 +26942,11 @@ def update_pre_reconstruction_exact_phase_validation_manifest(
 def exact_source_validation_effectively_passed(validation: dict[str, Any]) -> bool:
     if not validation.get("requiredRegionObservations", {}).get("passed", True):
         return False
+    support_readiness = validation.get("sourceBodySupportReadiness")
+    if (isinstance(support_readiness, dict)
+            and support_readiness.get("required") is True
+            and support_readiness.get("ready") is False):
+        return False
     source_pose_audit = validation.get("sourcePoseEvidenceAudit")
     if (
         isinstance(source_pose_audit, dict)
@@ -27539,6 +27467,11 @@ def baked_source_support_evidence(
                 for row in records:
                     if not isinstance(row, dict):
                         continue
+                    if row.get("supportKind") == "observed_foot_patch":
+                        # Patch intervals remain normalized to native patch rows;
+                        # the shared source-clock mapper projects them to this cut.
+                        clipped.append(row)
+                        continue
                     contact_start = parse_optional_float(row.get("startRatio"))
                     contact_end = parse_optional_float(row.get("endRatio"))
                     if contact_start is None:
@@ -27568,21 +27501,13 @@ def baked_source_support_evidence(
                 for key, value in list(node.items()):
                     if key in {"contacts", "supportContacts", "contactIntervals", "footContactCandidates"} and isinstance(value, list):
                         node[key] = rebase_contacts(value)
+                    elif key == "footPatchEvidence":
+                        # Its states, rays, heel rows, sourceTimesSec and native
+                        # contact ratios form one immutable observation track.
+                        continue
                     elif isinstance(value, dict):
                         rebase(value)
             rebase(evidence)
-            patch_feet = (evidence.get("footPatchEvidence") or {}).get("feet") or {}
-            for foot in patch_feet.values():
-                states = foot.get("states") if isinstance(foot, dict) else None
-                if not isinstance(states, list) or not states:
-                    continue
-                state_denominator = max(1, len(states) - 1)
-                first_state = max(0, math.floor(first_frame * state_denominator / (int(count) - 1)))
-                last_state = min(
-                    len(states) - 1,
-                    math.ceil(last_frame * state_denominator / (int(count) - 1)),
-                )
-                foot["states"] = states[first_state:last_state + 1]
     return evidence
 
 
@@ -28166,6 +28091,7 @@ def bake_preview_loops_with_playwright(
                               Path(__file__).with_name("structural_refinement.py"),
                               Path(__file__).with_name("foot_kinematics.py"),
                               Path(__file__).with_name("contact_constraints.py"),
+                              Path(__file__).with_name("contact_pinning.py"),
                               Path(__file__).with_name("foot_contact_observation.py"),
                               Path(__file__).with_name("body_support_observation.py"),
                               Path(__file__).with_name("source_support_tracking.py"),
@@ -28178,11 +28104,16 @@ def bake_preview_loops_with_playwright(
                               Path(__file__).with_name("whole_body_repair.py"),
                               Path(__file__).with_name("sequence_stabilization.py"),
                               Path(__file__).with_name("controlled_motion.py"),
+                              Path(__file__).with_name("contact_heel_pitch.py"),
+                              Path(__file__).with_name("contact_heel_repair.py"),
+                              Path(__file__).with_name("contact_interpolation.py"),
+                              Path(__file__).with_name("joint_plant_initialization.py"),
                               Path(__file__).with_name("fit_runtime.py"),
                               Path(__file__).with_name("equipment_constraints.py"),
                               Path(__file__).with_name("motion_placement.py"),
                               Path(__file__).with_name("scene_placement.py"),
                               Path(__file__).with_name("rig_playback.py"),
+                              Path(__file__).with_name("foot_geometry.py"),
                               Path(__file__).with_name("rig_interpolation.py"),
                               Path(__file__).with_name("loop_cycles.py"),
                               Path(__file__).with_name("loop_seam.py"),
@@ -29164,9 +29095,23 @@ def _bake_preview_loops_with_playwright_uncached(
                     stop_after_incomplete_fit = True
                     if not support_repair_possible:
                         break
+                support_repair_required = False
+                if (
+                    support_repair_possible
+                    and not rank_preview_variants
+                    and export_payload.get("controlledMotionFit")
+                    and not (stop_after_incomplete_fit and support_repair_possible)
+                ):
+                    support_repair_required = not bool(
+                        source_confirmed_support_stationarity_metrics(
+                            export_payload,
+                            artifact_source_support_evidence,
+                        ).get("passed", True)
+                    )
                 if (not rank_preview_variants
                         and export_payload.get('controlledMotionFit')
-                        and not (stop_after_incomplete_fit and support_repair_possible)):
+                        and not (stop_after_incomplete_fit and support_repair_possible)
+                        and not support_repair_required):
                     # The unified fit already tried its bounded source cycles
                     # against the available evidence. Renderer locks add no evidence
                     # to either a valid result or an unresolved fit. Preserve
@@ -29325,9 +29270,16 @@ def _bake_preview_loops_with_playwright_uncached(
                             corrected_payload,
                             contract=exercise_motion_contract,
                             selection_class=eligible_loop.artifact_class,
-                            selection_evidence=lineage_evidence,
+                            selection_evidence=corrected_contact_selection_lineage(
+                                parent_selection_evidence=lineage_evidence,
+                                movement_payload=corrected_payload,
+                                selection_class=eligible_loop.artifact_class,
+                                source_parent_payload=lineage_parent_payload,
+                            ) or lineage_evidence,
                             source_parent_payload=lineage_parent_payload,
                         )
+                        if corrected_artifact_state.get("lineageComplete") is True:
+                            lineage_evidence = corrected_artifact_state["selectionEvidence"]
                         if (
                             preserves_loop_continuity
                             and eligible_loop.artifact_class == FULL_CLIP_BAKE
@@ -29472,9 +29424,106 @@ def _bake_preview_loops_with_playwright_uncached(
     return artifacts
 
 
+def source_phase_reference_intervals(source_pose, contract, parent_phase):
+    """Return validated source intervals that each contain one observed execution."""
+    if not isinstance(parent_phase, dict) or parent_phase.get("required") is not True:
+        return []
+    if parent_phase.get("hasSingleMajorCycle") is True:
+        if parent_phase.get("passed") is not True:
+            return []
+        return [{"startFrame": 0, "stopFrameExclusive": len(source_pose.get("frames", [])),
+                 "metrics": parent_phase, "source": "approved_single_repetition_phase"}]
+    if parent_phase.get("hasCompleteMajorCycle") is not True:
+        return []
+    frames = source_pose.get("frames")
+    if not isinstance(frames, list) or not frames:
+        return []
+    ranking = {"exerciseMotionContract": contract} if contract else {}
+    motion_contract = target_motion_contract_from_ranking_payload(ranking)
+    spec = observable_motion_spec_for_contract(motion_contract)
+    if spec is None:
+        return []
+    body_height = body_height_from_payload_frames(frames)
+    dominant = dominant_observable_motion_phase_track(frames, spec=spec, body_span=body_height)
+    if not isinstance(dominant, dict) or len(dominant.get("values", [])) != len(frames):
+        return []
+    evidence = phase_track_signal_evidence(dominant["values"])
+    if evidence.get("resolved") is not True:
+        return []
+    runs = major_phase_runs(evidence["smoothedValues"])
+    references = []
+    for index in range(len(runs) - 2):
+        first, middle, last = runs[index:index + 3]
+        if first[0] != last[0] or middle[0] == first[0]:
+            continue
+        start, stop = int(first[1]), int(last[2]) + 1
+        if stop - start < SOURCE_CUT_POSE_PHASE_COMPLETENESS_MIN_FRAMES:
+            continue
+        scoped = {**source_pose, "frames": frames[start:stop]}
+        metrics = full_repetition_phase_completeness_metrics_from_source_pose_payload(
+            scoped, exercise_name="", ranking_payload=ranking)
+        if (metrics.get("required") is True and metrics.get("passed") is True
+                and metrics.get("hasSingleMajorCycle") is True):
+            references.append({"startFrame": start, "stopFrameExclusive": stop,
+                               "metrics": metrics, "source": "validated_source_execution"})
+    return references
+
+
+def source_phase_reference_for_interval(references, candidate_source, parent_source, candidate_metrics):
+    """Match a proposal to a source execution by retained timestamps and phase signal."""
+    if not isinstance(candidate_metrics, dict) or not candidate_metrics.get("required"):
+        return None, None
+    if candidate_metrics.get("passed") is not True or candidate_metrics.get("hasSingleMajorCycle") is not True:
+        return None, None
+    frames = candidate_source.get("frames") if isinstance(candidate_source, dict) else None
+    parent_frames = parent_source.get("frames") if isinstance(parent_source, dict) else None
+    if not isinstance(frames, list) or not frames or not isinstance(parent_frames, list):
+        return None, None
+    candidate_times = [parse_optional_float(frame.get("sourceTimeSec")) for frame in frames
+                       if isinstance(frame, dict)]
+    if not candidate_times or any(value is None for value in candidate_times):
+        return None, None
+    candidate_start, candidate_end = min(candidate_times), max(candidate_times)
+    candidate_duration = max(candidate_end - candidate_start, 1e-9)
+    parent_times = [parse_optional_float(frame.get("sourceTimeSec")) for frame in parent_frames]
+    if not parent_times or any(value is None for value in parent_times):
+        return None, None
+    matches = []
+    for reference in references:
+        start_index, stop_index = reference["startFrame"], reference["stopFrameExclusive"]
+        interval_times = [value for value in parent_times[start_index:stop_index] if value is not None]
+        metrics = reference.get("metrics")
+        if not interval_times or not isinstance(metrics, dict):
+            continue
+        start, end = min(interval_times), max(interval_times)
+        overlap = max(0.0, min(candidate_end, end) - max(candidate_start, start))
+        interval_duration = max(end - start, 1e-9)
+        overlap_ratio = min(overlap / candidate_duration, overlap / interval_duration)
+        if overlap_ratio < MOVEMENT_CUT_MIN_SOURCE_MOTION_COVERAGE_RATIO:
+            continue
+        capture = comparable_phase_motion_capture_ratio(candidate_metrics, metrics)
+        if capture is not None:
+            matches.append((overlap_ratio, capture, reference))
+    if len(matches) != 1:
+        return None, None
+    overlap_ratio, capture, reference = matches[0]
+    start_index, stop_index = reference["startFrame"], reference["stopFrameExclusive"]
+    interval_times = [value for value in parent_times[start_index:stop_index] if value is not None]
+    return reference, {
+        "sourceExecutionInterval": {
+            "startFrame": start_index,
+            "stopFrameExclusive": stop_index,
+            "startTimeSec": min(interval_times),
+            "endTimeSec": max(interval_times),
+        },
+        "sourceExecutionOverlapRatio": overlap_ratio,
+        "phaseMotionCaptureRatio": capture,
+    }
+
+
 def source_validated_cycle_proposals(payload, source_pose, contract):
     """Apply final phase semantics to observed proposals before trajectory fitting."""
-    from .loop_cycles import rank_loop_cycles, slice_loop_cycle
+    from .loop_cycles import cycle_boundary_motion_metrics, rank_loop_cycles, slice_loop_cycle
     accepted, diagnostics = [], []
     ranking = {"exerciseMotionContract": contract} if contract else {}
     proposal_diagnostics = {}
@@ -29490,26 +29539,20 @@ def source_validated_cycle_proposals(payload, source_pose, contract):
     if not choices:
         diagnostics.append({'passed': False, 'reason': 'no_feasible_observed_cycle',
                             'proposalDiagnostics': proposal_diagnostics})
-    for choice in choices:
-        candidate = slice_loop_cycle(payload, choice)
-        observed = source_pose_reference_for_motion(source_pose, candidate)
-        source_phase = full_repetition_phase_completeness_metrics_from_source_pose_payload(
-            observed, exercise_name="", ranking_payload=ranking)
-        output_phase = full_repetition_phase_completeness_metrics_from_payload(
-            candidate, exercise_name="", ranking_payload=ranking)
-        passed = bool(source_phase.get("passed")) and bool(output_phase.get("passed"))
-        diagnostics.append({"selection": choice, "passed": passed,
-                            "sourcePhase": source_phase, "outputPhase": output_phase})
-        if not passed:
-            continue
-        accepted.append(choice)
-        if len(accepted) == 3:
-            break
-    if not accepted and spec is not None and len(payload.get('frames', [])) >= 7:
-        # A source-complete selected interval can be excluded by geometric
-        # ranking when its return point is the final observed frame. Offer the
-        # whole interval once as a repair proposal, but only when exact source
-        # phase and the observed output both independently show one full cycle.
+    parent_source = source_pose_reference_for_motion(source_pose, payload)
+    parent_phase = payload.get("parentFullRepetitionPhaseCompletenessMetrics")
+    if not isinstance(parent_phase, dict):
+        parent_phase = full_repetition_phase_completeness_metrics_from_source_pose_payload(
+            parent_source, exercise_name="", ranking_payload=ranking)
+    parent_is_single_complete = bool(
+        parent_phase.get("required") is True
+        and parent_phase.get("passed") is True
+        and parent_phase.get("hasSingleMajorCycle") is True
+    )
+    source_references = source_phase_reference_intervals(parent_source, contract, parent_phase)
+    full_interval = None
+    full_interval_metrics = None
+    if spec is not None and len(payload.get('frames', [])) >= 7:
         full_interval = {
             'startFrame': 0,
             'stopFrameExclusive': len(payload['frames']),
@@ -29523,17 +29566,31 @@ def source_validated_cycle_proposals(payload, source_pose, contract):
         except (KeyError, TypeError, ValueError):
             candidate = None
         if candidate is not None:
+            boundary_motion = cycle_boundary_motion_metrics(payload, full_interval)
             observed = source_pose_reference_for_motion(source_pose, candidate)
             source_phase = full_repetition_phase_completeness_metrics_from_source_pose_payload(
                 observed, exercise_name="", ranking_payload=ranking)
             output_phase = full_repetition_phase_completeness_metrics_from_payload(
                 candidate, exercise_name="", ranking_payload=ranking)
-            if (
-                source_phase.get('required') is True
+            passed = bool(
+                boundary_motion['passed']
+                and source_phase.get('required') is True
                 and source_phase.get('passed') is True
+                and source_phase.get('hasSingleMajorCycle') is True
                 and output_phase.get('required') is True
                 and output_phase.get('passed') is True
-            ):
+                and output_phase.get('hasSingleMajorCycle') is True
+            )
+            full_interval_metrics = {
+                'selection': full_interval,
+                'passed': passed,
+                'sourcePhase': source_phase,
+                'outputPhase': output_phase,
+                'boundaryMotion': boundary_motion,
+                'selectionSource': 'whole_interval_source_and_output_phase',
+            }
+            diagnostics.append(full_interval_metrics)
+            if passed:
                 full_interval['endpointGapMeters'] = max(
                     (
                         math.dist(
@@ -29548,14 +29605,56 @@ def source_validated_cycle_proposals(payload, source_pose, contract):
                     ),
                     default=0.0,
                 )
-                diagnostics.append({
-                    'selection': full_interval,
-                    'passed': True,
-                    'sourcePhase': source_phase,
-                    'outputPhase': output_phase,
-                    'selectionSource': 'whole_interval_source_and_output_phase_fallback',
-                })
                 accepted.append(full_interval)
+    for choice in choices:
+        if full_interval is not None and (
+            int(choice.get('startFrame', -1)) == 0
+            and int(choice.get('stopFrameExclusive', -1)) == len(payload['frames'])
+            and full_interval_metrics is not None
+            and full_interval_metrics.get('passed') is True
+        ):
+            continue
+        candidate = slice_loop_cycle(payload, choice)
+        observed = source_pose_reference_for_motion(source_pose, candidate)
+        source_phase = full_repetition_phase_completeness_metrics_from_source_pose_payload(
+            observed, exercise_name="", ranking_payload=ranking)
+        output_phase = full_repetition_phase_completeness_metrics_from_payload(
+            candidate, exercise_name="", ranking_payload=ranking)
+        reference_details = None
+        if parent_is_single_complete:
+            parent_capture = comparable_phase_motion_capture_ratio(source_phase, parent_phase)
+            parent_capture_source = "approved_single_repetition_phase"
+        else:
+            source_reference, reference_details = source_phase_reference_for_interval(
+                source_references, observed, parent_source, source_phase)
+            parent_capture = (
+                reference_details.get("phaseMotionCaptureRatio")
+                if isinstance(reference_details, dict) else None
+            )
+            parent_capture_source = (
+                source_reference.get("source") if isinstance(source_reference, dict) else None
+            )
+        parent_capture_passed = bool(
+            parent_capture is not None
+            and parent_capture >= MOVEMENT_CUT_MIN_SOURCE_MOTION_COVERAGE_RATIO
+        )
+        passed = (bool(source_phase.get("passed")) and source_phase.get("hasSingleMajorCycle") is True
+                  and bool(output_phase.get("passed")) and output_phase.get("hasSingleMajorCycle") is True
+                  and parent_capture_passed)
+        diagnostics.append({"selection": choice, "passed": passed,
+                            "sourcePhase": source_phase, "outputPhase": output_phase,
+                            "parentSourcePhase": parent_phase,
+                            "parentPhaseCaptureRatio": parent_capture,
+                            "parentPhaseCapturePassed": parent_capture_passed,
+                            "parentPhaseCaptureSource": parent_capture_source,
+                            "sourceExecutionReference": reference_details,
+                            "needsReview": not parent_capture_passed,
+                            "reason": None if parent_capture_passed else "parent_phase_coverage_unresolved"})
+        if not passed:
+            continue
+        accepted.append(choice)
+        if len(accepted) >= 3:
+            break
     return accepted, diagnostics
 
 
@@ -31979,6 +32078,15 @@ def apply_source_contact_sequence_correction(
     pinning_intervals = [
         {
             **interval,
+            # The final stationarity gate uses a millimeter-scale tolerance
+            # for a source-observed shoe patch, while legacy ankle proxies
+            # retain their wider articulation allowance. Pin each interval at
+            # the same threshold the gate will apply to that evidence type.
+            "slideThresholdRatio": (
+                None
+                if interval.get("supportKind") == "observed_foot_patch"
+                else SOURCE_POSE_CONTACT_LOCAL_RANGE_RATIO_THRESHOLD
+            ),
             # Only observed ground contacts may be anchored to the support
             # plane; elevated supports keep their own observed anchor height.
             "isObservedGroundContact": is_observed_ground_contact(
@@ -32001,6 +32109,13 @@ def apply_source_contact_sequence_correction(
         )
         if pinning_body_span > 1e-6:
             from .contact_pinning import pin_stationary_contact_chains
+            from .support_geometry import observed_foot_patch_stationarity_threshold
+
+            for interval in pinning_intervals:
+                if interval.get("supportKind") == "observed_foot_patch":
+                    interval["slideThresholdRatio"] = observed_foot_patch_stationarity_threshold(
+                        pinning_body_span
+                    )
             pinning_plane_y, _plane_source = observed_ground_support_plane_y(
                 frames,
                 [interval for interval in pinning_intervals
@@ -35003,7 +35118,7 @@ def render_video_window_contact_sheet(
             contact_sheet_frames_per_sheet_override=contact_sheet_frames_per_sheet_override,
             contact_sheet_jpeg_quality=contact_sheet_jpeg_quality, crop_empty_borders=crop_empty_borders,
             native_frame_lookup=native_frame_lookup),
-        supporting_outputs=lambda: source_cut_sample_frame_paths(output_dir))
+        supporting_outputs=lambda: [*source_cut_sample_frame_paths(output_dir), output_dir / "contact_sheet_evidence.json"])
 
 
 def _render_video_window_contact_sheet_uncached(
@@ -35532,7 +35647,27 @@ def movement_topology_from_contract(contract: dict[str, Any] | None) -> dict[str
         return None
     topology = contract_payload.get("movementTopology")
     if not isinstance(topology, dict):
-        return None
+        if str(contract_payload.get("actionDefinitionStatus") or "").casefold() == "uncertain":
+            return None
+        defining_action = str(contract_payload.get("definingAction") or "").strip()
+        required_phases = contract_payload.get("requiredPhases")
+        required_phases = required_phases if isinstance(required_phases, list) else []
+        if not required_phases and defining_action:
+            required_phases = [defining_action]
+        if not required_phases:
+            return None
+        topology = {
+            "schemaVersion": 1,
+            "completionMode": contract_payload.get("completionMode"),
+            "startState": {"id": "start_state", "label": "unspecified"},
+            "phases": [
+                {"id": f"phase_{index + 1:02d}", "label": str(label)}
+                for index, label in enumerate(required_phases)
+                if isinstance(label, str) and label.strip()
+            ],
+            "endState": {"id": "end_state", "label": "unspecified"},
+            "endpointEvidenceRequired": False,
+        }
     start_state = topology.get("startState")
     end_state = topology.get("endState")
     phases = topology.get("phases")
@@ -35544,8 +35679,8 @@ def movement_topology_from_contract(contract: dict[str, Any] | None) -> dict[str
         if isinstance(phase, dict)
     ]
     if (
-        not str(start_state.get("label") or "").strip()
-        or not str(end_state.get("label") or "").strip()
+        (topology.get("endpointEvidenceRequired", True) and not str(start_state.get("label") or "").strip())
+        or (topology.get("endpointEvidenceRequired", True) and not str(end_state.get("label") or "").strip())
         or not normalized_phases
         or any(not phase["id"] or not phase["label"] for phase in normalized_phases)
     ):
@@ -35569,24 +35704,30 @@ def movement_topology_from_contract(contract: dict[str, Any] | None) -> dict[str
         # generated phase ids must not override a positive visual judgment.
         phase_evidence_hard_gate = False
     else:
+        trusted_definition = exercise_motion_action_definition_is_trusted(authority_payload)
         phase_evidence_hard_gate = (
-            explicit_phase_hard_gate
-            if explicit_phase_hard_gate is not None
-            else not (llm_authored or generated_without_authority)
+            True if trusted_definition else
+            explicit_phase_hard_gate if explicit_phase_hard_gate is not None else
+            not (llm_authored or generated_without_authority)
         )
     return {
         "schemaVersion": 1,
         "completionMode": str(topology.get("completionMode") or "").strip(),
-        # Generated phase prose is useful review context, but a text model can
-        # invent a plausible-looking intermediate step. Only contracts that
-        # explicitly claim phase authority may turn exact phase IDs into a hard
-        # rejection gate. Boundary and whole-movement checks remain required.
+        # Generated phases require review evidence, but only a trusted definition
+        # can make their absence a hard source rejection.
         "phaseEvidenceHardGate": phase_evidence_hard_gate,
         "boundaryStateHardGate": False,
+        "endpointEvidenceRequired": topology.get("endpointEvidenceRequired", True),
+        "actionPhaseEvidenceRequired": True,
+        "actionDefinitionTrusted": exercise_motion_action_definition_is_trusted(authority_payload),
         "startState": {"id": "start_state", "label": str(start_state.get("label")).strip()},
         "phases": normalized_phases,
         "endState": {"id": "end_state", "label": str(end_state.get("label")).strip()},
     }
+
+
+def contract_action_definition_is_trusted(contract: dict[str, Any] | None) -> bool:
+    return exercise_motion_action_definition_is_trusted(contract)
 
 
 def contract_completion_mode(contract: dict[str, Any] | None) -> str:
@@ -35622,28 +35763,126 @@ def movement_topology_evidence_prompt(contract: dict[str, Any] | None) -> str:
     topology = movement_topology_from_contract(contract)
     if topology is None:
         return ""
+    action_text = str(contract.get("definingAction") or "").strip() if isinstance(contract, dict) else ""
+    action_context = ""
+    if action_text:
+        prefix = (
+            "Trusted target defining action: "
+            if exercise_motion_action_definition_is_trusted(contract)
+            else "Provisional action proposal; target definition remains unresolved: "
+        )
+        action_context = prefix + action_text + "\n"
     if movement_topology_accepts_ongoing_action_interval(topology):
         return (
+            action_context +
             "This contract describes an ongoing action. A clean interval entirely inside the target action is complete "
             "without showing approach, a predetermined destination, stopping, or return to start. Report the visible "
-            "target-action phases, but do not reject merely because the clip begins and ends while the action continues. "
+            "target-action phases with exact evidenceFrameIds from the supplied candidate frame inventory, but do not "
+            "reject merely because the clip begins and ends while the action continues. These are sampled observations, "
+            "not phase start/end timestamps. "
         )
     phase_ids = [str(phase["id"]) for phase in topology["phases"]]
+    if not bool(topology.get("endpointEvidenceRequired", True)):
+        return_instruction = (
+            "The completion mode requires a visible return to the starting state. "
+            if contract_completion_mode(contract) == "return_to_start"
+            else "Do not add a return-to-start phase unless the completion mode explicitly requires one. "
+        )
+        return (
+            action_context +
+            "The target contract does not define required start or end postures. Judge completion from the listed "
+            "visible action phases and the target's explicit completion mode. Do not infer a floor start, hang, or "
+            "other unspecified endpoint posture. "
+            + return_instruction
+            + "Return one "
+            "phaseEvidence entry per listed phase with its exact ID, visible true only when the frames support it, "
+            "position only for visible phases, exact evidenceFrameIds copied from the supplied candidate frame "
+            "inventory, and a short observable fact. If no exact candidate frame ID establishes a phase, return an "
+            "empty evidenceFrameIds list. Missing or ambiguous required phase evidence leaves the review unresolved. "
+            f"Required phase IDs in order: {json.dumps(phase_ids)}. "
+            "These are sampled observations, not phase start/end timestamps. "
+        )
     if not bool(topology.get("phaseEvidenceHardGate", True)):
         return (
-            "The generated start and end states are advisory posture expectations. Report startStateMatch and endStateMatch as exactly "
-            "match, mismatch, or uncertain. The listed intermediate phases are model-generated guidance, not an "
-            "authoritative checklist: report only phase IDs that are visibly supported, in chronological order, and "
-            "judge completeMovement from the actual target exercise rather than inventing a missing phase. "
-            "A mismatch or uncertainty about generated posture details alone must not set approved false. "
+            action_context +
+            "The listed action phases are generated proposals, not trusted physical facts. Return one phaseEvidence "
+            "entry per listed phase with its exact ID, visible true only when the frames support it, position only "
+            "for visible phases, exact evidenceFrameIds copied from the supplied candidate frame inventory, and a short observable fact. "
+            "If no exact candidate frame ID establishes the phase, return an empty evidenceFrameIds list. If any proposed phase is missing, ambiguous, or "
+            "unsupported, do not approve; mark the review unclear so the interval stays unresolved. Do not turn an "
+            "unsupported generated phase into a definitive rejection. Endpoint posture is not required by an "
+            "action-only contract. "
         )
     return (
+        action_context +
         "Report startStateMatch and endStateMatch as exactly match, mismatch, or uncertain; these generated posture expectations are advisory. "
-        "Report phaseEvidence as one item for every visibly observed required phase, using only the exact phase IDs from the contract and a normalized timeline position from 0.0 (first frame) to 1.0 (last frame). "
-        f"For approval, phaseEvidence must contain every required phase exactly once in this exact order: {json.dumps(phase_ids)}. "
+        "Report phaseEvidence as one item for every listed phase, using only its exact ID. Set visible true only when "
+        "the phase is actually shown and include a normalized timeline position from 0.0 (first frame) to 1.0 "
+        "(last frame); otherwise set visible false and omit position. Also cite exact evidenceFrameIds from the supplied "
+        "candidate frame inventory for each visible phase; return [] when no exact tile establishes it. These IDs "
+        "are sampled observations only, not phase start/end timestamps. "
+        f"For approval, every phase must be visible exactly once in this exact order: {json.dumps(phase_ids)}. "
         "Do not copy the expected phase IDs unless the visible frames actually show each phase at increasing positions. "
         "A return-to-start candidate that begins at an interior/end-range state and returns to that same wrong state must report boundary mismatches even when its endpoints resemble each other. "
     )
+
+
+def source_cut_candidate_evidence_inventory(candidate: SourceCutCandidate) -> list[dict[str, Any]]:
+    """Return hash-verified frame IDs for one candidate, or no timing authority."""
+    if not candidate.frame_paths:
+        return []
+    try:
+        from .source_evidence import evidence_inventory
+
+        return evidence_inventory({candidate.candidate_id: candidate.frame_paths})
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return []
+
+
+def source_cut_candidate_timing_prompt(candidate: SourceCutCandidate) -> str:
+    inventory = source_cut_candidate_evidence_inventory(candidate)
+    if not inventory:
+        return (
+            f"Candidate {candidate.candidate_id} has no hash-validated tile inventory; "
+            "leave evidenceFrameIds empty and timing unresolved. "
+        )
+    tiles = [
+        {"id": frame["id"], "tileNumber": frame["tileNumber"]}
+        for frame in inventory
+    ]
+    return (
+        f"Candidate {candidate.candidate_id} exact evidence-frame IDs (match the printed tile numbers): "
+        f"{json.dumps(tiles, separators=(',', ':'))}. Cite only these IDs; do not return or infer timestamps. "
+    )
+
+
+def source_cut_equipment_timing_evidence(
+    observations: Any,
+    expected_ids: list[str],
+    frame_inventory: list[dict[str, Any]],
+    *,
+    equipment_engaged: bool,
+    source_time_offset_seconds: float = 0.0,
+) -> dict[str, Any]:
+    if not expected_ids:
+        return {"status": "not_required", "roles": {}}
+    if not equipment_engaged:
+        return {
+            "status": "unresolved",
+            "reason": "equipment_not_confirmed_engaged",
+            "roles": {},
+        }
+    from .source_evidence import temporal_observation_bins
+
+    timing = temporal_observation_bins(
+        observations,
+        expected_ids,
+        frame_inventory,
+        id_field="requirementId",
+        source_time_offset_seconds=source_time_offset_seconds,
+        ordered=False,
+    )
+    return {"status": timing["status"], **timing}
 
 
 def source_cut_pose_phase_prompt_context(candidate: SourceCutCandidate) -> str:
@@ -35697,7 +35936,46 @@ def build_source_cut_candidate_choice_prompt(
         if equipment_role_requirements
         else "Set namedEquipmentEngagedStatus to not_applicable because the target has no named equipment requirement. "
     )
-    cyclic_source = observable_motion_spec_requires_return(exercise_motion_contract)
+    topology = movement_topology_from_contract(exercise_motion_contract)
+    completion_mode = contract_completion_mode(exercise_motion_contract)
+    if completion_mode in {
+        "return_to_start", "distinct_end_state", "active_travel", "stable_hold",
+        "representative_cycle", "alternating_pair",
+    }:
+        cyclic_source = completion_mode == "return_to_start"
+    else:
+        cyclic_source = observable_motion_spec_requires_return(exercise_motion_contract)
+    equipment_frame_requirements = two_scale_equipment_role_requirements(
+        exercise_name, exercise_motion_contract
+    )
+    action_phase_schema = (
+        (
+            ',"startStateMatch":"match|mismatch|uncertain"'
+            if bool(topology.get("endpointEvidenceRequired", True)) else ""
+        )
+        + ',"phaseEvidence":[{"phaseId":"exact id","visible":false,"position":0.0,'
+        '"evidence":"short visible fact","evidenceFrameIds":["candidateId:tileNumber"]}]'
+        + (
+            ',"endStateMatch":"match|mismatch|uncertain"'
+            if bool(topology.get("endpointEvidenceRequired", True)) else ""
+        )
+        if topology is not None else ""
+    )
+    equipment_evidence_schema = (
+        ',"equipmentEvidence":[{"requirementId":"equipment_1",'
+        '"evidenceFrameIds":["candidateId:tileNumber"]}]'
+        if equipment_frame_requirements else ""
+    )
+    equipment_timing_instruction = (
+        "For timing only, return one equipmentEvidence row per listed equipment role in its supplied order, using IDs "
+        + json.dumps([f"equipment_{index + 1}" for index in range(len(equipment_frame_requirements))])
+        + ". Cite only tiles where that role's engagement is directly visible; use [] if unclear. Do not infer equipment use from body pose or another role. This evidence does not replace namedEquipmentEngagedStatus. "
+        if equipment_frame_requirements else ""
+    )
+    unresolved_action_definition = (
+        isinstance(exercise_motion_contract, dict)
+        and exercise_motion_action_definition_review_reason(exercise_motion_contract) is not None
+    )
     execution_rules = (
         "This is a cyclic reconstruction source context, not the final animation loop. "
         "Approve only when at least one complete repetition is visibly contained in the window, including both "
@@ -35713,8 +35991,10 @@ def build_source_cut_candidate_choice_prompt(
         "For a static hold, a sustained, visibly correct exercise posture is a complete useful interval. "
         "Do not require movement, a phase transition, entry into the posture, release, or a return; maintaining the target hold is exercise execution, not waiting or setup. "
         "For continuous travel or an ongoing activity, a representative interval of that activity is complete without approach, stopping, a destination, or an invented return. "
-        "For a discrete execution, require its meaningful start, full exercise-defining action path, and natural finish. "
-        "For a repetition exercise, require the visible turning points and return in order; a top-to-bottom-to-top or bottom-to-top-to-bottom cycle is complete. "
+        "For a representative-cycle contract, judge the visible representative action interval; do not require return to an exact starting posture. "
+        "For a distinct-end-state execution, require the defining action path to reach its distinct finish; do not require a return to start or infer an unspecified start posture. "
+        "For an alternating-pair action, require the listed alternating action phases in order; do not add an unlisted return phase. "
+        "For another discrete execution, require its meaningful start, full exercise-defining action path, and natural finish. "
         "Do not infer a missing phase, or reject a legitimate boundary merely because it is a bottom, contracted, lockout, or end-range posture. "
         "In every case, the whole interval must show the requested exercise with readable real footage, correct explicit qualifiers, and no material setup, reset, unrelated waiting, equipment transitions, or changed grip/support relationships. "
         "Reject still footage when the target requires motion, but do not classify a requested static hold as partial_movement merely because it is static. "
@@ -35727,7 +36007,9 @@ def build_source_cut_candidate_choice_prompt(
     ) if cyclic_source else (
         "completeMovement means the matching completion case above is visibly satisfied. "
         "For a static hold or ongoing activity, startBoundaryClean and finishBoundaryClean are true when both edges remain within the correct exercise action; starting or ending mid-hold or mid-travel is not a bad boundary. "
-        "For a discrete execution or repetition, the boundaries must show its meaningful start and natural finish/return rather than cutting off a required phase. "
+        "For a distinct-end-state action, the boundaries must not cut off the defining action or its distinct finish; no return to start is required. "
+        "For an alternating-pair action, both listed phases must be visible in order without requiring an extra return phase. "
+        "For another discrete action, the boundaries must not cut off its meaningful start, required phases, or natural finish. "
         "For every case, set the relevant boundary false for actual setup, unrelated waiting, cleanup, equipment transitions, or changed support/grip relationships at that edge. "
     )
     return (
@@ -35743,6 +36025,7 @@ def build_source_cut_candidate_choice_prompt(
         f"Target exercise: {exercise_name}.\n"
         "Use only the attached source-window frames as evidence. Ignore title, labels, captions, and outside context.\n"
         + source_cut_pose_phase_prompt_context(candidate)
+        + source_cut_candidate_timing_prompt(candidate)
         + "The candidate may have one or more chronological contact sheets. Read all sheets together in attachment order. "
         "Boundary audit sheets repeat the first or last frames at larger size; use them only to inspect whether the visible cut starts and ends cleanly. "
         f"{CONTACT_SHEET_READING_INSTRUCTIONS}"
@@ -35757,12 +36040,19 @@ def build_source_cut_candidate_choice_prompt(
         "When the target says weighted or loaded, a real external load/resistance must be visible as held, worn, attached, or connected to the moving person. "
         "Do not count bodyweight alone, a bench, floor, anchor strap, support belt, partner, or setup fixture as weighted unless an actual load or resistance is visibly attached or held. "
         f"{equipment_section}"
-        "When the target requires multiple action phases, showing only one is partial_movement; do not invent extra phases for a hold or require an extra repetition after the normal finish. "
+        + equipment_timing_instruction
+        + movement_topology_evidence_prompt(exercise_motion_contract)
+        + (
+            "The target action definition is unresolved. Do not approve this interval based on a generic completion judgment; "
+            "return uncertain/unclear so the existing source-review route can resolve the action definition. "
+            if unresolved_action_definition else ""
+        )
+        + "When the target requires multiple action phases, showing only one is partial_movement; do not invent extra phases for a hold or require an extra repetition after the normal finish. "
         "Use the candidate id exactly as shown in the attachment list, for example A, B, or C; do not write 'Candidate A'. "
         "The code owns timing and will choose among separately reviewed candidates after classification; do not select a winner and do not return timestamps. "
         + execution_rules
-        + "For an exercise with a repetition cycle, require both directions of the main movement. "
-        "If unsure, set approved false and use unclear or low_confidence. "
+        + "If unsure, set approved false and use unclear or low_confidence. "
+        + "Keep identityEvidence, boundaryEvidence, qualityEvidence, and each phase evidence to one concise factual sentence of at most 12 words. "
         "Do not invent frame numbers, timestamps, selected candidate IDs, or chain-of-thought. "
         "reject must use only these fixed tags: wrong_exercise, wrong_variant, partial_movement, mechanics_inconsistent, contact_changed, bad_boundary, setup_or_filler, low_source_quality, low_confidence, synthetic_subject, unclear. Use [] only when approved is true. "
         + boundary_rules
@@ -35771,6 +36061,8 @@ def build_source_cut_candidate_choice_prompt(
         "If approved is false, reject must contain at least one matching tag. If approved is true, reject must be []. "
         "note must be one short sentence with at most 10 words.\n"
         "Return JSON only with exactly one row in this schema: {\"candidates\": [{\"id\": string, \"approved\": boolean, \"confidence\": number_0_to_1, \"completeMovement\": boolean, \"startBoundaryClean\": boolean, \"finishBoundaryClean\": boolean, \"setupOrFiller\": boolean, \"namedEquipmentEngagedStatus\": \"engaged|absent|unclear|not_applicable\", \"reject\": [string], \"note\": string, \"identityMatch\": \"match|mismatch|uncertain\", \"identityEvidence\": string, \"boundaryEvidence\": string, \"qualityEvidence\": string"
+        + action_phase_schema
+        + equipment_evidence_schema
         + "}]}. "
         "Classify from visible evidence only; code applies thresholds, retries, and failure handling."
     )
@@ -35809,6 +36101,12 @@ def build_source_cut_candidate_batch_choice_prompt(
             "The candidate may have one or more chronological contact sheets.",
             batch_phase_context + "The candidate may have one or more chronological contact sheets.",
         )
+    first_timing_context = source_cut_candidate_timing_prompt(first)
+    batch_timing_context = "".join(
+        source_cut_candidate_timing_prompt(candidate) for candidate in candidates
+    )
+    if first_timing_context:
+        prompt = prompt.replace(first_timing_context, batch_timing_context)
     prompt = prompt.replace(
         "Classify one candidate source-video cut for an exercise animation.",
         "Classify each listed candidate source-video cut independently for the same exercise.",
@@ -35876,7 +36174,7 @@ _CLEF_SOURCE_CUT_CONFIDENCE_CHOICES = {
     "C05": (0.90, "0.90 through 0.94"),
     "C06": (0.95, "0.95 through 1.00"),
 }
-CLEF_SOURCE_CUT_SCORECARD_POLICY_VERSION = "clef-source-cut-scorecard-v2"
+CLEF_SOURCE_CUT_SCORECARD_POLICY_VERSION = "clef-source-cut-scorecard-v3"
 
 
 def source_cut_systemone_questions(
@@ -36374,7 +36672,7 @@ def build_final_output_source_contract_prompt_section(contract: dict[str, Any] |
 def _contract_provenance(contract: dict[str, Any]) -> dict[str, Any]:
     return {
         key: contract[key]
-        for key in ("status", "source", "exerciseMotionContractStatus")
+        for key in ("status", "source", "authority", "exerciseMotionContractStatus")
         if contract.get(key) is not None
     }
 
@@ -36437,7 +36735,7 @@ def exercise_motion_contract_from_candidate(candidate: dict[str, Any]) -> dict[s
     if isinstance(candidate_contract, dict):
         prompt_contract = exercise_motion_contract_for_prompt(candidate_contract)
         if prompt_contract is not None:
-            return prompt_contract
+            return {**_contract_provenance(candidate_contract), **prompt_contract}
         if observable_motion_spec_for_contract(candidate_contract) is not None:
             return candidate_contract
 
@@ -36448,13 +36746,15 @@ def exercise_motion_contract_from_candidate(candidate: dict[str, Any]) -> dict[s
         contract = payload.get(key)
         prompt_contract = exercise_motion_contract_for_prompt(contract if isinstance(contract, dict) else None)
         if prompt_contract is not None:
-            return prompt_contract
+            provenance = _contract_provenance(contract) if isinstance(contract, dict) else {}
+            return {**provenance, **prompt_contract}
     advisory_payload = payload.get("advisoryVlmSourceReview")
     if isinstance(advisory_payload, dict):
         contract = advisory_payload.get("exerciseMotionContract")
         prompt_contract = exercise_motion_contract_for_prompt(contract if isinstance(contract, dict) else None)
         if prompt_contract is not None:
-            return prompt_contract
+            provenance = _contract_provenance(contract) if isinstance(contract, dict) else {}
+            return {**provenance, **prompt_contract}
     return None
 
 
@@ -37787,6 +38087,40 @@ def selection_evidence_for_materialized_interval(
             source_parent_payload=source_parent_payload,
         )
     }
+
+
+def corrected_contact_selection_lineage(
+    *,
+    parent_selection_evidence: dict[str, Any],
+    movement_payload: dict[str, Any],
+    selection_class: str,
+    source_parent_payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Rebind contact-corrected output to its parent and actual source interval."""
+    evidence = selection_evidence_for_materialized_interval(
+        parent_selection_evidence=parent_selection_evidence,
+        movement_payload=movement_payload,
+        selection_class=selection_class,
+        source_parent_payload=source_parent_payload,
+    )
+    if not evidence:
+        return {}
+    loop = movement_payload.get("loop")
+    materialized_class = (
+        CYCLE_SELECTION
+        if selection_class == FULL_CLIP_BAKE
+        and isinstance(loop, dict)
+        and loop.get("enabled") is True
+        else selection_class
+    )
+    if materialized_class in {CYCLE_SELECTION, BOUNDED_MOVEMENT_SELECTION}:
+        if not attach_materialized_source_interval(
+            movement_payload,
+            evidence,
+            selection_class=materialized_class,
+        ):
+            return {}
+    return evidence
 
 
 def attach_materialized_source_interval(
@@ -40000,14 +40334,28 @@ def topology_phase_evidence(
             missing_fields.append(f"phaseEvidence[{index}]")
             continue
         phase_id = str(item.get("phaseId") or item.get("phase_id") or "").strip()
+        visible = parse_optional_bool(item.get("visible"))
         position = parse_optional_float(item.get("position"))
+        observation = str(item.get("evidence") or "").strip()
         if not phase_id:
             missing_fields.append(f"phaseEvidence[{index}].phaseId")
-        if position is None:
+        if visible is None:
+            missing_fields.append(f"phaseEvidence[{index}].visible")
+        if visible is True and position is None:
             missing_fields.append(f"phaseEvidence[{index}].position")
+        if visible is True and not observation:
+            missing_fields.append(f"phaseEvidence[{index}].evidence")
         evidence.append({
             "phaseId": phase_id,
+            "visible": visible,
             "position": position,
+            "evidence": observation,
+            "evidenceFrameIds": (
+                [str(frame_id) for frame_id in item.get("evidenceFrameIds", [])]
+                if isinstance(item.get("evidenceFrameIds"), list)
+                and all(isinstance(frame_id, str) for frame_id in item.get("evidenceFrameIds", []))
+                else []
+            ),
         })
     return evidence, missing_fields
 
@@ -40015,6 +40363,9 @@ def topology_phase_evidence(
 def topology_evidence_rejection_reasons(
     payload: dict[str, Any],
     movement_topology: dict[str, Any],
+    *,
+    frame_inventory: list[dict[str, Any]] | None = None,
+    source_time_offset_seconds: float = 0.0,
 ) -> tuple[dict[str, Any], list[str], list[str]]:
     start_match = normalize_boundary_state_match(payload.get("startStateMatch"))
     end_match = normalize_boundary_state_match(payload.get("endStateMatch"))
@@ -40022,9 +40373,10 @@ def topology_evidence_rejection_reasons(
     missing_fields = list(evidence_missing_fields)
     ongoing_action_interval = movement_topology_accepts_ongoing_action_interval(movement_topology)
     phase_evidence_hard_gate = bool(movement_topology.get("phaseEvidenceHardGate", True))
-    if start_match is None:
+    endpoint_evidence_required = bool(movement_topology.get("endpointEvidenceRequired", True))
+    if start_match is None and endpoint_evidence_required:
         missing_fields.append("startStateMatch")
-    if end_match is None and not ongoing_action_interval:
+    if end_match is None and endpoint_evidence_required and not ongoing_action_interval:
         missing_fields.append("endStateMatch")
     blocking_missing_fields = [
         field
@@ -40037,8 +40389,11 @@ def topology_evidence_rejection_reasons(
         for phase in movement_topology.get("phases", [])
         if isinstance(phase, dict)
     ]
-    observed_phase_ids = [str(item.get("phaseId") or "") for item in evidence]
-    positions = [item.get("position") for item in evidence]
+    observed_phase_ids = [
+        str(item.get("phaseId") or "") for item in evidence if item.get("visible") is True
+    ]
+    visible_evidence = [item for item in evidence if item.get("visible") is True]
+    positions = [item.get("position") for item in visible_evidence]
     positions_valid = (
         len(positions) == len(expected_phase_ids)
         and all(isinstance(position, (int, float)) and 0.0 <= float(position) <= 1.0 for position in positions)
@@ -40051,26 +40406,40 @@ def topology_evidence_rejection_reasons(
     reasons: list[str] = []
     boundary_hard_gate = bool(movement_topology.get("boundaryStateHardGate", True))
     boundary_warnings = []
-    if start_match != "match":
+    if endpoint_evidence_required and start_match != "match":
         boundary_warnings.append("inferred_start_posture_mismatch_or_uncertain")
-    if not ongoing_action_interval and end_match != "match":
+    if endpoint_evidence_required and not ongoing_action_interval and end_match != "match":
         boundary_warnings.append("inferred_end_posture_mismatch_or_uncertain")
-    if boundary_hard_gate and start_match != "match":
+    if endpoint_evidence_required and boundary_hard_gate and start_match != "match":
         reasons.append("source_cut_contract_start_state_mismatch" if start_match == "mismatch" else "source_cut_contract_start_state_uncertain")
-    if boundary_hard_gate and not ongoing_action_interval and end_match != "match":
+    if endpoint_evidence_required and boundary_hard_gate and not ongoing_action_interval and end_match != "match":
         reasons.append("source_cut_contract_end_state_mismatch" if end_match == "mismatch" else "source_cut_contract_end_state_uncertain")
+    phase_evidence_complete = (
+        [str(item.get("phaseId") or "") for item in evidence] == expected_phase_ids
+        and all(item.get("visible") is True and item.get("evidence") for item in evidence)
+        and positions_valid
+        and positions_increasing
+    )
+    from .source_evidence import temporal_observation_bins
+
+    phase_timing = temporal_observation_bins(
+        evidence,
+        expected_phase_ids,
+        frame_inventory or [],
+        id_field="phaseId",
+        source_time_offset_seconds=source_time_offset_seconds,
+        require_visible=True,
+    )
     if phase_evidence_hard_gate:
-        if observed_phase_ids != expected_phase_ids:
+        if not phase_evidence_complete:
             reasons.append("source_cut_contract_phase_sequence_mismatch")
-        if not positions_valid:
-            reasons.append("source_cut_contract_phase_positions_invalid")
-        elif not positions_increasing:
-            reasons.append("source_cut_contract_phase_order_invalid")
         for field in evidence_missing_fields:
             reasons.append(f"source_cut_scorecard_missing_{field}")
-    if start_match is None:
+    elif not phase_evidence_complete:
+        reasons.append("source_cut_scorecard_action_phase_evidence_unresolved")
+    if endpoint_evidence_required and start_match is None:
         reasons.append("source_cut_scorecard_missing_startStateMatch")
-    if end_match is None and not ongoing_action_interval:
+    if endpoint_evidence_required and end_match is None and not ongoing_action_interval:
         reasons.append("source_cut_scorecard_missing_endStateMatch")
     return (
         {
@@ -40091,10 +40460,14 @@ def topology_evidence_rejection_reasons(
             "startStateMatch": start_match,
             "endStateMatch": end_match,
             "phaseEvidence": evidence,
+            "phaseTimingEvidence": phase_timing,
             "observedPhaseIds": observed_phase_ids,
             "positionsValid": positions_valid,
             "positionsIncreasing": positions_increasing,
             "endStateRequired": not ongoing_action_interval,
+            "endpointEvidenceRequired": endpoint_evidence_required,
+            "actionPhaseEvidenceComplete": phase_evidence_complete,
+            "actionDefinitionTrusted": movement_topology.get("actionDefinitionTrusted") is True,
         },
         dedupe_text(reasons),
         dedupe_text(blocking_missing_fields),
@@ -40134,6 +40507,8 @@ def source_cut_scorecard_row(
     legacy_thresholds: dict[str, float],
     movement_topology: dict[str, Any] | None = None,
     required_equipment: str = "none",
+    equipment_timing_requirement_ids: list[str] | None = None,
+    source_time_offset_seconds: float = 0.0,
 ) -> dict[str, Any]:
     candidate_id = normalize_source_cut_candidate_id(
         payload.get("id")
@@ -40211,6 +40586,11 @@ def source_cut_scorecard_row(
             missing_fields.append("namedEquipmentEngagedStatus")
 
         candidate = candidates_by_id.get(candidate_id)
+        frame_inventory = (
+            source_cut_candidate_evidence_inventory(candidate)
+            if candidate is not None
+            else []
+        )
         target_motion_observability = (
             candidate.motion_coverage.get("targetMotionObservability")
             if candidate is not None and isinstance(candidate.motion_coverage, dict)
@@ -40273,9 +40653,36 @@ def source_cut_scorecard_row(
             topology_evidence, topology_reasons, topology_missing_fields = topology_evidence_rejection_reasons(
                 payload,
                 movement_topology,
+                frame_inventory=frame_inventory,
+                source_time_offset_seconds=source_time_offset_seconds,
             )
+            if isinstance(topology_evidence, dict):
+                phase_timing = topology_evidence.get("phaseTimingEvidence")
+                if isinstance(phase_timing, dict):
+                    phase_timing["candidateId"] = candidate_id
+                    if candidate is not None:
+                        phase_timing["candidateWindowSourceSeconds"] = {
+                            "start": float(candidate.window.start_seconds) + float(source_time_offset_seconds),
+                            "end": float(candidate.window.end_seconds) + float(source_time_offset_seconds),
+                        }
             rejection_reasons.extend(topology_reasons)
             missing_fields.extend(topology_missing_fields)
+            if (
+                isinstance(topology_evidence, dict)
+                and topology_evidence.get("actionPhaseEvidenceComplete") is False
+                and topology_evidence.get("actionDefinitionTrusted") is not True
+            ):
+                phase_only_reasons = {
+                    "source_cut_model_rejected",
+                    "source_cut_partial_movement",
+                    "source_cut_scorecard_reject_partial_movement",
+                    "source_cut_scorecard_action_phase_evidence_unresolved",
+                    "source_cut_contract_phase_sequence_mismatch",
+                    "source_cut_contract_phase_positions_invalid",
+                    "source_cut_contract_phase_order_invalid",
+                }
+                if set(rejection_reasons) <= phase_only_reasons:
+                    rejection_reasons = ["source_cut_scorecard_action_phase_evidence_unresolved"]
 
         phase_metrics = (
             candidate.motion_coverage.get("candidateFullRepetitionPhaseCompletenessMetrics")
@@ -40359,6 +40766,19 @@ def source_cut_scorecard_row(
             rejection_reasons = [
                 reason for reason in rejection_reasons if reason not in boundary_only_reasons
             ]
+        equipment_timing = source_cut_equipment_timing_evidence(
+            payload.get("equipmentEvidence"),
+            equipment_timing_requirement_ids or [],
+            frame_inventory,
+            equipment_engaged=equipment_status == "engaged",
+            source_time_offset_seconds=source_time_offset_seconds,
+        )
+        equipment_timing["candidateId"] = candidate_id
+        if candidate is not None:
+            equipment_timing["candidateWindowSourceSeconds"] = {
+                "start": float(candidate.window.start_seconds) + float(source_time_offset_seconds),
+                "end": float(candidate.window.end_seconds) + float(source_time_offset_seconds),
+            }
         deduped_reasons = dedupe_text(rejection_reasons)
         model_score = apply_source_cut_camera_stability_score(
             0.0 if confidence is None else confidence,
@@ -40387,6 +40807,7 @@ def source_cut_scorecard_row(
             "rejectionReasons": deduped_reasons,
             "missingFields": missing_fields,
             "movementTopologyEvidence": topology_evidence,
+            "equipmentTimingEvidence": equipment_timing,
             "ongoingActionIntervalOverride": ongoing_action_override,
             "deterministicFullCycleOverride": deterministic_full_cycle_override,
             "cameraStabilityClassification": source_cut_camera_stability_classification(candidate),
@@ -40540,6 +40961,8 @@ def build_source_cut_scorecard_ranking(
     raw: str,
     movement_topology: dict[str, Any] | None = None,
     required_equipment: str = "none",
+    equipment_timing_requirement_ids: list[str] | None = None,
+    source_time_offset_seconds: float = 0.0,
 ) -> LoopRanking:
     thresholds = source_cut_scorecard_thresholds(has_contract=has_contract)
     legacy_thresholds = legacy_source_cut_scorecard_thresholds(has_contract=has_contract)
@@ -40555,6 +40978,8 @@ def build_source_cut_scorecard_ranking(
             legacy_thresholds=legacy_thresholds,
             movement_topology=movement_topology,
             required_equipment=required_equipment,
+            equipment_timing_requirement_ids=equipment_timing_requirement_ids,
+            source_time_offset_seconds=source_time_offset_seconds,
         )
         for item in source_cut_scorecard_candidate_payloads(payload)
     ]
@@ -40574,7 +40999,7 @@ def build_source_cut_scorecard_ranking(
     rank_endpoints = bool(quality) and all(item[1] is not None for item in quality)
 
     base_payload: dict[str, Any] = {
-        "sourceCutScorecardSchemaVersion": 3,
+        "sourceCutScorecardSchemaVersion": 4,
         "sourceCutScorecardThresholds": thresholds,
         "sourceCutScorecardContractPresent": has_contract,
         "sourceCutScorecardCandidates": rows,
@@ -40705,6 +41130,8 @@ def parse_source_cut_candidate_choice(
     exercise_motion_contract: dict[str, Any] | None = None,
     required_equipment: str = "none",
     require_identity_evidence: bool = False,
+    equipment_timing_requirement_ids: list[str] | None = None,
+    source_time_offset_seconds: float = 0.0,
 ) -> LoopRanking | None:
     payload = extract_json_object_with_trailing_repair(raw)
     if not isinstance(payload, dict):
@@ -40733,6 +41160,27 @@ def parse_source_cut_candidate_choice(
                 candidate_payload.pop("candidateId", None)
     if not source_cut_scorecard_payload_has_valid_confidence(payload):
         return None
+    discrete_action = (
+        isinstance(exercise_motion_contract, dict)
+        and contract_completion_mode(exercise_motion_contract)
+        in {"return_to_start", "distinct_end_state", "alternating_pair"}
+    )
+    action_definition_unresolved = bool(
+        discrete_action
+        and exercise_motion_action_definition_review_reason(exercise_motion_contract) is not None
+    )
+    unresolved_action_review_ids: set[str] = set()
+    if action_definition_unresolved:
+        for row in source_cut_scorecard_candidate_payloads(payload):
+            if row.get("approved") is True:
+                unresolved_action_review_ids.add(normalize_source_cut_candidate_id(
+                    row.get("id") or row.get("candidate_id") or row.get("candidateId")
+                ))
+                row["approved"] = False
+                row["reject"] = list(dict.fromkeys([
+                    *payload_string_list(row.get("reject")),
+                    "unclear",
+                ]))
     if require_identity_evidence:
         from .source_review_authority import evidence_text
         for row in source_cut_scorecard_candidate_payloads(payload):
@@ -40746,9 +41194,40 @@ def parse_source_cut_candidate_choice(
         candidates,
         has_contract=has_contract,
         raw=raw,
-        movement_topology=None,
+        movement_topology=movement_topology_from_contract(exercise_motion_contract),
         required_equipment=required_equipment,
+        equipment_timing_requirement_ids=equipment_timing_requirement_ids,
+        source_time_offset_seconds=source_time_offset_seconds,
     )
+    if (
+        ranking is not None
+        and action_definition_unresolved
+    ):
+        ranking_payload = dict(ranking.payload or {})
+        rows = ranking_payload.get("sourceCutScorecardCandidates")
+        if isinstance(rows, list):
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                row["passed"] = False
+                if str(row.get("id") or "") in unresolved_action_review_ids:
+                    row["rejectionReasons"] = ["source_cut_action_definition_unresolved"]
+                else:
+                    row["rejectionReasons"] = dedupe_text([
+                        *(row.get("rejectionReasons") or []),
+                        "source_cut_action_definition_unresolved",
+                    ])
+        ranking_payload["sourceCutActionDefinitionUnresolved"] = True
+        ranking = replace(
+            ranking,
+            score=0.0,
+            reasons=dedupe_text([
+                *ranking.reasons,
+                "source_cut_scorecard_action_phase_evidence_unresolved",
+            ]),
+            payload=ranking_payload,
+            model_score=0.0,
+        )
     if ranking is not None and require_identity_evidence:
         from .source_review_authority import SOURCE_REVIEW_AUTHORITY_VERSION
         ranking = replace(ranking, payload={**(ranking.payload or {}),
@@ -40903,16 +41382,12 @@ def source_cut_vlm_caption_kwargs(
     clef_systemone_base_url: str = "http://127.0.0.1:8091",
     clef_systemone_model: str = "ggml-org/Clef-Flash-GGUF:Q4_K_M",
 ) -> dict[str, Any]:
-    topology = (
-        exercise_motion_contract.get("movementTopology")
-        if isinstance(exercise_motion_contract, dict)
-        else None
-    )
+    topology = movement_topology_from_contract(exercise_motion_contract)
     phases = topology.get("phases") if isinstance(topology, dict) else None
     phase_count = len(phases) if isinstance(phases, list) else 0
-    # The response schema emits one structured evidence object per contract
-    # phase. Size the completion budget from that schema instead of truncating
-    # every exercise at the same token count.
+    # The response emits fixed scorecard fields, per-phase evidence, and
+    # equipment-frame IDs. Size for that schema so valid reviews are not
+    # truncated before their required evidence fields.
     max_tokens = (
         SOURCE_CUT_CANDIDATE_VLM_BASE_MAX_TOKENS
         + SOURCE_CUT_CANDIDATE_VLM_TOKENS_PER_PHASE * phase_count
@@ -41228,7 +41703,11 @@ def rank_cut_candidate_batch_with_caption_images(
         ranking = parsed_rankings[candidate.candidate_id]
         candidate_prompt = single_candidate_prompt_builder(candidate)
         try:
-            if (ranking.payload or {}).get("sourceReviewAuthorityVersion") and not source_cut_ranking_has_vlm_approval(ranking):
+            if (
+                (ranking.payload or {}).get("sourceReviewAuthorityVersion")
+                and not (ranking.payload or {}).get("sourceCutActionDefinitionUnresolved")
+                and not source_cut_ranking_has_vlm_approval(ranking)
+            ):
                 from .source_review_authority import assess_source_rejection, review_observation
 
                 def independent_source_review() -> tuple[dict[str, Any], str]:
@@ -42066,22 +42545,59 @@ def rank_cut_candidate_with_caption_images(
     ranking: LoopRanking | None = None
     boundary_raw: list[str] = []
     try:
-        for request_attempt in range(2):
-            attempt_prompt = prompt
-            if request_attempt > 0:
-                attempt_prompt += (
-                    "\nYour previous response violated the JSON schema. Return the same requested JSON schema again. "
-                    "Every confidence value must be a decimal number from 0.0 through 1.0 inclusive; values such as "
-                    "5, 95, and strings such as 95% are invalid."
+        def classify_source_interval() -> tuple[str, LoopRanking | None]:
+            response: str | None = None
+            parsed_ranking: LoopRanking | None = None
+            for request_attempt in range(2):
+                attempt_prompt = prompt
+                if request_attempt > 0:
+                    attempt_prompt += (
+                        "\nYour previous response violated the JSON schema. Return the same requested JSON schema again. "
+                        "Every confidence value must be a decimal number from 0.0 through 1.0 inclusive; values such as "
+                        "5, 95, and strings such as 95% are invalid."
+                    )
+                response = invoke_cut_caption_images(
+                    caption_images, frame_paths=list(candidate.frame_paths), prompt=attempt_prompt, request_kwargs=request_kwargs,
                 )
-            raw = invoke_cut_caption_images(
-                caption_images, frame_paths=list(candidate.frame_paths), prompt=attempt_prompt, request_kwargs=request_kwargs,
+                parsed_ranking = parser(response, candidate)
+                if parsed_ranking is not None:
+                    break
+            return response or "", parsed_ranking
+
+        settings = getattr(getattr(caption_images, "__self__", None), "settings", None)
+        model_identity = source_review_model_identity(settings)
+        cache_dir = cut_candidate_review_debug_path(candidate)
+        if model_identity is not None and cache_dir is not None and all(path.is_file() for path in candidate.frame_paths):
+            from exercise_motion_pkg.review_questions import answer_question
+
+            def classify_for_cache() -> tuple[str, dict[str, bool]]:
+                response, parsed = classify_source_interval()
+                return response, {"parsed": parsed is not None}
+
+            raw, _ = answer_question(
+                directory=cache_dir.parent / "source-question-cache",
+                name="source-cut-provisional-observation",
+                prompt=prompt,
+                frames=list(candidate.frame_paths),
+                max_tokens=int(request_kwargs.get("max_tokens") or 0),
+                identity={
+                    "model": model_identity,
+                    "policyVersion": SOURCE_CUT_APPROVAL_CACHE_POLICY_VERSION,
+                    "candidateId": candidate.candidate_id,
+                    "intervalSeconds": [candidate.window.start_seconds, candidate.window.end_seconds],
+                },
+                operation=classify_for_cache,
+                reusable=lambda result: isinstance(result, dict) and result.get("parsed") is True,
             )
             ranking = parser(raw, candidate)
-            if ranking is not None:
-                break
+        else:
+            raw, ranking = classify_source_interval()
         if ranking is not None:
-            if (ranking.payload or {}).get("sourceReviewAuthorityVersion") and not source_cut_ranking_has_vlm_approval(ranking):
+            if (
+                (ranking.payload or {}).get("sourceReviewAuthorityVersion")
+                and not (ranking.payload or {}).get("sourceCutActionDefinitionUnresolved")
+                and not source_cut_ranking_has_vlm_approval(ranking)
+            ):
                 from .source_review_authority import assess_source_rejection, review_observation
                 def independent_source_review() -> tuple[dict[str, Any], str]:
                     independent_raw = invoke_cut_caption_images(
@@ -43598,14 +44114,420 @@ def kinematic_cut_debug_payload(
     plan: KinematicSourceCutPlan,
     *,
     used: bool = False,
+    boundary_pose_refinement: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "kinematicCutProposed": bool(plan.specs),
         "kinematicCutCandidateCount": len(plan.specs),
         "kinematicCutPolicy": plan.policy,
         "kinematicCutUsed": bool(used),
         "kinematicCutExpandedParentWindow": bool(plan.expanded_parent),
     }
+    if boundary_pose_refinement is not None:
+        payload["kinematicCutBoundaryPoseRefinement"] = boundary_pose_refinement
+    return payload
+
+
+SOURCE_CUT_NATIVE_BOUNDARY_BAND_SECONDS = 0.5
+SOURCE_CUT_NATIVE_BOUNDARY_FRAMES_PER_EDGE = 30
+# Source timestamps are interpreted against the selected video's constant-FPS
+# decode clock. Only rounded-to-frame samples within this tolerance acquire a
+# native frame index; their original timestamp remains authoritative.
+SOURCE_CUT_NATIVE_FRAME_ROUNDING_TOLERANCE_SECONDS = 0.001
+
+
+def _native_source_frame_index(sample: dict[str, Any], *, fps: float) -> int | None:
+    timestamp = parse_optional_float(sample.get("timeSeconds"))
+    if timestamp is None or timestamp < 0.0 or fps <= 0.0:
+        return None
+    declared = sample.get("nativeFrameIndex")
+    if isinstance(declared, bool):
+        return None
+    if isinstance(declared, int):
+        frame_index = declared
+    else:
+        frame_index = int(round(timestamp * fps))
+    if frame_index < 0:
+        return None
+    if abs(timestamp - frame_index / fps) > SOURCE_CUT_NATIVE_FRAME_ROUNDING_TOLERANCE_SECONDS:
+        return None
+    return frame_index
+
+
+def source_cut_native_boundary_frame_indices(
+    plan: KinematicSourceCutPlan,
+    *,
+    fps: float,
+    frame_count: int,
+    max_proposals: int = KINEMATIC_CUT_MAX_PROPOSALS,
+    band_seconds: float = SOURCE_CUT_NATIVE_BOUNDARY_BAND_SECONDS,
+    frames_per_edge: int = SOURCE_CUT_NATIVE_BOUNDARY_FRAMES_PER_EDGE,
+) -> tuple[int, ...]:
+    """Return a bounded set of real source frames around coarse cut edges."""
+    if fps <= 0.0 or frame_count <= 0 or not plan.specs:
+        return ()
+    requested: set[int] = set()
+    for spec in plan.specs[: max(0, int(max_proposals))]:
+        chunking = spec.chunking if isinstance(spec.chunking, dict) else {}
+        for key in ("originalStartSeconds", "originalEndSeconds"):
+            boundary = parse_optional_float(chunking.get(key))
+            if boundary is None:
+                continue
+            first = max(0, int(math.ceil((boundary - band_seconds) * fps)))
+            last = min(frame_count - 1, int(math.floor((boundary + band_seconds) * fps)))
+            if last < first:
+                continue
+            count = min(max(1, int(frames_per_edge)), last - first + 1)
+            if count == 1:
+                edge_indices = [int(round(boundary * fps))]
+            else:
+                edge_indices = [
+                    int(round(first + (last - first) * index / (count - 1)))
+                    for index in range(count)
+                ]
+                center = min(last, max(first, int(round(boundary * fps))))
+                nearest = min(range(len(edge_indices)), key=lambda index: abs(edge_indices[index] - center))
+                edge_indices[nearest] = center
+            requested.update(index for index in edge_indices if first <= index <= last)
+    return tuple(sorted(requested))
+
+
+def merge_native_source_pose_samples(
+    parent_payload: dict[str, Any] | None,
+    native_payload: dict[str, Any] | None,
+    *,
+    fps: float,
+) -> dict[str, Any] | None:
+    """Merge detections by exact native frame index without interpolating gaps."""
+    if fps <= 0.0:
+        return parent_payload
+    parent = parent_payload if isinstance(parent_payload, dict) else {}
+    native = native_payload if isinstance(native_payload, dict) else {}
+    merged: dict[tuple[str, float | int], dict[str, Any]] = {}
+    for payload, prefer in ((parent, False), (native, True)):
+        samples = payload.get("dominantPoseSamples")
+        if not isinstance(samples, list):
+            continue
+        for sample in samples:
+            if not isinstance(sample, dict):
+                continue
+            timestamp = parse_optional_float(sample.get("timeSeconds"))
+            if timestamp is None or timestamp < 0.0:
+                continue
+            frame_index = _native_source_frame_index(sample, fps=fps)
+            key = ("frame", frame_index) if frame_index is not None else ("time", timestamp)
+            if prefer or key not in merged:
+                merged[key] = (
+                    {**sample, "nativeFrameIndex": frame_index}
+                    if frame_index is not None
+                    else {key: value for key, value in sample.items() if key != "nativeFrameIndex"}
+                )
+    if not merged:
+        return parent_payload
+    ordered_samples = sorted(
+        merged.values(),
+        key=lambda sample: (
+            float(sample.get("timeSeconds", 0.0)),
+            int(sample["nativeFrameIndex"]) if isinstance(sample.get("nativeFrameIndex"), int) else -1,
+        ),
+    )
+    return {
+        **parent,
+        "dominantPoseSamples": ordered_samples,
+        "nativeBoundaryPoseFrameIndices": sorted(
+            int(index)
+            for index in (native.get("nativeBoundaryPoseFrameIndices") or [])
+            if isinstance(index, (int, float))
+        ),
+    }
+
+
+def merge_boundary_local_kinematic_refinements(
+    coarse: KinematicSourceCutPlan,
+    refined: KinematicSourceCutPlan,
+    *,
+    max_edge_shift_seconds: float = SOURCE_CUT_NATIVE_BOUNDARY_BAND_SECONDS,
+) -> tuple[KinematicSourceCutPlan, int]:
+    """Replace only coarse proposals whose two edges were locally refined."""
+    replacements: dict[int, SourceWindowCandidateSpec] = {}
+    rejected = 0
+    for refined_spec in refined.specs:
+        refined_chunking = refined_spec.chunking if isinstance(refined_spec.chunking, dict) else {}
+        refined_start = parse_optional_float(refined_chunking.get("originalStartSeconds"))
+        refined_end = parse_optional_float(refined_chunking.get("originalEndSeconds"))
+        if refined_start is None or refined_end is None:
+            rejected += 1
+            continue
+        matches: list[tuple[float, int]] = []
+        for index, coarse_spec in enumerate(coarse.specs):
+            coarse_chunking = coarse_spec.chunking if isinstance(coarse_spec.chunking, dict) else {}
+            coarse_start = parse_optional_float(coarse_chunking.get("originalStartSeconds"))
+            coarse_end = parse_optional_float(coarse_chunking.get("originalEndSeconds"))
+            if coarse_start is None or coarse_end is None:
+                continue
+            if (
+                abs(refined_start - coarse_start) > max_edge_shift_seconds
+                or abs(refined_end - coarse_end) > max_edge_shift_seconds
+            ):
+                continue
+            overlap = max(0.0, min(refined_end, coarse_end) - max(refined_start, coarse_start))
+            ratio = overlap / max(1e-6, max(refined_end - refined_start, coarse_end - coarse_start))
+            if ratio >= 0.5:
+                matches.append((ratio, index))
+        if not matches:
+            rejected += 1
+            continue
+        _ratio, index = max(matches)
+        replacements[index] = refined_spec
+    combined = tuple(replacements.get(index, spec) for index, spec in enumerate(coarse.specs))
+    return (
+        KinematicSourceCutPlan(
+            specs=combined,
+            timeline_window=coarse.timeline_window,
+            expanded_parent=coarse.expanded_parent,
+            policy=coarse.policy,
+        ),
+        rejected,
+    )
+
+
+def refine_kinematic_plan_with_native_boundary_pose(
+    *,
+    plan: KinematicSourceCutPlan,
+    parent_pose_payload: dict[str, Any] | None,
+    source_video_path: Path,
+    contract: dict[str, Any] | None,
+    exercise_name: str,
+    output_dir: Path,
+    shared_pose_cache_dir: Path | None = None,
+    caption_images: Callable[..., str],
+    source_offset_seconds: float,
+    video_duration_seconds: float | None,
+) -> tuple[KinematicSourceCutPlan, dict[str, Any] | None, dict[str, Any]]:
+    """Refine only shortlisted boundaries with bounded native source frames."""
+    metadata = read_basic_video_metadata(source_video_path)
+    frame_indices = source_cut_native_boundary_frame_indices(
+        plan,
+        fps=metadata.fps,
+        frame_count=metadata.frame_count,
+    )
+    diagnostics: dict[str, Any] = {
+        "status": "skipped_no_kinematic_shortlist" if not frame_indices else "pending",
+        "requestedNativeFrameCount": len(frame_indices),
+        "requestedNativeFrameIndices": list(frame_indices),
+        "boundaryBandSeconds": SOURCE_CUT_NATIVE_BOUNDARY_BAND_SECONDS,
+        "sourceClockAssumption": "constant_fps_source_video",
+    }
+    if not frame_indices:
+        return plan, parent_pose_payload, diagnostics
+
+    from .stage_cache import cache_key
+
+    settings = PosePrefilterSettings(
+        model=str((parent_pose_payload or {}).get("model") or "yolo26x-pose.pt"),
+        sample_fps=metadata.fps,
+        max_seconds=len(frame_indices) / metadata.fps,
+        scan_strategy="full",
+        batch_size=16,
+        device=str((parent_pose_payload or {}).get("device") or "cuda"),
+        target_exercise_name=exercise_name,
+        target_motion_contract=contract,
+        sample_frame_indices=frame_indices,
+    )
+    resolved_model = str((parent_pose_payload or {}).get("resolvedModelPath") or "").strip()
+    model_path = Path(resolved_model or settings.model).expanduser()
+    cache_payload = {
+        "policy": "kinematic_cut_native_boundary_pose_v2",
+        "model": settings.model,
+        "device": settings.device,
+        "targetExerciseName": settings.target_exercise_name,
+        "targetMotionContract": settings.target_motion_contract,
+        "minKeypointConfidence": settings.min_keypoint_confidence,
+        "sourceClock": "absolute_source_video_frame_index_v1",
+    }
+    cache_inputs = [
+        source_video_path,
+        Path(__file__),
+        Path(__file__).with_name("pose_prefilter.py"),
+    ]
+    if model_path.is_file():
+        cache_inputs.append(model_path)
+    cache_id = cache_key(cache_payload, cache_inputs)
+    cache_dir = shared_pose_cache_dir or output_dir / "native_boundary_pose"
+    cache_path = cache_dir / f"{cache_id}.json"
+    from .stage_cache import stage_lock
+
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    with stage_lock(cache_dir / f"{cache_id}.lock"):
+        cached: dict[str, Any] = {}
+        try:
+            loaded = loads_reconstruction_metadata(cache_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict) and loaded.get("cacheIdentity") == cache_id:
+                cached = loaded
+        except (OSError, ValueError, TypeError):
+            pass
+        observed_indices = {
+            int(value)
+            for value in cached.get("observedFrameIndices", [])
+            if isinstance(value, (int, float)) and 0 <= int(value) < metadata.frame_count
+        }
+        cached_samples = {
+            int(index): sample
+            for index, sample in (cached.get("samplesByFrameIndex") or {}).items()
+            if str(index).lstrip("-").isdigit()
+            and isinstance(sample, dict)
+            and 0 <= int(index) < metadata.frame_count
+        }
+        missing_indices = tuple(index for index in frame_indices if index not in observed_indices)
+        diagnostics.update({
+            "cacheIdentity": cache_id,
+            "cachedNativeFrameCount": len(observed_indices.intersection(frame_indices)),
+            "requestedMissingNativeFrameCount": len(missing_indices),
+        })
+        if missing_indices:
+            incremental_settings = replace(
+                settings,
+                max_seconds=len(missing_indices) / metadata.fps,
+                sample_frame_indices=missing_indices,
+            )
+
+            def compute_missing() -> dict[str, Any]:
+                result = run_yolo_pose_prefilter(
+                    video_path=source_video_path,
+                    settings=incremental_settings,
+                )
+                return result.payload
+
+            new_payload = run_with_caption_gpu_exclusive(
+                caption_images,
+                compute_missing,
+                small_stage="yolo_pose_prefilter",
+                small_min_free_mib=1024,
+            )
+            new_samples = (
+                new_payload.get("dominantPoseSamples")
+                if isinstance(new_payload, dict)
+                else None
+            )
+            for sample in new_samples if isinstance(new_samples, list) else []:
+                if not isinstance(sample, dict):
+                    continue
+                index = _native_source_frame_index(sample, fps=metadata.fps)
+                if index is None:
+                    continue
+                if index in missing_indices:
+                    cached_samples[index] = {
+                        **sample,
+                        "nativeFrameIndex": index,
+                    }
+            observed_indices.update(missing_indices)
+            cached = {
+                "schemaVersion": 1,
+                "cacheIdentity": cache_id,
+                "observedFrameIndices": sorted(observed_indices),
+                "samplesByFrameIndex": {
+                    str(index): cached_samples[index] for index in sorted(cached_samples)
+                },
+            }
+            write_json_atomic(cache_path, cached)
+            diagnostics["newlyObservedNativeFrameCount"] = len(missing_indices)
+    native_payload = {
+        "dominantPoseSamples": [
+            cached_samples[index] for index in sorted(cached_samples)
+            if index in frame_indices
+        ],
+        "nativeBoundaryPoseFrameIndices": list(frame_indices),
+    }
+    native_samples = (
+        native_payload.get("dominantPoseSamples")
+        if isinstance(native_payload, dict)
+        else None
+    )
+    merged_payload = merge_native_source_pose_samples(
+        parent_pose_payload,
+        native_payload if isinstance(native_payload, dict) else None,
+        fps=metadata.fps,
+    )
+    native_frames = parse_dominant_pose_samples(native_samples if isinstance(native_samples, list) else None)
+    observed_times = sorted(
+        frame.time_seconds
+        for frame in native_frames
+        if frame.confidence >= MIN_KEYPOINT_CONFIDENCE
+    )
+    boundary_coverage: list[dict[str, Any]] = []
+    boundaries_bracketed = True
+    for spec in plan.specs[:KINEMATIC_CUT_MAX_PROPOSALS]:
+        chunking = spec.chunking if isinstance(spec.chunking, dict) else {}
+        for edge_name, key in (("start", "originalStartSeconds"), ("end", "originalEndSeconds")):
+            edge = parse_optional_float(chunking.get(key))
+            if edge is None:
+                continue
+            before = sum(edge - SOURCE_CUT_NATIVE_BOUNDARY_BAND_SECONDS <= time < edge for time in observed_times)
+            after = sum(edge < time <= edge + SOURCE_CUT_NATIVE_BOUNDARY_BAND_SECONDS for time in observed_times)
+            local_times = sorted(
+                time for time in observed_times
+                if edge - SOURCE_CUT_NATIVE_BOUNDARY_BAND_SECONDS <= time
+                <= edge + SOURCE_CUT_NATIVE_BOUNDARY_BAND_SECONDS
+            )
+            largest_gap = max(
+                (right - left for left, right in zip(local_times, local_times[1:])),
+                default=0.0,
+            )
+            bracketed = (
+                before > 0
+                and after > 0
+                and largest_gap <= MAX_POSE_OBSERVATION_GAP_SECONDS
+            )
+            boundaries_bracketed = boundaries_bracketed and bracketed
+            boundary_coverage.append({
+                "candidateId": spec.chunking.get("candidateId"),
+                "edge": edge_name,
+                "sourceTimeSeconds": round(edge, 6),
+                "nativeObservationsBefore": before,
+                "nativeObservationsAfter": after,
+                "maximumLocalObservationGapSeconds": round(largest_gap, 6),
+                "bracketed": bracketed,
+            })
+    if not observed_times or not boundaries_bracketed:
+        diagnostics.update({
+            "status": "native_boundary_evidence_unresolved_coarse_plan_retained",
+            "nativePoseSampleCount": len(observed_times),
+            "boundaryCoverage": boundary_coverage,
+            "mergedPoseSampleCount": len((merged_payload or {}).get("dominantPoseSamples") or []),
+            "cachePath": str(cache_path.resolve()),
+        })
+        return plan, merged_payload, diagnostics
+    refined_plan = build_kinematic_source_cut_plan(
+        pose_payload=merged_payload,
+        contract=contract,
+        timeline_window=plan.timeline_window,
+        source_offset_seconds=source_offset_seconds,
+        video_duration_seconds=video_duration_seconds,
+    )
+    locally_refined_plan, rejected_outside_band = merge_boundary_local_kinematic_refinements(
+        plan,
+        refined_plan,
+    )
+    diagnostics.update({
+        "status": "computed_or_reused",
+        "nativePoseSampleCount": len(observed_times),
+        "mergedPoseSampleCount": len((merged_payload or {}).get("dominantPoseSamples") or []),
+        "boundaryCoverage": boundary_coverage,
+        "refinedProposalCount": len(refined_plan.specs),
+        "acceptedLocalRefinementCount": sum(
+            left is not right for left, right in zip(plan.specs, locally_refined_plan.specs)
+        ),
+        "rejectedProposalOutsideBoundaryBandCount": rejected_outside_band,
+        "cachePath": str(cache_path.resolve()),
+        "refinedOriginalIntervals": [
+            {
+                "startSeconds": spec.chunking.get("originalStartSeconds"),
+                "endSeconds": spec.chunking.get("originalEndSeconds"),
+            }
+            for spec in refined_plan.specs
+        ],
+    })
+    return locally_refined_plan, merged_payload, diagnostics
 
 
 def build_kinematic_source_cut_plan(
@@ -43820,6 +44742,7 @@ def rank_source_video_cut_candidates_with_caption_images(
     exercise_motion_contract: dict[str, Any] | None = None,
     source_pose_prefilter_payload: dict[str, Any] | None = None,
     source_pose_offset_seconds: float = 0.0,
+    shared_pose_cache_dir: Path | None = None,
     max_vlm_workers: int = 1,
     request_timeout_seconds: float = DEFAULT_SOURCE_REVIEW_TIMEOUT_SECONDS,
     visual_decision_backend: str = "qwen-chat",
@@ -43852,6 +44775,42 @@ def rank_source_video_cut_candidates_with_caption_images(
         source_offset_seconds=source_pose_offset_seconds,
         video_duration_seconds=video_duration_seconds,
     )
+    kinematic_boundary_pose_refinement: dict[str, Any] = {
+        "status": "skipped_no_kinematic_shortlist",
+        "requestedNativeFrameCount": 0,
+        "nativePoseSampleCount": 0,
+    }
+    if kinematic_plan.specs:
+        try:
+            (
+                refined_plan,
+                refined_pose_payload,
+                kinematic_boundary_pose_refinement,
+            ) = refine_kinematic_plan_with_native_boundary_pose(
+                plan=kinematic_plan,
+                parent_pose_payload=source_pose_prefilter_payload,
+                source_video_path=original_source_path,
+                contract=exercise_motion_contract,
+                exercise_name=exercise_name,
+                output_dir=output_dir,
+                shared_pose_cache_dir=shared_pose_cache_dir,
+                caption_images=caption_images,
+                source_offset_seconds=source_pose_offset_seconds,
+                video_duration_seconds=video_duration_seconds,
+            )
+            if refined_plan.specs:
+                kinematic_plan = refined_plan
+            if isinstance(refined_pose_payload, dict):
+                source_pose_prefilter_payload = refined_pose_payload
+        except Exception as exc:
+            # Native-boundary refinement is an optimization of an existing
+            # pose-supported shortlist. An unavailable refinement must retain
+            # the coarse proposals and their unresolved status.
+            kinematic_boundary_pose_refinement = {
+                "status": "unavailable_coarse_plan_retained",
+                "errorType": type(exc).__name__,
+                "error": str(exc),
+            }
     # Pyramid/scene search stays on the detection window. Expand only when a
     # kinematic cut needs footage outside it; never replace the parent with a
     # kinematic-only span.
@@ -44275,7 +45234,10 @@ def rank_source_video_cut_candidates_with_caption_images(
                     ),
                     "sourceCutIncompletePhaseExpansionCount": len(incomplete_expansion_specs),
                     "exerciseMotionContract": exercise_motion_contract,
-                    **kinematic_cut_debug_payload(kinematic_plan),
+                    **kinematic_cut_debug_payload(
+                        kinematic_plan,
+                        boundary_pose_refinement=kinematic_boundary_pose_refinement,
+                    ),
                 },
                 model_score=0.0,
             ),
@@ -44307,6 +45269,15 @@ def rank_source_video_cut_candidates_with_caption_images(
                 exercise_name, exercise_motion_contract
             )) or "none"),
             require_identity_evidence=True,
+            equipment_timing_requirement_ids=[
+                f"equipment_{index + 1}"
+                for index, _ in enumerate(
+                    two_scale_equipment_role_requirements(
+                        exercise_name, exercise_motion_contract
+                    )
+                )
+            ],
+            source_time_offset_seconds=source_pose_offset_seconds,
         )
 
     required_equipment = ", ".join(two_scale_required_equipment_names(
@@ -44637,7 +45608,10 @@ def rank_source_video_cut_candidates_with_caption_images(
                         has_contract=source_scorecard_has_contract,
                     ),
                     "exerciseMotionContract": exercise_motion_contract,
-                    **kinematic_cut_debug_payload(kinematic_plan),
+                    **kinematic_cut_debug_payload(
+                        kinematic_plan,
+                        boundary_pose_refinement=kinematic_boundary_pose_refinement,
+                    ),
                 },
                 model_score=0.0,
             ),
@@ -44737,7 +45711,11 @@ def rank_source_video_cut_candidates_with_caption_images(
         and normalize_source_cut_candidate_id(candidate.candidate_id) == selected_id
         for candidate in all_candidates
     )
-    ranking_payload.update(kinematic_cut_debug_payload(kinematic_plan, used=kinematic_used))
+    ranking_payload.update(kinematic_cut_debug_payload(
+        kinematic_plan,
+        used=kinematic_used,
+        boundary_pose_refinement=kinematic_boundary_pose_refinement,
+    ))
     ranking = replace(
         ranking,
         payload=ranking_payload,

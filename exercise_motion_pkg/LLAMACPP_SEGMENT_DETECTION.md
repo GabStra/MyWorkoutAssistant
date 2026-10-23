@@ -36,6 +36,31 @@ reconstruction. You can provide `-SegmentStartSeconds` and
 `-SegmentEndSeconds` to choose a span directly, or pass `-UseSourceAsIs` to
 process the whole source.
 
+## Pose-guided source cuts
+
+Library source selection uses the existing pose scan to propose cuts inside
+the detected exercise region. It splits the source timeline at unsupported
+observation gaps before finding motion cycles. Loop proposals need compatible
+observed boundary motion; distinct-end actions, holds and travel use their own
+completion policies. A proposal does not approve an exercise or its equipment.
+
+Only shortlisted boundaries request finer observations: at most two proposals,
+30 actual source frames per edge, within a half-second band on either side.
+The parent observations remain reusable, and source/model/settings identity
+controls reuse of native-frame detections. Missing detections retain the coarse
+candidate rather than creating interpolated evidence.
+
+Complex-phase and equipment observations cite frame IDs from hash-verified
+contact sheets. Their source times and sampling-uncertainty bins come from the
+manifest, not model-generated timestamps. A child refinement must preserve the
+reviewed parent's cited evidence. Missing or insufficient timing keeps the
+reviewed parent; it does not establish that a shorter child is valid. Legacy
+normalized phase positions remain semantic order evidence only.
+
+The selected exact interval still passes the normal source approval and
+post-reconstruction movement checks. Pose-guided search does not relax those
+checks or establish continuous equipment tracking from body landmarks.
+
 ## Run the full movement flow
 
 ```powershell

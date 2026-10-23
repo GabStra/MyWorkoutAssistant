@@ -160,4 +160,5 @@ def test_chat_reasoning_recovery_is_bounded_and_validated(failure):
         assert 'reasoning_effort' not in requests[1]
         assert requests[1]['extra_body']['thinking']['type'] == 'disabled'
         assert requests[0]['messages'] == requests[1]['messages']
-        assert requests[0]['tools'] == requests[1]['tools']
+        assert requests[0].get('tools') == requests[1].get('tools')
+        assert requests[0]['response_format'] == requests[1]['response_format'] == {'type': 'json_object'}

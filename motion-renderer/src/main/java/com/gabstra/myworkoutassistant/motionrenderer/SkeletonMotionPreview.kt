@@ -135,6 +135,7 @@ private data class WearSkeleton(
     val bodyAxesByFrame: List<BodyAxes>,
     val fixedRig: FixedRigPlayback? = null,
     val displayTransform: WearSkeletonDisplayCoordinateTransform = WearSkeletonDisplayCoordinateTransform.None,
+    val footRestPitchRadians: Map<String, Float> = emptyMap(),
 )
 
 private data class WearSkeletonDisplay(
@@ -821,6 +822,7 @@ private class WearSkeletonFilamentRenderer(
                 stableBodyAxes = if (skeleton.fixedRig != null) posedFrame.joints.toBodyAxes() else skeleton.bodyAxesByFrame.getOrNull(resolvedFrameIndex),
                 boneSides = posedFrame.boneSides,
                 bodyProportions = skeleton.stableBodyProportions(),
+                footRestPitches = skeleton.footRestPitchRadians,
             ) ?: GeneratedLowPolyMesh()
             val reuseTopology = bodyEntity != 0 &&
                 generatedMesh.vertices.size == bodyVertexCount &&
@@ -1544,6 +1546,7 @@ private fun WearSkeleton.toStableRenderedSceneCameraFrame(
             stableBodyAxes = if (fixedRig != null) frame.joints.toBodyAxes() else bodyAxesByFrame.getOrNull(frameIndex),
             boneSides = frame.boneSides,
             bodyProportions = bodyProportions,
+            footRestPitches = footRestPitchRadians,
         )?.vertices.orEmpty()
         meshVertices.forEach(::includeInBounds)
         frameVertices += meshVertices
@@ -1670,6 +1673,7 @@ private fun buildSingleLowPolyMesh(
     stableBodyAxes: BodyAxes?,
     boneSides: Map<LimbKey, WearSkeletonVec3>,
     bodyProportions: StableBodyProportions,
+    footRestPitches: Map<String, Float> = emptyMap(),
 ): GeneratedLowPolyMesh? {
     val pelvis = joints["pelvis"] ?: return null
     val neck = joints["neck"] ?: return null
@@ -2079,11 +2083,13 @@ private fun buildSingleLowPolyMesh(
         mesh, resolvedJoints, "left_ankle", "left_foot", bodyAxes, footScale, palette,
         boneSides[LimbKey("left_ankle", "left_foot")]
             ?: coordinatedLegSides[LimbKey("left_ankle", "left_foot")],
+        footRestPitches["left"],
     )
     val rightFootSurface = addShoeBlockFromNames(
         mesh, resolvedJoints, "right_ankle", "right_foot", bodyAxes, footScale, palette,
         boneSides[LimbKey("right_ankle", "right_foot")]
             ?: coordinatedLegSides[LimbKey("right_ankle", "right_foot")],
+        footRestPitches["right"],
     )
     addJointCapAtNames(mesh, resolvedJoints, "left_elbow", bodyAxes, max(
         segmentScaledWidth("left_shoulder", "left_elbow", 0.225f),
@@ -2195,6 +2201,7 @@ private fun addShoeBlockFromNames(
     footScale: Float,
     palette: SkeletonPalette,
     preferredSide: WearSkeletonVec3? = null,
+    restPitch: Float? = null,
 ): WearSkeletonVec3? {
     val ankle = joints[ankleName] ?: return null
     val foot = joints[footName] ?: return null
@@ -2203,7 +2210,7 @@ private fun addShoeBlockFromNames(
     val footLength = footVector.length()
     val bodyForward = bodyAxes.forward - worldUp * bodyAxes.forward.dot(worldUp)
     val stableForward = bodyForward.normalizedOr(WearSkeletonVec3(0f, 0f, 1f))
-    val footForward = if (footLength > 0.0001f) {
+    var footForward = if (footLength > 0.0001f) {
         footVector * (1f / footLength)
     } else {
         stableForward
@@ -2218,7 +2225,10 @@ private fun addShoeBlockFromNames(
         ?.takeIf { it.length() > 0.0001f }
         ?.normalizedOr(defaultFootSide)
         ?: defaultFootSide
-    val shoeUp = if (preferredSide != null) {
+    if (restPitch != null) {
+        footForward = footForward * cos(restPitch) - footSide.cross(footForward) * sin(restPitch)
+    }
+    val shoeUp = if (preferredSide != null || restPitch != null) {
         footSide.cross(footForward).normalizedOr(defaultShoeUp)
     } else {
         defaultShoeUp
@@ -2232,6 +2242,9 @@ private fun addShoeBlockFromNames(
     val length = shoeScale * 1.15f
     val halfWidth = max(shoeScale * 0.26f, footScale * 0.15f)
     val height = max(shoeScale * 0.28f, footScale * 0.15f)
+    // Remove the observed bind pitch and pivot the material sole at the forefoot.
+    val origin = if (restPitch != null) foot - footForward * length
+        else ankle - footForward * (shoeScale * 0.08f)
     val fill = palette.limbFill
     val profile = listOf(
         floatArrayOf(0f, -0.05f, 0.78f, 0.55f),
@@ -2242,7 +2255,7 @@ private fun addShoeBlockFromNames(
         addMeshDirectionalRing(
             mesh = mesh,
             // Offset only the mesh; keep the animated foot joint unchanged.
-            center = ankle + footForward * (length * point[0] - shoeScale * 0.08f) + shoeUp * (height * (point[1] + 0.60f)),
+            center = origin + footForward * (length * point[0]) + shoeUp * (height * (point[1] + 0.60f)),
             side = footSide,
             depth = shoeUp,
             halfWidth = halfWidth * point[2],
@@ -2264,10 +2277,11 @@ private fun addShoeBlockFromNames(
     val axisUp = shinDirection.dot(shoeUp)
     var surfaceDistance: Float? = null
     profile.zipWithNext().forEach { (rear, front) ->
-        val rearForward = length * rear[0] - shoeScale * 0.08f
-        val frontForward = length * front[0] - shoeScale * 0.08f
-        val rearTop = height * (rear[1] + 0.60f + rear[3])
-        val frontTop = height * (front[1] + 0.60f + front[3])
+        val offset = origin - ankle
+        val rearForward = length * rear[0] + offset.dot(footForward)
+        val frontForward = length * front[0] + offset.dot(footForward)
+        val rearTop = height * (rear[1] + 0.60f + rear[3]) + offset.dot(shoeUp)
+        val frontTop = height * (front[1] + 0.60f + front[3]) + offset.dot(shoeUp)
         val slope = (frontTop - rearTop) / (frontForward - rearForward)
         val denominator = axisUp - slope * axisForward
         if (abs(denominator) > 0.0001f) {
@@ -2810,7 +2824,10 @@ private fun coordinateLegSides(
         }
         put(thighKey, side)
         put(shinKey, side)
-        put(footKey, side.projectOntoPlane(foot).normalizedOr(reference ?: side))
+        // A knee bend plane cannot observe shoe roll. Preserve the foot's own
+        // transported axis; exported sole axes override this fallback at draw.
+        val footSide = referenceSides[footKey]?.projectOntoPlane(foot) ?: ankleReference
+        put(footKey, (footSide ?: side).normalizedOr(ankleReference ?: side))
     }
 }
 
@@ -2850,7 +2867,11 @@ private fun buildStableLimbSides(
                 put(key, resolvedSide)
             }
         }
-        val coordinatedSides = currentSides + coordinateLegSides(frame.joints, previousSides)
+        val soleSides = listOf("left", "right").mapNotNull { leg ->
+            val key = LimbKey("${leg}_ankle", "${leg}_foot")
+            frame.boneSides[key]?.let { key to it }
+        }.toMap()
+        val coordinatedSides = currentSides + coordinateLegSides(frame.joints, previousSides) + soleSides
         previousSides = coordinatedSides
         coordinatedSides
     }
@@ -3084,6 +3105,11 @@ private fun parseWearSkeleton(json: String): WearSkeleton {
         },
         groundContactMode = root.optionalString("groundContactMode")?.trim()?.lowercase(),
         displayTransform = displayCoordinateTransform,
+        footRestPitchRadians = listOf("left", "right").mapNotNull { side ->
+            root.optionalJsonObject("footRestPitchRadians")?.optionalFloat(side)
+                ?.takeIf { it.isFinite() && abs(it) < PI.toFloat() / 2f }
+                ?.let { side to it }
+        }.toMap(),
     )
 }
 

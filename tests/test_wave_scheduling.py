@@ -284,12 +284,12 @@ def test_ready_sources_defer_later_attempts_and_resume_next_candidate(tmp_path, 
     items = [wave.StagedWaveItem(name, name, bake.BakeAndRankRequest(
         candidates_json=tmp_path / 'candidates.json', workspace=tmp_path / name,
         body_model_root=None, fallback_candidates=0,
-        max_final_output_rejections=0)) for name in ['a', 'b', 'slow'] + [f'unavailable_{i}' for i in range(unavailable_count)]]
+        max_final_output_rejections=0)) for name in ['a', 'b', 'slow', 'queued'] + [f'unavailable_{i}' for i in range(unavailable_count)]]
     candidates = {item.exercise_id: [bake.RankedCandidate(
         exercise_index=0, candidate_rank=index, exercise_id=item.exercise_id,
         exercise_name=item.exercise_name, exercise_slug=item.exercise_id,
         candidate={'videoId': f'{item.exercise_id}-{index}'})
-        for index in range(0 if item.exercise_id.startswith('unavailable_') else 2 if item.exercise_id == 'slow' else 1)] for item in items}
+        for index in range(0 if item.exercise_id.startswith('unavailable_') else 2 if item.exercise_id in {'a', 'slow', 'queued'} else 1)] for item in items}
     monkeypatch.setattr(wave, '_wave_candidates', lambda request: candidates[request.workspace.name])
     ready = threading.Event()
     usable = []
@@ -304,13 +304,12 @@ def test_ready_sources_defer_later_attempts_and_resume_next_candidate(tmp_path, 
                 unavailable_done.set()
         if '1 usable source(s)' in message:
             usable.append(message)
-            if len(usable) == 2: ready.set()
+            if len(usable) >= 1: ready.set()
     attempted = []
     def prepare(candidate, **kwargs):
         attempted.append(candidate.video_id)
         if candidate.video_id == 'slow-0':
             assert ready.wait(3)
-            assert unavailable_done.wait(3)
             raise bake.SourceCandidateRejected('bad window')
         if candidate.video_id == 'slow-1' and not remaining_source_passes:
             raise bake.SourceCandidateRejected('last window rejected')
@@ -327,12 +326,30 @@ def test_ready_sources_defer_later_attempts_and_resume_next_candidate(tmp_path, 
     slow = next(x for x in report['items'] if x['exerciseId'] == 'slow')
     assert slow['source']['failureReason'] == 'source_turn_deferred'
     assert 'slow-1' not in attempted
+    resume = json.loads((items[2].request.workspace / 'source_turn_resume.json').read_text())
+    assert resume['nextCandidateKey'] == wave._candidate_key(candidates['slow'][1])
+    assert wave._candidate_key(candidates['slow'][0]) in resume['attemptedCandidateKeys']
+    queued = next(x for x in report['items'] if x['exerciseId'] == 'queued')
+    assert queued['source']['failureReason'] == 'source_turn_deferred'
+    queued_resume = json.loads((items[3].request.workspace / 'source_turn_resume.json').read_text())
+    assert queued_resume['nextCandidateKey'] == wave._candidate_key(candidates['queued'][0])
+    assert not any(key.startswith('queued-') for key in attempted)
     assert report['metrics']['generationCpuWorkers'] == 2
     assert sum(x['status'] == 'completed' for x in report['items']) == 2
+    ready_source = next(x for x in report['items'] if x['exerciseId'] == 'a')
+    assert ready_source['source']['nextCandidateKey'] == wave._candidate_key(candidates['a'][1])
     attempted.clear()
     wave.run_staged_bake_wave([items[2]], workspace=tmp_path / 'wave2', wave_id='second')
     assert attempted == ['slow-1']
-    assert not (items[2].request.workspace / 'source_turn_resume.json').exists()
+    if remaining_source_passes:
+        assert not (items[2].request.workspace / 'source_turn_resume.json').exists()
+    else:
+        final_resume = json.loads((items[2].request.workspace / 'source_turn_resume.json').read_text())
+        assert final_resume['attemptedVideoIds'] == ['slow-0', 'slow-1']
+        assert final_resume['sourceTurnAttemptsUsed'] == 2
+        assert final_resume['nextCandidateKey'] is None
+    budget = json.loads((items[2].request.workspace / 'source_turn_budget.json').read_text())
+    assert budget['sourceTurnAttemptsUsed'] == 2
 
 
 def test_staged_wave_rejects_source_before_motion_generation(tmp_path, monkeypatch):
@@ -396,6 +413,76 @@ def test_staged_wave_rejects_source_before_motion_generation(tmp_path, monkeypat
     assert report['items'][0]['reconstruction']['status'] != 'prepared'
 
 
+def test_staged_wave_rejects_unresolved_stationary_foot_before_reconstruction(tmp_path, monkeypatch):
+    import hashlib
+    from exercise_motion_pkg import body_support_observation as support_observation
+
+    class Session:
+        def __init__(self, request): pass
+        def caption_images(self, **kwargs): return '{}'
+        def close(self, **kwargs): pass
+        def run_without_llama_overlap(self, operation): return operation()
+
+    candidate = bake.RankedCandidate(
+        exercise_index=0, candidate_rank=0, exercise_id='carry',
+        exercise_name='Dumbbell Overhead Carry', exercise_slug='carry',
+        candidate={'videoId': 'carry-source', 'title': 'Carry'},
+    )
+    request = bake.BakeAndRankRequest(
+        candidates_json=tmp_path / 'candidates.json', workspace=tmp_path / 'carry',
+        body_model_root=None, fallback_candidates=0, max_final_output_rejections=0,
+    )
+    item = wave.StagedWaveItem('carry', 'Dumbbell Overhead Carry', request)
+    source_path = tmp_path / 'carry' / 'selected.mp4'
+    source_path.parent.mkdir(parents=True)
+    source_path.write_bytes(b'exact selected cut')
+    digest = hashlib.sha256(source_path.read_bytes()).hexdigest()
+    source_evidence = {
+        'bodySupportObservation': {},
+        'footPatchEvidence': {'available': True, 'policyVersion': 16, 'feet': {
+            'left': {'states': ['unknown'] * 8}, 'right': {'states': ['unknown'] * 8},
+        }},
+        'contacts': [],
+    }
+
+    monkeypatch.setattr(wave, 'LazyLlamaCppVisionSession', Session)
+    monkeypatch.setattr(wave, '_wave_candidates_for_item', lambda _item: [candidate])
+    monkeypatch.setattr(wave, 'build_exercise_motion_contract_resolver', lambda **_kwargs: None)
+    monkeypatch.setattr(wave, 'first_attempt_readiness_assessment',
+                        lambda *_args, **_kwargs: {'eligible': True, 'portfolioSize': 1})
+    monkeypatch.setattr(wave, 'evaluate_source_candidate_gate',
+                        lambda *_args, **_kwargs: {'passed': True})
+    monkeypatch.setattr(wave, 'prepare_candidate_input_video',
+                        lambda *_args, **_kwargs: source_path)
+    monkeypatch.setattr(wave, 'review_prepared_source', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(bake, 'load_pre_reconstruction_exact_source_phase_metrics',
+                        lambda _workspace: {'sourceFootSupportEvidence': source_evidence})
+    monkeypatch.setattr(bake, 'load_verified_source_pose_reference', lambda *_args: {'frames': []})
+    monkeypatch.setattr(support_observation, 'source_support_observation_needed', lambda *_args: True)
+    monkeypatch.setattr(support_observation, 'observe_body_support', lambda *_args: {
+        'status': 'observed', 'policyVersion': support_observation.POLICY_VERSION,
+        'sourceVideoSha256': digest,
+        'observation': {'leftFoot': 'moving', 'rightFoot': 'stationary_full_sole'},
+    })
+    monkeypatch.setattr(wave, 'generate_candidate_motion',
+                        lambda *_args, **_kwargs: pytest.fail('unresolved support reached reconstruction'))
+    monkeypatch.setattr(wave, 'run_bake_and_rank_pipeline', lambda *_args, **_kwargs: {'selected': None})
+
+    report = wave.run_staged_bake_wave(
+        [item], workspace=tmp_path / 'wave', wave_id='source-support-readiness',
+    )
+
+    assert report['items'][0]['source']['attempts'], report
+    attempt = report['items'][0]['source']['attempts'][0]
+    assert attempt['status'] == 'needs_source_review'
+    assert attempt['failureOwner'] == 'source_evidence'
+    assert attempt['reasonTags'] == ['source_support_contact_evidence_unavailable']
+    assert attempt['sourceContactReadiness']['unresolvedSides'] == ['right']
+    assert report['items'][0]['source']['failureReason'] == 'source_review_incomplete'
+    assert wave.wave_retry_disposition(report['items'][0]) == 'retry_review'
+    assert report['items'][0]['reconstruction']['status'] != 'prepared'
+
+
 def test_cached_source_rejects_invalid_variant_contract(tmp_path):
     contract = contract_for(exercise('Barbell Push Jerk'))
     contract['requiredPhases'] = ['catch the barbell in a split stance']
@@ -432,6 +519,40 @@ def test_incomplete_tracking_and_invalid_contract_do_not_retry_infrastructure():
     assert wave.wave_retry_disposition({"reconstruction": {"attempts": [
         {"status": "rejected_incomplete_reconstruction_tracking"}]}}) == "next_source"
     assert wave.wave_retry_disposition({"source": {"failureReason": "exercise_contract_invalid"}}) == "repair_contract"
+    assert wave.wave_retry_disposition({"source": {"failureReason": "needs_definition_review"}}) == "needs_definition_review"
+
+
+def test_wave_routes_failures_to_the_stage_that_owns_them():
+    deferred = {"source": {"failureReason": "source_turn_deferred"}}
+    assert wave.wave_retry_disposition(deferred) == "continue_source"
+
+    support_repair = {"finalValidation": {
+        "status": "no_selection",
+        "candidateDiagnostics": [{
+            "status": "rejected_baked_motion_validation",
+            "reasons": ["source_confirmed_support_unrepaired", "source_confirmed_baseline_support_drift"],
+        }],
+    }}
+    assert wave.wave_retry_disposition(support_repair) == "retry_processing"
+
+    missing_contact_evidence = {"finalValidation": {
+        "status": "no_selection",
+        "candidateDiagnostics": [{
+            "status": "rejected_baked_motion_validation",
+            "reasons": ["source_support_contact_evidence_unavailable"],
+        }],
+    }}
+    assert wave.wave_retry_disposition(missing_contact_evidence) == "retry_review"
+
+    raw_reconstruction_failure = {"reconstruction": {"attempts": [
+        {"status": "rejected_raw_reconstruction_validation"},
+    ]}}
+    assert wave.wave_retry_disposition(raw_reconstruction_failure) == "retry_processing"
+
+    bad_source_tracking = {"reconstruction": {"attempts": [
+        {"status": "rejected_incomplete_reconstruction_tracking"},
+    ]}}
+    assert wave.wave_retry_disposition(bad_source_tracking) == "next_source"
 
 
 def test_contract_generation_repairs_invalid_variant_before_accepting(monkeypatch):

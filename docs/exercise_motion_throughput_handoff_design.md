@@ -8,6 +8,65 @@ cache identity, and exclusive ownership of GPU models. Keep Q6 and current model
 context settings. Increasing automated acceptance or accelerating rejection alone
 does not demonstrate success.
 
+## Target and interval evidence (22 October 2026)
+
+Supply a minimal trusted target in an exercise's `motionContext.exerciseDefinition`:
+
+```json
+{
+  "definingAction": "The visible action that distinguishes the requested movement.",
+  "completionMode": "distinct_end_state",
+  "variantQualifiers": []
+}
+```
+
+Use the existing completion modes, including `return_to_start`, `alternating_pair`,
+`stable_hold`, and `active_travel`. Qualifiers describe essential requested variants;
+they are not inferred contact locations, joint angles, or detailed pose prescriptions.
+Existing trusted `requiredPhases` remain supported. Model-authored definitions remain
+provisional; generic coaching text does not establish target authority.
+
+An unresolved discrete target produces `needs_definition_review` before source search
+or download. Checkpoints preserve this state without rediscovering footage or updating
+source quality history. Changing the target invalidates cached source selection;
+unchanged exact interval, target, evidence, model, and policy remain reusable.
+
+### Review, persist, and resume
+
+Export a pending review from the discovery manifest. This copies a proposal, not an
+approval; edit `definition` while checking the included exercise context and proposal
+notes. Old contracts may have no action sentence, which must be authored before approval.
+
+```powershell
+py -3 -m exercise_motion_pkg.cli review-motion-definition --workout-plan-json plan.json --candidates-json youtube_candidates.json --exercise-id EXERCISE_ID --review-json definition-review.json
+```
+
+After reviewing the action, finish, and essential qualifiers, explicitly approve the
+edited file into a new plan. The original plan and existing review file are preserved.
+Approval refuses a changed target configuration or malformed definition; it records
+the reviewed artifact hash and approval time in `motionContext.exerciseDefinition`.
+
+```powershell
+py -3 -m exercise_motion_pkg.cli review-motion-definition --workout-plan-json plan.json --exercise-id EXERCISE_ID --review-json definition-review.json --approve --out-plan-json reviewed-plan.json
+pwsh ./scripts/run_exercise_motion_workout_plan.ps1 -WorkoutPlanJson reviewed-plan.json -WorkspaceRoot SAME_WORKSPACE
+```
+
+Keep the original runner options on resume. The changed definition invalidates its old
+discovery signature and contract identity, so `needs_definition_review` is reopened.
+Normal source approval still applies; approving a target does not approve any footage.
+
+Keep at most three source-supported fitting proposals, including the complete interval
+when independently validated. Multi-repetition references come from complete observed
+executions of the declared target motion signal, with either signal polarity. Each
+reference must pass source phase validation separately. A crop must match one reference
+in source time and preserve its range; absent or ambiguous references require review.
+Never use whole-video drift, the best surviving crop, or arbitrary joint motion as the
+reference. Final fitting, support, interpolation, and rendered-output gates still apply.
+
+Definition problems return to definition review; bad sources return to source selection;
+reconstruction and fitting defects retain their approved source for local replay.
+The existing bounded review and processing budgets remain in force.
+
 ## Evidence checked on 10 October 2026
 
 The overnight run produced 12 packaged movements in approximately 9 hours 47 minutes.
@@ -165,3 +224,59 @@ also prevents presentation pitch/roll changes. Python export retains that floor
 even without detected contact episodes. Refinement blocks must afford their measured
 minimum update time in every stage. These changes do not waive failed fit or playback
 checks, and retained poor reconstructions can still require another candidate.
+
+### Frame-grounded source review
+
+Source approval now uses one structured observation of the uniform and
+motion-focused samples. The response contains only exact requirement IDs,
+`supported|contradicted|unresolved` verdicts, supplied frame IDs, and numeric object
+counts for equipment requirements. The approved
+action, explicit phases, qualifiers, completion mode and equipment roles supply
+the requirements; generated posture expectations do not add requirements.
+
+The llama.cpp request carries a JSON Schema. Python independently validates the
+reply, including complete requirement coverage, image references, temporal
+evidence for action/completion, explicit phase order and uniform-sample coverage.
+Contact sheets retain a hash-bound manifest mapping printed tile numbers to
+sample timestamps. Missing or changed manifests remain unresolved. Explanatory
+prose and exercise-name guesses cannot approve or reject a source, and legacy
+prose adjudication cannot override the new evidence record.
+
+Conclusive reviews are cached against the exact interval, contract, model,
+policy and image evidence. Explicitly unresolved visual evidence requires
+inspection or expanded sampling rather than an identical immediate question;
+malformed replies retain the existing bounded retry. Physical endpoint,
+reconstruction, support and rendered-output validation remain separate gates.
+Structured references constrain the decision process; they do not prove that
+the visual observation itself is correct.
+
+### Contact refinement authority
+
+Sparse support review and stationary ankle tracks do not establish uninterrupted
+full-sole contact. Whole-clip ankle/toe anchors require a fully observed full-sole
+track and a full-range stationary patch interval; source and fitted frame counts
+may differ. Unknown observations do not fill contact gaps or preserve legacy
+continuous ankle pins. Timed forefoot, heel and released states retain their own
+constraints. Source-calibrated image heel rotation may corroborate a stationary
+forefoot despite disagreement from the landmark model's world pose, only with
+visible, identity-matched, non-foreshortened geometry and stable forefoot evidence.
+
+Support correction is checked against the pre-contact articulation before its
+result can become a fitting reference, and again before final acceptance. Knee
+and ankle excursion, body-local foot heading and heel pitch remain independently
+guarded. A contact improvement cannot authorize a destructive pose correction.
+Timed foot contacts also activate the existing leg-excursion objective and a
+per-frame target from the immutable pre-contact knee/ankle tracks. Total range
+alone does not establish that the movement phase was preserved. These remain
+soft fit objectives; contact, anatomy, temporal and playback gates still decide
+whether the proposed movement is usable.
+
+
+### Knee bend direction and root placement ownership
+
+Retained High Pull stage tracing isolated two defects: a second per-frame contact-average translation amplified registered-root jitter, and scalar knee-angle preservation allowed an approximately 82-degree bend-plane swivel. Registration now bounds root jerk against its independent source root using the existing 1.05 preservation margin and bounded temporal reweighting; unresolved placement conflicts remain failures. Target construction reuses the registered, support-corrected root, and does not apply a second translation to the rig.
+
+Reliable knee bend direction is constrained in the shared trajectory objective with the existing knee articulation tolerance and a small solver margin. Independent anatomy validation and the support-articulation guard use the same source-relative bend-plane evidence, including isolated bad frames. Near-straight or temporally unsupported source hinges do not establish a direction. Existing contact, temporal and playback acceptance limits remain in force. These changes require retained rendered verification; focused tests alone do not establish exercise-wide acceptance.
+
+
+The same replay exposed an additional playback-repair gap: interval plant repair could retain per-frame root/leg corrections that more than doubled third-difference jerk. Every exit from that shared repair now checks the whole-clip result against the incoming/source jerk bound and reliable per-frame knee-direction evidence, rolling back regressions. This prevents repair from hiding its cost behind improved contact error; it does not establish that the main fit itself reaches a usable solution.

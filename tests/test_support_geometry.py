@@ -247,7 +247,8 @@ def test_rebasing_support_does_not_rotate_free_arms_with_the_spine():
 def test_equal_toe_heights_do_not_hide_pitch_or_constrain_knee_articulation():
     names = ['knee', 'ankle', 'foot']
     points = np.array([[[0., 1., 0.], [0., 0., 0.], [.2, 0., 0.]]])
-    evidence = {'soleContacts': [{'joints': names, 'normal': [0, 1, 0]}]}
+    evidence = {'soleContacts': [{'joints': names, 'normal': [0, 1, 0]}],
+                'materialFootRestPitchRadians': {'ankle': 0.}}
     np.testing.assert_allclose(geometry_errors(points, names, evidence), 0.)
     changed = points.copy()
     changed[0, 1, 1] += .1
@@ -261,6 +262,26 @@ def test_equal_toe_heights_do_not_hide_pitch_or_constrain_knee_articulation():
     np.testing.assert_allclose(
         geometry_errors(rotation.apply(changed[0])[None]+[3, 2, 1], names, transformed),
         geometry_errors(changed, names, evidence), atol=1e-12)
+
+
+def test_full_sole_geometry_uses_calibrated_material_pitch_not_horizontal_ankle_toe_bone():
+    from exercise_motion_pkg.support_geometry import geometry_errors
+
+    rest_pitch = np.deg2rad(-19.)
+    length = .2
+    ankle = np.array([0., -length*np.sin(rest_pitch), 0.])
+    toe = ankle + np.array([length*np.cos(rest_pitch), length*np.sin(rest_pitch), 0.])
+    points = np.array([[0., 1., 0.], ankle, toe])
+    names = ['left_knee', 'left_ankle', 'left_foot']
+    evidence = {
+        'soleContacts': [{'joints': names, 'normal': [0., 1., 0.]}],
+        'materialFootRestPitchRadians': {'left': rest_pitch},
+    }
+
+    np.testing.assert_allclose(geometry_errors(points[None], names, evidence), 0., atol=1e-12)
+    flattened = points.copy()
+    flattened[2, 1] = flattened[1, 1]
+    assert np.max(np.abs(geometry_errors(flattened[None], names, evidence))) > .005
 
 
 def test_contact_projection_preserves_unconstrained_head_articulation():
@@ -290,6 +311,7 @@ def test_surface_dependencies_cover_every_changed_residual():
     points = np.array([[fixture['joints'][n] for n in names]])
     rig = FixedRig(points, names)
     evidence = {'soleContacts': [{'joints': ['left_knee', 'left_ankle', 'left_foot'], 'normal': [0, 1, 0]}],
+        'materialFootRestPitchRadians': {'left': 0.},
         'coplanarGroups': [{'joints': ['left_foot', 'right_foot'], 'normal': [0, 1, 0], 'planeOffsetMeters': 0.},
                           {'joints': ['pelvis', 'left_shoulder', 'right_shoulder'], 'normal': [0, 1, 0]}],
         'nonPenetrationChains': [{'endpoints': ['pelvis', 'neck'], 'joints': ['spine1'], 'normal': [0, 1, 0]}]}
@@ -348,6 +370,7 @@ def test_shoe_roll_uses_confirmed_surface_after_pose_correction():
     payload = {'jointNames': ['knee', 'ankle', 'foot'], 'frames': [{'joints': {
         'knee': [0., 1., .1], 'ankle': [0., 0., 0.], 'foot': [.2, 0., 0.]},
         'boneSides': {'ankle->foot': [0., .5, .5]}}],
+        'footRestPitchRadians': {'ankle': 0.},
         'sourceFootSupportEvidence': {'bodySupport': {'required': True, 'status': 'confirmed',
             'stationaryJoints': ['ankle', 'foot'],
             'soleContacts': [{'joints': ['knee', 'ankle', 'foot'], 'normal': [0, 1, 0]}]}}}
@@ -357,6 +380,54 @@ def test_shoe_roll_uses_confirmed_surface_after_pose_correction():
     assert validate_supported_shoe_orientation(payload)['passed']
     payload['frames'][0]['boneSides']['ankle->foot'] = [0., .5, .5]
     assert not validate_supported_shoe_orientation(payload)['passed']
+
+
+def test_material_shoe_orientation_accepts_source_neutral_pitch():
+    from exercise_motion_pkg.support_geometry import validate_supported_shoe_orientation
+
+    pitch = np.deg2rad(-19.)
+    vector = .2*np.array([np.cos(pitch), np.sin(pitch), 0.])
+    payload = {
+        'jointNames': ['left_knee', 'left_ankle', 'left_foot'],
+        'footRestPitchRadians': {'left': pitch},
+        'frames': [{'joints': {'left_knee': [0., 1., 0.], 'left_ankle': [0., 0., 0.],
+                               'left_foot': vector.tolist()},
+                    'boneSides': {'left_ankle->left_foot': [0., 0., 1.]}}],
+        'sourceFootSupportEvidence': {'bodySupport': {
+            'required': True, 'status': 'confirmed',
+            'stationaryJoints': ['left_ankle', 'left_foot'],
+            'soleContacts': [{'joints': ['left_knee', 'left_ankle', 'left_foot'],
+                              'normal': [0., 1., 0.]}],
+            'materialFootRestPitchRadians': {'left': 0.},
+        }},
+    }
+
+    assert validate_supported_shoe_orientation(payload)['passed']
+
+
+def test_full_sole_without_calibrated_material_pitch_remains_unresolved():
+    from exercise_motion_pkg.support_geometry import (
+        geometry_errors, validate_support_geometry, validate_supported_shoe_orientation,
+    )
+
+    names = ['left_knee', 'left_ankle', 'left_foot']
+    evidence = {'required': True, 'status': 'confirmed',
+                'stationaryJoints': ['left_ankle', 'left_foot'],
+                'soleContacts': [{'joints': names, 'normal': [0., 1., 0.]}]}
+    points = np.asarray([[[0., 1., 0.], [0., 0., 0.], [.2, 0., 0.]]])
+    residual = geometry_errors(points, names, evidence)
+    assert np.isfinite(residual).all()
+    assert np.max(np.abs(residual)) > .005
+    payload = {'jointNames': names,
+               'frames': [{'joints': dict(zip(names, points[0].tolist())),
+                           'boneSides': {'left_ankle->left_foot': [0., 0., 1.]}}],
+               'sourceFootSupportEvidence': {'bodySupport': evidence}}
+    support = validate_support_geometry(payload, points, names)
+    assert not support['passed']
+    assert support['rejectionReasons'] == ['supported_material_sole_pitch_unavailable']
+    orientation = validate_supported_shoe_orientation(payload)
+    assert not orientation['passed']
+    assert orientation['reason'] == 'sole_orientation_unavailable'
 
 
 def test_support_projection_repairs_reference_before_final_fit():

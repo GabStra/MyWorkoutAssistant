@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import json
 from types import SimpleNamespace
 
@@ -35,6 +36,64 @@ def test_fresh_support_receives_ground_plane_without_parent_depth_timing(tmp_pat
     assert result['groundReferenced'] and result['contacts'] == fresh['contacts']
     assert source == 'exact_selected_source_video'
     assert 'groundReferenced' not in fresh
+
+
+def test_fresh_source_phase_reuses_only_matching_cached_support_review(tmp_path, monkeypatch):
+    from exercise_motion_pkg import bake_and_rank as bake
+    from exercise_motion_pkg.body_support_observation import POLICY_VERSION
+
+    video = tmp_path / 'selected.mp4'
+    video.write_bytes(b'exact selected interval')
+    digest = hashlib.sha256(video.read_bytes()).hexdigest()
+    cache = tmp_path / 'segment_detection' / 'body_support'
+    cache.mkdir(parents=True)
+    observed = {
+        'status': 'observed', 'source': 'exact_source_visual_support_observation',
+        'sourceVideoSha256': digest, 'policyVersion': POLICY_VERSION,
+        'observation': {'leftFoot': 'stationary_full_sole', 'rightFoot': 'stationary_full_sole'},
+    }
+    (cache / f'body-support-{digest}-v{POLICY_VERSION}.json').write_text(json.dumps(observed))
+    fresh = {'footPatchEvidence': {'available': True}, 'contacts': [],
+             'bodySupport': {'source': 'fresh-derived-geometry'}}
+    monkeypatch.setattr(bake, 'source_pose_reference_from_phase_metrics', lambda _: None)
+
+    result, source = bake.authoritative_source_foot_support_evidence(
+        SimpleNamespace(candidate_workspace=tmp_path),
+        {'sourceFootSupportEvidence': fresh, 'sourceVideoPath': str(video)},
+    )
+
+    assert source == 'exact_selected_source_video'
+    assert result['bodySupportObservation'] == observed
+    assert result['bodySupport'] == fresh['bodySupport']
+    assert 'bodySupportObservation' not in fresh
+
+
+@pytest.mark.parametrize('mismatch', ['sourceVideoSha256', 'policyVersion'])
+def test_fresh_source_phase_does_not_reuse_incompatible_support_review(tmp_path, monkeypatch, mismatch):
+    from exercise_motion_pkg import bake_and_rank as bake
+    from exercise_motion_pkg.body_support_observation import POLICY_VERSION
+
+    video = tmp_path / 'selected.mp4'
+    video.write_bytes(b'exact selected interval')
+    digest = hashlib.sha256(video.read_bytes()).hexdigest()
+    cache = tmp_path / 'segment_detection' / 'body_support'
+    cache.mkdir(parents=True)
+    observed = {
+        'status': 'observed', 'source': 'exact_source_visual_support_observation',
+        'sourceVideoSha256': digest, 'policyVersion': POLICY_VERSION,
+        'observation': {'leftFoot': 'stationary_full_sole'},
+    }
+    observed[mismatch] = 'different-source' if mismatch == 'sourceVideoSha256' else POLICY_VERSION - 1
+    (cache / f'body-support-{digest}-v{POLICY_VERSION}.json').write_text(json.dumps(observed))
+    fresh = {'footPatchEvidence': {'available': True}, 'contacts': []}
+    monkeypatch.setattr(bake, 'source_pose_reference_from_phase_metrics', lambda _: None)
+
+    result, _ = bake.authoritative_source_foot_support_evidence(
+        SimpleNamespace(candidate_workspace=tmp_path),
+        {'sourceFootSupportEvidence': fresh, 'sourceVideoPath': str(video)},
+    )
+
+    assert 'bodySupportObservation' not in result
 
 
 def evidence(end=1.):

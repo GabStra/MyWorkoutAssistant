@@ -361,6 +361,41 @@ def anatomical_structure_residuals(points, names, *, pose_only=False, margin=0.,
     return (np.stack(rows, axis=1) if rows else np.empty((len(points), 0))), labels
 
 
+def hinge_direction_events(points, names, reference, *, fps=30.):
+    """Preserve reliable observed knee bend planes as well as hinge branches."""
+    index = {name: i for i, name in enumerate(names)}
+    events = []
+    from .models import MotionFrame
+    from .structural_refinement import (
+        _local_hinge_bend, _source_branch_is_temporally_supported, _transport_hinge_bend,
+    )
+    source_frames=[MotionFrame(i/fps,dict(zip(names,map(tuple,f)))) for i,f in enumerate(reference)]
+    target_frames=[MotionFrame(i/fps,dict(zip(names,map(tuple,f)))) for i,f in enumerate(points)]
+    for label,a,h,b,tolerance in ARTICULATIONS:
+        if not label.endswith(('_knee','_elbow')) or not all(n in index for n in (a,h,b)):
+            continue
+        source_track=[_local_hinge_bend(f,a,h,b) for f in source_frames]
+        proposed_track=[_local_hinge_bend(f,a,h,b) for f in target_frames]
+        reliable=(np.sin(angles(*(reference[:,index[n]] for n in (a,h,b))))>np.sin(np.deg2rad(15.))) & (
+            np.sin(angles(*(points[:,index[n]] for n in (a,h,b))))>np.sin(np.deg2rad(15.)))
+        for frame in np.flatnonzero(reliable):
+            source_bend,proposed_bend=source_track[frame],proposed_track[frame]
+            if source_bend is None or proposed_bend is None or not _source_branch_is_temporally_supported(
+                source_track,int(frame),max(1,round(fps*.1))
+            ):
+                continue
+            transported=_transport_hinge_bend(source_bend[1],source_bend[0],proposed_bend[0])
+            cosine = float(np.clip(np.dot(transported, proposed_bend[1]), -1., 1.))
+            if label.endswith('_knee') and cosine < np.cos(np.deg2rad(tolerance)):
+                events.append({'reason': 'repair_hinge_direction_distortion',
+                               'joint': label, 'frameIndex': int(frame),
+                               'changeDegrees': float(np.rad2deg(np.arccos(cosine))),
+                               'toleranceDegrees': float(tolerance)})
+            if cosine < 0.:
+                events.append({'reason':'repair_hinge_branch_flip','joint':label,'frameIndex':int(frame)})
+    return events
+
+
 def validate_physical_motion(
     points,
     names,
@@ -398,30 +433,7 @@ def validate_physical_motion(
             events.append({'reason': 'anatomy_span_variation', 'span': label,
                            'frameIndex': int(frame), 'deviationMeters': float(deviation[frame])})
     if reference is not None:
-        # Use the same body-relative, temporally supported branch definition
-        # as the final articulation guard. Matching angles is not sufficient.
-        from .models import MotionFrame
-        from .structural_refinement import (
-            _local_hinge_bend, _source_branch_is_temporally_supported, _transport_hinge_bend,
-        )
-        source_frames=[MotionFrame(i/fps,dict(zip(names,map(tuple,f)))) for i,f in enumerate(reference)]
-        target_frames=[MotionFrame(i/fps,dict(zip(names,map(tuple,f)))) for i,f in enumerate(points)]
-        for label,a,h,b,_ in ARTICULATIONS:
-            if not label.endswith(('_knee','_elbow')) or not all(n in index for n in (a,h,b)):
-                continue
-            source_track=[_local_hinge_bend(f,a,h,b) for f in source_frames]
-            proposed_track=[_local_hinge_bend(f,a,h,b) for f in target_frames]
-            reliable=(np.sin(angles(*(reference[:,index[n]] for n in (a,h,b))))>np.sin(np.deg2rad(15.))) & (
-                np.sin(angles(*(points[:,index[n]] for n in (a,h,b))))>np.sin(np.deg2rad(15.)))
-            for frame in np.flatnonzero(reliable):
-                source_bend,proposed_bend=source_track[frame],proposed_track[frame]
-                if source_bend is None or proposed_bend is None or not _source_branch_is_temporally_supported(
-                    source_track,int(frame),max(1,round(fps*.1))
-                ):
-                    continue
-                transported=_transport_hinge_bend(source_bend[1],source_bend[0],proposed_bend[0])
-                if np.dot(transported,proposed_bend[1])<0.:
-                    events.append({'reason':'repair_hinge_branch_flip','joint':label,'frameIndex':int(frame)})
+        events.extend(hinge_direction_events(points, names, reference, fps=fps))
         for a,b in body_bones(names):
             lengths=np.linalg.norm(reference[:,a]-reference[:,b],axis=1)
             changes=np.abs(np.linalg.norm(points[:,a]-points[:,b],axis=1)-lengths)
@@ -518,7 +530,8 @@ def physical_metrics_from_payload(payload):
             return {'passed': False, 'reasons': [reason], 'events': []}
     supported={side:np.zeros(len(frames),dtype=bool) for side in ('left','right')}
     other_support=False
-    for contact in motion_support_contacts(payload.get('sourceFootSupportEvidence')):
+    from .contact_constraints import motion_space_support_evidence
+    for contact in motion_support_contacts(motion_space_support_evidence(payload)):
         name=str(contact.get('jointName',''))
         side=name.split('_')[0]
         if side in supported and name.endswith(('_foot','_ankle')):

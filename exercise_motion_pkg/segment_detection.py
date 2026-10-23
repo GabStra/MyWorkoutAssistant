@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import logging
+import math
 import re
 import shutil
 import subprocess
@@ -1371,6 +1373,8 @@ def build_frame_contact_sheets(
     crop_empty_borders: bool = False,
 ) -> list[Path]:
     frames_per_sheet = max(1, frames_per_sheet)
+    if len(timestamps) != len(frame_paths):
+        return []
     crop_box = persistent_border_crop(frame_paths) if crop_empty_borders else None
     if crop_empty_borders:
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -1396,6 +1400,8 @@ def build_frame_contact_sheets(
             sequence_label_total=len(frame_paths),
             crop_box=crop_box,
         )
+        if sheet_path is None:
+            return []
         if sheet_path is not None:
             contact_sheets.append(sheet_path)
     return contact_sheets
@@ -1429,7 +1435,7 @@ def build_frame_contact_sheet(
     for index, frame_path in enumerate(frame_paths):
         frame = cv2.imread(str(frame_path))
         if frame is None:
-            continue
+            return None
         if crop_box is not None:
             left, top, right, bottom = crop_box
             if not (0 <= left < right <= frame.shape[1] and 0 <= top < bottom <= frame.shape[0]):
@@ -1466,6 +1472,25 @@ def build_frame_contact_sheet(
     ok = cv2.imwrite(str(output_path), sheet, [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_quality])
     if not ok or not output_path.exists() or output_path.stat().st_size <= 0:
         return None
+    # Single-sheet overviews need the same provenance as paginated sheets.
+    if len(timestamps) == len(frame_paths) and all(math.isfinite(value) for value in timestamps):
+        from .stage_cache import stage_lock
+        manifest_path = output_path.parent / 'contact_sheet_evidence.json'
+        with stage_lock(output_path.parent / 'contact_sheet_evidence.lock'):
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+                if not isinstance(manifest.get('sheets'), dict):
+                    manifest = {'schemaVersion': 1, 'sheets': {}}
+            except (OSError, ValueError, AttributeError):
+                manifest = {'schemaVersion': 1, 'sheets': {}}
+            manifest['sheets'][output_path.name] = {
+                'sha256': hashlib.sha256(output_path.read_bytes()).hexdigest(),
+                'frames': [{'number': sequence_label_offset + index + 1, 'timestampSeconds': timestamp}
+                           for index, timestamp in enumerate(timestamps)],
+            }
+            temporary = manifest_path.with_suffix('.tmp')
+            temporary.write_text(json.dumps(manifest, indent=2), encoding='utf-8')
+            temporary.replace(manifest_path)
     return output_path
 
 
@@ -1653,6 +1678,7 @@ class LlamaCppVisionClient:
         request_timeout_seconds: float | None = None,
         disable_reasoning: bool | None = None,
         json_response: bool = True,
+        response_schema: dict | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
         top_k: int | None = None,
@@ -1677,6 +1703,7 @@ class LlamaCppVisionClient:
                 request_timeout_seconds=request_timeout_seconds,
                 disable_reasoning=disable_reasoning,
                 json_response=json_response,
+                response_schema=response_schema,
                 temperature=temperature,
                 top_p=top_p,
                 top_k=top_k,
@@ -1698,6 +1725,7 @@ class LlamaCppVisionClient:
         request_timeout_seconds: float | None = None,
         disable_reasoning: bool | None = None,
         json_response: bool = True,
+        response_schema: dict | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
         top_k: int | None = None,
@@ -1718,7 +1746,10 @@ class LlamaCppVisionClient:
             "temperature": self.temperature if temperature is None else max(0.0, float(temperature)),
             "max_tokens": self.n_predict if max_tokens is None else max(1, int(max_tokens)),
         }
-        if json_response:
+        if response_schema is not None:
+            payload["response_format"] = {"type": "json_schema", "json_schema": {
+                "name": "source_evidence", "strict": True, "schema": response_schema}}
+        elif json_response:
             payload["response_format"] = {"type": "json_object"}
         effective_top_p = self.top_p if top_p is None else max(0.0, min(1.0, float(top_p)))
         effective_top_k = self.top_k if top_k is None else max(0, int(top_k))

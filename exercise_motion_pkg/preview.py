@@ -9473,7 +9473,8 @@ def _build_html(
       bakedWearGroundContactMode = String(
         exportPayload?.groundContactMode ?? "unknown"
       ).trim().toLowerCase();
-      playbackState = {{ frames, boundsFrames: frames, loopable: exportPayload.loop?.enabled === true, fixedRig: exportPayload.fixedRig ?? null }};
+      playbackState = {{ frames, boundsFrames: frames, loopable: exportPayload.loop?.enabled === true, fixedRig: exportPayload.fixedRig ?? null,
+        footRestPitchRadians: exportPayload.footRestPitchRadians ?? {{}} }};
       const exportedRenderFloorY = exportPayload?.renderFloorY == null
         ? Number.NaN : Number(exportPayload.renderFloorY);
       bakedWearRenderFloorY = Number.isFinite(exportedRenderFloorY)
@@ -10566,7 +10567,7 @@ def _build_html(
           if (frame.boneSides?.[key]) sides.set(key, new THREE.Vector3(...frame.boneSides[key]));
         }}
         wearApplyExportedSoleSides(frame, sides);
-        const mesh = wearBuildHumanoid(joints, sides, wearStableBodyAxesByFrame?.[index]);
+        const mesh = wearBuildHumanoid(joints, sides, wearStableBodyAxesByFrame?.[index], playbackState.footRestPitchRadians ?? {{}});
         points.push(...(mesh?.vertices ?? Object.values(joints)));
       }});
       bakedMeshFitCache.set(frames, points);
@@ -10707,15 +10708,87 @@ def _build_html(
     const rigSplineCache = new WeakMap();
     function rigSpline(rig, quaternion) {{
       const wrap = playbackState.loopable;
+      const contactFootTracks = rig.contactFootTracks ?? null;
       let cache = rigSplineCache.get(rig);
-      if (cache?.wrap === wrap) return cache;
+      if (cache?.wrap === wrap && cache.contactFootTracks === contactFootTracks) return cache;
       const roots = rig.coordinates.map(row => row.slice(0, 3));
       const rotations = rig.rotationJointNames.map((name, j) => rig.coordinates.map(row => quaternion(row, 3 + j * 3).toArray()));
-      const tangents = (track, isQuaternion) => track.map((row, i) => limitedRigTangent(
-        track[wrap ? (i - 1 + track.length) % track.length : Math.max(0, i - 1)], row,
-        track[wrap ? (i + 1) % track.length : Math.min(track.length - 1, i + 1)], isQuaternion,
+      const tangents = (track, isQuaternion, trackWrap = wrap) => track.map((row, i) => limitedRigTangent(
+        track[trackWrap ? (i - 1 + track.length) % track.length : Math.max(0, i - 1)], row,
+        track[trackWrap ? (i + 1) % track.length : Math.min(track.length - 1, i + 1)], isQuaternion,
         rig.interpolation === 'limited_quaternion_hermite_v2'));
-      cache = {{wrap, roots, rotations, rootTangents: tangents(roots, false), rotationTangents: rotations.map(track => tangents(track, true))}};
+      let contactFeet = null;
+      if (contactFootTracks != null) {{
+        if (contactFootTracks.version !== 1 || !contactFootTracks.left && !contactFootTracks.right) {{
+          throw new Error('contactFootTracks has an unsupported or malformed version');
+        }}
+        const count = rig.coordinates.length;
+        const scalarTangents = values => tangents(values.map(value => [value]), false);
+        contactFeet = {{}};
+        for (const side of ['left', 'right']) {{
+          const source = contactFootTracks[side];
+          if (source == null) continue;
+          if (!Array.isArray(source.active) || source.active.length !== count
+              || source.active.some(value => typeof value !== 'boolean')
+              || !Array.isArray(source.toes) || source.toes.length !== count
+              || !Array.isArray(source.directions) || source.directions.length !== count
+              || source.toes.some(row => !Array.isArray(row) || row.length !== 3 || row.some(value => !Number.isFinite(value)))
+              || source.directions.some(row => !Array.isArray(row) || row.length !== 3
+                || row.some(value => !Number.isFinite(value)))) {{
+            throw new Error(`${{side}} contact foot track has incompatible or non-finite frame data`);
+          }}
+          const directions = source.directions.map(row => {{
+            const length = Math.hypot(...row);
+            if (!Number.isFinite(length) || length <= 1e-9 || Math.abs(length - 1) > 1e-4) {{
+              throw new Error(`${{side}} contact foot directions must be normalized`);
+            }}
+            return row.map(value => value / length);
+          }});
+          const rawYaw = directions.map(direction => Math.atan2(direction[0], direction[2]));
+          const yawSource = wrap ? rawYaw.concat(rawYaw, rawYaw) : rawYaw;
+          let previousYaw = null;
+          const yaw = yawSource.map(value => {{
+            if (previousYaw != null) {{
+              while (value - previousYaw > Math.PI) value -= 2 * Math.PI;
+              while (value - previousYaw < -Math.PI) value += 2 * Math.PI;
+            }}
+            previousYaw = value;
+            return value;
+          }});
+          const pitch = directions.map(direction => Math.atan2(
+            direction[1], Math.hypot(direction[0], direction[2])));
+          const jointNames = [`${{side}}_hip`, `${{side}}_knee`, `${{side}}_ankle`, `${{side}}_foot`];
+          if (jointNames.some(name => !rig.jointNames.includes(name))) {{
+            throw new Error(`${{side}} contact foot track requires a complete leg chain`);
+          }}
+          const kneeIndex = rig.jointNames.indexOf(`${{side}}_knee`);
+          const ankleIndex = rig.jointNames.indexOf(`${{side}}_ankle`);
+          const footIndex = rig.jointNames.indexOf(`${{side}}_foot`);
+          const legLengths = [kneeIndex, ankleIndex, footIndex].map(index =>
+            Math.hypot(...rig.offsets[index]));
+          if (legLengths.some(length => !Number.isFinite(length) || length <= 1e-9)) {{
+            throw new Error(`${{side}} fixed-rig leg lengths are invalid`);
+          }}
+          const yawTrack = yaw.map(value => [value]), pitchTrack = pitch.map(value => [value]);
+          contactFeet[side] = {{
+            active: source.active,
+            toes: source.toes,
+            toeTangents: tangents(source.toes, false),
+            yaw,
+            yawTrack,
+            yawTangents: tangents(yawTrack, false, false),
+            yawOffset: wrap ? count : 0,
+            pitch,
+            pitchTrack,
+            pitchTangents: scalarTangents(pitch),
+            thighLength: legLengths[0],
+            shinLength: legLengths[1],
+            footLength: legLengths[2],
+          }};
+        }}
+      }}
+      cache = {{wrap, contactFootTracks, contactFeet, roots, rotations,
+        rootTangents: tangents(roots, false), rotationTangents: rotations.map(track => tangents(track, true))}};
       rigSplineCache.set(rig, cache);
       return cache;
     }}
@@ -10739,21 +10812,93 @@ def _build_html(
         const angle = axis.length();
         return angle < 1e-12 ? new THREE.Quaternion() : new THREE.Quaternion().setFromAxisAngle(axis.multiplyScalar(1 / angle), angle);
       }};
-      const spline = ['limited_quaternion_hermite_v1', 'limited_quaternion_hermite_v2'].includes(rig.interpolation) ? rigSpline(rig, quaternion) : null;
+      const useHermite = ['limited_quaternion_hermite_v1', 'limited_quaternion_hermite_v2'].includes(rig.interpolation);
+      const spline = useHermite || rig.contactFootTracks != null ? rigSpline(rig, quaternion) : null;
       // Serialized order is parent-first, independent of external joint order.
       for (const index of rig.order) {{
         const name = rig.jointNames[index], parent = rig.parents[index];
         const slot = slots.get(name);
         const rotationIndex = slot == null ? -1 : (slot - 3) / 3;
-        const local = slot == null ? new THREE.Quaternion() : spline
+        const local = slot == null ? new THREE.Quaternion() : useHermite
           ? new THREE.Quaternion(...rigHermite(spline.rotations[rotationIndex], spline.rotationTangents[rotationIndex], first, last, alpha, true))
           : quaternion(a, slot).slerp(quaternion(b, slot), alpha);
         rotations[index] = parent < 0 ? local : rotations[parent].clone().multiply(local);
         positions[index] = parent < 0
-          ? (spline ? new THREE.Vector3(...rigHermite(spline.roots, spline.rootTangents, first, last, alpha, false))
+          ? (useHermite ? new THREE.Vector3(...rigHermite(spline.roots, spline.rootTangents, first, last, alpha, false))
                     : new THREE.Vector3(...a.slice(0, 3)).lerp(new THREE.Vector3(...b.slice(0, 3)), alpha))
           : new THREE.Vector3(...rig.offsets[index]).applyQuaternion(rotations[index]).add(positions[parent]);
         joints[name] = positions[index].toArray();
+      }}
+      if (spline?.contactFeet && alpha > 1e-12) {{
+        for (const side of ['left', 'right']) {{
+          const track = spline.contactFeet[side];
+          if (!track) continue;
+          const startActive = track.active[first], endActive = track.active[last];
+          const smooth = alpha * alpha * (3 - 2 * alpha);
+          const weight = startActive && endActive ? 1 : startActive ? 1 - smooth : endActive ? smooth : 0;
+          if (weight <= 0) continue;
+          const goalToe = new THREE.Vector3(...rigHermite(
+            track.toes, track.toeTangents, first, last, alpha, false));
+          let yawFirst = first + track.yawOffset, yawLast = last + track.yawOffset;
+          if (spline.wrap && last <= first) yawLast += track.yawTrack.length / 3;
+          const yaw = rigHermite(track.yawTrack, track.yawTangents, yawFirst, yawLast, alpha, false)[0];
+          const pitch = rigHermite(track.pitchTrack, track.pitchTangents, first, last, alpha, false)[0];
+          const targetDirection = new THREE.Vector3(
+            Math.cos(pitch) * Math.sin(yaw), Math.sin(pitch), Math.cos(pitch) * Math.cos(yaw));
+          const hip = new THREE.Vector3(...joints[`${{side}}_hip`]);
+          const knee = new THREE.Vector3(...joints[`${{side}}_knee`]);
+          const sourceAnkle = new THREE.Vector3(...joints[`${{side}}_ankle`]);
+          const sourceToe = new THREE.Vector3(...joints[`${{side}}_foot`]);
+          const toe = sourceToe.clone().lerp(goalToe, weight);
+          const sourceDirection = sourceToe.clone().sub(sourceAnkle);
+          if (sourceDirection.length() <= 1e-9) throw new Error(`${{side}} sampled contact foot direction is zero`);
+          sourceDirection.normalize();
+          const direction = sourceDirection.multiplyScalar(1 - weight)
+            .addScaledVector(targetDirection, weight);
+          if (direction.length() <= 1e-9) throw new Error(`${{side}} contact foot direction is undefined`);
+          direction.normalize();
+          const ankle = toe.clone().addScaledVector(direction, -track.footLength);
+          const thigh = track.thighLength, shin = track.shinLength;
+          const reach = ankle.clone().sub(hip), distance = reach.length();
+          if (!(distance > 1e-9 && distance >= Math.abs(thigh - shin) - 1e-8
+              && distance <= thigh + shin + 1e-8)) {{
+            throw new Error(`${{side}} contact foot IK is unreachable at sample ${{first}}+${{alpha}}`);
+          }}
+          const unchangedAnkle = ankle.distanceTo(sourceAnkle) <= 1e-9;
+          const axis = reach.multiplyScalar(1 / distance);
+          const along = (thigh * thigh - shin * shin + distance * distance) / (2 * distance);
+          const heightSquared = thigh * thigh - along * along;
+          if (heightSquared < -1e-8) throw new Error(`${{side}} contact foot IK has invalid knee geometry`);
+          let solvedKnee = knee;
+          const sourceAxis = sourceAnkle.clone().sub(hip);
+          const pole = knee.clone().sub(hip);
+          if (sourceAxis.length() > 1e-9) {{
+            sourceAxis.normalize();
+            pole.addScaledVector(sourceAxis, -pole.dot(sourceAxis));
+          }}
+          if (sourceAxis.length() <= 1e-9 || pole.length() <= 1e-9) {{
+            if (!unchangedAnkle) throw new Error(`${{side}} contact foot IK needs an undefined source knee pole`);
+          }} else if (!unchangedAnkle) {{
+            pole.normalize();
+            const cross = sourceAxis.clone().cross(axis);
+            const sine = cross.length(), cosine = Math.max(-1, Math.min(1, sourceAxis.dot(axis)));
+            let transported = pole;
+            if (sine > 1e-8) {{
+              const turnAxis = cross.multiplyScalar(1 / sine);
+              transported = pole.clone().multiplyScalar(cosine)
+                .add(turnAxis.clone().cross(pole).multiplyScalar(sine))
+                .addScaledVector(turnAxis, turnAxis.dot(pole) * (1 - cosine));
+            }}
+            const bend = transported.addScaledVector(axis, -transported.dot(axis));
+            if (bend.length() <= 1e-9) throw new Error(`${{side}} contact foot IK has an undefined transported knee plane`);
+            bend.normalize();
+            solvedKnee = hip.clone().addScaledVector(axis, along)
+              .addScaledVector(bend, Math.sqrt(Math.max(heightSquared, 0)));
+          }}
+          joints[`${{side}}_foot`] = toe.toArray();
+          joints[`${{side}}_ankle`] = ankle.toArray();
+          joints[`${{side}}_knee`] = solvedKnee.toArray();
+        }}
       }}
       return joints;
     }}

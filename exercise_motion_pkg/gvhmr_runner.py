@@ -15,6 +15,7 @@ from typing import Any
 
 from exercise_motion_pkg.gpu_lock import (
     exclusive_gpu_device,
+    gpu_device_uuid,
     gpu_stage_lock,
     resolve_docker_gpu_selection,
 )
@@ -389,6 +390,12 @@ def build_gvhmr_command(
         command.extend(["--name", docker_container_name])
     if docker_gpus:
         command.extend(["--gpus", resolve_docker_gpu_selection(docker_gpus)])
+    exclusive_device = exclusive_gpu_device()
+    if exclusive_device is not None:
+        gpu_uuid = gpu_device_uuid(exclusive_device)
+        if gpu_uuid is None:
+            raise RuntimeError(f"Could not resolve physical GPU UUID for exclusive GPU {exclusive_device}.")
+        command.extend(["--env", f"CUDA_VISIBLE_DEVICES={gpu_uuid}"])
     if docker_shm_size:
         command.extend(["--shm-size", docker_shm_size])
     command.extend(

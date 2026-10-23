@@ -11,6 +11,11 @@ POLICY_VERSION = 4
 TOLERANCE_METERS = .005
 
 
+def observed_foot_patch_stationarity_threshold(body_span: float) -> float:
+    """Return the body-relative local-range limit used for observed shoe patches."""
+    return TOLERANCE_METERS / max(float(body_span), 1e-9)
+
+
 def declare_support_requirements(payload, contract):
     """Recheck observed contact authority; contracts do not establish contact."""
     from .body_support_observation import remove_unobserved_torso_support
@@ -25,7 +30,12 @@ def support_evidence(payload):
     # The fitter uses a temporally materialized motion-space view. Rebuild that
     # same view for downstream geometry checks so cached full-clip foot anchors
     # cannot outlive contradictory or incomplete contact observations.
-    return materialize_stationary_sole_support(payload).get('bodySupport', {})
+    support = materialize_stationary_sole_support(payload).get('bodySupport', {})
+    pitches = payload.get('footRestPitchRadians')
+    if isinstance(pitches, dict):
+        support = dict(support)
+        support['materialFootRestPitchRadians'] = pitches
+    return support
 
 
 def support_contact_readiness(payload, *, evidence=None):
@@ -62,6 +72,12 @@ def support_contact_readiness(payload, *, evidence=None):
             'passed': not unresolved, 'requiredSides': sorted(required),
             'resolvedSides': sorted(required & supported), 'unresolvedSides': unresolved,
             'rejectionReasons': ['source_support_contact_evidence_unavailable'] if unresolved else []}
+
+
+def pre_reconstruction_source_support_readiness(source_evidence):
+    """Apply the final fit gate's normal evidence materialization before reconstruction."""
+    evidence = source_evidence if isinstance(source_evidence, dict) else {}
+    return support_contact_readiness({'sourceFootSupportEvidence': evidence})
 
 
 # Distal plants owned by contact pins / plant projection. Torso/back support still
@@ -113,6 +129,26 @@ def evidence_is_complete(evidence, names):
     return True
 
 
+def _missing_material_sole_pitch_sides(evidence):
+    """Full-sole geometry needs an independently calibrated shoe pitch."""
+    pitches = (evidence.get('materialFootRestPitchRadians')
+               or evidence.get('footRestPitchRadians') or {})
+    missing = []
+    for contact in evidence.get('soleContacts', []):
+        joints = contact.get('joints') or []
+        if len(joints) != 3:
+            continue
+        side = str(joints[1]).split('_', 1)[0]
+        try:
+            pitch = float(pitches[side])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            missing.append(side)
+            continue
+        if not np.isfinite(pitch):
+            missing.append(side)
+    return sorted(set(missing))
+
+
 def chain_support_plane(chain, evidence):
     """Use observed anchors instead of letting a free endpoint lower clearance."""
     normal = np.asarray(chain['normal'], dtype=float)
@@ -130,14 +166,23 @@ def chain_support_plane(chain, evidence):
 def geometry_errors(points, names, evidence):
     """Plane equality and one-sided chain clearance in the observed normal."""
     errors = []
+    missing_pitch_sides = set(_missing_material_sole_pitch_sides(evidence))
     for contact in evidence.get('soleContacts', []):
         _, ankle, toe = (points[:, names.index(n)] for n in contact['joints'])
+        side = str(contact['joints'][1]).split('_', 1)[0]
+        if side in missing_pitch_sides:
+            # Keep optimizer residuals finite while making absent geometry
+            # authority impossible to satisfy as a valid contact.
+            errors.append(np.full((len(points), 1), 2. * TOLERANCE_METERS))
+            continue
         normal = np.asarray(contact['normal'], dtype=float)
         normal /= np.linalg.norm(normal)
-        forward = toe - ankle
-        # Pitch belongs to joint geometry. Shoe roll is an independent axial
-        # orientation; tying it to the shin would also pin valid knee motion.
-        errors.append((forward @ normal)[:, None])
+        pitches = evidence.get('materialFootRestPitchRadians') or evidence.get('footRestPitchRadians') or {}
+        try:
+            rest_pitch = float(pitches.get(side, 0.))
+        except (AttributeError, TypeError, ValueError, OverflowError):
+            rest_pitch = 0.
+        errors.append(_material_sole_plane_error(ankle, toe, normal, rest_pitch)[:, None])
     for group in evidence.get('coplanarGroups', []):
         indices = [names.index(n) for n in group['joints']]
         normal = np.asarray(group['normal'], dtype=float)
@@ -168,6 +213,29 @@ def geometry_errors(points, names, evidence):
     return np.concatenate(errors, axis=1) if errors else np.empty((len(points), 0))
 
 
+def _material_sole_plane_error(ankle, toe, normal, rest_pitch):
+    """Signed heel-to-forefoot height using the renderer's calibrated shoe pitch."""
+    from .foot_geometry import SHOE_LENGTH_RATIO
+
+    ankle = np.asarray(ankle, dtype=float)
+    toe = np.asarray(toe, dtype=float)
+    normal = np.asarray(normal, dtype=float)
+    normal = normal / max(np.linalg.norm(normal), 1e-12)
+    vector = toe - ankle
+    length = np.linalg.norm(vector, axis=-1)
+    forward = vector / np.maximum(length[..., None], 1e-12)
+    up = normal - np.sum(normal * forward, axis=-1, keepdims=True) * forward
+    up_length = np.linalg.norm(up, axis=-1)
+    up = up / np.maximum(up_length[..., None], 1e-12)
+    material_forward = (forward * np.cos(rest_pitch)
+                        - up * np.sin(rest_pitch))
+    # When the ankle-to-toe bone is nearly parallel to the plane normal,
+    # sagittal pitch is undefined; retain a strong finite error rather than
+    # manufacturing a flat sole orientation from an unstable axis.
+    signed_height = -SHOE_LENGTH_RATIO * length * np.sum(material_forward * normal, axis=-1)
+    return np.where(up_length > 1e-8, signed_height, SHOE_LENGTH_RATIO * length)
+
+
 def validate_support_geometry(payload, points=None, names=None):
     from .body_support_observation import materialize_stationary_sole_support
     materialized = materialize_stationary_sole_support(payload)
@@ -175,12 +243,20 @@ def validate_support_geometry(payload, points=None, names=None):
     if not readiness['passed']:
         return {**readiness, 'policyVersion': POLICY_VERSION}
     evidence = materialized.get('bodySupport', {})
+    pitches = payload.get('footRestPitchRadians')
+    if isinstance(pitches, dict):
+        evidence = {**evidence, 'materialFootRestPitchRadians': pitches}
     if not evidence.get('required'):
         return {'required': False, 'passed': True, 'policyVersion': POLICY_VERSION,
                 'sourceContactReadiness': readiness}
     if evidence.get('status') != 'confirmed':
         return {'required': True, 'passed': False, 'policyVersion': POLICY_VERSION,
                 'rejectionReasons': ['supported_body_evidence_unresolved']}
+    missing_pitch_sides = _missing_material_sole_pitch_sides(evidence)
+    if missing_pitch_sides:
+        return {'required': True, 'passed': False, 'policyVersion': POLICY_VERSION,
+                'unresolvedSides': missing_pitch_sides,
+                'rejectionReasons': ['supported_material_sole_pitch_unavailable']}
     names = names or payload.get('jointNames', [])
     if not evidence_is_complete(evidence, names) or (points is None and not payload.get('frames')):
         return {'required': True, 'passed': False, 'policyVersion': POLICY_VERSION,
@@ -237,26 +313,40 @@ def validate_supported_shoe_orientation(payload):
         return {'required': False, 'passed': True}
     if evidence.get('status') != 'confirmed' or not evidence_is_complete(evidence, payload.get('jointNames', [])):
         return {'required': True, 'passed': False, 'reason': 'sole_orientation_evidence_unresolved'}
+    if _missing_material_sole_pitch_sides(evidence):
+        return {'required': True, 'passed': False, 'reason': 'sole_orientation_unavailable'}
     maximum = 0.
+    pitches = (evidence.get('materialFootRestPitchRadians')
+               or payload.get('footRestPitchRadians') or {})
     try:
         if not payload.get('frames'):
             raise ValueError('Missing frames')
         for contact in contacts:
             _, ankle, toe = contact['joints']
+            side_name = str(ankle).split('_', 1)[0]
+            rest_pitch = float(pitches[side_name])
             normal = np.asarray(contact['normal'], dtype=float)
             normal /= np.linalg.norm(normal)
             for frame in payload['frames']:
-                forward = np.asarray(frame['joints'][toe])-frame['joints'][ankle]
-                length = np.linalg.norm(forward)
+                ankle_point = np.asarray(frame['joints'][ankle], dtype=float)
+                toe_point = np.asarray(frame['joints'][toe], dtype=float)
+                vector = toe_point - ankle_point
+                length = np.linalg.norm(vector)
                 if length < 1e-8:
                     raise ValueError('Degenerate foot')
-                forward /= length
+                forward = vector / length
                 side = np.asarray(frame['boneSides'][f'{ankle}->{toe}'], dtype=float)
                 side -= forward*np.dot(side, forward)
                 if np.linalg.norm(side) < 1e-8:
                     raise ValueError('Degenerate shoe side')
                 side /= np.linalg.norm(side)
-                up = np.cross(side, forward)
+                from .foot_geometry import material_foot_points
+                heel, material_toe = material_foot_points(
+                    ankle_point, toe_point, side, rest_pitch)
+                material_forward = material_toe - heel
+                material_forward /= np.linalg.norm(material_forward)
+                up = np.cross(side, material_forward)
+                up /= max(np.linalg.norm(up), 1e-12)
                 error = np.linalg.norm(up-normal)*length
                 if not np.isfinite(error):
                     raise ValueError('Nonfinite shoe orientation')
@@ -333,6 +423,10 @@ def calibrate_support_pose(rig, points, evidence, alignment_reference=None, *, a
 
     if evidence.get('status') != 'confirmed' or not evidence_is_complete(evidence, rig.names):
         return None, {'passed': False, 'reason': 'supported_body_evidence_unresolved'}
+    missing_pitch_sides = _missing_material_sole_pitch_sides(evidence)
+    if missing_pitch_sides:
+        return None, {'passed': False, 'reason': 'supported_material_sole_pitch_unavailable',
+                      'unresolvedSides': missing_pitch_sides}
     indices = [rig.names.index(n) for n in evidence.get('stationaryJoints', [])]
     target = np.median(points, axis=0)
     closest = int(np.argmin(np.sum((points[:, indices]-target[indices])**2, axis=(1, 2))))

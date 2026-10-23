@@ -17,6 +17,50 @@ from .temporal_quality import refresh_motion_bounds
 from .repetition_phase import complete_repetition
 
 
+def _boundary_motion_metrics(points, *, fps, scale):
+    from .loop_seam import seam_quality_metrics, MAX_RANKED_SOURCE_WRAP_RATIO
+    seam = seam_quality_metrics(points, fps=fps, scale=scale)
+    wrap_ratio = max(
+        seam['seamStepExcessMeters'] / seam['seamStepExcessLimitMeters'],
+        seam['seamVelocityMismatchMetersPerSecond'] / seam['seamVelocityMismatchLimitMetersPerSecond'],
+    )
+    incoming, outgoing = points[-1] - points[-2], points[1] - points[0]
+    mismatch = float(np.max(np.linalg.norm(outgoing - incoming, axis=-1))) * fps
+    # A wrap step cannot match both observed tangents within the seam limit
+    # when their separation exceeds twice that limit (triangle inequality).
+    limit = 2 * seam['seamVelocityMismatchLimitMetersPerSecond']
+    reasons = []
+    if wrap_ratio > MAX_RANKED_SOURCE_WRAP_RATIO:
+        reasons.append('source_support_wrap_unrepairable')
+    if mismatch > limit:
+        reasons.append('source_boundary_tangents_incompatible')
+    return {'passed': not reasons, 'rejectionReasons': reasons,
+            'failureOwner': 'source' if reasons else None,
+            'sourceSupportWrapOverLimitRatio': float(wrap_ratio),
+            'maximumEndpointVelocityDifferenceMetersPerSecond': mismatch,
+            'endpointVelocityDifferenceLimitMetersPerSecond': float(limit)}
+
+
+def cycle_boundary_motion_metrics(payload, selection=None):
+    """Check actual included endpoint edges, independently of phase completeness."""
+    names, frames = payload.get('jointNames', []), payload.get('frames', [])
+    start = int((selection or {}).get('startFrame', 0))
+    stop = int((selection or {}).get('stopFrameExclusive', len(frames)))
+    fps = float(payload.get('fps', 0))
+    if (not names or not (0 <= start < stop <= len(frames)) or stop - start < 3
+            or not np.isfinite(fps) or fps <= 0):
+        return {'passed': False, 'rejectionReasons': ['boundary_motion_unresolved']}
+    points = np.asarray([[f['joints'][n] for n in names] for f in frames], dtype=float)
+    if not np.isfinite(points).all():
+        return {'passed': False, 'rejectionReasons': ['boundary_motion_unresolved']}
+    indices = [i for i, name in enumerate(names)
+               if name == 'pelvis' or name.endswith(('hip', 'knee', 'ankle', 'foot'))]
+    if not indices:
+        return {'passed': False, 'rejectionReasons': ['boundary_motion_unresolved']}
+    return _boundary_motion_metrics(points[start:stop, indices], fps=fps,
+                                    scale=body_scale(points, names))
+
+
 def rank_loop_cycles(payload, *, max_candidates=5, endpoint_correction_ratio=0., diagnostics=None,
                      phase_values=None):
     """Rank matching poses with compatible velocity, support and full excursion.
@@ -27,7 +71,8 @@ def rank_loop_cycles(payload, *, max_candidates=5, endpoint_correction_ratio=0.,
     Opposite endpoint velocity is expected at extreme-to-extreme returns.
     Incomplete windows with opposite phase or whole-body velocity are rejected
     as eccentric/concentric crossings. Complete returns may carry a soft
-    whole-body opposite-velocity score penalty. Source wraps above
+    whole-body opposite-velocity score penalty, but must have compatible
+    support/root boundary tangents. Source wraps above
     MAX_RANKED_SOURCE_WRAP_RATIO on support joints are not proposed.
     """
     frames, names = payload['frames'], payload['jointNames']
@@ -81,7 +126,7 @@ def rank_loop_cycles(payload, *, max_candidates=5, endpoint_correction_ratio=0.,
     minimum_frames = max(6, round(fps*.5))
     counts = {'intervalPairs': 0, 'contactCompatible': 0, 'endpointFeasible': 0,
               'directionCompatible': 0, 'completePhase': 0, 'rangePreserved': 0,
-              'wrapFeasible': 0}
+              'wrapFeasible': 0, 'boundaryMotionCompatible': 0}
     if diagnostics is not None:
         diagnostics.update(counts=counts, endpointGapLimitMeters=max(.08, 2*endpoint_correction_ratio)*scale)
     from .loop_seam import (
@@ -135,22 +180,24 @@ def rank_loop_cycles(payload, *, max_candidates=5, endpoint_correction_ratio=0.,
             # cannot empty otherwise-valid geometric proposals.
             _, excess, increments = seam_errors(points[start:stop])
             support_points = points[start:stop][:, support_idx] if support_idx else points[start:stop]
-            _, support_excess, support_increments = seam_errors(support_points)
             step_ratio = float(np.max(excess, initial=0.)) / max(
                 MAX_STEP_EXCESS_BODY_RATIO * scale, 1e-9)
             vel_ratio = (
                 float(np.max(np.linalg.norm(increments, axis=-1), initial=0.)) * fps
                 / max(MAX_VELOCITY_MISMATCH_BODY_RATIO * scale, 1e-9))
             wrap_ratio = max(step_ratio, vel_ratio)
-            support_step_ratio = float(np.max(support_excess, initial=0.)) / max(
-                MAX_STEP_EXCESS_BODY_RATIO * scale, 1e-9)
-            support_vel_ratio = (
-                float(np.max(np.linalg.norm(support_increments, axis=-1), initial=0.)) * fps
-                / max(MAX_VELOCITY_MISMATCH_BODY_RATIO * scale, 1e-9))
-            support_wrap_ratio = max(support_step_ratio, support_vel_ratio)
-            if support_wrap_ratio > MAX_RANKED_SOURCE_WRAP_RATIO:
+            boundary = _boundary_motion_metrics(support_points, fps=fps, scale=scale)
+            if boundary['sourceSupportWrapOverLimitRatio'] > MAX_RANKED_SOURCE_WRAP_RATIO:
                 continue
             counts['wrapFeasible'] += 1
+            if not boundary['passed']:
+                if diagnostics is not None:
+                    previous = diagnostics.get('boundaryMotion')
+                    if (previous is None or boundary['maximumEndpointVelocityDifferenceMetersPerSecond']
+                            < previous['maximumEndpointVelocityDifferenceMetersPerSecond']):
+                        diagnostics['boundaryMotion'] = boundary
+                continue
+            counts['boundaryMotionCompatible'] += 1
             # Whole-body opposite velocity is advisory on complete returns.
             score = (wrap_ratio + 0.2 * (jump / scale) + 0.05 * (mismatch / scale)
                      + (0.25 if body_opposite else 0.)
@@ -211,6 +258,8 @@ def rank_loop_cycles(payload, *, max_candidates=5, endpoint_correction_ratio=0.,
                              if moving_basis.any() else 1.)})
         if len(accepted) >= max_candidates:
             break
+    if diagnostics is not None and counts['boundaryMotionCompatible']:
+        diagnostics.pop('boundaryMotion', None)
     return accepted
 
 
@@ -235,6 +284,11 @@ def slice_loop_cycle(payload, selection):
     def clipped_contacts(records):
         contacts = []
         for contact in records:
+            # Observed foot-patch intervals stay on their native source clock.
+            # The fit view maps them onto this cycle's sourceTimeSec rows.
+            if contact.get('supportKind') == 'observed_foot_patch':
+                contacts.append(contact)
+                continue
             first, last = contact_frame_bounds(contact, original_count)
             first, last = max(first, start), min(last, stop-1)
             if first > last:
@@ -246,17 +300,9 @@ def slice_loop_cycle(payload, selection):
     contacts = clipped_contacts(motion_support_contacts(evidence))
     if 'footContactCandidates' in evidence:
         evidence['footContactCandidates'] = clipped_contacts(evidence['footContactCandidates'])
-    patches = evidence.get('footPatchEvidence') or {}
-    if 'contacts' in patches:
-        patches['contacts'] = clipped_contacts(patches['contacts'])
-    for foot in (patches.get('feet') or {}).values():
-        states = foot.get('states') or []
-        if states:
-            # Keep the neighboring observations at either boundary, so slicing
-            # cannot hide contradictory release evidence between sample times.
-            first = int(np.floor(start*(len(states)-1)/(original_count-1)))
-            last = int(np.ceil((stop-1)*(len(states)-1)/(original_count-1)))
-            foot['states'] = states[first:last+1]
+    # Keep footPatchEvidence native and internally aligned: states, rays,
+    # heel observations, timestamps and patch contacts are one source-clock
+    # record. The fit-time mapper selects the cycle rows without rewriting it.
     # Normalize the three accepted input representations to avoid retaining
     # unsliced duplicate contact intervals in legacy fields.
     evidence.pop('feet', None)

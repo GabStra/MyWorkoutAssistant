@@ -160,6 +160,125 @@ def test_export_and_interpolated_playback_reject_a_corrupt_constant_length_rig()
     assert not physical_metrics_from_payload(payload)['passed']
 
 
+def test_playback_uses_time_aligned_articulation_and_rejects_mid_sample_overrun(monkeypatch):
+    from types import SimpleNamespace
+
+    from exercise_motion_pkg import body_support_observation, equipment_constraints
+    from exercise_motion_pkg import foot_geometry, heel_contacts, loop_seam
+    from exercise_motion_pkg import rig_playback, support_alignment, support_geometry
+    from exercise_motion_pkg.physical_validation import validate_physical_motion
+    from test_controlled_motion_pipeline import accepted_payload
+
+    payload = accepted_payload()
+    names = payload['jointNames']
+    index = {name: i for i, name in enumerate(names)}
+    joints = np.asarray([payload['frames'][0]['joints'][name] for name in names])
+    hip, knee = joints[index['left_hip']], joints[index['left_knee']]
+    parent_axis = (hip-knee) / np.linalg.norm(hip-knee)
+    perpendicular = np.array([0., 0., 1.])
+    perpendicular -= parent_axis * np.dot(parent_axis, perpendicular)
+    perpendicular /= np.linalg.norm(perpendicular)
+    cross_axis = np.cross(parent_axis, perpendicular)
+    cross_axis /= np.linalg.norm(cross_axis)
+    ankle_length = np.linalg.norm(joints[index['left_ankle']]-knee)
+
+    def pose(cursor, knee_angle_degrees=135.):
+        result = joints.copy()
+        bend_phase = np.deg2rad(90. * cursor / 6.)
+        bend_plane = np.cos(bend_phase)*perpendicular + np.sin(bend_phase)*cross_axis
+        angle = np.deg2rad(knee_angle_degrees)
+        ankle = knee + ankle_length*(np.cos(angle)*parent_axis + np.sin(angle)*bend_plane)
+        delta = ankle-result[index['left_ankle']]
+        result[index['left_ankle']] = ankle
+        result[index['left_foot']] += delta
+        return result
+
+    key_points = np.asarray([pose(float(i)) for i in range(7)])
+    for i, point in enumerate(key_points):
+        frame = payload['frames'][i]
+        for field in ('joints', 'controlledSourceJoints'):
+            frame[field] = dict(zip(names, point.tolist()))
+        frame['controlledArticulationReferenceJoints'] = dict(zip(names, point.tolist()))
+
+    add_overrun = {'enabled': False}
+
+    def sample(rig, cursors, *, wrap=False):
+        return np.asarray([
+            pose(float(cursor), 110. if add_overrun['enabled']
+                 and abs(float(cursor)-2.5) < 1e-8 else 135.)
+            for cursor in cursors
+        ])
+
+    monkeypatch.setattr(rig_playback, 'sample_rig', sample)
+    monkeypatch.setattr(rig_playback, 'contact_mask',
+                        lambda *_args, **_kwargs: np.zeros((7, len(names)), dtype=bool))
+    monkeypatch.setattr(body_support_observation, 'materialize_stationary_sole_support', lambda _: {})
+    monkeypatch.setattr(heel_contacts, 'heel_contact_tracks', lambda *_args, **_kwargs:
+                        SimpleNamespace(pairs=[], residual=lambda *_a: np.empty((0, 3))))
+    monkeypatch.setattr(loop_seam, 'seam_quality_metrics',
+                        lambda *_args, **_kwargs: {'seamContinuous': True})
+    monkeypatch.setattr(equipment_constraints, 'validate_grip', lambda *_: {'passed': True})
+    monkeypatch.setattr(support_geometry, 'validate_support_geometry', lambda *_: {'passed': True})
+    monkeypatch.setattr(support_geometry, 'validate_supported_shoe_orientation', lambda *_: {'passed': True})
+    monkeypatch.setattr(foot_geometry, 'validate_material_shoes', lambda *_args, **_kwargs: {'passed': True})
+    monkeypatch.setattr(support_alignment, 'validate_payload_alignment', lambda *_args, **_kwargs: {'passed': True})
+
+    cursors = np.arange(25, dtype=float)/4.
+    output = sample(payload['fixedRig'], cursors)
+    left_endpoint_reference = np.repeat(key_points[:1], len(cursors), axis=0)
+    legacy = validate_physical_motion(output, names, reference=left_endpoint_reference, fps=120.)
+    assert any(event['reason'] == 'repair_hinge_direction_distortion'
+               and event['joint'] == 'left_knee' for event in legacy['events'])
+
+    clean = rig_playback.validate_rig_playback(payload)
+    assert clean['passed']
+    assert 'repair_hinge_direction_distortion' not in clean['physicalReasons']
+    assert 'repair_articulation_distortion' not in clean['physicalReasons']
+
+    # A real 25-degree knee change at a subframe must survive playback filtering.
+    add_overrun['enabled'] = True
+    overrun = rig_playback.validate_rig_playback(payload)
+    knee_events = [event for event in overrun['physicalEvents']
+                   if event.get('reason') == 'repair_articulation_distortion'
+                   and event.get('joint') == 'left_knee']
+    assert knee_events
+    assert max(abs(event['changeDegrees']) for event in knee_events) > 10.25
+
+
+def test_sample_rig_applies_contact_foot_tracks_after_forward_kinematics():
+    from exercise_motion_pkg.contact_interpolation import build_contact_foot_tracks
+    from exercise_motion_pkg.rig_playback import sample_rig
+
+    names, rig, _ = calibrated_stance(count=2)
+    keypoints = rig.decode(rig.initial)
+    payload = {
+        'jointNames': names,
+        'fixedRig': {
+            'jointNames': names,
+            'parents': rig.parents,
+            'order': rig.order,
+            'offsets': rig.offsets.tolist(),
+            'rotationJointNames': [names[j] for j in rig.active],
+            'coordinates': rig.initial.tolist(),
+        },
+    }
+    pinned = np.zeros((len(keypoints), len(names)), dtype=bool)
+    pinned[:, names.index('left_foot')] = True
+    tracks = build_contact_foot_tracks(rig, keypoints, pinned)
+    tracks['left']['toes'] = (
+        np.asarray(tracks['left']['toes']) + np.array([.01, 0., 0.])
+    ).tolist()
+    payload['fixedRig']['contactFootTracks'] = tracks
+
+    raw = sample_rig({**payload['fixedRig'], 'contactFootTracks': None}, [.5, 0., 1.])
+    sampled = sample_rig(payload['fixedRig'], [.5, 0., 1.])
+    toe = names.index('left_foot')
+    ankle = names.index('left_ankle')
+    assert np.isclose(sampled[0, toe, 0] - raw[0, toe, 0], .01, atol=1e-6)
+    assert not np.allclose(sampled[0, ankle], raw[0, ankle])
+    np.testing.assert_array_equal(sampled[1:], raw[1:])
+
+
 def _stance_with_shoulder_span_swing(swing_meters):
     """Draw both shoulders symmetrically inward by swing_meters/2 each."""
     names, _, points = calibrated_stance()

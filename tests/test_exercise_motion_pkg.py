@@ -546,6 +546,27 @@ def test_crop_motion_clip_to_input_window_rebases_inference_context() -> None:
     assert cropped.metadata["inferenceContextCrop"]["outputFrameCount"] == 4
 
 
+def test_crop_motion_clip_to_input_window_excludes_half_open_end_frame() -> None:
+    clip = MotionClip(
+        fps=30.0,
+        joint_names=["pelvis"],
+        frames=[
+            MotionFrame(time_sec=index / 30.0, joints={"pelvis": (float(index), 0.0, 0.0)})
+            for index in range(97)
+        ],
+    )
+
+    cropped = pipeline.crop_motion_clip_to_input_window(
+        clip,
+        start_seconds=0.0,
+        end_seconds=96 / 30.0,
+    )
+
+    assert len(cropped.frames) == 96
+    assert cropped.frames[-1].time_sec == pytest.approx(95 / 30.0)
+    assert cropped.metadata["inferenceContextCrop"]["retainedInputEndSeconds"] == pytest.approx(95 / 30.0)
+
+
 def test_crop_motion_clip_to_input_window_rejects_incomplete_reconstruction_track() -> None:
     clip = MotionClip(
         fps=30.0,
@@ -12325,6 +12346,9 @@ def test_llama_cpp_ranker_starts_server_with_safe_vision_profile(
     from types import SimpleNamespace
     monkeypatch.setattr(child_process, "ChildProcessOwner", lambda process: SimpleNamespace(close=lambda: None))
 
+    from contextlib import nullcontext
+    monkeypatch.setattr(youtube_module, "GlobalGpuLock", lambda **kwargs: nullcontext(0.0))
+
     ranker = youtube_module.LlamaCppVisionRanker(
         YouTubeRankingSettings(
             llama_cpp_server_command=existing_path,
@@ -12358,6 +12382,7 @@ def test_llama_cpp_ranker_starts_server_with_safe_vision_profile(
         assert args[args.index("--spec-type") + 1] == "draft-mtp"
         assert args[args.index("--spec-draft-n-max") + 1] == "4"
         assert args[args.index("--gpu-layers-draft") + 1] == "all"
+        assert args[args.index("--gpu-layers") + 1] == "auto"
         assert args[args.index("--split-mode") + 1] == "layer"
         assert "--ctx-size" in args
         assert args[args.index("--ctx-size") + 1] == "65536"
@@ -12383,8 +12408,7 @@ def test_llama_cpp_ranker_starts_server_with_safe_vision_profile(
         assert args[args.index("--image-max-tokens") + 1] == "768"
         assert "--mtmd-batch-max-tokens" in args
         assert args[args.index("--mtmd-batch-max-tokens") + 1] == "1536"
-        assert "--no-mmap" in args
-        assert "--mlock" in args
+        assert args[args.index("--load-mode") + 1] == "mlock"
         assert "--reasoning" in args
         assert args[args.index("--reasoning") + 1] == "on"
         assert "--reasoning-format" in args
@@ -20073,6 +20097,156 @@ def test_staged_wave_hands_off_shared_llama_before_reconstruction_and_reuses_fin
     assert report["metrics"]["generationVisionSession"]["exclusiveGpuOperationCount"] == 1
 
 
+def test_staged_wave_reuses_source_session_when_no_reconstruction_is_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import exercise_motion_pkg.wave_pipeline as wave_pipeline
+
+    events: list[str] = []
+    sessions: list[object] = []
+
+    class FakeSession:
+        server_running = False
+        server_start_count = 0
+
+        def __init__(self, _request: BakeAndRankRequest) -> None:
+            sessions.append(self)
+
+        def caption_images(self, *_args: object, **_kwargs: object) -> str:
+            if not type(self).server_running:
+                type(self).server_running = True
+                type(self).server_start_count += 1
+            return "{}"
+
+        def run_without_llama_overlap(self, operation: object) -> object:
+            return operation()
+
+        def close(self, *, force_stop_server: bool = False) -> None:
+            events.append(f"closed_{force_stop_server}")
+            if force_stop_server or not request.keep_llama_cpp_server:
+                type(self).server_running = False
+
+        def timing_manifest(self) -> dict[str, object]:
+            return {}
+
+    candidate = RankedCandidate(
+        exercise_index=0,
+        candidate_rank=0,
+        exercise_id="squat",
+        exercise_name="Squat",
+        exercise_slug="squat",
+        candidate={"videoId": "video", "title": "Squat"},
+    )
+    request = BakeAndRankRequest(
+        candidates_json=tmp_path / "candidates.json",
+        workspace=tmp_path / "squat" / "bake",
+        body_model_root=None,
+        pre_reconstruction_source_validation=True,
+        final_output_validation=True,
+        keep_llama_cpp_server=True,
+    )
+    item = wave_pipeline.StagedWaveItem(
+        exercise_id="squat",
+        exercise_name="Squat",
+        request=request,
+    )
+    monkeypatch.setattr(wave_pipeline, "LazyLlamaCppVisionSession", FakeSession)
+    monkeypatch.setattr(wave_pipeline, "_wave_candidates", lambda _request: [candidate])
+    monkeypatch.setattr(
+        wave_pipeline,
+        "first_attempt_readiness_assessment",
+        lambda *_args, **_kwargs: {"eligible": True},
+    )
+    monkeypatch.setattr(
+        wave_pipeline,
+        "evaluate_source_candidate_gate",
+        lambda *_args, **_kwargs: {"passed": True},
+    )
+    monkeypatch.setattr(
+        wave_pipeline,
+        "build_exercise_motion_contract_resolver",
+        lambda **_kwargs: None,
+    )
+    def fail_after_model_request(*_args: object, **kwargs: object) -> Path:
+        kwargs["source_cut_caption_images"]([], prompt="test source review")
+        raise RuntimeError("source remains unresolved")
+
+    monkeypatch.setattr(wave_pipeline, "prepare_candidate_input_video", fail_after_model_request)
+
+    reports = [
+        wave_pipeline.run_staged_bake_wave(
+            [item], workspace=tmp_path / "wave", wave_id=f"wave-empty-source-{index}"
+        )
+        for index in range(2)
+    ]
+
+    # The source model remains owned through the empty reconstruction stage and
+    # is closed without eviction at final cleanup, so a later empty wave reuses
+    # the configured keepalive server instead of loading the model again.
+    assert len(sessions) == 2
+    assert FakeSession.server_start_count == 1
+    assert events == ["closed_False", "closed_False"]
+    assert reports[-1]["retryExerciseCount"] == 1
+
+
+def test_staged_wave_closes_source_session_when_source_phase_aborts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import exercise_motion_pkg.wave_pipeline as wave_pipeline
+    from exercise_motion_pkg.storage import InsufficientStorageError
+
+    events: list[str] = []
+
+    class FakeSession:
+        def __init__(self, _request: BakeAndRankRequest) -> None:
+            pass
+
+        def caption_images(self, *_args: object, **_kwargs: object) -> str:
+            return "{}"
+
+        def run_without_llama_overlap(self, operation: object) -> object:
+            return operation()
+
+        def close(self, *, force_stop_server: bool = False) -> None:
+            events.append(f"closed_{force_stop_server}")
+
+        def timing_manifest(self) -> dict[str, object]:
+            return {}
+
+    request = BakeAndRankRequest(
+        candidates_json=tmp_path / "candidates.json",
+        workspace=tmp_path / "squat" / "bake",
+        body_model_root=None,
+        pre_reconstruction_source_validation=True,
+        final_output_validation=True,
+    )
+    item = wave_pipeline.StagedWaveItem(
+        exercise_id="squat",
+        exercise_name="Squat",
+        request=request,
+    )
+    monkeypatch.setattr(wave_pipeline, "LazyLlamaCppVisionSession", FakeSession)
+
+    def fail_source(_request: BakeAndRankRequest) -> list[RankedCandidate]:
+        raise InsufficientStorageError("test source-stage abort")
+
+    monkeypatch.setattr(wave_pipeline, "_wave_candidates", fail_source)
+    monkeypatch.setattr(
+        wave_pipeline,
+        "build_exercise_motion_contract_resolver",
+        lambda **_kwargs: None,
+    )
+
+    with pytest.raises(InsufficientStorageError, match="test source-stage abort"):
+        wave_pipeline.run_staged_bake_wave(
+            [item], workspace=tmp_path / "wave", wave_id="wave-source-error"
+        )
+
+    assert events == ["closed_True"]
+
+
 def test_lazy_vision_session_drains_exclusive_gpu_work_before_restarting_vlm(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -22879,11 +23053,17 @@ def test_yolo_pose_prefilter_requires_cuda_and_rejects_cpu(
 
     monkeypatch.setattr(pose_prefilter_module, "torch_cuda_available", lambda: True)
 
+    monkeypatch.setattr(pose_prefilter_module, "exclusive_gpu_device", lambda: None)
     assert pose_prefilter_module.resolve_yolo_device("cuda") == "0"
     assert pose_prefilter_module.resolve_yolo_device(None) == "0"
     assert pose_prefilter_module.resolve_yolo_device("gpu") == "0"
     assert pose_prefilter_module.resolve_yolo_device("0") == "0"
     assert pose_prefilter_module.resolve_yolo_device("cuda:0") == "cuda:0"
+    monkeypatch.setattr(pose_prefilter_module, "exclusive_gpu_device", lambda: "1")
+    assert pose_prefilter_module.resolve_yolo_device("cuda") == "1"
+    assert pose_prefilter_module.resolve_yolo_device("cuda:1") == "cuda:1"
+    with pytest.raises(ValueError, match="conflicts with exclusive GPU 1"):
+        pose_prefilter_module.resolve_yolo_device("cuda:0")
     assert PosePrefilterSettings(device=None).device == "cuda"
     assert PosePrefilterSettings(device="gpu").device == "cuda"
     assert (
@@ -26371,6 +26551,52 @@ def test_source_outcome_index_persists_video_and_channel_history(tmp_path: Path)
     assert index["sources"]["video:accepted"]["accepts"] == 1
     assert index["sources"]["video:rejected"]["rejectionCounts"]["status:source_rejected"] == 1
     assert index["sources"]["video:rejected"]["rejectionCounts"]["cropped_body"] == 1
+
+
+def test_incomplete_preflight_evidence_does_not_penalize_source_or_channel(tmp_path: Path) -> None:
+    index_path = tmp_path / "source-outcomes.json"
+    retained_like_result = {
+        "candidate": {"videoId": "uncertain-source", "channel": "Uncertain Coach"},
+        "status": "skipped_pre_reconstruction_source_validation",
+        "reviewRequired": False,
+        "finalSelectionStatus": "not_reviewable",
+        "failures": [{
+            "reason": "pre_reconstruction_source_validation_rejected",
+            "reasonTags": [
+                "two_scale_source_incomplete_movement",
+                "two_scale_source_evidence_consistency_incomplete",
+                "two_scale_source_identity_review_incomplete",
+            ],
+            "evidence": {
+                "validation": {
+                    "reviewStatus": "incomplete",
+                    "missingEvidenceReasons": [
+                        "two_scale_source_evidence_consistency_incomplete",
+                        "two_scale_source_identity_review_incomplete",
+                    ],
+                    "resolvedMissingEvidenceReasons": [],
+                },
+            },
+        }],
+    }
+
+    assert source_outcomes_module.candidate_result_has_incomplete_source_validation(retained_like_result)
+    update = source_outcomes_module.update_source_outcome_index(index_path, [retained_like_result])
+    index = source_outcomes_module.load_source_outcome_index(index_path)
+
+    assert update is None
+    assert index["sources"] == {}
+    assert index["channels"] == {}
+
+    resolved = copy.deepcopy(retained_like_result)
+    resolved["failures"][0]["evidence"]["validation"]["resolvedMissingEvidenceReasons"] = list(
+        resolved["failures"][0]["evidence"]["validation"]["missingEvidenceReasons"]
+    )
+    assert not source_outcomes_module.candidate_result_has_incomplete_source_validation(resolved)
+
+    repaired = copy.deepcopy(retained_like_result)
+    repaired["failures"][0]["evidence"]["repair"] = {"resolved": True, "status": "resolved"}
+    assert not source_outcomes_module.candidate_result_has_incomplete_source_validation(repaired)
 
 
 def test_legacy_materialized_acceptance_counts_as_source_success() -> None:
@@ -34478,6 +34704,22 @@ def test_prepare_candidate_input_video_validates_padded_ranked_chunk_before_reco
                         "completeMovement": True,
                         "startBoundaryClean": True,
                         "finishBoundaryClean": True,
+                        "startStateMatch": "match",
+                        "phaseEvidence": [
+                            {
+                                "phaseId": "phase_01",
+                                "visible": True,
+                                "position": 0.25,
+                                "evidence": "The bar lowers to the chest.",
+                            },
+                            {
+                                "phaseId": "phase_02",
+                                "visible": True,
+                                "position": 0.75,
+                                "evidence": "The bar presses back to extended arms.",
+                            },
+                        ],
+                        "endStateMatch": "match",
                         "setupOrFiller": False,
                         "namedEquipmentEngagedStatus": "engaged",
                         "reject": [],
@@ -34501,6 +34743,13 @@ def test_prepare_candidate_input_video_validates_padded_ranked_chunk_before_reco
     )
     pre_reconstruction_contract = {
         "status": "generated",
+        "actionDefinitionStatus": "defined",
+        "actionDefinitionAuthority": "trusted",
+        "definingAction": "Lower the bar to the chest and press it back to extended arms.",
+        "requiredPhases": [
+            "lower the barbell to the chest",
+            "press the barbell to extended arms",
+        ],
         "exerciseName": "Bench Press",
         "advisoryText": (
             "Source: Barbell bench press setup.\n"
@@ -34673,6 +34922,12 @@ def test_prepare_candidate_input_video_reuses_parent_fallback_source_selection(
     selected.write_bytes(b"selected")
     selection = workspace / "segment_detection" / "segment_selection.json"
     selection.parent.mkdir(parents=True)
+    trusted_contract = contract_for(exercise("Push-Up"))
+    trusted_contract.update({
+        "actionDefinitionStatus": "defined",
+        "actionDefinitionAuthority": "trusted",
+        "definingAction": "Lower the body toward the floor and press back to the top position.",
+    })
     selection.write_text(
         json.dumps(
             {
@@ -34692,7 +34947,7 @@ def test_prepare_candidate_input_video_reuses_parent_fallback_source_selection(
                         "passed": True,
                     },
                 },
-                "exerciseMotionContract": contract_for(exercise("Push-Up")),
+                    "exerciseMotionContract": trusted_contract,
                 }
         ),
         encoding="utf-8",
@@ -34739,7 +34994,7 @@ def test_prepare_candidate_input_video_reuses_parent_fallback_source_selection(
         candidate,
         request=request,
         source_cut_caption_images=caption_session.caption_images,
-        exercise_motion_contract_resolver=lambda _candidate: pytest.fail("contract should be cached"),
+        exercise_motion_contract_resolver=lambda _candidate: trusted_contract,
     )
 
     assert reused == selected
@@ -35745,20 +36000,33 @@ def test_source_cut_vlm_requests_have_a_bounded_timeout() -> None:
 
 def test_source_cut_vlm_response_budget_scales_with_contract_phases() -> None:
     contract = {
+        "completionMode": "distinct_end_state",
         "movementTopology": {
+            "startState": {"label": "start"},
             "phases": [
-                {"id": "phase_01"},
-                {"id": "phase_02"},
-                {"id": "phase_03"},
-                {"id": "phase_04"},
-            ]
+                {"id": "phase_01", "label": "phase one"},
+                {"id": "phase_02", "label": "phase two"},
+                {"id": "phase_03", "label": "phase three"},
+                {"id": "phase_04", "label": "phase four"},
+            ],
+            "endState": {"label": "finish"},
         }
     }
 
-    assert bake_and_rank_module.source_cut_vlm_caption_kwargs()["max_tokens"] == 256
+    assert bake_and_rank_module.source_cut_vlm_caption_kwargs()["max_tokens"] == 384
     assert bake_and_rank_module.source_cut_vlm_caption_kwargs(
         exercise_motion_contract=contract
-    )["max_tokens"] == 512
+    )["max_tokens"] == 768
+
+    flat_definition = {
+        "completionMode": "distinct_end_state",
+        "contractScope": "definition_only",
+        "actionDefinitionAuthority": "structured_definition",
+        "definingAction": "Raise the bar to the final overhead position.",
+    }
+    assert bake_and_rank_module.source_cut_vlm_caption_kwargs(
+        exercise_motion_contract=flat_definition
+    )["max_tokens"] == 480
 
 
 def test_selected_section_review_video_is_not_time_stretched_by_default() -> None:
@@ -47010,6 +47278,217 @@ def test_build_kinematic_source_cut_plan_does_not_shrink_parent_to_short_cycle()
     assert plan.specs[0].window.end_seconds - plan.specs[0].window.start_seconds < 16.0
 
 
+def test_pose_sample_plan_honors_explicit_native_frame_indices_and_budget() -> None:
+    settings = PosePrefilterSettings(
+        sample_frame_indices=(29, 3, 29, 15),
+        max_seconds=0.2,
+    )
+    indices, windows = build_pose_sample_plan(
+        BasicVideoMetadata(fps=30.0, frame_count=300, width=640, height=480),
+        settings=settings,
+    )
+
+    assert indices == [3, 15, 29]
+    assert windows == [{"startSeconds": 0.1, "endSeconds": 0.966667}]
+    with pytest.raises(ValueError, match="time budget"):
+        build_pose_sample_plan(
+            BasicVideoMetadata(fps=30.0, frame_count=300, width=640, height=480),
+            settings=replace(settings, max_seconds=0.05),
+        )
+    for invalid in ((3.5,), (True,)):
+        with pytest.raises(ValueError, match="must be integers"):
+            build_pose_sample_plan(
+                BasicVideoMetadata(fps=30.0, frame_count=300, width=640, height=480),
+                settings=replace(settings, sample_frame_indices=invalid),
+            )
+
+
+def test_native_pose_merge_preserves_coarse_timestamps_and_only_indexes_aligned_samples() -> None:
+    parent = {
+        "dominantPoseSamples": [
+            {"timeSeconds": 10.0004, "keypoints": {"left_hip": [0.4, 0.5, 0.9]}},
+            {"timeSeconds": 10.123, "keypoints": {"left_hip": [0.4, 0.5, 0.9]}},
+        ]
+    }
+    native = {
+        "dominantPoseSamples": [
+            {"timeSeconds": 10.0, "nativeFrameIndex": 300, "keypoints": {"left_hip": [0.5, 0.5, 0.9]}}
+        ],
+        "nativeBoundaryPoseFrameIndices": [300],
+    }
+
+    merged = bake_and_rank_module.merge_native_source_pose_samples(parent, native, fps=30.0)
+
+    assert merged is not None
+    samples = merged["dominantPoseSamples"]
+    aligned = next(sample for sample in samples if sample.get("nativeFrameIndex") == 300)
+    unaligned = next(sample for sample in samples if sample["timeSeconds"] == 10.123)
+    assert aligned["timeSeconds"] == 10.0
+    assert "nativeFrameIndex" not in unaligned
+    assert unaligned["timeSeconds"] == 10.123
+
+
+def test_native_boundary_pose_refinement_reuses_absolute_parent_clock_and_leaves_gaps_unresolved(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_video = tmp_path / "source.mp4"
+    source_video.write_bytes(b"verified source")
+    parent = bake_and_rank_module.KinematicSourceCutPlan(
+        specs=(
+            bake_and_rank_module.SourceWindowCandidateSpec(
+                window=DetectionWindow(index=0, start_seconds=0.0, end_seconds=2.0),
+                chunking={"originalStartSeconds": 10.0, "originalEndSeconds": 12.0},
+            ),
+        ),
+        timeline_window=DetectionWindow(index=0, start_seconds=0.0, end_seconds=5.0),
+        expanded_parent=False,
+    )
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "read_basic_video_metadata",
+        lambda _path: BasicVideoMetadata(fps=30.0, frame_count=600, width=640, height=480),
+    )
+    captured: dict[str, object] = {}
+
+    pose_calls: list[tuple[int, ...]] = []
+    gpu_handoffs: list[dict[str, object]] = []
+
+    def fake_pose_prefilter(*, video_path: Path, settings: PosePrefilterSettings) -> object:
+        assert video_path == source_video
+        assert settings.sample_frame_indices is not None
+        captured["indices"] = settings.sample_frame_indices
+        pose_calls.append(settings.sample_frame_indices)
+        keypoints = {
+            name: [0.4 + 0.001 * offset, 0.5, 0.9]
+            for offset, name in enumerate(
+                ("nose", "left_shoulder", "right_shoulder", "left_elbow", "right_elbow", "left_hip")
+            )
+        }
+        samples = [
+            {
+                "timeSeconds": index / 30.0,
+                "confidence": 0.9,
+                "keypoints": keypoints,
+            }
+            for index in settings.sample_frame_indices
+        ]
+        return SimpleNamespace(payload={"dominantPoseSamples": samples})
+
+    monkeypatch.setattr(bake_and_rank_module, "run_yolo_pose_prefilter", fake_pose_prefilter)
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "run_with_caption_gpu_exclusive",
+        lambda _caption, callback, **kwargs: (
+            gpu_handoffs.append(kwargs),
+            captured.setdefault("gpu_handoff", kwargs),
+            callback(),
+        )[2],
+    )
+    refined_plan = parent
+    rebuild_inputs: list[dict[str, object]] = []
+
+    def fake_rebuild(**kwargs: object) -> object:
+        rebuild_inputs.append(kwargs)
+        return refined_plan
+
+    monkeypatch.setattr(bake_and_rank_module, "build_kinematic_source_cut_plan", fake_rebuild)
+    plan, merged, report = bake_and_rank_module.refine_kinematic_plan_with_native_boundary_pose(
+        plan=parent,
+        parent_pose_payload={"model": "pose.pt", "device": "cuda", "dominantPoseSamples": []},
+        source_video_path=source_video,
+        contract={"completionMode": "return_to_start"},
+        exercise_name="Squat",
+        output_dir=tmp_path / "cache",
+        shared_pose_cache_dir=tmp_path / "shared-native-cache",
+        caption_images=lambda **_kwargs: "{}",
+        source_offset_seconds=10.0,
+        video_duration_seconds=5.0,
+    )
+
+    assert plan.specs == refined_plan.specs
+    assert report["status"] == "computed_or_reused"
+    assert len(captured["indices"]) <= 60
+    samples = merged["dominantPoseSamples"]
+    native = [sample for sample in samples if "nativeFrameIndex" in sample]
+    assert len(native) == len(captured["indices"])
+    assert all(
+        sample["timeSeconds"] == pytest.approx(sample["nativeFrameIndex"] / 30.0)
+        for sample in native
+    )
+    assert rebuild_inputs[0]["source_offset_seconds"] == 10.0
+    assert captured["gpu_handoff"] == {
+        "small_stage": "yolo_pose_prefilter",
+        "small_min_free_mib": 1024,
+    }
+
+    shifted_parent = bake_and_rank_module.KinematicSourceCutPlan(
+        specs=(
+            bake_and_rank_module.SourceWindowCandidateSpec(
+                window=DetectionWindow(index=0, start_seconds=0.2, end_seconds=2.2),
+                chunking={"originalStartSeconds": 10.2, "originalEndSeconds": 12.2},
+            ),
+        ),
+        timeline_window=parent.timeline_window,
+        expanded_parent=False,
+    )
+    _shifted_plan, _shifted_merged, shifted_report = bake_and_rank_module.refine_kinematic_plan_with_native_boundary_pose(
+        plan=shifted_parent,
+        parent_pose_payload={"model": "pose.pt", "device": "cuda", "dominantPoseSamples": []},
+        source_video_path=source_video,
+        contract={"completionMode": "return_to_start"},
+        exercise_name="Squat",
+        output_dir=tmp_path / "shifted-cache",
+        shared_pose_cache_dir=tmp_path / "shared-native-cache",
+        caption_images=lambda **_kwargs: "{}",
+        source_offset_seconds=10.0,
+        video_duration_seconds=5.0,
+    )
+    assert len(pose_calls) == 2
+    assert report["cacheIdentity"] == shifted_report["cacheIdentity"]
+    assert shifted_report["cachedNativeFrameCount"] > 0
+    assert shifted_report["requestedMissingNativeFrameCount"] == len(set(pose_calls[1]))
+    assert set(pose_calls[1]).isdisjoint(pose_calls[0])
+
+    bake_and_rank_module.refine_kinematic_plan_with_native_boundary_pose(
+        plan=shifted_parent,
+        parent_pose_payload={"model": "pose.pt", "device": "cuda", "dominantPoseSamples": []},
+        source_video_path=source_video,
+        contract={"completionMode": "return_to_start"},
+        exercise_name="Squat",
+        output_dir=tmp_path / "repeat-cache",
+        shared_pose_cache_dir=tmp_path / "shared-native-cache",
+        caption_images=lambda **_kwargs: "{}",
+        source_offset_seconds=10.0,
+        video_duration_seconds=5.0,
+    )
+    assert len(pose_calls) == 2
+    assert len(gpu_handoffs) == 2
+
+    # A missing native observation on either side of an edge is unresolved;
+    # the coarse approved-parent shortlist remains available and no gap is filled.
+    monkeypatch.setattr(
+        bake_and_rank_module,
+        "run_yolo_pose_prefilter",
+        lambda **_kwargs: SimpleNamespace(payload={"dominantPoseSamples": []}),
+    )
+    rebuild_inputs.clear()
+    retained_plan, _merged, unresolved = bake_and_rank_module.refine_kinematic_plan_with_native_boundary_pose(
+        plan=parent,
+        parent_pose_payload={"dominantPoseSamples": []},
+        source_video_path=source_video,
+        contract={"completionMode": "return_to_start"},
+        exercise_name="Squat",
+        output_dir=tmp_path / "empty-cache",
+        caption_images=lambda **_kwargs: "{}",
+        source_offset_seconds=10.0,
+        video_duration_seconds=5.0,
+    )
+    assert retained_plan is parent
+    assert unresolved["status"] == "native_boundary_evidence_unresolved_coarse_plan_retained"
+    assert not rebuild_inputs
+
+
 def test_expand_detection_source_retrims_when_cycle_extends_past_clip(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -53287,47 +53766,6 @@ def test_distal_chain_depth_moderate_arm_recovers_travel_compressed_legs() -> No
     assert clean_report["applied"] is False
 
 
-def test_stationary_contact_wobble_smoothing_preserves_rigid_foot_bone() -> None:
-    """Smoothing a planted foot must not bend its parent bone.
-
-    Raw SMPL foot bones are rigid, so planted-foot wobble is purely angular
-    around the ankle. The stabilizer smooths only the direction and
-    re-imposes the original per-frame bone length; a traveling foot stays
-    bit-identical.
-    """
-    import numpy as np
-
-    from exercise_motion_pkg import anatomical_repair
-
-    names = ["pelvis", "left_ankle", "left_foot"]
-    rng = np.random.default_rng(7)
-    frames = 40
-    points = np.zeros((frames, len(names), 3))
-    points[:, 0] = [0.0, 1.0, 0.0]
-    points[:, 1] = [0.0, 0.05, 0.0]
-    bone_length = 0.13
-    # Planted foot: small angular scatter around one plant direction, at
-    # rigid bone length (raw SMPL bones do not stretch).
-    nominal = np.array([0.3, 0.1, 0.95])
-    nominal = nominal / np.linalg.norm(nominal)
-    offsets = nominal * bone_length + rng.normal(scale=0.008, size=(frames, 3))
-    offsets = offsets / np.linalg.norm(offsets, axis=-1, keepdims=True) * bone_length
-    points[:, 2] = points[:, 1] + offsets
-    before = points.copy()
-
-    corrected, report = anatomical_repair.stabilize_stationary_contact_wobble(
-        points, names, fps=30.0
-    )
-
-    assert report["left_foot"]["applied"] is True
-    length_before = np.linalg.norm(before[:, 2] - before[:, 1], axis=-1)
-    length_after = np.linalg.norm(corrected[:, 2] - corrected[:, 1], axis=-1)
-    assert length_after == pytest.approx(length_before)
-    range_before = float(np.sqrt(np.sum(np.ptp(before[:, 2], axis=0) ** 2)))
-    range_after = float(np.sqrt(np.sum(np.ptp(corrected[:, 2], axis=0) ** 2)))
-    assert range_after < range_before
-
-
 def test_spine_axis_alignment_clamps_only_past_tolerance_frames() -> None:
     """Spine curvature past the anatomy gate's bound is clamped inside it.
 
@@ -54182,7 +54620,7 @@ def test_kinematic_cut_proposes_cycles_for_periodic_squat() -> None:
     top = proposals[0]
     assert 0.0 <= top.start_seconds <= 1.5
     assert 4.5 <= top.end_seconds <= 7.5
-    assert top.policy == "cycle_return_to_start"
+    assert top.policy in {"cycle_return_to_start", "observed_boundary_return_to_start"}
     assert top.duration_seconds >= 4.0
     # A second distinct cycle must be available for the verifier.
     assert len(proposals) >= 2
@@ -54622,7 +55060,7 @@ def test_kinematic_cut_distinct_end_does_not_grow_to_later_start_pose() -> None:
     assert 5.0 < proposals[0].end_seconds < 8.5
 
 
-def test_kinematic_cut_distinct_end_uses_first_extreme_when_pose_labels_fail() -> None:
+def test_kinematic_cut_distinct_end_rejects_extreme_with_incompatible_observed_boundaries() -> None:
     from exercise_motion_pkg.kinematic_cut import propose_source_cut
 
     samples: list[dict[str, object]] = []
@@ -54651,10 +55089,9 @@ def test_kinematic_cut_distinct_end_uses_first_extreme_when_pose_labels_fail() -
         max_proposals=1,
     )
 
-    assert proposals
-    assert proposals[0].policy == "distinct_end_state_signal_extreme"
-    assert proposals[0].start_seconds < 3.0
-    assert 3.5 <= proposals[0].end_seconds <= 4.5
+    # A PCA excursion cannot override source evidence that contradicts both
+    # requested boundaries (the samples are a squat, not lying->seated).
+    assert proposals == []
 
 
 def test_cpu_fit_slot_does_not_deadlock_on_priority_from_concurrent_finalize() -> None:
@@ -55810,7 +56247,7 @@ def test_workout_plan_script_fits_renders_and_packages_reviewed_movement(
         assert isinstance(two_scale_validation, dict)
         assert two_scale_validation.get("passed") is True
         assert any(
-            call["event"] == "two_scale_topology_request" for call in boundary_calls
+            call["event"] == "structured_source_evidence_request" for call in boundary_calls
         )
     visual_review = final_validation.get("visualReview")
     assert visual_review["status"] == "observed"

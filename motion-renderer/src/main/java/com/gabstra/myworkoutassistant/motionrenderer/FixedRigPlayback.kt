@@ -2,7 +2,11 @@ package com.gabstra.myworkoutassistant.motionrenderer
 
 import com.google.gson.JsonObject
 import kotlin.math.acos
+import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.hypot
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.sin
 import kotlin.math.sqrt
 
@@ -16,6 +20,7 @@ internal class FixedRigPlayback private constructor(
     private val coordinates: Array<DoubleArray>,
     private val continuousVelocity: Boolean,
     private val smoothLimiter: Boolean,
+    private val contactFootTracks: Map<String, ContactFootTrack>,
 ) {
     private val roots = coordinates.map { it.copyOfRange(0, 3) }.toTypedArray()
     private val quaternionTracks = rotationSlots.map { slot ->
@@ -50,7 +55,59 @@ internal class FixedRigPlayback private constructor(
                 DoubleArray(3) { points[parent][it] + offset[it] }
             }
         }
+        if (alpha != 0.0) {
+            contactFootTracks.forEach { (side, track) ->
+                val firstActive = track.active[first]
+                val lastActive = track.active[last]
+                val weight = when {
+                    firstActive && lastActive -> 1.0
+                    !firstActive && !lastActive -> 0.0
+                    lastActive -> smoothStep(alpha)
+                    else -> 1.0 - smoothStep(alpha)
+                }
+                if (weight > 0.0) {
+                    applyContactFootPose(points, side, track, first, last, alpha, wrap, weight)
+                }
+            }
+        }
         return jointNames.indices.associate { jointNames[it] to points[it] }
+    }
+
+    private fun applyContactFootPose(
+        points: Array<DoubleArray>, side: String, track: ContactFootTrack,
+        first: Int, last: Int, alpha: Double, wrap: Boolean, weight: Double,
+    ) {
+        val hipIndex = jointNames.indexOf("${side}_hip")
+        val kneeIndex = jointNames.indexOf("${side}_knee")
+        val ankleIndex = jointNames.indexOf("${side}_ankle")
+        val footIndex = jointNames.indexOf("${side}_foot")
+        val rawToe = points[footIndex].copyOf()
+        val rawAnkle = points[ankleIndex].copyOf()
+        val rawDirection = normalized(subtract(rawToe, rawAnkle), "$side raw foot direction")
+        val curveToe = interpolateRigTrack(track.toes, first, last, alpha, wrap, false, smoothLimiter)
+        val yawFirst = first + track.frameCount
+        val yawLast = last + track.frameCount + if (wrap && last <= first) track.frameCount else 0
+        val yaw = interpolateRigTrack(track.yaw, yawFirst, yawLast, alpha, false, false, smoothLimiter)[0]
+        val pitch = interpolateRigTrack(track.pitch, first, last, alpha, wrap, false, smoothLimiter)[0]
+        val targetDirection = doubleArrayOf(sin(yaw) * cos(pitch), sin(pitch), cos(yaw) * cos(pitch))
+        val direction = normalized(DoubleArray(3) { rawDirection[it] * (1.0 - weight) + targetDirection[it] * weight }, "$side blended foot direction")
+        val toe = DoubleArray(3) { rawToe[it] + weight * (curveToe[it] - rawToe[it]) }
+        val footLength = length(offsets[footIndex])
+        require(footLength > 1e-8) { "Contact foot track requires a nonzero $side ankle-to-foot length" }
+        val ankle = DoubleArray(3) { toe[it] - footLength * direction[it] }
+        val rawHip = points[hipIndex].copyOf()
+        val rawKnee = points[kneeIndex].copyOf()
+        val upperLength = length(subtract(rawKnee, rawHip))
+        val lowerLength = length(subtract(rawAnkle, rawKnee))
+        if (length(subtract(ankle, rawAnkle)) <= 1e-9) {
+            points[kneeIndex] = rawKnee
+            points[ankleIndex] = ankle
+            points[footIndex] = toe
+            return
+        }
+        points[kneeIndex] = solveKnee(rawHip, rawKnee, rawAnkle, ankle, upperLength, lowerLength, side)
+        points[ankleIndex] = ankle
+        points[footIndex] = toe
     }
 
     companion object {
@@ -79,9 +136,113 @@ internal class FixedRigPlayback private constructor(
             val interpolation = value.get("interpolation")?.asString
             val smoothLimiter = interpolation == "limited_quaternion_hermite_v2"
             val continuous = smoothLimiter || interpolation == "limited_quaternion_hermite_v1"
-            return FixedRigPlayback(names, parents, order, offsets, slots, coordinates, continuous, smoothLimiter)
+            val contactTracks = parseContactFootTracks(value.getAsJsonObject("contactFootTracks"), names, parents, offsets, frameCount)
+            return FixedRigPlayback(names, parents, order, offsets, slots, coordinates, continuous, smoothLimiter, contactTracks)
         }
     }
+}
+
+private data class ContactFootTrack(
+    val frameCount: Int,
+    val active: BooleanArray,
+    val toes: Array<DoubleArray>,
+    val yaw: Array<DoubleArray>,
+    val pitch: Array<DoubleArray>,
+)
+
+private fun parseContactFootTracks(
+    value: JsonObject?, names: List<String>, parents: IntArray, offsets: Array<DoubleArray>, frameCount: Int,
+): Map<String, ContactFootTrack> {
+    if (value == null) return emptyMap()
+    require(value.get("version")?.asInt == 1) { "Unsupported contact foot track version" }
+    val result = mutableMapOf<String, ContactFootTrack>()
+    for (side in listOf("left", "right")) {
+        val sideValue = value.getAsJsonObject(side) ?: continue
+        val chainNames = listOf("${side}_hip", "${side}_knee", "${side}_ankle", "${side}_foot")
+        val indices = chainNames.map { name -> names.indexOf(name).also { require(it >= 0) { "Contact foot track requires $name" } } }
+        require(indices.drop(1).zip(indices).all { (child, parent) -> parents[child] == parent }) {
+            "Contact foot track requires a direct hip-knee-ankle-foot chain for $side"
+        }
+        val activeJson = sideValue.getAsJsonArray("active")
+        val toeJson = sideValue.getAsJsonArray("toes")
+        val directionJson = sideValue.getAsJsonArray("directions")
+        require(activeJson != null && activeJson.size() == frameCount) { "Contact foot active track for $side must have $frameCount frames" }
+        require(toeJson != null && toeJson.size() == frameCount) { "Contact foot toe track for $side must have $frameCount frames" }
+        require(directionJson != null && directionJson.size() == frameCount) { "Contact foot direction track for $side must have $frameCount frames" }
+        val active = BooleanArray(frameCount) { activeJson[it].asBoolean }
+        val toes = Array(frameCount) { frame -> parseVector(toeJson[frame], "Contact foot toe for $side frame $frame") }
+        val directions = Array(frameCount) { frame ->
+            normalized(parseVector(directionJson[frame], "Contact foot direction for $side frame $frame"), "Contact foot direction for $side frame $frame")
+        }
+        require(length(offsets[indices[1]]) > 1e-8 && length(offsets[indices[2]]) > 1e-8 && length(offsets[indices[3]]) > 1e-8) {
+            "Contact foot track requires nonzero leg segment lengths for $side"
+        }
+        val rawYaw = DoubleArray(frameCount) { atan2(directions[it][0], directions[it][2]) }
+        val yawValues = DoubleArray(frameCount * 3) { index -> rawYaw[index % frameCount] }
+        for (frame in 1 until yawValues.size) {
+            while (yawValues[frame] - yawValues[frame - 1] > Math.PI) yawValues[frame] -= 2.0 * Math.PI
+            while (yawValues[frame] - yawValues[frame - 1] < -Math.PI) yawValues[frame] += 2.0 * Math.PI
+        }
+        val yaw = Array(yawValues.size) { doubleArrayOf(yawValues[it]) }
+        val pitch = Array(frameCount) { doubleArrayOf(atan2(directions[it][1], hypot(directions[it][0], directions[it][2]))) }
+        result[side] = ContactFootTrack(frameCount, active, toes, yaw, pitch)
+    }
+    return result
+}
+
+private fun parseVector(value: com.google.gson.JsonElement, description: String): DoubleArray {
+    val array = value.asJsonArray
+    require(array.size() == 3) { "$description must have three coordinates" }
+    return DoubleArray(3) { array[it].asDouble.also { coordinate -> require(coordinate.isFinite()) { "$description must be finite" } } }
+}
+
+private fun smoothStep(value: Double) = value * value * (3.0 - 2.0 * value)
+
+private fun dot(a: DoubleArray, b: DoubleArray) = a.indices.sumOf { a[it] * b[it] }
+private fun length(value: DoubleArray) = sqrt(dot(value, value))
+private fun subtract(a: DoubleArray, b: DoubleArray) = DoubleArray(3) { a[it] - b[it] }
+private fun add(a: DoubleArray, b: DoubleArray) = DoubleArray(3) { a[it] + b[it] }
+private fun scale(value: DoubleArray, factor: Double) = DoubleArray(3) { value[it] * factor }
+private fun cross(a: DoubleArray, b: DoubleArray) = doubleArrayOf(
+    a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0],
+)
+private fun normalized(value: DoubleArray, description: String): DoubleArray {
+    val magnitude = length(value)
+    require(magnitude.isFinite() && magnitude > 1e-10) { "$description is degenerate" }
+    return scale(value, 1.0 / magnitude)
+}
+
+private fun solveKnee(
+    hip: DoubleArray, rawKnee: DoubleArray, oldAnkle: DoubleArray, ankle: DoubleArray,
+    upperLength: Double, lowerLength: Double, side: String,
+): DoubleArray {
+    require(upperLength > 1e-8 && lowerLength > 1e-8) { "Contact foot track has a degenerate $side leg" }
+    val oldAxis = normalized(subtract(oldAnkle, hip), "$side original hip-to-ankle axis")
+    val rawPole = subtract(rawKnee, hip)
+    val oldAlong = dot(rawPole, oldAxis)
+    val transportedPole = normalized(DoubleArray(3) { rawPole[it] - oldAxis[it] * oldAlong }, "$side knee bend plane")
+    val newDelta = subtract(ankle, hip)
+    val distance = length(newDelta)
+    require(distance > 1e-8) { "Contact foot target collapses the $side leg" }
+    val minimum = kotlin.math.abs(upperLength - lowerLength)
+    val maximum = upperLength + lowerLength
+    require(distance >= minimum - 1e-7 && distance <= maximum + 1e-7) {
+        "Contact foot target is unreachable for $side leg (distance=$distance, range=$minimum..$maximum)"
+    }
+    val newAxis = scale(newDelta, 1.0 / distance)
+    val rotationAxis = cross(oldAxis, newAxis)
+    val rotationMagnitude = length(rotationAxis)
+    val axisDot = dot(oldAxis, newAxis).coerceIn(-1.0, 1.0)
+    val pole = if (rotationMagnitude > 1e-10) {
+        val unitAxis = scale(rotationAxis, 1.0 / rotationMagnitude)
+        val angle = atan2(rotationMagnitude, axisDot)
+        val rotated = add(add(scale(transportedPole, cos(angle)), scale(cross(unitAxis, transportedPole), sin(angle))),
+            scale(unitAxis, dot(unitAxis, transportedPole) * (1.0 - cos(angle))))
+        normalized(rotated, "$side transported knee pole")
+    } else transportedPole
+    val along = (upperLength * upperLength - lowerLength * lowerLength + distance * distance) / (2.0 * distance)
+    val height = sqrt(max(0.0, upperLength * upperLength - along * along))
+    return add(add(hip, scale(newAxis, along)), scale(pole, height))
 }
 
 private data class RigQuaternion(val x: Double, val y: Double, val z: Double, val w: Double) {

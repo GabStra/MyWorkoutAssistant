@@ -313,6 +313,34 @@ def transport_corrected_bone_sides(previous_frames: list[dict[str, Any]], payloa
                 side = _unit(_cross3(forward, normal))
                 if side is not None:
                     frame.setdefault('boneSides', {})[f'{ankle}->{toe}'] = side.tolist()
+    # Timed ground patches also own sole roll, even without torso bodySupport.
+    # This rotates mesh axes only; toe-only pitch and all joint positions stay free.
+    from .contact_constraints import motion_space_support_evidence, observed_ground_contact_mask
+    frames = payload.get('frames', [])
+    names = payload.get('jointNames', [])
+    timed_evidence = motion_space_support_evidence(payload)
+    ground = observed_ground_contact_mask(timed_evidence, names, len(frames))
+    if frames and names:
+        from .foot_geometry import calibrated_foot_rest_pitches
+        payload['footRestPitchRadians'] = {
+            **calibrated_foot_rest_pitches(
+                np.asarray([[frame['joints'][name] for name in names] for frame in frames]),
+                names, timed_evidence,
+                frame_times=[frame.get('sourceTimeSec') for frame in frames]),
+            **payload.get('footRestPitchRadians', {}),
+        }
+    for leg in ('left', 'right'):
+        ankle, toe = f'{leg}_ankle', f'{leg}_foot'
+        if toe not in names:
+            continue
+        for index in np.flatnonzero(ground[:, names.index(toe)]):
+            frame = frames[index]
+            if ankle not in frame.get('joints', {}) or toe not in frame.get('joints', {}):
+                continue
+            forward = np.asarray(frame['joints'][toe]) - frame['joints'][ankle]
+            side = _unit(_cross3(forward, np.array([0., 1., 0.])))
+            if side is not None:
+                frame.setdefault('boneSides', {})[f'{ankle}->{toe}'] = side.tolist()
 
 
 def bone_roll_metrics(payload: dict[str, Any]) -> dict[str, Any]:
@@ -407,10 +435,21 @@ def rendered_leg_sides(frames: list[dict[str, Any]]) -> list[dict[str, list[floa
                 side = _unit(reference * (1 - weight) + side * weight)
             current[f"{leg}_hip->{leg}_knee"] = side
             current[shin_key] = side
-            foot_side = _unit(side - foot * np.dot(side, foot))
+            # Match playback: knee articulation must not become shoe roll.
+            old_foot = previous.get(f"{leg}_ankle->{leg}_foot")
+            foot_side = (_unit(old_foot - foot * np.dot(old_foot, foot))
+                         if old_foot is not None else _unit(_cross3(foot, -shin)))
+            ankle_reference = _unit(_cross3(foot, -shin))
             current[f"{leg}_ankle->{leg}_foot"] = (
-                foot_side if foot_side is not None else reference if reference is not None else side
+                foot_side if foot_side is not None
+                else ankle_reference if ankle_reference is not None else side
             )
+            exported = frame.get('boneSides', {}).get(f'{leg}_ankle->{leg}_foot')
+            if exported is not None:
+                observed_side = np.asarray(exported, dtype=float)
+                observed_side = _unit(observed_side - foot * np.dot(observed_side, foot))
+                if observed_side is not None:
+                    current[f'{leg}_ankle->{leg}_foot'] = observed_side
         result.append({key: value.tolist() for key, value in current.items()})
         previous = current
     return result

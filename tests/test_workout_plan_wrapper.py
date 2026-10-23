@@ -13,6 +13,45 @@ from pathlib import Path
 import pytest
 
 
+def test_motion_launchers_allow_automatic_vram_fitting():
+    repo = Path(__file__).resolve().parents[1]
+    command = r'''
+    $ErrorActionPreference = 'Stop'
+    $tokens = $null; $errors = $null
+    $root = $env:MOTION_FIT_TEST_ROOT
+    $wrapper = [System.Management.Automation.Language.Parser]::ParseFile(
+        (Join-Path $root 'scripts/run_exercise_motion_workout_plan.ps1'), [ref]$tokens, [ref]$errors)
+    if ($errors.Count) { throw $errors[0] }
+    $body = $wrapper.FindAll({param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Start-SharedLlamaServer'}, $true)[0].Body.Extent.Text
+    $from = $body.IndexOf('    $parallel =')
+    $to = $body.IndexOf('    $launchId =')
+    $build = [scriptblock]::Create($body.Substring($from, $to - $from))
+    $LlamaCppCtxSize = 16384; $LlamaCppFitCtx = 12345; $LlamaCppFitTarget = 3072
+    foreach ($fit in @('on', 'off')) {
+        $LlamaCppFit = $fit
+        . $build
+        $expected = if ($fit -eq 'on') { 'auto' } else { 'all' }
+        if ($serverArgs[[array]::IndexOf($serverArgs, '--gpu-layers') + 1] -ne $expected) { throw 'Shared worker defeats auto-fit' }
+        if ($serverArgs[[array]::IndexOf($serverArgs, '--fit-ctx') + 1] -ne '12345') { throw 'Fit context not forwarded' }
+        if ($serverArgs[[array]::IndexOf($serverArgs, '--fit-target') + 1] -ne '3072') { throw 'VRAM reserve not forwarded' }
+    }
+    $segment = [System.Management.Automation.Language.Parser]::ParseFile(
+        (Join-Path $root 'scripts/run_exercise_segment_detection.ps1'), [ref]$tokens, [ref]$errors)
+    if ($errors.Count) { throw $errors[0] }
+    $definition = $segment.FindAll({param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Resolve-LlamaCppServerProcess'}, $true)[0]
+    . ([scriptblock]::Create($definition.Extent.Text))
+    function Start-Process { param($FilePath, $ArgumentList, [switch]$PassThru, $WindowStyle) $script:launchArgs = @($ArgumentList) }
+    foreach ($fit in @('on', 'off')) {
+        Resolve-LlamaCppServerProcess -Command 'unused.exe' -ModelPath 'model' -MmprojPath 'projector' -Backend 'gpu' -Fit $fit
+        $expected = if ($fit -eq 'on') { 'auto' } else { 'all' }
+        if ($launchArgs[[array]::IndexOf($launchArgs, '--gpu-layers') + 1] -ne $expected) { throw 'Segment worker defeats auto-fit' }
+    }
+    '''
+    result = subprocess.run(['pwsh', '-NoProfile', '-Command', command],
+        env={**os.environ, 'MOTION_FIT_TEST_ROOT': str(repo)}, capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_motion_cancellation_reaches_piped_child_wrapper(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     helper = str(repo_root / "scripts/motion_run_interrupt.ps1").replace("'", "''")
@@ -473,6 +512,8 @@ def write_fake_motion_cli(tmp_path: Path) -> tuple[Path, Path]:
             if command == "list-workout-plan-exercises":
                 out_json = Path(arg_value(args, "--out-json"))
                 plan = json.loads(Path(arg_value(args, "--workout-plan-json")).read_text(encoding="utf-8"))
+                readiness_status = os.environ.get("FAKE_MOTION_DEFINITION_STATUS", "ready")
+                source_budget_status = os.environ.get("FAKE_MOTION_SOURCE_BUDGET_STATUS", "ready")
                 exercises = []
                 for item in plan["exercises"]:
                     name = item["name"]
@@ -484,11 +525,44 @@ def write_fake_motion_cli(tmp_path: Path) -> tuple[Path, Path]:
                             "slug": slugify(exercise_id),
                             "sourceExerciseName": name,
                             "equipmentQualifiedExerciseName": name,
+                            "definitionReadiness": {
+                                "status": readiness_status,
+                                "reason": "fake_definition_unresolved" if readiness_status != "ready" else None,
+                            },
+                            "sourceReviewBudgetReadiness": {
+                                "ready": source_budget_status == "ready",
+                                "status": source_budget_status,
+                                "stopReason": "source_turn_attempt_budget" if source_budget_status != "ready" else None,
+                            },
                             **({"motionContext": item["motionContext"]} if "motionContext" in item else {}),
                         }
                     )
+                readiness = {
+                    "readyCount": sum(item["definitionReadiness"]["status"] == "ready" for item in exercises),
+                    "unresolvedCount": sum(item["definitionReadiness"]["status"] != "ready" for item in exercises),
+                    "approvedDefinitionsReused": 0,
+                    "unresolvedReviewQueue": [
+                        {"exerciseId": item["exerciseId"], "exerciseName": item["exerciseName"], **item["definitionReadiness"]}
+                        for item in exercises if item["definitionReadiness"]["status"] != "ready"
+                    ],
+                    "readinessByExerciseId": {item["exerciseId"]: item["definitionReadiness"] for item in exercises},
+                    "sourceReviewBudgetReadiness": {
+                        "readyCount": sum(item["sourceReviewBudgetReadiness"]["ready"] for item in exercises),
+                        "needsReviewCount": sum(not item["sourceReviewBudgetReadiness"]["ready"] for item in exercises),
+                    },
+                }
+                effective_plan_path = arg_value(args, "--definition-effective-plan-json")
+                if effective_plan_path:
+                    Path(effective_plan_path).parent.mkdir(parents=True, exist_ok=True)
+                    Path(effective_plan_path).write_text(json.dumps(plan), encoding="utf-8")
+                    readiness["effectivePlanPath"] = effective_plan_path
+                    readiness["effectivePlanSha256"] = hashlib.sha256(Path(effective_plan_path).read_bytes()).hexdigest()
+                readiness_report_path = arg_value(args, "--definition-readiness-report-json")
+                if readiness_report_path:
+                    Path(readiness_report_path).parent.mkdir(parents=True, exist_ok=True)
+                    Path(readiness_report_path).write_text(json.dumps(readiness), encoding="utf-8")
                 out_json.parent.mkdir(parents=True, exist_ok=True)
-                out_json.write_text(json.dumps({"exercises": exercises}), encoding="utf-8")
+                out_json.write_text(json.dumps({"definitionReadiness": readiness, "exercises": exercises}), encoding="utf-8")
                 raise SystemExit(0)
 
             if command == "find-youtube-videos":
@@ -754,10 +828,24 @@ def write_fake_motion_cli(tmp_path: Path) -> tuple[Path, Path]:
                     "wearSkeletonSettingsBaked": True,
                     "selectionScore": 0.9,
                 }
+                if os.environ.get("FAKE_MOTION_SOURCE_CLEARANCE") == "1":
+                    selected["sourceSelectionClearance"] = {
+                        "status": "not_required",
+                        "sourceSelectionPolicyVersion": 67,
+                        "sourceSelectionClearancePolicyVersion": 2,
+                        "sourcePrepReason": "test explicitly skipped pre-reconstruction review",
+                        "sourceManifestPath": str(candidates_json),
+                        "sourceManifestSha256": hashlib.sha256(candidates_json.read_bytes()).hexdigest(),
+                        "selectedSegmentPath": str(input_video_path),
+                        "selectedSegmentSha256": hashlib.sha256(input_video_path.read_bytes()).hexdigest(),
+                    }
                 manual_review = os.environ.get("FAKE_MOTION_MANUAL_REVIEW") == "1"
                 selection = {
                     "schemaVersion": 1,
                     "selectionValidationPolicyVersion": __SELECTION_VALIDATION_POLICY_VERSION__,
+                    "sourceSelectionPolicyVersion": 67,
+                    "preReconstructionSourceValidationEnabled": False,
+                    "preReconstructionSourceValidationExplicitlyDisabled": True,
                     "selectionStatus": "needs_manual_review" if manual_review else "selected",
                     "sourceCandidatesJson": str(candidates_json),
                     "timings": {
@@ -2266,6 +2354,148 @@ def test_staged_wave_producer_retries_if_idle_worker_closed_admission(tmp_path: 
 
 
 @pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None, reason="PowerShell wrapper test requires Windows pwsh")
+def test_staged_service_restarts_after_source_identity_worker_exit(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    wrapper_path = repo_root / "scripts" / "run_exercise_motion_workout_plan.ps1"
+    command = textwrap.dedent(
+        r"""
+        $ErrorActionPreference = 'Stop'
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($env:MOTION_WRAPPER_PATH, [ref]$tokens, [ref]$parseErrors)
+        if ($parseErrors.Count -gt 0) { throw ($parseErrors | Out-String) }
+        $function = $ast.Find({ param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -eq 'Ensure-StagedBakeQueueService'
+        }, $true)
+        if ($null -eq $function) { throw 'Ensure-StagedBakeQueueService was not found.' }
+        Invoke-Expression $function.Extent.Text
+
+        $script:StagedWaveServiceQueueRoot = $env:MOTION_TEST_ROOT
+        $script:MotionSourceIdentityFingerprint = 'new-source'
+        $script:PythonCommand = 'python.exe'
+        $script:repoRoot = $env:MOTION_REPO_ROOT
+        $script:stateReadCount = 0
+        $script:startCount = 0
+        $oldProcess = [pscustomobject]@{}
+        $oldProcess | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value { param([int]$Milliseconds) return $true }
+        function Get-StagedBakeServiceConfigurationFingerprint { return 'same-configuration' }
+        function Get-StagedBakeQueueServiceState {
+            param([string]$QueueRoot)
+            $script:stateReadCount += 1
+            if ($script:stateReadCount -eq 1) {
+                return [pscustomobject]@{
+                    healthy = $true; processState = 'running'; matchingProcess = $true
+                    state = [pscustomobject]@{ pid = 79216; status = 'idle'; sourceIdentityFingerprint = 'old-source'; serviceConfigurationFingerprint = 'same-configuration' }
+                    process = $oldProcess
+                }
+            }
+            return [pscustomobject]@{
+                healthy = $false; processState = 'stopped'; matchingProcess = $false
+                state = [pscustomobject]@{ pid = 79216; status = 'stopped' }; process = $null
+            }
+        }
+        function Start-StagedBakeQueueServiceGeneration { $script:startCount += 1 }
+
+        foreach ($directoryName in @('requests', 'processing', 'results', 'ambiguous', 'cancelled_runs')) {
+            New-Item -ItemType Directory -Force -Path (Join-Path $script:StagedWaveServiceQueueRoot $directoryName) | Out-Null
+        }
+        Ensure-StagedBakeQueueService -MaxWaveItems 1
+        if ($script:stateReadCount -ne 2 -or $script:startCount -ne 1) {
+            throw 'A confirmed worker exit did not start a replacement generation.'
+        }
+        'STAGED_SERVICE_SOURCE_RESTART_OK'
+        """
+    )
+    env = os.environ.copy()
+    env["MOTION_WRAPPER_PATH"] = str(wrapper_path)
+    env["MOTION_TEST_ROOT"] = str(tmp_path / "queue")
+    env["MOTION_REPO_ROOT"] = str(repo_root)
+    result = subprocess.run(
+        ["pwsh", "-NoProfile", "-Command", command],
+        cwd=repo_root,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "STAGED_SERVICE_SOURCE_RESTART_OK" in result.stdout
+
+
+def test_motion_runner_writes_owned_partial_outcome_and_library_rejects_stale_summary(tmp_path: Path) -> None:
+    repo = Path(__file__).resolve().parents[1]
+    command = r'''
+    $ErrorActionPreference = 'Stop'
+    $runnerPath = Join-Path $env:MOTION_REPORT_TEST_ROOT 'scripts/run_exercise_motion_workout_plan.ps1'
+    $libraryPath = Join-Path $env:MOTION_REPORT_TEST_ROOT 'scripts/run_exercise_motion_library.ps1'
+    $tokens = $null; $errors = $null
+    $runnerAst = [System.Management.Automation.Language.Parser]::ParseFile($runnerPath, [ref]$tokens, [ref]$errors)
+    if ($errors.Count) { throw $errors[0] }
+    $libraryAst = [System.Management.Automation.Language.Parser]::ParseFile($libraryPath, [ref]$tokens, [ref]$errors)
+    if ($errors.Count) { throw $errors[0] }
+    foreach ($name in @('Write-JsonAtomically', 'Write-EarlyMotionRunOutcomeSummary', 'Write-RunOutcomeArtifacts')) {
+        $functionAst = $runnerAst.Find({param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name}, $true)
+        if (-not $functionAst) { throw "Missing $name" }
+        . ([scriptblock]::Create($functionAst.Extent.Text))
+    }
+    function Write-ProgressCheckpoint { }
+    $testRoot = $env:MOTION_REPORT_TEST_ROOT_TEMP
+    New-Item -ItemType Directory -Force -Path $testRoot | Out-Null
+    try {
+        $script:movementRunId = 'current-run'
+        $script:movementRunStartedAtUtc = '2026-10-23T10:00:00Z'
+        $script:LibraryRunId = 'library-run'
+        $script:inputIdentitySha256 = 'current-input-sha'
+        $script:definitionsInputSha256 = 'definitions-sha'
+        $script:effectiveWorkoutPlanInputSha256 = 'effective-plan-sha'
+        $script:earlyRunTargetCount = 4
+        $script:MotionSourceIdentity = @{ schemaVersion = 1 }
+        $script:resolvedWorkoutPlanJson = 'input.json'
+        $script:resolvedWorkspaceRoot = $testRoot
+        $script:workItems = @([pscustomobject]@{}, [pscustomobject]@{}, [pscustomobject]@{})
+        $script:summaryByIndex = @{ 0 = [pscustomobject]@{status='needs_definition_review'; exerciseName='A'} }
+        $script:summaryPath = Join-Path $testRoot 'workout_motion_generation_summary.json'
+        $script:progressCheckpointPath = Join-Path $testRoot 'workout_motion_generation_checkpoint.json'
+        $script:MotionRunOutcome = 'running'
+        @{ runId='foreign-run'; exercises=@(@{status='completed'}) } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $summaryPath
+        Write-EarlyMotionRunOutcomeSummary -Outcome 'running'
+        $summary = Get-Content -LiteralPath $summaryPath -Raw | ConvertFrom-Json
+        if ($summary.runId -ne 'current-run' -or $summary.outcome -ne 'running' -or $summary.totalExerciseCount -ne 4 -or $summary.pendingExerciseCount -ne 4 -or $summary.terminalExerciseCount -ne 0) { throw 'Early run envelope did not preserve the selected target count as pending' }
+        Write-EarlyMotionRunOutcomeSummary -Outcome 'failed'
+        $summary = Get-Content -LiteralPath $summaryPath -Raw | ConvertFrom-Json
+        if ($summary.runId -ne 'current-run' -or $summary.outcome -ne 'failed' -or $summary.pendingExerciseCount -ne 4 -or [string]::IsNullOrWhiteSpace($summary.failedAtUtc)) { throw 'Early startup failure did not update only the current run envelope' }
+        $runnerSource = Get-Content -LiteralPath $runnerPath -Raw
+        $initialEnvelopeIndex = $runnerSource.IndexOf('Write-EarlyMotionRunOutcomeSummary -Outcome "running"')
+        $sharedServerStartIndex = $runnerSource.IndexOf('Start-SharedLlamaServer -SessionDir $resolvedSharedLlamaServerSessionDir')
+        if ($initialEnvelopeIndex -lt 0 -or $sharedServerStartIndex -lt 0 -or $initialEnvelopeIndex -ge $sharedServerStartIndex) { throw 'Initial run envelope is written after shared llama server startup' }
+        Write-RunOutcomeArtifacts -Outcome 'stopped'
+        $summary = Get-Content -LiteralPath $summaryPath -Raw | ConvertFrom-Json
+        if ($summary.runId -ne 'current-run' -or $summary.outcome -ne 'stopped') { throw 'Partial summary lost run identity/outcome' }
+        if ($summary.totalExerciseCount -ne 3 -or $summary.terminalExerciseCount -ne 1 -or $summary.pendingExerciseCount -ne 2) { throw 'Partial summary counts are not checkpoint-derived' }
+        if ($summary.completedAtUtc -ne $null -or [string]::IsNullOrWhiteSpace($summary.stoppedAtUtc)) { throw 'Stopped outcome timestamps are mislabeled' }
+        if (@(Get-ChildItem $testRoot -Filter '*.previous-*.json').Count -ne 1) { throw 'Foreign summary was not preserved before replacement' }
+        $script:summaryByIndex[1] = [pscustomobject]@{status='needs_source_review'; exerciseName='B'}
+        Write-RunOutcomeArtifacts -Outcome 'stopped'
+        $summary = Get-Content -LiteralPath $summaryPath -Raw | ConvertFrom-Json
+        if ($summary.terminalExerciseCount -ne 2 -or $summary.pendingExerciseCount -ne 1 -or $summary.exercises.Count -ne 2) { throw 'Same-run stopped summary did not refresh from the latest checkpoint' }
+        $librarySource = Get-Content -LiteralPath $libraryPath -Raw
+        if ($librarySource -notmatch 'passSummary\.runId -eq \$passRunId' -or $librarySource -notmatch 'passSummary\.inputIdentitySha256 -eq \$libraryInputIdentitySha256' -or $librarySource -notmatch 'passSummary\.effectiveDefinitionPlanSha256 -eq \$definitionEffectivePlanSha256' -or $librarySource -notmatch '"-InputIdentitySha256", \$libraryInputIdentitySha256') { throw 'Library runner does not reject stale pass artifacts or pass the authoritative input identity' }
+        if ($librarySource.IndexOf('$existingState.signature') -gt $librarySource.IndexOf('Write-RunState -Phase "initialized"')) { throw 'Library overwrites the prior phase before deciding whether pass one is reusable' }
+        $runnerSource = Get-Content -LiteralPath $runnerPath -Raw
+        if ($runnerSource -notmatch 'source_support_contact_evidence_unavailable' -or $runnerSource -notmatch 'bakeAttemptCount = \[int\]\$waveItem\.bakeAttemptCount \+ 1' -or $runnerSource -notmatch 'reconstructionGeneratedCount' -or $runnerSource -notmatch 'finalValidationDiagnosticSeconds') { throw 'Staged-wave metrics/failure owner are not preserved' }
+    } finally { Remove-Item -LiteralPath $testRoot -Recurse -Force }
+    '''
+    result = subprocess.run(
+        ['pwsh', '-NoProfile', '-Command', command],
+        env={**os.environ, 'MOTION_REPORT_TEST_ROOT': str(repo), 'MOTION_REPORT_TEST_ROOT_TEMP': str(tmp_path / 'motion-reporting')},
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None, reason="PowerShell wrapper test requires Windows pwsh")
 def test_workout_plan_wrapper_publishes_manual_review_fallback(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     workspace = tmp_path / "workspace"
@@ -2683,3 +2913,174 @@ def test_startup_recovers_only_dead_staged_claims(tmp_path: Path, owner: str) ->
         assert result.returncode != 0
         assert "Resolve this queue" in result.stdout + result.stderr
         assert (claim if owner == "live" else queue / "ambiguous" / claim.name).is_file()
+
+
+@pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None, reason="PowerShell wrapper test requires Windows pwsh")
+def test_workout_plan_definition_preflight_blocks_all_unresolved_before_model_work(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    workout_plan = write_workout_plan(tmp_path, exercise_count=2)
+    approved_registry = tmp_path / "approved_definitions.json"
+    approved_registry.write_text(json.dumps({"schemaVersion": 1, "exercises": []}), encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    _fake_cli, fake_cmd = write_fake_motion_cli(tmp_path)
+    command_log = tmp_path / "cli_commands.txt"
+    env = os.environ.copy()
+    env["FAKE_MOTION_DEFINITION_STATUS"] = "needs_definition_review"
+    env["FAKE_MOTION_CLI_LOG"] = str(command_log)
+
+    result = subprocess.run(
+        [
+            "pwsh", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+            str(repo_root / "scripts" / "run_exercise_motion_workout_plan.ps1"),
+            "-AllowDirtyWorktree",
+            "-WorkoutPlanJson", str(workout_plan),
+            "-ApprovedExerciseDefinitionsJson", str(approved_registry),
+            "-WorkspaceRoot", str(workspace),
+            "-PythonCommand", str(fake_cmd),
+            "-SharedLlamaServer",
+            "-LlamaCppServerCommand", str(fake_cmd),
+            "-LlamaCppServerStartupTimeoutSeconds", "1",
+            "-SkipVisionRanking", "-SkipSemanticGate", "-SkipLlamaCppQueryPlanner", "-SkipPosePrefilter",
+        ],
+        cwd=repo_root,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=60,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert command_log.read_text(encoding="utf-8").splitlines() == ["list-workout-plan-exercises"]
+    summary = json.loads((workspace / "workout_motion_generation_summary.json").read_text(encoding="utf-8"))
+    assert [item["status"] for item in summary["exercises"]] == [
+        "needs_definition_review", "needs_definition_review",
+    ]
+    readiness_report = json.loads((workspace / "definition_readiness_report.json").read_text(encoding="utf-8"))
+    assert readiness_report["readyCount"] == 0
+    assert readiness_report["unresolvedCount"] == 2
+    effective_plan = Path(readiness_report["effectivePlanPath"])
+    assert effective_plan == workspace / "effective_workout_plan.json"
+    assert effective_plan.is_file()
+
+
+@pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None, reason="PowerShell wrapper test requires Windows pwsh")
+def test_workout_plan_exhausted_source_budget_stops_before_new_discovery(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    workout_plan = write_workout_plan(tmp_path, exercise_count=1)
+    workspace = tmp_path / "workspace"
+    body_models = tmp_path / "GVHMR" / "inputs" / "checkpoints" / "body_models"
+    body_models.mkdir(parents=True)
+    _fake_cli, fake_cmd = write_fake_motion_cli(tmp_path)
+    command_log = tmp_path / "cli_commands.txt"
+    env = os.environ.copy()
+    env["FAKE_MOTION_SOURCE_BUDGET_STATUS"] = "needs_source_review"
+    env["FAKE_MOTION_CLI_LOG"] = str(command_log)
+
+    result = subprocess.run(
+        [
+            "pwsh", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+            str(repo_root / "scripts" / "run_exercise_motion_workout_plan.ps1"),
+            "-AllowDirtyWorktree", "-WorkoutPlanJson", str(workout_plan),
+            "-WorkspaceRoot", str(workspace), "-BodyModelRoot", str(body_models),
+            "-PythonCommand", str(fake_cmd), "-SharedLlamaServer",
+            "-LlamaCppServerCommand", str(fake_cmd), "-LlamaCppServerStartupTimeoutSeconds", "1",
+            "-SkipSemanticGate", "-SkipLlamaCppQueryPlanner", "-SkipPosePrefilter",
+        ],
+        cwd=repo_root,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=60,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert command_log.read_text(encoding="utf-8").splitlines() == ["list-workout-plan-exercises"]
+    summary = json.loads((workspace / "workout_motion_generation_summary.json").read_text(encoding="utf-8"))
+    assert summary["exercises"][0]["status"] == "needs_source_review"
+    assert "source_turn_attempt_budget" in summary["exercises"][0]["error"]
+
+
+@pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None, reason="PowerShell wrapper test requires Windows pwsh")
+def test_workout_plan_exhausted_source_budget_preserves_approved_selected_cache(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    workout_plan = write_workout_plan(tmp_path, exercise_count=1)
+    workspace = tmp_path / "workspace"
+    body_models = tmp_path / "GVHMR" / "inputs" / "checkpoints" / "body_models"
+    body_models.mkdir(parents=True)
+    _fake_cli, fake_cmd = write_fake_motion_cli(tmp_path)
+    command_log = tmp_path / "cli_commands.txt"
+    env = os.environ.copy()
+    env["FAKE_MOTION_CLI_LOG"] = str(command_log)
+    env["FAKE_MOTION_SOURCE_CLEARANCE"] = "1"
+
+    command = [
+        "pwsh", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+        str(repo_root / "scripts" / "run_exercise_motion_workout_plan.ps1"),
+        "-AllowDirtyWorktree", "-WorkoutPlanJson", str(workout_plan),
+        "-WorkspaceRoot", str(workspace), "-BodyModelRoot", str(body_models),
+        "-PythonCommand", str(fake_cmd), "-SkipVisionRanking", "-SkipSemanticGate",
+        "-SkipLlamaCppQueryPlanner", "-SkipPosePrefilter", "-SkipPreReconstructionSourceValidation",
+        "-SkipFinalOutputValidation", "-NoExerciseMotionContract",
+    ]
+    first = subprocess.run(command, cwd=repo_root, env=env, text=True, capture_output=True, timeout=60, check=False)
+    assert first.returncode == 0, first.stdout + first.stderr
+
+    command_log.write_text("", encoding="utf-8")
+    env["FAKE_MOTION_SOURCE_BUDGET_STATUS"] = "needs_source_review"
+    second = subprocess.run(
+        [*command, "-ReuseExistingSelected"], cwd=repo_root, env=env, text=True,
+        capture_output=True, timeout=60, check=False,
+    )
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert command_log.read_text(encoding="utf-8").splitlines() == ["list-workout-plan-exercises"]
+    summary = json.loads((workspace / "workout_motion_generation_summary.json").read_text(encoding="utf-8"))
+    assert summary["exercises"][0]["status"] == "completed"
+    assert summary["exercises"][0]["reusedExistingSelected"] is True
+
+
+@pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None, reason="PowerShell wrapper test requires Windows pwsh")
+def test_workout_plan_discovery_child_receives_effective_definition_context(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    wrapper_path = repo_root / "scripts" / "run_exercise_motion_workout_plan.ps1"
+    output_path = tmp_path / "exercise_plan.json"
+    command = r"""
+    $ErrorActionPreference = 'Stop'
+    $tokens = $null; $errors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($env:MOTION_WRAPPER_PATH, [ref]$tokens, [ref]$errors)
+    if ($errors.Count) { throw ($errors | Out-String) }
+    $function = $ast.Find({ param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'New-OneExercisePlanJson'
+    }, $true)
+    . ([scriptblock]::Create($function.Extent.Text))
+    $resolvedWorkoutPlanJson = $env:MOTION_SOURCE_PLAN
+    $exercise = [pscustomobject]@{
+        exerciseId = 'bench'; exerciseName = 'Barbell Bench Press'
+        motionContext = @{ exerciseDefinition = @{ definingAction = 'Press bar from chest to full elbow extension.' } }
+        definitionReadiness = @{ status = 'ready'; definitionSource = 'approved_registry' }
+    }
+    New-OneExercisePlanJson -Exercise $exercise -OutPath $env:MOTION_CHILD_PLAN
+    $child = Get-Content -LiteralPath $env:MOTION_CHILD_PLAN -Raw | ConvertFrom-Json
+    if ($child.sourcePlanPath -ne $env:MOTION_SOURCE_PLAN) { throw 'Child plan lost original source provenance.' }
+    if ($child.exercises[0].motionContext.exerciseDefinition.definingAction -notlike 'Press bar*') { throw 'Child plan lost approved motion context.' }
+    if ($child.exercises[0].definitionReadiness.status -ne 'ready') { throw 'Child plan lost readiness evidence.' }
+    'EFFECTIVE_DEFINITION_CHILD_PLAN_OK'
+    """
+    result = subprocess.run(
+        ["pwsh", "-NoProfile", "-Command", command],
+        cwd=repo_root,
+        env={**os.environ, "MOTION_WRAPPER_PATH": str(wrapper_path),
+             "MOTION_SOURCE_PLAN": str(tmp_path / "source_plan.json"), "MOTION_CHILD_PLAN": str(output_path)},
+        text=True,
+        capture_output=True,
+        timeout=20,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "EFFECTIVE_DEFINITION_CHILD_PLAN_OK" in result.stdout
+    child_plan = json.loads(output_path.read_text(encoding="utf-8"))
+    assert child_plan["sourcePlanPath"] == str(tmp_path / "source_plan.json")
+    assert child_plan["exercises"][0]["definitionReadiness"]["definitionSource"] == "approved_registry"

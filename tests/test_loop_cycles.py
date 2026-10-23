@@ -22,6 +22,37 @@ def repeated_motion():
                         'joints': dict(zip(names, p.tolist()))} for i, p in enumerate(points)]}
 
 
+def test_complete_return_requires_compatible_observed_boundary_motion(monkeypatch):
+    from exercise_motion_pkg import controlled_motion
+    from exercise_motion_pkg.loop_cycles import cycle_boundary_motion_metrics
+    payload = repeated_motion()
+    # A complete down/up excursion cut before its top turnaround: matching
+    # poses alone cannot join the fast descent and ascent tangents.
+    payload['frames'] = payload['frames'][24:67]
+    payload['frameCount'] = len(payload['frames'])
+    payload['loop'] = {'enabled': True}
+    boundary = cycle_boundary_motion_metrics(payload)
+    assert 'source_boundary_tangents_incompatible' in boundary['rejectionReasons']
+    diagnostics = {}
+    assert not rank_loop_cycles(payload, diagnostics=diagnostics)
+    assert diagnostics['boundaryMotion']['failureOwner'] == 'source'
+
+    def unexpected_fit(*_args, **_kwargs):
+        pytest.fail('incompatible source boundaries must not start fitting')
+
+    monkeypatch.setattr(controlled_motion, '_fit_controlled_motion', unexpected_fit)
+    # Cached proposals and explicit interval selections must not bypass admission.
+    for selected in (False, True):
+        candidate = dict(payload)
+        if selected:
+            candidate['loopCycleSelection'] = {'startFrame': 0, 'stopFrameExclusive': len(payload['frames'])}
+        else:
+            candidate['observedCycleProposals'] = [{'startFrame': 0, 'stopFrameExclusive': len(payload['frames'])}]
+        _, report = controlled_motion._fit_observed_cycles(candidate, timeout_seconds=60)
+        assert report['reason'] == 'source_cycle_preflight_rejected'
+        assert report['boundaryMotion']['passed'] is False
+
+
 def test_cycle_preserves_excursion_and_direction_without_duplicate_endpoint():
     payload = repeated_motion()
     choices = rank_loop_cycles(payload)
@@ -204,7 +235,50 @@ def test_contact_intervals_are_clipped_rebased_and_not_duplicated():
     assert 'supportContacts' not in result['sourceFootSupportEvidence']
     candidate = result['sourceFootSupportEvidence']['footContactCandidates'][0]
     assert (candidate['startRatio'], candidate['endRatio']) == (0., 1.)
-    assert result['sourceFootSupportEvidence']['footPatchEvidence']['feet']['left']['states'] == ['unknown']*60
+    assert result['sourceFootSupportEvidence']['footPatchEvidence']['feet']['left']['states'] == ['airborne']*20+['unknown']*60+['airborne']*20
+
+
+def test_cycle_keeps_native_patch_track_aligned_and_maps_cycle_rows_by_source_clock():
+    from copy import deepcopy
+    from exercise_motion_pkg.contact_constraints import (
+        contact_frame_bounds, mapped_foot_patch_state_indices,
+        motion_space_support_evidence, motion_support_contacts,
+    )
+
+    payload = repeated_motion()
+    source_times = [(200. + index) / 30. for index in range(100)]
+    contact = {
+        'jointName': 'left_foot', 'supportKind': 'observed_foot_patch',
+        'contactState': 'full_sole', 'contactMotion': 'stationary',
+        'startRatio': 0., 'endRatio': 1.,
+    }
+    patch = {
+        'available': True,
+        'sourceTimeBasis': 'absolute_source_video',
+        'sourceFps': 30.,
+        'sourceFrameCount': 100,
+        'sourceTimesSec': source_times,
+        'contacts': [deepcopy(contact)],
+        'feet': {
+            'left': {'states': ['full_sole'] * 100, 'rayObservations': [{'frame': i} for i in range(100)]},
+            'right': {'states': ['unknown'] * 100},
+        },
+    }
+    payload['sourceFootSupportEvidence'] = {'contacts': [deepcopy(contact)], 'footPatchEvidence': patch}
+    original_patch = deepcopy(patch)
+
+    cycle = slice_loop_cycle(payload, {'startFrame': 9, 'stopFrameExclusive': 91})
+    assert len(cycle['frames']) == 82
+    cropped_evidence = cycle['sourceFootSupportEvidence']
+    assert cropped_evidence['footPatchEvidence'] == original_patch
+    assert payload['sourceFootSupportEvidence']['footPatchEvidence'] == original_patch
+
+    fit_times = [frame['sourceTimeSec'] for frame in cycle['frames']]
+    indexes = mapped_foot_patch_state_indices(cropped_evidence, fit_times, len(fit_times))
+    np.testing.assert_array_equal(indexes, np.arange(9, 91))
+    mapped_contacts = motion_support_contacts(motion_space_support_evidence(cycle))
+    assert len(mapped_contacts) == 1
+    assert contact_frame_bounds(mapped_contacts[0], len(cycle['frames'])) == (0, 81)
 
 
 def test_source_pose_reference_uses_cycle_source_timestamps_after_slicing():

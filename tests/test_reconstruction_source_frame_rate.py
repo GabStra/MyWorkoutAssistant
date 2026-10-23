@@ -36,7 +36,8 @@ def test_conversion_and_context_crop_use_input_frame_clock(monkeypatch, fps):
     assert clip.frames[24].time_sec == pytest.approx(24 / fps)
     cropped = crop_motion_clip_to_input_window(clip, start_seconds=1, end_seconds=2)
     assert cropped.frames[0].joints['pelvis'][0] == np.ceil(fps)
-    assert cropped.frames[-1].joints['pelvis'][0] == np.floor(2 * fps)
+    assert cropped.frames[-1].joints['pelvis'][0] == np.ceil(2 * fps) - 1
+    assert cropped.frames[-1].time_sec < 2
     assert cropped.fps == fps
     retarget = reconstruction_retarget_source.build_reconstruction_retarget_source_payload(reconstruction_results_pkl=Path('unused.pkl'), fps=fps)
     assert retarget['fps'] == fps

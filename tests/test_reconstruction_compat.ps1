@@ -19,6 +19,18 @@ if ($payload.items[0].reconstructionPath -ne 'cache/wham/item.json') {
     throw 'Normalization changed a nested path value or missed its key.'
 }
 
+$approvedAtUtc = '2026-10-22T11:27:56.244742+00:00'
+$approvedPlan = ('{"motionContext":{"exerciseDefinition":{"review":{"approvedAtUtc":"' +
+    $approvedAtUtc + '"}}}}') | ConvertFrom-ReconstructionJson
+$approvedTimestamp = $approvedPlan.motionContext.exerciseDefinition.review.approvedAtUtc
+if ($approvedTimestamp -isnot [string] -or $approvedTimestamp -cne $approvedAtUtc) {
+    throw 'ISO timestamp strings must retain their exact JSON type and text.'
+}
+$serializedApprovedPlan = $approvedPlan | ConvertTo-Json -Depth 16 -Compress
+if (-not $serializedApprovedPlan.Contains('"approvedAtUtc":"' + $approvedAtUtc + '"')) {
+    throw 'Plan serialization changed the approved timestamp used for cache identity.'
+}
+
 $escaped = '{"\u0077ham":{"\u0057HAMFrame":1}}' | ConvertFrom-ReconstructionJson
 if ($escaped.reconstruction.RECONSTRUCTIONFrame -ne 1) {
     throw 'Escaped legacy keys were not normalized.'

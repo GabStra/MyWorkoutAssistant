@@ -16,7 +16,7 @@ import numpy as np
 from .contact_constraints import contact_frame_bounds, is_stationary_contact
 
 MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task"
-POLICY_VERSION = 11
+POLICY_VERSION = 17
 # Classification changes reuse the exact same expensive landmark observations.
 OBSERVATION_CACHE_VERSION = 3
 LANDMARKS = {"left_shoulder": 11, "right_shoulder": 12,
@@ -25,6 +25,18 @@ LANDMARKS = {"left_shoulder": 11, "right_shoulder": 12,
              "left_ankle": 27, "right_ankle": 28, "left_heel": 29, "right_heel": 30,
              "left_toe": 31, "right_toe": 32}
 _RUNTIME_WARNING_EMITTED = False
+
+
+def _patch_source_timing_metadata(frames, source_origin):
+    """Persist the same absolute source clock used by heel observations."""
+    source_times = [float(source_origin) + float(frame['timeSeconds']) for frame in frames]
+    return {
+        'sourceTimeBasis': 'absolute_source_video',
+        'sourceTimeOriginSec': float(source_origin),
+        'sourceTimesSec': source_times,
+        'sourceStartTimeSec': source_times[0],
+        'sourceEndTimeSec': source_times[-1],
+    }
 
 
 def _model_asset_path() -> Path:
@@ -200,6 +212,243 @@ def observe_foot_landmarks(video_path: Path, *, cache_dir: Path | None = None) -
     return payload
 
 
+def _materialize_foot_patch_contacts(
+    *, side, states, valid, toe_valid, heel_points, toe_points, foot_sizes, image_pitch,
+    world_pitch, image_only_toe, unresolved_heel_recontact, references,
+    tolerances, uncalibrated_toe, answer, support_contacts,
+):
+    contacts = []
+    count = len(states)
+    start = 0
+    while start < count:
+        end = start + 1
+        while end < count and states[end] == states[start]:
+            end += 1
+        state = states[start]
+        if end - start < 3:
+            states[start:end] = ["unknown"] * (end - start)
+        elif state not in {"unknown", "airborne"}:
+            anchor_points = heel_points[start:end] if state == "heel_only" else toe_points[start:end]
+            scale = float(np.median(foot_sizes[start:end]))
+            chunks = np.array_split(anchor_points, min(3, len(anchor_points)))
+            centers = np.array([np.median(chunk, axis=0) for chunk in chunks])
+            spread = float(np.linalg.norm(np.ptp(centers, axis=0)))
+            stationary = spread <= max(0.005, scale * 0.15)
+            if state == 'toe_only' and np.any(image_only_toe[start:end]) and not stationary:
+                states[start:end] = ['unknown'] * (end - start)
+                start = end
+                continue
+            if uncalibrated_toe and np.linalg.norm(np.ptp(anchor_points, axis=0)) > max(.005, scale * .15):
+                states[start:end] = ['unknown'] * (end - start)
+                start = end
+                continue
+            lift_ratio = 0.0
+            if state in {"toe_only", "heel_only"} and not uncalibrated_toe:
+                lift_angle = min(
+                    max(0.0, float(np.median(np.abs(track[start:end] - center))) - tolerance)
+                    for track, center, tolerance in zip(
+                        (image_pitch, world_pitch), references, tolerances
+                    )
+                )
+                lift_ratio = float(np.sin(min(lift_angle, np.pi / 2)))
+            contact = {
+                "jointName": f"{side}_foot", "supportKind": "observed_foot_patch",
+                "contactState": state, "contactMotion": "stationary" if stationary else "unknown",
+                "verticalOnly": state == "heel_only", "startRatio": start / max(1, count - 1),
+                "endRatio": (end - 1) / max(1, count - 1), "confidence": 0.8,
+                "source": "observed_heel_and_forefoot", "anchorImageSpread": spread,
+                "minimumLiftRatio": lift_ratio,
+            }
+            if state == 'toe_only' and np.any(image_only_toe[start:end]):
+                contact['heelPhaseEvidence'] = {
+                    'source': 'image_only_toe_pitch', 'worldHeightResolved': False,
+                }
+            elif state == 'toe_only' and np.any(unresolved_heel_recontact[start:end]):
+                contact['heelPhaseEvidence'] = {
+                    'source': 'heel_recontact_unresolved', 'worldHeightResolved': False,
+                }
+            if uncalibrated_toe:
+                contact['surfaceKind'] = ('ground' if answer[f'{side}FootSurface'] == 'ground'
+                                          else 'observed_raised_support_surface')
+                contact['source'] = 'exact_visual_contact_and_independent_stationary_toe'
+            if state == 'full_sole' and stationary:
+                for candidate_index, candidate in enumerate(support_contacts):
+                    first, last = contact_frame_bounds(candidate, count)
+                    if (candidate.get('jointName') == f'{side}_ankle'
+                            and is_stationary_contact(candidate)
+                            and first <= start and end - 1 <= last):
+                        # Missing heel observations split patches, not an
+                        # independently observed stationary stance.
+                        contact['ankleAnchorGroupId'] = f'{side}:ankle:{candidate_index}'
+                        break
+            contacts.append(contact)
+        start = end
+    assign_stationary_anchor_groups(
+        contacts, side=side, valid=valid, toe_valid=toe_valid, toe_points=toe_points,
+        foot_sizes=foot_sizes, states=states,
+    )
+    return contacts
+
+
+def _heel_image_observations(
+    *, frames, side, source_origin, image_width, image_height, states,
+    stationary_groups_by_frame=None,
+):
+    rows = []
+    for index, frame in enumerate(frames):
+        heel = frame['joints'].get(f'{side}_heel')
+        toe = frame['joints'].get(f'{side}_toe')
+        if (not heel or not toe or heel['confidence'] < .8 or toe['confidence'] < .8
+                or any(not np.isfinite(point['image']).all()
+                       or any(value < 0.0 or value > 1.0 for value in point['image'])
+                       for point in (heel, toe))):
+            continue
+        rows.append({
+            'sourceTimeSec': source_origin + float(frame['timeSeconds']),
+            'heelImagePoint': [float(heel['image'][0] * image_width / image_height),
+                               float(heel['image'][1])],
+            'toeImagePoint': [float(toe['image'][0] * image_width / image_height),
+                              float(toe['image'][1])],
+            'heelConfidence': float(heel['confidence']),
+            'toeConfidence': float(toe['confidence']),
+            'state': states[index],
+            'stationaryAnchorGroupId': (stationary_groups_by_frame or {}).get(index),
+        })
+    return rows
+
+
+def _preserve_heel_release_until_recontact(
+    *, side, states, contacts, valid, toe_valid, heel_points, toe_points, foot_sizes,
+    heel_toe_confidence, image_axes, unresolved_heel_recontact,
+):
+    """Keep a toe-pivot state until heel position returns to its stance track.
+
+    Neutral sole pitch is not positive heel-contact evidence. A recontact must
+    return the heel to the same observed stationary-toe anchor within the
+    high-confidence pre-release measurement envelope for three frames.
+    """
+    count = len(states)
+    indexed_contacts = []
+    for contact in contacts:
+        if contact.get('jointName') != f'{side}_foot':
+            continue
+        start, end = contact_frame_bounds(contact, count)
+        indexed_contacts.append((start, end, contact))
+    indexed_contacts.sort(key=lambda row: (row[0], row[1]))
+
+    trusted_fullsole: dict[str, list[int]] = {}
+    pending_release: dict[str, dict[str, Any]] = {}
+    previous_end = -1
+    for start, end, contact in indexed_contacts:
+        if any(state == 'airborne' for state in states[previous_end + 1:start]):
+            # A flight separates ground episodes. A later landing must establish
+            # its own stance track instead of inheriting the pre-flight toe pivot.
+            pending_release.clear()
+            trusted_fullsole.clear()
+        contact_state = contact.get('contactState')
+        group = contact.get('anchorGroupId')
+        indexes = list(range(start, end + 1))
+        reliable = [
+            index for index in indexes
+            if valid[index] and heel_toe_confidence[index] >= .8
+        ]
+        if contact_state == 'airborne':
+            pending_release.clear()
+            trusted_fullsole.clear()
+            previous_end = end
+            continue
+        if contact_state == 'toe_only':
+            if group is not None:
+                pending_release[group] = {
+                    'lastToeOnlyEnd': end,
+                    'baselineIndexes': list(trusted_fullsole.get(group, [])),
+                }
+            previous_end = end
+            continue
+        if contact_state != 'full_sole':
+            previous_end = end
+            continue
+
+        if not pending_release:
+            if group is not None:
+                trusted_fullsole.setdefault(group, []).extend(reliable)
+            previous_end = end
+            continue
+
+        release = pending_release.get(group) if group is not None else None
+        if release is None:
+            # A different or unlinked anchor after a pivot is a new, unresolved
+            # ground pose until its heel contact is independently established.
+            states[start:end + 1] = ['unknown'] * (end - start + 1)
+            previous_end = end
+            continue
+
+        baseline_indexes = [
+            index for index in release['baselineIndexes']
+            if index < start and valid[index] and heel_toe_confidence[index] >= .8
+        ]
+        returned = np.zeros(count, dtype=bool)
+        if len(baseline_indexes) >= 3:
+            toe_anchor = np.median(toe_points[baseline_indexes], axis=0)
+            baseline_heel_offsets = (heel_points[baseline_indexes] - toe_anchor) * image_axes
+            stance_center = np.median(baseline_heel_offsets, axis=0)
+            baseline_residuals = np.linalg.norm(
+                baseline_heel_offsets - stance_center, axis=1,
+            )
+            noise_radius = float(np.quantile(baseline_residuals, .95, method='higher'))
+            for index in reliable:
+                heel_offset = (heel_points[index] - toe_anchor) * image_axes
+                returned[index] = np.linalg.norm(heel_offset - stance_center) <= noise_radius
+
+        recontact_start = None
+        run = 0
+        for index in indexes:
+            run = run + 1 if returned[index] else 0
+            if run >= 3:
+                recontact_start = index - 2
+                break
+
+        toe_supported_start = release['lastToeOnlyEnd'] + 1
+        toe_supported_end = release['lastToeOnlyEnd']
+        if group is not None and len(baseline_indexes) >= 3:
+            toe_anchor = np.median(toe_points[baseline_indexes], axis=0)
+            baseline_size = float(np.median(foot_sizes[baseline_indexes]))
+            toe_tolerance_pixels = max(.005 * min(image_axes), baseline_size * .15 * min(image_axes))
+            for index in range(toe_supported_start, end + 1):
+                if not toe_valid[index]:
+                    break
+                if np.linalg.norm((toe_points[index] - toe_anchor) * image_axes) > toe_tolerance_pixels:
+                    break
+                toe_supported_end = index
+        contiguous_toe_support = toe_supported_end >= toe_supported_start
+        if recontact_start is None:
+            states[start:end + 1] = ['unknown'] * (end - start + 1)
+            if contiguous_toe_support:
+                states[toe_supported_start:toe_supported_end + 1] = ['toe_only'] * (
+                    toe_supported_end - toe_supported_start + 1
+                )
+                unresolved_heel_recontact[toe_supported_start:toe_supported_end + 1] = True
+            previous_end = end
+            continue
+
+        if recontact_start > start:
+            states[start:recontact_start] = ['unknown'] * (recontact_start - start)
+        if contiguous_toe_support:
+            prefix_end = min(toe_supported_end, recontact_start - 1)
+            if prefix_end >= toe_supported_start:
+                states[toe_supported_start:prefix_end + 1] = ['toe_only'] * (
+                    prefix_end - toe_supported_start + 1
+                )
+                unresolved_heel_recontact[toe_supported_start:prefix_end + 1] = True
+        for index in range(recontact_start, end + 1):
+            states[index] = 'full_sole' if returned[index] else 'unknown'
+        pending_release.pop(group, None)
+        trusted_fullsole.setdefault(group, []).extend(
+            index for index in indexes if returned[index]
+        )
+        previous_end = end
+
+
 def classify_foot_contacts(
     observations: dict[str, Any], evidence: dict[str, Any],
     source_pose: dict[str, Any], camera_normal: list[float] | None = None,
@@ -208,8 +457,8 @@ def classify_foot_contacts(
     """Resolve partial contacts from observed heel-to-toe geometry.
 
     A stationary ankle is only a calibration candidate, never a flat-foot
-    command. Agreement of image and 3D heel lift is required; occlusion,
-    identity mismatch, missing calibration and disagreement remain unknown.
+    command. Image/3D agreement supports resolved heel height; a clear image-only
+    toe pivot retains angular evidence but leaves heel height unresolved.
     """
     if not observations.get("available"):
         return {"available": False, "reason": observations.get("reason")}
@@ -233,31 +482,75 @@ def classify_foot_contacts(
         return {"available": False, "reason": "invalid_ground_normal"}
     normal /= max(np.linalg.norm(normal), 1e-8)
     contacts = evidence.get("footContactCandidates", evidence.get("contacts", []))
+    source_origin = float(source_pose.get("sourceTimeOriginSec", 0.))
     result: dict[str, Any] = {"available": True, "policyVersion": POLICY_VERSION,
-                            "source": observations["source"], "feet": {}, "contacts": []}
+                            "source": observations["source"], "sourceFrameCount": count,
+                            "sourceFps": observations.get("fps"),
+                            **_patch_source_timing_metadata(frames, source_origin),
+                            "sourceVideoSha256": observations.get("sourceVideoSha256"),
+                            "feet": {}, "contacts": []}
     for side in ("left", "right"):
         valid = np.zeros(count, dtype=bool)
+        toe_valid = np.zeros(count, dtype=bool)
+        ray_observations = []
         image_pitch = np.zeros(count)
         world_pitch = np.zeros(count)
         toe_points = np.zeros((count, 2))
         heel_points = np.zeros((count, 2))
         foot_sizes = np.zeros(count)
+        pixel_foot_sizes = np.zeros(count)
         for index, frame in enumerate(frames):
             points = frame["joints"]
-            named = [points.get(f"{side}_{part}") for part in ("ankle", "heel", "toe")]
-            if any(not point or point["confidence"] < 0.8 for point in named):
+            ankle, heel, toe = (points.get(f"{side}_{part}")
+                                for part in ("ankle", "heel", "toe"))
+            if (toe and toe['confidence'] >= .8
+                    and np.isfinite(toe['image']).all()
+                    and all(0.0 <= value <= 1.0 for value in toe['image'])):
+                toe_points[index] = toe['image']
+                toe_valid[index] = True
+            # The ankle-to-toe ray is independent source motion evidence. A
+            # missing/occluded heel keeps contact unknown but must not erase
+            # this articulation signal.
+            if any(not point or point["confidence"] < 0.8 for point in (ankle, toe)):
                 continue
-            # Trackers can confidently predict landmarks outside the image.
-            # Those predictions are not observed support or release evidence.
             if any(not np.isfinite(point['image']).all()
-                   or not np.isfinite(point['world']).all()
                    or any(value < 0.0 or value > 1.0 for value in point['image'])
-                   for point in named):
+                   for point in (ankle, toe)):
                 continue
-            ankle, heel, toe = named
-            reference = min(source_frames, key=lambda f: abs(float(f.get("sourceTimeSec", f.get("timeSec", 0))) - frame["timeSeconds"]))
+            source_time = source_origin + float(frame["timeSeconds"])
+            reference = min(source_frames, key=lambda f: abs(float(f.get("sourceTimeSec", f.get("timeSec", 0))) - source_time))
             reference_ankle = reference.get("joints", {}).get(f"{side}_ankle")
             if reference_ankle is None or np.linalg.norm(np.asarray(ankle["image"]) - reference_ankle[:2]) > 0.08:
+                continue
+            ray_delta = np.asarray(toe["image"]) - ankle["image"]
+            ray_pixel_delta = ray_delta * image_axes
+            ray_pixel_length = np.linalg.norm(ray_pixel_delta)
+            ankle_disagreement = np.linalg.norm(
+                (np.asarray(ankle["image"]) - np.asarray(reference_ankle[:2])) * image_axes)
+            if (ray_pixel_length < 0.005 * min(image_axes)
+                    or ankle_disagreement > max(.003 * np.min(image_axes), .5 * ray_pixel_length)):
+                continue
+            ray_observations.append({
+                "sourceTimeSec": source_origin + float(frame["timeSeconds"]),
+                # Match _pose_frames' aspect-corrected normalized image plane.
+                "ankleToToeImageRay": [
+                    float(ray_delta[0] * image_width / image_height), float(ray_delta[1]),
+                ],
+                "toeImagePoint": [
+                    float(toe['image'][0] * image_width / image_height),
+                    float(toe['image'][1]),
+                ],
+                "confidence": float(min(ankle["confidence"], toe["confidence"])),
+                "state": "unknown",
+                "frameIndex": index,
+            })
+            # Contact classification still requires all three in-frame world
+            # landmarks and the established whole-foot geometry checks.
+            if (not heel or heel["confidence"] < 0.8
+                    or any(not np.isfinite(point['image']).all()
+                           or not np.isfinite(point['world']).all()
+                           or any(value < 0.0 or value > 1.0 for value in point['image'])
+                           for point in (ankle, heel, toe))):
                 continue
             image_delta = np.asarray(toe["image"]) - heel["image"]
             world_delta = np.asarray(toe["world"]) - heel["world"]
@@ -266,8 +559,6 @@ def classify_foot_contacts(
                 continue
             pixel_delta = image_delta * image_axes
             pixel_length = np.linalg.norm(pixel_delta)
-            ankle_disagreement = np.linalg.norm(
-                (np.asarray(ankle["image"]) - np.asarray(reference_ankle[:2])) * image_axes)
             # A whole-image identity tolerance can accept an ankle displaced
             # by most of the foot's length. In that case the accompanying heel
             # and toe are not independent evidence of a support change, even
@@ -295,6 +586,7 @@ def classify_foot_contacts(
                     np.dot(pixel_delta, lift_direction), np.dot(pixel_delta, ground_direction))
             toe_points[index], heel_points[index] = toe["image"], heel["image"]
             foot_sizes[index] = image_length
+            pixel_foot_sizes[index] = pixel_length
             valid[index] = True
         possible_contact = np.zeros(count, dtype=bool)
         calibration = np.zeros(count, dtype=bool)
@@ -313,6 +605,8 @@ def classify_foot_contacts(
                 calibration[start:end + 1] = True
         calibration &= valid
         states = ["unknown"] * count
+        image_only_toe = np.zeros(count, dtype=bool)
+        unresolved_heel_recontact = np.zeros(count, dtype=bool)
         uncalibrated_toe = np.count_nonzero(calibration) < 4
         observed = evidence.get('bodySupportObservation') or {}
         answer = observed.get('observation') or {}
@@ -323,11 +617,29 @@ def classify_foot_contacts(
             and answer.get(f'{side}Foot') in {'stationary_full_sole', 'stationary_forefoot'}
             and answer.get(f'{side}FootSurface') in {'ground', 'raised_surface'})
         if uncalibrated_toe and not toe_contact_observed:
-            result["feet"][side] = {"states": states, "reason": "no_observed_stance_calibration"}
+            heel_image_observations = _heel_image_observations(
+                frames=frames, side=side, source_origin=source_origin,
+                image_width=image_width, image_height=image_height, states=states,
+            )
+            for row in ray_observations:
+                row.pop("frameIndex", None)
+            result["feet"][side] = {"states": states, "reason": "no_observed_stance_calibration",
+                                    "rayObservationCount": len(ray_observations),
+                                    "rayObservations": ray_observations,
+                                    "heelImageObservations": heel_image_observations}
             continue
         if uncalibrated_toe and np.count_nonzero(valid) < 3:
+            heel_image_observations = _heel_image_observations(
+                frames=frames, side=side, source_origin=source_origin,
+                image_width=image_width, image_height=image_height, states=states,
+            )
+            for row in ray_observations:
+                row.pop("frameIndex", None)
             result['feet'][side] = {'states': states, 'reason': 'independent_foot_identity_unverified',
-                                    'validObservationCount': int(valid.sum())}
+                                    'validObservationCount': int(valid.sum()),
+                                    'rayObservationCount': len(ray_observations),
+                                    'rayObservations': ray_observations,
+                                    'heelImageObservations': heel_image_observations}
             continue
         # Estimate the neutral observed sole orientation from supported stance,
         # not from the reconstructed foot or an assumed camera angle.
@@ -375,63 +687,79 @@ def classify_foot_contacts(
                 states[index] = "toe_only"
             elif all(value > tolerance for value, tolerance in zip(differences, tolerances)):
                 states[index] = "heel_only"
+            elif (differences[0] < -tolerances[0]
+                  and pixel_foot_sizes[index] >= 0.5 * float(np.median(pixel_foot_sizes[calibration]))
+                  and differences[1] <= tolerances[1]):
+                # MediaPipe's world pose can miss a visible heel pivot. The
+                # source-calibrated image angle is sufficient only when the
+                # observed forefoot also stays in place across the episode.
+                states[index] = "toe_only"
+                image_only_toe[index] = True
         # Do not bridge unknown observations or erase a real release. Isolated
         # detections lack enough temporal evidence to impose a new constraint.
-        start = 0
-        while start < count:
-            end = start + 1
-            while end < count and states[end] == states[start]:
-                end += 1
-            state = states[start]
-            if end - start < 3:
-                states[start:end] = ["unknown"] * (end - start)
-            elif state not in {"unknown", "airborne"}:
-                anchor_points = heel_points[start:end] if state == "heel_only" else toe_points[start:end]
-                scale = float(np.median(foot_sizes[start:end]))
-                chunks = np.array_split(anchor_points, min(3, len(anchor_points)))
-                centers = np.array([np.median(chunk, axis=0) for chunk in chunks])
-                spread = float(np.linalg.norm(np.ptp(centers, axis=0)))
-                stationary = spread <= max(0.005, scale * 0.15)
-                if uncalibrated_toe and np.linalg.norm(np.ptp(anchor_points, axis=0)) > max(.005, scale * .15):
-                    states[start:end] = ['unknown'] * (end - start)
-                    start = end
-                    continue
-                lift_ratio = 0.0
-                if state in {"toe_only", "heel_only"} and not uncalibrated_toe:
-                    lift_angle = min(
-                        max(0.0, float(np.median(np.abs(track[start:end] - center))) - tolerance)
-                        for track, center, tolerance in zip(
-                            (image_pitch, world_pitch), references, tolerances
-                        )
-                    )
-                    lift_ratio = float(np.sin(min(lift_angle, np.pi / 2)))
-                contact = {
-                    "jointName": f"{side}_foot", "supportKind": "observed_foot_patch",
-                    "contactState": state, "contactMotion": "stationary" if stationary else "unknown",
-                    "verticalOnly": state == "heel_only", "startRatio": start / max(1, count - 1),
-                    "endRatio": (end - 1) / max(1, count - 1), "confidence": 0.8,
-                    "source": "observed_heel_and_forefoot", "anchorImageSpread": spread,
-                    "minimumLiftRatio": lift_ratio,
-                }
-                if uncalibrated_toe:
-                    contact['surfaceKind'] = ('ground' if answer[f'{side}FootSurface'] == 'ground'
-                                              else 'observed_raised_support_surface')
-                    contact['source'] = 'exact_visual_contact_and_independent_stationary_toe'
-                if state == 'full_sole' and stationary:
-                    for candidate_index, candidate in enumerate(contacts):
-                        first, last = contact_frame_bounds(candidate, count)
-                        if (candidate.get('jointName') == f'{side}_ankle'
-                                and is_stationary_contact(candidate)
-                                and first <= start and end-1 <= last):
-                            # Missing heel observations split classified patches,
-                            # not an independently observed stationary stance.
-                            contact['ankleAnchorGroupId'] = f'{side}:ankle:{candidate_index}'
-                            break
-                result["contacts"].append(contact)
-            start = end
-        assign_stationary_anchor_groups(result["contacts"], side=side, valid=valid,
-                                        toe_points=toe_points, foot_sizes=foot_sizes, states=states)
+        patch_contacts = _materialize_foot_patch_contacts(
+            side=side, states=states, valid=valid, toe_valid=toe_valid, heel_points=heel_points,
+            toe_points=toe_points, foot_sizes=foot_sizes, image_pitch=image_pitch,
+            world_pitch=world_pitch, image_only_toe=image_only_toe,
+            unresolved_heel_recontact=unresolved_heel_recontact,
+            references=references, tolerances=tolerances, uncalibrated_toe=uncalibrated_toe,
+            answer=answer, support_contacts=contacts,
+        )
+        heel_toe_confidence = np.asarray([
+            min(float(frame['joints'][f'{side}_heel']['confidence']),
+                float(frame['joints'][f'{side}_toe']['confidence']))
+            if (frame['joints'].get(f'{side}_heel') and frame['joints'].get(f'{side}_toe'))
+            else 0.0
+            for frame in frames
+        ])
+        _preserve_heel_release_until_recontact(
+            side=side, states=states, contacts=patch_contacts, valid=valid, toe_valid=toe_valid,
+            heel_points=heel_points, toe_points=toe_points, foot_sizes=foot_sizes,
+            heel_toe_confidence=heel_toe_confidence, image_axes=image_axes,
+            unresolved_heel_recontact=unresolved_heel_recontact,
+        )
+        patch_contacts = _materialize_foot_patch_contacts(
+            side=side, states=states, valid=valid, toe_valid=toe_valid, heel_points=heel_points,
+            toe_points=toe_points, foot_sizes=foot_sizes, image_pitch=image_pitch,
+            world_pitch=world_pitch, image_only_toe=image_only_toe,
+            unresolved_heel_recontact=unresolved_heel_recontact,
+            references=references, tolerances=tolerances, uncalibrated_toe=uncalibrated_toe,
+            answer=answer, support_contacts=contacts,
+        )
+        result["contacts"].extend(patch_contacts)
+        stationary_groups_by_frame = {}
+        for contact_index, contact in enumerate(result["contacts"]):
+            if (contact.get('jointName') != f'{side}_foot'
+                    or contact.get('contactMotion') != 'stationary'
+                    or contact.get('contactState') not in {'full_sole', 'toe_only'}):
+                continue
+            first, last = contact_frame_bounds(contact, count)
+            anchor_group = contact.get('anchorGroupId') or f'{side}:stationary:{contact_index}'
+            for frame_index in range(first, last + 1):
+                if states[frame_index] == contact.get('contactState'):
+                    stationary_groups_by_frame[frame_index] = anchor_group
+        for row in ray_observations:
+            frame_index = row.get('frameIndex')
+            if frame_index in stationary_groups_by_frame:
+                row['stationaryAnchorGroupId'] = stationary_groups_by_frame[frame_index]
+        ray_by_frame = {
+            int(row['frameIndex']): row for row in ray_observations
+            if row.get('frameIndex') is not None
+        }
+        for row in ray_observations:
+            row["state"] = states[row["frameIndex"]]
+            row.pop("frameIndex", None)
+        # The heel trajectory is a separate camera-space observation. Keep it
+        # available even when ankle identity prevents an ankle-to-toe ray row.
+        heel_image_observations = _heel_image_observations(
+            frames=frames, side=side, source_origin=source_origin,
+            image_width=image_width, image_height=image_height, states=states,
+            stationary_groups_by_frame=stationary_groups_by_frame,
+        )
         result["feet"][side] = {"states": states, "validObservationCount": int(valid.sum()),
+                                "rayObservationCount": len(ray_observations),
+                                "rayObservations": ray_observations,
+                                "heelImageObservations": heel_image_observations,
                                 "pitchReferenceSource": ("heel_unobserved" if uncalibrated_toe else
                                                          "observed_ground_plane" if ground_referenced else "relative_stance"),
                                 "imagePitchReference": references[0], "worldPitchReference": references[1],
@@ -439,7 +767,9 @@ def classify_foot_contacts(
     return result
 
 
-def assign_stationary_anchor_groups(contacts, *, side, valid, toe_points, foot_sizes, states):
+def assign_stationary_anchor_groups(
+    contacts, *, side, valid, toe_points, foot_sizes, states, toe_valid=None,
+):
     """Retain a toe anchor across a pitch-uncertain but visibly stationary gap.
 
     Contact classification can change from full sole to toe-only without the
@@ -451,6 +781,7 @@ def assign_stationary_anchor_groups(contacts, *, side, valid, toe_points, foot_s
     previous = None
     observed_stances = {}
     count = len(valid)
+    toe_valid = valid if toe_valid is None else toe_valid
     for number, contact in enumerate(contacts):
         if contact.get('jointName') != f'{side}_foot':
             continue
@@ -462,12 +793,23 @@ def assign_stationary_anchor_groups(contacts, *, side, valid, toe_points, foot_s
         if previous is not None:
             previous_contact, previous_end = previous
             indexes = slice(previous_end, start + 1)
-            visible = bool(np.all(valid[indexes]))
+            visible = bool(np.all(toe_valid[indexes]))
             compatible = all(state in {'unknown', 'full_sole', 'toe_only'} for state in states[indexes])
             if visible and compatible:
                 points = toe_points[indexes]
                 spread = float(np.linalg.norm(np.ptp(points, axis=0)))
-                tolerance = max(.005, float(np.median(foot_sizes[indexes])) * .15)
+                local_size = foot_sizes[indexes]
+                local_size = local_size[local_size > 0]
+                if not len(local_size):
+                    previous_start, previous_end = contact_frame_bounds(previous_contact, count)
+                    current_start, current_end = contact_frame_bounds(contact, count)
+                    local_size = np.concatenate((
+                        foot_sizes[previous_start:previous_end + 1],
+                        foot_sizes[current_start:current_end + 1],
+                    ))
+                    local_size = local_size[local_size > 0]
+                scale = float(np.median(local_size)) if len(local_size) else 0.0
+                tolerance = max(.005, scale * .15)
                 if spread <= tolerance:
                     group = previous_contact['anchorGroupId']
         ankle_group = contact.get('ankleAnchorGroupId') if contact.get('contactState') == 'full_sole' else None
@@ -523,10 +865,15 @@ def add_observed_foot_contacts(
                 continue
             airborne = [str(state).casefold() == "airborne" for state in states]
             if not any(airborne):
+                if any(str(state).casefold() != 'full_sole' for state in states):
+                    foot['continuousSupport'] = False
+                    foot['supportSplitByUnresolvedFootPatch'] = True
                 continue
 
             foot["continuousSupport"] = False
             foot["supportSplitByObservedAirborne"] = True
+            if any(str(state).casefold() == 'unknown' for state in states):
+                foot['supportSplitByUnresolvedFootPatch'] = True
             joint_name = str(foot.get("jointName") or f"{side}_ankle")
             try:
                 confidence = max(0.0, min(1.0, float(foot.get("confidence", 1.0))))
@@ -534,7 +881,7 @@ def add_observed_foot_contacts(
                 confidence = 1.0
             start = None
             for index in range(len(airborne) + 1):
-                supported = index < len(airborne) and not airborne[index]
+                supported = index < len(airborne) and str(states[index]).casefold() == 'full_sole'
                 if supported and start is None:
                     start = index
                 if supported or start is None:

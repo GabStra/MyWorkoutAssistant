@@ -52,23 +52,38 @@ PATCHABLE_CONTRACT_FIELDS: dict[str, tuple[str, ...] | None] = {
 
 def contract_critic_projection(contract: dict[str, Any]) -> dict[str, Any]:
     """The critic only needs the fields it can reason about and patch."""
-    keys = (
-        "movementType",
-        "completionMode",
-        "requiresReturnToStart",
-        "groundContactMode",
-        "implementSupportMode",
-        "handRelationship",
-        "validStartState",
-        "validEndState",
-        "startPoseConstraints",
-        "endPoseConstraints",
-        "requiredPhases",
-        "singleExecutionDurationSeconds",
-        "motionContext",
-        "primaryMovingRegions",
-        "referenceRegions",
-    )
+    if contract.get("contractScope") == "definition_only":
+        keys = (
+            "movementType",
+            "completionMode",
+            "requiresReturnToStart",
+            "groundContactMode",
+            "implementSupportMode",
+            "handRelationship",
+            "definingAction",
+            "variantQualifiers",
+            "motionContext",
+            "primaryMovingRegions",
+            "referenceRegions",
+        )
+    else:
+        keys = (
+            "movementType",
+            "completionMode",
+            "requiresReturnToStart",
+            "groundContactMode",
+            "implementSupportMode",
+            "handRelationship",
+            "validStartState",
+            "validEndState",
+            "startPoseConstraints",
+            "endPoseConstraints",
+            "requiredPhases",
+            "singleExecutionDurationSeconds",
+            "motionContext",
+            "primaryMovingRegions",
+            "referenceRegions",
+        )
     projection: dict[str, Any] = {}
     for key in keys:
         value = contract.get(key)

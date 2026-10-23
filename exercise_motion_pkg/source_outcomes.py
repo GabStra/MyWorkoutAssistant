@@ -11,14 +11,18 @@ from exercise_motion_pkg.process_lock import InterProcessFileLock
 
 
 SOURCE_OUTCOME_INDEX_SCHEMA_VERSION = 2
+SOURCE_QUALITY_HISTORY_POLICY_VERSION = 1
 SOURCE_OUTCOME_INDEX_LOCK_TIMEOUT_SECONDS = 30.0
 SOURCE_OUTCOME_INDEX_LOCK_STALE_SECONDS = 5 * 60.0
 UNRESOLVED_OUTCOME_STATUSES = frozenset({
-    "needs_source_review", "needs_motion_processing", "needs_manual_review",
+    "needs_source_review", "needs_definition_review", "needs_motion_processing", "needs_manual_review",
     "source_processing_failed", "rejected_vlm_timeout", "failed", "blocked_contract",
     "skipped_previous_terminal_result",
 })
 QUALITY_HISTORY_FIELDS = ("attempts", "sourcePasses", "accepts")
+LOCAL_MOTION_REJECTION_STATUSES = frozenset({
+    "rejected_baked_motion_validation", "skipped_no_usable_baked_motion",
+})
 
 
 def source_quality_history(stats: dict[str, Any]) -> dict[str, Any]:
@@ -28,10 +32,14 @@ def source_quality_history(stats: dict[str, Any]) -> dict[str, Any]:
     reconstruct a reliable denominator. Retain the old totals for inspection
     and learn a fresh prior from resolved observations for affected records.
     """
+    tags = stats.get("rejectionCounts") or {}
+    if (stats.get("qualityHistoryPolicyVersion") != SOURCE_QUALITY_HISTORY_POLICY_VERSION
+            and any(int(tags.get(f"status:{status}") or 0) > 0
+                    for status in LOCAL_MOTION_REJECTION_STATUSES)):
+        return {}
     history = stats.get("qualityHistory")
     if isinstance(history, dict):
         return history
-    tags = stats.get("rejectionCounts") or {}
     if any(int(tags.get(f"status:{status}") or 0) > 0 for status in UNRESOLVED_OUTCOME_STATUSES):
         return {}
     return stats
@@ -137,6 +145,7 @@ def rejection_tags_from_candidate_result(result: dict[str, Any]) -> list[str]:
     ignored_subtrees = {
         "candidate",
         "exercisemotioncontract",
+        "failureowner",
         "generationtimings",
         "timings",
     }
@@ -170,6 +179,57 @@ def candidate_result_is_accepted(result: dict[str, Any]) -> bool:
     return status in {"selected", "selected_alternative", "accepted_after_materialized_review"}
 
 
+def candidate_result_failure_owner(result: dict[str, Any]) -> str | None:
+    """Resolve the owner for current and retained pre-render candidate results."""
+    explicit_owner = result.get("failureOwner")
+    if isinstance(explicit_owner, str) and explicit_owner.strip():
+        return explicit_owner.strip()
+    # These statuses are emitted only after reconstruction and deterministic
+    # baked-motion validation. Older retained manifests predate failureOwner,
+    # but they still must not count local motion/support defects against a
+    # source that already passed approval.
+    if str(result.get("status") or "").strip() in LOCAL_MOTION_REJECTION_STATUSES:
+        return "motion_output"
+    return None
+
+
+def candidate_result_has_incomplete_source_validation(result: dict[str, Any]) -> bool:
+    """Identify retained preflight results that lack enough evidence to reject a source.
+
+    Older result manifests may carry a terminal-looking status even though the
+    nested validation explicitly says its review is incomplete. Preserve that
+    evidence distinction when routing and when updating source-quality history.
+    """
+    failures = result.get("failures")
+    if isinstance(failures, dict):
+        failures = [failures]
+    if not isinstance(failures, list):
+        return False
+    for failure in failures:
+        if not isinstance(failure, dict):
+            continue
+        evidence = failure.get("evidence")
+        if not isinstance(evidence, dict):
+            continue
+        validation = evidence.get("validation")
+        if isinstance(validation, dict) and validation.get("reviewStatus") == "incomplete":
+            missing = validation.get("missingEvidenceReasons")
+            resolved = validation.get("resolvedMissingEvidenceReasons")
+            if isinstance(missing, list) and missing:
+                unresolved = {str(item) for item in missing if str(item)} - {
+                    str(item) for item in (resolved or []) if str(item)
+                }
+                if not unresolved:
+                    continue
+            repair = evidence.get("repair")
+            if isinstance(repair, dict) and (
+                repair.get("resolved") is True or repair.get("status") == "resolved"
+            ):
+                continue
+            return True
+    return False
+
+
 def _increment_stats(
     stats: dict[str, Any],
     *,
@@ -179,9 +239,10 @@ def _increment_stats(
     rejection_tags: Iterable[str],
     observed_at: str,
 ) -> None:
-    if not isinstance(stats.get("qualityHistory"), dict):
-        history = source_quality_history(stats)
+    history = source_quality_history(stats)
+    if not isinstance(stats.get("qualityHistory"), dict) or history is not stats["qualityHistory"]:
         stats["qualityHistory"] = {key: int(history.get(key) or 0) for key in QUALITY_HISTORY_FIELDS}
+    stats["qualityHistoryPolicyVersion"] = SOURCE_QUALITY_HISTORY_POLICY_VERSION
     history = stats["qualityHistory"]
     history["attempts"] += 1
     history["sourcePasses"] += int(source_passed)
@@ -208,7 +269,12 @@ def update_source_outcome_index(
         # An unresolved observation or contract is not evidence against a source.
         # Other, resolved windows from that same video still update its history.
         if (result.get("status") in UNRESOLVED_OUTCOME_STATUSES
-                or result.get("finalSelectionStatus") in {"processing_incomplete", "review_incomplete"}):
+                or result.get("finalSelectionStatus") in {"processing_incomplete", "review_incomplete"}
+                or candidate_result_has_incomplete_source_validation(result)):
+            continue
+        failure_owner = candidate_result_failure_owner(result)
+        if (not candidate_result_is_accepted(result)
+                and failure_owner is not None and failure_owner != "source"):
             continue
         candidate = result.get("candidate") if isinstance(result.get("candidate"), dict) else {}
         identity = source_identity(candidate.get("videoId"), candidate.get("url"))

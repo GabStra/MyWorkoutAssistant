@@ -17,7 +17,20 @@ if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
 from exercise_motion_pkg.artifact_state import FULL_CLIP_BAKE
-from exercise_motion_pkg.bake_and_rank import EligibleLoop, bake_preview_loops_with_playwright
+from exercise_motion_pkg.bake_and_rank import (
+    EligibleLoop,
+    bake_preview_loops_with_playwright,
+)
+from exercise_motion_pkg.browser_workers import browser_session, run_browser_work
+from exercise_motion_pkg.bake_and_rank import (
+    dense_loop_review_video_frame_indices,
+    launch_chromium_browser,
+    parse_review_video_fps,
+    render_baked_wear_frames_with_playwright,
+    stage_preview_for_browser_if_needed,
+    write_validated_review_video_from_data_urls,
+)
+from exercise_motion_pkg.body_support_observation import POLICY_VERSION as BODY_SUPPORT_POLICY_VERSION
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -77,7 +90,7 @@ def _copy_retained_inputs(source_workspace: Path, output_workspace: Path) -> Non
         source_workspace
         / "segment_detection"
         / "body_support"
-        / f"body-support-{digest}-v3.json"
+        / f"body-support-{digest}-v{BODY_SUPPORT_POLICY_VERSION}.json"
     )
     if not support_cache.is_file():
         raise FileNotFoundError(
@@ -127,6 +140,62 @@ def _artifact_summary(artifact: Any) -> dict[str, Any]:
     }
 
 
+def _render_failed_gate_diagnostics(
+    artifacts: list[Any], preview_html: Path, output_workspace: Path
+) -> list[dict[str, Any]]:
+    """Render rejected payloads through the production renderer for inspection only."""
+    diagnostic_dir = output_workspace / "diagnostic_failed_gate_render"
+    diagnostic_dir.mkdir(parents=True, exist_ok=True)
+    browser_preview, staged_temp = stage_preview_for_browser_if_needed(preview_html)
+
+    def render() -> list[dict[str, Any]]:
+        rendered = []
+        with browser_session(launch_chromium_browser) as browser:
+            page = browser.new_page(viewport={"width": 960, "height": 720}, device_scale_factor=1)
+            page.goto(browser_preview.resolve().as_uri(), wait_until="networkidle")
+            page.wait_for_function("() => window.exerciseMotionAutomation != null")
+            for artifact in artifacts:
+                gate = artifact.export_payload.get("preRenderDeterministicGate") or {}
+                if gate.get("passed") is True:
+                    continue
+                indices = dense_loop_review_video_frame_indices(artifact.export_payload)
+                if not indices:
+                    continue
+                urls = render_baked_wear_frames_with_playwright(
+                    page,
+                    export_payload=artifact.export_payload,
+                    frame_indices=indices,
+                    options=artifact.settings_options,
+                )
+                path, quality = write_validated_review_video_from_data_urls(
+                    urls,
+                    diagnostic_dir / f"{artifact.settings_variant_id}.webm",
+                    fps=parse_review_video_fps(artifact.export_payload, frame_count=len(urls)),
+                )
+                path.with_suffix(".json").write_text(json.dumps({
+                    "diagnosticOnly": True,
+                    "acceptanceGatePassed": False,
+                    "rejectionReasons": gate.get("rejectionReasons", []),
+                    "renderSource": "production_baked_wear_payload_renderer",
+                    "quality": quality,
+                    "frameCount": len(urls),
+                }, indent=2), encoding="utf-8")
+                rendered.append({
+                    "variantId": artifact.settings_variant_id,
+                    "videoPath": str(path.resolve()),
+                    "qualityPassed": quality.get("passed"),
+                    "rejectionReasons": gate.get("rejectionReasons", []),
+                })
+            page.close()
+        return rendered
+
+    try:
+        return run_browser_work(render, task_name="retained_failed_gate_diagnostic_render")
+    finally:
+        if staged_temp is not None:
+            staged_temp.cleanup()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("bake_manifest", type=Path)
@@ -134,6 +203,11 @@ def main() -> int:
     parser.add_argument("--workspace", type=Path, required=True, help="New isolated replay output workspace")
     parser.add_argument("--review-frames", type=int, default=12)
     parser.add_argument("--timeout-seconds", type=float, default=360.0)
+    parser.add_argument(
+        "--render-failed-gate-diagnostics",
+        action="store_true",
+        help="Render gate-rejected artifacts into an explicitly diagnostic-only folder.",
+    )
     parser.add_argument(
         "--loop-index",
         type=int,
@@ -175,6 +249,11 @@ def main() -> int:
         source_foot_support_evidence=manifest.get("sourceFootSupportEvidence"),
         deadline=deadline,
     )
+    diagnostic_renders = (
+        _render_failed_gate_diagnostics(artifacts, preview_html, output_workspace)
+        if args.render_failed_gate_diagnostics
+        else []
+    )
     report = {
         "schema": "retained_baked_preview_replay_v1",
         "sourceBakeManifest": str(manifest_path),
@@ -185,6 +264,7 @@ def main() -> int:
         "modelCalls": 0,
         "reconstructionRuns": 0,
         "downloads": 0,
+        "diagnosticFailedGateRenders": diagnostic_renders,
         "artifacts": [_artifact_summary(artifact) for artifact in artifacts],
     }
     report_path = output_workspace / "baked_preview_replay.json"

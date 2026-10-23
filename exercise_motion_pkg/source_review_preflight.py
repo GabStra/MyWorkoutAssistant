@@ -37,6 +37,10 @@ def review_prepared_source(candidate: bake.RankedCandidate, *, request: bake.Bak
             source_phase_metrics=phase)
         if validation.get("passed") is True:
             return
+        if validation.get("sourceEvidencePolicyVersion") is not None and validation.get("reviewStatus") == "incomplete":
+            evidence = validation.get("gates", {}).get("structuredEvidence", {})
+            if not evidence.get("errors"):
+                raise SourceReviewIncomplete("Source evidence unresolved; inspect or expand the retained frames before another review.")
         reasons = validation.get("rejectionReasons", [])
         # Preserve the existing source-evidence exceptions. These do not approve
         # the reconstructed output; its independent checks still run later.

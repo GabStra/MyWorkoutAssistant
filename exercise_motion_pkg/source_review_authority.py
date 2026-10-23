@@ -1,6 +1,8 @@
 """Source-review evidence and bounded disagreement handling.
 
-Generated contracts are not evidence of what an exercise must look like.
+Generated target-action proposals may define conservative evidence obligations,
+but they are not evidence of what the source physically shows. Missing or
+uncertain action evidence remains unresolved until independently grounded.
 Re-reviewing a rejection can establish agreement or uncertainty, never an
 automatic approval over the original negative judgment.
 """

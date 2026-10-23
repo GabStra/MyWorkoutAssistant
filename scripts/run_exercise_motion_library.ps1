@@ -3,6 +3,8 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ExerciseLibraryJson,
 
+    [string]$ApprovedExerciseDefinitionsJson,
+
     [string]$EquipmentJson,
 
     [string]$WorkspaceRoot = "build/exercise_motion/exercise-library",
@@ -44,11 +46,16 @@ param(
     [ValidateRange(0, 86400)]
     [double]$ExerciseTimeoutSeconds = 1200.0,
 
+    [ValidateRange(0, 86400)]
+    [double]$SourceReviewTimeoutSeconds = 180.0,
+
+    [ValidateRange(0, 10000)]
+    [int]$MaxSourceWindowAttempts = 0,
+
     [switch]$DisableStagedWaves,
 
-    # Discovery/bake overlap on staged waves. "auto" avoids overlap when
-    # discovery uses CUDA, preventing VLM and reconstruction workers from
-    # competing for the same GPU lock; CPU-only discovery can still overlap.
+    # "auto" overlaps discovery with bake for a verified explicit GPU split;
+    # otherwise CUDA stages share the GPU lock. CPU-only work can overlap.
     # Pass "allow" to explicitly overlap GPU discovery and bake stages.
     [ValidateSet("auto", "allow", "avoid")]
     [string]$GpuDiscoveryBakeOverlap = "auto",
@@ -63,14 +70,22 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$script:LibraryRunId = [guid]::NewGuid().ToString("N")
+$script:LibraryRunStartedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+$script:LibraryRunOutcome = "running"
 . (Join-Path $PSScriptRoot "reconstruction_compat.ps1")
 . (Join-Path $PSScriptRoot "motion_run_interrupt.ps1")
 . (Join-Path $PSScriptRoot "motion_library_logging.ps1")
 Register-MotionInterruptHandler -Silent
 trap {
+    $interrupt = ($_.Exception -is [System.Management.Automation.PipelineStoppedException]) -or (Test-MotionRunCancelRequested)
+    $script:LibraryRunOutcome = if ($interrupt) { "stopped" } else { "failed" }
+    if (Get-Command Write-RunState -ErrorAction SilentlyContinue) {
+        $summaryForOutcome = if (Get-Variable -Name summaryPath -ErrorAction SilentlyContinue) { [string]$summaryPath } else { "" }
+        try { Write-RunState -Phase $script:LibraryRunOutcome -SummaryJson $summaryForOutcome -Outcome $script:LibraryRunOutcome -ErrorMessage ([string]$_.Exception.Message) } catch {}
+    }
     if (
-        $_.Exception -is [System.Management.Automation.PipelineStoppedException] -or
-        (Test-MotionRunCancelRequested)
+        $interrupt
     ) {
         Write-MotionInterruptReceived
         exit 130
@@ -89,6 +104,10 @@ if (-not $DisableStagedWaves -and $StagedWaveSize -lt 1) {
 $runner = Join-Path $PSScriptRoot "run_exercise_motion_workout_plan.ps1"
 $packageBuilder = Join-Path $PSScriptRoot "build_workout_plan_movement_package.ps1"
 $resolvedLibraryJson = (Resolve-Path -LiteralPath $ExerciseLibraryJson).Path
+$resolvedApprovedExerciseDefinitionsJson = $null
+if (-not [string]::IsNullOrWhiteSpace($ApprovedExerciseDefinitionsJson)) {
+    $resolvedApprovedExerciseDefinitionsJson = (Resolve-Path -LiteralPath $ApprovedExerciseDefinitionsJson).Path
+}
 $resolvedEquipmentJson = $null
 if (-not [string]::IsNullOrWhiteSpace($EquipmentJson)) {
     $resolvedEquipmentJson = (Resolve-Path -LiteralPath $EquipmentJson).Path
@@ -110,7 +129,48 @@ function Resolve-MotionPythonCommand {
 }
 
 $PythonCommand = Resolve-MotionPythonCommand $PythonCommand
-if (-not $PSBoundParameters.ContainsKey("PythonCommand")) {
+$definitionPreflightDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ("exercise-motion-library-definition-preflight-" + [guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Force -Path $definitionPreflightDirectory | Out-Null
+$definitionPreflightListPath = Join-Path $definitionPreflightDirectory "exercise_library.json"
+$definitionPreflightEffectivePlanPath = Join-Path $definitionPreflightDirectory "effective_workout_plan.json"
+$definitionPreflightReportPath = Join-Path $definitionPreflightDirectory "definition_readiness_report.json"
+$definitionPreflightArguments = @(
+    "-m", "exercise_motion_pkg.cli", "list-workout-plan-exercises",
+    "--workout-plan-json", $resolvedLibraryJson,
+    "--definition-effective-plan-json", $definitionPreflightEffectivePlanPath,
+    "--definition-readiness-report-json", $definitionPreflightReportPath,
+    "--source-budget-workspace-root", ([System.IO.Path]::GetFullPath($WorkspaceRoot)),
+    "--source-review-timeout-seconds", "$SourceReviewTimeoutSeconds",
+    "--exercise-timeout-seconds", "$ExerciseTimeoutSeconds",
+    "--max-source-window-attempts", "$MaxSourceWindowAttempts",
+    "--out-json", $definitionPreflightListPath
+)
+if (-not [string]::IsNullOrWhiteSpace($resolvedEquipmentJson)) {
+    $definitionPreflightArguments += @("--equipment-json", $resolvedEquipmentJson)
+}
+if ($resolvedApprovedExerciseDefinitionsJson) {
+    $definitionPreflightArguments += @("--approved-exercise-definitions-json", $resolvedApprovedExerciseDefinitionsJson)
+}
+& $PythonCommand @definitionPreflightArguments
+if ($LASTEXITCODE -ne 0) {
+    throw "Exercise-definition preflight failed with exit code $LASTEXITCODE. No reset, revalidation, or discovery was started."
+}
+$definitionExerciseList = Get-Content -LiteralPath $definitionPreflightListPath -Raw | ConvertFrom-Json
+$definitionReadiness = $definitionExerciseList.definitionReadiness
+$readyDefinitionExerciseSlugs = @(
+    $definitionExerciseList.exercises |
+        Where-Object { $_.definitionReadiness.status -eq "ready" } |
+        ForEach-Object { [string]$_.slug } |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        Select-Object -Unique
+)
+$readyDefinitionExerciseCount = $readyDefinitionExerciseSlugs.Count
+$readySourceReviewExerciseCount = @(
+    $definitionExerciseList.exercises |
+        Where-Object { $_.definitionReadiness.status -eq "ready" -and $_.sourceReviewBudgetReadiness.ready -eq $true }
+).Count
+$definitionEffectivePlanSha256 = (Get-FileHash -LiteralPath $definitionPreflightEffectivePlanPath -Algorithm SHA256).Hash
+if (-not $PSBoundParameters.ContainsKey("PythonCommand") -and $readySourceReviewExerciseCount -gt 0) {
     & $PythonCommand -c "import sys, torch; assert torch.cuda.is_available(), f'{sys.executable} cannot see CUDA'; print(sys.executable)" *> $null
     if ($LASTEXITCODE -ne 0) {
         throw "The automatically selected exercise-motion Python cannot see CUDA: $PythonCommand"
@@ -127,6 +187,17 @@ if ([string]::IsNullOrWhiteSpace($OutputJson)) {
 
 New-Item -ItemType Directory -Force -Path $WorkspaceRoot | Out-Null
 $resolvedWorkspaceRoot = (Resolve-Path -LiteralPath $WorkspaceRoot).Path
+$definitionEffectivePlanPath = Join-Path $resolvedWorkspaceRoot "effective_workout_plan.json"
+$definitionReadinessReportPath = Join-Path $resolvedWorkspaceRoot "definition_readiness_report.json"
+Copy-Item -LiteralPath $definitionPreflightEffectivePlanPath -Destination $definitionEffectivePlanPath -Force
+$definitionEffectivePlanSha256 = (Get-FileHash -LiteralPath $definitionEffectivePlanPath -Algorithm SHA256).Hash
+$definitionReadiness | Add-Member -NotePropertyName effectivePlanPath -NotePropertyValue $definitionEffectivePlanPath -Force
+$definitionReadiness | Add-Member -NotePropertyName effectivePlanSha256 -NotePropertyValue $definitionEffectivePlanSha256 -Force
+$definitionReadiness | ConvertTo-Json -Depth 32 | Set-Content -LiteralPath $definitionReadinessReportPath -Encoding UTF8
+foreach ($preflightArtifactPath in @($definitionPreflightListPath, $definitionPreflightEffectivePlanPath, $definitionPreflightReportPath)) {
+    Remove-Item -LiteralPath $preflightArtifactPath -Force -ErrorAction SilentlyContinue
+}
+Remove-Item -LiteralPath $definitionPreflightDirectory -Force -ErrorAction SilentlyContinue
 $summaryPath = Join-Path $resolvedWorkspaceRoot "workout_motion_generation_summary.json"
 $firstPassSummaryPath = Join-Path $resolvedWorkspaceRoot "exercise_library_first_pass_summary.json"
 $deferredPassSummaryPath = Join-Path $resolvedWorkspaceRoot "exercise_library_deferred_pass_summary.json"
@@ -158,8 +229,17 @@ $equipmentSignature = if ([string]::IsNullOrWhiteSpace($resolvedEquipmentJson)) 
 } else {
     (Get-FileHash -Algorithm SHA256 -LiteralPath $resolvedEquipmentJson).Hash
 }
+$sourceLibrarySha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $resolvedLibraryJson).Hash
+$approvedDefinitionsSha256 = if ($resolvedApprovedExerciseDefinitionsJson) {
+    (Get-FileHash -Algorithm SHA256 -LiteralPath $resolvedApprovedExerciseDefinitionsJson).Hash
+} else { "none" }
+$equipmentInputSha256 = if ([string]::IsNullOrWhiteSpace($resolvedEquipmentJson)) { "none" } else { $equipmentSignature }
+$libraryInputIdentityBytes = [System.Text.Encoding]::UTF8.GetBytes("$sourceLibrarySha256`n$approvedDefinitionsSha256`n$definitionEffectivePlanSha256`n$equipmentInputSha256")
+$libraryInputIdentitySha256 = [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData($libraryInputIdentityBytes))
 $runSignatureSource = @(
-    (Get-FileHash -Algorithm SHA256 -LiteralPath $resolvedLibraryJson).Hash,
+    $sourceLibrarySha256,
+    $approvedDefinitionsSha256,
+    $definitionEffectivePlanSha256,
     $equipmentSignature,
     "$SelectionValidationPolicyVersion",
     "$RetainedSelectedRevalidationVersion",
@@ -181,32 +261,83 @@ $runSignature = [Convert]::ToHexString(
     [System.Security.Cryptography.SHA256]::HashData($signatureBytes)
 )
 
+function Write-AtomicJson {
+    param([string]$Path, [object]$Value, [int]$Depth = 16)
+    $temporaryPath = "$Path.$script:LibraryRunId.tmp"
+    $Value | ConvertTo-Json -Depth $Depth | Set-Content -LiteralPath $temporaryPath -Encoding UTF8
+    Move-Item -Force -LiteralPath $temporaryPath -Destination $Path
+}
+
 function Write-RunState {
     param(
         [string]$Phase,
-        [string]$SummaryJson = ""
+        [string]$SummaryJson = "",
+        [string]$Outcome = $script:LibraryRunOutcome,
+        [string]$ErrorMessage = ""
     )
+
+    if (-not $script:LibraryStateInitialized -and (Test-Path -LiteralPath $statePath)) {
+        $priorStateHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $statePath).Hash.Substring(0, 12)
+        $priorStateTime = (Get-Item -LiteralPath $statePath).LastWriteTimeUtc.ToString("yyyyMMddTHHmmssZ")
+        $priorStateArchive = "$statePath.previous-$priorStateTime-$priorStateHash.json"
+        $archiveIndex = 1
+        while (Test-Path -LiteralPath $priorStateArchive) {
+            $priorStateArchive = "$statePath.previous-$priorStateTime-$priorStateHash-$archiveIndex.json"
+            $archiveIndex += 1
+        }
+        Copy-Item -LiteralPath $statePath -Destination $priorStateArchive
+    }
+    $script:LibraryStateInitialized = $true
 
     $counts = [ordered]@{}
     if (-not [string]::IsNullOrWhiteSpace($SummaryJson) -and (Test-Path -LiteralPath $SummaryJson)) {
-        $summary = Get-Content -LiteralPath $SummaryJson -Raw | ConvertFrom-ReconstructionJson
-        foreach ($group in @($summary.exercises | Group-Object status)) {
-            $counts[$group.Name] = $group.Count
-        }
+        try {
+            $summary = Get-Content -LiteralPath $SummaryJson -Raw | ConvertFrom-ReconstructionJson
+            if ($summary.libraryRunId -eq $script:LibraryRunId -and $summary.inputIdentitySha256 -eq $libraryInputIdentitySha256) {
+                foreach ($group in @($summary.exercises | Group-Object status)) { $counts[$group.Name] = $group.Count }
+            }
+        } catch { }
     }
+    $terminalCount = 0
+    foreach ($statusName in $counts.Keys) {
+        if ($statusName -ne "postponed") { $terminalCount += [int]$counts[$statusName] }
+    }
+    $totalCount = 0
+    try { $library = Get-Content -LiteralPath $resolvedLibraryJson -Raw | ConvertFrom-ReconstructionJson; $totalCount = @($library.exercises).Count } catch { }
     $state = [ordered]@{
-        schemaVersion = 1
+        schemaVersion = 2
+        runId = $script:LibraryRunId
         signature = $runSignature
+        inputIdentitySha256 = $libraryInputIdentitySha256
+        approvedDefinitionsSha256 = $approvedDefinitionsSha256
+        effectiveDefinitionPlanSha256 = $definitionEffectivePlanSha256
+        outcome = $Outcome
+        startedAtUtc = $script:LibraryRunStartedAtUtc
+        completedAtUtc = if ($Outcome -eq "completed") { (Get-Date).ToUniversalTime().ToString("o") } else { $null }
+        stoppedAtUtc = if ($Outcome -eq "stopped") { (Get-Date).ToUniversalTime().ToString("o") } else { $null }
+        failedAtUtc = if ($Outcome -eq "failed") { (Get-Date).ToUniversalTime().ToString("o") } else { $null }
         phase = $Phase
         updatedAt = (Get-Date).ToUniversalTime().ToString("o")
         sourceExerciseLibraryPath = $resolvedLibraryJson
         sourceEquipmentPath = if ([string]::IsNullOrWhiteSpace($resolvedEquipmentJson)) { $null } else { $resolvedEquipmentJson }
         summaryPath = if ([string]::IsNullOrWhiteSpace($SummaryJson)) { $null } else { $SummaryJson }
+        totalExerciseCount = $totalCount
+        terminalExerciseCount = $terminalCount
+        pendingExerciseCount = [Math]::Max(0, $totalCount - $terminalCount)
         counts = $counts
+        errorMessage = if ([string]::IsNullOrWhiteSpace($ErrorMessage)) { $null } else { $ErrorMessage }
     }
-    $temporaryStatePath = "$statePath.tmp"
-    $state | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $temporaryStatePath -Encoding UTF8
-    Move-Item -Force -LiteralPath $temporaryStatePath -Destination $statePath
+    Write-AtomicJson -Path $statePath -Value $state
+}
+
+function Exit-IfLibraryRunInterrupted {
+    param([int]$ExitCode = $LASTEXITCODE)
+    if ((Test-MotionRunCancelRequested) -or $ExitCode -eq 130) {
+        $script:LibraryRunOutcome = "stopped"
+        $summaryForOutcome = if (Test-Path -LiteralPath $summaryPath) { $summaryPath } else { "" }
+        Write-RunState -Phase "stopped" -SummaryJson $summaryForOutcome -Outcome "stopped"
+        Exit-IfMotionRunInterrupted -ExitCode $ExitCode
+    }
 }
 
 function Invoke-MovementPass {
@@ -223,9 +354,15 @@ function Invoke-MovementPass {
         "-IncrementalMobilePackageOutputJson", $OutputJson
         "-PythonCommand", $PythonCommand
     )
+    $passRunId = [guid]::NewGuid().ToString("N")
+    $runnerArguments += @("-InvocationRunId", $passRunId, "-LibraryRunId", $script:LibraryRunId)
     if (-not [string]::IsNullOrWhiteSpace($resolvedEquipmentJson)) {
         $runnerArguments += @("-EquipmentJson", $resolvedEquipmentJson)
     }
+    if ($resolvedApprovedExerciseDefinitionsJson) {
+        $runnerArguments += @("-ApprovedExerciseDefinitionsJson", $resolvedApprovedExerciseDefinitionsJson)
+    }
+    $runnerArguments += @("-InputIdentitySha256", $libraryInputIdentitySha256)
     if ($ReuseSelected) {
         $runnerArguments += "-ReuseExistingSelected"
     }
@@ -240,6 +377,8 @@ function Invoke-MovementPass {
     if ($ExerciseTimeoutSeconds -gt 0) {
         $runnerArguments += @('-ExerciseTimeoutSeconds', "$ExerciseTimeoutSeconds")
     }
+    $runnerArguments += @('-SourceReviewTimeoutSeconds', "$SourceReviewTimeoutSeconds",
+        '-MaxSourceWindowAttempts', "$MaxSourceWindowAttempts")
     Write-MotionLibraryMessage "Discovery turn: up to $candidateBudget new candidates or $reviewSeconds seconds of review; finish the active batch before yielding."
     if (-not $DisableCpuPrefetch) {
         $runnerArguments += @(
@@ -257,20 +396,35 @@ function Invoke-MovementPass {
             "-KeepLlamaCppServer:`$true"
         )
     }
-    if (-not $DisableStagedWaves -and $MaxConcurrentStagedWaves -gt 1) {
+    $exclusiveGpuIndex = 0
+    $hasExclusiveGpuLane = [int]::TryParse(
+        "$env:EXERCISE_MOTION_EXCLUSIVE_GPU_DEVICE", [ref]$exclusiveGpuIndex
+    ) -and $exclusiveGpuIndex -gt 0
+    if (-not $DisableStagedWaves -and ($MaxConcurrentStagedWaves -gt 1 -or $hasExclusiveGpuLane)) {
         $runnerArguments += "-SharedLlamaServer"
     }
     $runnerArguments += $RemainingArguments
 
     for ($restartAttempt = 1; $restartAttempt -le $PassRestartAttempts; $restartAttempt += 1) {
         $passExitCode = Invoke-MotionLibraryLoggedCommand -Command pwsh -Arguments $runnerArguments -LogPath $diagnosticLogPath -ShowDetails:$showDetailedOutput
-        Exit-IfMotionRunInterrupted -ExitCode $passExitCode
+        Exit-IfLibraryRunInterrupted -ExitCode $passExitCode
         if ($passExitCode -eq 75) {
             Write-MotionLibraryMessage "Movement generation stopped: insufficient storage. Free space and resume; automatic retries are suspended."
+            $script:LibraryRunOutcome = "stopped"
+            Write-RunState -Phase "stopped" -Outcome "stopped" -ErrorMessage "Insufficient storage (exit code 75)."
             exit 75
         }
         if ($passExitCode -eq 0 -and (Test-Path -LiteralPath $summaryPath)) {
-            return
+            try { $passSummary = Get-Content -LiteralPath $summaryPath -Raw | ConvertFrom-ReconstructionJson } catch { $passSummary = $null }
+            if ($passSummary -and
+                $passSummary.runId -eq $passRunId -and
+                $passSummary.libraryRunId -eq $script:LibraryRunId -and
+                $passSummary.inputIdentitySha256 -eq $libraryInputIdentitySha256 -and
+                $passSummary.approvedDefinitionsSha256 -eq $approvedDefinitionsSha256 -and
+                $passSummary.effectiveDefinitionPlanSha256 -eq $definitionEffectivePlanSha256) {
+                return
+            }
+            throw "Exercise-library pass exited successfully but its summary does not match this pass ID and input identity; refusing to consume stale output at $summaryPath."
         }
 
         $failure = if ($passExitCode -ne 0) {
@@ -351,14 +505,17 @@ function Invoke-ExistingSelectionRevalidation {
     $revalidateArguments = @(
         "-m", "exercise_motion_pkg.cli", "revalidate-library-workspace",
         "--workspace-root", $resolvedWorkspaceRoot,
-        "--exercise-library-json", $resolvedLibraryJson,
+        "--exercise-library-json", $definitionEffectivePlanPath,
         "--out-json", $reportPath
     )
     if (-not [string]::IsNullOrWhiteSpace($resolvedEquipmentJson)) {
         $revalidateArguments += @("--equipment-json", $resolvedEquipmentJson)
     }
+    foreach ($exerciseSlug in $readyDefinitionExerciseSlugs) {
+        $revalidateArguments += @("--only-exercise-slug", $exerciseSlug)
+    }
     $revalidateExitCode = Invoke-MotionLibraryLoggedCommand -Command $PythonCommand -Arguments $revalidateArguments -LogPath $diagnosticLogPath -ShowDetails:$showDetailedOutput
-    Exit-IfMotionRunInterrupted -ExitCode $revalidateExitCode
+    Exit-IfLibraryRunInterrupted -ExitCode $revalidateExitCode
     if ($revalidateExitCode -ne 0) {
         throw "Existing selection revalidation failed with exit code $revalidateExitCode"
     }
@@ -389,35 +546,20 @@ function Write-MovementPackage {
         '-WorkoutPlanPackageJson', $resolvedLibraryJson, '-MotionSummaryJson', $MotionSummaryJson,
         '-OutputJson', $OutputJson, '-StrictIdMatch', '-AllowEmpty')
     $packageExitCode = Invoke-MotionLibraryLoggedCommand -Command pwsh -Arguments $packageArguments -LogPath $diagnosticLogPath -ShowDetails:$showDetailedOutput
-    Exit-IfMotionRunInterrupted -ExitCode $packageExitCode
+    Exit-IfLibraryRunInterrupted -ExitCode $packageExitCode
     if ($packageExitCode -ne 0) {
         throw "Movement package creation failed with exit code $packageExitCode. Details: $diagnosticLogPath"
     }
 
 }
 
-function Invoke-AutoResetDiscoveryRejections {
-    # Discovery reviews accumulate per-candidate rejections in the candidates
-    # manifests, and same-workspace resumes never re-attempt them. Re-eligible
-    # them at every run start so candidates rejected under older review logic
-    # are re-reviewed under the current one (identity rejections stay
-    # permanent). Mirrors scripts/reset_exercise_motion_candidate_rejections.py.
-    $repoRoot = Split-Path -Parent $PSScriptRoot
-    $resetScript = Join-Path $repoRoot "scripts/reset_exercise_motion_candidate_rejections.py"
-    $resetArguments = @(
-        $resetScript,
-        "--workspace-root", $resolvedWorkspaceRoot
-    )
-    Write-MotionLibraryMessage "Re-enabling discovery-rejected candidates for re-review under the current review logic."
-    $resetExitCode = Invoke-MotionLibraryLoggedCommand -Command $PythonCommand -Arguments $resetArguments -LogPath $diagnosticLogPath -ShowDetails:$showDetailedOutput
-    if ($resetExitCode -ne 0) {
-        Write-MotionLibraryMessage "Discovery rejection reset exited with code $resetExitCode; continuing."
-    }
-}
-
 $skipFirstPass = $false
-Invoke-AutoResetDiscoveryRejections
-Invoke-PassBoundaryRevalidation
+if ($readyDefinitionExerciseCount -gt 0) {
+    # Discovery owns policy/input invalidation; resuming must preserve its verdicts.
+    Invoke-PassBoundaryRevalidation
+} else {
+    Write-MotionLibraryMessage "Definition preflight found no ready targets; skipping retained-selection revalidation."
+}
 if (-not $Fresh -and (Test-Path -LiteralPath $statePath)) {
     try {
         $existingState = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-ReconstructionJson
@@ -429,6 +571,8 @@ if (-not $Fresh -and (Test-Path -LiteralPath $statePath)) {
         $skipFirstPass = $false
     }
 }
+if ($readyDefinitionExerciseCount -eq 0) { $skipFirstPass = $false }
+Write-RunState -Phase "initialized" -Outcome "running"
 
 if (-not $skipFirstPass) {
     Write-MotionLibraryMessage -NewBlock "Pass 1/2: try one candidate for each exercise; revisit unresolved exercises in pass 2."
@@ -437,14 +581,18 @@ if (-not $skipFirstPass) {
     Copy-Item -Force -LiteralPath $summaryPath -Destination $firstPassSummaryPath
     $firstPassSummary = Get-Content -LiteralPath $firstPassSummaryPath -Raw | ConvertFrom-ReconstructionJson
     foreach ($exercise in @($firstPassSummary.exercises)) {
-        if ($exercise.status -ne "completed") {
+        if ($exercise.status -notin @("completed", "needs_definition_review")) {
             $exercise | Add-Member -NotePropertyName firstPassStatus -NotePropertyValue $exercise.status -Force
             $exercise.status = "postponed"
         }
     }
     $firstPassSummary | ConvertTo-Json -Depth 64 | Set-Content -LiteralPath $firstPassSummaryPath -Encoding UTF8
-    Write-RunState -Phase "first_pass_completed" -SummaryJson $firstPassSummaryPath
+    Write-RunState -Phase "first_pass_completed" -SummaryJson $firstPassSummaryPath -Outcome "running"
     Write-MovementPackage -MotionSummaryJson $firstPassSummaryPath
+    if ($readyDefinitionExerciseCount -eq 0) {
+        Copy-Item -Force -LiteralPath $firstPassSummaryPath -Destination $deferredPassSummaryPath
+        Write-RunState -Phase "deferred_pass_completed" -SummaryJson $deferredPassSummaryPath -Outcome "running"
+    }
 } else {
     Write-MotionLibraryMessage "Exercise library phase 1/2 already completed for these inputs; resuming deferred work."
 }
@@ -472,7 +620,7 @@ function Get-SourceTurnResumeSignature {
 }
 
 $round = 0
-while ($true) {
+while ($readyDefinitionExerciseCount -gt 0) {
     $round += 1
     $beforeReviewCount = Get-DiscoveryReviewCount
     $beforeSourceTurnSignature = Get-SourceTurnResumeSignature
@@ -482,7 +630,7 @@ while ($true) {
     Invoke-MovementPass -ReuseSelected
     Copy-Item -Force -LiteralPath $summaryPath -Destination $deferredPassSummaryPath
     Write-MovementPackage -MotionSummaryJson $deferredPassSummaryPath
-    Write-RunState -Phase "deferred_pass_completed" -SummaryJson $deferredPassSummaryPath
+    Write-RunState -Phase "deferred_pass_completed" -SummaryJson $deferredPassSummaryPath -Outcome "running"
     $roundSummary = Get-Content -LiteralPath $deferredPassSummaryPath -Raw | ConvertFrom-ReconstructionJson
     $unresolved = @($roundSummary.exercises | Where-Object status -ne 'completed').Count
     $newReviews = (Get-DiscoveryReviewCount) - $beforeReviewCount
@@ -504,3 +652,5 @@ Write-MotionLibraryOutcomeSummary -SummaryPath $deferredPassSummaryPath
 Write-MotionLibraryMessage ("Elapsed: {0:hh\:mm\:ss}" -f ((Get-Date) - $runStartedAt))
 Write-MotionLibraryMessage "Detailed log: $diagnosticLogPath"
 Write-MotionLibraryMessage "Resume unresolved work: $resumeCommand"
+Write-RunState -Phase "invocation_completed" -SummaryJson $deferredPassSummaryPath -Outcome "completed"
+$script:LibraryRunOutcome = "completed"

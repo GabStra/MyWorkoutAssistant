@@ -80,17 +80,80 @@ def visible_gpu_count() -> int | None:
 def resolve_stage_cuda_device(device: str) -> str:
     """Map bare "cuda" to the exclusive lane's device for subprocess launchers."""
     lane = exclusive_gpu_device()
-    if lane is not None and device.strip().lower() in {"cuda", "gpu"}:
-        return f"cuda:{lane}"
+    normalized = device.strip().lower()
+    if lane is not None:
+        if normalized in {"cuda", "gpu"}:
+            return f"cuda:{lane}"
+        if normalized.startswith("cuda:") and normalized[5:].isdigit():
+            requested_device = normalized[5:]
+        elif normalized.isdigit():
+            requested_device = normalized
+        else:
+            return device
+        if requested_device != lane:
+            raise ValueError(
+                f"CUDA device {device!r} conflicts with exclusive GPU {lane}; "
+                f"use cuda:{lane} or disable the exclusive GPU lane."
+            )
     return device
 
 
+def resolve_llama_server_cuda_visibility(exclusive_device: str | None) -> str | None:
+    """Pin the resident llama server to GPU 0 when exclusive work uses another card."""
+    if exclusive_device is None:
+        return None
+    gpu_uuid = gpu_device_uuid("0")
+    if gpu_uuid is None:
+        raise RuntimeError("Could not resolve physical GPU UUID for the resident llama server on GPU 0.")
+    return gpu_uuid
+
+
+def gpu_device_uuid(device_index: str) -> str | None:
+    """Return the physical NVIDIA UUID for a host GPU index."""
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=index,uuid", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5.0,
+        )
+        if result.returncode != 0:
+            return None
+        for line in result.stdout.splitlines():
+            index, gpu_uuid = (part.strip() for part in line.split(",", 1))
+            if index == str(device_index):
+                return gpu_uuid
+    except (OSError, subprocess.SubprocessError, ValueError):
+        pass
+    return None
+
+
 def resolve_docker_gpu_selection(docker_gpus: str) -> str:
-    """Pin a default "all" container GPU grant to the exclusive lane's device."""
+    """Pin Docker's grant to the same physical GPU used by the exclusive lane."""
     lane = exclusive_gpu_device()
-    if lane is not None and docker_gpus.strip().lower() in {"", "all"}:
-        return f"device={lane}"
-    return docker_gpus
+    if lane is None:
+        return docker_gpus
+
+    gpu_selection = docker_gpus.strip()
+    gpu_uuid = gpu_device_uuid(lane)
+    if gpu_uuid is None:
+        raise RuntimeError(f"Could not resolve physical GPU UUID for exclusive GPU {lane}.")
+    if gpu_selection.lower() in {"", "all"}:
+        return f"device={gpu_uuid}"
+
+    selector_name, separator, selector_value = gpu_selection.partition("=")
+    selector_value = selector_value.strip()
+    if (
+        separator
+        and selector_name.strip().lower() == "device"
+        and selector_value
+        and "," not in selector_value
+        and selector_value.lower() in {lane.lower(), gpu_uuid.lower()}
+    ):
+        return f"device={gpu_uuid}"
+
+    raise ValueError(
+        f"Docker GPU selection {docker_gpus!r} conflicts with exclusive GPU {lane}; "
+        f"select device={gpu_uuid} or leave Docker GPU selection as 'all'."
+    )
 
 
 def _activate_torch_device(device: str) -> None:

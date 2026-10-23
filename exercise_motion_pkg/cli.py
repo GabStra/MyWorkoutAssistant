@@ -6,6 +6,7 @@ initialize_cli_runtime()
 
 import argparse
 from dataclasses import fields, replace
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -492,6 +493,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     youtube_search.add_argument("--contract-prefetch-workers", type=int)
     youtube_search.add_argument("--only-exercise-id", action="append", default=[])
+    youtube_search.add_argument(
+        "--definition-readiness-report-json",
+        type=Path,
+        help="Optional offline preflight report path; unresolved selected exercises stop before discovery.",
+    )
     youtube_search.add_argument("--llama-cpp-base-url", default="http://127.0.0.1:8090")
     youtube_search.add_argument("--no-llama-cpp", action="store_true")
     youtube_search.add_argument("--llama-cpp-model", default=DEFAULT_LLAMA_CPP_MODEL)
@@ -611,6 +617,40 @@ def build_parser() -> argparse.ArgumentParser:
     )
     list_plan_exercises.add_argument("--out-json", required=True)
     list_plan_exercises.add_argument("--include-disabled", action="store_true")
+    list_plan_exercises.add_argument(
+        "--approved-exercise-definitions-json",
+        type=Path,
+        help="Reviewed plan containing explicitly approved exercise-definition records.",
+    )
+    list_plan_exercises.add_argument(
+        "--definition-effective-plan-json",
+        type=Path,
+        help="Required with --approved-exercise-definitions-json; writes the exact enriched plan for downstream stages.",
+    )
+    list_plan_exercises.add_argument(
+        "--definition-readiness-report-json",
+        type=Path,
+        help="Optional path for the pre-discovery definition-readiness report and review queue.",
+    )
+    list_plan_exercises.add_argument(
+        "--source-budget-workspace-root",
+        type=Path,
+        help="Optional movement workspace used to check each exercise's retained source-review budget offline.",
+    )
+    list_plan_exercises.add_argument("--source-review-timeout-seconds", type=float, default=180.0)
+    list_plan_exercises.add_argument("--exercise-timeout-seconds", type=float, default=0.0)
+    list_plan_exercises.add_argument("--max-source-window-attempts", type=int, default=0)
+
+    definition_review = subparsers.add_parser(
+        "review-motion-definition", help="Export a provisional definition, or explicitly approve an edited review into a new plan.",
+    )
+    definition_review.add_argument("--workout-plan-json", required=True, type=Path)
+    definition_review.add_argument("--equipment-json", type=Path)
+    definition_review.add_argument("--exercise-id", required=True)
+    definition_review.add_argument("--review-json", required=True, type=Path)
+    definition_review.add_argument("--candidates-json", type=Path, help="Required when exporting a pending review.")
+    definition_review.add_argument("--approve", action="store_true", help="Explicitly approve the edited definition; never called automatically.")
+    definition_review.add_argument("--out-plan-json", type=Path, help="New plan path required with --approve.")
 
     source_prefetch = subparsers.add_parser(
         "prefetch-youtube-sources",
@@ -1375,6 +1415,23 @@ def run_staged_bake_wave_manifest(
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
+    if args.command == "review-motion-definition":
+        from .definition_review import approve_definition_review, export_definition_review
+
+        common = dict(plan_path=args.workout_plan_json, exercise_id=args.exercise_id,
+                      review_path=args.review_json, equipment_path=args.equipment_json)
+        if args.approve:
+            if args.out_plan_json is None:
+                parser.error("--approve requires --out-plan-json")
+            result = approve_definition_review(**common, output_path=args.out_plan_json)
+            print(json.dumps(result, indent=2))
+            print("Resume the existing runner with -WorkoutPlanJson pointing to this plan and the same -WorkspaceRoot.")
+        else:
+            if args.candidates_json is None:
+                parser.error("Export requires --candidates-json")
+            export_definition_review(**common, candidates_path=args.candidates_json)
+            print(f"Pending review written to {args.review_json}. Edit definition, then explicitly run --approve.")
+        return
     if args.command == "generate":
         if (args.source_start_seconds is None) != (args.source_end_seconds is None):
             raise ValueError("Provide both --source-start-seconds and --source-end-seconds together.")
@@ -1576,15 +1633,64 @@ def main() -> None:
         return
     if args.command == "list-workout-plan-exercises":
         out_json = Path(args.out_json)
-        exercises = load_workout_plan_exercises(
-            Path(args.workout_plan_json),
-            include_disabled=args.include_disabled,
-            equipment_path=Path(args.equipment_json) if args.equipment_json else None,
+        from exercise_motion_pkg.definition_ingestion import (
+            prepare_workout_plan_definition_readiness,
+            write_definition_readiness_report,
         )
+        if args.approved_exercise_definitions_json and not args.definition_effective_plan_json:
+            parser.error("--approved-exercise-definitions-json requires --definition-effective-plan-json")
+        effective_plan, exercises, readiness = prepare_workout_plan_definition_readiness(
+            plan_path=Path(args.workout_plan_json),
+            approved_registry_path=args.approved_exercise_definitions_json,
+            equipment_path=Path(args.equipment_json) if args.equipment_json else None,
+            include_disabled=args.include_disabled,
+        )
+        source_budget_summary = None
+        if args.source_budget_workspace_root:
+            from exercise_motion_pkg.source_turn_budget import source_turn_budget_readiness
+            slug_counts: dict[str, int] = {}
+            budget_entries = []
+            for exercise in exercises:
+                base_slug = exercise.slug or "exercise"
+                slug_counts[base_slug] = slug_counts.get(base_slug, 0) + 1
+                workspace_slug = (
+                    base_slug if slug_counts[base_slug] == 1
+                    else f"{base_slug}-{slug_counts[base_slug]}"
+                )
+                budget = source_turn_budget_readiness(
+                    workspace=(Path(args.source_budget_workspace_root) / workspace_slug / "bake"),
+                    exercise_id=exercise.exercise_id,
+                    exercise_name=exercise.name,
+                    authoritative_exercise_motion_context=exercise.motion_context,
+                    source_review_timeout_seconds=args.source_review_timeout_seconds,
+                    exercise_timeout_seconds=args.exercise_timeout_seconds,
+                    max_source_window_attempts=args.max_source_window_attempts,
+                )
+                budget["status"] = "ready" if budget["ready"] else "needs_source_review"
+                budget["workspaceSlug"] = workspace_slug
+                budget_entries.append((exercise.exercise_id, budget))
+            budget_by_id = {exercise_id: budget for exercise_id, budget in budget_entries}
+            source_budget_summary = {
+                "readyCount": sum(budget["ready"] for _, budget in budget_entries),
+                "needsReviewCount": sum(not budget["ready"] for _, budget in budget_entries),
+                "byExerciseId": {exercise_id: budget for exercise_id, budget in budget_entries},
+                "workspaceRoot": str(args.source_budget_workspace_root.resolve()),
+            }
+        if args.definition_effective_plan_json:
+            from exercise_motion_pkg.definition_ingestion import write_effective_workout_plan
+            write_effective_workout_plan(args.definition_effective_plan_json, effective_plan)
+            readiness["effectivePlanPath"] = str(args.definition_effective_plan_json.resolve())
+            readiness["effectivePlanSha256"] = hashlib.sha256(
+                args.definition_effective_plan_json.read_bytes()
+            ).hexdigest()
+        if args.definition_readiness_report_json:
+            write_definition_readiness_report(args.definition_readiness_report_json, readiness)
         payload = {
             "schemaVersion": 1,
             "sourceWorkoutPlanPath": str(Path(args.workout_plan_json)),
             "equipmentJsonPath": str(Path(args.equipment_json)) if args.equipment_json else None,
+            "definitionReadiness": readiness,
+            **({"sourceReviewBudgetReadiness": source_budget_summary} if source_budget_summary is not None else {}),
             "exercises": [
                 {
                     "exerciseId": exercise.exercise_id,
@@ -1593,6 +1699,14 @@ def main() -> None:
                     "sourceExerciseName": exercise.source_name,
                     "equipmentQualifiedExerciseName": exercise.equipment_qualified_name,
                     "motionContext": exercise.motion_context,
+                    "definitionReadiness": readiness["readinessByExerciseId"].get(
+                        exercise.exercise_id,
+                        {"status": "needs_definition_review", "reason": "readiness_missing"},
+                    ),
+                    **({"sourceReviewBudgetReadiness": budget_by_id.get(
+                        exercise.exercise_id,
+                        {"ready": False, "status": "needs_source_review", "stopReason": "readiness_missing"},
+                    )} if source_budget_summary is not None else {}),
                     "exerciseNameRewrite": {
                         "applied": exercise.name_was_rewritten,
                         "reason": exercise.name_rewrite_reason,
@@ -1606,6 +1720,24 @@ def main() -> None:
         print(f"Wrote {len(exercises)} workout-plan exercise(s) to {out_json}")
         return
     if args.command == "find-youtube-videos":
+        from exercise_motion_pkg.definition_ingestion import (
+            prepare_workout_plan_definition_readiness,
+            require_definition_readiness,
+            write_definition_readiness_report,
+        )
+        _, _, definition_readiness = prepare_workout_plan_definition_readiness(
+            plan_path=Path(args.workout_plan_json),
+            equipment_path=Path(args.equipment_json) if args.equipment_json else None,
+            exercise_ids=set(args.only_exercise_id) if args.only_exercise_id else None,
+        )
+        if args.definition_readiness_report_json:
+            write_definition_readiness_report(args.definition_readiness_report_json, definition_readiness)
+        try:
+            require_definition_readiness(definition_readiness)
+        except ValueError as exc:
+            if args.definition_readiness_report_json:
+                raise ValueError(f"{exc} Full report: {args.definition_readiness_report_json.resolve()}") from exc
+            raise
         out_json = Path(args.out_json)
         preview_cache_dir = args.youtube_preview_cache_dir or (out_json.parent / "youtube-preview-cache")
         excluded_candidate_keys = load_youtube_candidate_exclusion_keys(

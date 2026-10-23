@@ -28,6 +28,17 @@ def _record(config: dict[str, Any], event: str, **details: Any) -> None:
         stream.write(json.dumps({"event": event, **details}, sort_keys=True) + "\n")
 
 
+def _structured_source_fixture(schema: dict[str, Any]) -> dict[str, Any]:
+    fields = schema["properties"]["observations"]["items"]["properties"]
+    ids = fields["evidenceFrameIds"]["items"]["enum"]
+    phases = [rid for rid in fields["requirementId"]["enum"] if rid.startswith("phase_")]
+    uniform = [fid for fid in ids if fid.startswith("uniform:")]
+    return {"observations": [{"requirementId": rid, "verdict": "supported",
+        "evidenceFrameIds": [uniform[phases.index(rid)]] if rid in phases else ids,
+        **({"observedObjectCount": 1} if rid.startswith("equipment_") else {})}
+        for rid in fields["requirementId"]["enum"]]}
+
+
 def _patch_module(fullname: str, module: Any) -> None:
     config = _config()
 
@@ -123,6 +134,9 @@ def _patch_module(fullname: str, module: Any) -> None:
 
         class FixtureVisionClient:
             def caption_images(self, *, frame_paths: list[Path], prompt: str, **_kwargs: Any) -> str:
+                if _kwargs.get("response_schema") is not None:
+                    _record(config, "structured_source_evidence_request", frameCount=len(frame_paths))
+                    return json.dumps(_structured_source_fixture(_kwargs["response_schema"]))
                 if not frame_paths and "Audit only the consistency of independent written visual observations" not in prompt:
                     payload = {
                         "score": 0.99,
@@ -555,6 +569,9 @@ def _patch_module(fullname: str, module: Any) -> None:
                 prompt: str,
                 **_request_options: Any,
             ) -> str:
+                if _request_options.get("response_schema") is not None:
+                    _record(config, "structured_source_evidence_request", frameCount=len(frame_paths))
+                    return json.dumps(_structured_source_fixture(_request_options["response_schema"]))
                 if "Verify an exact exercise-specific movement topology" in prompt:
                     from exercise_motion_pkg.bake_and_rank import movement_topology_from_contract
 

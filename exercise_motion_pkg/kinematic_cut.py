@@ -39,12 +39,15 @@ FEATURE_JOINTS: tuple[str, ...] = (
 )
 
 MIN_CORE_JOINTS = 6
+MIN_KEYPOINT_CONFIDENCE = 0.35
 MIN_SAMPLE_INTERVAL_SECONDS = 0.05
 DEFAULT_MIN_CYCLE_SECONDS = 0.75
 DEFAULT_MAX_CYCLE_SECONDS = 20.0
 DEFAULT_CYCLE_MARGIN_SECONDS = 0.25
 DEFAULT_SPAN_PAD_SECONDS = 4.0
 MIN_SIGNAL_QUALITY = 0.12
+MAX_POSE_OBSERVATION_GAP_SECONDS = 0.5
+LOOP_BOUNDARY_QUIET_SPEED_TORSO_PER_SECOND = 0.15
 MIN_AMPLITUDE_TORSO_UNITS = 0.10
 HOLD_MAX_MOTION_ENERGY_SCALE = 0.45
 SUSTAINED_STATE_SECONDS = 0.5
@@ -130,6 +133,8 @@ def parse_dominant_pose_samples(payload: Sequence[dict[str, Any]] | None) -> lis
             time_seconds = float(entry.get("timeSeconds"))
         except (TypeError, ValueError):
             continue
+        if not math.isfinite(time_seconds):
+            continue
         keypoints: dict[str, tuple[float, float, float]] = {}
         raw_keypoints = entry.get("keypoints")
         if isinstance(raw_keypoints, dict):
@@ -137,16 +142,32 @@ def parse_dominant_pose_samples(payload: Sequence[dict[str, Any]] | None) -> lis
                 if isinstance(point, Sequence) and len(point) >= 2:
                     try:
                         x, y = float(point[0]), float(point[1])
-                        confidence = float(point[2]) if len(point) >= 3 else 1.0
+                        confidence = float(point[2]) if len(point) >= 3 else 0.0
                     except (TypeError, ValueError):
                         continue
-                    keypoints[str(name)] = (x, y, confidence)
+                    if (
+                        math.isfinite(x)
+                        and math.isfinite(y)
+                        and math.isfinite(confidence)
+                        and confidence >= MIN_KEYPOINT_CONFIDENCE
+                    ):
+                        keypoints[str(name)] = (x, y, confidence)
         if len(keypoints) < MIN_CORE_JOINTS:
             continue
         try:
-            confidence = float(entry.get("confidence", 1.0))
+            raw_confidence = entry.get("confidence")
+            confidence = (
+                float(raw_confidence)
+                if raw_confidence is not None
+                else statistics.mean(point[2] for point in keypoints.values())
+            )
         except (TypeError, ValueError):
-            confidence = 1.0
+            confidence = 0.0
+        if not math.isfinite(confidence):
+            confidence = 0.0
+        confidence = max(0.0, min(1.0, confidence))
+        if len(keypoints) < MIN_CORE_JOINTS:
+            continue
         frames.append(PoseFrame(time_seconds, confidence, keypoints))
     frames.sort(key=lambda frame: frame.time_seconds)
     return frames
@@ -571,10 +592,36 @@ def _state_series(
     return [pose_state_score(frame, constraints) for frame in frames]
 
 
-def _sustained_runs(scores: Sequence[float], times: Sequence[float], threshold: float) -> list[tuple[int, int]]:
+def _supported_observation_gap_seconds(times: Sequence[float]) -> float:
+    """Estimate the coarsest regular cadence without treating window gaps as cadence."""
+    intervals = np.diff(np.asarray(times, dtype=np.float64))
+    intervals = intervals[np.isfinite(intervals) & (intervals > 0.0)]
+    if intervals.size == 0:
+        return MAX_POSE_OBSERVATION_GAP_SECONDS
+    upper_cadence = float(np.percentile(intervals, 90.0))
+    return min(
+        MAX_POSE_OBSERVATION_GAP_SECONDS,
+        max(MIN_SAMPLE_INTERVAL_SECONDS, 2.5 * upper_cadence),
+    )
+
+
+def _sustained_runs(
+    scores: Sequence[float],
+    times: Sequence[float],
+    threshold: float,
+    *,
+    max_gap_seconds: float | None = None,
+) -> list[tuple[int, int]]:
     runs: list[tuple[int, int]] = []
+    if not scores or len(scores) != len(times):
+        return runs
+    max_gap = max_gap_seconds or _supported_observation_gap_seconds(times)
     start: int | None = None
     for index, score in enumerate(scores):
+        if index and float(times[index]) - float(times[index - 1]) > max_gap:
+            if start is not None and (times[index - 1] - times[start]) >= SUSTAINED_STATE_SECONDS:
+                runs.append((start, index - 1))
+            start = None
         if score >= threshold:
             if start is None:
                 start = index
@@ -1121,6 +1168,264 @@ def _stable_hold_proposals(
     return proposals
 
 
+def _normalized_pose_excursion(
+    frames: Sequence[PoseFrame],
+    start_index: int,
+    end_index: int,
+) -> float:
+    """Largest observed displacement from a start pose, in torso units."""
+    start = frames[start_index]
+    body_scale = _median_body_scale(frames[start_index : end_index + 1])
+    reference = {
+        name: (point[0], point[1])
+        for name, point in start.keypoints.items()
+        if point[2] >= MIN_KEYPOINT_CONFIDENCE
+    }
+    excursions: list[float] = []
+    for frame in frames[start_index : end_index + 1]:
+        distances = [
+            math.hypot(point[0] - reference[name][0], point[1] - reference[name][1])
+            for name, point in frame.keypoints.items()
+            if name in reference and point[2] >= MIN_KEYPOINT_CONFIDENCE
+        ]
+        if distances:
+            rms_displacement = math.sqrt(statistics.mean(distance * distance for distance in distances))
+            excursions.append(rms_displacement / max(body_scale, 1e-4))
+    return max(excursions, default=0.0)
+
+
+def _observed_boundary_proposals(
+    frames: Sequence[PoseFrame],
+    contract: dict[str, Any],
+    *,
+    max_proposals: int,
+) -> list[CutProposal]:
+    """Propose cuts from confidence-qualified observed contract boundary states."""
+    mode = contract_completion_mode(contract)
+    start_constraints = contract.get("startPoseConstraints")
+    end_constraints = contract.get("endPoseConstraints")
+    if not _has_usable_pose_constraints(start_constraints):
+        return []
+    times = [frame.time_seconds for frame in frames]
+    max_gap = _supported_observation_gap_seconds(times)
+    start_runs = _sustained_runs(
+        _state_series(frames, start_constraints), times, POSE_MATCH_THRESHOLD, max_gap_seconds=max_gap
+    )
+    if mode in _LOOPING_COMPLETION_MODES:
+        boundary_runs = start_runs
+        required_end_constraints = start_constraints
+    else:
+        if not _has_usable_pose_constraints(end_constraints):
+            return []
+        boundary_runs = _sustained_runs(
+            _state_series(frames, end_constraints), times, POSE_MATCH_THRESHOLD, max_gap_seconds=max_gap
+        )
+        required_end_constraints = end_constraints
+
+    candidates: list[tuple[float, int, int, int, int, float, float]] = []
+    if mode in _LOOPING_COMPLETION_MODES:
+        for start_run, end_run in zip(start_runs, start_runs[1:]):
+            start_index = _quiet_pose_index(frames, start_run)
+            end_index = _quiet_pose_index(frames, end_run)
+            if start_index is None or end_index is None or start_index >= end_index:
+                continue
+            duration = times[end_index] - times[start_index]
+            if not DEFAULT_MIN_CYCLE_SECONDS <= duration <= DEFAULT_MAX_CYCLE_SECONDS:
+                continue
+            excursion = _normalized_pose_excursion(frames, start_index, end_index)
+            if excursion < MIN_AMPLITUDE_TORSO_UNITS:
+                continue
+            start_score = pose_state_score(frames[start_index], start_constraints)
+            end_score = pose_state_score(frames[end_index], start_constraints)
+            candidates.append((excursion, start_index, end_index, start_run[0], end_run[1], start_score, end_score))
+    else:
+        for start_run in start_runs:
+            for end_run in boundary_runs:
+                if start_run[1] >= end_run[0]:
+                    continue
+                start_index, end_index = start_run[1], end_run[0]
+                duration = times[end_index] - times[start_index]
+                if not DEFAULT_MIN_CYCLE_SECONDS <= duration <= DEFAULT_MAX_CYCLE_SECONDS:
+                    continue
+                start_score = pose_state_score(frames[start_index], start_constraints)
+                end_score = pose_state_score(frames[end_index], required_end_constraints)
+                excursion = _normalized_pose_excursion(frames, start_index, end_index)
+                if excursion < MIN_AMPLITUDE_TORSO_UNITS:
+                    continue
+                candidates.append((excursion, start_index, end_index, start_run[0], end_run[1], start_score, end_score))
+
+    candidates.sort(key=lambda item: (-item[0], item[1], item[2]))
+    proposals: list[CutProposal] = []
+    for excursion, start_index, end_index, start_run_start, end_run_end, start_score, end_score in candidates:
+        start_seconds, end_seconds = times[start_index], times[end_index]
+        interval_frames = frames[start_index : end_index + 1]
+        mean_confidence = statistics.mean(
+            point[2] for frame in interval_frames for point in frame.keypoints.values()
+        )
+        confidence = max(0.0, min(1.0, min(start_score, end_score) * mean_confidence * min(1.0, excursion)))
+        policy = "observed_boundary_return_to_start" if mode in _LOOPING_COMPLETION_MODES else "observed_boundary_distinct_end_state"
+        proposals.append(
+            CutProposal(
+                start_seconds=start_seconds,
+                end_seconds=end_seconds,
+                policy=policy,
+                confidence=confidence,
+                stats={
+                    "durationSeconds": end_seconds - start_seconds,
+                    "excursionTorsoUnits": excursion,
+                    "meanKeypointConfidence": mean_confidence,
+                    "maxObservationGapSeconds": max(
+                        np.diff([frame.time_seconds for frame in interval_frames]), default=0.0
+                    ),
+                    "startBoundaryScore": start_score,
+                    "endBoundaryScore": end_score,
+                },
+            )
+        )
+        if len(proposals) >= max_proposals:
+            break
+    return proposals
+
+
+def _proposal_observation_stats(
+    proposal: CutProposal,
+    frames: Sequence[PoseFrame],
+    contract: dict[str, Any],
+) -> dict[str, float] | None:
+    """Return evidence diagnostics only when observed boundaries are compatible."""
+    if not frames or not math.isfinite(proposal.start_seconds) or not math.isfinite(proposal.end_seconds):
+        return None
+    if proposal.end_seconds <= proposal.start_seconds:
+        return None
+    times = [frame.time_seconds for frame in frames]
+    max_gap = _supported_observation_gap_seconds(times)
+    start_index = _nearest_time_index(times, proposal.start_seconds)
+    end_index = _nearest_time_index(times, proposal.end_seconds)
+    if start_index > end_index:
+        return None
+    if abs(times[start_index] - proposal.start_seconds) > max_gap or abs(times[end_index] - proposal.end_seconds) > max_gap:
+        return None
+    interval_times = times[start_index : end_index + 1]
+    observed_gap = max(np.diff(interval_times), default=0.0)
+    if observed_gap > max_gap:
+        return None
+
+    mode = contract_completion_mode(contract)
+    start_constraints = contract.get("startPoseConstraints")
+    end_constraints = contract.get("endPoseConstraints")
+    if mode in _LOOPING_COMPLETION_MODES:
+        expected_start = start_constraints
+        expected_end = start_constraints
+    elif mode == "stable_hold":
+        expected_start = start_constraints or end_constraints
+        expected_end = expected_start
+    else:
+        expected_start = start_constraints
+        expected_end = end_constraints
+    start_score = pose_state_score(frames[start_index], expected_start) if _has_usable_pose_constraints(expected_start) else 1.0
+    end_score = pose_state_score(frames[end_index], expected_end) if _has_usable_pose_constraints(expected_end) else 1.0
+    if start_score < POSE_MATCH_THRESHOLD or end_score < POSE_MATCH_THRESHOLD:
+        return None
+    stats = {
+        "maxObservationGapSeconds": float(observed_gap),
+        "startBoundaryScore": float(start_score),
+        "endBoundaryScore": float(end_score),
+        "meanKeypointConfidence": float(
+            statistics.mean(point[2] for frame in frames[start_index : end_index + 1] for point in frame.keypoints.values())
+        ),
+    }
+    if mode in _LOOPING_COMPLETION_MODES:
+        boundary_motion = _loop_boundary_motion_compatibility(frames, start_index, end_index)
+        if boundary_motion is None:
+            return None
+        stats.update(boundary_motion)
+    return stats
+
+
+def _quiet_pose_index(frames: Sequence[PoseFrame], run: tuple[int, int]) -> int | None:
+    candidates = []
+    for index in range(run[0], run[1] + 1):
+        velocity = _pose_boundary_velocity(frames, index)
+        if velocity is not None:
+            candidates.append((velocity[1], index))
+    if not candidates:
+        return None
+    return min(candidates)[1]
+
+
+def _pose_boundary_velocity(
+    frames: Sequence[PoseFrame],
+    index: int,
+) -> tuple[np.ndarray, float] | None:
+    """Return a confidence-qualified, torso-normalized local pose velocity."""
+    left_index = max(0, index - 1)
+    right_index = min(len(frames) - 1, index + 1)
+    if left_index == right_index:
+        return None
+    left = frames[left_index]
+    right = frames[right_index]
+    max_gap = _supported_observation_gap_seconds([frame.time_seconds for frame in frames])
+    if (
+        frames[index].time_seconds - left.time_seconds > max_gap
+        or right.time_seconds - frames[index].time_seconds > max_gap
+    ):
+        return None
+    elapsed = right.time_seconds - left.time_seconds
+    if elapsed <= 0.0 or elapsed > 2.0 * max_gap:
+        return None
+    common = [
+        joint
+        for joint in FEATURE_JOINTS
+        if joint in left.keypoints
+        and joint in right.keypoints
+        and left.keypoints[joint][2] >= MIN_KEYPOINT_CONFIDENCE
+        and right.keypoints[joint][2] >= MIN_KEYPOINT_CONFIDENCE
+    ]
+    if len(common) < MIN_CORE_JOINTS:
+        return None
+    scale = _median_body_scale(frames[max(0, index - 2) : min(len(frames), index + 3)])
+    velocity = np.asarray(
+        [
+            (right.keypoints[joint][axis] - left.keypoints[joint][axis]) / (elapsed * max(scale, 1e-4))
+            for joint in common
+            for axis in (0, 1)
+        ],
+        dtype=np.float64,
+    )
+    speed = float(np.linalg.norm(velocity) / math.sqrt(len(common)))
+    return velocity, speed
+
+
+def _loop_boundary_motion_compatibility(
+    frames: Sequence[PoseFrame],
+    start_index: int,
+    end_index: int,
+) -> dict[str, float] | None:
+    start = _pose_boundary_velocity(frames, start_index)
+    end = _pose_boundary_velocity(frames, end_index)
+    if start is None or end is None:
+        return None
+    start_velocity, start_speed = start
+    end_velocity, end_speed = end
+    quiet = LOOP_BOUNDARY_QUIET_SPEED_TORSO_PER_SECOND
+    if start_speed <= quiet and end_speed <= quiet:
+        direction_similarity = 1.0
+    else:
+        if start_speed <= quiet or end_speed <= quiet:
+            return None
+        denominator = float(np.linalg.norm(start_velocity) * np.linalg.norm(end_velocity))
+        if denominator <= 1e-12:
+            return None
+        direction_similarity = float(np.dot(start_velocity, end_velocity) / denominator)
+        if direction_similarity < 0.5:
+            return None
+    return {
+        "startBoundarySpeedTorsoPerSecond": start_speed,
+        "endBoundarySpeedTorsoPerSecond": end_speed,
+        "boundaryVelocityCosine": direction_similarity,
+    }
+
+
 def contract_completion_mode(contract: dict[str, Any] | None) -> str:
     """Resolve completionMode without importing bake_and_rank."""
     if not isinstance(contract, dict):
@@ -1214,6 +1519,8 @@ def propose_source_cut(
     span_pad_seconds: float = DEFAULT_SPAN_PAD_SECONDS,
 ) -> list[CutProposal]:
     """Propose source cuts from pose samples, using the contract cut policy."""
+    if max_proposals <= 0:
+        return []
     samples = dominant_pose_samples
     if span_start_seconds is not None and span_end_seconds is not None:
         samples = filter_pose_samples_to_span(
@@ -1225,39 +1532,125 @@ def propose_source_cut(
     frames = parse_dominant_pose_samples(samples)
     if len(frames) < 8:
         return []
-    signal = dominant_motion_signal(frames)
-    if signal is None or signal.quality < MIN_SIGNAL_QUALITY:
-        return []
     safe_contract = contract if isinstance(contract, dict) else {}
-    completion_mode = contract_completion_mode(safe_contract)
     request_count = max_proposals
     if span_start_seconds is not None and span_end_seconds is not None:
         request_count = max(max_proposals, 8)
-    if completion_mode in _CYCLE_POLICIES:
-        proposals = _cycle_proposals(frames, signal, safe_contract, max_proposals=request_count)
-    elif completion_mode == "distinct_end_state":
-        proposals = _distinct_end_state_proposals(frames, signal, safe_contract, max_proposals=request_count)
+    supported: list[CutProposal] = []
+    for run in _contiguous_pose_runs(frames):
+        if len(run) < 8:
+            continue
+        supported.extend(
+            _propose_contiguous_run(
+                run,
+                safe_contract,
+                max_proposals=request_count,
+            )
+        )
+
+    supported = _deduplicate_proposals(supported)
+    if span_start_seconds is not None and span_end_seconds is not None:
+        supported = proposals_overlapping_span(
+            supported,
+            start_seconds=span_start_seconds,
+            end_seconds=span_end_seconds,
+            pad_seconds=span_pad_seconds,
+        )
+    if span_start_seconds is not None and span_end_seconds is not None:
+        return supported[:max_proposals]
+    supported.sort(key=lambda proposal: (-proposal.confidence, proposal.start_seconds, proposal.end_seconds))
+    return supported[:max_proposals]
+
+
+def _contiguous_pose_runs(frames: Sequence[PoseFrame]) -> list[list[PoseFrame]]:
+    """Split on unsupported observation gaps before global PCA can bridge them."""
+    if not frames:
+        return []
+    times = [frame.time_seconds for frame in frames]
+    max_gap = _supported_observation_gap_seconds(times)
+    runs: list[list[PoseFrame]] = []
+    start = 0
+    for index in range(1, len(frames)):
+        if times[index] - times[index - 1] > max_gap:
+            runs.append(list(frames[start:index]))
+            start = index
+    runs.append(list(frames[start:]))
+    return runs
+
+
+def _propose_contiguous_run(
+    frames: Sequence[PoseFrame],
+    contract: dict[str, Any],
+    *,
+    max_proposals: int,
+) -> list[CutProposal]:
+    signal = dominant_motion_signal(frames)
+    mode = contract_completion_mode(contract)
+    if signal is None or signal.quality < MIN_SIGNAL_QUALITY:
+        proposals: list[CutProposal] = []
+    elif mode in _CYCLE_POLICIES:
+        proposals = _cycle_proposals(frames, signal, contract, max_proposals=max_proposals)
+    elif mode == "distinct_end_state":
+        proposals = _distinct_end_state_proposals(frames, signal, contract, max_proposals=max_proposals)
         if not proposals:
             proposals = _distinct_end_state_excursion_proposals(
                 frames,
                 signal,
-                safe_contract,
-                max_proposals=request_count,
+                contract,
+                max_proposals=max_proposals,
             )
-    elif completion_mode == "stable_hold":
-        proposals = _stable_hold_proposals(frames, signal, safe_contract, max_proposals=request_count)
+    elif mode == "stable_hold":
+        proposals = _stable_hold_proposals(frames, signal, contract, max_proposals=max_proposals)
     else:
-        # Unknown or missing contract: cycles are the dominant library shape and
-        # a safe default; callers keep the existing grid search as fallback.
-        proposals = _cycle_proposals(frames, signal, safe_contract, max_proposals=request_count)
-    if span_start_seconds is not None and span_end_seconds is not None:
-        return proposals_overlapping_span(
-            proposals,
-            start_seconds=span_start_seconds,
-            end_seconds=span_end_seconds,
-            pad_seconds=span_pad_seconds,
-        )[:max_proposals]
-    return proposals[:max_proposals]
+        proposals = _cycle_proposals(frames, signal, contract, max_proposals=max_proposals)
+
+    supported = []
+    for proposal in proposals:
+        evidence = _proposal_observation_stats(proposal, frames, contract)
+        if evidence is None:
+            continue
+        supported.append(
+            CutProposal(
+                start_seconds=proposal.start_seconds,
+                end_seconds=proposal.end_seconds,
+                policy=proposal.policy,
+                confidence=proposal.confidence,
+                stats={**proposal.stats, **evidence},
+            )
+        )
+    if len(supported) < max_proposals:
+        for proposal in _observed_boundary_proposals(
+            frames,
+            contract,
+            max_proposals=max_proposals - len(supported),
+        ):
+            evidence = _proposal_observation_stats(proposal, frames, contract)
+            if evidence is None:
+                continue
+            supported.append(
+                CutProposal(
+                    start_seconds=proposal.start_seconds,
+                    end_seconds=proposal.end_seconds,
+                    policy=proposal.policy,
+                    confidence=proposal.confidence,
+                    stats={**proposal.stats, **evidence},
+                )
+            )
+    return _deduplicate_proposals(supported)
+
+
+def _deduplicate_proposals(proposals: Sequence[CutProposal]) -> list[CutProposal]:
+    ranked = sorted(proposals, key=lambda proposal: (-proposal.confidence, proposal.start_seconds, proposal.end_seconds))
+    unique: list[CutProposal] = []
+    for proposal in ranked:
+        if any(
+            abs(proposal.start_seconds - existing.start_seconds) < 0.1
+            and abs(proposal.end_seconds - existing.end_seconds) < 0.1
+            for existing in unique
+        ):
+            continue
+        unique.append(proposal)
+    return unique
 
 
 def cycles_intersecting(

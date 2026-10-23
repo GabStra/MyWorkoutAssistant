@@ -51,6 +51,42 @@ def test_discovery_filters_selected_exercise_and_rejects_unknown_id_before_searc
     assert not unknown_output.exists()
 
 
+def test_unresolved_target_definition_stops_before_source_search(tmp_path):
+    plan = tmp_path / "library.json"
+    plan.write_text(json.dumps({"exercises": [{"id": "pull-id", "name": "Barbell High Pull"}]}))
+    settings = YouTubeRankingSettings(
+        exercise_motion_contract_enabled=True,
+        exercise_name_rewrite_enabled=False,
+        llama_cpp_base_url=None,
+        llama_cpp_auto_start_server=False,
+        semantic_gate_enabled=False,
+        rank_with_vision=True,
+    )
+    contract = {
+        "status": "generated",
+        "contractScope": "definition_only",
+        "movementType": "repetition",
+        "completionMode": "distinct_end_state",
+        "requiredPhases": ["raise the bar toward the upper chest"],
+        "actionDefinitionStatus": "defined",
+        "actionDefinitionAuthority": "unresolved",
+        "primaryMovingRegions": ["upper_limb"],
+    }
+    result = discover_and_rank_youtube_candidates(
+        workout_plan_json=plan,
+        out_json=tmp_path / "candidates.json",
+        settings=settings,
+        search_fn=lambda *_: (_ for _ in ()).throw(AssertionError("unresolved definition must stop before search")),
+        exercise_motion_contract_provider=lambda *_: contract,
+    )
+    exercise = result["exercises"][0]
+    assert exercise["status"] == "needs_definition_review"
+    assert exercise["reason"] == "target_action_definition_unresolved"
+    assert exercise["failureStage"] == "exercise_definition"
+    assert exercise["exerciseMotionContract"]["status"] == "generated"
+    assert exercise["candidates"] == []
+
+
 def test_discovery_turn_budget_spans_expansion_and_resumes_reviews(tmp_path):
     plan = tmp_path / "plan.json"
     plan.write_text(json.dumps({"exercises": [{"name": "Barbell Bench Press"}]}))

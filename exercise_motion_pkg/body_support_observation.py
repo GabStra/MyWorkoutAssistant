@@ -203,9 +203,8 @@ def materialize_body_support(payload, source_pose, contract=None):
     existing = evidence.get('bodySupport') or {}
     if (existing.get('status') == 'confirmed'
             and set(BODY_SUPPORT_ANCHORS).intersection(existing.get('stationaryJoints') or [])):
-        # Retained evidence can be only partially materialized. Fill missing
-        # ground-foot anchors from the same hash-matched source observation,
-        # while retaining all existing torso and support constraints.
+        # Add foot anchors only when the temporal patch confirms full sole for
+        # every selected frame; keep existing torso constraints intact.
         _augment_confirmed_ground_sole_support(payload, evidence, source_pose)
         return
     observed = evidence.get('bodySupportObservation') or {}
@@ -254,6 +253,7 @@ def materialize_body_support(payload, source_pose, contract=None):
     for side in ('left', 'right'):
         if (answer.get(f'{side}Foot') != 'stationary_full_sole'
                 or answer.get(f'{side}FootSurface') != 'ground'
+                or not _has_uninterrupted_full_sole_patch(evidence, side)
                 or not stationary_source_track(source_pose, f'{side}_ankle')):
             continue
         sides.append(side)
@@ -356,9 +356,6 @@ def materialize_observed_ground_contacts(payload, source_pose):
 
 def add_ground_sole_contacts(payload, support, medians, sides, *, evidence):
     """Use the same shoe dimensions for every explicitly observed ground contact."""
-    hip_width = np.linalg.norm(medians['right_hip']-medians['left_hip'])
-    shoulder_width = np.linalg.norm(medians['right_shoulder']-medians['left_shoulder'])
-    foot_scale = max(hip_width*.98, shoulder_width*.58)
     camera_reference = payload.get('sourcePoseCameraReference') or {}
     camera = camera_reference.get('camera') or {}
     source_labels_swapped = (
@@ -375,27 +372,43 @@ def add_ground_sole_contacts(payload, support, medians, sides, *, evidence):
         geometry_ankle, geometry_foot = (f'{geometry_side}_{part}' for part in ('ankle', 'foot'))
         if not {geometry_ankle, geometry_foot}.issubset(medians):
             continue
-        shoe_height = max(
-            np.linalg.norm(medians[geometry_foot]-medians[geometry_ankle])*.28,
-            foot_scale*.15,
-        )
         for joint in (ankle, foot):
             if joint not in support['stationaryJoints']:
                 support['stationaryJoints'].append(joint)
-        plane_height = float(payload.get('renderFloorY') or 0.) + .04 * shoe_height
+        # `foot` is the renderer's forefoot pivot and the lowest material-sole
+        # vertices lie on its calibrated ground plane. Do not add a shoe-height
+        # offset here: that creates a visible gap at the anchor and fails the
+        # rendered full-sole contact check.
+        plane_height = float(payload.get('renderFloorY') or 0.)
         existing_planes = [group for group in support['coplanarGroups']
-                           if set(group['joints']) == {ankle, foot}
+                           if set(group['joints']) in ({foot}, {ankle, foot})
                            and np.allclose(group['normal'], [0., 1., 0.])]
         if existing_planes:
             # Confirmed ground contact belongs to today's floor and shoe geometry,
-            # not a cached per-foot height from another placement or bake.
+            # not a cached per-foot height from another placement or bake. The
+            # forefoot is the observed sole anchor; ankle-to-toe pitch belongs
+            # to the calibrated shoe geometry below, not a horizontal bone rule.
             for group in existing_planes:
+                group['joints'] = [foot]
+                group.pop('anchorJoint', None)
                 group['planeOffsetMeters'] = plane_height
         else:
-            support['coplanarGroups'].append({'joints': [ankle, foot], 'normal': [0, 1, 0],
+            support['coplanarGroups'].append({'joints': [foot], 'normal': [0, 1, 0],
                                              'planeOffsetMeters': plane_height})
         if not any(contact['joints'] == [knee, ankle, foot] for contact in support['soleContacts']):
             support['soleContacts'].append({'joints': [knee, ankle, foot], 'normal': [0, 1, 0]})
+    canonical_planes = []
+    seen_feet = set()
+    for group in support['coplanarGroups']:
+        joints = group.get('joints') or []
+        side = (joints[0].removesuffix('_foot')
+                if len(joints) == 1 and joints[0].endswith('_foot') else None)
+        if (side in sides and np.allclose(group.get('normal'), [0., 1., 0.])):
+            if side in seen_feet:
+                continue
+            seen_feet.add(side)
+        canonical_planes.append(group)
+    support['coplanarGroups'] = canonical_planes
     _remove_superseded_ground_sole_planes(support, sides)
 
 
@@ -412,8 +425,6 @@ def _confirmed_observed_ground_sole_sides(evidence, source_pose, joint_names):
 
     answer = observed.get('observation') or {}
     names = set(joint_names or [])
-    patch = evidence.get('footPatchEvidence') or {}
-    feet = patch.get('feet') or {}
     mapping = evidence.get('motionSpaceMapping') or {}
     swapped = mapping.get('bilateralAssignment') == 'swapped'
     confirmed = set()
@@ -423,15 +434,9 @@ def _confirmed_observed_ground_sole_sides(evidence, source_pose, joint_names):
         if (answer.get(f'{side}Foot') != 'stationary_full_sole'
                 or answer.get(f'{side}FootSurface') != 'ground'):
             continue
-        states = (feet.get(side) or {}).get('states') or []
-        normalized_states = {str(state).casefold() for state in states}
-        # Stationarity alone cannot put an entirely unobserved sole on the ground.
-        if patch.get('available') is True and 'full_sole' not in normalized_states:
-            continue
-        # Unknown samples do not contradict an exact source observation. Any
-        # observed release or partial sole does, so never widen it to a full
-        # clip anchor.
-        if normalized_states - {'unknown', 'full_sole'}:
+        # Sparse visual review and unknown patch samples cannot establish a
+        # whole-clip full-sole anchor; timed contacts remain available below.
+        if not _has_uninterrupted_full_sole_patch(evidence, side):
             continue
         source_side = ('right' if side == 'left' else 'left') if swapped else side
         # An exact-video observation can confirm that a foot remains planted
@@ -448,7 +453,7 @@ def _body_support_has_complete_ground_sole(support, side):
     ankle, foot, knee = (f'{side}_ankle', f'{side}_foot', f'{side}_knee')
     stationary = set(support.get('stationaryJoints') or [])
     has_plane = any(
-        {ankle, foot}.issubset(set(group.get('joints') or []))
+        list(group.get('joints') or []) == [foot]
         and isinstance(group.get('planeOffsetMeters'), (int, float))
         and np.isfinite(group.get('planeOffsetMeters'))
         for group in support.get('coplanarGroups') or []
@@ -468,7 +473,7 @@ def _remove_superseded_ground_sole_planes(support, sides):
         joints = list(group['joints'])
         for side in complete:
             sole = {f'{side}_ankle', f'{side}_foot'}
-            if not sole.issubset(group['joints']):
+            if sole.issubset(group['joints']):
                 joints = [name for name in joints if name not in sole]
         if len(joints) < (1 if 'planeOffsetMeters' in group else 2):
             continue
@@ -485,7 +490,8 @@ def _augment_confirmed_ground_sole_support(payload, evidence, source_pose, *, si
             or payload.get('groundContactMode') in {'intermittent', 'none'}):
         return set()
     confirmed_sides = (_confirmed_observed_ground_sole_sides(
-        evidence, source_pose, payload.get('jointNames')) if sides is None else set(sides))
+        evidence, source_pose, payload.get('jointNames'))
+        if sides is None else set(sides))
     _remove_superseded_ground_sole_planes(support, confirmed_sides)
     frames = payload.get('frames') or []
     names = payload.get('jointNames') or []
@@ -507,15 +513,25 @@ def observed_stationary_sole_contacts(evidence):
             and c.get('verticalOnly') is not True]
 
 
+def _has_uninterrupted_full_sole_patch(evidence, side):
+    patch = evidence.get('footPatchEvidence') or {}
+    states = ((patch.get('feet') or {}).get(side) or {}).get('states') or []
+    contact_intervals = patch.get('contacts') or []
+    return bool(patch.get('available') is True and states
+                and all(str(state).casefold() == 'full_sole' for state in states)
+                and any(contact.get('jointName') == f'{side}_foot'
+                        and contact.get('contactState') == 'full_sole'
+                        and contact.get('contactMotion') == 'stationary'
+                        and contact.get('startRatio') == 0.
+                        and contact.get('endRatio') == 1.
+                        for contact in contact_intervals))
+
+
 def corroborated_stationary_sole(evidence, side):
-    """Bridge unobserved sole samples only with independent full-stance evidence."""
+    """Require frame-complete full-sole patches before bridging ankle evidence."""
     if evidence.get('temporalResolutionSufficient') is not True:
         return False
-    patch = evidence.get('footPatchEvidence') or {}
-    states = (patch.get('feet', {}).get(side) or {}).get('states') or []
-    if not patch.get('available') or not states or 'full_sole' not in states:
-        return False
-    if any(state not in {'unknown', 'full_sole'} for state in states):
+    if not _has_uninterrupted_full_sole_patch(evidence, side):
         return False
     # These ratios describe the full source, so this evidence also covers any
     # selected subinterval. Partial ankle tracks cannot fill missing contacts.
@@ -526,6 +542,8 @@ def corroborated_stationary_sole(evidence, side):
 
 
 def _has_full_cycle_stationary_sole(evidence, side, frame_count):
+    if not _has_uninterrupted_full_sole_patch(evidence, side):
+        return False
     if frame_count > 1:
         from .contact_constraints import contact_frame_bounds
         if any(
@@ -639,8 +657,7 @@ def materialize_stationary_sole_support(payload):
     existing_soles = {c['joints'][2] for c in existing.get('soleContacts', [])}
     for side in ('left', 'right'):
         if side in source_confirmed_sides:
-            if (side not in existing_soles
-                    and not _body_support_has_complete_ground_sole(existing, side)):
+            if not _body_support_has_complete_ground_sole(existing, side):
                 sides.append(side)
             continue
         if f'{side}_foot' in existing_soles:

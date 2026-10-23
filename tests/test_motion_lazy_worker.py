@@ -112,6 +112,43 @@ def test_cache_only_wave_does_not_wait_for_unstarted_worker(tmp_path):
     assert not (tmp_path / "stop").exists()
 
 
+def test_explicit_split_gpu_lane_keeps_shared_reconstruction_worker_warm(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from exercise_motion_pkg import wave_pipeline as wave
+
+    worker_dir = tmp_path / "gvhmr-worker"
+    worker_dir.mkdir(parents=True)
+    (worker_dir / "ready.json").write_text("{}", encoding="utf-8")
+    item = SimpleNamespace(request=SimpleNamespace(
+        use_warm_gvhmr_worker=True,
+        gvhmr_worker_session_dir=worker_dir,
+        shared_llama_server=True,
+        shared_llama_server_session_dir=tmp_path / "llama",
+        llama_cpp_base_url="http://127.0.0.1:8090",
+    ))
+    monkeypatch.setattr(wave, "exclusive_gpu_device", lambda: "1")
+
+    release = wave._stop_warm_reconstruction_worker_before_vlm([item])
+
+    assert wave._wave_uses_separate_gpu_residency([item]) is True
+    assert release == {
+        "requested": False,
+        "stopped": False,
+        "skippedForSeparateGpuResidency": True,
+    }
+    assert not (worker_dir / "stop").exists()
+
+
+def test_split_gpu_lane_requires_shared_vision_server(monkeypatch):
+    from types import SimpleNamespace
+    from exercise_motion_pkg import wave_pipeline as wave
+
+    item = SimpleNamespace(request=SimpleNamespace(shared_llama_server=False))
+    monkeypatch.setattr(wave, "exclusive_gpu_device", lambda: "1")
+
+    assert wave._wave_uses_separate_gpu_residency([item]) is False
+
+
 def test_wave_finalization_overlaps_and_preserves_other_results_on_failure(tmp_path, monkeypatch):
     from types import SimpleNamespace
     from exercise_motion_pkg import wave_pipeline as wave

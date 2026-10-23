@@ -183,6 +183,37 @@ def test_incomplete_processing_preserves_source_and_resumes_processing(tmp_path)
     assert not index.exists()
 
 
+def test_unresolved_parent_phase_routes_to_bounded_review_without_source_penalty(tmp_path):
+    from exercise_motion_pkg.source_outcomes import candidate_result_failure_owner
+
+    controlled = {
+        "applied": False,
+        "reason": "source_cycle_parent_phase_coverage_unresolved",
+        "reviewRequired": True,
+    }
+    artifact = bake.BakedLoopArtifact(
+        0, Path("candidate.json"), Path("candidate.webm"),
+        {"controlledMotionFit": controlled},
+    )
+    diagnostics = bake.incomplete_controlled_fit_diagnostics([artifact])
+    assert diagnostics["controlledMotionFit"]["reviewRequired"] is True
+
+    candidate = {
+        "status": "needs_source_review",
+        "reviewRequired": True,
+        "failureOwner": "review",
+        "failures": [{"reason": controlled["reason"], "failureOwner": "review"}],
+    }
+    final_diagnostics = final_processing_diagnostics({"candidateResults": [candidate]})
+    assert wave_retry_disposition({
+        "finalValidation": {"status": "no_selection", **final_diagnostics},
+    }) == "retry_review"
+    assert candidate_result_failure_owner(candidate) == "review"
+    index = tmp_path / "unresolved-review-outcomes.json"
+    assert update_source_outcome_index(index, [candidate]) is None
+    assert not index.exists()
+
+
 def test_sibling_variant_timeout_does_not_mask_applied_controlled_motion():
     applied = bake.BakedLoopArtifact(
         0, Path("a.json"), Path("a.webm"),

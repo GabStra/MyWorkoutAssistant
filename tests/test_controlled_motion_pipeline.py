@@ -38,6 +38,61 @@ def accepted_payload():
     return payload
 
 
+def test_supported_fit_anatomy_gate_uses_support_reference_without_retargeting_source_articulation():
+    from exercise_motion_pkg.controlled_motion import (
+        ANATOMY_FIT_MARGIN, fit_anatomy_constraint_reference,
+        fit_anatomy_structure_residuals,
+    )
+    from exercise_motion_pkg.physical_validation import (
+        anatomical_structure_residuals, validate_physical_motion,
+    )
+
+    names = ['pelvis', 'left_hip', 'right_hip', 'spine1', 'spine2', 'spine3', 'neck',
+             'left_collar', 'right_collar', 'left_shoulder', 'right_shoulder']
+
+    def pose(shoulder_bend_degrees):
+        deviation = np.deg2rad(180. - shoulder_bend_degrees)
+        shoulders = np.array([.5 * np.sin(deviation), .25 + .5 * np.cos(deviation), 0.])
+        points = np.array([
+            [0., 0., 0.], [-.1, 0., 0.], [.1, 0., 0.], [0., .25, 0.],
+            [0., .5, 0.], [0., .75, 0.], [0., 1., 0.],
+            [-.05, .75, .1], [-.05, .75, -.1],
+            shoulders + [0., 0., .1], shoulders + [0., 0., -.1],
+        ])
+        return points[None, :, :]
+
+    source_reference = pose(143.)
+    support_reference = pose(145.)
+    fitted_points = pose(143.5)
+
+    selected_source_reference = fit_anatomy_constraint_reference(source_reference)
+    source_residuals = fit_anatomy_structure_residuals(
+        fitted_points, names, selected_source_reference)
+    selected_support_reference = fit_anatomy_constraint_reference(
+        source_reference, support_reference)
+    supported_residuals = fit_anatomy_structure_residuals(
+        fitted_points, names, selected_support_reference)
+    expected_residuals, labels = anatomical_structure_residuals(
+        fitted_points, names, pose_only=True, margin=ANATOMY_FIT_MARGIN,
+        reference=selected_support_reference)
+    bend_index = labels.index('anatomy_torso_bend:shoulders')
+    # Ask the same hard validator used by both fit completion and materialization.
+    source_gate = validate_physical_motion(
+        fitted_points, names, reference=source_reference,
+        anatomy_reference=source_reference)
+    supported_gate = validate_physical_motion(
+        fitted_points, names, reference=support_reference,
+        anatomy_reference=selected_support_reference)
+    assert not any(e.get('reason') == 'anatomy_torso_bend'
+                   for e in source_gate['events'])
+    assert any(e.get('reason') == 'anatomy_torso_bend'
+               for e in supported_gate['events'])
+    np.testing.assert_allclose(supported_residuals, expected_residuals)
+    assert source_residuals[0, bend_index] <= 1e-6
+    assert supported_residuals[0, bend_index] > 1e-6
+    assert fit_anatomy_constraint_reference(source_reference) is source_reference
+
+
 def test_pipeline_reuse_skips_earlier_positional_repairs(monkeypatch):
     from exercise_motion_pkg.scene_placement import normalize_scene_placement
     payload=normalize_scene_placement(accepted_payload())
@@ -243,6 +298,10 @@ def test_fit_cache_identity_includes_transitive_motion_constraint_dependencies()
 
     assert {
         'fit_runtime.py',
+        'contact_heel_pitch.py',
+        'contact_heel_repair.py',
+        'contact_interpolation.py',
+        'joint_plant_initialization.py',
         'foot_kinematics.py',
         'motion_placement.py',
         'smpl_joint_names.py',
@@ -388,9 +447,21 @@ def test_fit_source_identity_binds_support_and_articulation_inputs():
     changed_support_surface['elevatedSupportSurfaces'] = [{'kind': 'bench', 'heightMeters': 0.4}]
     assert controlled_motion_fit_source_evidence_digest(changed_support_surface) != source_digest
 
+    changed_foot_rest_pitch = copy.deepcopy(payload)
+    changed_foot_rest_pitch['footRestPitchRadians'] = {'left': 0.1}
+    assert controlled_motion_fit_source_evidence_digest(changed_foot_rest_pitch) != source_digest
+
+    changed_bridge_authority = copy.deepcopy(payload)
+    changed_bridge_authority['frames'][0]['syntheticLoopBridge'] = True
+    assert controlled_motion_fit_source_evidence_digest(changed_bridge_authority) != source_digest
+
     payload['controlledMotionFit']['fitSourceEvidenceDigest'] = source_digest
     payload['controlledMotionFit']['outputPoseDigest'] = pose_digest(payload)
     assert can_reuse_controlled_motion(payload)
+    stale_strategy = copy.deepcopy(payload)
+    stale_strategy['controlledMotionFit']['strategy'] = (
+        'fixed_rig_controlled_motion_v96_contact_foot_playback')
+    assert not can_reuse_controlled_motion(stale_strategy)
     changed_fit_gate = copy.deepcopy(payload)
     changed_fit_gate['postBakeForefootContactConstraint'] = {'requiresReconstruction': True}
     assert not can_reuse_controlled_motion(changed_fit_gate)
@@ -576,6 +647,18 @@ def test_final_acceptance_requires_the_complete_current_fit_contract():
     payload['controlledMotionFit']['checks'].pop('relativeJointShake')
     metrics = bake_and_rank.compute_kinematic_plausibility_metrics_from_payload(payload)
     assert 'controlled_motion_fit_rejected' in metrics['artifactReasons']
+
+
+def test_proven_source_boundary_failure_is_not_incomplete_motion_processing():
+    payload = accepted_payload()
+    payload['controlledMotionFit'] = {
+        'applied': False, 'reason': 'source_cycle_preflight_rejected',
+        'boundaryMotion': {'passed': False, 'failureOwner': 'source',
+                           'rejectionReasons': ['source_boundary_tangents_incompatible']},
+    }
+    metrics = bake_and_rank.compute_kinematic_plausibility_metrics_from_payload(payload)
+    assert 'source_cycle_boundary_incompatible' in metrics['artifactReasons']
+    assert 'controlled_motion_cycle_proposal_unavailable' not in metrics['processingIncompleteReasons']
 
 
 def test_terminal_fit_rejection_falls_back_only_for_unchanged_raw_reconstruction_pose():

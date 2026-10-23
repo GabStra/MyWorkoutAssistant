@@ -67,6 +67,55 @@ def test_heel_lift_uses_pixel_angles_across_image_aspect_ratios(image_height):
         np.sin(np.arctan2(20., 40.) - np.deg2rad(8.)))
 
 
+@pytest.mark.parametrize('scenario,expected', [
+    ('stable', 'toe_only'), ('moving_toe', 'unknown'), ('foreshortened', 'unknown'),
+])
+def test_stable_image_heel_pivot_survives_world_pose_disagreement(scenario, expected):
+    from exercise_motion_pkg.foot_contact_observation import classify_foot_contacts
+
+    frames = []
+    for index in range(12):
+        lifted = index >= 6
+        progress = (index - 6) / 5 if scenario == 'moving_toe' and lifted else 0.
+        heel_x = .5
+        toe_x = .6 + .04 * progress
+        toe_y = .55 + .014 * progress
+        if scenario == 'foreshortened' and lifted:
+            toe_x = .53
+        joints = {
+            'left_ankle': {'image': [.5, .5], 'world': [0., 0., 0.], 'confidence': .99},
+            'left_heel': {'image': [heel_x, .55 if not lifted else .515],
+                          'world': [0., 0., 0.], 'confidence': .99},
+            'left_toe': {'image': [toe_x, toe_y], 'world': [.1, 0., 0.], 'confidence': .99},
+        }
+        frames.append({'timeSeconds': index / 30., 'joints': joints})
+    observations = {'available': True, 'source': 'observed', 'fps': 30.,
+                    'imageWidth': 640, 'imageHeight': 480, 'frames': frames}
+    source = {'imageWidth': 640, 'imageHeight': 480,
+              'frames': [{'sourceTimeSec': frame['timeSeconds'],
+                          'joints': {'left_ankle': frame['joints']['left_ankle']['image']}}
+                         for frame in frames]}
+    evidence = {'contacts': [
+        {'jointName': 'left_ankle', 'startFrame': 0, 'endFrame': 5},
+        {'jointName': 'left_foot', 'supportKind': 'forefoot', 'verticalOnly': True,
+         'startFrame': 6, 'endFrame': 11},
+    ]}
+
+    result = classify_foot_contacts(observations, evidence, source)
+
+    assert result['feet']['left']['states'][:6] == ['full_sole'] * 6
+    assert result['feet']['left']['states'][6:] == [expected] * 6
+    assert result['sourceFrameCount'] == 12
+    assert result['sourceFps'] == 30.
+    assert result['sourceStartTimeSec'] == 0.
+    assert result['sourceEndTimeSec'] == pytest.approx(11 / 30.)
+    if scenario == 'stable':
+        assert result['contacts'][-1]['contactState'] == 'toe_only'
+        toe_only_rays = result['feet']['left']['rayObservations'][6:]
+        assert len({row['stationaryAnchorGroupId'] for row in toe_only_rays}) == 1
+        assert all(row['state'] == 'toe_only' for row in toe_only_rays)
+
+
 @pytest.mark.parametrize('toe_y', [.9, 1.02, float('nan')])
 def test_contact_requires_landmarks_inside_observed_image(toe_y):
     from exercise_motion_pkg.foot_contact_observation import classify_foot_contacts
@@ -84,6 +133,46 @@ def test_contact_requires_landmarks_inside_observed_image(toe_y):
     assert bool(result['contacts']) == (toe_y == .9)
     if toe_y != .9:
         assert set(result['feet']['left']['states']) == {'unknown'}
+
+
+def test_ankle_toe_ray_survives_missing_heel_and_uses_absolute_source_time():
+    from exercise_motion_pkg.foot_contact_observation import classify_foot_contacts
+
+    origin = 7.25
+    frames = []
+    source_frames = []
+    for index in range(5):
+        ankle = [.45, .70]
+        toe = [.57, .72 + .01 * index]
+        frames.append({
+            'timeSeconds': index / 30.,
+            'joints': {
+                'left_ankle': {'image': ankle, 'world': [0., 0., 0.], 'confidence': .99},
+                'left_heel': {'image': [.45, .74], 'world': [0., 0., 0.], 'confidence': .2},
+                'left_toe': {'image': toe, 'world': [.2, 0., 0.], 'confidence': .99},
+            },
+        })
+        source_frames.append({
+            'sourceTimeSec': origin + index / 30.,
+            'joints': {'left_ankle': ankle},
+        })
+    result = classify_foot_contacts(
+        {'available': True, 'source': 'test', 'fps': 30., 'imageWidth': 640,
+         'imageHeight': 480, 'frames': frames},
+        {'contacts': []},
+        {'sourceTimeOriginSec': origin, 'imageWidth': 640, 'imageHeight': 480,
+         'frames': source_frames},
+    )
+
+    foot = result['feet']['left']
+    assert set(foot['states']) == {'unknown'}
+    assert foot['rayObservationCount'] == 5
+    assert foot['rayObservations'][0]['sourceTimeSec'] == pytest.approx(origin)
+    assert foot['rayObservations'][-1]['sourceTimeSec'] == pytest.approx(origin + 4 / 30.)
+    assert foot['rayObservations'][0]['state'] == 'unknown'
+    assert foot['rayObservations'][0]['ankleToToeImageRay'][0] == pytest.approx(.12 * 640 / 480)
+    assert foot['rayObservations'][-1]['toeImagePoint'][0] == pytest.approx(.57 * 640 / 480)
+    assert foot['rayObservations'][-1]['toeImagePoint'][1] > foot['rayObservations'][0]['toeImagePoint'][1]
 
 
 @pytest.mark.parametrize('foot_pixels', [12., 48.])
@@ -133,6 +222,94 @@ def test_only_continuously_observed_stationary_toe_links_contact_states(gap):
     assert (contacts[0]['anchorGroupId'] == contacts[1]['anchorGroupId']) == (gap == 'stationary')
     # Linking endpoint anchors does not label the uncertain gap as contact.
     assert [{k: v for k, v in c.items() if k != 'anchorGroupId'} for c in contacts] == original
+
+
+def test_stationary_toe_anchor_survives_missing_heel_observations():
+    from exercise_motion_pkg.foot_contact_observation import assign_stationary_anchor_groups
+
+    contacts = [
+        {'jointName': 'left_foot', 'contactState': 'full_sole', 'contactMotion': 'stationary',
+         'startFrame': 0, 'endFrame': 4},
+        {'jointName': 'left_foot', 'contactState': 'toe_only', 'contactMotion': 'stationary',
+         'startFrame': 8, 'endFrame': 12},
+    ]
+    valid = np.ones(13, dtype=bool)
+    valid[5:8] = False  # heel/ankle validity is lost; toe observations remain usable.
+    toe_valid = np.ones(13, dtype=bool)
+    points = np.full((13, 2), .5)
+    states = ['full_sole'] * 5 + ['unknown'] * 3 + ['toe_only'] * 5
+
+    assign_stationary_anchor_groups(
+        contacts, side='left', valid=valid, toe_valid=toe_valid,
+        toe_points=points, foot_sizes=np.full(13, .05), states=states,
+    )
+
+    assert contacts[0]['anchorGroupId'] == contacts[1]['anchorGroupId']
+
+
+def test_heel_recontact_preserves_toe_prefix_and_stops_at_missing_toe():
+    from exercise_motion_pkg.foot_contact_observation import _preserve_heel_release_until_recontact
+
+    states = ['full_sole'] * 4 + ['toe_only'] * 2 + ['unknown'] * 2 + ['full_sole'] * 5
+    valid = np.ones(len(states), dtype=bool)
+    valid[10] = False  # Heel contact is unresolved from here onward.
+    toe_valid = np.ones(len(states), dtype=bool)
+    toe_valid[10] = False  # A real toe-observation gap ends the forefoot anchor.
+    toe_points = np.tile([.5, .6], (len(states), 1))
+    heel_points = np.tile([.5, .5], (len(states), 1))
+    heel_points[6:] = [.5, .52]  # Still outside the pre-release stance track.
+    foot_sizes = np.full(len(states), .1)
+    contacts = [
+        {'jointName': 'left_foot', 'contactState': 'full_sole', 'startFrame': 0,
+         'endFrame': 3, 'anchorGroupId': 'toe-a'},
+        {'jointName': 'left_foot', 'contactState': 'toe_only', 'startFrame': 4,
+         'endFrame': 5, 'anchorGroupId': 'toe-a'},
+        {'jointName': 'left_foot', 'contactState': 'full_sole', 'startFrame': 8,
+         'endFrame': 12, 'anchorGroupId': 'toe-a'},
+    ]
+    unresolved = np.zeros(len(states), dtype=bool)
+
+    _preserve_heel_release_until_recontact(
+        side='left', states=states, contacts=contacts, valid=valid, toe_valid=toe_valid,
+        heel_points=heel_points, toe_points=toe_points, foot_sizes=foot_sizes,
+        heel_toe_confidence=np.ones(len(states)), image_axes=np.asarray([640., 480.]),
+        unresolved_heel_recontact=unresolved,
+    )
+
+    assert states[6:10] == ['toe_only'] * 4
+    assert states[10:] == ['unknown'] * 3
+
+
+def test_airborne_gap_starts_a_new_heel_stance_track():
+    from exercise_motion_pkg.foot_contact_observation import _preserve_heel_release_until_recontact
+
+    states = ['full_sole'] * 4 + ['toe_only'] * 2 + ['airborne'] * 2 + ['full_sole'] * 4
+    valid = np.ones(len(states), dtype=bool)
+    toe_valid = np.ones(len(states), dtype=bool)
+    toe_points = np.tile([.5, .6], (len(states), 1))
+    heel_points = np.tile([.5, .5], (len(states), 1))
+    toe_points[8:] = [.7, .6]
+    heel_points[8:] = [.7, .5]  # A distinct landing pose, unrelated to the old toe anchor.
+    foot_sizes = np.full(len(states), .1)
+    contacts = [
+        {'jointName': 'left_foot', 'contactState': 'full_sole', 'startFrame': 0,
+         'endFrame': 3, 'anchorGroupId': 'toe-a'},
+        {'jointName': 'left_foot', 'contactState': 'toe_only', 'startFrame': 4,
+         'endFrame': 5, 'anchorGroupId': 'toe-a'},
+        {'jointName': 'left_foot', 'contactState': 'full_sole', 'startFrame': 8,
+         'endFrame': 11, 'anchorGroupId': 'toe-b'},
+    ]
+    unresolved = np.zeros(len(states), dtype=bool)
+
+    _preserve_heel_release_until_recontact(
+        side='left', states=states, contacts=contacts, valid=valid, toe_valid=toe_valid,
+        heel_points=heel_points, toe_points=toe_points, foot_sizes=foot_sizes,
+        heel_toe_confidence=np.ones(len(states)), image_axes=np.asarray([640., 480.]),
+        unresolved_heel_recontact=unresolved,
+    )
+
+    assert states[6:8] == ['airborne'] * 2
+    assert states[8:] == ['full_sole'] * 4
 
 
 @pytest.mark.parametrize('same_ankle,toe_returned,gap_state', [
@@ -218,6 +395,112 @@ def test_neutral_pitch_does_not_promote_forefoot_evidence_to_an_ankle_lock():
     assert not mask[8:12].any()
 
 
+def test_image_only_heel_pivot_is_annotated_as_phase_without_fake_height():
+    from exercise_motion_pkg.foot_contact_observation import classify_foot_contacts
+
+    frames = []
+    for index in range(20):
+        heel_pivot = index >= 10
+        ankle_y = .77 if heel_pivot else .8
+        heel_y = .86 if heel_pivot else .9
+        frames.append({'timeSeconds': index / 30., 'joints': {
+            'left_ankle': {'image': [.5, ankle_y], 'world': [0., 0., 0.],
+                           'confidence': .99},
+            'left_heel': {'image': [.5, heel_y], 'world': [0., -.1, 0.],
+                          'confidence': .99},
+            'left_toe': {'image': [.6, .9], 'world': [.2, -.1, 0.],
+                         'confidence': .99},
+        }})
+    observations = {'available': True, 'source': 'observed', 'fps': 30.,
+                    'frames': frames}
+    source = {'frames': [
+        {'sourceTimeSec': index / 30., 'joints': {'left_ankle': [.5, .8]}}
+        for index in range(20)
+    ]}
+    evidence = {'contacts': [{'jointName': 'left_ankle', 'startFrame': 0,
+                              'endFrame': 19}]}
+
+    result = classify_foot_contacts(observations, evidence, source, [0., -1., 0.])
+    pivot = next(contact for contact in result['contacts']
+                 if contact['contactState'] == 'toe_only')
+    assert pivot['minimumLiftRatio'] == 0.
+    assert pivot['heelPhaseEvidence'] == {
+        'source': 'image_only_toe_pitch', 'worldHeightResolved': False,
+    }
+
+
+def test_full_sole_recontact_waits_for_heel_to_return_to_its_stance_track():
+    from exercise_motion_pkg.foot_contact_observation import classify_foot_contacts
+
+    frames = []
+    for index in range(16):
+        if index < 6 or index >= 13:
+            heel_y = .55
+        elif index < 10:
+            heel_y = .51  # clear toe pivot
+        else:
+            heel_y = .54  # neutral within the angle band, but not back at stance
+        joints = {
+            'left_ankle': {'image': [.5, .5], 'world': [0., 0., 0.], 'confidence': .99},
+            'left_heel': {'image': [.5, heel_y], 'world': [0., 0., 0.], 'confidence': .99},
+            'left_toe': {'image': [.6, .55], 'world': [.2, 0., 0.], 'confidence': .99},
+        }
+        frames.append({'timeSeconds': index / 30., 'joints': joints})
+    observations = {'available': True, 'source': 'observed', 'fps': 30.,
+                    'imageWidth': 640, 'imageHeight': 480, 'frames': frames}
+    source = {'imageWidth': 640, 'imageHeight': 480,
+              'frames': [{'sourceTimeSec': frame['timeSeconds'],
+                          'joints': {'left_ankle': frame['joints']['left_ankle']['image']}}
+                         for frame in frames]}
+    evidence = {'contacts': [
+        {'jointName': 'left_ankle', 'contactMotion': 'stationary',
+         'startFrame': 0, 'endFrame': 5},
+        {'jointName': 'left_foot', 'supportKind': 'forefoot', 'contactMotion': 'stationary',
+         'verticalOnly': True, 'startFrame': 6, 'endFrame': 12},
+        {'jointName': 'left_ankle', 'contactMotion': 'stationary',
+         'startFrame': 13, 'endFrame': 15},
+    ]}
+
+    result = classify_foot_contacts(observations, evidence, source)
+
+    states = result['feet']['left']['states']
+    assert states[:6] == ['full_sole'] * 6
+    assert states[6:13] == ['toe_only'] * 7
+    assert states[13:] == ['full_sole'] * 3
+    contacts = result['contacts']
+    assert all(not contact.get('ankleAnchorGroupId') for contact in contacts
+               if contact['contactState'] == 'toe_only')
+
+
+def test_heel_image_observations_do_not_require_ankle_identity():
+    from exercise_motion_pkg.foot_contact_observation import classify_foot_contacts
+
+    frames = []
+    for index in range(4):
+        frames.append({'timeSeconds': index / 30., 'joints': {
+            'left_ankle': {'image': [.5, .5], 'world': [0., 0., 0.], 'confidence': .2},
+            'left_heel': {'image': [.5, .55], 'world': [0., 0., 0.], 'confidence': .99},
+            'left_toe': {'image': [.6, .55], 'world': [.2, 0., 0.], 'confidence': .98},
+        }})
+    source = {'imageWidth': 640, 'imageHeight': 480,
+              'frames': [{'sourceTimeSec': frame['timeSeconds'],
+                          'joints': {'left_ankle': [.5, .5]}}
+                         for frame in frames]}
+
+    result = classify_foot_contacts(
+        {'available': True, 'source': 'observed', 'fps': 30., 'imageWidth': 640,
+         'imageHeight': 480, 'frames': frames}, {'contacts': []}, source,
+    )
+
+    foot = result['feet']['left']
+    assert foot['rayObservationCount'] == 0
+    assert len(foot['heelImageObservations']) == 4
+    assert foot['heelImageObservations'][0]['sourceTimeSec'] == pytest.approx(0.)
+    assert foot['heelImageObservations'][0]['heelImagePoint'] == pytest.approx([.5 * 640 / 480, .55])
+    assert foot['heelImageObservations'][0]['heelConfidence'] == pytest.approx(.99)
+    assert all(row['state'] == 'unknown' for row in foot['heelImageObservations'])
+
+
 @pytest.mark.parametrize('failure', [None, 'different_video', 'moving_toe', 'wrong_ankle'])
 def test_uncalibrated_visible_contact_requires_matching_video_and_independent_still_toe(failure):
     from exercise_motion_pkg.foot_contact_observation import classify_foot_contacts
@@ -253,14 +536,21 @@ def test_uncalibrated_visible_contact_requires_matching_video_and_independent_st
 @pytest.mark.parametrize(
     'states,expected_pins,continuous',
     [
-        (['full_sole', 'unknown', 'unknown', 'full_sole'], [True] * 4, True),
+        (['full_sole', 'unknown', 'unknown', 'full_sole'], [False] * 4, False),
         (
             ['unknown', 'unknown', 'airborne', 'airborne', 'airborne', 'unknown', 'unknown'],
-            [True, True, False, False, False, True, True],
+            [False] * 7,
+            False,
+        ),
+        (
+            ['full_sole', 'full_sole', 'unknown', 'unknown', 'airborne', 'airborne',
+             'airborne', 'full_sole', 'full_sole', 'unknown', 'unknown', 'full_sole', 'full_sole'],
+            [True, True, False, False, False, False, False, True, True, False, False, True, True],
             False,
         ),
     ],
-    ids=['unknown-patch-keeps-source-stance', 'observed-airborne-splits-source-stance'],
+    ids=['unknown-patch-does-not-authorize-source-stance', 'airborne-unknown-patches-stay-unresolved',
+         'mixed-unknown-airborne-only-keeps-confirmed-sole'],
 )
 def test_foot_patch_merge_preserves_source_support_unless_airborne_is_observed(
     monkeypatch, states, expected_pins, continuous,
