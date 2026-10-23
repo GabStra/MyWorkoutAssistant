@@ -1,5 +1,13 @@
 # Agent Instructions
 
+## Debugging
+
+- Always investigate the deeper design flaw behind a failure, not only its immediate symptom. Trace the actual failing artifact through its producers, consumers and shared ownership boundaries; prefer fixing the owning shared code over local workarounds, extra prompt instructions or weaker validation. Before claiming a root cause, verify causality with a controlled replay or focused regression, and distinguish the proven blocker from downstream behavior that remains untested.
+
+## LLM Output Design
+
+- Do not ask the LLM to calculate, reconstruct, or repeat exact numbers or numbered references when code can own them; these are recurring failure points. Compute and validate quantities in shared code, carry structured identity and evidence provenance internally, and let the LLM select from code-provided choices or express qualitative intent. Preserve explicit user-supplied numbers as authoritative inputs. Fix fragile output boundaries instead of adding prompt instructions that demand more precise copying.
+
 ## E2E Testing
 
 - Always run `pwsh ./scripts/run_wear_e2e.ps1` with the maximum available timeout so the run can complete and be tracked to the end (do not rely on default tool timeouts).
