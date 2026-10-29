@@ -3,6 +3,7 @@
 ## Debugging
 
 - Always investigate the deeper design flaw behind a failure, not only its immediate symptom. Trace the actual failing artifact through its producers, consumers and shared ownership boundaries; prefer fixing the owning shared code over local workarounds, extra prompt instructions or weaker validation. Before claiming a root cause, verify causality with a controlled replay or focused regression, and distinguish the proven blocker from downstream behavior that remains untested.
+- Re-evaluate the assumptions, limits and priorities behind unresolved outcomes, even when a candidate passes hard validation. When a change could resolve current failures, propose it with the evidence, expected benefits, remaining gaps and tradeoffs; do not silently relax an approved requirement. Compare controlled alternatives before repeating model repairs.
 
 ## LLM Output Design
 
