@@ -6,8 +6,10 @@ from jsonschema import ValidationError
 from test_workout_generator_conversation_sessions import FakeFunction, FakeToolCall, make_shell_deps, run_shell
 from workout_generator_pkg import interactive_shell as shell
 from workout_generator_pkg.conversation_store import load_active_conversation_record
-from workout_generator_pkg.user_interaction import answer_question, clarification_question, pending_question
+from workout_generator_pkg.user_interaction import (answer_question, clarification_question, pending_question,
+    preference_comparison_concerns, PROPOSE_WORKOUT_ALTERNATIVES_TOOL)
 from workout_generator_pkg.logging_ui import format_question
+from workout_generator_pkg.constants import EXACT_GENERATION_CONFIRMATION
 
 
 @pytest.mark.parametrize('options, answer, expected', [
@@ -112,6 +114,73 @@ def test_question_validation_rejects_blank_prompts_and_model_approval_actions():
         clarification_question({'question': 'Approve?', 'action': 'generate_workout'})
 
 
+def test_preference_comparison_selector_uses_reviewed_source_accounting_and_excludes_accepted_or_hard_findings():
+    findings = [
+        {'concernGroupId': 'CONCERN_PREF', 'basis': 'soft_tradeoff', 'action': 'advisory',
+         'decisionId': None, 'message': 'The approved preference remains incomplete.',
+         'evidencePaths': ['/sourceMessages/SOURCE_0', '/draft/exercises/0']},
+        {'concernGroupId': 'CONCERN_ACCEPTED', 'basis': 'soft_tradeoff', 'action': 'advisory',
+         'decisionId': None, 'message': 'An already accepted tradeoff.',
+         'evidencePaths': ['/sourceMessages/SOURCE_1', '/draft/exercises/1']},
+        {'concernGroupId': 'CONCERN_HARD', 'basis': 'established_violation', 'action': 'repair',
+         'decisionId': None, 'message': 'A hard requirement violation.',
+         'evidencePaths': ['/sourceMessages/SOURCE_2', '/draft/exercises/2']},
+    ]
+    audit = {'review': {'findings': findings, 'requirementAssessments': {
+        'SOURCE_0': {'findingIndexes': [0]}, 'SOURCE_1': {'findingIndexes': [1]},
+        'SOURCE_2': {'findingIndexes': [2]}},
+        'assessment': {'groups': [
+            {'findingIndexes': [0], 'disposition': 'advisory', 'reason': 'Preference evidence.'},
+            {'findingIndexes': [1], 'disposition': 'advisory', 'reason': 'Already adjudicated.'},
+            {'findingIndexes': [2], 'disposition': 'repair', 'reason': 'Hard requirement.'}]}}}
+    requirements = {'requirementAccounting': [
+        {'sourceReferences': ['SOURCE_0'], 'priority': 'preference', 'instruction': 'Favor similar durations.'},
+        {'sourceReferences': ['SOURCE_1'], 'priority': 'preference', 'instruction': 'Favor extra variety.'},
+        {'sourceReferences': ['SOURCE_2'], 'priority': 'mandatory', 'instruction': 'Keep the schedule.'}]}
+    checklist = {'acceptedSoftTradeoffs': {'CONCERN_ACCEPTED': {'finding': findings[1]}}}
+
+    eligible = preference_comparison_concerns(audit, requirements, review_checklist=checklist)
+    assert [item['concernGroupId'] for item in eligible] == ['CONCERN_PREF']
+    assert eligible[0]['preferenceRequirements'][0]['instruction'] == 'Favor similar durations.'
+    assert preference_comparison_concerns(audit, requirements, ['CONCERN_PREF'],
+        review_checklist=checklist) == eligible
+    with pytest.raises(ValueError, match='not an unresolved, source-backed preference'):
+        preference_comparison_concerns(audit, requirements, ['CONCERN_HARD'], review_checklist=checklist)
+
+
+def test_preference_comparison_tool_selector_is_optional_and_explicit():
+    parameters = PROPOSE_WORKOUT_ALTERNATIVES_TOOL['function']['parameters']
+    assert 'comparisonConcernIds' not in parameters.get('required', [])
+    assert parameters['properties']['comparisonConcernIds']['uniqueItems'] is True
+
+
+def test_alternative_question_gate_only_exposes_the_latest_validated_proposal():
+    from test_workout_generator_conflict_resolution import _alternative_case
+    from workout_generator_pkg.conflict_resolution import render_alternative_preview
+
+    _, _, result = _alternative_case()
+    proposal = result['proposals'][0]
+    messages = [
+        {'role': 'assistant', 'tool_calls': [{'id': 'proposal', 'function': {
+            'name': 'propose_workout_alternatives', 'arguments': '{}'}}]},
+        {'role': 'tool', 'tool_call_id': 'proposal', 'content': json.dumps(result)},
+        {'role': 'assistant', 'content': render_alternative_preview(proposal),
+         'canonicalAlternativePreview': proposal['proposalId']},
+    ]
+
+    question = pending_question(messages)
+    assert question['kind'] == 'alternative'
+    assert answer_question(question, '1') == 'APPROVE ALTERNATIVE ' + proposal['proposalId']
+
+    messages.extend([
+        {'role': 'assistant', 'tool_calls': [{'id': 'new-diagnosis', 'function': {
+            'name': 'propose_workout_alternatives', 'arguments': '{}'}}]},
+        {'role': 'tool', 'tool_call_id': 'new-diagnosis', 'content': json.dumps({
+            'outcome': 'unresolved', 'proposals': []})},
+    ])
+    assert pending_question(messages) is None
+
+
 @pytest.mark.parametrize('kind', ['requirements', 'generation'])
 @pytest.mark.parametrize('reply', ['1', '2', 'no', 'cancel'])
 def test_approval_survives_explanations_but_not_approval_or_decline(kind, reply):
@@ -131,6 +200,108 @@ def test_approval_survives_explanations_but_not_approval_or_decline(kind, reply)
         'userInteraction': {'question': question, 'input': reply}},
         {'role': 'assistant', 'content': 'Understood.'}])
     assert pending_question(json.loads(json.dumps(messages))) is None
+
+
+def test_generation_confirmation_names_unproven_distribution_without_other_limitations():
+    from test_workout_generator_planning_tools import planning_case, requirement_messages, approved_messages
+    from workout_generator_pkg.generation_audit import render_optimization_disclosure
+    from workout_generator_pkg.planning_tools import audit_workout_plan
+
+    equipment, _, stored, draft = planning_case()
+    result = audit_workout_plan(draft, equipment, requirement_messages(stored))
+    execution = {'approvedPriorities': [
+        {'priority': 'distribution', 'owner': 'joint_solver', 'status': 'unproven'},
+    ]}
+    result['automaticAllocation'] = {'priorityExecution': execution}
+    result['preview'] += '\n\n' + render_optimization_disclosure(execution)
+    question = pending_question(approved_messages(stored, result)[:-1])
+
+    assert 'bounded search did not establish this priority' in question['question']
+    assert 'not proof that improvement is impossible' in question['question']
+    assert 'A better menu or placement has not been ruled out' in question['question']
+    assert question['options'][0] == 'Accept the disclosed priority limitations and generate'
+
+    placement_disclosure = render_optimization_disclosure({**execution, 'structuralConcentration': {
+        'rolePlacement': {'status': 'feasible', 'profiles': [
+            {'roles': ['abs', 'core'], 'peakSurplusPerOccurrence': 2},
+        ]},
+        'verifiedDemandUnion': {'optimizationStatus': 'unavailable_evidence'},
+    }})
+    assert 'preserves weekly exercise-recipe doses and exact target counts' in placement_disclosure
+    assert 'does not add volume to make inclusion-only roles appear balanced' in placement_disclosure
+    assert '2 working sets above its frequency-weighted per-occasion average' in placement_disclosure
+    assert 'Verified-demand co-location: not optimized because verified exercise evidence is unavailable' in placement_disclosure
+
+
+@pytest.mark.parametrize('status', ['optimal', 'feasible'])
+def test_development_disclosure_reports_both_allocation_objectives(status):
+    from workout_generator_pkg.generation_audit import (
+        _development_summary_interpretation, render_optimization_disclosure)
+
+    development = {'roleKeys': ['lateral_delt', 'vertical_pull'], 'status': status,
+        'minimumWeeklyWorkingSets': 4,
+        'combinedExposure': {'status': status, 'weeklyWorkingSets': 12}}
+    disclosure = render_optimization_disclosure({'developmentEmphasis': development})
+
+    assert 'then maximize combined exposure without reducing that minimum' in disclosure
+    assert 'combined development-role exposure 12 role-set credits/week' in disclosure
+    assert 'not a count of distinct physical sets' in disclosure
+    assert 'does not establish adequate stimulus or personal suitability' in disclosure
+    assert ('best minimum and combined exposure proven' in disclosure) == (status == 'optimal')
+    assert 'compared combined development-role exposure' in _development_summary_interpretation(development)
+
+
+def test_generation_confirmation_names_unoptimized_joint_priorities():
+    from test_workout_generator_planning_tools import planning_case, requirement_messages, approved_messages
+    from workout_generator_pkg.generation_audit import render_optimization_disclosure
+    from workout_generator_pkg.planning_tools import audit_workout_plan
+
+    equipment, _, stored, draft = planning_case()
+    result = audit_workout_plan(draft, equipment, requirement_messages(stored))
+    priority_execution = {'approvedPriorities': [
+        {'priority': 'demand_distribution', 'owner': 'joint_solver', 'status': 'unavailable_evidence'},
+        {'priority': 'duration_balance', 'owner': 'joint_solver', 'status': 'feasible'},
+        {'priority': 'progression', 'owner': 'movement_selection_and_review', 'status': 'outside_joint_solver'},
+    ], 'developmentEmphasis': {
+        'owner': 'joint_solver', 'status': 'feasible',
+        'roleKeys': ['lateral_delt', 'vertical_pull'],
+        'comparison': 'maximize the minimum weekly raw working-set exposure across development roles',
+        'unit': 'weekly_raw_working_sets', 'minimumWeeklyWorkingSets': 3,
+        'sourceBudget': {'source': 'code_preparation_hard_feasible_set_allocation_plus_existing_source_sessions',
+            'variableSourceWorkingSets': 22, 'fixedExistingWorkingSets': 4,
+            'sourceBudgetWeeklyWorkingSets': 26, 'variableMenuCapWorkingSets': 22},
+        'scope': 'Qualified executable recipes in the submitted finite menu and approved hard constraints.',
+    }}
+    result['automaticAllocation'] = {'priorityExecution': priority_execution}
+    result['preview'] += '\n\n' + render_optimization_disclosure(
+        priority_execution)
+    messages = approved_messages(stored, result)[:-1]
+
+    question = pending_question(messages)
+
+    assert 'demand distribution: not optimized because verified exercise evidence is unavailable.' in question['question']
+    assert 'duration balance: valid candidate found; the approved balance hierarchy is not proven optimal.' in question['question']
+    assert 'Development allocation across lateral delt, vertical pull: maximize the minimum weekly raw working-set exposure.' in question['question']
+    assert 'Source budget (code-prepared workout allocation plus existing sessions): 22 weekly variable-session sets, plus 4 fixed-session sets; 26 total source weekly sets.' in question['question']
+    assert 'variable-menu cap is 22 weekly sets; fixed-session sets remain constant' in question['question']
+    assert 'attained minimum 3 raw working sets/week' in question['question']
+    assert 'does not establish adequate stimulus or personal suitability' in question['question']
+    assert question['options'][0] == 'Accept the disclosed priority limitations and generate'
+    assert answer_question(question, '1') == EXACT_GENERATION_CONFIRMATION
+
+    budget_conflict = dict(priority_execution['developmentEmphasis'],
+        status='source_budget_conflict_requires_review', minimumWeeklyWorkingSets=None)
+    conflict_disclosure = render_optimization_disclosure({'developmentEmphasis': budget_conflict})
+    assert 'uncapped diagnostic found hard feasibility' in conflict_disclosure
+    assert 'not proof that hard requirements are infeasible' in conflict_disclosure
+    assert 'no export candidate is available' in conflict_disclosure
+
+    duration_disclosure = render_optimization_disclosure({'approvedPriorities': [
+        {'priority': 'duration_balance', 'owner': 'joint_solver', 'status': 'optimal',
+            'solverStage': {'goal': 'duration_balance', 'status': 'optimal', 'value': 42}},
+    ]})
+    assert 'Duration balance retains 42 seconds of excess beyond the approved duration-similarity band' in duration_disclosure
+    assert 'the preferred tolerance remains unmet' in duration_disclosure
 
 
 @pytest.mark.parametrize('omitted', [[], [0, 1]])

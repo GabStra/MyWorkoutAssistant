@@ -1,6 +1,8 @@
 """Structured terminal questions; approval actions stay owned by the backend."""
 
+import copy
 import json
+import re
 
 from jsonschema import ValidationError, validate
 
@@ -31,10 +33,16 @@ ASK_USER_TOOL = {
 
 PROPOSE_WORKOUT_ALTERNATIVES_TOOL = {'type': 'function', 'function': {
     'name': 'propose_workout_alternatives',
-    'description': 'After a current-bound joint allocation conflict, request validated alternatives within explicitly negotiable numerical bounds. Structural exercise-selection repair should be attempted first; if it remains unresolved, proposals are still useful but must be labeled as scoped to the supplied exercise menu, with exact original-target shortfalls and no global-best or impossibility claim. Preserve equipment, explicit safety restrictions, mandatory requirements and preferences. Never silently relax requirements. Supply all workout sessions and the current requirementsId/draftId. Proposals remain hypothetical until the user explicitly approves one.',
+    'description': 'Compare alternatives for a current allocation conflict or selected preferences. Python explores authorized numerical changes and separately reports non-exportable diagnostics of hypothetical priority orders over the verified recipe pool, or the selected menu when that pool is unavailable. The current plan, hard requirements and approved priority order remain active. Proposals require explicit approval; a comparison does not declare the baseline invalid.',
     'parameters': {'type': 'object', 'properties': {
         'requirementsId': {'type': 'string', 'minLength': 1},
         'baseDraftId': {'type': 'string', 'minLength': 1},
+        'comparisonPriorities': {'type': 'array', 'minItems': 1, 'uniqueItems': True,
+            'items': {'type': 'string', 'minLength': 1},
+            'description': 'Select existing approved objectiveOrder names for diagnostic comparisons of their precedence. Python owns the scenario orders and quantities; diagnostics do not approve a policy change.'},
+        'comparisonConcernIds': {'type': 'array', 'items': {'type': 'string', 'minLength': 1},
+            'uniqueItems': True,
+            'description': 'Optional current review concernGroupId values selected for preference comparison. Python accepts only source-backed, unresolved user preferences; omit when no specific reviewed preference should be compared.'},
         'workouts': {'type': 'array', 'minItems': 1, 'items': {'type': 'object'},
                      'description': 'Optional only when baseDraftId identifies the current saved audited draft; Python then loads its submitted workouts.'},
     }, 'required': ['requirementsId', 'baseDraftId'], 'additionalProperties': False},
@@ -75,6 +83,92 @@ def repair_workout_alternative_tool(task):
         'This does not approve the alternative. The user must separately approve its exact reviewed proposal ID. '
         + tool['function']['description'])
     return {'type': 'function', 'function': tool['function']}
+
+
+def preference_comparison_priorities(audit, requirements, selected_priorities):
+    """Select approved solver preferences without inventing a failure threshold."""
+    if (not isinstance(selected_priorities, list) or not selected_priorities
+            or any(not isinstance(name, str) for name in selected_priorities)
+            or len(set(selected_priorities)) != len(selected_priorities)):
+        raise ValueError('Select unique approved priority names for comparison.')
+    approved = requirements.get('objectiveOrder') or []
+    joint = audit.get('coordinatedJointPlanning') or audit.get('automaticAllocation') or {}
+    rows = (joint.get('priorityExecution') or {}).get('approvedPriorities', [])
+    evidence = {row.get('priority'): row for row in rows if isinstance(row, dict)}
+    if any(name not in approved or name not in evidence for name in selected_priorities):
+        raise ValueError('Preference comparisons require approved priorities with current execution evidence.')
+    return [{'priority': name, 'execution': copy.deepcopy(evidence[name]),
+             'approvedObjectiveOrder': list(approved), 'basis': 'requested_comparison'}
+            for name in approved if name in selected_priorities]
+
+
+def preference_comparison_concerns(audit, requirements, selected_ids=None, *, review_checklist=None):
+    """Resolve explicit concern keys to current, source-backed soft preferences."""
+    review = audit.get('review') if isinstance(audit, dict) else None
+    assessment = review.get('assessment') if isinstance(review, dict) else None
+    if not isinstance(review, dict) or not isinstance(assessment, dict):
+        raise ValueError('A current semantic review is required to select preference comparisons.')
+
+    checklist = review_checklist or (audit.get('reviewChecklist') if isinstance(audit, dict) else {}) or {}
+    accepted = checklist.get('acceptedSoftTradeoffs', {}) if isinstance(checklist, dict) else {}
+    accepted_ids = set(accepted) if isinstance(accepted, dict) else set()
+    accounting = requirements.get('requirementAccounting', []) if isinstance(requirements, dict) else []
+    preferences_by_source = {}
+    for item in accounting:
+        if not isinstance(item, dict) or item.get('priority') != 'preference':
+            continue
+        for source in item.get('sourceReferences', []):
+            preferences_by_source.setdefault(source, []).append(item)
+
+    source_assessments = review.get('requirementAssessments', {})
+    findings = review.get('findings', [])
+    eligible = []
+    for group in assessment.get('groups', []):
+        indexes = group.get('findingIndexes', [])
+        if group.get('disposition') != 'advisory' or not indexes:
+            continue
+        group_findings = [findings[index] for index in indexes
+            if type(index) is int and 0 <= index < len(findings)]
+        if len(group_findings) != len(indexes) or any(
+                finding.get('basis') not in ('uncertainty', 'soft_tradeoff')
+                or finding.get('action') != 'advisory' or finding.get('decisionId')
+                for finding in group_findings):
+            continue
+        concern_ids = {finding.get('concernGroupId') for finding in group_findings}
+        if len(concern_ids) != 1:
+            continue
+        concern_id = next(iter(concern_ids))
+        if not isinstance(concern_id, str) or not concern_id or concern_id in accepted_ids:
+            continue
+
+        cited_sources = set()
+        for finding in group_findings:
+            for path in finding.get('evidencePaths', []):
+                match = re.match(r'^/sourceMessages/(SOURCE_[0-9]+)(?:/|$)', path)
+                if match:
+                    cited_sources.add(match.group(1))
+        for source, check in source_assessments.items():
+            if any(index in check.get('findingIndexes', []) for index in indexes):
+                cited_sources.add(source)
+        linked_preferences = [copy.deepcopy(item) for source in sorted(cited_sources)
+            for item in preferences_by_source.get(source, [])]
+        if not linked_preferences:
+            continue
+        eligible.append({'concernGroupId': concern_id, 'disposition': group['disposition'],
+            'groupReason': group.get('reason', ''), 'findingIndexes': list(indexes),
+            'findings': [copy.deepcopy(finding) for finding in group_findings],
+            'preferenceRequirements': linked_preferences})
+
+    if selected_ids is None:
+        return eligible
+    if (not isinstance(selected_ids, list) or not selected_ids
+            or any(not isinstance(identifier, str) or not identifier for identifier in selected_ids)
+            or len(selected_ids) != len(set(selected_ids))):
+        raise ValueError('Select one or more unique reviewed preference concern IDs.')
+    by_id = {entry['concernGroupId']: entry for entry in eligible}
+    if any(identifier not in by_id for identifier in selected_ids):
+        raise ValueError('A selected concern is not an unresolved, source-backed preference in the current review.')
+    return [by_id[identifier] for identifier in selected_ids]
 
 
 def clarification_question(arguments):
@@ -157,6 +251,23 @@ def pending_question(messages):
                     if (result.get('requirementsId') != requirements.get('requirementsId')
                             or not requirements_approved(messages, requirements)):
                         continue
+                    joint_receipt = result.get('coordinatedJointPlanning') or result.get('automaticAllocation') or {}
+                    priority_execution = joint_receipt.get('priorityExecution') or {}
+                    priorities = priority_execution.get('approvedPriorities', [])
+                    development = priority_execution.get('developmentEmphasis') or {}
+                    development_requested = bool(development.get('roleKeys'))
+                    incomplete_priorities = any(entry.get('owner') == 'joint_solver'
+                            and entry.get('status') in ('feasible', 'unproven', 'unavailable_evidence', 'not_run', 'not_run_after_solver_stop')
+                            for entry in priorities)
+                    incomplete_development = (development_requested
+                        and development.get('status') not in ('optimal', 'optimal_zero_lower_bound'))
+                    if incomplete_priorities or development_requested:
+                        from .generation_audit import render_optimization_disclosure
+                        disclosure = render_optimization_disclosure(priority_execution)
+                        if disclosure:
+                            title += '\n\n' + disclosure
+                        if incomplete_priorities or incomplete_development:
+                            options = ['Accept the disclosed priority limitations and generate', 'Revise workout']
                 elif result.get('approvedAlternativeId') and requirements_approved(messages, result):
                     continue
                 reference = result.get('requirementsId' if kind == 'requirements' else 'draftId')

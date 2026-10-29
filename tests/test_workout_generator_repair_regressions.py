@@ -22,6 +22,203 @@ def qualified_recipe_fixture(monkeypatch):
         lambda *args, **kwargs: {'inputHash': 'qualified-fixture', 'contracts': [], 'capabilities': {}})
 
 
+def test_selection_repair_ignores_exact_identity_noops_but_keeps_change_guards():
+    original = {'sessions': [{'exercises': [
+        {'definition_id': 'LIBRARY_1', 'satisfiesCoverage': ['horizontal_pull']},
+        {'definition_id': 'LIBRARY_2', 'satisfiesCoverage': ['horizontal_push']},
+    ]}]}
+    occurrences = {
+        '/sessions/0/exercises/0': copy.deepcopy(original['sessions'][0]['exercises'][0]),
+        '/sessions/0/exercises/1': copy.deepcopy(original['sessions'][0]['exercises'][1]),
+    }
+    task = {'arguments': copy.deepcopy(original), 'blockRepair': {'groupingOnly': False, 'sessions': {
+        'SESSION_0': {'occurrences': occurrences, 'editableOccurrences': list(occurrences), 'canAdd': False}}}}
+    patch = {'sessionBlocks': [{'sessionReference': 'SESSION_0', 'replacements': [
+        {'replaces': '/sessions/0/exercises/0', 'definition_id': 'LIBRARY_1',
+         'satisfiesCoverage': ['horizontal_pull']},
+        {'replaces': '/sessions/0/exercises/1', 'definition_id': 'LIBRARY_3',
+         'satisfiesCoverage': ['vertical_pull']},
+    ]}]}
+
+    result = session_drafting._apply_selection_blocks(patch, task)
+    assert result['sessions'][0]['exercises'] == [
+        {'definition_id': 'LIBRARY_1', 'satisfiesCoverage': ['horizontal_pull']},
+        {'definition_id': 'LIBRARY_3', 'satisfiesCoverage': ['vertical_pull']},
+    ]
+    assert original['sessions'][0]['exercises'][1]['definition_id'] == 'LIBRARY_2'
+
+    coverage_edit = copy.deepcopy(patch)
+    coverage_edit['sessionBlocks'][0]['replacements'][0]['satisfiesCoverage'] = ['vertical_pull']
+    with pytest.raises(ValueError, match='different library definition'):
+        session_drafting._apply_selection_blocks(coverage_edit, task)
+
+    all_noop = {'sessionBlocks': [{'sessionReference': 'SESSION_0', 'replacements': [
+        {'replaces': '/sessions/0/exercises/0', 'definition_id': 'LIBRARY_1',
+         'satisfiesCoverage': ['horizontal_pull']},
+    ]}]}
+    with pytest.raises(ValueError, match='replace or add at least one exercise'):
+        session_drafting._apply_selection_blocks(all_noop, task)
+
+
+def test_preparation_repair_carries_menu_review_into_the_model_request():
+    from workout_generator_pkg.planner_context import focus_planner_context
+
+    equipment, _, messages, arguments, _ = prepared_case()
+    prepared = session_drafting.prepare_workout_sessions(arguments, messages, equipment)
+    store_tool(messages, 'prepare_workout_sessions', arguments, prepared)
+    alternate = 'LIBRARY_0'
+    menu_review = {'evidence': {
+        'status': 'infeasible_relaxation', 'roleUpperBounds': {'lateral_delt': 3.0},
+        'approvedMinimumConflicts': [{'role': 'lateral_delt', 'required': 6, 'qualifiedMenuUpperBound': 3.0}],
+        'selectableCreditProfileAlternatives': {'alternatives': [
+            {'definition_id': alternate, 'qualificationStatus': 'unqualified'}]},
+    }}
+    error = {'code': 'infeasible_set_allocation', 'path': '/sessions',
+        'conflictingTargets': [{'target': 'weekly:lateral_delt', 'slotIds': ['/sessions/0/exercises/0']}]}
+    worker = {'preparationId': prepared['preparationId'], 'preparationErrors': [error], 'menuReview': menu_review}
+    store_tool(messages, 'draft_workout_sessions', {}, worker)
+
+    task = session_drafting.preparation_repair_task(messages)
+    request = focus_planner_context(messages, messages, equipment)
+    state = json.loads(request[-1]['content'].split('\n', 1)[1])
+    evidence = state['preparationRepairTask']['menuReview']['evidence']
+    assert task['menuReview'] == menu_review
+    assert evidence['roleUpperBounds']['lateral_delt'] == 3.0
+    assert evidence['approvedMinimumConflicts'][0]['required'] == 6
+    assert evidence['selectableCreditProfileAlternatives']['alternatives'][0]['definition_id'] == alternate
+
+
+def test_hard_menu_conflict_exposes_only_proven_single_addition_and_code_owns_fields():
+    task = {'menuReview': {'evidence': {
+        'hardFeasibilityStatus': 'infeasible_relaxation',
+        'developmentRoleRelief': {'singleAdditionFeasibility': {
+            'status': 'feasible_relaxation', 'additions': [{
+                'hardFeasibilityStatus': 'feasible_relaxation', 'qualificationStatus': 'unqualified',
+                'qualifiedRoleContribution': 0, 'definitionChoices': [
+                {'id': 'LIBRARY_17', 'name': 'Candidate'}]}]}}}},
+        'arguments': {'sessions': [{'exercises': [
+            {'definition_id': 'LIBRARY_1', 'satisfiesCoverage': ['upper_pull'], 'numWorkSets': 5}]}]},
+        'blockRepair': {'groupingOnly': False, 'sessions': {'SESSION_0': {
+            'occurrences': {'/sessions/0/exercises/0': {'definition_id': 'LIBRARY_1'}},
+            'editableOccurrences': ['/sessions/0/exercises/0'], 'canAdd': True}}},
+        'permittedPaths': ['/sessions/0/exercises/-'], 'permittedDescendantPaths': [],
+    }
+    schema = session_drafting.preparation_patch_tool(task)['function']['parameters']
+    valid = {'basePreparationId': 'PREPARATION_3', 'sessionBlocks': [{
+        'sessionReference': 'SESSION_0', 'additions': [{'definition_id': 'LIBRARY_17'}]}]}
+    validate(valid, schema)
+
+    for forbidden in (
+        {'definition_id': 'LIBRARY_18'},
+        {'definition_id': 'LIBRARY_17', 'satisfiesCoverage': ['lateral_delt']},
+        {'definition_id': 'LIBRARY_17', 'numWorkSets': 4},
+    ):
+        invalid = copy.deepcopy(valid)
+        invalid['sessionBlocks'][0]['additions'] = [forbidden]
+        with pytest.raises(ValidationError):
+            validate(invalid, schema)
+    invalid = copy.deepcopy(valid)
+    invalid['sessionBlocks'][0]['additions'].append({'definition_id': 'LIBRARY_17'})
+    with pytest.raises(ValidationError):
+        validate(invalid, schema)
+    invalid = copy.deepcopy(valid)
+    invalid['sessionBlocks'][0]['replacements'] = [{'replaces': '/sessions/0/exercises/0',
+        'definition_id': 'LIBRARY_17', 'satisfiesCoverage': []}]
+    with pytest.raises(ValidationError):
+        validate(invalid, schema)
+
+    applied = session_drafting._apply_selection_blocks(valid, task)
+    assert applied['sessions'][0]['exercises'][0] == task['arguments']['sessions'][0]['exercises'][0]
+    assert applied['sessions'][0]['exercises'][1] == {
+        'definition_id': 'LIBRARY_17', 'satisfiesCoverage': [], 'numWorkSets': 3,
+        'allocationBounds': {'minimum': 1, 'maximum': 20}, 'superset': None}
+
+
+def test_stale_hard_menu_review_recomputes_from_hash_matched_recipe_qualification(monkeypatch):
+    import hashlib
+    from workout_generator_pkg.recipe_contracts import _recipe_context
+
+    equipment, _, messages, arguments, _ = prepared_case()
+    prepared = session_drafting.prepare_workout_sessions(arguments, messages, equipment)
+    prepared['recipeSessions'][0]['exercises'][0]['satisfiesCoverage'] = ['untrusted_model_claim']
+    store_tool(messages, 'prepare_workout_sessions', arguments, prepared)
+    _, requirements = session_drafting._latest_result(messages, 'set_workout_requirements')
+    refs = prepared['definition_ids']
+    input_hashes = {ref: hashlib.sha256(json.dumps(_recipe_context(
+        prepared, requirements['requirements'], ref), sort_keys=True).encode()).hexdigest() for ref in refs}
+    identity = hashlib.sha256(json.dumps(input_hashes, sort_keys=True).encode()).hexdigest()
+    worker = {key: prepared[key] for key in (
+        'preparationId', 'requirementsId', 'baseDraftId', 'libraryFingerprint', 'historyFingerprint', 'draftingVersion')}
+    worker.update(preparationErrors=[{'code': 'infeasible_set_allocation'}], recipeQualification={
+        'inputHash': identity, 'inputHashes': input_hashes,
+        'contracts': [{'definition_id': ref, 'satisfiesCoverage': []} for ref in refs]},
+        menuReview={'evidence': {'hardFeasibilityStatus': 'infeasible_relaxation',
+            'selectableCreditProfileAlternatives': {'alternatives': [{'definition_id': 'LIBRARY_98'}]}}})
+    store_tool(messages, 'draft_workout_sessions', {}, worker)
+    worker_index = len(messages) - 1
+    task = {'basePreparationId': f'PREPARATION_{worker_index}',
+        'arguments': arguments, 'menuReview': worker['menuReview']}
+    observed = {}
+    def recompute(actual_prepared, selections, actual_requirements, actual_equipment, actual_messages, existing):
+        observed['coverage'] = [item['satisfiesCoverage'] for day in selections for item in day['exercises']]
+        return {'evidence': {'status': 'infeasible_relaxation',
+            'hardFeasibilityStatus': 'infeasible_relaxation',
+            'roleUpperBounds': {'lateral_delt': 4.5},
+            'selectableCreditProfileAlternatives': {'alternatives': [{'definition_id': 'LIBRARY_98'}]},
+            'developmentRoleRelief': {'singleAdditionFeasibility': {
+                'status': 'feasible_relaxation', 'additions': [{
+                    'hardFeasibilityStatus': 'feasible_relaxation', 'qualificationStatus': 'unqualified',
+                    'qualifiedRoleContribution': 0, 'definitionChoices': [{'id': 'LIBRARY_216', 'name': 'Candidate'}]}]}}}}
+    monkeypatch.setattr(session_drafting, '_development_menu_review', recompute)
+
+    refreshed = session_drafting.refresh_stale_hard_menu_review(task, messages, equipment)
+
+    assert observed['coverage'] == [[], [], []]
+    evidence = refreshed['menuReview']['evidence']
+    assert session_drafting._proven_single_add_menu_choices(refreshed) == ['LIBRARY_216']
+    assert 'selectableCreditProfileAlternatives' not in evidence
+    assert evidence['roleUpperBounds'] == {'lateral_delt': 4.5}
+    schema = session_drafting.preparation_patch_tool({**refreshed, 'blockRepair': {
+        'groupingOnly': False, 'sessions': {'SESSION_0': {
+            'occurrences': {}, 'editableOccurrences': [], 'canAdd': True}}},
+        'permittedPaths': [], 'permittedDescendantPaths': []})['function']['parameters']
+    assert schema['properties']['sessionBlocks']['items']['oneOf'][0]['properties']['additions']['items'][
+        'properties']['definition_id']['enum'] == ['LIBRARY_216']
+
+
+def test_retained_lib216_repair_passes_request_and_real_preparation_handler():
+    from pathlib import Path
+    from workout_generator_pkg.interactive_shell import _load_exercise_library_payload
+
+    root = Path(__file__).resolve().parents[1]
+    run = root / 'build/workout_quality_policy_20261027/fresh_e2e'
+    transcript = run / 'workouts/conversation_sessions/aca503d2-2204-4091-959a-64cc950960f4/messages.json'
+    backup = root / 'build/backup_conversion/workout_store_backup_2026-10-15_current_library_snapshot_evidence.json'
+    if not transcript.exists() or not backup.exists():
+        pytest.skip('Retained E2E case is unavailable in this checkout.')
+    messages = json.loads(transcript.read_text(encoding='utf-8'))[:209]
+    arguments = json.loads(messages[205]['tool_calls'][0]['function']['arguments'])
+    assert arguments['sessionBlocks'][0]['additions'] == [{'definition_id': 'LIBRARY_216'}]
+    failed = json.loads(messages[206]['content'])
+    assert failed['errors'][0]['code'] == 'preparation_patch_rejected'
+    library = _load_exercise_library_payload(str(backup))
+    equipment = {key: library[key] for key in (
+        'exerciseDefinitions', 'equipments', 'accessoryEquipments', 'exerciseMovements')}
+    from workout_generator_pkg.planner_context import focus_planner_context
+    request = focus_planner_context(messages, messages, equipment)
+    request_state = json.loads(request[-1]['content'].split('\n', 1)[1])
+    projected_task = request_state['preparationRepairTask']
+    validate(arguments, session_drafting.preparation_patch_tool(projected_task)['function']['parameters'])
+    assert session_drafting._proven_single_add_menu_choices(projected_task)
+
+    prepared = session_drafting.prepare_workout_sessions(arguments, messages, equipment)
+
+    assert prepared['setAllocation']['feasible'] is True
+    added = [item for day in prepared['recipeSessions'] for item in day['exercises']
+        if item['definition_id'] == 'LIBRARY_216']
+    assert len(added) == 1 and added[0]['satisfiesCoverage'] == []
+
+
 def test_movement_selection_leaves_arithmetic_to_allocator_and_preserves_source_state():
     from workout_generator_pkg.interactive_shell import _messages_for_api
     from workout_generator_pkg.planner_context import request_planning_state
@@ -347,3 +544,25 @@ def test_shell_stops_bounded_repair_work_and_saves_feedback(monkeypatch, tmp_pat
     saved = load_active_conversation_record(str(tmp_path))['messages']
     feedback = [json.loads(message['content']) for message in saved if message['role'] == 'tool']
     assert len(feedback) == expected_calls and feedback[-1]['errors']
+
+
+def test_pending_question_reply_keeps_repair_task_on_stable_edit_route():
+    from workout_generator_pkg.interactive_shell import _active_draft_edit_route
+    from workout_generator_pkg.planning_tools import coordinated_repair_tool
+
+    draft = {'workouts': [{'name': 'Full Body A', 'exercises': [
+        {'definition_id': 'LIBRARY_1', 'numWorkSets': 2},
+        {'definition_id': 'LIBRARY_2', 'numWorkSets': 2},
+    ]}]}
+    repair_task = {'requirementsId': 'REQ_1', 'baseDraftId': 'REVISION_2',
+        'findingsAssessment': {'groups': [{'disposition': 'repair', 'findingIndexes': [0],
+            'repairDimensions': ['exercise_selection'], 'repairObjectives': []}]},
+        'currentDraft': draft}
+    active_task, sparse = _active_draft_edit_route({
+        'newInstructionPending': True, 'planningDecisionNeeded': True,
+    }, repair_task)
+    assert active_task is repair_task and sparse
+    schema = coordinated_repair_tool({**active_task, 'preferSparseEdits': sparse})['function']['parameters']
+    assert 'edits' in schema['properties']
+    assert 'sessionBlocks' not in schema['properties']
+    assert 'patch' not in schema['properties']

@@ -163,6 +163,11 @@ def test_assessment_binds_objectives_to_recipe_identity_in_finding_evidence():
             (0, 0, 'LIBRARY_A'), (1, 0, 'LIBRARY_A'), (0, 1, 'LIBRARY_B'), (1, 1, 'LIBRARY_B'),
             (0, 2, 'LIBRARY_C'), (2, 0, 'LIBRARY_D')):
         draft['workouts'][workout_index]['exercises'][exercise_index]['definition_id'] = definition
+    next_exercise = 0
+    for workout in draft['workouts']:
+        workout['exerciseIds'] = [f'EXERCISE_{index}' for index in range(
+            next_exercise, next_exercise + len(workout['exercises']))]
+        next_exercise += len(workout['exercises'])
     definitions = {key: {'exerciseCategory': 'MODERATE_COMPOUND'}
         for key in ('LIBRARY_A', 'LIBRARY_B', 'LIBRARY_C', 'LIBRARY_D')}
     choices = redistribution_objective_choices(draft, requirements, definitions)
@@ -179,12 +184,18 @@ def test_assessment_binds_objectives_to_recipe_identity_in_finding_evidence():
     assert allowed and all(set(choice['exerciseRefs']) <= {'EXERCISE_0', 'EXERCISE_3'} for choice in allowed)
     assert not any(set(choice['exerciseRefs']) & {'EXERCISE_1', 'EXERCISE_4'} for choice in allowed)
 
-    unrelated = {**clean, 'path': '/draft/workouts/2', 'evidencePaths': ['/audit/workouts/2']}
-    assert review_assessment.finding_redistribution_objective_choices(unrelated, context) == []
-
-    review = {'inputHash': 'candidate', 'findings': [clean]}
     wrong = next(choice for choice in choices if choice['exerciseRefs'] == ['EXERCISE_1', 'EXERCISE_4']
         and choice['minimumSessions'] == 2)
+    session_evidence = {**clean, 'path': '/draft/workouts/0', 'evidencePaths': ['/draft/workouts/0']}
+    session_choices = review_assessment.finding_redistribution_objective_choices(session_evidence, context)
+    assert wrong in session_choices
+
+    unrelated = {**clean, 'path': '/draft/workouts/2', 'evidencePaths': ['/draft/workouts/2']}
+    unrelated_session_choices = review_assessment.finding_redistribution_objective_choices(unrelated, context)
+    assert unrelated_session_choices == []
+    assert wrong not in unrelated_session_choices
+
+    review = {'inputHash': 'candidate', 'findings': [clean]}
     review['assessment'] = {'version': review_assessment.VERSION,
         'inputHash': review_assessment.assessment_hash(review), 'groups': [{
             'findingIndexes': [0], 'disposition': 'repair', 'repairDimensions': ['prescription'],
@@ -193,6 +204,27 @@ def test_assessment_binds_objectives_to_recipe_identity_in_finding_evidence():
         'repairPlan': 'Redistribute work.'}
     with pytest.raises(ValueError, match='identified by this finding group'):
         review_assessment.validate_assessment(review, context)
+
+
+def test_improving_objectives_checks_reference_coverage_separately_from_session_count():
+    choices = [
+        {'kind': 'redistribute_work', 'exerciseRefs': ['EXERCISE_0', 'EXERCISE_1', 'EXERCISE_2'], 'minimumSessions': 2},
+        {'kind': 'redistribute_work', 'exerciseRefs': ['EXERCISE_2', 'EXERCISE_3'], 'minimumSessions': 3},
+    ]
+    draft = {'workouts': [
+        {'exerciseIds': ['EXERCISE_0', 'EXERCISE_1']},
+        {'exerciseIds': ['EXERCISE_2', 'EXERCISE_3']},
+    ]}
+
+    # Three recipe occurrences occupy two sessions, so a two-session spread is
+    # already satisfied even though occurrence count and session count differ.
+    # A distinct-session count is not a reference-coverage count.
+    assert review_assessment.improving_repair_objective_choices(choices[:1], draft) == []
+    assert review_assessment.improving_repair_objective_choices(choices[1:], draft) == choices[1:]
+
+    # Unknown occurrence identity stays available rather than being assumed satisfied.
+    unknown = {'workouts': [{'exerciseIds': ['EXERCISE_0']}]}
+    assert review_assessment.improving_repair_objective_choices(choices[:1], unknown) == choices[:1]
 
 
 def test_cached_assessment_reuse_rebuilds_current_source_association_context():
@@ -270,6 +302,49 @@ def test_finding_evidence_resolves_occurrences_from_supersets_and_final_componen
             'status': 'open', 'disposition': 'repair', 'repairDimensions': ['prescription'],
             'repairObjectives': [choices[1]], 'reason': 'Redistribute unrelated exercise.',
             'evidencePaths': ['/draft/exercises/0']}, finding, context)
+
+
+def test_programming_summary_order_identity_scopes_live_redistribution_objectives():
+    library_indexes = (249, 208, 153, 169, 139, 82, 239, 7, 233, 248, 130, 225,
+        47, 208, 160, 153, 96, 249, 47, 98, 301, 14, 239, 7)
+    definitions = {f'LIBRARY_{index}': {} for index in set(library_indexes)}
+    exercises = [{'id': f'EXERCISE_{index}', 'libraryDefinitionId': f'LIBRARY_{library_index}'}
+        for index, library_index in enumerate(library_indexes)]
+    choices = [
+        {'kind': 'redistribute_work', 'exerciseRefs': ['EXERCISE_0', 'EXERCISE_17'], 'minimumSessions': 3},
+        {'kind': 'redistribute_work', 'exerciseRefs': ['EXERCISE_1', 'EXERCISE_13'], 'minimumSessions': 3},
+        {'kind': 'redistribute_work', 'exerciseRefs': ['EXERCISE_6', 'EXERCISE_22'], 'minimumSessions': 3},
+        {'kind': 'redistribute_work', 'exerciseRefs': ['EXERCISE_7', 'EXERCISE_23'], 'minimumSessions': 3},
+        {'kind': 'redistribute_work', 'exerciseRefs': ['EXERCISE_12', 'EXERCISE_18'], 'minimumSessions': 3},
+        {'kind': 'redistribute_work', 'exerciseRefs': ['EXERCISE_14'], 'minimumSessions': 2},
+        {'kind': 'redistribute_work', 'exerciseRefs': ['EXERCISE_14'], 'minimumSessions': 3},
+        {'kind': 'redistribute_work', 'exerciseRefs': ['EXERCISE_19'], 'minimumSessions': 2},
+        {'kind': 'redistribute_work', 'exerciseRefs': ['EXERCISE_21'], 'minimumSessions': 2},
+        {'kind': 'redistribute_work', 'exerciseRefs': ['EXERCISE_21'], 'minimumSessions': 3},
+    ]
+    session_b_order = [
+        {'id': f'EXERCISE_{index}', 'name': f'Exercise {index}'}
+        for index in (10, 11, 12, 13, 14)]
+    context = {'draft': {'exercises': exercises, 'libraryDefinitions': definitions},
+        'programmingSummary': {'sessions': [{}, {'finalExerciseOrder': session_b_order}]},
+        'redistributionObjectiveChoices': choices}
+    finding = {'path': '/programmingSummary/sessions/1/muscles', 'evidencePaths': [
+        '/programmingSummary/sessions/1/finalExerciseOrder/2',
+        '/programmingSummary/sessions/1/finalExerciseOrder/3',
+        '/programmingSummary/sessions/1/finalExerciseOrder/4']}
+
+    allowed = review_assessment.finding_redistribution_objective_choices(finding, context)
+    assert allowed == [choices[index] for index in (1, 4, 5, 6)]
+    assert review_assessment.finding_redistribution_objective_choices({
+        'path': '/programmingSummary/sessions/1/finalExerciseOrder/2/id', 'evidencePaths': []},
+        context) == [choices[4]]
+
+    review = {'findings': [finding], 'assessment': {'groups': [{
+        'findingIndexes': [0], 'repairObjectives': allowed}]}}
+    review_assessment.validate_redistribution_objective_associations(review, context)
+    review['assessment']['groups'][0]['repairObjectives'] = [choices[0]]
+    with pytest.raises(ValueError, match='identified by this finding group'):
+        review_assessment.validate_redistribution_objective_associations(review, context)
 
 
 def test_selected_large_recipe_compiles_with_exact_weekly_set_conservation():

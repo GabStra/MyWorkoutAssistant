@@ -545,7 +545,7 @@ PLAN_INDEX_SYSTEM_PROMPT = (
     "- For BODY_WEIGHT exercises with a fixed added load, each item must be {workSetIndex, reps, additionalWeight}; with native calibration, use {workSetIndex, reps}.\n"
     "- Preserve exact load targets when they are provided.\n\n"
     "Workout plan constraints:\n"
-    "- Include auditTargets: {weeklyEffectiveSets: {muscle: {minimum: number, maximum: number}}, perSessionEffectiveSets: {muscle: {minimum: number, maximum: number}}, maximumSessionSeconds: integer|null}.\n"
+    "- Include auditTargets: {weeklyEffectiveSets: {muscle: {minimum: number, maximum: number|null}}, perSessionEffectiveSets: {muscle: {minimum: number, maximum: number|null}}, maximumSessionSeconds: integer|null}. A null volume maximum means the source specified no upper limit.\n"
     "- Preserve the approved audit target keys exactly; do not introduce, split or merge target groups.\n"
     "- Copy the user's AGREED numeric targets, including explicitly accepted tradeoffs, into auditTargets. Never replace targets with the model's claimed achieved totals or lower them to fit a failing plan. Use empty maps/null for unspecified goals. Do not assign weekly targets across unrelated periodized phases.\n"
     "- For the programming audit, encode numWorkSets and generateWarmUpSets explicitly for every exercise, and maxReps for strength exercises.\n"

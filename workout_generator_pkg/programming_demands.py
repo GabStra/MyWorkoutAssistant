@@ -45,3 +45,32 @@ def demand_distribution_inputs(definitions):
     return {'groups': groups, 'unavailableGroups': unavailable,
             'status': 'available' if groups and not unavailable else 'partial' if groups else 'unavailable',
             'interpretation': 'Counts of prescribed working sets sharing reviewed library properties, not equivalent fatigue, a tolerance threshold, or a personal-suitability verdict.'}
+
+
+def demand_union_exposure_input(demand_inputs):
+    """Describe unique sets with any verified-present property, without treating unknown as absent."""
+    groups = demand_inputs.get('groups', {})
+    present_by_group = {key: frozenset(group.get('presentDefinitionIds', []))
+                        for key, group in groups.items()}
+    union = frozenset().union(*present_by_group.values()) if present_by_group else frozenset()
+    if (len(groups) < 2 or len(set(present_by_group.values())) < 2
+            or any(union == present for present in present_by_group.values())):
+        return None
+
+    evidence_by_definition = {}
+    for key, group in groups.items():
+        for identifier in group.get('presentDefinitionIds', []):
+            source = group.get('evidenceByDefinition', {}).get(identifier)
+            if source:
+                evidence_by_definition.setdefault(identifier, {})[key] = source
+
+    return {
+        'presentDefinitionIds': sorted(union),
+        'evidenceByDefinition': evidence_by_definition,
+        'availableGroups': sorted(groups),
+        'status': demand_inputs.get('status', 'unavailable'),
+        'unavailableGroups': dict(demand_inputs.get('unavailableGroups', {})),
+        'interpretation': ('Unique work sets with at least one sourced-present property among the listed complete groups; '
+            'overlapping properties count a set once. This is structural concentration only; unavailable properties '
+            'remain unknown, with no fatigue-equivalence, tolerance threshold, or personal-suitability claim.'),
+    }

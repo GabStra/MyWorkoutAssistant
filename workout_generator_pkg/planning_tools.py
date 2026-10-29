@@ -16,12 +16,14 @@ from .plan_contract import (LIBRARY_DEFINITION_OWNED_FIELDS, validate_plan_index
 from .json_patching import apply_json_patch, validate_patch_operations_scope
 from .muscle_roles import MUSCLE_LABELS, MOVEMENT_COVERAGE_ROLES, coverage_role_descriptions
 from .programming_guidelines import (EXECUTION_RULES_SCHEMA, MINIMUM_WORK_SETS_RULE, SESSION_STRUCTURE_RULE,
+    EXECUTION_ORDER_DESCRIPTION,
     execution_rule_errors,
     render_execution_rule, audit_execution_rules, audit_execution_details, normalize_work_set_bounds,
-    native_warmup_supported)
+    native_warmup_supported, replacement_supports_required_warmup)
 from .domain_ops import get_selectable_weights_for_exercise
 from .requirement_accounting import (ACCOUNTING_SCHEMA, RELAXATION_PERMISSIONS_SCHEMA,
-    validate_relaxation_permissions, pointer as requirement_pointer)
+    validate_relaxation_permissions, pointer as requirement_pointer,
+    structured_requirement_source, seed_structured_requirements)
 from .repair_capabilities import (has_unresolved_capabilities,
     repair_field_dimensions as _repair_field_dimensions,
     repair_group_dimensions)
@@ -365,18 +367,32 @@ def metadata_patch_tool(tool, fields):
 _BOUNDS = {"type": "object", "description": "Include only muscles with user-requested targets. Omit unspecified muscles; 0-0 means an explicit ban on credited working sets, never 'no target'.", "properties": {
     muscle: {"type": "object", "properties": {
         "minimum": {"type": "number", "minimum": 0, "maximum": 100},
-        "maximum": {"type": "number", "minimum": 0, "maximum": 100},
+        "maximum": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
     }, "required": ["minimum", "maximum"], "additionalProperties": False} for muscle in MUSCLES
 }, "additionalProperties": False}
 _TARGETS = {"type": "object", "properties": {
     "weeklyEffectiveSets": _BOUNDS, "perSessionEffectiveSets": _BOUNDS,
     "maximumSessionSeconds": {"type": ["integer", "null"], "minimum": 1},
 }, "required": ["weeklyEffectiveSets", "perSessionEffectiveSets", "maximumSessionSeconds"], "additionalProperties": False}
+_FAMILY_SET_BOUNDS = {'type': 'array', 'items': {'type': 'object', 'properties': {
+    'exerciseFamilyId': {'type': 'string', 'minLength': 1},
+    'minimumWeeklySets': {'type': 'integer', 'minimum': 0},
+    'maximumWeeklySets': {'type': 'integer', 'minimum': 0},
+}, 'required': ['exerciseFamilyId'], 'additionalProperties': False},
+    'description': 'Optional explicit user-approved weekly family bounds, counted across all sessions and frequencies. '
+        'Choose a code-provided reviewed family; preserve user quantities. Equal bounds express a target. '
+        'Omission imposes no family limit. Do not infer caps from a qualitative concern.'}
 _REQUIREMENTS = {"type": "object", "properties": {
+    'familySetBounds': _FAMILY_SET_BOUNDS,
     'requirementAccounting': ACCOUNTING_SCHEMA,
     'relaxationPermissions': RELAXATION_PERMISSIONS_SCHEMA,
-    'objectiveOrder': {'type': 'array', 'uniqueItems': True, 'items': {'type': 'string', 'enum': ['demand_distribution', 'duration_balance', 'source_balance', 'distribution', 'progression', 'preservation']},
-        'description': 'Only directly supported priorities, highest first, grounded in original user instructions. demand_distribution reduces per-session peaks of working-set exposure for sourced library demand properties; missing classifications are unknown, never zero demand. It is an exposure-distribution objective, not a fatigue score or tolerance limit. duration_balance minimizes the longest-minus-shortest audited session duration in seconds as a soft preference, using the same timing model as the hard session limit. source_balance minimizes differences for balanced coverage pairs and one-sided undershoot for source-backed first_not_less_than_second comparisons; these are soft comparisons, not hard quotas. distribution reduces muscle-set concentration; progression is assessed during movement selection/review using supported performance and configuration facts, never a cost per working set; preservation minimizes changes to the CURRENT CANDIDATE (never means preserve user requirements). Safety, equipment, time and volume constraints are enforced separately, never encoded as preservation. Omit unsupported objectives and do not invent a numerical ranking for broad qualitative goals or prioritize mathematical symmetry over a source instruction against it.'},
+    'objectiveOrder': {'type': 'array', 'uniqueItems': True, 'items': {'type': 'string', 'enum': [
+        'demand_distribution', 'duration_balance', 'source_balance', 'exercise_distribution',
+        'workload_economy', 'distribution', 'development_emphasis', 'development_exposure',
+        'progression', 'preservation']},
+        'description': 'objectiveOrder is authoritative: list applicable supported solver preferences from highest to lowest; omitted preferences do not run. demand_distribution reduces per-session peaks of working-set exposure for sourced library demand properties; missing classifications are unknown, never zero demand. It is exposure distribution, not a fatigue score or tolerance limit. duration_balance minimizes excess spread beyond durationBalanceToleranceSeconds using the same timing model as the hard session limit. source_balance minimizes differences for balanced coverage pairs and one-sided undershoot for source-backed first_not_less_than_second comparisons; these are soft comparisons, not quotas. exercise_distribution spreads working-set exposure across sourced movement families within completely classified qualified-role pools; variants in one reviewed family count together, and unknown pools are omitted rather than treated as diverse. workload_economy minimizes total physical working sets across the week; frequency is counted and supersets do not double-count a physical set. It is a soft preference after the earlier approved priorities and cannot change user-owned counts, hard floors, or other constraints. distribution reduces muscle-set concentration. requiredCoverage.intent=development describes a source-backed purpose; only its explicit minimumWeeklySets/minimumSessions fields create hard floors. Development intent never inserts extra-exposure objectives. development_emphasis and development_exposure are optional preferences, used only when explicitly supported and ranked in objectiveOrder; they maximize role exposure without creating floors or proving adequacy. The app owns progression and load calibration; this generator does not define their policy. preservation minimizes changes to the CURRENT CANDIDATE, never user requirements. Safety, equipment, duration, volume and explicit exercise bounds remain constraints, not optimization preferences. Do not invent qualitative rankings, ratios, fatigue thresholds, or numeric requirements.'},
+    'durationBalanceToleranceSeconds': {'type': 'integer', 'minimum': 0,
+        'description': 'Optional source-stated soft tolerance for duration_balance: spreads up to this many seconds count as equally balanced, allowing lower-ranked objectives to choose among them. When maximumSessionSeconds is set, this cannot exceed that hard limit. Use only an explicit numeric tolerance from the user; do not translate “similar” or other qualitative wording into guessed seconds. This is not a hard time limit.'},
     "executionRules": EXECUTION_RULES_SCHEMA,
     "requiredCoverage": {"type": "array", "maxItems": 30, "description": "Select only code-defined movement or supported muscle-role keys. Do not add exercise-variant qualifiers in free text; the original user source remains the authority for qualitative meaning. `intent` distinguishes source-backed inclusion from development emphasis; development is qualitative and creates no automatic numeric floor. No invented balance rules.", "items": {
         "type": "object", "properties": {
@@ -384,6 +400,10 @@ _REQUIREMENTS = {"type": "object", "properties": {
             "description": {"type": "string", "minLength": 1, "maxLength": 300},
             "scope": {"enum": ["eachSession", "weekly"]},
             "intent": {"enum": ["inclusion", "development"]},
+            "minimumWeeklySets": {"type": "integer", "minimum": 1, "maximum": 100,
+                "description": "Explicitly approved minimum qualified working sets per week for this role; no default is inferred from development emphasis."},
+            "minimumSessions": {"type": "integer", "minimum": 1, "maximum": 21,
+                "description": "Explicitly approved minimum weekly training occasions containing qualified work for this role; multiple exercises in one session count once."},
         }, "required": ["key", "scope"], "additionalProperties": False}},
     "exerciseRestrictions": {"type": "object",
         "description": "Encode all explicit exclusions and limited permissions. If only named movements within a family are allowed, exclude that family and list those source-backed movements as exceptions. Do not omit a restriction merely because it is phrased as a permission, or add unrelated exclusions.", "properties": {
@@ -423,6 +443,23 @@ def _coverage_role_schema(supported_muscles):
     normalized_supported = {muscle.replace('lowerBack', 'lower_back') for muscle in supported_muscles}
     available_roles = set(MOVEMENT_COVERAGE_ROLES) | normalized_supported
     schema['items']['properties']['key']['enum'] = sorted(available_roles)
+    return schema
+
+
+def _family_set_bounds_schema(equipment):
+    from .recipe_contracts import reviewed_exercise_family_evidence, library_definitions_by_reference
+    schema = copy.deepcopy(_FAMILY_SET_BOUNDS)
+    definitions = library_definitions_by_reference(equipment or {})
+    families = reviewed_exercise_family_evidence(equipment or {})['familyByReference']
+    choices = {}
+    for reference, family in families.items():
+        choices.setdefault(family, []).append(definitions[reference]['name'])
+    selector = schema['items']['properties']['exerciseFamilyId']
+    if choices:
+        selector['enum'] = sorted(choices)
+    else:
+        schema['maxItems'] = 0
+    selector['description'] = 'Reviewed family choices: ' + json.dumps(choices, ensure_ascii=False)
     return schema
 
 
@@ -544,6 +581,118 @@ def latest_requirement_candidate(messages):
     return -1, {}
 
 
+def _resume_approved_requirements_after_unrequested_decision(messages, candidate_index, candidate):
+    """Keep the exact approved hard requirements active after a decision-only no-op."""
+    if (candidate.get('passed') is not False
+            or candidate.get('sourceReview', {}).get('passed') is not False
+            or not isinstance(candidate.get('requirements'), dict)):
+        return None
+
+    tool_call_id = messages[candidate_index].get('tool_call_id')
+    call = next((call for message in messages[:candidate_index] for call in message.get('tool_calls', [])
+                 if call.get('id') == tool_call_id), None)
+    try:
+        arguments = json.loads(call.get('function', {}).get('arguments', '{}')) if call else {}
+    except (ValueError, TypeError, AttributeError):
+        return None
+    if arguments.get('updates') != {}:
+        return None
+
+    prior_messages = messages[:candidate_index]
+    approved = approved_requirement_base(prior_messages)
+    if (not approved or candidate.get('requirements') != approved.get('requirements')
+            or not requirements_approved(messages, approved)):
+        return None
+
+    from .planning_decisions import _current_reviewed_audit, latest_decision_receipt
+    audit_index, audit = _current_reviewed_audit(prior_messages)
+    if (audit_index < 0 or audit_index >= candidate_index
+            or audit.get('requirementsId') != approved.get('requirementsId')
+            or not isinstance(audit.get('submittedDraft'), dict)):
+        if not candidate.get('proposedDecisions'):
+            return None
+        audit_index, audit = _latest_result(prior_messages, 'audit_workout_plan')
+        latest_draft = audit.get('submittedDraft') or audit.get('currentDraft')
+        if (audit_index < 0 or audit_index >= candidate_index
+                or audit.get('requirementsId') != approved.get('requirementsId')
+                or not isinstance(latest_draft, dict)):
+            return None
+    decision_index, decision = latest_decision_receipt(prior_messages)
+    boundary = (decision.get('decisionReview') or {}).get('instructionBoundary')
+    decision_only = (decision_index > audit_index and decision_index < candidate_index
+        and isinstance(boundary, int) and audit_index < boundary < decision_index
+        and messages[boundary].get('role') == 'user'
+        and not any(message.get('role') == 'user'
+                    for message in messages[boundary + 1:candidate_index]))
+    if not decision_only:
+        # Retain the earlier, already-proven control-only recovery for a rejected
+        # decision proposal. It still requires the exact approved base and no
+        # intervening user instruction.
+        _, latest_audit = _latest_result(prior_messages, 'audit_workout_plan')
+        latest_draft = latest_audit.get('submittedDraft') or latest_audit.get('currentDraft')
+        controls = {'/continue', '/resume'}
+        control_only = (bool(candidate.get('proposedDecisions'))
+            and candidate.get('baseRequirementsId') == approved.get('requirementsId')
+            and isinstance(latest_draft, dict)
+            and latest_audit.get('requirementsId') == approved.get('requirementsId')
+            and not any(message.get('role') == 'user'
+                and (message.get('content') or '').strip() not in controls
+                for message in messages[audit_index + 1:candidate_index]))
+        if not control_only:
+            return None
+
+    requirement_calls = {call.get('id') for message in prior_messages
+                         for call in message.get('tool_calls', [])
+                         if call.get('function', {}).get('name') in
+                         ('set_workout_requirements', 'accept_workout_alternative')}
+    for index in range(candidate_index - 1, -1, -1):
+        message = messages[index]
+        if message.get('role') != 'tool' or message.get('tool_call_id') not in requirement_calls:
+            continue
+        try:
+            result = json.loads(message.get('content') or '{}')
+        except (ValueError, TypeError):
+            continue
+        if (isinstance(result, dict) and result.get('requirementsId') == approved.get('requirementsId')
+                and result.get('sourceReview', {}).get('passed') is True):
+            return index, approved
+    return None
+
+
+def active_requirement_result(messages):
+    """Return latest requirements, recovering an exact approved base after a decision-only no-op."""
+    index, candidate = _latest_requirements_result(messages)
+    if index < 0:
+        return index, candidate
+    recovered = _resume_approved_requirements_after_unrequested_decision(messages, index, candidate)
+    return recovered if recovered is not None else (index, candidate)
+
+
+def _latest_requirements_result(messages):
+    """Preserve the original extraction semantics for every set-requirements result."""
+    calls = {call.get("id") for message in messages for call in message.get("tool_calls", [])
+             if call.get("function", {}).get("name") in ('set_workout_requirements', 'accept_workout_alternative')}
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if message.get('role') != 'tool' or message.get('tool_call_id') not in calls:
+            continue
+        if (message.get('content') or '').startswith((
+                "Tool call started",
+                "Tool call was not completed in the previous session. Treat this as a failed tool result and continue.")):
+            continue
+        try:
+            result = json.loads(message.get('content') or '{}')
+        except (ValueError, TypeError):
+            continue
+        if isinstance(result, dict) and result.get('skipped'):
+            continue
+        if isinstance(result, dict) and result.get('approvedAlternativeId') and not result.get('passed'):
+            continue
+        if isinstance(result, dict) and result.get('requirements'):
+            return index, result
+    return -1, {}
+
+
 def _partial_requirement_schema(schema):
     """Allow sparse typed objects; arrays still replace as a whole."""
     result = copy.deepcopy(schema)
@@ -581,12 +730,16 @@ def _merge_requirement_updates(base, updates, schema):
     return merged
 
 
-def _live_relaxation_permissions_schema(equipment):
+def _live_relaxation_permissions_schema(equipment, requirements=None):
     supported = available_muscle_targets(equipment)
-    paths = ['/auditTargets/maximumSessionSeconds'] + [
-        f'/auditTargets/{field}/{muscle}/{bound}'
-        for field in ('weeklyEffectiveSets', 'perSessionEffectiveSets')
-        for muscle in sorted(supported) for bound in ('minimum', 'maximum')]
+    paths = ['/auditTargets/maximumSessionSeconds']
+    for field in ('weeklyEffectiveSets', 'perSessionEffectiveSets'):
+        targets = (requirements or {}).get('auditTargets', {}).get(field, {})
+        for muscle in sorted(supported):
+            bounds = targets.get(muscle)
+            paths.append(f'/auditTargets/{field}/{muscle}/minimum')
+            if not bounds or bounds.get('maximum') is not None:
+                paths.append(f'/auditTargets/{field}/{muscle}/maximum')
     schema = copy.deepcopy(RELAXATION_PERMISSIONS_SCHEMA)
     schema['items']['properties']['path']['enum'] = paths
     return schema
@@ -619,15 +772,17 @@ def _render_requirement_changes(before, after):
     return '\n'.join(lines)
 
 
-def _requirement_update_tool(equipment, base):
-    from .planning_decisions import RECORD_PLANNING_DECISIONS_TOOL
+def _requirement_update_tool(equipment, base, messages=None):
+    from .planning_decisions import record_planning_decisions_tool
     properties = {key: _partial_requirement_schema(value)
                   for key, value in _REQUIREMENTS['properties'].items()
                   if key not in ('requirementAccounting', 'notes')}
-    properties['relaxationPermissions'] = _partial_requirement_schema(_live_relaxation_permissions_schema(equipment))
+    properties['relaxationPermissions'] = _partial_requirement_schema(
+        _live_relaxation_permissions_schema(equipment, base.get('requirements')))
     supported = available_muscle_targets(equipment)
     properties['requiredCoverage'] = _coverage_role_schema(supported)
     properties['executionRules'] = _partial_requirement_schema(_execution_rules_schema(supported))
+    properties['familySetBounds'] = _family_set_bounds_schema(equipment)
     for field in ('weeklyEffectiveSets', 'perSessionEffectiveSets'):
         properties['auditTargets']['properties'][field]['properties'] = {
             key: value for key, value in properties['auditTargets']['properties'][field]['properties'].items()
@@ -636,7 +791,8 @@ def _requirement_update_tool(equipment, base):
     tool['function']['parameters'] = {'type': 'object', 'properties': {
         'baseRequirementsId': {'type': 'string', 'enum': [base['requirementsId']]},
         'updates': {'type': 'object', 'properties': properties, 'additionalProperties': False},
-        'planningDecisions': copy.deepcopy(RECORD_PLANNING_DECISIONS_TOOL['function']['parameters']),
+        'planningDecisions': copy.deepcopy(
+            record_planning_decisions_tool(messages or [])['function']['parameters']),
     }, 'required': ['baseRequirementsId', 'updates'], 'additionalProperties': False}
     return tool
 
@@ -656,21 +812,54 @@ def workout_requirements_tool(equipment, messages=None, *, accounting_only=None)
     supported = available_muscle_targets(equipment)
     _, candidate = latest_requirement_candidate(messages)
     if candidate:
-        return _requirement_update_tool(equipment, candidate)
+        tool = _requirement_update_tool(equipment, candidate, messages)
+        return _structured_requirements_tool(tool, messages, candidate)
     tool = copy.deepcopy(SET_WORKOUT_REQUIREMENTS_TOOL)
     tool['function']['parameters']['properties'].pop('requirementAccounting', None)
     tool['function']['parameters']['properties']['relaxationPermissions'] = _live_relaxation_permissions_schema(equipment)
     tool['function']['parameters']['properties']['requiredCoverage'] = _coverage_role_schema(supported)
     tool['function']['parameters']['properties']['executionRules'] = _execution_rules_schema(supported)
-    from .planning_decisions import RECORD_PLANNING_DECISIONS_TOOL
+    tool['function']['parameters']['properties']['familySetBounds'] = _family_set_bounds_schema(equipment)
+    from .planning_decisions import record_planning_decisions_tool
     tool['function']['parameters']['properties']['planningDecisions'] = copy.deepcopy(
-        RECORD_PLANNING_DECISIONS_TOOL['function']['parameters'])
+        record_planning_decisions_tool(messages)['function']['parameters'])
     tool['function']['description'] += (' When choices and extraction are ready together, include planningDecisions '
         'with decisions/sourceReferences for one independent authorization and requirements review. '
         'Do not invent user authorization; unresolved ambiguity still requires asking the user.')
     for field in ('weeklyEffectiveSets', 'perSessionEffectiveSets'):
         bounds = tool['function']['parameters']['properties']['auditTargets']['properties'][field]
         bounds['properties'] = {key: value for key, value in bounds['properties'].items() if key in supported}
+    return _structured_requirements_tool(tool, messages)
+
+
+def _structured_requirements_tool(tool, messages, base=None):
+    try:
+        authority = _structured_requirement_source(requirement_sources(messages))
+    except PlanningInputError:
+        # The backend reports invalid user input through the existing tool error path.
+        return tool
+    if base and authority and authority['sourceMessageIndex'] <= max(
+            (source['messageIndex'] for source in base.get('sourceMessages', [])), default=-1):
+        return tool
+    if authority:
+        parameters = tool['function']['parameters']
+        if base:
+            parameters = parameters['properties']['updates']
+        for key, value in authority['requirements'].items():
+            if key == 'executionRules':
+                kinds = {rule['kind'] for rule in value}
+                variants = parameters['properties'][key]['items']['oneOf']
+                remaining = [rule for rule in variants if rule['properties']['kind']['const'] not in kinds]
+                if remaining:
+                    parameters['properties'][key]['items']['oneOf'] = remaining
+                    parameters['properties'][key]['description'] = 'Additional rule kinds only; Python loads the user-supplied rules.'
+                    continue
+            parameters['properties'].pop(key, None)
+            if key in parameters.get('required', []):
+                parameters['required'].remove(key)
+        tool['function']['description'] += (
+            ' Python loads the explicitly marked user structured requirements directly. '
+            'Return only remaining fields; do not repeat supplied values. Additional executionRules use only new rule kinds.')
     return tool
 
 
@@ -775,6 +964,8 @@ REPAIR_WORKOUT_PLAN_TOOL = {'type': 'function', 'function': {
 
 def uses_menu_selection(task, *, domain=None):
     task = task or {}
+    if task.get('preferSparseEdits') is True:
+        return False
     groups = [group for group in (task.get('findingsAssessment') or {}).get('groups', [])
               if group.get('disposition') == 'repair']
     objectives = [objective for group in groups for objective in group.get('repairObjectives', [])]
@@ -834,6 +1025,12 @@ def coordinated_repair_tool(task=None, *, for_compilation=False):
     addition_exercise_schema['properties'].pop('allocationBounds', None)
     if available_definition_references:
         addition_exercise_schema['properties']['definition_id']['enum'] = available_definition_references
+    exercise_update_items = {'type': 'object', 'properties': {
+        'exerciseRef': {'type': 'string', 'enum': exercise_refs},
+        'setFields': {'type': 'object', 'properties': copy.deepcopy(field_properties), 'additionalProperties': False},
+        'removeOptionalFields': {'type': 'array', 'uniqueItems': True,
+            'items': {'type': 'string', 'enum': exercise_optional}}},
+        'required': ['exerciseRef'], 'additionalProperties': False}
     edit_schema = {'type': 'object', 'properties': {
         'workoutUpdates': {'type': 'array', 'items': {'type': 'object', 'properties': {
             'workoutRef': {'type': 'string', 'enum': workout_refs},
@@ -842,12 +1039,7 @@ def coordinated_repair_tool(task=None, *, for_compilation=False):
             'removeOptionalFields': {'type': 'array', 'uniqueItems': True,
                 'items': {'type': 'string', 'enum': workout_optional}}},
             'required': ['workoutRef'], 'additionalProperties': False}},
-        'exerciseUpdates': {'type': 'array', 'items': {'type': 'object', 'properties': {
-            'exerciseRef': {'type': 'string', 'enum': exercise_refs},
-            'setFields': {'type': 'object', 'properties': field_properties, 'additionalProperties': False},
-            'removeOptionalFields': {'type': 'array', 'uniqueItems': True,
-                'items': {'type': 'string', 'enum': exercise_optional}}},
-            'required': ['exerciseRef'], 'additionalProperties': False}},
+        'exerciseUpdates': {'type': 'array', 'items': exercise_update_items},
         'exerciseAdditions': {'type': 'array', 'items': {'type': 'object', 'properties': {
             'temporaryId': {'type': 'string', 'pattern': '^NEW_EXERCISE_[A-Za-z0-9_]+$'},
             'workoutRef': {'type': 'string', 'enum': workout_refs},
@@ -1023,6 +1215,21 @@ def coordinated_repair_tool(task=None, *, for_compilation=False):
     has_rejected_proposal = _rejected_coordinated_edits(
         task, task.get('requirementsId'), task.get('baseDraftId')) is not None
     tool['function']['parameters'] = parameters
+    repair_groups = [group for group in task.get('findingsAssessment', {}).get('groups', [])
+                     if group.get('disposition') == 'repair']
+    if (repair_groups and all(repair_group_dimensions(group) == {'session_labels'}
+                             and not group.get('repairObjectives') for group in repair_groups)):
+        label_updates = copy.deepcopy(edit_schema['properties']['workoutUpdates'])
+        label_updates['minItems'] = 1
+        fields = label_updates['items']['properties']
+        fields.pop('removeOptionalFields', None)
+        fields['setFields']['properties'] = {key: value for key, value in
+            fields['setFields']['properties'].items() if key in ('name', 'description')}
+        fields['setFields']['minProperties'] = 1
+        label_updates['items']['required'] = ['workoutRef', 'setFields']
+        parameters['properties']['edits'] = {'type': 'object', 'properties': {
+            'workoutUpdates': label_updates}, 'required': ['workoutUpdates'], 'additionalProperties': False}
+        return tool
     tool['function']['description'] = (
         (f'Revise the complete assessed candidate using its exact current identifiers and addressedFindingIndexes={indexes}. ' if assessed_repair
          else 'Revise the saved currentDraft using its exact current identifiers. ')
@@ -1067,10 +1274,13 @@ def coordinated_repair_tool(task=None, *, for_compilation=False):
         recipe_definitions = task.get('recipeDefinitions', {})
         protected_definitions = set(repair_domain['protectedDefinitions'])
         replacement_choices = []
+        references_by_exercise = task.get('replacementDefinitionReferencesByExercise', {})
         for reference in selectable_refs:
             source_id = source_definitions.get(reference)
             source_type = source_types.get(source_id) or recipe_definitions.get(source_id, {}).get('exerciseType')
-            candidates = [candidate for candidate in sorted(set(replacement_references) | {source_id})
+            eligible_references = (references_by_exercise.get(reference, replacement_references)
+                if isinstance(references_by_exercise, dict) else replacement_references)
+            candidates = [candidate for candidate in sorted(set(eligible_references) | {source_id})
                           if candidate not in protected_definitions and
                               (source_type is None or _replacement_types_compatible(source_type,
                                   source_types.get(candidate) or recipe_definitions.get(candidate, {}).get('exerciseType')))]
@@ -1419,8 +1629,72 @@ def _validate_protected_repair_edits(edits, domain):
             'Choose redistributionTargets; code places source and generated occurrences.')
 
 
+def _normalize_replacement_exercise(item, source, reference, task, *, error_path='/edits/exerciseUpdates',
+                                    explicit_fields=()):
+    """Rebind fields that belong to the selected library definition."""
+    source_id = source.get('definition_id')
+    replacement_id = item.get('definition_id')
+    if replacement_id == source_id:
+        return
+    definitions = task.get('recipeDefinitions') or {}
+    source_definition = definitions.get(source_id, {})
+    replacement_definition = definitions.get(replacement_id, {})
+    if not source_definition or not replacement_definition:
+        raise PlanningInputError('replacement_definition_unavailable',
+            'Python cannot rebind exercise-specific fields without both library definitions.',
+            '/edits/exerciseUpdates',
+            'Refresh the current library-backed repair task before replacing an exercise.')
+    if not _replacement_types_compatible(
+            source_definition.get('exerciseType'), replacement_definition.get('exerciseType')):
+        raise PlanningInputError('incompatible_replacement_recipe',
+            'The selected exercise type cannot reuse the source prescription fields.',
+            error_path,
+            'Choose a replacement in the same prescription family so Python can preserve valid counts and ranges.')
+
+    requirements = task.get('requirements') or {}
+    warmup_roles = {rule.get('coverageKey') for rule in requirements.get('executionRules', [])
+                    if rule.get('kind') == 'warmup' and rule.get('coverageKey')}
+    source_coverage = source.get('satisfiesCoverage')
+    needs_warmup = bool(warmup_roles and (not isinstance(source_coverage, list)
+        or warmup_roles.intersection(source_coverage)))
+    equipment_ids = set(task.get('equipmentIds') or [])
+    warmup_supported = native_warmup_supported(replacement_definition, equipment_ids)
+    allowed_by_occurrence = task.get('replacementDefinitionReferencesByExercise') or {}
+    allowed = allowed_by_occurrence.get(reference)
+    if allowed is not None and replacement_id not in allowed:
+        raise PlanningInputError('replacement_not_eligible',
+            'The selected replacement is outside the code-computed choices for this source occurrence.',
+            error_path,
+            'Choose a replacement from the current occurrence-specific menu or keep the source exercise.')
+    if needs_warmup:
+        if not replacement_supports_required_warmup(source_coverage, replacement_definition,
+                                                    equipment_ids, requirements):
+            raise PlanningInputError('replacement_warmup_unsupported',
+                'The selected replacement cannot provide the approved native ramp-up for this source role.',
+                error_path,
+                'Keep the source exercise or choose a loaded replacement with supported equipment; preserve its approved warm-up rule.')
+    item['generateWarmUpSets'] = bool(needs_warmup or (
+        source.get('generateWarmUpSets') and warmup_supported))
+    item['intraSetRestInSeconds'] = (_UNILATERAL_SIDE_REST_DEFAULT_SECONDS
+        if replacement_definition and _exercise_requires_unilateral_rest(replacement_definition) else None)
+    explicit_fields = set(explicit_fields)
+    if 'workSetTemplate' not in explicit_fields and isinstance(item.get('workSetTemplate'), dict):
+        item['workSetTemplate'].pop('weight', None)
+        item['workSetTemplate'].pop('additionalWeight', None)
+    if 'targetSetPrescriptions' not in explicit_fields:
+        for target in item.get('targetSetPrescriptions', []):
+            if isinstance(target, dict):
+                target.pop('weight', None)
+                target.pop('additionalWeight', None)
+    acceptance = item.get('effortAcceptance') or {}
+    if acceptance.get('kind') == 'rir_range':
+        item['effortAcceptance'] = {key: acceptance[key] for key in
+            ('kind', 'minimumRIR', 'maximumRIR') if key in acceptance}
+    else:
+        item.pop('effortAcceptance', None)
+
+
 def _menu_selection_edits(arguments, task, current_draft):
-    from .session_drafting import _apply_session_blocks
     from .joint_planning import _rest_options
     protected = repair_exercise_domain(task, current_draft)['protected']
     occurrences, recoveries, filtered_workouts = {}, {}, []
@@ -1441,33 +1715,43 @@ def _menu_selection_edits(arguments, task, current_draft):
                 other.get('restAfterSupersetExerciseSeconds', 0) for other in day['exercises']
                 if group is not None and other.get('superset') == group])
         filtered_workouts.append(filtered_day)
-    selection_task = {'arguments': {'sessions': filtered_workouts},
-        'blockRepair': {'groupingOnly': False, 'sessions': {f'WORKOUT_{index}': {
-            'occurrences': occurrences,
-            'editableOccurrences': list(occurrences),
-            'canAdd': False} for index in range(len(current_draft['workouts']))}}}
-    selected = _apply_session_blocks(arguments, selection_task)['sessions']
+    selected = copy.deepcopy(filtered_workouts)
+    selected_references = [[] for _ in filtered_workouts]
     member_references = lambda members: [member if isinstance(member, str) else member['replaces'] for member in members]
-    definitions_by_reference = task.get('recipeDefinitions', {})
+    seen_sessions = set()
     for update in arguments['sessionBlocks']:
+        session_reference = update['sessionReference']
+        if session_reference in seen_sessions:
+            raise PlanningInputError('duplicate_menu_session',
+                'A menu selection may include each session only once.', '/sessionBlocks',
+                'Submit one complete menu block list for every current session.')
+        seen_sessions.add(session_reference)
         day_index = int(update['sessionReference'].split('_')[1])
-        offset = 0
-        for block in update['blocks']:
+        used = set()
+        selected_items = []
+        for group_index, block in enumerate(update['blocks']):
             for member, reference in zip(block['exercises'], member_references(block['exercises'])):
-                item = selected[day_index]['exercises'][offset]
-                if isinstance(member, dict) and item.get('definition_id') != occurrences[reference].get('definition_id'):
-                    source_definition = definitions_by_reference.get(occurrences[reference].get('definition_id'), {})
-                    replacement_definition = definitions_by_reference.get(item.get('definition_id'), {})
-                    if (source_definition and replacement_definition
-                            and not _replacement_types_compatible(source_definition.get('exerciseType'),
-                                                                  replacement_definition.get('exerciseType'))):
-                        raise PlanningInputError('incompatible_replacement_recipe',
-                            'The selected exercise type cannot reuse the source recipe fields.',
-                            f'/sessionBlocks/{day_index}/blocks',
-                            'Choose a replacement in the same prescription family so Python can preserve valid counts and ranges.')
-                    item.pop('workSetTemplate', None)
-                    item.pop('targetSetPrescriptions', None)
-                offset += 1
+                if reference not in occurrences or reference in used:
+                    raise PlanningInputError('invalid_menu_occurrence',
+                        'Each selected menu occurrence must identify one editable source and may appear at most once per session.',
+                        f'/sessionBlocks/{day_index}/blocks',
+                        'Use current editable occurrence references, once per session; code places protected redistribution sources.')
+                used.add(reference)
+                item = copy.deepcopy(occurrences[reference])
+                if isinstance(member, dict):
+                    item['definition_id'] = member['definition_id']
+                    item['satisfiesCoverage'] = copy.deepcopy(member['satisfiesCoverage'])
+                    _normalize_replacement_exercise(item, occurrences[reference], reference, task,
+                                                    error_path='/sessionBlocks')
+                item['superset'] = f'MENU_{group_index}' if len(block['exercises']) > 1 else None
+                selected_items.append(item)
+                selected_references[day_index].append(reference)
+        selected[day_index]['exercises'] = selected_items
+    expected_sessions = {f'WORKOUT_{index}' for index in range(len(current_draft['workouts']))}
+    if seen_sessions != expected_sessions:
+        raise PlanningInputError('incomplete_menu_sessions',
+            'A complete menu selection must include each current session exactly once.', '/sessionBlocks',
+            'Submit one complete block list per current WORKOUT_n; omitted sessions must not be inferred as deletions.')
     # Reuse approved rest-range calculation after changing a block's grouping.
     definitions = {item['definition_id']: {} for item in occurrences.values()}
     definitions.update(task.get('recipeDefinitions', {}))
@@ -1485,10 +1769,32 @@ def _menu_selection_edits(arguments, task, current_draft):
                                          max(item['numWorkSets'] for item in items)))
             day['exercises'][offset:offset + len(items)] = options[-1]
             offset += len(items)
+    # The menu supplies identity and grouping. Code owns the final exercise order.
+    from .programming_guidelines import canonical_execution_order_draft
+    for day_index, day in enumerate(selected):
+        for item_index, item in enumerate(day['exercises']):
+            item['_menuSelectionToken'] = f'{day_index}_{item_index}'
+    ordered = canonical_execution_order_draft(
+        {'workouts': selected}, task.get('requirements') or {},
+        {'exerciseDefinitions': list(definitions_by_reference.values())})
+    if ordered is None:
+        raise PlanningInputError('cyclic_execution_order',
+            'The selected menu conflicts with the approved exercise-order rules.', '/sessionBlocks',
+            'Choose a menu whose required ordering rules are compatible; Python applies the default category order.')
+    selected = ordered['workouts']
+    token_to_reference = {f'{day_index}_{item_index}': reference
+        for day_index, references in enumerate(selected_references)
+        for item_index, reference in enumerate(references)}
+    selected_references = []
+    for day in selected:
+        references = []
+        for item in day['exercises']:
+            references.append(token_to_reference[item.pop('_menuSelectionToken')])
+        selected_references.append(references)
     placements = {}
     for update in arguments['sessionBlocks']:
         day_index = int(update['sessionReference'].split('_')[1])
-        references = [ref for block in update['blocks'] for ref in member_references(block['exercises'])]
+        references = selected_references[day_index]
         for index, reference in enumerate(references):
             placements.setdefault(reference, []).append((day_index, index))
     retained = {reference: next((position for position in positions
@@ -1498,7 +1804,7 @@ def _menu_selection_edits(arguments, task, current_draft):
              'exerciseMoves': [], 'exerciseAdditions': [], 'exerciseOrders': []}
     for update in arguments['sessionBlocks']:
         day_index = int(update['sessionReference'].split('_')[1])
-        references = [ref for block in update['blocks'] for ref in member_references(block['exercises'])]
+        references = selected_references[day_index]
         order = []
         for index, reference in enumerate(references):
             item = selected[day_index]['exercises'][index]
@@ -1527,18 +1833,79 @@ def _menu_selection_edits(arguments, task, current_draft):
             if source_positions[reference][0] != day_index:
                 edits['exerciseMoves'].append({'exerciseRef': reference, 'workoutRef': update['sessionReference']})
             order.append(reference)
-        edits['exerciseOrders'].append({'workoutRef': update['sessionReference'], 'exerciseRefs': order})
+        if order:
+            edits['exerciseOrders'].append({'workoutRef': update['sessionReference'], 'exerciseRefs': order})
     return {key: value for key, value in edits.items() if value}
 
 
+def _omit_code_owned_redistribution_menu_members(arguments, protected_references, selection_schema):
+    """Drop only valid, code-owned source refs duplicated in menu blocks.
+
+    Their placement is compiled from redistributionTargets. Keep malformed or
+    unknown members for the ordinary strict schema validator to reject.
+    """
+    targets = (arguments.get('edits', {}).get('redistributionTargets')
+        if isinstance(arguments.get('edits'), dict) else None)
+    edits_schema = selection_schema.get('properties', {}).get('edits')
+    if (not protected_references or targets is None or not isinstance(edits_schema, dict)
+            or not Draft7Validator(edits_schema).is_valid({'redistributionTargets': targets})):
+        return
+    session_blocks = arguments.get('sessionBlocks')
+    if not isinstance(session_blocks, list):
+        return
+    protected_references = set(protected_references)
+    for session in session_blocks:
+        if not isinstance(session, dict) or not isinstance(session.get('blocks'), list):
+            continue
+        retained_blocks = []
+        for block in session['blocks']:
+            if (not isinstance(block, dict) or set(block) != {'exercises'}
+                    or not isinstance(block.get('exercises'), list) or not block['exercises']):
+                retained_blocks.append(block)
+                continue
+            block['exercises'] = [member for member in block['exercises']
+                if not (isinstance(member, str) and member in protected_references)]
+            if block['exercises']:
+                retained_blocks.append(block)
+        session['blocks'] = retained_blocks
+
+
 def _menu_replacement_edits(selected, current_draft):
-    additions = []
-    for day_index, day in enumerate(selected):
-        for index, item in enumerate(day['exercises']):
-            additions.append({'temporaryId': f'NEW_EXERCISE_{day_index}_{index}', 'workoutRef': f'WORKOUT_{day_index}',
-                'exercise': {key: copy.deepcopy(value) for key, value in item.items()
-                             if key in _EXERCISE['properties'] and key != 'allocationBounds'}})
-    return {'exerciseRemovals': list(_stable_draft_references(current_draft)[1]), 'exerciseAdditions': additions}
+    _, source_positions = _stable_draft_references(current_draft)
+    source_items = {reference: current_draft['workouts'][workout_index]['exercises'][exercise_index]
+        for reference, (workout_index, exercise_index) in source_positions.items()}
+    unused = set(source_items)
+    edits = {'exerciseUpdates': [], 'exerciseRemovals': [], 'exerciseMoves': [],
+             'exerciseAdditions': [], 'exerciseOrders': []}
+    for workout_index, day in enumerate(selected):
+        workout_ref = f'WORKOUT_{workout_index}'
+        references = []
+        for exercise_index, item in enumerate(day.get('exercises', [])):
+            definition_id = item.get('definition_id')
+            matching = sorted((reference for reference in unused
+                if source_items[reference].get('definition_id') == definition_id),
+                key=lambda reference: (source_positions[reference][0] != workout_index,
+                                       source_positions[reference]))
+            fields = {key: copy.deepcopy(value) for key, value in item.items()
+                      if key in _EXERCISE['properties'] and key != 'allocationBounds'}
+            if matching:
+                reference = matching[0]
+                unused.remove(reference)
+                source = source_items[reference]
+                changed = {key: value for key, value in fields.items() if source.get(key) != value}
+                if changed:
+                    edits['exerciseUpdates'].append({'exerciseRef': reference, 'setFields': changed})
+                if source_positions[reference][0] != workout_index:
+                    edits['exerciseMoves'].append({'exerciseRef': reference, 'workoutRef': workout_ref})
+            else:
+                reference = f'NEW_EXERCISE_{workout_index}_{exercise_index}'
+                edits['exerciseAdditions'].append({'temporaryId': reference, 'workoutRef': workout_ref,
+                    'exercise': fields})
+            references.append(reference)
+        if references:
+            edits['exerciseOrders'].append({'workoutRef': workout_ref, 'exerciseRefs': references})
+    edits['exerciseRemovals'] = sorted(unused, key=lambda reference: source_positions[reference], reverse=True)
+    return {key: value for key, value in edits.items() if value}
 
 
 def _normalize_explicit_superset_detachments(edits, task, current_draft, redistribution_manifest):
@@ -1551,6 +1918,9 @@ def _normalize_explicit_superset_detachments(edits, task, current_draft, redistr
     ``expand_redistributions`` and are deliberately left to that compiler.
     """
     updates = edits.get('exerciseUpdates', [])
+    regrouped = {item.get('exerciseRef') for item in updates
+                 if isinstance(item, dict) and isinstance(item.get('setFields'), dict)
+                 and item['setFields'].get('superset') is not None}
     explicit = {item.get('exerciseRef'): item.get('setFields', {}) for item in updates
                 if isinstance(item, dict) and isinstance(item.get('setFields'), dict)
                 and item['setFields'].get('superset', ...) is None}
@@ -1572,7 +1942,9 @@ def _normalize_explicit_superset_detachments(edits, task, current_draft, redistr
         detached = [reference for _, reference, _ in members if reference in explicit]
         if not detached or any(reference in redistributed for reference in (ref for _, ref, _ in members)):
             continue
-        remaining = [(index, reference, item) for index, reference, item in members if reference not in detached]
+        # Explicit new membership owns the result; old-group cleanup cannot detach it.
+        remaining = [(index, reference, item) for index, reference, item in members
+                     if reference not in detached and reference not in regrouped]
         if len(remaining) == 1:
             normalize = [(index, reference, item) for index, reference, item in members
                          if reference in detached] + remaining
@@ -1639,7 +2011,12 @@ def compile_coordinated_repair(arguments, task, current_draft, *, return_referen
     selection = uses_menu_selection(task, domain=repair_domain) and (
         'sessionBlocks' in arguments or 'useSolverMenu' in arguments)
     if selection:
-        validate(arguments, coordinated_repair_tool({**task, 'currentDraft': current_draft})['function']['parameters'])
+        selection_schema = coordinated_repair_tool(
+            {**task, 'currentDraft': current_draft})['function']['parameters']
+        if 'sessionBlocks' in arguments:
+            _omit_code_owned_redistribution_menu_members(
+                arguments, repair_domain['protected'], selection_schema)
+        validate(arguments, selection_schema)
         selection_arguments = {key: arguments[key] for key in ('requirementsId', 'baseDraftId')}
         if 'addressedFindingIndexes' in arguments:
             selection_arguments['addressedFindingIndexes'] = copy.deepcopy(arguments['addressedFindingIndexes'])
@@ -1651,6 +2028,34 @@ def compile_coordinated_repair(arguments, task, current_draft, *, return_referen
         if arguments.get('workoutUpdates'):
             selected_edits['workoutUpdates'] = copy.deepcopy(arguments['workoutUpdates'])
         arguments = selection_arguments | {'edits': selected_edits}
+    _, source_positions = _stable_draft_references(current_draft)
+    for update in arguments.get('edits', {}).get('exerciseUpdates', []):
+        reference = update.get('exerciseRef')
+        position = source_positions.get(reference)
+        if position is None:
+            continue
+        source = current_draft['workouts'][position[0]]['exercises'][position[1]]
+        set_fields = update.get('setFields', {})
+        if set_fields.get('definition_id', source.get('definition_id')) == source.get('definition_id'):
+            continue
+        replacement = copy.deepcopy(source)
+        replacement.update(set_fields)
+        for field in update.get('removeOptionalFields', []):
+            replacement.pop(field, None)
+        _normalize_replacement_exercise(replacement, source, reference, task,
+                                        explicit_fields=set(set_fields))
+        removals = set(update.get('removeOptionalFields', []))
+        for field in ('generateWarmUpSets', 'intraSetRestInSeconds', 'effortAcceptance',
+                      'workSetTemplate', 'targetSetPrescriptions'):
+            if field in replacement:
+                set_fields[field] = copy.deepcopy(replacement[field])
+                removals.discard(field)
+            elif field in source:
+                removals.add(field)
+        if removals:
+            update['removeOptionalFields'] = sorted(removals)
+        else:
+            update.pop('removeOptionalFields', None)
     redistribution_bound = False
     if selection and arguments.get('edits', {}).get('redistributionTargets'):
         from .repair_contract import RepairContractError, bind_redistribution_targets
@@ -1722,7 +2127,7 @@ def compile_coordinated_repair(arguments, task, current_draft, *, return_referen
         raise PlanningInputError(first['code'], first['message'], first['path'], first['repair'],
             errors=order_reference_errors)
     edits = effective_arguments['edits']
-    if not any(edits.get(key) for key in ('workoutUpdates', 'exerciseUpdates', 'exerciseAdditions',
+    if edits != {} and not any(edits.get(key) for key in ('workoutUpdates', 'exerciseUpdates', 'exerciseAdditions',
         'exerciseRemovals', 'exerciseMoves', 'workoutOrder', 'exerciseOrders', 'programGuidance')):
         raise PlanningInputError('empty_coordinated_edits', 'The coordinated repair contains no edits.', '/edits',
             'Submit a concrete typed field or structural change; an empty edit contract does not change the saved candidate.')
@@ -1997,7 +2402,60 @@ def compile_coordinated_repair(arguments, task, current_draft, *, return_referen
             candidate['workouts'].insert(target_index, day)
             current_order.insert(target_index, current_order.pop(source_index))
 
-    if not operations:
+    if any(edits.get(key) for key in ('exerciseUpdates', 'exerciseAdditions', 'exerciseRemovals',
+                                      'exerciseMoves', 'exerciseOrders')):
+        from .programming_guidelines import canonical_execution_order_draft
+        definitions = task.get('recipeDefinitions') or {}
+        ordered = copy.deepcopy(candidate)
+        references_by_workout = {}
+        for workout_index, day in enumerate(ordered['workouts']):
+            workout_ref = workout_refs_by_position[workout_index]
+            references = exercise_ids_by_workout[workout_ref]
+            if len(references) != len(day.get('exercises', [])):
+                raise PlanningInputError('repair_reference_mismatch',
+                    'Compiled exercise references no longer match the candidate exercise list.', '/edits',
+                    'Resubmit the repair against the unchanged current draft; Python could not safely preserve occurrence identity.')
+            references_by_workout[workout_ref] = references
+            for exercise, reference in zip(day.get('exercises', []), references):
+                exercise['_repairReference'] = reference
+        ordered = canonical_execution_order_draft(ordered, task.get('requirements') or {},
+            {'exerciseDefinitions': list(definitions.values())})
+        if ordered is None:
+            raise PlanningInputError('cyclic_execution_order',
+                'The proposed exercise placement conflicts with the approved ordering rules.', '/edits/exerciseOrders',
+                'Choose placements compatible with the approved order rules; Python applies the default category order.')
+        for workout_index, day in enumerate(ordered['workouts']):
+            workout_ref = workout_refs_by_position[workout_index]
+            current = exercise_ids_by_workout[workout_ref]
+            desired = [item.pop('_repairReference') for item in day.get('exercises', [])]
+            target_items = {reference: item
+                for reference, item in zip(desired, day.get('exercises', []))}
+            # The helper also assigns superset recovery by final member slot.
+            for exercise_index, reference in enumerate(current):
+                target = target_items.get(reference)
+                if target is None:
+                    continue
+                item = candidate['workouts'][workout_index]['exercises'][exercise_index]
+                for field in ('restBetweenSetsSeconds', 'restAfterSupersetExerciseSeconds', 'restAfterExerciseSeconds'):
+                    if target.get(field) == item.get(field):
+                        continue
+                    emit({'op': 'replace', 'path': f'/workouts/{workout_index}/exercises/{exercise_index}/{field}',
+                          'value': copy.deepcopy(target.get(field))}, [reference, workout_ref])
+                    item[field] = copy.deepcopy(target.get(field))
+            changed_order_refs = {reference for index, reference in enumerate(desired)
+                                  if current[index] != reference}
+            for target_index, reference in enumerate(desired):
+                source_index = current.index(reference)
+                if source_index == target_index:
+                    continue
+                emit({'op': 'move', 'from': f'/workouts/{workout_index}/exercises/{source_index}',
+                      'path': f'/workouts/{workout_index}/exercises/{target_index}'},
+                     changed_order_refs | {workout_ref})
+                item = candidate['workouts'][workout_index]['exercises'].pop(source_index)
+                candidate['workouts'][workout_index]['exercises'].insert(target_index, item)
+                current.insert(target_index, current.pop(source_index))
+
+    if not operations and edits != {}:
         raise PlanningInputError('empty_coordinated_edits', 'The coordinated edit produced no patch operations.', '/edits',
             'Submit a concrete changed field or ordering update; no-op edits do not address findings.')
     if (task.get('candidateMenuExpansionTask') and uses_menu_selection(task)) or selection:
@@ -2050,6 +2508,18 @@ def prepare_workout_session(arguments, messages, equipment):
     _, revision = latest_draft_submission(messages, equipment)
     if arguments['requirementsId'] != requirements['requirementsId'] or arguments['baseDraftId'] != revision:
         raise ValueError('Session preparation is stale; use the current requirementsId and currentDraftId (null before the first draft).')
+    from .session_drafting import _preparation_choice_domain, _preparation_selection_errors
+    choice_domain = _preparation_choice_domain(messages, equipment)
+    selection_errors = _preparation_selection_errors({'sessions': [{'exercises': [
+        {'definition_id': reference} for reference in arguments['definition_ids']]}]}, choice_domain)
+    if selection_errors:
+        for index, error in enumerate(selection_errors):
+            error['path'] = f'/definition_ids/{index}'
+            error['permittedPaths'] = {'exact': [error['path']], 'descendants': []}
+        raise PlanningInputError('preparation_selection_outside_reviewed_pool',
+            'The fresh selector can choose only reviewed, eligible definitions while demand or family distribution is active.',
+            '/definition_ids', 'Choose only the reviewed definition IDs supplied by the current selector, or ask the user if an outside-domain exercise is required.',
+            selection_errors)
     index, prepared = _latest_result(messages, 'prepare_workout_session')
     new_instruction = any(message.get('role') == 'user' and message.get('content', '').strip()
                           not in ('/continue', 'CONFIRM REQUIREMENTS', 'CONFIRM GENERATE') for message in messages[index + 1:])
@@ -2145,6 +2615,10 @@ def _structured_repair_coverage(arguments, task, current_draft):
 
     def finding_source_refs(finding):
         source_refs, source_workout_refs = set(), set()
+        if 'subjectExerciseRefs' in finding:
+            source_refs = set(finding['subjectExerciseRefs']) & exercise_refs.keys()
+            source_workout_refs = set(finding.get('subjectWorkoutRefs', [])) & workout_refs.keys()
+            return source_refs, source_workout_refs
         for path in [finding.get('draftPath'), *(finding.get('evidencePaths') or [])]:
             match = re.match(r'^/(?:draft/)?workouts/(\d+)/exercises/(\d+)(?:/|$)', path or '')
             if match:
@@ -2265,6 +2739,8 @@ def _structured_repair_coverage(arguments, task, current_draft):
         relevant_paths = []
         relevant_source_refs = set()
         relevant_workout_refs = set()
+        typed_subjects = any('subjectExerciseRefs' in findings[index] for index in indexes
+            if isinstance(index, int) and index < len(findings))
         for objective in group.get('repairObjectives', []):
             relevant_source_refs.update(reference for reference in objective.get('exerciseRefs', [])
                                         if isinstance(reference, str))
@@ -2274,6 +2750,11 @@ def _structured_repair_coverage(arguments, task, current_draft):
             source_refs, workout_refs_for_finding = finding_source_refs(findings[index])
             relevant_source_refs.update(source_refs)
             relevant_workout_refs.update(workout_refs_for_finding)
+            if 'subjectExerciseRefs' in findings[index]:
+                relevant_paths.extend(f'/workouts/{exercise_refs[ref][0]}/exercises/{exercise_refs[ref][1]}'
+                    for ref in source_refs)
+                relevant_paths.extend(f'/workouts/{ref.removeprefix("WORKOUT_")}' for ref in workout_refs_for_finding)
+                continue
             draft_path = findings[index].get('draftPath')
             match = re.match(r'^(/workouts/\d+/exercises/\d+)(?:/|$)', draft_path or '')
             if match:
@@ -2315,7 +2796,8 @@ def _structured_repair_coverage(arguments, task, current_draft):
                 path = operation.get('path', '')
                 structural_exercise_operation = (operation.get('op') in ('add', 'remove', 'replace')
                     and re.fullmatch(r'/workouts/\d+/exercises/(?:\d+|-)', path))
-                same_source_definition_occurrence = ('exercise_selection' in (changed_dimensions & dimensions)
+                same_source_definition_occurrence = (not typed_subjects
+                    and 'exercise_selection' in (changed_dimensions & dimensions)
                     and any(reference.startswith('EXERCISE_') and reference in exercise_refs
                         and current_draft['workouts'][exercise_refs[reference][0]]['exercises'][exercise_refs[reference][1]].get('definition_id')
                             in source_definition_ids
@@ -2469,6 +2951,10 @@ def validate_construction_submission(arguments, task):
 
 
 def _latest_result(messages, tool_name):
+    if tool_name == 'set_workout_requirements':
+        index, result = active_requirement_result(messages)
+        if index >= 0:
+            return index, result
     calls = {call.get("id") for message in messages for call in message.get("tool_calls", [])
              if call.get("function", {}).get("name") in (("set_workout_requirements", "accept_workout_alternative") if tool_name == "set_workout_requirements" else (tool_name,))}
     for index in range(len(messages) - 1, -1, -1):
@@ -2492,6 +2978,92 @@ def _latest_result(messages, tool_name):
                     continue
                 return index, {}
     return -1, {}
+
+
+def accepted_menu_preparation(messages, requirements_id, base_draft_id, library_fp,
+                              history_fp, drafting_version, restriction_policy=None,
+                              resolved_decision_context=None):
+    """Return the exact current preparation explicitly accepted at its menu-review gate."""
+    calls = {call.get('id'): call.get('function', {}) for message in messages
+             for call in message.get('tool_calls', [])}
+    tool_results = []
+    for index, message in enumerate(messages):
+        function = calls.get(message.get('tool_call_id'), {})
+        if message.get('role') != 'tool' or function.get('name') not in (
+                'draft_workout_sessions', 'prepare_workout_sessions'):
+            continue
+        try:
+            payload = json.loads(message.get('content') or '{}')
+        except (ValueError, TypeError):
+            continue
+        if isinstance(payload, dict):
+            tool_results.append((index, function.get('name'), payload))
+
+    try:
+        from .user_interaction import answer_question
+    except ImportError:
+        return None
+
+    accepted = []
+    for gate_index, name, gate in tool_results:
+        menu_review = gate.get('menuReview')
+        question = gate.get('userQuestion')
+        if (name != 'draft_workout_sessions' or not isinstance(menu_review, dict)
+                or not isinstance(question, dict) or not gate.get('preparationId')
+                or not question.get('options') or len(question['options']) < 2):
+            continue
+        try:
+            accepted_answer = answer_question(question, '2')
+        except (ValueError, KeyError, TypeError):
+            continue
+        answer_index = next((index for index in range(gate_index + 1, len(messages))
+                             if messages[index].get('role') == 'user'), None)
+        if answer_index is None or messages[answer_index].get('content', '').strip() != accepted_answer:
+            continue
+        if any(message.get('role') == 'user'
+               and message.get('content', '').strip() not in (
+                   '/continue', 'CONFIRM REQUIREMENTS', 'CONFIRM GENERATE')
+               for message in messages[answer_index + 1:]):
+            continue
+
+        preceding_preparations = [(index, payload) for index, tool_name, payload in tool_results
+                                  if index < gate_index and tool_name == 'prepare_workout_sessions']
+        if not preceding_preparations:
+            continue
+        prep_index, prepared = preceding_preparations[-1]
+        if not isinstance(prepared, dict):
+            continue
+        if prepared.get('preparationId') != gate.get('preparationId'):
+            continue
+        source_budget = prepared.get('sourceWorkingSetBudget')
+        if (prepared.get('requirementsId') != requirements_id
+                or prepared.get('baseDraftId') != base_draft_id
+                or prepared.get('libraryFingerprint') != library_fp
+                or prepared.get('historyFingerprint') != history_fp
+                or prepared.get('draftingVersion') != drafting_version
+                or not isinstance(source_budget, dict)
+                or source_budget.get('preparationId') != prepared.get('preparationId')):
+            continue
+        calls_before_preparation = [message for message in messages[:prep_index]
+                                    if message.get('role') != 'assistant' or not message.get('tool_calls')]
+        source_snapshot = source_message_context(requirement_sources(calls_before_preparation))
+        authority = prepared.get('sourceBudgetAuthority')
+        if (prepared.get('sourceMessages') != source_snapshot
+                or not isinstance(authority, dict)
+                or any(authority.get(key) != value for key, value in {
+                    'requirementsId': requirements_id,
+                    'baseDraftId': base_draft_id,
+                    'libraryFingerprint': library_fp,
+                    'historyFingerprint': history_fp,
+                    'restrictionPolicy': restriction_policy,
+                    'sourceMessages': source_snapshot,
+                }.items())):
+            continue
+        accepted.append((answer_index, prep_index, prepared, gate))
+    if not accepted:
+        return None
+    _, prep_index, prepared, gate = max(accepted, key=lambda item: item[0])
+    return {'preparationIndex': prep_index, 'preparation': prepared, 'gateResult': gate}
 
 
 def latest_draft_audit(messages, draft):
@@ -2735,11 +3307,22 @@ def source_message_context(sources):
                if m.get('imageAttachments') else {})} for i, m in enumerate(sources)}
 
 
+def _structured_requirement_source(sources):
+    try:
+        return structured_requirement_source(sources, _REQUIREMENTS)
+    except (ValueError, ValidationError) as error:
+        raise PlanningInputError('invalid_structured_requirements', str(error), '/sourceMessages',
+            'Correct the explicitly marked user structured requirements; no supplied values were changed.') from error
+
+
 def render_requirements(requirements, restriction_policy=None, confirmation=False):
     lines = ["## Program requirements", "", "### Schedule", "",
              f"- Sessions per week: **{requirements['sessionsPerWeek'] or 'unspecified'}**"]
     limit = requirements["auditTargets"]["maximumSessionSeconds"]
     lines.append(f"- Session duration limit: **{limit / 60:g} minutes**" if limit else "- Session duration limit: unspecified")
+    if 'durationBalanceToleranceSeconds' in requirements:
+        tolerance = requirements['durationBalanceToleranceSeconds']
+        lines.append(f"- Soft duration-balance tolerance: spreads up to **{tolerance / 60:g} minutes** count as equally balanced, allowing lower-ranked objectives to choose within that range; this is not a hard session limit.")
     lines.extend(["", "### Effective-set targets", ""])
     weekly = requirements['auditTargets']['weeklyEffectiveSets']
     per_session = requirements['auditTargets']['perSessionEffectiveSets']
@@ -2747,7 +3330,8 @@ def render_requirements(requirements, restriction_policy=None, confirmation=Fals
     if muscles:
         lines.extend(['| Muscle | Per week | Per session |', '| :--- | ---: | ---: |'])
         for muscle in muscles:
-            ranges = [f"{values[muscle]['minimum']:g}–{values[muscle]['maximum']:g}" if muscle in values else '—'
+            from .generation_audit import volume_target_text
+            ranges = [volume_target_text(values[muscle]) if muscle in values else '—'
                       for values in (weekly, per_session)]
             lines.append(f"| {MUSCLE_LABELS.get(muscle, muscle.capitalize())} | {ranges[0]} | {ranges[1]} |")
         lines.extend(['', '— means no target specified. Zero is an explicit zero target.'])
@@ -2759,11 +3343,28 @@ def render_requirements(requirements, restriction_policy=None, confirmation=Fals
             scope = 'each session' if rule['scope'] == 'eachSession' else 'across the week'
             intent = rule.get('intent', 'inclusion')
             purpose = 'development emphasis' if intent == 'development' else 'inclusion'
+            minimums = []
+            if 'minimumWeeklySets' in rule:
+                minimums.append(f"at least {rule['minimumWeeklySets']} qualified working sets weekly")
+            if 'minimumSessions' in rule:
+                minimums.append(f"at least {rule['minimumSessions']} weekly training sessions")
             lines.append(f"- {rule['description']} ({scope}; {purpose}; `{rule['key']}`)" +
-                         ('; qualitative emphasis, not an added numeric minimum.' if intent == 'development' else '.'))
+                         ('; ' + '; '.join(minimums) + '.' if minimums else
+                          '; qualitative emphasis, not an added numeric minimum.' if intent == 'development' else '.'))
+    lines.extend(['', '### Default exercise order', '', EXECUTION_ORDER_DESCRIPTION])
     if requirements.get('executionRules'):
         lines.extend(['', '### Execution rules', ''])
         lines.extend('- ' + render_execution_rule(rule) for rule in requirements['executionRules'])
+    if requirements.get('familySetBounds'):
+        lines.extend(['', '### Approved weekly exercise-family bounds', ''])
+        for bound in requirements['familySetBounds']:
+            limits = []
+            if 'minimumWeeklySets' in bound:
+                limits.append(f"at least {bound['minimumWeeklySets']} working sets")
+            if 'maximumWeeklySets' in bound:
+                limits.append(f"at most {bound['maximumWeeklySets']} working sets")
+            lines.append(f"- `{bound['exerciseFamilyId']}`: " + '; '.join(limits) + ' across the week.')
+        lines.append('Selected exercises require reviewed family evidence; unknown membership is not zero exposure.')
     if 'minimumRestDaysBetweenSessions' in requirements:
         lines.append(f"- At least {requirements['minimumRestDaysBetweenSessions']} full rest days between sessions, including across weeks.")
     if 'workingSetRIR' in requirements:
@@ -2795,7 +3396,20 @@ def render_requirements(requirements, restriction_policy=None, confirmation=Fals
                 lines.append(f"- {target}: {directions[permission['direction']]}{rank}.")
             lines.append('These permissions allow proposals only; any proposed change still needs review and your approval.')
     if requirements.get('objectiveOrder'):
-        lines.append('Approved optimization order: ' + ', '.join(requirements['objectiveOrder']) + '.')
+        objective_labels = {
+            'demand_distribution': 'reduce known per-session demand peaks',
+            'duration_balance': 'balance estimated session durations',
+            'source_balance': 'reduce source-backed movement set-count differences',
+            'exercise_distribution': 'spread exposure across qualified exercises',
+            'workload_economy': 'minimize physical working sets across the week',
+            'distribution': 'reduce muscle-set concentration across sessions',
+            'development_emphasis': 'maximize the least-exposed development role (explicit preference only)',
+            'development_exposure': 'increase combined development-role exposure (explicit preference only)',
+            'progression': 'consider app-supported progression configuration during exercise selection',
+            'preservation': 'preserve the current candidate',
+        }
+        lines.append('Approved optimization order: ' + ', then '.join(
+            objective_labels.get(objective, objective) for objective in requirements['objectiveOrder']) + '.')
     lines.extend(['', 'Your original instructions and clarification answers also apply.'])
     restrictions = requirements.get('exerciseRestrictions', {})
     sections = [('Excluded exercise / equipment terms', restrictions.get('excludeNameTerms', []))]
@@ -2857,6 +3471,13 @@ def set_workout_requirements(arguments, messages, equipment=None, client=None, p
     accounting_refresh = 'baseRequirementsId' in arguments and not scoped_update
     update_base = {}
     inherited_legacy_accounting = False
+    authority = _structured_requirement_source(requirement_sources(messages))
+    if authority and not scoped_update and not accounting_refresh:
+        try:
+            arguments = seed_structured_requirements(arguments, authority)
+        except ValueError as error:
+            raise PlanningInputError('structured_requirement_mismatch', str(error), '/',
+                'Use the supplied structured values unchanged; propose a scoped amendment only with new user authority.') from error
     if scoped_update:
         _, update_base = latest_requirement_candidate(messages)
         if not update_base or arguments.get('baseRequirementsId') != update_base.get('requirementsId'):
@@ -2865,6 +3486,13 @@ def set_workout_requirements(arguments, messages, equipment=None, client=None, p
                 'Use the current set_workout_requirements update schema and preserve unrelated fields.')
         validate(arguments, workout_requirements_tool(equipment, messages)['function']['parameters'])
         updates = arguments['updates']
+        if authority and authority['sourceMessageIndex'] > max(
+                (source['messageIndex'] for source in update_base.get('sourceMessages', [])), default=-1):
+            try:
+                updates = seed_structured_requirements(updates, authority)
+            except ValueError as error:
+                raise PlanningInputError('structured_requirement_mismatch', str(error), '/updates',
+                    'Use the new structured user amendment unchanged and preserve unrelated requirements.') from error
         inherited_legacy_accounting = 'requirementAccounting' in update_base['requirements']
         arguments = _merge_requirement_updates(update_base['requirements'], updates, _REQUIREMENTS)
         if inherited_legacy_accounting and 'requirementAccounting' not in updates:
@@ -2883,6 +3511,27 @@ def set_workout_requirements(arguments, messages, equipment=None, client=None, p
     if not scoped_update and 'relaxationPermissions' not in arguments and 'requirementAccounting' not in arguments:
         arguments['relaxationPermissions'] = []
     validate(arguments, _REQUIREMENTS)
+    if arguments.get('familySetBounds'):
+        from .generation_audit import validate_family_set_bounds
+        from .recipe_contracts import reviewed_exercise_family_evidence
+        family_errors = validate_family_set_bounds(arguments,
+            reviewed_exercise_family_evidence(equipment or {})['familyByReference'])
+        if family_errors:
+            first = family_errors[0]
+            raise PlanningInputError(first['code'], first['message'], first['path'], first['repair'], errors=family_errors)
+    duration_tolerance = arguments.get('durationBalanceToleranceSeconds')
+    hard_duration_limit = arguments['auditTargets']['maximumSessionSeconds']
+    if duration_tolerance is not None and 'duration_balance' not in arguments.get('objectiveOrder', []):
+        raise PlanningInputError('duration_balance_tolerance_without_objective',
+            'A duration-balance tolerance requires the approved duration_balance objective.',
+            '/durationBalanceToleranceSeconds',
+            'Add duration_balance only when the original source supports it, or omit the tolerance.')
+    if (duration_tolerance is not None and hard_duration_limit is not None
+            and duration_tolerance > hard_duration_limit):
+        raise PlanningInputError('duration_balance_tolerance_exceeds_session_limit',
+            'The approved duration-balance tolerance cannot exceed the hard maximum session duration.',
+            '/durationBalanceToleranceSeconds',
+            'Use a source-supported tolerance no greater than auditTargets.maximumSessionSeconds, or omit it; do not alter the hard duration limit.')
     arguments = {**copy.deepcopy(arguments), 'notes': ''}
     from .requirement_accounting import validate_accounting
     if not inherited_legacy_accounting:
@@ -2900,6 +3549,13 @@ def set_workout_requirements(arguments, messages, equipment=None, client=None, p
     if len(set(keys)) != len(keys):
         raise PlanningInputError('duplicate_coverage_key', 'Coverage keys must be unique.', '/requiredCoverage',
                                  'Give each source-backed coverage requirement a distinct key.')
+    for index, rule in enumerate(arguments.get('requiredCoverage', [])):
+        if (arguments.get('sessionsPerWeek') is not None
+                and rule.get('minimumSessions', 0) > arguments['sessionsPerWeek']):
+            raise PlanningInputError('coverage_frequency_exceeds_schedule',
+                'A role minimum cannot exceed the approved weekly session count.',
+                f'/requiredCoverage/{index}/minimumSessions',
+                'Resolve the conflicting approved frequency and schedule explicitly; do not silently lower either.')
     rule_errors = execution_rule_errors(arguments)
     if rule_errors:
         first = rule_errors[0]
@@ -2908,7 +3564,8 @@ def set_workout_requirements(arguments, messages, equipment=None, client=None, p
     from .generation_audit import validate_audit_targets
     validate_audit_targets(arguments["auditTargets"])
     requested = {muscle for field in ('weeklyEffectiveSets', 'perSessionEffectiveSets')
-                 for muscle, bounds in arguments['auditTargets'][field].items() if bounds['maximum'] > 0}
+                 for muscle, bounds in arguments['auditTargets'][field].items()
+                 if bounds['maximum'] is None or bounds['maximum'] > 0}
     if requested - supported.keys():
         raise PlanningInputError('unsupported_muscle_targets', f'The loaded library has no auditable credit for: {sorted(requested - supported.keys())}.',
             '/auditTargets', 'Use only auditPolicy.supportedMuscleTargets. Preserve the original request and follow auditPolicy.capabilityLimits to resolve an unsupported target.')
@@ -2924,7 +3581,7 @@ def set_workout_requirements(arguments, messages, equipment=None, client=None, p
                 and previous_policy.get('libraryFingerprint') == library_fingerprint(equipment or {})
                 and previous_policy.get('resolutionVersion') == RESTRICTION_POLICY_VERSION):
             restriction_policy = copy.deepcopy(previous_policy)
-    if prior.get('supportedMuscleTargets') == supported and prior.get('requirementsVersion') == REQUIREMENTS_VERSION and prior.get('sourceMessages') == sources and prior.get('resolvedDecisions', {}) == decisions and prior.get("requirements") == arguments and (not restricted or
+    if prior.get('supportedMuscleTargets') == supported and prior.get('libraryFingerprint') == library_fingerprint(equipment or {}) and prior.get('requirementsVersion') == REQUIREMENTS_VERSION and prior.get('sourceMessages') == sources and prior.get('resolvedDecisions', {}) == decisions and prior.get("requirements") == arguments and (not restricted or
             (prior.get('restrictionPolicy', {}).get('libraryFingerprint') == library_fingerprint(equipment or {})
              and prior.get('restrictionPolicy', {}).get('resolutionVersion') == RESTRICTION_POLICY_VERSION)):
         return {**copy.deepcopy(prior), "cached": True}
@@ -2936,6 +3593,7 @@ def set_workout_requirements(arguments, messages, equipment=None, client=None, p
         raise PlanningInputError("requirements_frozen", "Requirements are frozen during automatic repair.", "/",
                                  "Reuse the stored requirementsId and repair the draft. Ask the user before changing a goal.")
     result = {"requirements": copy.deepcopy(arguments), 'requirementsVersion': REQUIREMENTS_VERSION,
+              'libraryFingerprint': library_fingerprint(equipment or {}),
               'supportedMuscleTargets': supported,
               'sourceMessages': sources, 'resolvedDecisions': decisions,
               "requirementsId": "REQUIREMENTS_" + _fingerprint({'version': REQUIREMENTS_VERSION, 'requirements': arguments, 'sources': sources})[:16]}
@@ -2966,8 +3624,10 @@ def requirements_approved(messages, result=None):
             or not review.get('passed') or review.get('failure') or review.get('auditPolicy') != ASSUMPTIONS
             or any(f.get('severity') == 'blocking' for f in review.get('findings', []))):
         return False
-    from .planning_decisions import resolved_decisions
-    current_context = _requirements_context({**result, 'resolvedDecisions': resolved_decisions(messages)})
+    # Source approval is for this exact extracted requirements record. Later
+    # candidate-scoped decisions still invalidate audit/review receipts, but
+    # they do not retroactively change the requirements that were reviewed.
+    current_context = _requirements_context(result)
     if review.get('inputHash') != _hash(current_context):
         return False
     if result.get('accountingRefreshBaseId'):
@@ -3037,7 +3697,9 @@ def _normalize_definition_dependent_fields(arguments, equipment, requirements=No
     definitions = {f'LIBRARY_{index}': definition for index, definition in enumerate(
         sorted(equipment.get('exerciseDefinitions', []), key=lambda item: item['id']))}
     for day in arguments.get('workouts', []):
-        for item in day.get('exercises', []):
+        for exercise_index, item in enumerate(day.get('exercises', [])):
+            if exercise_index and 'setupSeconds' not in item:
+                item['setupSeconds'] = ASSUMPTIONS['transitionSeconds']
             definition = definitions.get(item.get('definition_id'))
             if not definition:
                 continue
@@ -3066,6 +3728,8 @@ def build_draft_plan(arguments, equipment, requirements, restriction_policy=None
             "accessoryEquipments": copy.deepcopy(equipment.get("accessoryEquipments", [])), "exercises": [], "workouts": []}
     if 'workingSetRIR' in requirements:
         plan['workingSetRIR'] = copy.deepcopy(requirements['workingSetRIR'])
+    if requirements.get('familySetBounds'):
+        plan['familySetBounds'] = copy.deepcopy(requirements['familySetBounds'])
     input_errors = []
     for day_index, day in enumerate(arguments["workouts"]):
         workout = {"id": f"WORKOUT_{day_index}", "name": day["name"], "description": day["description"],
@@ -3295,14 +3959,29 @@ def render_draft(plan, requirements, report, restriction_policy=None, source_dra
                 for muscle, values in credits[reference].items() if values.get(role, 0)) or '—' for role in ('direct', 'indirect')]
             lines.append(f"| {i+1} | {cell(e['name'])} | {e['numWorkSets']} | {cell(reps)} | {cell(effort_text)} | {cell(primary)} | {cell(secondary)} | {between} | {day['restToNextSeconds'][i]}s | {round_rest} | {cell(notes)} |")
     indirect_credit = ASSUMPTIONS['secondarySetCredit']
+    exposure = report.get('weeklyExerciseExposure', {})
+    if exposure:
+        canonical_names = {}
+        for exercise in plan.get('exercises', []):
+            canonical_id = exercise.get('libraryDefinitionId') or exercise.get('id')
+            canonical_names.setdefault(canonical_id, exercise.get('name', canonical_id))
+        lines.extend(["", "Per-exercise exposure audit (definition-level; variants sharing a library ID are combined):",
+            "", "| Exercise definition | Weekly sessions | Weekly working sets |", "|---|---:|---:|"])
+        for definition_id, counts in sorted(exposure.items()):
+            lines.append(f"| {cell(canonical_names.get(definition_id, definition_id))} | {counts['weeklySessions']} | {counts['weeklyWorkingSets']} |")
     lines.extend(["", "Weekly volume audit:",
                   f"Effective sets = direct sets + {indirect_credit:g} × indirect sets. Credits follow the selected library's primary/secondary roles, which may differ from illustrative examples; these are accounting conventions, not exact physiological equivalences.",
                   "", "| Muscle | Direct sets | Indirect sets | Effective sets | Weekly target | Status |", "|---|---|---|---|---|---|"])
     for muscle, values in report["weeklyVolume"].items():
         if values["effective"] or muscle in requirements["auditTargets"]["weeklyEffectiveSets"]:
             bounds = requirements['auditTargets']['weeklyEffectiveSets'].get(muscle)
-            target = f"{bounds['minimum']:g}–{bounds['maximum']:g}" if bounds else '—'
-            status = ('Within target' if bounds['minimum'] <= values['effective'] <= bounds['maximum'] else 'Outside target') if bounds else 'Reported'
+            if bounds:
+                from .generation_audit import volume_target_bounds, volume_target_text
+                minimum, maximum = volume_target_bounds(bounds)
+                target = volume_target_text(bounds)
+                status = 'Within target' if minimum <= values['effective'] <= maximum else 'Outside target'
+            else:
+                target, status = '—', 'Reported'
             lines.append(f"| {MUSCLE_LABELS.get(muscle, muscle.capitalize())} | {values['direct']:g} | {values['indirect'] / indirect_credit:g} | {values['effective']:g} | {target} | {status} |")
     lines.extend(["", "Superset rests apply after each listed member; omit the final member's recovery after the last round. Outer exercise rests are separate.",
                   f"Duration estimate: {ASSUMPTIONS['secondsPerRep']}s/rep by default (per-exercise overrides shown above), both sides when unilateral, {ASSUMPTIONS['generalWarmupSeconds']//60} min general warm-up, {ASSUMPTIONS['generatedRampUpSecondsPerExercise']//60} min per generated ramp-up, {ASSUMPTIONS['transitionSeconds']}s per setup transition, plus prescribed rests.",
@@ -3339,6 +4018,9 @@ def _audit_coverage(arguments, requirements, report):
         if rule['scope'] == 'weekly' and key not in covered_week:
             add_audit_issue(report, 'required_coverage_missing', f"Weekly plan: missing {rule['description']}.",
                 f'Include a qualifying exercise with satisfiesCoverage={key!r} and re-audit. Do not change the requirement.', coverageKey=key)
+    if 'workouts' in report:
+        from .generation_audit import audit_coverage_minimums
+        audit_coverage_minimums(report, rules.values())
 
 
 def audit_workout_plan(arguments, equipment, messages, allow_educated_load_guesses=True, training_history=None):
@@ -3386,8 +4068,10 @@ def audit_workout_plan(arguments, equipment, messages, allow_educated_load_guess
         error.draft_revision_id = revision_id
         error.draft_library_fingerprint = fingerprint
         raise
+    from .generation_audit import family_set_audit_options
     report = audit_workout_package(plan_audit_package(plan, allow_educated_load_guesses), requirements["auditTargets"],
-        coverage_by_exercise=draft_coverage_assignments(plan, arguments))
+        coverage_by_exercise=draft_coverage_assignments(plan, arguments),
+        **family_set_audit_options(requirements, equipment))
     if overrides:
         report['requirementOverrides'] = overrides
     _audit_coverage(arguments, requirements, report)

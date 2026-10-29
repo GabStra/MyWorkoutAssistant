@@ -15,7 +15,7 @@ from .semantic_retrieval import CACHE_DIRECTORY, _query_text, rank as _local_sem
 
 from .api_client import chat_call
 from .constants import EXACT_GENERATION_CONFIRMATION
-from .generation_audit import MUSCLES, muscle_credits_per_set, available_muscle_targets
+from .generation_audit import MUSCLES, available_muscle_targets
 
 
 _SEARCH_MUSCLE_TARGETS = sorted(MUSCLES)
@@ -25,12 +25,12 @@ SEARCH_EXERCISE_LIBRARY_TOOL = {
     "type": "function",
     "function": {
         "name": "search_exercise_library",
-        "description": "Search the loaded exercise library by meaning before proposing exercises. Every candidate must match ALL muscleTargets (AND), with primary role by default. Use separate calls for alternative muscle groups; omit muscle filters for queries spanning different movement patterns. Returns real entries satisfying supplied filters; semantic similarity alone does not establish suitability or authorize substitutions.",
+        "description": "Search the loaded exercise library by meaning before proposing exercises. Every candidate must match the muscle target, with primary role by default. Use separate calls for alternative muscle groups; omit muscle filters for queries spanning different movement patterns. Returns real entries satisfying supplied filters; semantic similarity alone does not establish suitability or authorize substitutions.",
         "parameters": {
             "type": "object",
             "properties": {
                 "queries": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 6},
-                "muscleTargets": {"type": "array", "items": {"type": "string", "enum": _SEARCH_MUSCLE_TARGETS}, "uniqueItems": True, "minItems": 1},
+                "muscleTargets": {"type": "string", "enum": _SEARCH_MUSCLE_TARGETS},
                 "excludedMuscleTargets": {"type": "array", "items": {"type": "string", "enum": _SEARCH_MUSCLE_TARGETS}, "uniqueItems": True, "minItems": 1},
                 "muscleRole": {"type": "string", "enum": ["primary", "any"]},
                 "exerciseCategories": {"type": "array", "items": {"type": "string", "enum": ["HEAVY_COMPOUND", "MODERATE_COMPOUND", "ISOLATION"]}, "uniqueItems": True, "minItems": 1},
@@ -45,11 +45,12 @@ def exercise_library_search_tool(equipment):
     tool = copy.deepcopy(SEARCH_EXERCISE_LIBRARY_TOOL)
     supported = sorted(available_muscle_targets(equipment))
     properties = tool['function']['parameters']['properties']
-    for field in ('muscleTargets', 'excludedMuscleTargets'):
-        if supported:
-            properties[field]['items']['enum'] = supported
-        else:
-            properties.pop(field)
+    if supported:
+        properties['muscleTargets']['enum'] = supported
+        properties['excludedMuscleTargets']['items']['enum'] = supported
+    else:
+        properties.pop('muscleTargets')
+        properties.pop('excludedMuscleTargets')
     return tool
 
 
@@ -101,6 +102,7 @@ SELECT_EXERCISES_TOOL = {
 def _selection_entry(definition, gear_names, reference):
     from .generation_audit import muscle_credits_per_set
     from .programming_demands import definition_demand_facts
+    from .recipe_contracts import regional_muscle_facts
     fields = (
         "name", "exerciseType", "bodyWeightPercentage",
         "muscleGroups", "secondaryMuscleGroups", "exerciseCategory",
@@ -112,6 +114,9 @@ def _selection_entry(definition, gear_names, reference):
     entry["accessoryNames"] = [gear_names.get(item, item) for item in definition.get("requiredAccessoryEquipmentIds", [])]
     entry["creditsPerWorkingSet"] = muscle_credits_per_set(definition)
     entry['programmingDemandFacts'] = definition_demand_facts(definition)
+    entry['regionalMuscleFacts'] = regional_muscle_facts(definition)
+    if definition.get('reviewedExerciseFamily'):
+        entry['reviewedExerciseFamily'] = copy.deepcopy(definition['reviewedExerciseFamily'])
     from .generation_audit import VOLUME_SET_TYPES
     if definition.get('exerciseType') not in VOLUME_SET_TYPES:
         entry['volumeAuditNote'] = 'Timed/cardio prescriptions count for duration but have no effective-set equivalence in the current volume audit.'
@@ -483,7 +488,13 @@ def execute_library_tool(function_name, arguments, provided_equipment, client=No
     queries = arguments.get("queries")
     if not isinstance(queries, list) or not 1 <= len(queries) <= 6 or not all(isinstance(q, str) and 0 < len(q.strip()) <= 200 for q in queries):
         raise ValueError("queries must contain 1 to 6 nonempty search strings of at most 200 characters")
-    targets = arguments.get("muscleTargets", [])
+    raw_targets = arguments.get("muscleTargets", [])
+    if isinstance(raw_targets, str):
+        targets = [raw_targets]
+    elif isinstance(raw_targets, list):
+        targets = raw_targets
+    else:
+        raise ValueError("muscleTargets must be one supported target")
     excluded_targets = arguments.get("excludedMuscleTargets", [])
     categories = arguments.get("exerciseCategories", [])
     role = arguments.get("muscleRole", "primary")
@@ -491,6 +502,8 @@ def execute_library_tool(function_name, arguments, provided_equipment, client=No
     for field, values in (("muscleTargets", targets), ("excludedMuscleTargets", excluded_targets)):
         if field in arguments and (not isinstance(values, list) or not 1 <= len(values) <= len(_SEARCH_MUSCLE_TARGETS)):
             raise ValueError(f"{field} must contain supported muscle targets")
+        if field == 'muscleTargets' and len(values) > 1:
+            raise ValueError('muscleTargets accepts one target per search; omit the filter for multi-pattern queries.')
         if any(not isinstance(target, str) or target not in MUSCLES for target in values):
             raise ValueError(f"{field} must contain supported muscle targets")
         unsupported = set(values) - supported.keys()
@@ -516,7 +529,7 @@ def execute_library_tool(function_name, arguments, provided_equipment, client=No
         {"libraryFingerprint": fingerprint, "filters": filters}, sort_keys=True, separators=(",", ":")
     ).encode()).hexdigest()
     def has_target_credit(entry, target):
-        credit = muscle_credits_per_set(entry).get(target, {})
+        credit = entry.get('creditsPerWorkingSet', {}).get(target, {})
         return credit.get("direct", 0) > 0 if role == "primary" else credit.get("direct", 0) + credit.get("indirect", 0) > 0
 
     if filters:
@@ -525,7 +538,7 @@ def execute_library_tool(function_name, arguments, provided_equipment, client=No
             for target in targets
         )]
         entries = [entry for entry in entries if not any(
-            (credit := muscle_credits_per_set(entry).get(target, {})).get("direct", 0) + credit.get("indirect", 0) > 0
+            (credit := entry.get('creditsPerWorkingSet', {}).get(target, {})).get("direct", 0) + credit.get("indirect", 0) > 0
             for target in excluded_targets
         ) and (not categories or entry.get("exerciseCategory") in categories)]
     def normalize(value):
@@ -574,7 +587,7 @@ def execute_library_tool(function_name, arguments, provided_equipment, client=No
         for query in unresolved:
             cached[normalize(query)] = {"query": query, "matchMethod": "no_suitable_matches", "exercises": [],
                                         "searchFilters": filters,
-                                        "reason": "No library entries satisfy these structured filters and the current equipment and restrictions. All muscleTargets must match each candidate, with primary role by default. Split alternative muscle groups into separate calls or omit muscle filters for multi-pattern queries. Changing query wording alone cannot change this filtered catalog."}
+                                        "reason": "No library entries satisfy these structured filters and the current equipment and restrictions. The muscle target must match each candidate, with primary role by default. Split alternative muscle groups into separate calls or omit muscle filters for multi-pattern queries. Changing query wording alone cannot change this filtered catalog."}
     elif unresolved:
         if requirements:
             require_approved_requirements(messages)

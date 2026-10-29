@@ -69,7 +69,11 @@ def test_definition_substitution_drops_inherited_load_but_keeps_explicit_replace
     source.update(definition_id='LIBRARY_0', targetSetPrescriptions=[
         {'workSetIndex': index, 'reps': 10, 'weight': 20.0} for index in range(source['numWorkSets'])])
     source.pop('workSetTemplate', None)
-    task = {'requirementsId': stored['requirementsId'], 'baseDraftId': 'REVISION_0', 'currentDraft': draft}
+    task = {'requirementsId': stored['requirementsId'], 'baseDraftId': 'REVISION_0', 'currentDraft': draft,
+            'equipmentIds': [equipment_id], 'requirements': stored['requirements'],
+            'recipeDefinitions': {'LIBRARY_0': equipment['exerciseDefinitions'][0],
+                                  'LIBRARY_1': equipment['exerciseDefinitions'][1]},
+            'replacementDefinitionReferences': ['LIBRARY_1']}
     update = {'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0', 'setFields': {'definition_id': 'LIBRARY_1'}}]}
 
     compiled, _ = compile_coordinated_repair(arguments(task, update), task, draft)
@@ -385,6 +389,97 @@ def test_solver_menu_selection_copies_only_code_owned_candidate():
         compile_coordinated_repair({**request, 'sessionBlocks': []}, task, draft)
     with pytest.raises(ValidationError):
         compile_coordinated_repair({**request, 'useSolverMenu': False}, task, draft)
+
+
+def _loaded_replacement_case():
+    equipment, requirements, stored, draft = planning_case()
+    equipment['equipments'] = [
+        {'id': identifier, 'name': name, 'type': name.upper(), 'availablePlates': []}
+        for identifier, name in [('EQUIPMENT_0', 'Barbell'), ('EQUIPMENT_1', 'Rings'),
+                                 ('EQUIPMENT_2', 'Dumbbells')]]
+    equipment['exerciseDefinitions'] = [
+        {'id': 'a-source', 'name': 'Barbell Zercher Squat', 'exerciseType': 'WEIGHT',
+         'equipmentId': 'EQUIPMENT_0', 'bodyWeightPercentage': None, 'requiredAccessoryEquipmentIds': [],
+         'muscleGroups': ['FRONT_QUADRICEPS'], 'secondaryMuscleGroups': [],
+         'exerciseCategory': 'HEAVY_COMPOUND'},
+        {'id': 'b-pull', 'name': 'Ring Pull-Up', 'exerciseType': 'BODY_WEIGHT',
+         'equipmentId': 'EQUIPMENT_1', 'bodyWeightPercentage': 70, 'requiredAccessoryEquipmentIds': [],
+         'muscleGroups': ['BACK_UPPER_BACK'], 'secondaryMuscleGroups': [],
+         'exerciseCategory': 'MODERATE_COMPOUND'},
+        {'id': 'c-heavy', 'name': 'Barbell Back Squat', 'exerciseType': 'WEIGHT',
+         'equipmentId': 'EQUIPMENT_0', 'bodyWeightPercentage': None, 'requiredAccessoryEquipmentIds': [],
+         'muscleGroups': ['FRONT_QUADRICEPS'], 'secondaryMuscleGroups': [],
+         'exerciseCategory': 'HEAVY_COMPOUND'},
+        {'id': 'd-split', 'name': 'Dumbbell Bulgarian Split Squat', 'exerciseType': 'WEIGHT',
+         'equipmentId': 'EQUIPMENT_2', 'bodyWeightPercentage': None, 'requiredAccessoryEquipmentIds': [],
+         'muscleGroups': ['FRONT_QUADRICEPS'], 'secondaryMuscleGroups': [],
+         'exerciseCategory': 'MODERATE_COMPOUND'},
+    ]
+    source = draft['workouts'][0]['exercises'][0]
+    source.update(definition_id='LIBRARY_0', satisfiesCoverage=['knee_dominant'],
+                  workSetTemplate={'reps': 8, 'weight': 0}, generateWarmUpSets=False)
+    pull = copy.deepcopy(source)
+    pull.update(definition_id='LIBRARY_1', satisfiesCoverage=['vertical_pull'], numWorkSets=2,
+                generateWarmUpSets=False, intraSetRestInSeconds=None)
+    pull.pop('effortAcceptance', None)
+    pull.pop('workSetTemplate', None)
+    heavy = copy.deepcopy(source)
+    heavy.update(definition_id='LIBRARY_2', satisfiesCoverage=['knee_dominant'], numWorkSets=2)
+    draft['workouts'][0]['exercises'].extend([pull, heavy])
+    requirements = copy.deepcopy(stored['requirements'])
+    requirements['executionRules'] = [{'kind': 'warmup', 'coverageKey': 'knee_dominant'}]
+    requirements['requiredCoverage'] = [{'key': 'knee_dominant'}]
+    task = {'requirementsId': stored['requirementsId'], 'baseDraftId': 'REVISION_0',
+        'currentDraft': draft, 'requirements': requirements,
+        'equipmentIds': ['EQUIPMENT_0', 'EQUIPMENT_1', 'EQUIPMENT_2'],
+        'recipeDefinitions': {f'LIBRARY_{index}': definition for index, definition in
+            enumerate(equipment['exerciseDefinitions'])},
+        'replacementDefinitionReferences': ['LIBRARY_3'],
+        'replacementDefinitionReferencesByExercise': {'EXERCISE_0': ['LIBRARY_3']}}
+    return equipment, requirements, draft, task
+
+
+def test_stable_replacement_rebinds_definition_fields_and_orders_without_losing_other_occurrences():
+    from workout_generator_pkg.planning_tools import build_draft_plan
+
+    equipment, requirements, draft, task = _loaded_replacement_case()
+    request = arguments(task, {'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0',
+        'setFields': {'definition_id': 'LIBRARY_3'}}]})
+    compiled, _ = compile_coordinated_repair(request, task, draft)
+    candidate = apply_json_patch(draft, compiled['patch'])
+    items = candidate['workouts'][0]['exercises']
+
+    assert [item['definition_id'] for item in items] == ['LIBRARY_2', 'LIBRARY_3', 'LIBRARY_1']
+    assert items[1]['numWorkSets'] == draft['workouts'][0]['exercises'][0]['numWorkSets']
+    assert items[1]['generateWarmUpSets'] is True and items[1]['intraSetRestInSeconds'] == 30
+    assert items[1]['workSetTemplate'] == {'reps': 8}
+    assert 'effortAcceptance' not in items[1]
+    assert next(item for item in items if item['definition_id'] == 'LIBRARY_1')['numWorkSets'] == 2
+    plan = build_draft_plan(candidate, equipment, requirements)
+    replacement = next(item for item in plan['exercises'] if item['libraryDefinitionId'] == 'd-split')
+    assert replacement['requiresLoadCalibration'] is True
+    assert replacement['generateWarmUpSets'] is True
+    assert replacement['intraSetRestInSeconds'] == 30
+
+
+def test_required_native_warmup_rejects_unweighted_replacement_before_patch():
+    _, _, draft, task = _loaded_replacement_case()
+    unsupported = copy.deepcopy(task['recipeDefinitions']['LIBRARY_3'])
+    unsupported.update(name='Unweighted Split Squat', equipmentId=None, bodyWeightPercentage=None,
+                       exerciseType='BODY_WEIGHT')
+    task['recipeDefinitions']['LIBRARY_3'] = unsupported
+    task['replacementDefinitionReferencesByExercise']['EXERCISE_0'] = ['LIBRARY_3']
+    request = arguments(task, {'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0',
+        'setFields': {'definition_id': 'LIBRARY_3'}}]})
+
+    with pytest.raises(PlanningInputError, match='approved native ramp-up') as error:
+        compile_coordinated_repair(request, task, draft)
+    assert error.value.code == 'replacement_warmup_unsupported'
+
+    task['replacementDefinitionReferencesByExercise']['EXERCISE_0'] = []
+    with pytest.raises(PlanningInputError, match='code-computed choices') as error:
+        compile_coordinated_repair(request, task, draft)
+    assert error.value.code == 'replacement_not_eligible'
 
 
 def test_feasible_solver_menu_does_not_remove_semantic_choice_without_a_blocker():

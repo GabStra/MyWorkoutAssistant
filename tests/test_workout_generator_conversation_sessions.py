@@ -45,6 +45,44 @@ def test_markdown_renderer_preserves_logs_and_plain_redirected_output(monkeypatc
         assert output.getvalue() == f"Assistant> {markdown}"
 
 
+def test_mid_turn_requirements_intake_drops_stale_draft_tools(monkeypatch, tmp_path):
+    from test_workout_generator_planning_tools import planning_case
+    from workout_generator_pkg.api_client import _strict_wire_schema
+
+    equipment, _, _, _ = planning_case()
+    path = tmp_path / 'library.json'
+    path.write_text(json.dumps(equipment), encoding='utf-8')
+    approved = [True]
+    monkeypatch.setattr(interactive_shell, 'requirements_approved', lambda *a: True)
+    monkeypatch.setattr(interactive_shell, 'pending_reaudit', lambda *a: None)
+    monkeypatch.setattr(interactive_shell, 'request_planning_state', lambda *a: {
+        'requirementsApproved': approved[0], 'sourceMessages': {}, 'resolvedDecisions': {}})
+    deps = make_shell_deps(tmp_path, chat_results=[], generation_results=[], generation_calls=[])
+    observed = []
+
+    def respond(client, messages, tools, logger, **options):
+        names = {tool['function']['name'] for tool in tools}
+        observed.append(names)
+        if len(observed) == 1:
+            assert 'generate_workout' in names
+            approved[0] = False
+            return None, [FakeToolCall('invalid-update', 'function',
+                FakeFunction('set_workout_requirements', '{"invalid":true}'))], None
+        assert names == {'set_workout_requirements', 'record_planning_decisions',
+                         interactive_shell.ASK_USER_TOOL['function']['name']}
+        assert options['require_strict_tool_delivery'] is True
+        for tool in tools:
+            _strict_wire_schema(tool['function']['parameters'])
+        return 'Please correct the requirements update.', None, None
+
+    deps.chat_call_with_loading = respond
+    monkeypatch.setattr('sys.argv', ['workout_generator.py', '--exercise-library-file', str(path)])
+    inputs = iter(['Review the saved workout', '/exit'])
+    monkeypatch.setattr('builtins.input', lambda prompt='': next(inputs))
+    interactive_shell.main(deps=deps)
+    assert len(observed) == 2
+
+
 def test_view_reopens_latest_assistant_markdown(monkeypatch, tmp_path):
     rendered = []
     monkeypatch.setattr(interactive_shell, "print_markdown", lambda text, logger, paged=False: rendered.append((text, paged)))
@@ -1184,6 +1222,27 @@ def test_failed_audit_revises_in_chat_and_requires_fresh_confirmation(monkeypatc
     assert "Revised plan: four sets" in capsys.readouterr().out
 
 
+def test_revision_failure_without_programming_audit_preserves_error_without_keyerror():
+    deps = SimpleNamespace(execute_workout_generation=lambda *_args, **_kwargs: {
+        "success": False,
+        "filepath": None,
+        "error": "The approved draft's load-calibration flags do not match current evidence.",
+        "requires_plan_revision": True,
+    })
+
+    result = interactive_shell.handle_function_call(
+        None,
+        [{"role": "user", "content": EXACT_GENERATION_CONFIRMATION}],
+        "generate_workout",
+        {},
+        deps=deps,
+    )
+
+    assert "load-calibration flags do not match current evidence" in result["result"]
+    assert "No programming audit was produced" in result["result"]
+    assert '"audit"' not in result["result"]
+
+
 def test_legacy_history_migrates_into_archived_session(tmp_path: Path) -> None:
     (tmp_path / "conversation_history.json").write_text(
         json.dumps(
@@ -1338,6 +1397,39 @@ def test_clear_starts_new_conversation_without_deleting_archived_ones(
     conversations = list_conversations(str(tmp_path))
     assert len(conversations) == 1
     assert any(item["conversation_id"] == "existing-conversation" for item in conversations)
+
+
+def test_clear_keep_requirements_starts_fresh_conversation_with_only_revalidated_policy(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from test_workout_generator_planning_tools import planning_case, requirement_messages
+    from workout_generator_pkg.planning_tools import library_fingerprint
+
+    equipment, _, stored, draft = planning_case()
+    stored['libraryFingerprint'] = library_fingerprint(equipment)
+    messages = requirement_messages(stored)
+    messages.extend([
+        {'role': 'assistant', 'tool_calls': [{'id': 'prior-audit', 'function': {
+            'name': 'audit_workout_plan', 'arguments': '{}'}}]},
+        {'role': 'tool', 'tool_call_id': 'prior-audit', 'content': json.dumps({
+            'currentDraftId': 'REVISION_0', 'submittedDraft': draft, 'review': {'passed': True}})},
+        {'role': 'assistant', 'content': 'Prior workout menu', 'canonicalDraftPreview': 'REVISION_0'},
+    ])
+    save_conversation(messages, conversation_id='approved-source', script_dir=str(tmp_path))
+    deps = make_shell_deps(tmp_path, chat_results=[], generation_results=[], generation_calls=[])
+
+    run_shell(monkeypatch, deps, ['/resume-conversation approved-source', '/clear keep-requirements', '/exit'])
+
+    active = load_active_conversation_record(str(tmp_path))
+    assert active is not None and active['conversation_id'] != 'approved-source'
+    carried = active['messages']
+    assert any(message.get('content') == stored['sourceMessages'][0]['content'] for message in carried)
+    assert not any(message.get('canonicalDraftPreview') or message.get('canonicalAlternativePreview')
+        for message in carried)
+    assert not any(message.get('tool_call_id') == 'prior-audit' for message in carried)
+    assert json.loads(carried[-2]['content'])['sourceReview'] == {}
+    assert carried[-1]['role'] == 'system' and 'library changed' in carried[-1]['content']
 
 
 def test_resume_can_reopen_completed_conversation(

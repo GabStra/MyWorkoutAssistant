@@ -11,6 +11,7 @@ from workout_generator_pkg.planning_tools import (
     repair_exercise_domain,
     uses_menu_selection,
 )
+from workout_generator_pkg.repair_contract import build_repair_contract, repair_contract_errors
 from test_workout_generator_planning_tools import planning_case
 
 
@@ -127,7 +128,7 @@ def test_incomplete_task_does_not_enable_menu_selection_for_missing_source_domai
     assert not uses_menu_selection(task)
 
 
-def test_mixed_menu_cannot_edit_or_reselect_protected_redistribution_source():
+def test_mixed_menu_ignores_protected_string_refs_and_compiles_their_code_owned_spread():
     draft, task = mixed_task()
     arguments = {
         'requirementsId': task['requirementsId'],
@@ -135,11 +136,73 @@ def test_mixed_menu_cannot_edit_or_reselect_protected_redistribution_source():
         'addressedFindingIndexes': [0],
         'sessionBlocks': [{
             'sessionReference': 'WORKOUT_0',
-            'blocks': [{'exercises': ['EXERCISE_0', 'EXERCISE_1']}],
+            'blocks': [{'exercises': ['EXERCISE_0', 'EXERCISE_2']}],
+        }, {
+            'sessionReference': 'WORKOUT_1',
+            'blocks': [{'exercises': ['EXERCISE_2', 'EXERCISE_1', 'EXERCISE_0']}],
         }],
         'edits': {'redistributionTargets': {'REDISTRIBUTION_0': ['WORKOUT_0', 'WORKOUT_1']}},
     }
+    original = copy.deepcopy(draft)
+    objective = task['findingsAssessment']['groups'][0]['repairObjectives'][0]
+    compiled, _, references = compile_coordinated_repair(arguments, task, draft,
+        return_reference_map=True)
+    repaired = apply_json_patch(draft, compiled['patch'])
+
+    assert draft == original
+    redistributed = [exercise for day in repaired['workouts'] for exercise in day['exercises']
+                     if exercise['definition_id'] == 'LIBRARY_0']
+    assert len(redistributed) == 2
+    assert sum(exercise['numWorkSets'] for exercise in redistributed) == 10
+    contract = build_repair_contract([objective], draft, task['requirements'],
+        references['redistributionManifest'], requirements_id=task['requirementsId'])
+    assert contract['redistributions'][0]['weeklyWorkSets'] == 10
+    assert not repair_contract_errors(contract, repaired)
+    assert not any(exercise['definition_id'] == 'LIBRARY_2' for exercise in repaired['workouts'][0]['exercises'])
+    assert sum(exercise['definition_id'] == 'LIBRARY_2'
+        for exercise in repaired['workouts'][1]['exercises']) == 1
+
+
+def test_protected_menu_normalization_keeps_unknown_refs_and_missing_targets_strict():
+    draft, task = mixed_task()
+    arguments = {
+        'requirementsId': task['requirementsId'],
+        'baseDraftId': task['baseDraftId'],
+        'addressedFindingIndexes': [0],
+        'sessionBlocks': [
+            {'sessionReference': 'WORKOUT_0', 'blocks': [{'exercises': ['EXERCISE_999']} ]},
+            {'sessionReference': 'WORKOUT_1', 'blocks': []},
+        ],
+        'edits': {'redistributionTargets': {'REDISTRIBUTION_0': ['WORKOUT_0', 'WORKOUT_1']}},
+    }
+    with pytest.raises(ValidationError) as error:
+        compile_coordinated_repair(arguments, task, draft)
+    assert 'EXERCISE_999' in error.value.message
+
+    for malformed in ({'exercises': []}, {'exercises': ['EXERCISE_0'], 'unexpected': True}):
+        arguments['sessionBlocks'][0]['blocks'] = [malformed]
+        with pytest.raises(ValidationError):
+            compile_coordinated_repair(arguments, task, draft)
+
+    arguments['sessionBlocks'][0]['blocks'] = [{'exercises': ['EXERCISE_0']}]
+    arguments.pop('edits')
     with pytest.raises((PlanningInputError, ValidationError)):
+        compile_coordinated_repair(arguments, task, draft)
+
+
+def test_menu_selection_requires_each_session_once():
+    draft, task = mixed_task()
+    arguments = {
+        'requirementsId': task['requirementsId'],
+        'baseDraftId': task['baseDraftId'],
+        'addressedFindingIndexes': [0],
+        'sessionBlocks': [
+            {'sessionReference': 'WORKOUT_0', 'blocks': [{'exercises': ['EXERCISE_1']}]},
+            {'sessionReference': 'WORKOUT_0', 'blocks': []},
+        ],
+        'edits': {'redistributionTargets': {'REDISTRIBUTION_0': ['WORKOUT_0', 'WORKOUT_1']}},
+    }
+    with pytest.raises(PlanningInputError, match='each session only once'):
         compile_coordinated_repair(arguments, task, draft)
 
 

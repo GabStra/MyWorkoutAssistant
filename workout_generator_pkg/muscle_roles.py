@@ -8,6 +8,18 @@ MUSCLE_LABELS = {
     'forearms': 'Forearms', 'traps': 'Trapezius', 'tibialis': 'Tibialis anterior', 'neck': 'Neck',
 }
 
+# These reviewed regions are reported separately from the library's aggregate
+# muscleGroups credits. An omitted region remains unknown.
+REGIONAL_MUSCLE_LABELS = {
+    'latissimus_dorsi': 'Latissimus dorsi',
+    'upper_back': 'Upper back',
+    'deltoid_anterior': 'Anterior deltoid',
+    'deltoid_lateral': 'Lateral deltoid',
+    'deltoid_posterior': 'Posterior deltoid',
+    'pectoralis_clavicular': 'Clavicular pectoralis',
+    'pectoralis_sternocostal': 'Sternocostal pectoralis',
+}
+
 MOVEMENT_COVERAGE_ROLES = {
     'knee_dominant': 'Knee-dominant lower-body work',
     'posterior_chain': 'Posterior-chain work',

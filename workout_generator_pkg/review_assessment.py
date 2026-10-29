@@ -91,7 +91,7 @@ def improving_repair_objective_choices(choices, draft):
             continue
         current_sessions = {workout_by_reference[reference] for reference in references
             if reference in workout_by_reference}
-        if len(current_sessions) != len(references):
+        if any(reference not in workout_by_reference for reference in references):
             # Keep an option when current placement cannot be established for
             # every source occurrence; do not infer that it is a no-op.
             improved.append(copy.deepcopy(choice))
@@ -118,6 +118,10 @@ def finding_redistribution_objective_choices(finding, context):
     choices = context.get('redistributionObjectiveChoices')
     if choices is None:
         return None
+    if 'subjectExerciseRefs' in finding:
+        subjects = set(finding['subjectExerciseRefs'])
+        return [choice for choice in choices if choice.get('exerciseRefs')
+            and set(choice['exerciseRefs']) <= subjects]
     draft = context.get('draft', {})
     exercises = draft.get('exercises', []) if isinstance(draft, dict) else []
     definitions = draft.get('libraryDefinitions', {}) if isinstance(draft, dict) else {}
@@ -143,6 +147,18 @@ def finding_redistribution_objective_choices(finding, context):
             if direct[1] in definitions:
                 cited_definitions.add(direct[1])
             continue
+        summary_order = re.fullmatch(
+            r'/programmingSummary/sessions/(\d+)/finalExerciseOrder/(\d+)(?:/id)?', path)
+        if summary_order:
+            try:
+                row_path = (f'/programmingSummary/sessions/{summary_order[1]}/'
+                    f'finalExerciseOrder/{summary_order[2]}')
+                row = _pointer(context, row_path)
+            except (KeyError, IndexError, TypeError, ValueError):
+                continue
+            if isinstance(row, dict):
+                add_occurrence(row.get('id'))
+            continue
         exercise = re.fullmatch(r'/draft/exercises/(\d+)(?:/.*)?', path)
         if exercise:
             if int(exercise[1]) < len(exercises):
@@ -155,6 +171,16 @@ def finding_redistribution_objective_choices(finding, context):
                 add_occurrence(_pointer(context, path))
             except (KeyError, IndexError, TypeError, ValueError):
                 pass
+            continue
+        workout = re.fullmatch(r'/draft/workouts/(\d+)', path)
+        if workout:
+            try:
+                session = _pointer(context, path)
+            except (KeyError, IndexError, TypeError, ValueError):
+                continue
+            if isinstance(session, dict):
+                for identifier in session.get('exerciseIds', []):
+                    add_occurrence(identifier)
             continue
         superset = re.fullmatch(r'/draft/workouts/(\d+)/supersetGroups/(\d+)(?:/.*)?', path)
         if superset:

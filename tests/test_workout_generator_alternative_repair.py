@@ -513,6 +513,8 @@ def _stub_repair_materialization(monkeypatch, audit):
     import workout_generator_pkg.alternative_repair as alternative_repair
     import workout_generator_pkg.cancellation as cancellation
     import workout_generator_pkg.planning_tools as planning_tools
+    import workout_generator_pkg.allocation as allocation
+    import workout_generator_pkg.review_assessment as review_assessment
 
     _stub_repair_preconditions(monkeypatch)
     candidate, arguments = _repair_scope_case()
@@ -524,6 +526,9 @@ def _stub_repair_materialization(monkeypatch, audit):
     monkeypatch.setattr(alternative_repair, 'compile_coordinated_repair',
         lambda *args, **kwargs: ({'patch': patch}, [{'operationIndex': 0}]))
     monkeypatch.setattr(alternative_repair, 'validate_repair_scope', lambda *args: None)
+    monkeypatch.setattr(allocation, 'qualify_workout_recipes',
+        lambda client, workouts, *args, **kwargs: (copy.deepcopy(workouts), {'contracts': []}))
+    monkeypatch.setattr(review_assessment, 'validate_assessment', lambda *args, **kwargs: None)
     def solve_preserving_candidate(sessions, *args, **kwargs):
         assert kwargs['preserve_source_selection'] is True
         return {'feasible': True, 'status': 'optimal', 'preserveSourceSelection': True,
@@ -613,7 +618,8 @@ def test_exercise_selection_repair_preserves_selected_placement_and_programming_
 
     def solve(sessions, *args, **kwargs):
         observed['preserve_source_selection'] = kwargs['preserve_source_selection']
-        return {'feasible': True, 'status': 'optimal', 'preserveSourceSelection': True,
+        return {'feasible': True, 'status': 'optimal',
+            'preserveSourceSelection': kwargs['preserve_source_selection'],
             'sessions': copy.deepcopy(sessions), 'occurrenceLineage': [[[0, 0]], [[1, 0]]],
             **receipt}
 
@@ -621,10 +627,10 @@ def test_exercise_selection_repair_preserves_selected_placement_and_programming_
 
     result = execute_repair(arguments, candidate, [], {}, None, True, None)
 
-    assert observed['preserve_source_selection'] is True
+    assert observed['preserve_source_selection'] is False
     assert result['workouts'][1]['exercises'][0]['definition_id'] == 'LIBRARY_2'
     assert result['workouts'][0]['exercises'][0]['definition_id'] == candidate['workouts'][0]['exercises'][0]['definition_id']
-    assert result['jointSolve']['preserveSourceSelection'] is True
+    assert result['jointSolve']['preserveSourceSelection'] is False
     assert result['jointSolve']['demandDistribution'] == receipt['demandDistribution']
     assert result['jointSolve']['priorityExecution'] == receipt['priorityExecution']
     assert result['jointSolve']['priorityTradeoffs'] == receipt['priorityTradeoffs']

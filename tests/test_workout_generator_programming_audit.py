@@ -1,9 +1,11 @@
 import copy
 import json
+import math
 
 import pytest
 
 from workout_generator_pkg import generation_audit as audit
+from workout_generator_pkg.plan_contract import ContractValidationError
 
 
 def test_volume_disclosure_uses_audited_roles_and_weekly_frequency():
@@ -41,6 +43,75 @@ def _exercise(exercise_id, reps, count, *, primary=None, secondary=None, intra=N
 
 def _package(*components):
     return {"workouts": [{"id": "WORKOUT_0", "name": "Day", "workoutComponents": list(components)}]}
+
+
+def test_minimum_only_volume_target_accepts_overage_and_numeric_maximum_still_rejects_it():
+    package = _package(_exercise('press', 10, 21))
+    minimum_only = {'weeklyEffectiveSets': {'chest': {'minimum': 15, 'maximum': None}},
+                    'perSessionEffectiveSets': {}, 'maximumSessionSeconds': None}
+    audit.validate_audit_targets(minimum_only)
+    assert audit.volume_target_bounds(minimum_only['weeklyEffectiveSets']['chest']) == (15, math.inf)
+    assert audit.volume_target_text(minimum_only['weeklyEffectiveSets']['chest']) == '≥ 15'
+    assert not audit.audit_workout_package(package, minimum_only)['errors']
+
+    capped = copy.deepcopy(minimum_only)
+    capped['weeklyEffectiveSets']['chest']['maximum'] = 20
+    assert 'volume_above_target' in {item['code'] for item in audit.audit_workout_package(package, capped)['errors']}
+
+
+def test_volume_menu_coupling_uses_only_the_minimum_without_serializing_infinity():
+    result = audit.muscle_credit_coupling_evidence([{
+        'id': 'LIBRARY_0', 'name': 'Press',
+        'creditsPerWorkingSet': {'chest': {'direct': 1, 'indirect': 0}},
+    }], {'auditTargets': {'weeklyEffectiveSets': {
+        'chest': {'minimum': 15, 'maximum': None}}}})
+
+    assert result['status'] == 'proven'
+    assert result['profileLowerBounds'][0]['minimumWeeklyWorkingSets'] == 15
+    json.dumps(result, allow_nan=False)
+
+
+def test_development_menu_diagnostic_omits_unbounded_upper_rows():
+    result = audit.development_menu_limits([{
+        'id': 'LIBRARY_0', 'name': 'Press',
+        'creditsPerWorkingSet': {'chest': {'direct': 1, 'indirect': 0}},
+    }], {
+        'auditTargets': {'weeklyEffectiveSets': {'chest': {'minimum': 15, 'maximum': None}}},
+        'requiredCoverage': [{'key': 'upper_push', 'scope': 'weekly', 'intent': 'development',
+                              'minimumWeeklySets': 6}],
+    }, {'LIBRARY_0': ['upper_push']}, source_set_cap=30,
+       training_occurrences=3, minimum_work_sets=2)
+
+    assert result['status'] == 'proven_upper_bounds'
+    assert result['roleUpperBounds']['upper_push'] == 30
+    json.dumps(result, allow_nan=False)
+
+
+@pytest.mark.parametrize('bounds', [
+    {'minimum': True, 'maximum': None},
+    {'minimum': math.nan, 'maximum': None},
+    {'minimum': math.inf, 'maximum': None},
+    {'minimum': 15, 'maximum': True},
+    {'minimum': 15, 'maximum': math.nan},
+    {'minimum': 15, 'maximum': math.inf},
+    {'minimum': 15, 'maximum': 14},
+    {'minimum': 15, 'maximum': 101},
+    {'minimum': 101, 'maximum': None},
+    {'minimum': 15},
+])
+def test_volume_target_bounds_reject_invalid_or_upper_only_shapes(bounds):
+    targets = {'weeklyEffectiveSets': {'chest': bounds}, 'perSessionEffectiveSets': {},
+               'maximumSessionSeconds': None}
+    with pytest.raises(ContractValidationError):
+        audit.validate_audit_targets(targets)
+
+
+def test_zero_to_zero_volume_target_remains_an_explicit_ban():
+    targets = {'weeklyEffectiveSets': {'chest': {'minimum': 0, 'maximum': 0}},
+               'perSessionEffectiveSets': {}, 'maximumSessionSeconds': None}
+    assert not audit.audit_workout_package(_package(_exercise('press', 10, 0)), targets)['errors']
+    assert 'volume_above_target' in {item['code'] for item in audit.audit_workout_package(
+        _package(_exercise('press', 10, 1)), targets)['errors']}
 
 
 def test_volume_deduplicates_tags_and_excludes_warmup_and_calibration():
@@ -114,15 +185,28 @@ def test_timed_unilateral_rest_can_make_a_session_exceed_its_limit(set_type, sup
     assert any(error['code'] == 'duration_exceeded' for error in report['errors'])
 
 
-def test_load_calibration_flag_does_not_add_time_or_remove_working_set_credit():
+def test_native_load_calibration_estimates_one_inserted_set_without_changing_working_set_credit():
     exercise = _exercise("press", 10, 3)
     exercise["requiresLoadCalibration"] = True
     report = audit.audit_workout_package(_package(exercise), {'maximumSessionSeconds': 700})
     assert report["workouts"][0]["workingSets"] == 3
     assert report["weeklyVolume"]["chest"]["direct"] == 3
-    assert report["workouts"][0]["timing"]["calibrationSeconds"] == 0
-    assert report["workouts"][0]["estimatedSeconds"] == 570
+    assert report["workouts"][0]["timing"]["calibrationSeconds"] == 30
+    assert report["workouts"][0]["estimatedSeconds"] == 600
     assert not report["errors"]
+    assert 'interaction, retries, and actual execution time remain unknown' in report['calibrationTiming']
+    over_limit = audit.audit_workout_package(_package(exercise), {'maximumSessionSeconds': 590})
+    assert any(error['code'] == 'duration_exceeded' for error in over_limit['errors'])
+
+
+def test_native_unilateral_calibration_estimate_counts_both_sides_and_between_side_rest():
+    exercise = _exercise('split squat', 8, 2, intra=20)
+    exercise['requiresLoadCalibration'] = True
+    report = audit.audit_workout_package(_package(exercise), {})
+    timing = report['workouts'][0]['timing']
+    assert timing['calibrationSeconds'] == 48
+    assert timing['restSeconds'] == 150
+    assert report['workouts'][0]['estimatedSeconds'] == 594
 
 
 def test_plan_audit_keeps_native_calibration_flag_without_inventing_attempt_metadata():
@@ -135,7 +219,8 @@ def test_plan_audit_keeps_native_calibration_flag_without_inventing_attempt_meta
     assert 'calibrationAttempts' not in exercise
     report = audit.audit_workout_package(package, plan['auditTargets'])
     assert report['workouts'][0]['workingSets'] == 3
-    assert report['workouts'][0]['timing']['calibrationSeconds'] == 0
+    assert report['workouts'][0]['timing']['calibrationSeconds'] == 30
+    assert report['workouts'][0]['estimatedSeconds'] == 600
 
 
 def test_explicit_calibration_set_and_rest_are_timed_as_real_activity():
@@ -191,7 +276,7 @@ def test_early_repair_fixes_counts_and_keeps_targets_and_identity(monkeypatch):
 
     def repair(_client, messages, *_args, **_kwargs):
         calls.append(json.loads(messages[-1]["content"]))
-        return '{"changes":[{"exerciseId":"EXERCISE_0","numWorkSets":4,"placementNotes":"Four working sets."}]}'
+        return '{"changes":[{"exerciseId":"EXERCISE_0","numWorkSets":4}]}'
 
     monkeypatch.setattr(audit, "json_call_reasoner_only_with_loading", repair)
     plan = _plan()
@@ -210,7 +295,7 @@ def test_repair_is_bounded_and_cannot_change_targets_or_muscles(monkeypatch):
 
     def ineffective(*_, **_kwargs):
         calls.append(1)
-        return '{"changes":[{"exerciseId":"EXERCISE_0","numWorkSets":3,"placementNotes":"Still three."}]}'
+        return '{"changes":[{"exerciseId":"EXERCISE_0","numWorkSets":3}]}'
 
     monkeypatch.setattr(audit, "json_call_reasoner_only_with_loading", ineffective)
     with pytest.raises(ValueError, match="after bounded repair"):
@@ -286,8 +371,8 @@ def test_load_calibration_flag_and_stale_trial_metadata_do_not_inflate_session_t
     exercise = _exercise('press', 10, 3)
     exercise.update(requiresLoadCalibration=True, calibrationAttempts=2, calibrationRecoverySeconds=90)
     planned = audit.audit_workout_package(_package(exercise), {'maximumSessionSeconds': 750})
-    assert planned['workouts'][0]['timing']['calibrationSeconds'] == 0
-    assert planned['workouts'][0]['estimatedSeconds'] == 570
+    assert planned['workouts'][0]['timing']['calibrationSeconds'] == 30
+    assert planned['workouts'][0]['estimatedSeconds'] == 600
     assert not planned['errors']
     assert 'calibrationAttemptsByExercise' not in planned
     assert 'calibrationRecoverySecondsByExercise' not in planned
@@ -316,7 +401,7 @@ def test_explicit_rep_duration_affects_prescribed_work_and_survives_export():
     planned = audit.audit_workout_package(_package(exercise), {'maximumSessionSeconds': 900})
     day = planned['workouts'][0]
     assert day['timing']['workSeconds'] == 3 * 10 * 6
-    assert day['timing']['calibrationSeconds'] == 0
+    assert day['timing']['calibrationSeconds'] == 60
     assert not planned['errors']
     exported = copy.deepcopy(exercise)
     exported.pop('repDurationSeconds')

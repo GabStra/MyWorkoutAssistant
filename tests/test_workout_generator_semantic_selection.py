@@ -175,7 +175,7 @@ def test_search_schema_and_runtime_use_loaded_library_muscle_capabilities():
     original = copy.deepcopy(library_tools.SEARCH_EXERCISE_LIBRARY_TOOL)
     tool = library_tools.exercise_library_search_tool(equipment)
     schema = tool['function']['parameters']
-    assert set(schema['properties']['muscleTargets']['items']['enum']) == {'back', 'biceps'}
+    assert set(schema['properties']['muscleTargets']['enum']) == {'back', 'biceps'}
     args = {'queries': ['row'], 'muscleTargets': ['lats']}
     with pytest.raises(ValidationError):
         validate(args, schema)
@@ -184,17 +184,67 @@ def test_search_schema_and_runtime_use_loaded_library_muscle_capabilities():
     assert library_tools.SEARCH_EXERCISE_LIBRARY_TOOL == original
 
 
-def test_empty_intersection_explains_filter_scope_without_claiming_library_gap():
+def test_search_limits_positive_muscle_targets_and_keeps_single_target_access():
+    from jsonschema import ValidationError, validate
+
     equipment = {'exerciseDefinitions': [
-        {'id': 'press', 'name': 'Press', "muscleGroups": ['FRONT_CHEST'], "secondaryMuscleGroups": ['FRONT_DELTOIDS']},
-        {'id': 'ohp', 'name': 'Overhead press', "muscleGroups": ['FRONT_DELTOIDS'], "secondaryMuscleGroups": []},
+        {'id': 'calf-raise', 'name': 'Standing Calf Raise', "muscleGroups": ['BACK_CALVES'],
+         "secondaryMuscleGroups": []},
+        {'id': 'ab-wheel', 'name': 'Ab Wheel Rollout', "muscleGroups": ['FRONT_ABS'],
+         "secondaryMuscleGroups": []},
     ]}
-    result = library_tools.execute_library_tool('search_exercise_library',
-        {'queries': ['press'], 'muscleTargets': ['chest', 'shoulders']}, equipment)
-    row = result['results'][0]
-    assert not row['exercises']
-    assert 'All muscleTargets must match' in row['reason']
-    assert 'Split alternative muscle groups' in row['reason']
+    schema = library_tools.exercise_library_search_tool(equipment)['function']['parameters']
+    assert schema['properties']['muscleTargets']['type'] == 'string'
+    assert set(schema['properties']['muscleTargets']['enum']) == {'calves', 'abs'}
+    with pytest.raises(ValidationError):
+        validate({'queries': ['calf or ab exercise'],
+            'muscleTargets': ['calves', 'abs']}, schema)
+    with pytest.raises(ValueError, match='one target per search'):
+        library_tools.execute_library_tool('search_exercise_library',
+            {'queries': ['calf or ab exercise'], 'muscleTargets': ['calves', 'abs']}, equipment)
+
+    calf = library_tools.execute_library_tool('search_exercise_library',
+        {'queries': ['Standing Calf Raise'], 'muscleTargets': ['calves']}, equipment)
+    abs_result = library_tools.execute_library_tool('search_exercise_library',
+        {'queries': ['Ab Wheel Rollout'], 'muscleTargets': ['abs']}, equipment)
+    assert [item['name'] for item in calf['results'][0]['exercises']] == ['Standing Calf Raise']
+    assert [item['name'] for item in abs_result['results'][0]['exercises']] == ['Ab Wheel Rollout']
+
+
+def test_scalar_search_target_matches_legacy_singleton_and_uses_projected_regional_credits(monkeypatch):
+    from jsonschema import ValidationError, validate
+
+    equipment = {'exerciseDefinitions': [
+        {'id': 'regional-row', 'name': 'Regional Row', 'muscleGroups': ['BACK_UPPER_BACK'],
+         'secondaryMuscleGroups': [], 'anatomy': {
+             'primarySubregions': ['latissimus_dorsi'], 'secondarySubregions': [],
+             'source': 'https://example.org/anatomy', 'basis': 'Reviewed source annotation'}},
+        {'id': 'aggregate-row', 'name': 'Aggregate Row', 'muscleGroups': ['BACK_UPPER_BACK'],
+         'secondaryMuscleGroups': []},
+    ]}
+    monkeypatch.setattr(library_tools, '_local_semantic_rank',
+        lambda _query, entries, **_kwargs: [{index: 0.9 for index in range(len(entries))}])
+
+    schema = library_tools.exercise_library_search_tool(equipment)['function']['parameters']
+    validate({'queries': ['row'], 'muscleTargets': 'latissimus_dorsi'}, schema)
+    scalar = library_tools.execute_library_tool('search_exercise_library',
+        {'queries': ['row'], 'muscleTargets': 'latissimus_dorsi'}, equipment)
+    legacy_list = library_tools.execute_library_tool('search_exercise_library',
+        {'queries': ['row'], 'muscleTargets': ['latissimus_dorsi']}, equipment)
+
+    assert scalar['searchFingerprint'] == legacy_list['searchFingerprint']
+    assert scalar['results'][0]['searchFilters'] == legacy_list['results'][0]['searchFilters']
+    assert [item['name'] for item in scalar['results'][0]['exercises']] == ['Regional Row']
+    assert scalar['results'][0]['exercises'][0]['id'] == 'LIBRARY_1'
+
+    with pytest.raises(ValidationError):
+        validate({'queries': ['row'], 'muscleTargets': ['latissimus_dorsi']}, schema)
+    with pytest.raises(ValueError, match='supported muscle targets'):
+        library_tools.execute_library_tool('search_exercise_library',
+            {'queries': ['row'], 'muscleTargets': 'not-a-target'}, equipment)
+    with pytest.raises(ValueError, match='one target per search'):
+        library_tools.execute_library_tool('search_exercise_library',
+            {'queries': ['row'], 'muscleTargets': ['latissimus_dorsi', 'upper_back']}, equipment)
 
 
 def test_structured_filters_exclude_glute_credit_and_non_isolation_categories(monkeypatch):

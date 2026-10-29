@@ -8,6 +8,9 @@ from workout_generator_pkg.planning_tools import (
     PlanningInputError, audit_workout_plan, confirmed_draft, set_workout_requirements,
 )
 from workout_generator_pkg.programming_guidelines import GUIDELINE_POLICY, approved_work_set_bounds
+from workout_generator_pkg.programming_guidelines import (
+    canonical_execution_order_draft, is_canonical_execution_order_change,
+)
 from test_workout_generator_planning_tools import planning_case, requirement_messages
 
 
@@ -38,19 +41,27 @@ def store_audit(messages, result):
 
 def test_execution_violations_block_preview_and_repair_with_json_patch(monkeypatch):
     from workout_generator_pkg.interactive_shell import handle_function_call
+    from test_workout_generator_single_review import request_data, response_for
     calls = []
 
     def review(client, request, **options):
         calls.append(request)
-        return '{"findings":[]}', None, None
+        return json.dumps(response_for(request_data(request), options['output_schema'])), None, None
 
-    monkeypatch.setattr(plan_review, 'chat_call', review)
+    monkeypatch.setattr(plan_review, '_review_call', review)
     rules = [
         {'kind': 'order', 'before': 'priority', 'after': 'accessory'},
         {'kind': 'warmup', 'coverageKey': 'priority'},
         {'kind': 'rest', 'coverageKey': 'priority', 'context': 'straightSets', 'minimumSeconds': 120, 'maximumSeconds': 180},
     ]
-    equipment, _, stored, draft = case(rules)
+    equipment, requirements, stored, draft = case(rules)
+    equipment['equipments'] = [{'id': 'EQUIPMENT_0', 'name': 'Barbell', 'type': 'BARBELL',
+        'barWeight': 10, 'sleeveLength': 100, 'availablePlates': [{'weight': 5, 'thickness': 1}] * 2}]
+    equipment['exerciseDefinitions'][0].update(name='Barbell Press', exerciseType='WEIGHT',
+        equipmentId='EQUIPMENT_0', bodyWeightPercentage=None)
+    stored = set_workout_requirements(requirements, [{'role': 'user', 'content':
+        'Priority work before accessories, with generated ramp-ups and 120–180s rest.'}], equipment)
+    draft['requirementsId'] = stored['requirementsId']
     assert '### Execution rules' in stored['requirementsPreview']
     day = draft['workouts'][0]
     day['exercises'].reverse()
@@ -59,14 +70,14 @@ def test_execution_violations_block_preview_and_repair_with_json_patch(monkeypat
     failed = json.loads(handle_function_call(None, messages, 'audit_workout_plan', draft, equipment)['result'])
     assert not failed['passed'] and 'preview' not in failed
     assert not calls  # Deterministic failures do not spend a reviewer call.
-    assert {e['code'] for e in failed['errors']} == {'execution_order', 'execution_warmup', 'execution_rest'}
+    assert {e['code'] for e in failed['errors']} == {'execution_order', 'execution_rest'}
+    assert failed['submittedDraft']['workouts'][0]['exercises'][1]['generateWarmUpSets'] is True
     assert all(e['rulePath'].startswith('/executionRules/') and e['repair'] for e in failed['errors'])
     messages = store_audit(messages, failed)
     with pytest.raises(ValueError, match='passing'):
         confirmed_draft(messages, equipment)
     patch = {
         'requirementsId': stored['requirementsId'], 'baseDraftId': failed['currentDraftId'], 'patch': [
-            {'op': 'replace', 'path': '/workouts/0/exercises/1/generateWarmUpSets', 'value': True},
             {'op': 'replace', 'path': '/workouts/0/exercises/1/restBetweenSetsSeconds', 'value': 150},
             {'op': 'move', 'from': '/workouts/0/exercises/1', 'path': '/workouts/0/exercises/0'},
         ]}
@@ -76,6 +87,31 @@ def test_execution_violations_block_preview_and_repair_with_json_patch(monkeypat
     assert repaired['audit']['executionGuidelines']['findings'] == 0
     assert repaired['requirementsId'] == stored['requirementsId']
     assert [e['numWorkSets'] for e in repaired['submittedDraft']['workouts'][0]['exercises']] == [3, 3]
+
+
+def test_canonical_order_repair_preserves_superset_dose_and_rest_slots():
+    equipment, _, stored, draft = case([])
+    moderate = equipment['exerciseDefinitions'][0]
+    moderate.update(exerciseCategory='MODERATE_COMPOUND')
+    isolation = copy.deepcopy(moderate)
+    isolation.update(id='zz_isolation', name='Cable Fly', exerciseCategory='ISOLATION')
+    equipment['exerciseDefinitions'].append(isolation)
+    first, second = draft['workouts'][0]['exercises']
+    first.update(definition_id='LIBRARY_1', superset='pair', numWorkSets=3,
+        restAfterSupersetExerciseSeconds=35, restAfterExerciseSeconds=10)
+    second.update(definition_id='LIBRARY_0', superset='pair', numWorkSets=2,
+        restAfterSupersetExerciseSeconds=45, restAfterExerciseSeconds=75)
+    canonical = canonical_execution_order_draft(draft, stored['requirements'], equipment)
+
+    assert is_canonical_execution_order_change(draft, canonical, stored['requirements'], equipment)
+    members = canonical['workouts'][0]['exercises']
+    assert [item['definition_id'] for item in members] == ['LIBRARY_0', 'LIBRARY_1']
+    assert [item['numWorkSets'] for item in members] == [2, 3]
+    assert [item['restAfterSupersetExerciseSeconds'] for item in members] == [35, 45]
+    assert [item['restAfterExerciseSeconds'] for item in members] == [10, 75]
+    changed_dose = copy.deepcopy(canonical)
+    changed_dose['workouts'][0]['exercises'][0]['numWorkSets'] += 1
+    assert not is_canonical_execution_order_change(draft, changed_dose, stored['requirements'], equipment)
 
 
 def test_fresh_two_set_policy_bounds_solver_domain_and_rejects_raw_single_set():
@@ -170,11 +206,12 @@ def test_reviewer_and_planner_share_policy_without_extra_calls(monkeypatch):
     calls = []
 
     def respond(client, request, **options):
-        assert options['reasoning_effort'] == 'low'
         context = json.loads(request[-1]['content'])
         calls.append(context)
         assert context['programmingGuidelines']['version'] == GUIDELINE_POLICY['version']
-        return json.dumps({'findings': []}), None, None
+        assert 'In this program the approved policy order' not in context['programmingGuidelines']['goalAuthority']
+        source_keys = options['output_schema']['properties']['sourceCoverage']['properties']
+        return json.dumps({'findings': [], 'sourceCoverage': {key: True for key in source_keys}}), None, None
 
     monkeypatch.setattr(plan_review, 'chat_call', respond)
     result = plan_review.review_draft(None, audit_workout_plan(draft, equipment, messages), messages, equipment)
@@ -197,13 +234,15 @@ def test_export_preserves_local_notes_without_adding_calibration_protocol():
     assert 'trial' not in emitted['placementNotes'].lower()
 
 
-def test_explicit_setup_replaces_default_and_reaches_final_uuid_audit():
+def test_default_setup_replaces_missing_value_and_explicit_estimate_reaches_final_uuid_audit():
     from workout_generator_pkg.generation_audit import audit_workout_package, plan_audit_package
     equipment, _, stored, draft = case([])
     second = draft['workouts'][0]['exercises'][1]
     del second['setupSeconds']
-    failed = audit_workout_plan(draft, equipment, requirement_messages(stored))
-    assert any(e['code'] == 'setup_time_required' for e in failed['errors'])
+    defaulted = audit_workout_plan(draft, equipment, requirement_messages(stored))
+    assert defaulted['passed']
+    assert defaulted['submittedDraft']['workouts'][0]['exercises'][1]['setupSeconds'] == 60
+    assert defaulted['audit']['workouts'][0]['timing']['transitionSeconds'] == 60
     second['setupSeconds'] = 120
     result = audit_workout_plan(draft, equipment, requirement_messages(stored))
     assert result['passed']

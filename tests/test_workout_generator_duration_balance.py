@@ -64,6 +64,24 @@ def test_duration_balance_retains_fractional_seconds_without_rounding_or_changin
     assert [day['exercises'][0]['numWorkSets'] for day in result['sessions']] == [3, 3]
 
 
+def test_approved_duration_tolerance_allows_lower_priority_balance_to_reduce_set_imbalance():
+    equipment, requirements, sessions = duration_case()
+    requirements['durationBalanceToleranceSeconds'] = 240
+
+    result = joint_planning.solve_prescribed_week(sessions, requirements, equipment,
+                                                 preserve_source_selection=True)
+
+    assert result['feasible'], result
+    assert [day['exercises'][0]['numWorkSets'] for day in result['sessions']] == [5, 5]
+    seconds = [day['estimatedSeconds'] for day in result['audit']['workouts']]
+    assert max(seconds) - min(seconds) == 240
+    assert result['objectiveProgress'][0]['goal'] == 'duration_balance'
+    assert result['objectiveProgress'][0]['status'] == 'optimal'
+    assert result['objectiveProgress'][0]['value'] == pytest.approx(0)
+    assert result['audit']['weeklyVolume']['chest']['effective'] == 10
+    assert all(value <= requirements['auditTargets']['maximumSessionSeconds'] for value in seconds)
+
+
 def test_duration_balance_includes_fixed_existing_sessions():
     equipment, requirements, sessions = duration_case()
     requirements.update(sessionsPerWeek=3, objectiveOrder=['duration_balance'])

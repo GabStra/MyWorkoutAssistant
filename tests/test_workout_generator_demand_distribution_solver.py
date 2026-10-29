@@ -1,6 +1,7 @@
 import copy
 
 from workout_generator_pkg import joint_planning
+from workout_generator_pkg.generation_audit import render_program_guidance
 from test_workout_generator_planning_tools import planning_case
 
 
@@ -77,6 +78,38 @@ def test_unknown_demand_tags_disable_group_optimization_and_are_not_zeroed():
     assert demand['unavailableGroups']['unsupported_trunk'] == ['second-exercise']
     assert result['priorityExecution']['approvedPriorities'][0]['status'] == 'unavailable_evidence'
 
+
+def test_partial_demand_evidence_discloses_known_group_scope_without_changing_solver_status():
+    equipment, requirements, _, draft = planning_case()
+    for definition in equipment['exerciseDefinitions']:
+        definition['programmingDemands'] = {
+            'unsupported_trunk': {'present': True, 'source': 'Reviewed execution setup.'}}
+    requirements.update(sessionsPerWeek=2,
+        objectiveOrder=['demand_distribution', 'distribution', 'preservation'])
+    requirements['auditTargets']['weeklyEffectiveSets']['chest'] = {'minimum': 10, 'maximum': 10}
+    requirements['auditTargets']['perSessionEffectiveSets']['chest'] = {'minimum': 4, 'maximum': 6}
+
+    result = joint_planning.solve_prescribed_week(
+        _sessions_from_draft(draft, [8, 2]), requirements, equipment)
+
+    assert result['feasible'], result
+    demand = result['demandDistribution']
+    assert demand['evidenceStatus'] == 'partial'
+    assert demand['unavailableGroups'] == {
+        'axial_loading': sorted(definition['id'] for definition in equipment['exerciseDefinitions']),
+        'eccentric_emphasis': sorted(definition['id'] for definition in equipment['exerciseDefinitions']),
+    }
+    demand_stage = next(stage for stage in result['objectiveProgress']
+        if stage['goal'] == 'demand_distribution')
+    assert demand_stage['status'] in ('optimal', 'optimal_zero_lower_bound')
+    assert demand['optimizationStatus'] == demand_stage['status']
+
+    guidance = render_program_guidance(
+        {'weeklyVolume': {}, 'weeklyWorkingSets': 0}, muscles=[],
+        priority_execution=result['priorityExecution'])
+    assert 'optimization includes only fully classified groups' in guidance
+    assert 'axial_loading, eccentric_emphasis remain unclassified' in guidance
+    assert 'conditional on the known evidence' in guidance
 
 def test_unusable_unknown_recipe_does_not_disable_demand_evidence_for_executable_menu(monkeypatch):
     equipment, requirements, _, draft = planning_case()

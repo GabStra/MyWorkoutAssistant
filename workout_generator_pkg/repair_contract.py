@@ -145,6 +145,19 @@ def _recipe_objectives(objectives, current_draft):
             yield {**copy.deepcopy(objective), 'exerciseRefs': all_sources}
 
 
+def _unique_recipe_objectives(objectives, current_draft):
+    """Merge repeated findings for one recipe, retaining their strongest spread."""
+    unique = {}
+    for objective in _recipe_objectives(objectives, current_draft):
+        identity = tuple(sorted(objective['exerciseRefs']))
+        previous = unique.get(identity)
+        if previous is None:
+            unique[identity] = objective
+        else:
+            previous['minimumSessions'] = max(previous['minimumSessions'], objective['minimumSessions'])
+    return list(unique.values())
+
+
 def assessed_redistributions(task, current_draft=None):
     """Give each assessed source recipe a stable destination-only input slot."""
     objectives = [objective for group in (task.get('findingsAssessment') or {}).get('groups', [])
@@ -486,10 +499,46 @@ def validated_repair_contract(owner, messages):
     return None
 
 
+def pending_redistribution_contract(owner, source_draft, *, requirements_id,
+                                   library_fingerprint, history_fingerprint,
+                                   source_draft_id):
+    """Recover code-verified redistribution intent from the exact pending draft.
+
+    A plan-wide audit can remain pending for unrelated failures while a
+    redistribution is structurally valid. Solver failure or incomplete search
+    does not invalidate that structural intent: callers may carry it as a
+    constraint, but must still solve and audit any proposed candidate. Keep the
+    proof bound to the current candidate and authority; never promote the draft
+    or treat audit failures as resolved.
+    """
+    if (not isinstance(owner, dict) or not isinstance(source_draft, dict)
+            or not isinstance(owner.get('audit'), dict)
+            or not isinstance(owner['audit'].get('errors'), list)
+            or owner.get('submittedDraft') != source_draft
+            or owner.get('currentDraftId') != source_draft_id
+            or owner.get('requirementsId') != requirements_id
+            or owner.get('libraryFingerprint') != library_fingerprint
+            or owner.get('historyFingerprint') != history_fingerprint):
+        return None
+
+    contract = owner.get('repairContract')
+    if (not isinstance(contract, dict) or contract.get('requirementsId') != requirements_id
+            or not isinstance(contract.get('redistributions'), list)
+            or not contract['redistributions']):
+        return None
+    try:
+        outcome_errors = repair_contract_errors(contract, source_draft)
+    except (KeyError, TypeError, ValueError):
+        return None
+    if any(error.get('code', '').startswith('redistribution_') for error in outcome_errors):
+        return None
+    return copy.deepcopy(contract)
+
+
 def build_repair_contract(objectives, source_draft, approved_requirements, expanded_edits, *, requirements_id=None):
     """Bind typed repair objectives to approved invariants and source recipes."""
-    objectives = list(_recipe_objectives(
-        [item for item in objectives if item.get('kind') == 'redistribute_work'], source_draft))
+    objectives = _unique_recipe_objectives(
+        [item for item in objectives if item.get('kind') == 'redistribute_work'], source_draft)
     manifest = copy.deepcopy(expanded_edits or [])
     _, source_refs = _stable_refs(source_draft)
     unmatched = list(objectives)

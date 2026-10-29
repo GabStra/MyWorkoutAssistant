@@ -24,11 +24,13 @@ from .plan_contract import (
     validate_assembled_workout_contract,
 )
 from .exercise_library_tools import selected_library_ids_from_messages
-from .planning_tools import confirmed_draft, draft_coverage_assignments
+from .planning_tools import confirmed_draft, draft_coverage_assignments, active_requirement_result
 from .training_history import apply_native_load_calibration_policy
 from jsonschema import Draft7Validator
 from .plan_review import require_current_review
-from .generation_audit import audit_workout_package, plan_audit_package, validate_audit_targets
+from .generation_audit import (audit_workout_package, plan_audit_package,
+                               plan_timing_reps_by_exercise, validate_audit_targets,
+                               audit_coverage_minimums, family_set_audit_options)
 from .progress_migration import migrate_progress_schema_v2_layout_step
 
 
@@ -327,6 +329,8 @@ def execute_workout_generation(
         (provided_equipment or {}).get("exerciseMovements", [])
     )
     canonical_snapshot = None
+    coverage_rules = []
+    audit_requirements = None
     try:
         has_draft = any(call.get("function", {}).get("name") == "audit_workout_plan"
                         for message in messages for call in message.get("tool_calls", []))
@@ -335,6 +339,9 @@ def execute_workout_generation(
             # Reproduce derived evidence metadata from the same live backup when available.
             require_current_review(canonical_snapshot, messages, review_equipment,
                 training_history if training_history is not None else canonical_snapshot.get('historyFingerprint'))
+            _, approved_requirements = active_requirement_result(messages)
+            audit_requirements = approved_requirements.get('requirements', {})
+            coverage_rules = audit_requirements.get('requiredCoverage', [])
             selected_definition_ids = list(dict.fromkeys(e["libraryDefinitionId"] for e in canonical_snapshot["planIndex"]["exercises"]))
         else:
             selected_definition_ids = selected_library_ids_from_messages(messages, supplied_exercise_definitions)
@@ -604,7 +611,10 @@ def execute_workout_generation(
                 history_fingerprint = canonical_snapshot.get('historyFingerprint')
             expected_plan_index = copy.deepcopy(plan_index)
             apply_native_load_calibration_policy(
-                expected_plan_index, messages, provided_equipment or {}, history_fingerprint,
+                # Evidence receipts are bound to the original complete library and equipment.
+                # `provided_equipment` has already been reduced to selected definitions and
+                # placeholder IDs for generation, so it cannot identify those receipts.
+                expected_plan_index, messages, review_equipment, history_fingerprint,
                 allow_educated_load_guesses=allow_educated_load_guesses,
             )
             current_flags = [item.get('requiresLoadCalibration') for item in plan_index.get('exercises', [])]
@@ -617,7 +627,9 @@ def execute_workout_generation(
             _gen_print("Step 1: Auditing planned volume and duration before emission...")
             with LoadingIndicator("Auditing planned volume and duration"):
                 plan_audit = audit_workout_package(plan_audit_package(plan_index, allow_educated_load_guesses), plan_index.get("auditTargets") or {},
-                    coverage_by_exercise=draft_coverage_assignments(plan_index, canonical_snapshot.get('submittedDraft')) if canonical_snapshot else None)
+                    coverage_by_exercise=draft_coverage_assignments(plan_index, canonical_snapshot.get('submittedDraft')) if canonical_snapshot else None,
+                    **family_set_audit_options(audit_requirements or plan_index, review_equipment))
+                audit_coverage_minimums(plan_audit, coverage_rules)
             step_data["step_1_programming_audit"] = plan_audit
             if plan_audit["issues"]:
                 _gen_print("Programming audit failed: " + " | ".join(plan_audit["issues"]))
@@ -1295,13 +1307,34 @@ def execute_workout_generation(
             coverage = ({id_manager.placeholder_to_uuid.get(identifier, identifier): keys for identifier, keys in
                          draft_coverage_assignments(plan_index, canonical_snapshot.get('submittedDraft')).items()}
                         if canonical_snapshot else None)
+            timing_reps = {id_manager.placeholder_to_uuid.get(identifier, identifier): reps
+                           for identifier, reps in plan_timing_reps_by_exercise(
+                               plan_index, allow_educated_load_guesses).items()}
             final_audit = audit_workout_package(data, plan_index.get("auditTargets") or {},
                 setup_seconds_by_exercise=setup_seconds,
                 coverage_by_exercise=coverage, rep_duration_seconds_by_exercise={
                     id_manager.placeholder_to_uuid.get(e['id'], e['id']): e['repDurationSeconds']
                     for e in plan_index['exercises'] if 'repDurationSeconds' in e},
+                timing_reps_by_exercise=timing_reps,
+                **family_set_audit_options(audit_requirements or plan_index, review_equipment),
                 )
+            audit_coverage_minimums(final_audit, coverage_rules)
+            emitted_audit = audit_workout_package(data, plan_index.get("auditTargets") or {},
+                setup_seconds_by_exercise=setup_seconds,
+                rep_duration_seconds_by_exercise={
+                    id_manager.placeholder_to_uuid.get(e['id'], e['id']): e['repDurationSeconds']
+                    for e in plan_index['exercises'] if 'repDurationSeconds' in e},
+                **family_set_audit_options(audit_requirements or plan_index, review_equipment),
+                )
+            for conservative, emitted in zip(final_audit['workouts'], emitted_audit['workouts'], strict=True):
+                conservative['emittedPrescriptionEstimatedSeconds'] = emitted['estimatedSeconds']
+                conservative['emittedPrescriptionTiming'] = copy.deepcopy(emitted['timing'])
         final_audit["prescriptionChanges"] = step_data.get("step_1_programming_audit", {}).get("prescriptionChanges", [])
+        if canonical_snapshot:
+            priority_receipt = canonical_snapshot.get('coordinatedJointPlanning') or canonical_snapshot.get('automaticAllocation') or {}
+            for field in ('priorityExecution', 'priorityTradeoffs'):
+                if field in priority_receipt:
+                    final_audit[field] = copy.deepcopy(priority_receipt[field])
         step_data["step_8_programming_audit"] = final_audit
         timing_data["step_times"][8] = time.time() - audit_start
         for workout_audit in final_audit["workouts"]:

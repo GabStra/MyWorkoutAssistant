@@ -1,0 +1,257 @@
+{
+  "relaxationPermissions": [],
+  "objectiveOrder": [
+    "duration_balance",
+    "source_balance",
+    "workload_economy",
+    "exercise_distribution",
+    "distribution"
+  ],
+  "durationBalanceToleranceSeconds": 300,
+  "executionRules": [
+    {
+      "kind": "sessionStructure",
+      "maximumExercises": 15,
+      "maximumSupersetSize": 3
+    },
+    {
+      "kind": "workSets",
+      "coverageKey": null,
+      "minimumSets": 2,
+      "maximumSets": 20
+    },
+    {
+      "kind": "rest",
+      "coverageKey": null,
+      "exerciseCategory": "HEAVY_COMPOUND",
+      "context": "straightSets",
+      "minimumSeconds": 120,
+      "maximumSeconds": 180
+    },
+    {
+      "kind": "rest",
+      "coverageKey": null,
+      "exerciseCategory": "MODERATE_COMPOUND",
+      "context": "straightSets",
+      "minimumSeconds": 90,
+      "maximumSeconds": 150
+    },
+    {
+      "kind": "rest",
+      "coverageKey": null,
+      "context": "supersetTransition",
+      "minimumSeconds": 15,
+      "maximumSeconds": 30
+    },
+    {
+      "kind": "rest",
+      "coverageKey": null,
+      "context": "supersetRound",
+      "minimumSeconds": 90,
+      "maximumSeconds": 120
+    },
+    {
+      "kind": "supersetNoReconfiguration",
+      "coverageKey": null
+    },
+    {
+      "kind": "coverageBalance",
+      "first": "horizontal_push",
+      "second": "horizontal_pull",
+      "scope": "weekly",
+      "relationship": "balanced"
+    },
+    {
+      "kind": "coverageBalance",
+      "first": "vertical_push",
+      "second": "vertical_pull",
+      "scope": "weekly",
+      "relationship": "balanced"
+    },
+    {
+      "kind": "coverageBalance",
+      "first": "horizontal_pull",
+      "second": "vertical_pull",
+      "scope": "weekly",
+      "relationship": "balanced"
+    },
+    {
+      "kind": "warmup",
+      "coverageKey": "knee_dominant"
+    },
+    {
+      "kind": "warmup",
+      "coverageKey": "hip_dominant"
+    }
+  ],
+  "requiredCoverage": [
+    {
+      "key": "knee_dominant",
+      "scope": "eachSession",
+      "intent": "inclusion",
+      "description": "Knee-dominant lower-body work"
+    },
+    {
+      "key": "posterior_chain",
+      "scope": "eachSession",
+      "intent": "inclusion",
+      "description": "Posterior-chain work"
+    },
+    {
+      "key": "upper_push",
+      "scope": "eachSession",
+      "intent": "inclusion",
+      "description": "Upper-body pushing work"
+    },
+    {
+      "key": "upper_pull",
+      "scope": "eachSession",
+      "intent": "inclusion",
+      "description": "Upper-body pulling work"
+    },
+    {
+      "key": "hip_dominant",
+      "scope": "weekly",
+      "intent": "inclusion",
+      "description": "Hip-dominant lower-body work"
+    },
+    {
+      "key": "knee_flexion_hamstring",
+      "scope": "weekly",
+      "intent": "inclusion",
+      "description": "Knee-flexion hamstring work"
+    },
+    {
+      "key": "horizontal_push",
+      "scope": "weekly",
+      "intent": "inclusion",
+      "description": "Horizontal push work"
+    },
+    {
+      "key": "horizontal_pull",
+      "scope": "weekly",
+      "intent": "inclusion",
+      "description": "Horizontal pull work"
+    },
+    {
+      "key": "vertical_push",
+      "scope": "weekly",
+      "intent": "inclusion",
+      "description": "Vertical push work"
+    },
+    {
+      "key": "vertical_pull",
+      "scope": "weekly",
+      "intent": "development",
+      "minimumWeeklySets": 6,
+      "minimumSessions": 2,
+      "description": "Vertical pull work"
+    },
+    {
+      "key": "lateral_delt",
+      "scope": "weekly",
+      "intent": "development",
+      "minimumWeeklySets": 6,
+      "minimumSessions": 2,
+      "description": "Lateral-delt work"
+    },
+    {
+      "key": "rear_delt",
+      "scope": "weekly",
+      "intent": "inclusion",
+      "description": "Rear-delt work"
+    },
+    {
+      "key": "elbow_flexion",
+      "scope": "weekly",
+      "intent": "inclusion",
+      "description": "Elbow-flexion work"
+    },
+    {
+      "key": "elbow_extension",
+      "scope": "weekly",
+      "intent": "inclusion",
+      "description": "Elbow-extension work"
+    },
+    {
+      "key": "calves",
+      "scope": "weekly",
+      "intent": "development",
+      "description": "Dedicated calf work",
+      "minimumWeeklySets": 9
+    },
+    {
+      "key": "core",
+      "scope": "weekly",
+      "intent": "inclusion",
+      "description": "Dedicated abdominal/core work"
+    },
+    {
+      "key": "abs",
+      "scope": "weekly",
+      "intent": "development",
+      "description": "Dedicated abdominals work",
+      "minimumWeeklySets": 9
+    }
+  ],
+  "exerciseRestrictions": {
+    "excludeNameTerms": [
+      "sumo deadlift",
+      "cable",
+      "pulley",
+      "lat pulldown",
+      "pushdown machine",
+      "Dumbbell Squat"
+    ],
+    "exceptNameTerms": [
+      "cable crunch",
+      "cable triceps pushdown",
+      "cable tricep pushdown"
+    ]
+  },
+  "auditTargets": {
+    "weeklyEffectiveSets": {
+      "chest": {
+        "minimum": 15,
+        "maximum": 18
+      },
+      "back": {
+        "minimum": 15,
+        "maximum": 18
+      },
+      "quads": {
+        "minimum": 15,
+        "maximum": 18
+      },
+      "hamstrings": {
+        "minimum": 15,
+        "maximum": 18
+      },
+      "glutes": {
+        "minimum": 15,
+        "maximum": 18
+      },
+      "shoulders": {
+        "minimum": 15,
+        "maximum": null
+      },
+      "biceps": {
+        "minimum": 15,
+        "maximum": 18
+      },
+      "triceps": {
+        "minimum": 15,
+        "maximum": 18
+      }
+    },
+    "perSessionEffectiveSets": {},
+    "maximumSessionSeconds": 5400
+  },
+  "sessionsPerWeek": 3,
+  "minimumRestDaysBetweenSessions": 1,
+  "workingSetRIR": {
+    "minimum": 1,
+    "maximum": 2
+  },
+  "notes": "Prefer 3 direct calf sets and 3 direct abdominal sets in each session; distribution is soft. Count overlapping abs/core physical sets once. Approved combined back/shoulder targets govern; report regional anatomy descriptively and mark incomplete evidence unknown."
+}

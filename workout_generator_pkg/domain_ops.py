@@ -1622,7 +1622,8 @@ def apply_exercise_library_schema_v2(
         definition = copy.deepcopy(raw_definition)
         definition.pop("instructions", None)
         definition.pop("instructionEquipmentIds", None)
-        definition.pop("programmingDemands", None)  # Generator evidence is not part of the app definition schema.
+        for key in ("programmingDemands", "anatomy", "reviewedExerciseFamily"):
+            definition.pop(key, None)  # Generator evidence is not part of the app definition schema.
         existing = supplied_by_id.get(definition["id"])
         if existing is not None and existing != definition:
             raise ValueError(

@@ -370,6 +370,29 @@ def test_explicit_superset_detachment_normalizes_only_detached_or_singleton_memb
     assert after_rest_repaired['workouts'][0]['exercises'][0]['restAfterSupersetExerciseSeconds'] == 0
 
 
+def test_explicit_detachment_does_not_overwrite_a_partners_new_group():
+    from workout_generator_pkg.json_patching import apply_json_patch
+    from workout_generator_pkg.planning_tools import compile_coordinated_repair
+
+    _, _, _, current = planning_case()
+    first = current['workouts'][0]['exercises'][0]
+    first.update(superset='OLD', restBetweenSetsSeconds=0, restAfterSupersetExerciseSeconds=90)
+    current['workouts'][0]['exercises'].extend([copy.deepcopy(first), copy.deepcopy(first)])
+    current['workouts'][0]['exercises'][2]['superset'] = None
+    task = {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_21',
+            'findingCode': 'independent_review_finding'}
+    updates = [
+        {'exerciseRef': 'EXERCISE_0', 'setFields': {'superset': None, 'restBetweenSetsSeconds': 75}},
+        {'exerciseRef': 'EXERCISE_1', 'setFields': {'superset': 'NEW', 'restAfterSupersetExerciseSeconds': 20}},
+        {'exerciseRef': 'EXERCISE_2', 'setFields': {'superset': 'NEW', 'restAfterSupersetExerciseSeconds': 90}}]
+    compiled, _ = compile_coordinated_repair({
+        'requirementsId': current['requirementsId'], 'baseDraftId': task['baseDraftId'],
+        'edits': {'exerciseUpdates': updates}}, task, current)
+    repaired = apply_json_patch(current, compiled['patch'])['workouts'][0]['exercises']
+    assert [item['superset'] for item in repaired] == [None, 'NEW', 'NEW']
+    assert repaired[1]['restAfterSupersetExerciseSeconds'] == 20
+
+
 def test_explicit_detachment_preserves_remaining_pair_and_accepts_explicit_reorder():
     from workout_generator_pkg.json_patching import apply_json_patch
     from workout_generator_pkg.planning_tools import compile_coordinated_repair
@@ -1309,28 +1332,28 @@ def test_exercise_finding_cannot_be_credited_by_an_unrelated_exercise_in_same_wo
 
     _, _, _, current = planning_case()
     current['workouts'][0]['exercises'].append(copy.deepcopy(current['workouts'][0]['exercises'][0]))
-    current['workouts'][0]['exercises'][1]['placementNotes'] = 'Sibling source cue'
+    current['workouts'][0]['exercises'][1]['restBetweenSetsSeconds'] = 90
     task = {'baseDraftId': 'REVISION_1', 'findingsAssessment': {'groups': [
-        {'findingIndexes': [0], 'disposition': 'repair', 'repairDimensions': ['guidance']} ]},
-        'reviewFindings': [{'draftPath': '/workouts/0/exercises/0/placementNotes'}]}
+        {'findingIndexes': [0], 'disposition': 'repair', 'repairDimensions': ['session_timing']} ]},
+        'reviewFindings': [{'draftPath': '/workouts/0/exercises/0/restBetweenSetsSeconds'}]}
     sibling_edit = {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_1',
         'addressedFindingIndexes': [0], 'patch': [{'op': 'replace',
-            'path': '/workouts/0/exercises/1/placementNotes', 'value': 'Changed sibling cue'}]}
+            'path': '/workouts/0/exercises/1/restBetweenSetsSeconds', 'value': 120}]}
 
     with pytest.raises(PlanningInputError, match='matching structured field'):
         validate_repair_scope({**sibling_edit, 'patch': copy.deepcopy(sibling_edit['patch'])},
             {**task, '_compiledRepairOperationRefs': [['EXERCISE_1', 'WORKOUT_0']]}, current)
 
     target_edit = {**sibling_edit, 'patch': [{'op': 'replace',
-        'path': '/workouts/0/exercises/0/placementNotes', 'value': 'Changed target cue'}]}
+        'path': '/workouts/0/exercises/0/restBetweenSetsSeconds', 'value': 180}]}
     validate_repair_scope(target_edit,
         {**task, '_compiledRepairOperationRefs': [['EXERCISE_0', 'WORKOUT_0']]}, current)
 
     mixed_task = {**task, 'findingsAssessment': {'groups': [
-        {'findingIndexes': [0], 'disposition': 'repair', 'repairDimensions': ['guidance', 'ordering']} ]}}
+        {'findingIndexes': [0], 'disposition': 'repair', 'repairDimensions': ['session_timing', 'ordering']} ]}}
     mixed_patch = {'requirementsId': current['requirementsId'], 'baseDraftId': 'REVISION_1',
         'addressedFindingIndexes': [0], 'patch': [
-            {'op': 'replace', 'path': '/workouts/0/exercises/1/placementNotes', 'value': 'Changed sibling cue'}]}
+            {'op': 'replace', 'path': '/workouts/0/exercises/1/restBetweenSetsSeconds', 'value': 120}]}
     with pytest.raises(PlanningInputError, match='matching structured field'):
         validate_repair_scope(mixed_patch, {**mixed_task, '_compiledRepairOperationRefs': [
             ['EXERCISE_1', 'WORKOUT_0']]}, current)
@@ -2083,6 +2106,57 @@ def test_coordinated_repair_reuses_valid_objective_receipt_after_candidate_audit
     assert result['coordinatedJointPlanning']['status'] == 'optimal'
 
 
+@pytest.mark.parametrize('source_plan_index_retained', [True, False])
+def test_pure_execution_order_repair_skips_joint_reoptimization_and_preserves_dose(
+        monkeypatch, source_plan_index_retained):
+    from workout_generator_pkg import interactive_shell
+    from workout_generator_pkg.planning_tools import set_workout_requirements
+
+    equipment, requirements, _, draft = planning_case()
+    requirements['auditTargets']['weeklyEffectiveSets']['chest'] = {'minimum': 5, 'maximum': 6}
+    requirements['auditTargets']['perSessionEffectiveSets']['chest'] = {'minimum': 5, 'maximum': 6}
+    isolation = copy.deepcopy(equipment['exerciseDefinitions'][0])
+    isolation.update(id='zz_isolation', name='Cable Fly', exerciseCategory='ISOLATION')
+    equipment['exerciseDefinitions'][0]['exerciseCategory'] = 'MODERATE_COMPOUND'
+    equipment['exerciseDefinitions'].append(isolation)
+    stored = set_workout_requirements(requirements,
+        [{'role': 'user', 'content': 'Plan 5-6 chest sets.'}], equipment)
+    draft['requirementsId'] = stored['requirementsId']
+    moderate, isolation_item = draft['workouts'][0]['exercises'][0], copy.deepcopy(draft['workouts'][0]['exercises'][0])
+    moderate.update(numWorkSets=3, definition_id='LIBRARY_0')
+    isolation_item.update(numWorkSets=2, definition_id='LIBRARY_1')
+    draft['workouts'][0]['exercises'] = [isolation_item, moderate]
+    messages = requirement_messages(stored)
+    prior = audit_workout_plan(draft, equipment, messages)
+    assert not prior['passed'] and {error['code'] for error in prior['errors']} == {'execution_order'}
+    prior.update(requirementsId=stored['requirementsId'], historyFingerprint=None,
+        coordinatedJointPlanning={'feasible': True, 'status': 'optimal', 'preserveSourceSelection': True})
+    if not source_plan_index_retained:
+        prior.pop('planIndex', None)  # A failed semantic review drops this non-export artifact.
+    messages.extend([
+        {'role': 'assistant', 'tool_calls': [{'id': 'prior-audit', 'function': {'name': 'audit_workout_plan'}}]},
+        {'role': 'tool', 'tool_call_id': 'prior-audit', 'content': json.dumps(prior)},
+    ])
+    from workout_generator_pkg.programming_guidelines import canonical_execution_order_draft
+    corrected = canonical_execution_order_draft(draft, stored['requirements'], equipment)
+    monkeypatch.setattr('workout_generator_pkg.allocation.qualify_coordinated_candidate',
+        lambda _client, args, *_a, **_k: (args, {'inputHash': 'qualified', 'contracts': []}))
+    monkeypatch.setattr('workout_generator_pkg.joint_planning.solve_prescribed_week',
+        lambda *_a, **_k: pytest.fail('A pure canonical order repair must preserve reviewed prescriptions.'))
+    def passing_review(_client, candidate, *_args, **_kwargs):
+        candidate['review'] = {'findings': []}
+        return candidate
+    monkeypatch.setattr(interactive_shell, 'review_draft', passing_review)
+
+    result = json.loads(interactive_shell.handle_function_call(None, messages, 'audit_workout_plan',
+        corrected, equipment, coordinated_repair=True)['result'])
+
+    assert result['passed'], result.get('errors')
+    assert [item['definition_id'] for item in result['submittedDraft']['workouts'][0]['exercises']] == [
+        'LIBRARY_0', 'LIBRARY_1']
+    assert [item['numWorkSets'] for item in result['submittedDraft']['workouts'][0]['exercises']] == [3, 2]
+
+
 def test_unproven_joint_receipt_cannot_shortcut_coordinated_solve():
     from workout_generator_pkg.allocation import reusable_joint_receipt
     from workout_generator_pkg.joint_planning import SELECTION_POLICY_VERSION, joint_objective_input_fingerprint
@@ -2104,18 +2178,25 @@ def test_unproven_joint_receipt_cannot_shortcut_coordinated_solve():
 def test_coordinated_repair_reuses_findings_across_equivalent_metadata_refresh_only(
         monkeypatch, change_source, expected_reuse):
     from workout_generator_pkg.allocation import qualify_coordinated_candidate
-    from workout_generator_pkg.planning_tools import _latest_result
+    from workout_generator_pkg.planning_tools import _latest_result, set_workout_requirements
 
-    equipment, _, stored, draft = planning_case()
-    draft['workouts'][0]['exercises'][0]['placementNotes'] = 'Use a controlled, repeatable range of motion.'
+    equipment, requirements, _, draft = planning_case()
+    requirements['requiredCoverage'] = [{'key': 'horizontal_push',
+        'description': 'Horizontal pushing work', 'scope': 'weekly'}]
+    stored = set_workout_requirements(requirements, [{'role': 'user',
+        'content': 'Include horizontal pushing work.'}], equipment)
+    draft['requirementsId'] = stored['requirementsId']
+    for exercise in draft['workouts'][0]['exercises']:
+        exercise.pop('placementNotes', None)
+    draft['workouts'][0]['exercises'][0]['satisfiesCoverage'] = ['horizontal_push']
     messages = requirement_messages(stored)
     _, original_receipt = _latest_result(messages, 'set_workout_requirements')
     prior = audit_workout_plan(draft, equipment, messages)
-    review = {'inputHash': 'prior-review', 'findings': [{'severity': 'warning', 'message': 'Repair progression.',
-        'draftPath': '/workouts/0/exercises/0'}]}
+    review = {'inputHash': 'prior-review', 'findings': [{'severity': 'warning', 'message': 'Re-audit this role assignment.',
+        'draftPath': '/workouts/0/exercises/0/satisfiesCoverage'}]}
     review['assessment'] = {'version': assessment.VERSION, 'inputHash': assessment.assessment_hash(review),
-        'groups': [{'findingIndexes': [0], 'disposition': 'repair', 'repairDimensions': ['guidance'], 'reason': 'Supported source goals.'}],
-        'repairPlan': 'Repair progression.'}
+        'groups': [{'findingIndexes': [0], 'disposition': 'repair', 'repairDimensions': ['coverage'], 'reason': 'Supported source goals.'}],
+        'repairPlan': 'Re-audit the role assignment.'}
     prior.update(passed=False, review=review)
     messages.extend([{'role': 'assistant', 'tool_calls': [{'id': 'prior', 'function': {'name': 'audit_workout_plan'}}]},
         {'role': 'tool', 'tool_call_id': 'prior', 'content': json.dumps(prior)}])
@@ -2132,7 +2213,7 @@ def test_coordinated_repair_reuses_findings_across_equivalent_metadata_refresh_o
     def qualify(client, prepared, active_requirements, *args, **kwargs):
         calls.append((prepared['reviewFeedbackByDefinition'].get('LIBRARY_0'), active_requirements['requirementsId']))
         return {'inputHash': 'fresh-contract', 'contracts': [{'definition_id': 'LIBRARY_0',
-            'satisfiesCoverage': [],
+            'satisfiesCoverage': ['horizontal_push'],
             'progressionPlan': {'kind': 'reps', 'nextDefinitionId': None, 'nextDefinitionName': None}}]}
     monkeypatch.setattr('workout_generator_pkg.recipe_contracts.qualify_recipe_contracts', qualify)
 
@@ -2144,21 +2225,31 @@ def test_coordinated_repair_reuses_findings_across_equivalent_metadata_refresh_o
         assert qualification['inputHash'] == 'fresh-contract'
         assert calls == [([{'findingIndex': 0, 'reason': 'Supported source goals.',
             'finding': review['findings'][0]}], refreshed['requirementsId'])]
-        assert 'progressionMethod' not in candidate['workouts'][0]['exercises'][0]
-        assert candidate['workouts'][0]['exercises'][0]['placementNotes'] == 'Use a controlled, repeatable range of motion.'
+        assert candidate['workouts'][0]['exercises'][0]['satisfiesCoverage'] == ['horizontal_push']
     else:
-        assert qualification is None and calls == []
+        assert qualification['inputHash'] == 'fresh-contract'
+        assert calls == [(None, refreshed['requirementsId'])]
+        assert candidate['workouts'][0]['exercises'][0]['satisfiesCoverage'] == ['horizontal_push']
 
 
-def test_coordinated_selection_qualification_preserves_goal_fields_and_occurrence_ownership(monkeypatch):
+def test_coordinated_selection_qualification_normalizes_roles_for_every_occurrence(monkeypatch):
     from workout_generator_pkg.allocation import qualify_coordinated_candidate
+    from workout_generator_pkg.planning_tools import set_workout_requirements
 
-    equipment, _, stored, draft = planning_case()
+    equipment, requirements, _, draft = planning_case()
+    requirements['requiredCoverage'] = [
+        {'key': 'original', 'description': 'Original role', 'scope': 'weekly'},
+        {'key': 'alternate', 'description': 'Alternate role', 'scope': 'weekly'}]
+    stored = set_workout_requirements(requirements, [{'role': 'user', 'content':
+        'Include movements supporting the original role and alternate role.'}], equipment)
+    draft['requirementsId'] = stored['requirementsId']
+    for exercise in draft['workouts'][0]['exercises']:
+        exercise.pop('placementNotes', None)
+    draft['workouts'][0]['exercises'][0]['satisfiesCoverage'] = ['original']
     second_definition = copy.deepcopy(equipment['exerciseDefinitions'][0])
     second_definition['id'] = 'LIBRARY_1'
     second_definition['name'] = 'Alternate press'
     equipment['exerciseDefinitions'].append(second_definition)
-    first = copy.deepcopy(draft['workouts'][0]['exercises'][0])
     messages = requirement_messages(stored)
     prior = audit_workout_plan(draft, equipment, messages)
     review = {'inputHash': 'selection-review', 'findings': [{'severity': 'warning', 'message': 'Repair progression.',
@@ -2178,32 +2269,22 @@ def test_coordinated_selection_qualification_preserves_goal_fields_and_occurrenc
             if item['id'] in args['definition_ids']]})
     monkeypatch.setattr('workout_generator_pkg.recipe_contracts.qualify_recipe_contracts',
         lambda *_args, **_kwargs: {'inputHash': 'qualified-all', 'contracts': [
-                {'definition_id': 'LIBRARY_0', 'progressionPlan': {'kind': 'reps', 'nextDefinitionId': None,
-                    'nextDefinitionName': None},
-             'satisfiesCoverage': ['original']},
-            {'definition_id': 'LIBRARY_1', 'progressionMethod': 'sourceDefined',
-                 'progressionPlan': {'kind': 'reps', 'nextDefinitionId': None,
-                    'nextDefinitionName': None}, 'satisfiesCoverage': ['alternate']}]})
+                {'definition_id': 'LIBRARY_0', 'satisfiesCoverage': ['original']},
+                {'definition_id': 'LIBRARY_1', 'satisfiesCoverage': ['alternate']}]})
 
     candidate = copy.deepcopy(draft)
     candidate['workouts'][0]['exercises'][0].update(
-        definition_id='LIBRARY_1', progressionMethod='doubleProgression',
-            progressionPlan={'kind': 'reps', 'nextDefinitionId': None, 'nextDefinitionName': None})
+        definition_id='LIBRARY_1', satisfiesCoverage=['original'])
     unchanged_duplicate = copy.deepcopy(candidate['workouts'][0]['exercises'][0])
-    unchanged_duplicate.update(definition_id='LIBRARY_0', progressionMethod='sourceDefined')
-    unchanged_duplicate['progressionPlan'] = {'kind': 'reps', 'nextDefinitionId': None,
-        'nextDefinitionName': None, 'atCeilingAction': 're_audit_higher_reps'}
+    unchanged_duplicate.update(definition_id='LIBRARY_0', satisfiesCoverage=['alternate'])
     candidate['workouts'][0]['exercises'].append(unchanged_duplicate)
     added_occurrence = copy.deepcopy(candidate['workouts'][0]['exercises'][0])
-    added_occurrence['satisfiesCoverage'] = ['authored_for_new_exercise']
+    added_occurrence['satisfiesCoverage'] = ['original']
     candidate['workouts'][0]['exercises'].append(added_occurrence)
     context = {'workoutRefsByPosition': ['WORKOUT_0'],
         'exerciseRefsByWorkout': {'WORKOUT_0': ['EXERCISE_0', 'EXERCISE_1', 'NEW_EXERCISE_0']},
-        'initialExerciseRefsByWorkout': {'WORKOUT_0': ['EXERCISE_0', 'EXERCISE_1']},
-        'initialDefinitionByExerciseRef': {'EXERCISE_0': 'LIBRARY_0', 'EXERCISE_1': 'LIBRARY_0'},
         'typedEdits': {'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0', 'setFields': {
-            'definition_id': 'LIBRARY_1', 'progressionMethod': 'doubleProgression',
-                    'progressionPlan': {'kind': 'reps', 'nextDefinitionId': None, 'nextDefinitionName': None}}}],
+            'definition_id': 'LIBRARY_1', 'satisfiesCoverage': ['original']}}],
             'exerciseAdditions': [{'temporaryId': 'NEW_EXERCISE_0', 'exercise': added_occurrence}]}}
 
     result, qualification = qualify_coordinated_candidate(None,
@@ -2213,16 +2294,18 @@ def test_coordinated_selection_qualification_preserves_goal_fields_and_occurrenc
     selected, unchanged_duplicate, added_result = result['workouts'][0]['exercises']
     assert qualification['inputHash'] == 'qualified-all'
     assert selected['definition_id'] == 'LIBRARY_1'
-    assert selected['progressionMethod'] == 'doubleProgression'
-    assert selected['progressionPlan'] == {'kind': 'reps', 'nextDefinitionId': None, 'nextDefinitionName': None}
+    assert selected['numWorkSets'] == 5
+    assert selected['minReps'] == 8 and selected['maxReps'] == 10
+    assert selected['setupSeconds'] == 60
+    assert selected['effortAcceptance']['acceptanceCriterion'] == 'Each repetition reaches the same controlled range of motion.'
     assert selected['satisfiesCoverage'] == ['alternate']
     assert unchanged_duplicate['definition_id'] == 'LIBRARY_0'
-    assert unchanged_duplicate['progressionMethod'] == 'sourceDefined'
-    assert unchanged_duplicate['progressionPlan']['atCeilingAction'] == 're_audit_higher_reps'
-    assert 'satisfiesCoverage' not in unchanged_duplicate
-    assert added_result['progressionMethod'] == 'doubleProgression'
-    assert added_result['progressionPlan'] == selected['progressionPlan']
-    assert added_result['satisfiesCoverage'] == ['authored_for_new_exercise']
+    assert unchanged_duplicate['numWorkSets'] == 5
+    assert unchanged_duplicate['satisfiesCoverage'] == ['original']
+    assert added_result['numWorkSets'] == selected['numWorkSets']
+    assert added_result['minReps'] == selected['minReps']
+    assert added_result['satisfiesCoverage'] == ['alternate']
+    assert selected['satisfiesCoverage'] == ['alternate']
 
 
 def test_latest_recipe_qualification_survives_a_later_tool_result_without_it():
@@ -2629,6 +2712,11 @@ def test_nested_optional_removal_is_unambiguous_idempotent_and_not_a_repair_chan
     with pytest.raises(PlanningInputError) as noop:
         compile_coordinated_repair(args, task, current)
     assert noop.value.code == 'empty_coordinated_edits' and args == before
+    revalidation = {**task, 'edits': {}}
+    compiled, _ = compile_coordinated_repair(revalidation, task, current)
+    assert compiled['patch'] == []
+    with pytest.raises(PlanningInputError, match='stale'):
+        compile_coordinated_repair({**revalidation, 'baseDraftId': 'OLD'}, task, current)
     args['edits']['exerciseUpdates'][0]['setFields']['numWorkSets'] = 4
     compiled, _ = compile_coordinated_repair(args, task, current)
     assert compiled['patch'] == [{'op': 'replace', 'path': '/workouts/0/exercises/0/numWorkSets', 'value': 4}]

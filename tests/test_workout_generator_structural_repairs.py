@@ -3,8 +3,7 @@ import copy
 import pytest
 
 from workout_generator_pkg import allocation, session_drafting
-from workout_generator_pkg.planning_tools import PlanningInputError, planning_tool_failure, set_workout_requirements
-from test_workout_generator_planning_tools import requirement_messages
+from workout_generator_pkg.planning_tools import PlanningInputError, planning_tool_failure
 from test_workout_generator_parallel_planning import store_tool
 from test_workout_generator_week_structure import prepared_case
 
@@ -47,24 +46,35 @@ def test_group_repair_preserves_duplicate_occurrences_and_rejects_lost_or_reused
 
 
 def test_selection_replacement_requires_explicit_roles_and_preserves_bounds():
-    equipment, requirements, messages, arguments, _ = prepared_case()
-    requirements['executionRules'] = [{'kind': 'workSets', 'coverageKey': None, 'minimumSets': 1, 'maximumSets': 1}]
-    receipt = set_workout_requirements(requirements, [{'role': 'user', 'content': 'Exactly one working set per occurrence.'}], equipment)
-    messages = requirement_messages(receipt)
-    arguments['requirementsId'] = receipt['requirementsId']
-    for day in arguments['sessions']:
-        day['exercises'][0]['allocationBounds'] = {'minimum': 1, 'maximum': 1}
-        day['exercises'][0]['numWorkSets'] = 1
-        day['exercises'][0]['satisfiesCoverage'] = []
+    equipment, _, messages, arguments, _ = prepared_case()
+    arguments['sessions'][0]['exercises'][0].update(
+        definition_id='LIBRARY_999', allocationBounds={'minimum': 2, 'maximum': 2}, numWorkSets=2)
     task = failed_preparation(arguments, messages, equipment)
     member = {'replaces': '/sessions/0/exercises/0', 'definition_id': 'LIBRARY_0'}
     request = {'basePreparationId': task['basePreparationId'], 'sessionBlocks': [
-        {'sessionReference': 'SESSION_0', 'blocks': [{'exercises': [member]}]}]}
+        {'sessionReference': 'SESSION_0', 'replacements': [member]}]}
+    schema = session_drafting.preparation_patch_tool(task)['function']['parameters']
+    selection_fields = schema['properties']['sessionBlocks']['items']['oneOf']
+    selection = next(item for item in selection_fields
+                     if 'replacements' in item.get('properties', {}))
+    replacement_schema = selection['properties']['replacements']['items']
+    assert replacement_schema['properties']['replaces']['enum'] == ['/sessions/0/exercises/0']
+    assert 'blocks' not in selection['properties']
     with pytest.raises(PlanningInputError):
         session_drafting.resolve_preparation_patch(request, messages)
     member['satisfiesCoverage'] = []
     repaired = session_drafting.resolve_preparation_patch(request, messages)
-    assert repaired['sessions'][0]['exercises'][0]['allocationBounds'] == {'minimum': 1, 'maximum': 1}
+    assert repaired['sessions'][0]['exercises'][0]['allocationBounds'] == {'minimum': 2, 'maximum': 2}
+    assert repaired['sessions'][0]['exercises'][0]['numWorkSets'] == 2
+    assert repaired['sessions'][0]['exercises'][1:] == arguments['sessions'][0]['exercises'][1:]
+    assert repaired['sessions'][1:] == arguments['sessions'][1:]
+    no_op = copy.deepcopy(request)
+    no_op['sessionBlocks'][0]['replacements'][0].update(definition_id='LIBRARY_999', satisfiesCoverage=[])
+    with pytest.raises(PlanningInputError):
+        session_drafting.resolve_preparation_patch(no_op, messages)
+    with pytest.raises(PlanningInputError):
+        session_drafting.resolve_preparation_patch({'basePreparationId': task['basePreparationId'],
+            'sessionBlocks': [{'sessionReference': 'SESSION_0', 'replacements': []}]}, messages)
     with pytest.raises(PlanningInputError):
         session_drafting.resolve_preparation_patch({'basePreparationId': task['basePreparationId'],
             'patch': [{'op': 'replace', 'path': '/sessions/0/exercises', 'value': []}]}, messages)

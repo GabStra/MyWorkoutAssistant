@@ -189,6 +189,8 @@ def _proposal_core(proposal):
         'libraryFingerprint', 'trainingHistoryFingerprint', 'changes', 'requirements', 'workouts', 'audit',
         'independentReview', 'diagnosisVersion', 'reviewVersion')}
     core['shortfallsAgainstOriginalRequirements'] = proposal.get('shortfallsAgainstOriginalRequirements', [])
+    if proposal.get('unresolvedPreferences'):
+        core['unresolvedPreferences'] = proposal['unresolvedPreferences']
     if isinstance(proposal.get('programGuidance'), str) and proposal['programGuidance'].strip():
         core['programGuidance'] = proposal['programGuidance']
     if proposal.get('allocationConflictFingerprint'):
@@ -198,6 +200,10 @@ def _proposal_core(proposal):
     for key in ('repairContract', 'jointSolve'):
         if isinstance(proposal.get(key), dict):
             core[key] = proposal[key]
+    if isinstance(proposal.get('jointCandidateComparison'), dict):
+        core['jointCandidateComparison'] = proposal['jointCandidateComparison']
+    if isinstance(proposal.get('baselineComparison'), dict):
+        core['baselineComparison'] = proposal['baselineComparison']
     core['searchScope'] = proposal.get('searchScope', 'the supplied exercise menu')
     core['structuralSearchStatus'] = proposal.get('structuralSearchStatus',
         'Structural alternatives may remain unexplored.')
@@ -245,6 +251,89 @@ def _shortfalls_against_original_requirements(audit, requirements, changes):
             **({'instruction': accounting['instruction']} if accounting else {}),
             **({'sourceReferences': copy.deepcopy(accounting['sourceReferences'])} if accounting else {})})
     return shortfalls
+
+
+def _audit_comparison(baseline, candidate):
+    """Report exact audit deltas without assigning a physiological score."""
+    baseline_audit, candidate_audit = baseline.get('audit') or {}, candidate.get('audit') or {}
+    def definition_exposure(workouts):
+        exposure = {}
+        for workout in workouts:
+            if not isinstance(workout, dict):
+                continue
+            frequency = workout.get('timesCompletedInAWeek', 1)
+            if type(frequency) is not int or frequency < 1:
+                continue
+            for item in workout.get('exercises', []):
+                if (not isinstance(item, dict) or not isinstance(item.get('definition_id'), str)
+                        or type(item.get('numWorkSets')) is not int or item['numWorkSets'] < 0):
+                    continue
+                definition_id = item['definition_id']
+                exposure[definition_id] = exposure.get(definition_id, 0) + item['numWorkSets'] * frequency
+        return exposure
+
+    baseline_definition_sets = definition_exposure(baseline.get('workouts', []))
+    candidate_definition_sets = definition_exposure(candidate.get('workouts', []))
+    definition_deltas = {definition_id: {'baseline': baseline_definition_sets.get(definition_id, 0),
+            'candidate': candidate_definition_sets.get(definition_id, 0),
+            'delta': candidate_definition_sets.get(definition_id, 0) - baseline_definition_sets.get(definition_id, 0)}
+        for definition_id in sorted(set(baseline_definition_sets) | set(candidate_definition_sets))
+        if baseline_definition_sets.get(definition_id, 0) != candidate_definition_sets.get(definition_id, 0)}
+    baseline_total_sets = sum(baseline_definition_sets.values())
+    candidate_total_sets = sum(candidate_definition_sets.values())
+    baseline_weekly = baseline_audit.get('weeklyVolume') or {}
+    candidate_weekly = candidate_audit.get('weeklyVolume') or {}
+    weekly = {}
+    for muscle in sorted(set(baseline_weekly) | set(candidate_weekly)):
+        left = baseline_weekly.get(muscle, {}).get('effective')
+        right = candidate_weekly.get(muscle, {}).get('effective')
+        if (isinstance(left, (int, float)) and not isinstance(left, bool)
+                and isinstance(right, (int, float)) and not isinstance(right, bool)
+                and left != right):
+            weekly[muscle] = {'baseline': left, 'candidate': right, 'delta': right - left}
+    baseline_coverage = baseline_audit.get('weeklyCoverageSets') or {}
+    candidate_coverage = candidate_audit.get('weeklyCoverageSets') or {}
+    coverage = {}
+    for role in sorted(set(baseline_coverage) | set(candidate_coverage)):
+        left, right = baseline_coverage.get(role), candidate_coverage.get(role)
+        if (isinstance(left, (int, float)) and not isinstance(left, bool)
+                and isinstance(right, (int, float)) and not isinstance(right, bool)
+                and left != right):
+            coverage[role] = {'baseline': left, 'candidate': right, 'delta': right - left}
+    baseline_sessions = {row.get('sessionId', row.get('name', str(index))): row
+        for index, row in enumerate(baseline_audit.get('workouts', []))}
+    candidate_sessions = {row.get('sessionId', row.get('name', str(index))): row
+        for index, row in enumerate(candidate_audit.get('workouts', []))}
+    durations, per_session_volume = {}, {}
+    for session in sorted(set(baseline_sessions) | set(candidate_sessions)):
+        before = baseline_sessions.get(session, {})
+        after = candidate_sessions.get(session, {})
+        left = before.get('estimatedSeconds')
+        right = after.get('estimatedSeconds')
+        if (isinstance(left, (int, float)) and not isinstance(left, bool)
+                and isinstance(right, (int, float)) and not isinstance(right, bool)
+                and left != right):
+            durations[session] = {'baseline': left, 'candidate': right, 'delta': right - left}
+        changed_muscles = {}
+        before_volume, after_volume = before.get('volume') or {}, after.get('volume') or {}
+        for muscle in sorted(set(before_volume) | set(after_volume)):
+            left = before_volume.get(muscle, {}).get('effective')
+            right = after_volume.get(muscle, {}).get('effective')
+            if (isinstance(left, (int, float)) and not isinstance(left, bool)
+                    and isinstance(right, (int, float)) and not isinstance(right, bool)
+                    and left != right):
+                changed_muscles[muscle] = {'baseline': left, 'candidate': right,
+                                           'delta': right - left}
+        if changed_muscles:
+            per_session_volume[session] = changed_muscles
+    return {'weeklyWorkingSets': {'baseline': baseline_total_sets, 'candidate': candidate_total_sets,
+            'delta': candidate_total_sets - baseline_total_sets},
+        'weeklyWorkingSetsByDefinition': definition_deltas,
+        'weeklyCoverageSets': coverage,
+        'weeklyEffectiveSets': weekly, 'perSessionEffectiveSets': per_session_volume,
+        'sessionDurationsSeconds': durations,
+        'baselineWorkoutCount': len(baseline.get('workouts', [])),
+        'candidateWorkoutCount': len(candidate.get('workouts', []))}
 
 
 def _ranked_change_paths(changes, ranks):
@@ -301,6 +390,28 @@ def render_alternative_preview(proposal):
                      for item in shortfalls)
     else:
         lines.append('- None on the changed numeric targets.')
+    comparison = proposal.get('baselineComparison')
+    if isinstance(comparison, dict):
+        lines.extend(['', 'Comparison to the currently reviewed candidate (facts only; no automatic ranking):'])
+        for change in comparison.get('requirementChanges', []):
+            lines.append(f"- Authorized requirement change: {change['path']} {change['from']} → {change['to']}")
+        deltas = comparison.get('auditDeltas', {})
+        total_sets = deltas.get('weeklyWorkingSets')
+        if isinstance(total_sets, dict):
+            lines.append(f"- Weekly physical working sets: {total_sets['baseline']} → {total_sets['candidate']} (Δ {total_sets['delta']})")
+        for definition_id, delta in deltas.get('weeklyWorkingSetsByDefinition', {}).items():
+            lines.append(f"- {definition_id} weekly working sets: {delta['baseline']} → {delta['candidate']} (Δ {delta['delta']})")
+        for role, delta in deltas.get('weeklyCoverageSets', {}).items():
+            lines.append(f"- {role} weekly coverage sets: {delta['baseline']} → {delta['candidate']} (Δ {delta['delta']})")
+        for muscle, delta in deltas.get('weeklyEffectiveSets', {}).items():
+            lines.append(f"- {muscle} weekly effective sets: {delta['baseline']} → {delta['candidate']} (Δ {delta['delta']})")
+        for session, muscles in deltas.get('perSessionEffectiveSets', {}).items():
+            for muscle, delta in muscles.items():
+                lines.append(f"- {session} {muscle} effective sets: {delta['baseline']} → {delta['candidate']} (Δ {delta['delta']})")
+        for session, delta in deltas.get('sessionDurationsSeconds', {}).items():
+            lines.append(f"- {session} estimated seconds: {delta['baseline']} → {delta['candidate']} (Δ {delta['delta']})")
+        if comparison.get('baselinePreview'):
+            lines.extend(['', 'Baseline reviewed plan:', comparison['baselinePreview'].strip()])
     lines.extend(['', preview.strip(), '', proposal.get('claim',
         'Validated against the proposed requirements; original-target shortfalls are shown above. No global optimum is claimed.')])
     lines.extend(['Estimated session duration is a planning estimate.',
@@ -313,7 +424,8 @@ def diagnose_conflict_and_propose(*, requirements_id, base_draft_id, workouts=No
                                   messages=None, allow_educated_load_guesses=True,
                                   max_solver_attempts=8,
                                   existing_conflict=None, allocation_conflict=None,
-                                  candidate_scope=None):
+                                  candidate_scope=None, unresolved_preferences=None,
+                                  preference_baseline=None):
     """Validate menu-scoped alternatives within explicitly negotiable numeric bounds.
 
     `review_candidate(sessions, requirements, solver_receipt)` must run the ordinary
@@ -331,6 +443,14 @@ def diagnose_conflict_and_propose(*, requirements_id, base_draft_id, workouts=No
     invalid_candidate_scope = candidate_scope is not None and not isinstance(candidate_scope, dict)
     if invalid_candidate_scope:
         candidate_scope = None
+    if (unresolved_preferences is not None
+            and (not isinstance(unresolved_preferences, list)
+                 or any(not isinstance(item, dict) for item in unresolved_preferences))):
+        return _outcome('unresolved', 'saved workout draft',
+            reason='The supplied unresolved preference evidence is invalid.')
+    unresolved_preferences = copy.deepcopy(unresolved_preferences or [])
+    preference_baseline_receipt = preference_baseline
+    priority_comparison = None
     candidate_diagnosis_source = ({key: copy.deepcopy(candidate_scope[key]) for key in (
         'requirementsId', 'baseDraftId', 'repairCandidateId', 'submittedMenuFingerprint',
         'feasibilityDomainFingerprint', 'candidateRequirementsId', 'sourceDraftId', 'sourceMenuFingerprint')
@@ -339,6 +459,10 @@ def diagnose_conflict_and_propose(*, requirements_id, base_draft_id, workouts=No
     def diagnosed_outcome(status, scope, **details):
         result = _outcome(status, scope, **details)
         result['diagnosisVersion'] = CONFLICT_RESOLUTION_VERSION
+        if priority_comparison is not None:
+            result['priorityComparison'] = copy.deepcopy(priority_comparison)
+            if not priority_comparison['searchComplete']:
+                result['searchComplete'] = False
         if candidate_diagnosis_source:
             result['candidateDiagnosisSource'] = copy.deepcopy(candidate_diagnosis_source)
         return result
@@ -354,6 +478,20 @@ def diagnose_conflict_and_propose(*, requirements_id, base_draft_id, workouts=No
         workouts = (current_draft.get('submittedDraft') or {}).get('workouts')
         if not workouts:
             return diagnosed_outcome('unresolved', 'saved workout draft', reason='The current audit receipt has no submitted workout menu.')
+    preference_baseline = None
+    if unresolved_preferences:
+        if (not isinstance(preference_baseline_receipt, dict)
+                or preference_baseline_receipt.get('sessions') != workouts
+                or not isinstance(preference_baseline_receipt.get('audit'), dict)
+                or preference_baseline_receipt['audit'].get('errors')
+                or not isinstance(preference_baseline_receipt.get('review'), dict)
+                or not isinstance(preference_baseline_receipt['review'].get('passed'), bool)
+                or not isinstance(preference_baseline_receipt.get('priorityExecution'), (dict, list))
+                or not isinstance(preference_baseline_receipt.get('objectiveProgress'), (dict, list))
+                or not isinstance(preference_baseline_receipt.get('sourceWorkingSetBudget'), dict)):
+            return diagnosed_outcome('unresolved', 'saved workout draft',
+                reason='Preference comparison requires the exact audited candidate, completed review, and current priority execution evidence.')
+        preference_baseline_receipt = copy.deepcopy(preference_baseline_receipt)
 
     # A fresh, exact audit proving a mandatory role is absent cannot be repaired
     # by changing numeric bounds. Keep this diagnosis unresolved until the menu
@@ -462,13 +600,23 @@ def diagnose_conflict_and_propose(*, requirements_id, base_draft_id, workouts=No
     def solver_attempt_count():
         return sum(not attempt.get('reused') for attempt in attempts)
 
-    def solve(requirement_set, label):
+    def solve(requirement_set, label, solve_workouts=None, solve_existing=None):
         if solver_attempt_count() >= max_solver_attempts:
             return None
-        receipt = solve_prescribed_week(workouts, requirement_set, equipment, restriction_policy,
-            allow_educated_load_guesses=allow_educated_load_guesses,
-            preserve_source_selection=candidate_scope is not None,
-            training_history=training_history, messages=messages)
+        solve_options = {'allow_educated_load_guesses': allow_educated_load_guesses,
+            'preserve_source_selection': candidate_scope is not None,
+            'training_history': training_history, 'messages': messages}
+        if unresolved_preferences:
+            solve_options['source_working_set_budget'] = copy.deepcopy(
+                preference_baseline_receipt['sourceWorkingSetBudget'])
+        if solve_existing is not None:
+            solve_options['existing'] = {'workouts': copy.deepcopy(solve_existing)}
+        receipt = solve_prescribed_week(solve_workouts if solve_workouts is not None else workouts,
+            requirement_set, equipment, restriction_policy,
+            **solve_options)
+        if unresolved_preferences:
+            receipt.setdefault('sourceWorkingSetBudget', copy.deepcopy(
+                preference_baseline_receipt['sourceWorkingSetBudget']))
         attempts.append({'scenario': label, 'status': receipt.get('status'),
                          'elapsedSeconds': receipt.get('elapsedSeconds')})
         return receipt
@@ -481,21 +629,39 @@ def diagnose_conflict_and_propose(*, requirements_id, base_draft_id, workouts=No
         except Exception as error:
             return None, 'error', f'{type(error).__name__}: {error}'[:500]
 
-    expected_problem_fingerprint = joint_problem_fingerprint(
-        workouts, original, equipment, training_history, messages,
-        restriction_policy=restriction_policy, existing=None,
-        allow_educated_load_guesses=allow_educated_load_guesses,
-        preserve_source_selection=candidate_scope is not None)
-    if (isinstance(existing_conflict, dict)
-            and existing_conflict.get('status') == 'infeasible'
-            and existing_conflict.get('problemFingerprint') == expected_problem_fingerprint):
-        first = existing_conflict
-        attempts.append({'scenario': 'approved_requirements', 'status': 'infeasible', 'reused': True})
+    if unresolved_preferences:
+        first = {'feasible': True, 'status': 'exact_reviewed_baseline',
+            'sessions': copy.deepcopy(preference_baseline_receipt['sessions']),
+            'audit': copy.deepcopy(preference_baseline_receipt['audit'])}
     else:
-        first = solve(original, 'approved_requirements')
+        expected_problem_fingerprint = joint_problem_fingerprint(
+            workouts, original, equipment, training_history, messages,
+            restriction_policy=restriction_policy, existing=None,
+            allow_educated_load_guesses=allow_educated_load_guesses,
+            preserve_source_selection=candidate_scope is not None)
+        if (isinstance(existing_conflict, dict)
+                and existing_conflict.get('status') == 'infeasible'
+                and existing_conflict.get('problemFingerprint') == expected_problem_fingerprint):
+            first = existing_conflict
+            attempts.append({'scenario': 'approved_requirements', 'status': 'infeasible', 'reused': True})
+        else:
+            first = solve(original, 'approved_requirements')
     if first is None:
         return diagnosed_outcome('unresolved', 'supplied prescription menu', reason='The configured solver-attempt limit prevented evaluation of the original request.', attempts=attempts)
-    if first.get('feasible'):
+    preference_baseline = None
+    if first.get('feasible') and unresolved_preferences:
+        preference_baseline = {'workouts': copy.deepcopy(preference_baseline_receipt['sessions']),
+            'audit': copy.deepcopy(preference_baseline_receipt['audit']),
+            'independentReview': copy.deepcopy(preference_baseline_receipt['review']),
+            'approvedRequirementsHash': original_hash,
+            'unresolvedPreferences': copy.deepcopy(unresolved_preferences),
+            'approvedObjectiveOrder': copy.deepcopy(requirements.get('objectiveOrder', [])),
+            'priorityExecution': copy.deepcopy(preference_baseline_receipt['priorityExecution']),
+            'objectiveProgress': copy.deepcopy(preference_baseline_receipt['objectiveProgress']),
+            'exerciseDistribution': copy.deepcopy(preference_baseline_receipt.get('exerciseDistribution')),
+            'coverageBalance': copy.deepcopy(preference_baseline_receipt.get('coverageBalance')),
+            'sourceWorkingSetBudget': copy.deepcopy(preference_baseline_receipt['sourceWorkingSetBudget'])}
+    elif first.get('feasible'):
         review, review_status, review_error = review_candidate_safely(first['sessions'], original, first)
         if review_status:
             attempts.append({'scenario': 'independent_review', 'review': review_status,
@@ -507,12 +673,129 @@ def diagnose_conflict_and_propose(*, requirements_id, base_draft_id, workouts=No
             if not isinstance(review.get('preview'), str) or not review['preview'].strip():
                 return diagnosed_outcome('candidate_feasible_pending_review', 'supplied prescription menu',
                     reason='Independent review passed, but the exact reviewed plan preview is missing.', attempts=attempts)
-            return diagnosed_outcome('verified_feasible', 'supplied prescription menu',
-                reason='The candidate passed production audit and independent review.', attempts=attempts)
-        return diagnosed_outcome('candidate_feasible_pending_review', 'supplied prescription menu',
-            reason='Numerical feasibility is established; independent review is still required.', attempts=attempts)
-    if first.get('status') != 'infeasible':
+            if not unresolved_preferences:
+                return diagnosed_outcome('verified_feasible', 'supplied prescription menu',
+                    reason='The candidate passed production audit and independent review.', attempts=attempts)
+        elif not unresolved_preferences:
+            return diagnosed_outcome('candidate_feasible_pending_review', 'supplied prescription menu',
+                reason='Numerical feasibility is established; independent review is still required.', attempts=attempts)
+        elif not isinstance(review, dict) or not isinstance(review.get('passed'), bool):
+            return diagnosed_outcome('candidate_feasible_pending_review', 'supplied prescription menu',
+                reason='The candidate review did not return a complete assessment for preference comparison.',
+                attempts=attempts)
+        preference_baseline = None
+    if first.get('status') != 'infeasible' and preference_baseline is None:
         return diagnosed_outcome('unresolved', 'supplied prescription menu', reason=first.get('instruction', 'The solver did not prove a conflict.'), attempts=attempts)
+
+    if preference_baseline is not None:
+        approved_order = list(original.get('objectiveOrder') or [])
+        selected_priorities = list(dict.fromkeys(item.get('priority') for item in unresolved_preferences
+            if isinstance(item.get('priority'), str) and item.get('priority') in approved_order))
+        if selected_priorities:
+            candidate_pool = preference_baseline_receipt.get('candidatePool')
+            candidate_pool_workouts = (candidate_pool.get('sessions')
+                if isinstance(candidate_pool, dict) else None)
+            candidate_pool_fixed = candidate_pool.get('fixedWorkouts') if isinstance(candidate_pool, dict) else None
+            use_candidate_pool = (isinstance(candidate_pool, dict)
+                and isinstance(candidate_pool.get('preparationId'), str)
+                and bool(candidate_pool['preparationId'])
+                and isinstance(candidate_pool.get('scope'), str)
+                and isinstance(candidate_pool_workouts, list) and candidate_pool_workouts
+                and all(isinstance(session, dict) for session in candidate_pool_workouts)
+                and isinstance(candidate_pool_fixed, list)
+                and all(isinstance(session, dict) for session in candidate_pool_fixed)
+                and candidate_pool.get('sourceWorkingSetBudget')
+                    == preference_baseline_receipt['sourceWorkingSetBudget']
+                and isinstance(candidate_pool.get('candidateUniverseCoverage'), dict))
+            diagnostic_workouts = candidate_pool_workouts if use_candidate_pool else workouts
+            diagnostic_existing = candidate_pool_fixed if use_candidate_pool else None
+            comparison_scope = ('the retained, provenance-validated executable candidate pool and approved hard requirements; '
+                'this pool is not a semantic review or a claim about the full exercise library'
+                if use_candidate_pool else
+                'the exact supplied executable menu and approved hard requirements; '
+                'exercise-selection alternatives outside this menu were not searched')
+            priority_comparison = {
+                'scope': comparison_scope,
+                'semanticReview': 'not_run_for_diagnostic_scenarios',
+                'exportable': False,
+                'approvedObjectiveOrder': approved_order,
+                'selectedPriorities': selected_priorities,
+                'baselineObjectiveProgress': copy.deepcopy(preference_baseline.get('objectiveProgress')),
+                'searchComplete': True,
+                'unexploredScenarios': [],
+                'scenarios': [],
+            }
+            if use_candidate_pool:
+                priority_comparison['candidatePoolScope'] = candidate_pool['scope']
+                priority_comparison['candidateUniverseCoverage'] = copy.deepcopy(
+                    candidate_pool['candidateUniverseCoverage'])
+            scenario_orders = [('approved_order', approved_order, None, None)]
+            for target in selected_priorities:
+                target_index = approved_order.index(target)
+                for earlier in reversed(approved_order[:target_index]):
+                    earlier_index = approved_order.index(earlier)
+                    reordered = list(approved_order)
+                    reordered.remove(target)
+                    reordered.insert(reordered.index(earlier), target)
+                    released = approved_order[earlier_index:target_index]
+                    scenario_orders.append((f'release:{target}_before_{earlier}', reordered, target, released))
+            for label, objective_order, target, released in scenario_orders:
+                if solver_attempt_count() >= max_solver_attempts:
+                    priority_comparison['searchComplete'] = False
+                    priority_comparison['unexploredScenarios'].append(label)
+                    continue
+                scenario_requirements = copy.deepcopy(original)
+                scenario_requirements['objectiveOrder'] = list(objective_order)
+                try:
+                    receipt = solve(scenario_requirements, f'priority:{label}',
+                        copy.deepcopy(diagnostic_workouts), diagnostic_existing)
+                except TimeoutError:
+                    attempts.append({'scenario': f'priority:{label}', 'status': 'unproven',
+                        'reason': 'solver_timeout'})
+                    receipt = {'feasible': False, 'status': 'unproven'}
+                if receipt is None:
+                    priority_comparison['searchComplete'] = False
+                    priority_comparison['unexploredScenarios'].append(label)
+                    continue
+                scenario = {
+                    'scenario': label,
+                    'objectiveOrder': list(objective_order),
+                    'targetPriority': target,
+                    'releasedPrecedenceAgainst': released,
+                    'solverStatus': receipt.get('status'),
+                    'priorityExecution': copy.deepcopy(receipt.get('priorityExecution')),
+                    'objectiveProgress': copy.deepcopy(receipt.get('objectiveProgress')),
+                    'objectiveOrderUsed': copy.deepcopy(receipt.get('objectiveOrderUsed')),
+                    'baselineExerciseDistribution': copy.deepcopy(
+                        preference_baseline.get('exerciseDistribution')),
+                    'candidateExerciseDistribution': copy.deepcopy(receipt.get('exerciseDistribution')),
+                    'baselineCoverageBalance': copy.deepcopy(
+                        preference_baseline.get('coverageBalance')),
+                    'candidateCoverageBalance': copy.deepcopy(receipt.get('coverageBalance')),
+                    'hardRequirementsChanged': [],
+                    'conditionalScope': priority_comparison['scope'],
+                }
+                if receipt.get('feasible') is True:
+                    audit = receipt.get('audit')
+                    if isinstance(audit, dict) and not audit.get('errors') and isinstance(receipt.get('sessions'), list):
+                        candidate_workouts = [*copy.deepcopy(diagnostic_existing or []),
+                            *copy.deepcopy(receipt['sessions'])]
+                        scenario.update(outcome='native_feasible_audited_candidate',
+                            auditDeltas=_audit_comparison(preference_baseline, {
+                                'workouts': candidate_workouts, 'audit': audit}),
+                            candidate={'workouts': candidate_workouts,
+                                'audit': copy.deepcopy(audit),
+                                'sourceWorkingSetBudget': copy.deepcopy(receipt.get('sourceWorkingSetBudget')),
+                                'semanticReview': 'not_run'})
+                    else:
+                        scenario['outcome'] = 'audit_missing_or_failed'
+                        priority_comparison['searchComplete'] = False
+                elif receipt.get('status') == 'infeasible':
+                    scenario['outcome'] = 'infeasible_within_supplied_menu_for_this_priority_order'
+                else:
+                    scenario['outcome'] = 'unproven'
+                    priority_comparison['searchComplete'] = False
+                priority_comparison['scenarios'].append(scenario)
 
     structural_search_verified = False
     if messages is not None and candidate_scope is None:
@@ -544,7 +827,7 @@ def diagnose_conflict_and_propose(*, requirements_id, base_draft_id, workouts=No
         # highest common feasible floor instead of asking a feasibility solver
         # to choose arbitrarily after dropping every minimum to zero.
         rank_by_path = relaxation_rank_by_path(original)
-        if (not rank_by_path and volume_minima and not duration_paths and not volume_maxima
+        if (not unresolved_preferences and not rank_by_path and volume_minima and not duration_paths and not volume_maxima
                 and len(volume_minima) == len(paths)):
             low, high = 0.0, 1.0
             best_requirements = _scaled_volume_minima(original, volume_minima, low)
@@ -616,6 +899,10 @@ def diagnose_conflict_and_propose(*, requirements_id, base_draft_id, workouts=No
             ]
             all_relaxation_scenarios = {label for label, allowed in scenario_groups
                                          if allowed and set(allowed) == set(paths)}
+        if unresolved_preferences:
+            single_path_scenarios = [(f'relax:{path}', [path]) for path in sorted(paths,
+                key=lambda path: (rank_by_path.get(path, math.inf), path))]
+            scenario_groups = single_path_scenarios + scenario_groups
         seen_scenarios = set()
         for label, allowed in scenario_groups:
             if numeric_candidates and volume_minima and set(allowed) == set(volume_minima):
@@ -697,6 +984,9 @@ def diagnose_conflict_and_propose(*, requirements_id, base_draft_id, workouts=No
                 'originalRequirementsHash': original_hash, 'libraryFingerprint': library_hash,
                 'trainingHistoryFingerprint': history_hash, 'changes': changes,
                 'requirements': candidate_requirements, 'workouts': receipt['sessions'], 'audit': receipt['audit'],
+                'priorityExecution': copy.deepcopy(receipt.get('priorityExecution')),
+                'objectiveProgress': copy.deepcopy(receipt.get('objectiveProgress')),
+                'sourceWorkingSetBudget': copy.deepcopy(receipt.get('sourceWorkingSetBudget')),
                 **({'candidateDiagnosisSource': copy.deepcopy(candidate_diagnosis_source)}
                     if candidate_diagnosis_source else {}),
                 **({'relaxationRanks': _ranked_change_paths(changes, rank_by_path)} if rank_by_path else {})})
@@ -713,7 +1003,8 @@ def diagnose_conflict_and_propose(*, requirements_id, base_draft_id, workouts=No
                 break
             return diagnosed_outcome('unresolved', 'supplied prescription menu and explored negotiable bounds',
                 reason='Independent review did not complete before any proposal was validated; no alternative or conflict is claimed.',
-                attemptedRelaxationPaths=paths, attempts=attempts, elapsedSeconds=time.monotonic() - started)
+                attemptedRelaxationPaths=paths, attempts=attempts, elapsedSeconds=time.monotonic() - started,
+                **({'baseline': preference_baseline} if preference_baseline else {}))
         if not isinstance(review, dict) or review.get('passed') is not True:
             attempts.append({'scenario': 'independent_review', **_review_failure(review),
                 'candidateChanges': copy.deepcopy(candidate['changes']),
@@ -730,6 +1021,20 @@ def diagnose_conflict_and_propose(*, requirements_id, base_draft_id, workouts=No
         candidate['independentReview'] = review
         candidate['diagnosisVersion'] = CONFLICT_RESOLUTION_VERSION
         candidate['reviewVersion'] = REVIEW_VERSION
+        if preference_baseline is not None:
+            candidate['unresolvedPreferences'] = copy.deepcopy(unresolved_preferences)
+            candidate['baselineComparison'] = {
+                'requirementChanges': copy.deepcopy(candidate['changes']),
+                'auditDeltas': _audit_comparison(preference_baseline, candidate),
+                'baselinePreview': (preference_baseline.get('independentReview') or {}).get('preview'),
+                'baselinePriorityExecution': copy.deepcopy(preference_baseline.get('priorityExecution')),
+                'candidatePriorityExecution': copy.deepcopy(candidate.get('priorityExecution')),
+                'baselineObjectiveProgress': copy.deepcopy(preference_baseline.get('objectiveProgress')),
+                'candidateObjectiveProgress': copy.deepcopy(candidate.get('objectiveProgress')),
+                'sourceWorkingSetBudget': copy.deepcopy(preference_baseline.get('sourceWorkingSetBudget')),
+                'candidateSourceWorkingSetBudget': copy.deepcopy(candidate.get('sourceWorkingSetBudget')),
+                'approvedObjectiveOrder': copy.deepcopy(requirements.get('objectiveOrder', [])),
+                'selection': 'facts_only_requires_user_judgment'}
         candidate['shortfallsAgainstOriginalRequirements'] = _shortfalls_against_original_requirements(
             candidate['audit'], approved_original, candidate['changes'])
         if allocation_conflict_fingerprint:
@@ -752,19 +1057,28 @@ def diagnose_conflict_and_propose(*, requirements_id, base_draft_id, workouts=No
         return diagnosed_outcome('alternatives_ready', 'supplied prescription menu and explicitly negotiable numerical bounds',
             requirementsId=requirements_id, originalRequirementsHash=original_hash, baseDraftId=base_draft_id,
             libraryFingerprint=library_hash, trainingHistoryFingerprint=history_hash,
-            initialConflict=_conflict_details(first, requirements),
+            **({'initialConflict': _conflict_details(first, requirements)}
+                if first.get('status') == 'infeasible' else {}),
             proposals=candidates, attempts=attempts, elapsedSeconds=elapsed,
             **({'allocationConflictFingerprint': allocation_conflict_fingerprint}
                 if allocation_conflict_fingerprint else {}),
             structuralSearchStatus=structural_status,
             searchComplete=not unexplored_axes,
             unexploredTradeoffAxes=unexplored_axes,
+            **({'baseline': preference_baseline} if preference_baseline else {}),
             approvalInstruction='No proposal changes the active requirements until its exact proposalId is explicitly approved.')
+    if preference_baseline is not None and not paths:
+        return diagnosed_outcome('unresolved', 'approved requirements and unresolved preferences',
+            reason=(('Priority tradeoff diagnostics are recorded separately; ' if priority_comparison else '')
+                + 'no explicitly authorized numeric relaxation path is available. The reviewed baseline is retained and no requirement was changed.'),
+            attempts=attempts, elapsedSeconds=elapsed, searchComplete=True,
+            baseline=preference_baseline)
     all_relaxed = (not paths or (all(any(a['scenario'] == label and a.get('status') == 'infeasible'
                                     for a in attempts) for label in all_relaxation_scenarios)
                                  and (not rank_by_path or bool(all_relaxation_scenarios))))
     all_relaxed = all_relaxed and not unexplored_axes
-    if (all_relaxed and structural_search_verified
+    if (preference_baseline is None and first.get('status') == 'infeasible'
+            and all_relaxed and structural_search_verified
             and all(a.get('status') not in ('unproven', 'unverified') for a in attempts)):
         return diagnosed_outcome('verified_conflict_within_menu', 'supplied prescription menu and modeled constraints',
             reason='The solver proved the supplied menu infeasible after exploring the explicitly negotiable numerical bounds within their supported ranges. Mandatory constraints, equipment and safety restrictions were preserved.',
@@ -774,7 +1088,8 @@ def diagnose_conflict_and_propose(*, requirements_id, base_draft_id, workouts=No
         reason='No reviewed alternative was validated within the bounded search; this does not establish that the request is impossible.',
         attemptedRelaxationPaths=paths, attempts=attempts, elapsedSeconds=elapsed,
         structuralSearchStatus=structural_status,
-        searchComplete=not unexplored_axes, unexploredTradeoffAxes=unexplored_axes)
+        searchComplete=not unexplored_axes, unexploredTradeoffAxes=unexplored_axes,
+        **({'baseline': preference_baseline} if preference_baseline else {}))
 
 
 def accept_workout_alternative(*, proposal_id, proposal_result, messages, current_requirements,

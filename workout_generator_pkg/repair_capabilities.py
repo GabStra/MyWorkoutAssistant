@@ -1,4 +1,5 @@
 """Shared statement of repair behavior supported by review and repair."""
+from collections import Counter
 from copy import deepcopy
 
 REPAIR_DIMENSIONS = {
@@ -63,6 +64,22 @@ def repair_group_dimensions(group):
         dimensions.update(repair_objective_dimensions(objective))
     return dimensions
 
+
+def assessment_repairs_dimension(assessment, dimension):
+    return any(group.get('disposition') == 'repair'
+               and dimension in repair_group_dimensions(group)
+               for group in (assessment or {}).get('groups', [])
+               if isinstance(group, dict))
+
+
+def exercise_selection_changed(before_workouts, after_workouts):
+    def occurrences(workouts):
+        return Counter(exercise.get('definition_id')
+                       for day in (workouts or [])
+                       for exercise in day.get('exercises', [])
+                       if isinstance(exercise, dict) and exercise.get('definition_id'))
+    return occurrences(before_workouts) != occurrences(after_workouts)
+
 RECOVERY_ADJUSTMENT_GUIDANCE = (
     'If recovery is inadequate, request a re-audit before changing set counts. Any proposed reduction '
     'must preserve approved per-exercise floors and weekly or per-session minimums; the audit rejects reductions '
@@ -109,8 +126,10 @@ def has_unresolved_capabilities(assessment):
                for group in (assessment or {}).get('groups', []))
 
 
-def preserve_source_selection_for_repair(previous_joint_solve=None, *, valid_carried_domain=False):
-    """Keep the submitted menu fixed unless continuing a validated solver domain."""
-    return not (valid_carried_domain is True
-                and isinstance(previous_joint_solve, dict)
-                and previous_joint_solve.get('preserveSourceSelection') is False)
+def preserve_source_selection_for_repair(previous_joint_solve=None, *, valid_carried_domain=False,
+                                         selection_repair=False):
+    """Unlock source selection only for an authorized structural selection change."""
+    return not (selection_repair is True
+                or (valid_carried_domain is True
+                    and isinstance(previous_joint_solve, dict)
+                    and previous_joint_solve.get('preserveSourceSelection') is False))

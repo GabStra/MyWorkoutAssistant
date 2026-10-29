@@ -34,6 +34,33 @@ def planning_case():
     return equipment, requirements, stored, draft
 
 
+def test_reordering_promotes_code_default_setup_for_new_transition():
+    from workout_generator_pkg.json_patching import apply_json_patch
+    from workout_generator_pkg.planning_tools import compile_coordinated_repair
+
+    equipment, requirements, stored, draft = planning_case()
+    first = draft['workouts'][0]['exercises'][0]
+    first.pop('setupSeconds')
+    second = copy.deepcopy(first)
+    first['numWorkSets'] = 4
+    second['numWorkSets'] = 2
+    second['setupSeconds'] = 30
+    draft['workouts'][0]['exercises'].append(second)
+    task = {'requirementsId': stored['requirementsId'], 'baseDraftId': 'REVISION_1',
+            'currentDraft': draft, 'requirements': requirements}
+    arguments = {'requirementsId': stored['requirementsId'], 'baseDraftId': 'REVISION_1', 'edits': {
+        'exerciseOrders': [{'workoutRef': 'WORKOUT_0', 'exerciseRefs': ['EXERCISE_1', 'EXERCISE_0']}],
+    }}
+
+    compiled, _ = compile_coordinated_repair(arguments, task, draft)
+    candidate = apply_json_patch(draft, compiled['patch'])
+    audited = audit_workout_plan(candidate, equipment, requirement_messages(stored))
+
+    assert audited['passed']
+    assert audited['submittedDraft']['workouts'][0]['exercises'][1]['setupSeconds'] == 60
+    assert audited['audit']['workouts'][0]['timing']['transitionSeconds'] == 60
+
+
 def requirement_messages(stored):
     # These unit fixtures represent an already source-reviewed requirement set.
     from workout_generator_pkg.plan_review import REQUIREMENTS_REVIEW_VERSION, _requirements_context, _hash
@@ -48,7 +75,7 @@ def requirement_messages(stored):
             {"role": "user", "content": "CONFIRM REQUIREMENTS"}]
 
 
-def test_requirements_approval_uses_current_decisions_before_workout_reaudit():
+def test_requirements_approval_uses_its_reviewed_snapshot_after_new_decision():
     from workout_generator_pkg.planning_tools import requirements_approved
 
     _, _, stored, _ = planning_case()
@@ -60,7 +87,111 @@ def test_requirements_approval_uses_current_decisions_before_workout_reaudit():
             'passed': True, 'decisionReview': {'passed': True}, 'decisions': {
                 'DECISION_0': {'topic': 'Numerical objective order',
                     'choice': 'Distribution then soft movement balance.', 'sourceReferences': ['SOURCE_0']}}})}])
-    assert not requirements_approved(messages)
+    assert requirements_approved(messages)
+
+
+def test_empty_requirement_refresh_after_consumed_decision_keeps_approved_base():
+    from workout_generator_pkg.planning_tools import active_requirement_result
+
+    _, _, stored, _ = planning_case()
+    messages = requirement_messages(stored)
+    stored = json.loads(messages[-3]['content'])
+    draft = {'requirementsId': stored['requirementsId'], 'workouts': []}
+    messages.extend([
+        {'role': 'assistant', 'tool_calls': [{'id': 'audit', 'function': {
+            'name': 'audit_workout_plan', 'arguments': '{}'}}]},
+        {'role': 'tool', 'tool_call_id': 'audit', 'content': json.dumps({
+            'passed': False, 'requirementsId': stored['requirementsId'], 'currentDraftId': 'REVISION_0',
+            'currentDraft': draft, 'submittedDraft': draft, 'libraryFingerprint': 'LIB',
+            'historyFingerprint': None, 'review': {'findings': []}})},
+        {'role': 'user', 'content': 'Accept the disclosed soft preference for this exact candidate.'},
+    ])
+    boundary = len(messages) - 1
+    messages.extend([
+        {'role': 'assistant', 'tool_calls': [{'id': 'decision', 'function': {
+            'name': 'record_planning_decisions', 'arguments': '{}'}}]},
+        {'role': 'tool', 'tool_call_id': 'decision', 'content': json.dumps({
+            'passed': True, 'decisionReview': {'passed': True, 'instructionBoundary': boundary}})},
+        {'role': 'assistant', 'tool_calls': [{'id': 'refresh', 'function': {
+            'name': 'set_workout_requirements', 'arguments': json.dumps({
+                'baseRequirementsId': 'REQUIREMENTS_REJECTED', 'updates': {}})}}]},
+    ])
+    refreshed = copy.deepcopy(stored)
+    refreshed.update(requirementsId='REQUIREMENTS_NOOP', baseRequirementsId='REQUIREMENTS_REJECTED',
+        passed=False, sourceReview={**stored['sourceReview'], 'passed': False})
+    messages.append({'role': 'tool', 'tool_call_id': 'refresh', 'content': json.dumps(refreshed)})
+
+    recovered_index, recovered = active_requirement_result(messages)
+    assert recovered_index < len(messages) - 2
+    assert recovered['requirementsId'] == stored['requirementsId']
+
+    changed = copy.deepcopy(refreshed)
+    changed['requirements']['auditTargets']['weeklyEffectiveSets']['chest']['minimum'] += 1
+    messages[-1]['content'] = json.dumps(changed)
+    candidate_index, candidate = active_requirement_result(messages)
+    assert candidate_index == len(messages) - 1
+    assert candidate['requirementsId'] == 'REQUIREMENTS_NOOP'
+def test_duration_balance_tolerance_is_optional_approved_requirement_and_respects_hard_cap():
+    from workout_generator_pkg.planning_tools import workout_requirements_tool
+
+    equipment, arguments, _, _ = planning_case()
+    properties = workout_requirements_tool(equipment)['function']['parameters']['properties']
+    schema = properties['durationBalanceToleranceSeconds']
+    assert schema['type'] == 'integer' and schema['minimum'] == 0
+    assert 'explicit numeric tolerance' in schema['description']
+
+    arguments['objectiveOrder'] = ['duration_balance', 'distribution']
+    arguments['durationBalanceToleranceSeconds'] = 300
+    stored = set_workout_requirements(arguments, [{'role': 'user', 'content':
+        'Prefer similar session durations, allowing up to a 5-minute difference.'}], equipment)
+    assert stored['requirements']['durationBalanceToleranceSeconds'] == 300
+    assert 'spreads up to **5 minutes** count as equally balanced' in stored['requirementsPreview']
+    assert 'this is not a hard session limit' in stored['requirementsPreview']
+
+    update_schema = workout_requirements_tool(equipment, source_checked_unconfirmed_messages(stored))
+    update_properties = update_schema['function']['parameters']['properties']['updates']['properties']
+    assert update_properties['durationBalanceToleranceSeconds']['minimum'] == 0
+    assert 'durationBalanceToleranceSeconds' not in set_workout_requirements(
+        {key: value for key, value in planning_case()[1].items()},
+        [{'role': 'user', 'content': 'Plan chest sets.'}], equipment)['requirements']
+
+    over_limit = copy.deepcopy(arguments)
+    over_limit['durationBalanceToleranceSeconds'] = 1001
+    with pytest.raises(PlanningInputError) as error:
+        set_workout_requirements(over_limit, [{'role': 'user', 'content': 'Plan chest sets.'}], equipment)
+    assert error.value.code == 'duration_balance_tolerance_exceeds_session_limit'
+
+    orphaned = copy.deepcopy(arguments)
+    orphaned['objectiveOrder'] = ['distribution']
+    with pytest.raises(PlanningInputError) as error:
+        set_workout_requirements(orphaned, [{'role': 'user', 'content': 'Plan chest sets.'}], equipment)
+    assert error.value.code == 'duration_balance_tolerance_without_objective'
+
+
+def test_exercise_distribution_is_explicit_ordered_priority_and_rendered_for_approval():
+    from workout_generator_pkg.planning_tools import workout_requirements_tool
+
+    equipment, requirements, _, _ = planning_case()
+    requirements['objectiveOrder'] = [
+        'demand_distribution', 'duration_balance', 'source_balance', 'exercise_distribution',
+        'workload_economy', 'distribution']
+    source = ('Prioritize demand reduction, similar session durations, movement balance, qualified exercise-family '
+        'distribution, lower total weekly working sets, then session muscle-set distribution.')
+    stored = set_workout_requirements(requirements, [{'role': 'user', 'content': source}], equipment)
+
+    objective_schema = workout_requirements_tool(equipment)['function']['parameters']['properties']['objectiveOrder']
+    assert 'exercise_distribution' in objective_schema['items']['enum']
+    assert 'workload_economy' in objective_schema['items']['enum']
+    assert 'unknown pools are omitted rather than treated as diverse' in objective_schema['description']
+    assert 'objectiveOrder is authoritative' in objective_schema['description']
+    assert 'The approved policy order is' not in objective_schema['description']
+    assert 'Development intent never inserts extra-exposure objectives' in objective_schema['description']
+    assert 'app owns progression and load calibration' in objective_schema['description']
+    assert stored['requirements']['objectiveOrder'] == requirements['objectiveOrder']
+    assert ('Approved optimization order: reduce known per-session demand peaks, then balance estimated '
+            'session durations, then reduce source-backed movement set-count differences, then spread exposure '
+            'across qualified exercises, then minimize physical working sets across the week, then reduce '
+            'muscle-set concentration across sessions.') in stored['requirementsPreview']
 
 
 def approved_messages(stored, result):
@@ -124,6 +255,33 @@ def test_requirements_tool_uses_structured_initial_extraction_and_sparse_updates
     assert not requirements_approved(messages, updated)
     assert '`/auditTargets/weeklyEffectiveSets/chest/maximum`' in updated['requirementsPreview']
     assert '`/workingSetRIR`' in updated['requirementsPreview']
+
+
+def test_open_ended_volume_targets_render_without_a_ceiling_or_raise_permission():
+    from workout_generator_pkg.planning_tools import workout_requirements_tool
+    from workout_generator_pkg.requirement_accounting import validate_relaxation_permissions
+
+    equipment, requirements, _, _ = planning_case()
+    requirements['auditTargets']['weeklyEffectiveSets']['chest']['maximum'] = None
+    requirements['auditTargets']['perSessionEffectiveSets']['chest']['maximum'] = None
+    stored = set_workout_requirements(requirements, [{'role': 'user', 'content': 'At least 5 chest sets.'}], equipment)
+    assert '≥ 5' in stored['requirementsPreview']
+
+    messages = requirement_messages(stored)
+    update_schema = workout_requirements_tool(equipment, messages)['function']['parameters']
+    permission_paths = update_schema['properties']['updates']['properties']['relaxationPermissions']['items']['properties']['path']['enum']
+    assert '/auditTargets/weeklyEffectiveSets/chest/maximum' not in permission_paths
+    assert '/auditTargets/weeklyEffectiveSets/chest/minimum' in permission_paths
+    with pytest.raises(ValueError, match='does not match a supported numeric target'):
+        validate_relaxation_permissions({**stored['requirements'], 'relaxationPermissions': [
+            {'path': '/auditTargets/weeklyEffectiveSets/chest/maximum', 'direction': 'raise_maximum'}]})
+
+    from workout_generator_pkg.planning_tools import audit_workout_plan
+    _, _, _, draft = planning_case()
+    draft['requirementsId'] = stored['requirementsId']
+    result = audit_workout_plan(draft, equipment, messages)
+    assert result['passed']
+    assert '≥ 5' in result['preview']
 
 
 def test_fresh_requirements_include_the_code_owned_two_set_floor_and_updates_preserve_it():
@@ -207,6 +365,27 @@ def test_requirements_distinguish_development_from_inclusion_without_inventing_a
     assert 'development emphasis' in preview and 'qualitative emphasis, not an added numeric minimum' in preview
     assert 'inclusion' in preview
     assert 'at least as much exposure' in preview and 'not a fixed ratio or hard minimum' in preview
+    assert 'objectiveOrder' not in stored['requirements']
+
+
+def test_development_floors_are_explicit_and_policy_does_not_infer_extra_dose():
+    from workout_generator_pkg.programming_guidelines import GUIDELINE_POLICY
+    from workout_generator_pkg.requirement_accounting import ACCOUNTING_SCHEMA
+
+    equipment, requirements, _, _ = planning_case()
+    requirements['sessionsPerWeek'] = 3
+    requirements['requiredCoverage'] = [{'key': 'lateral_delt', 'description': 'Lateral delts',
+        'scope': 'weekly', 'intent': 'development', 'minimumWeeklySets': 6, 'minimumSessions': 2}]
+    stored = set_workout_requirements(requirements,
+        [{'role': 'user', 'content': 'Program at least six qualified lateral-delt sets over two sessions.'}], equipment)
+
+    preview = stored['requirementsPreview']
+    assert 'at least 6 qualified working sets weekly' in preview
+    assert 'at least 2 weekly training sessions' in preview
+    assert 'relative allocation of the approved weekly set budget' not in GUIDELINE_POLICY['goalAuthority']
+    assert 'extra-set bonus' in GUIDELINE_POLICY['goalAuthority']
+    assert 'only when explicitly listed in the authoritative `objectiveOrder`' in GUIDELINE_POLICY['goalAuthority']
+    assert 'workload_economy preference minimizes physical weekly working sets' in ACCOUNTING_SCHEMA['description']
 
 
 def test_scoped_requirement_update_can_clear_nested_optional_target_and_rejects_stale_base():
@@ -558,6 +737,8 @@ def test_contract_and_execution_failures_use_same_error_envelope():
     assert unbound['errors'][0]['exerciseId'] is None
     execution = planning_tool_failure("audit_workout_plan", RuntimeError("unexpected failure"), arguments)
     assert execution["errors"][0]["code"] == "tool_execution_failed"
+    assert execution["errors"][0]["owner"] == "generator"
+    assert execution["executionFailure"] is True
     assert "do not change the draft" in execution["errors"][0]["repair"]
 
 
@@ -649,7 +830,7 @@ def test_loaded_exercises_without_any_targets_enable_native_calibration(exercise
     assert 'targetSetPrescriptions' not in plan['exercises'][0]
     audited = audit_workout_plan(draft, equipment, requirement_messages(stored))
     assert audited['planIndex']['exercises'][0]['requiresLoadCalibration'] is True
-    assert audited['audit']['workouts'][0]['timing']['calibrationSeconds'] == 0
+    assert audited['audit']['workouts'][0]['timing']['calibrationSeconds'] == 30
 
 
 @pytest.mark.parametrize('indexed', [False, True])
@@ -1032,3 +1213,73 @@ def test_app_owned_progression_needs_no_generator_method_or_algorithm():
     actual = domain_ops._materialize_exercise_definition(plan['exercises'][0])
     assert actual['progressionMode'] == 'AUTO_REGULATION'
     assert (actual['minReps'], actual['maxReps']) == original_reps
+
+
+def test_label_only_repair_schema_cannot_change_exercise_allocation():
+    from jsonschema import validate, ValidationError
+    from workout_generator_pkg.planning_tools import coordinated_repair_tool, compile_coordinated_repair
+    import pytest
+
+    _, requirements, stored, draft = planning_case()
+    task = {'requirementsId': stored['requirementsId'], 'baseDraftId': 'REVISION_1',
+        'currentDraft': draft, 'requirements': requirements,
+        'findingsAssessment': {'groups': [{'disposition': 'repair', 'findingIndexes': [0],
+            'repairDimensions': ['session_labels'], 'repairObjectives': []}]}}
+    schema = coordinated_repair_tool(task)['function']['parameters']
+    arguments = {'requirementsId': stored['requirementsId'], 'baseDraftId': 'REVISION_1',
+        'addressedFindingIndexes': [0], 'edits': {'workoutUpdates': [
+            {'workoutRef': 'WORKOUT_0', 'setFields': {'description': 'Workout'}}]}}
+    validate(arguments, schema)
+    compiled, _ = compile_coordinated_repair(arguments, task, draft)
+    assert all(operation['path'].endswith('/description') for operation in compiled['patch'])
+    arguments['edits']['exerciseUpdates'] = [{'exerciseRef': 'EXERCISE_0',
+        'setFields': {'numWorkSets': 6}}]
+    with pytest.raises(ValidationError):
+        validate(arguments, schema)
+    arguments['edits'].pop('exerciseUpdates')
+    arguments['edits']['workoutUpdates'][0]['setFields']['timesCompletedInAWeek'] = 2
+    with pytest.raises(ValidationError):
+        validate(arguments, schema)
+
+
+def test_existing_draft_execution_repair_schema_uses_stable_fields_and_order_refs():
+    from jsonschema import validate
+    from workout_generator_pkg.planning_tools import coordinated_repair_tool
+
+    _, requirements, stored, draft = planning_case()
+    task = {'requirementsId': stored['requirementsId'], 'baseDraftId': 'REVISION_1',
+        'currentDraft': draft, 'requirements': requirements}
+    schema = coordinated_repair_tool(task)['function']['parameters']
+    assert 'patch' not in schema['properties']
+    edits_schema = schema['properties']['edits']
+    assert {'exerciseUpdates', 'exerciseOrders'} <= set(edits_schema['properties'])
+    arguments = {'requirementsId': stored['requirementsId'], 'baseDraftId': 'REVISION_1', 'edits': {
+        'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0', 'setFields': {'generateWarmUpSets': False}}],
+        'exerciseOrders': [{'workoutRef': 'WORKOUT_0', 'exerciseRefs': ['EXERCISE_1', 'EXERCISE_0']}],
+    }}
+    validate(arguments, schema)
+
+
+def test_typed_replacement_schema_stays_compact_for_per_occurrence_allowlists():
+    from jsonschema import validate
+    from workout_generator_pkg.planning_tools import coordinated_repair_tool
+
+    _, requirements, stored, draft = planning_case()
+    task = {'requirementsId': stored['requirementsId'], 'baseDraftId': 'REVISION_1',
+        'currentDraft': draft, 'requirements': requirements,
+        'replacementDefinitionReferences': ['LIBRARY_90', 'LIBRARY_91'],
+        'replacementDefinitionReferencesByExercise': {
+            'EXERCISE_0': ['LIBRARY_90'], 'EXERCISE_1': ['LIBRARY_91']}}
+    schema = coordinated_repair_tool(task)['function']['parameters']
+    update_items = schema['properties']['edits']['properties']['exerciseUpdates']['items']
+    assert 'oneOf' not in update_items
+    valid = {'requirementsId': stored['requirementsId'], 'baseDraftId': 'REVISION_1',
+        'edits': {'exerciseUpdates': [{'exerciseRef': 'EXERCISE_0',
+            'setFields': {'definition_id': 'LIBRARY_90'}}]}}
+    validate(valid, schema)
+    invalid = copy.deepcopy(valid)
+    invalid['edits']['exerciseUpdates'][0]['setFields']['definition_id'] = 'LIBRARY_91'
+    # The compact provider schema exposes the shared replacement catalog. The
+    # compiler owns the occurrence-specific allowlist and rejects this before
+    # applying any candidate mutation.
+    validate(invalid, schema)

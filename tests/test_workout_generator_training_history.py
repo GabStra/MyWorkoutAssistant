@@ -40,7 +40,8 @@ def test_batch_load_validation_resolves_evidence_once_without_weakening_checks(m
     reads = []
     original = training_history.json.loads
     def read(value):
-        reads.append(1)
+        if value == messages[1]['content']:
+            reads.append(1)
         return original(value)
     monkeypatch.setattr(training_history.json, 'loads', read)
     monkeypatch.setattr(history, '_load_concerns', lambda item: [{'code': 'recorded_load_exceeds_current_capacity'}] if item else [])
@@ -75,6 +76,157 @@ def test_highest_comparable_load_uses_wider_history_without_treating_latest_as_m
     assert refreshed['exercises'][0]['loadHeadroom']['highestObservedComparableLoad']['loadKg']==10
     legacy['historyFingerprint']='stale'
     assert history.refresh_evidence_metadata(legacy,equipment)==legacy
+
+
+def test_refresh_retained_history_adds_current_setup_metadata_without_rewriting_pages():
+    equipment, _, _, backup = history_case()
+    backup['SetHistories'][0].update(equipmentIdSnapshot='vest', equipmentTypeSnapshot='WEIGHTVEST')
+    backup['SetHistories'][0]['setData'].update(actualReps=6, additionalWeight=18)
+    history = TrainingHistory(backup)
+    retained = history._exact_evidence({'definition_ids': ['LIBRARY_0']}, equipment)
+    item = retained['exercises'][0]
+    item['candidateContext'].pop('equipmentId')
+    item.pop('loadSuitabilityConcerns', None)
+    item['loadSuitabilityConcerns'] = [{'code': 'related_history_only', 'message': 'keep this'}]
+    item['loadHeadroom'].pop('highestObservedComparableLoad')
+    saved_pages = copy.deepcopy((item['sessions'], item['otherSetupSessions']))
+    before = copy.deepcopy(retained)
+
+    refreshed = history.refresh_evidence_metadata(retained, equipment)
+    result = refreshed['exercises'][0]
+
+    assert retained == before
+    assert (result['sessions'], result['otherSetupSessions']) == saved_pages
+    assert result['candidateContext']['equipmentId'] is None
+    assert [concern['code'] for concern in result['loadSuitabilityConcerns']] == [
+        'related_history_only', 'recorded_loaded_setup_requires_reassessment']
+    assert result['loadSuitabilityConcerns'][0] == {'code': 'related_history_only', 'message': 'keep this'}
+    loaded = result['loadSuitabilityConcerns'][1]['records'][0]
+    assert loaded['equipmentId'] == 'vest' and loaded['loadKg'] == 18
+    assert loaded['equipmentContext']['source'] == 'set_snapshot'
+    assert result['loadHeadroom']['latestSessionHeaviestLoadKg'] is None
+    assert result['loadHeadroom']['highestObservedComparableLoad'] is None
+
+
+def test_refresh_retained_history_does_not_treat_equipped_bodyweight_as_fixed():
+    equipment, _, _, backup = history_case()
+    vest = {'id': 'vest', 'type': 'WEIGHTVEST', 'name': 'Vest', 'availableWeights': [{'weight': 18}]}
+    equipment['equipments'] = [copy.deepcopy(vest)]
+    equipment['exerciseDefinitions'][0]['equipmentId'] = 'vest'
+    backup['WorkoutStore']['equipments'] = [copy.deepcopy(vest)]
+    backup['WorkoutStore']['exerciseDefinitions'][0]['equipmentId'] = 'vest'
+    backup['WorkoutStore']['workouts'][0]['workoutComponents'][0]['equipmentId'] = 'vest'
+    backup['SetHistories'][0].update(equipmentIdSnapshot='vest', equipmentTypeSnapshot='WEIGHTVEST')
+    backup['SetHistories'][0]['setData'].update(actualReps=6, additionalWeight=18)
+    history = TrainingHistory(backup)
+    retained = history._exact_evidence({'definition_ids': ['LIBRARY_0']}, equipment)
+    item = retained['exercises'][0]
+    item['candidateContext'].pop('equipmentId')
+    item['loadSuitabilityConcerns'] = [{'code': 'recorded_loaded_setup_requires_reassessment'}]
+    item['sessions'].clear()
+    item['otherSetupSessions'].clear()
+    saved_pages = copy.deepcopy((item['sessions'], item['otherSetupSessions']))
+    before = copy.deepcopy(retained)
+
+    refreshed = history.refresh_evidence_metadata(retained, equipment)
+    result = refreshed['exercises'][0]
+
+    assert retained == before
+    assert (result['sessions'], result['otherSetupSessions']) == saved_pages
+    assert result['candidateContext']['equipmentId'] == 'vest'
+    assert not any(concern['code'] == 'recorded_loaded_setup_requires_reassessment'
+                   for concern in result['loadSuitabilityConcerns'])
+
+
+def test_validator_refreshes_old_history_and_does_not_mutate_reused_evidence():
+    equipment, _, _, backup = history_case()
+    backup['WorkoutHistories'].append({'id': 'loaded-session', 'workoutId': 'version1',
+        'isDone': True, 'date': '2026-10-02'})
+    backup['SetHistories'].append({'id': 'loaded-set', 'exerciseId': 'occurrence',
+        'workoutHistoryId': 'loaded-session', 'equipmentIdSnapshot': 'vest',
+        'equipmentTypeSnapshot': 'WEIGHTVEST',
+        'setData': {'type': 'BodyWeightSetData', 'actualReps': 6, 'additionalWeight': 18,
+                    'relativeBodyWeightInKg': 49}})
+    history = TrainingHistory(backup)
+    old_evidence = history._exact_evidence({'definition_ids': ['LIBRARY_0']}, equipment)
+    old_item = old_evidence['exercises'][0]
+    old_item['candidateContext'].pop('equipmentId')
+    old_item['loadSuitabilityConcerns'] = []
+    history_call = {'role': 'assistant', 'tool_calls': [{'id': 'history', 'function': {
+        'name': 'get_training_evidence', 'arguments': '{"definition_ids":["LIBRARY_0"]}'}}]}
+    messages = [history_call, {'role': 'tool', 'tool_call_id': 'history',
+        'content': json.dumps(old_evidence)}]
+    before_messages = copy.deepcopy(messages)
+    plan = {'workouts': [{'exerciseIds': ['candidate']}], 'workingSetRIR': {'maximum': 0},
+        'exercises': [{'id': 'candidate', 'libraryDefinitionId': 'press', 'exerciseType': 'BODY_WEIGHT',
+            'equipmentId': None, 'minReps': 6, 'maxReps': 8, 'targetSetPrescriptions': []}]}
+    validate = history.load_suitability_validator(messages, equipment)
+
+    first = validate(plan)
+    second = validate(plan)
+
+    assert first == second
+    assert messages == before_messages
+    assert first[0]['code'] == 'training_load_suitability_unresolved'
+    codes = {concern['code'] for concern in first[0]['concerns']}
+    assert codes == {'historical_reps_exceed_prescription', 'recorded_loaded_setup_requires_reassessment'}
+    setup = next(concern for concern in first[0]['concerns']
+                 if concern['code'] == 'recorded_loaded_setup_requires_reassessment')
+    assert setup['records'][0]['equipmentContext']['source'] == 'set_snapshot'
+
+
+@pytest.mark.parametrize('min_reps', [5, 6, 7, 12])
+@pytest.mark.parametrize('change,blocked', [
+    ('recorded_vest', True), ('accounting_changed', True),
+    ('inferred_equipment', False), ('different_movement', False),
+    ('below_target_reps', True), ('newer_unweighted', False),
+    ('loadable_candidate', False), ('older_page', True),
+])
+def test_recorded_loaded_setup_evidence_is_independent_of_proposed_reps(change, blocked, min_reps):
+    equipment, _, _, backup = history_case()
+    record = backup['SetHistories'][0]
+    record.update(equipmentIdSnapshot='vest', equipmentTypeSnapshot='WEIGHTVEST')
+    record['setData'].update(actualReps=6, additionalWeight=18,
+        bodyWeightPercentageSnapshot=100 if change == 'accounting_changed' else 65)
+    if change == 'inferred_equipment':
+        record.pop('equipmentIdSnapshot')
+        record.pop('equipmentTypeSnapshot')
+        backup['WorkoutStore']['workouts'][0]['workoutComponents'][0]['equipmentId'] = 'vest'
+    if change == 'different_movement':
+        backup['WorkoutStore']['exerciseDefinitions'][0]['name'] = 'Different movement'
+    if change == 'below_target_reps':
+        record['setData']['actualReps'] = 3
+    if change == 'newer_unweighted':
+        backup['WorkoutHistories'].append({'id': 'newer', 'workoutId': 'version1',
+            'isDone': True, 'date': '2026-10-02'})
+        backup['SetHistories'].append({'id': 'newer-set', 'exerciseId': 'occurrence',
+            'workoutHistoryId': 'newer', 'setData': {'type': 'BodyWeightSetData',
+                'actualReps': 6, 'additionalWeight': 0, 'relativeBodyWeightInKg': 49}})
+    history = TrainingHistory(backup)
+    evidence = history.evidence({'definition_ids': ['LIBRARY_0'],
+        'session_offset': 1 if change == 'older_page' else 0}, equipment)
+    messages = [{'role': 'assistant', 'tool_calls': [{'id': 'evidence',
+        'function': {'name': 'get_training_evidence'}}]},
+        {'role': 'tool', 'tool_call_id': 'evidence', 'content': json.dumps(evidence)}]
+    exercise = {'id': 'candidate', 'libraryDefinitionId': 'press', 'exerciseType': 'BODY_WEIGHT',
+        'equipmentId': 'vest' if change == 'loadable_candidate' else None,
+        'requiresLoadCalibration': True, 'minReps': min_reps, 'maxReps': max(10, min_reps)}
+    errors = history.load_suitability_errors({'exercises': [exercise]}, messages, equipment)
+    assert bool(errors) is blocked
+    concerns = evidence['exercises'][0]['loadSuitabilityConcerns']
+    assert any(concern['code'] == 'recorded_loaded_setup_requires_reassessment' for concern in concerns) is (
+        change not in ('inferred_equipment', 'different_movement', 'newer_unweighted'))
+    if blocked:
+        assert errors[0]['repairStage'] == 'candidate_reassessment'
+        concern = errors[0]['concerns'][0]
+        assert concern['code'] == 'recorded_loaded_setup_requires_reassessment'
+        assert concern['records'][0]['loadKg'] == 18
+        assert concern['records'][0]['sessionDate'] == '2026-10-01'
+        assert concern['records'][0]['equipmentContext']['source'] == 'set_snapshot'
+        assert 'setHistoryId' not in concern['records'][0]
+        assert 'proposed minimum reps' not in concern['message']
+        assert 'targetSetPrescriptions' not in exercise
+    assert evidence['exercises'][0]['loadHeadroom']['latestSessionHeaviestLoadKg'] != 18
 
 
 def test_cancelled_matching_does_not_block_new_turns_or_publish_late_cache_results(monkeypatch):

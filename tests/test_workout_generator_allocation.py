@@ -27,6 +27,65 @@ def test_optional_preparation_checks_feasibility_with_a_finite_deadline(monkeypa
     assert 5 <= result['sessions'][0]['exercises'][0]['numWorkSets'] <= 6
 
 
+def test_prepared_milp_can_meet_minimum_only_target_above_old_range():
+    from workout_generator_pkg.allocation import allocate_prepared_sets
+
+    sessions = [{'timesCompletedInAWeek': 1, 'exercises': [
+        {'definition_id': f'LIBRARY_{index}', 'numWorkSets': 1, 'superset': None,
+         'allocationBounds': {'minimum': 1, 'maximum': 20}}
+        for index in range(2)]}]
+    candidates = {f'LIBRARY_{index}': {'creditsPerWorkingSet': {'chest': {'direct': 1}}}
+                  for index in range(2)}
+    requirements = {'auditTargets': {'weeklyEffectiveSets': {
+        'chest': {'minimum': 21, 'maximum': None}}, 'perSessionEffectiveSets': {}}}
+
+    result = allocate_prepared_sets(sessions, candidates, requirements, select_movements=True)
+
+    assert result['feasible'], result
+    assert sum(item['numWorkSets'] for item in result['sessions'][0]['exercises']) == 21
+
+
+def test_prepared_selection_respects_shared_source_set_budget():
+    from workout_generator_pkg.allocation import allocate_prepared_sets
+    sessions = [{'timesCompletedInAWeek': 1, 'exercises': [{
+        'definition_id': 'LIBRARY_0', 'numWorkSets': 1, 'superset': None,
+        'allocationBounds': {'minimum': 1, 'maximum': 20}}]}]
+    candidates = {'LIBRARY_0': {'creditsPerWorkingSet': {'chest': {'direct': 1}}}}
+    requirements = {'auditTargets': {'weeklyEffectiveSets': {'chest': {
+        'minimum': 5, 'maximum': 6}}}}
+    assert not allocate_prepared_sets(sessions, candidates, requirements,
+        select_movements=True, source_working_set_budget={
+            'source': 'prior_feasible_preparation', 'variableWeeklyWorkingSets': 4,
+            'preparationId': 'prior'})['feasible']
+    result = allocate_prepared_sets(sessions, candidates, requirements,
+        select_movements=True, source_working_set_budget={
+            'source': 'prior_feasible_preparation', 'variableWeeklyWorkingSets': 5,
+            'preparationId': 'prior'})
+    assert result['feasible']
+    assert result['sessions'][0]['exercises'][0]['numWorkSets'] == 5
+    assert result['sourceWorkingSetBudget']['preparationId'] == 'prior'
+
+
+def test_prepared_menu_cap_counts_fresh_sets_not_fixed_existing_workouts():
+    from workout_generator_pkg.allocation import allocate_prepared_sets
+    equipment, requirements, _, draft = planning_case()
+    requirements['auditTargets'].pop('perSessionEffectiveSets')
+    existing = {'name': draft['name'], 'workouts': copy.deepcopy(draft['workouts'])}
+    sessions = [{'timesCompletedInAWeek': 1, 'exercises': [{
+        'definition_id': 'LIBRARY_0', 'numWorkSets': 1, 'superset': None,
+        'allocationBounds': {'minimum': 1, 'maximum': 10}}]}]
+    candidates = {'LIBRARY_0': {'creditsPerWorkingSet': {'chest': {'direct': 1}}}}
+
+    result = allocate_prepared_sets(sessions, candidates, requirements, existing, equipment,
+        select_movements=True, source_working_set_budget={
+            'source': 'prior_feasible_preparation', 'variableWeeklyWorkingSets': 5,
+            'preparationId': 'prior'})
+
+    assert result['feasible'], result
+    assert result['sessions'][0]['exercises'][0]['numWorkSets'] == 1
+    assert result['sourceWorkingSetBudget']['variableWeeklyWorkingSets'] == 5
+
+
 @pytest.mark.parametrize('frequency,glute_credit,glute_maximum,expected_minimum', [
     (1, 1, 18, 12), (3, 1, 18, 12), (1, .5, 18, 5), (1, 1, 30, 0),
 ])
@@ -154,6 +213,35 @@ def test_allocation_returns_minimal_patch_and_exact_numeric_summary():
     assert result["submittedDraft"]["workouts"][0]["exercises"][0]["numWorkSets"] == 3
 
 
+def test_explicit_preservation_relocation_uses_current_audited_workouts_as_dose_reference(monkeypatch):
+    from workout_generator_pkg import allocation, joint_planning
+    from workout_generator_pkg.planning_tools import set_workout_requirements
+
+    equipment, requirements, _, draft = planning_case()
+    requirements['objectiveOrder'] = ['preservation']
+    stored = set_workout_requirements(requirements, [])
+    draft['requirementsId'] = stored['requirementsId']
+    messages, audited = _audited_messages(equipment, stored, draft)
+    assert audited['passed'] is True
+
+    observed = {}
+    def solve(workouts, *args, **kwargs):
+        observed['reference'] = kwargs['reviewed_baseline_workouts']
+        return {'feasible': True, 'sessions': copy.deepcopy(workouts), 'audit': {}}
+    monkeypatch.setattr(joint_planning, 'solve_prescribed_week', solve)
+
+    allocation.allocate_workout_sets({
+        'requirementsId': stored['requirementsId'],
+        'baseDraftId': audited['currentDraftId'],
+        'reallocateAcrossSessions': True,
+    }, equipment, messages)
+
+    assert [[item['numWorkSets'] for item in day['exercises']]
+            for day in observed['reference']] == [
+        [item['numWorkSets'] for item in day['exercises']]
+        for day in draft['workouts']]
+
+
 def test_soft_count_preferences_steer_design_without_requiring_a_numeric_failure():
     from workout_generator_pkg.planning_tools import set_workout_requirements
     equipment, requirements, _, draft = planning_case()
@@ -215,11 +303,14 @@ def test_automatic_allocation_balances_only_before_a_preview_is_shown(monkeypatc
     assert repaired['passed'] is not shown_preview
     assert calls and not any(calls)
     assert repaired['automaticAllocation']['objective'] == 'joint_prescriptions'
-    assert repaired['submittedDraft']['workouts'][0]['exercises'][0]['numWorkSets'] == (7 if shown_preview else 6)
+    assert repaired['automaticAllocation']['reviewedDoseReferenceAvailable'] is False
     if shown_preview:
+        assert repaired['submittedDraft']['workouts'][0]['exercises'][0]['numWorkSets'] == 7
         assert repaired['automaticAllocation']['application'] == 'proposal'
-        assert any(patch['path'].endswith('/numWorkSets') and patch['value'] == 6
+        assert any(patch['path'].endswith('/numWorkSets')
                    for patch in repaired['automaticAllocation']['patch'])
+    else:
+        assert repaired['audit']['weeklyVolume']['chest']['effective'] == 5
     assert draft['workouts'][0]['exercises'][0]['numWorkSets'] == 7
 
 
@@ -297,24 +388,108 @@ def test_cached_joint_allocation_is_recomputed_when_solver_policy_changes(monkey
     assert repaired['automaticAllocation']['problemFingerprint'] == 'fresh'
 
 
-def test_automatic_allocation_repairs_numeric_counts_without_waiving_setup_findings():
+def test_automatic_allocation_repairs_numeric_counts_with_code_owned_setup_estimate():
     from workout_generator_pkg.allocation import auto_allocate_workout
     equipment, _, stored, draft = planning_case()
     first = draft['workouts'][0]['exercises'][0]
-    first.update(numWorkSets=1, allocationBounds={'minimum': 1, 'maximum': 5})
+    first.update(numWorkSets=2, allocationBounds={'minimum': 2, 'maximum': 5})
     second = copy.deepcopy(first)
     second.update(numWorkSets=2)
     second.pop('allocationBounds')
     second.pop('setupSeconds')
     draft['workouts'][0]['exercises'].append(second)
     messages, result = _audited_messages(equipment, stored, draft)
-    assert {error['code'] for error in result['errors']} >= {'volume_below_target', 'setup_time_required'}
+    assert {error['code'] for error in result['errors']} >= {'volume_below_target'}
+    assert result['submittedDraft']['workouts'][0]['exercises'][1]['setupSeconds'] == 60
     repaired = auto_allocate_workout(result, equipment, messages)
     assert repaired['automaticAllocation']['feasible']
     assert repaired['audit']['weeklyVolume']['chest']['effective'] == 5
-    assert repaired['passed']  # The redundant occurrence can be omitted rather than inventing its setup.
+    assert repaired['passed']
     assert all('setupSeconds' in item for item in repaired['submittedDraft']['workouts'][0]['exercises'][1:])
-    assert [item['numWorkSets'] for item in result['submittedDraft']['workouts'][0]['exercises']] == [1, 2]
+    assert [item['numWorkSets'] for item in result['submittedDraft']['workouts'][0]['exercises']] == [2, 2]
+
+
+def test_automatic_allocation_runs_joint_solver_for_only_coverage_floor_error(monkeypatch):
+    from workout_generator_pkg import allocation, joint_planning
+    from workout_generator_pkg.planning_tools import set_workout_requirements
+
+    equipment, requirements, _, draft = planning_case()
+    requirements['requiredCoverage'] = [{
+        'key': 'upper_push', 'scope': 'weekly', 'intent': 'development',
+        'minimumWeeklySets': 6, 'minimumSessions': 1,
+    }]
+    stored = set_workout_requirements(requirements, [{'role': 'user', 'content':
+        'At least six upper-push working sets in one weekly session.'}], equipment)
+    draft['requirementsId'] = stored['requirementsId']
+    draft['workouts'][0]['exercises'][0]['satisfiesCoverage'] = ['upper_push']
+    messages, result = _audited_messages(equipment, stored, draft)
+    assert [error['code'] for error in result['errors']] == [
+        'required_coverage_weekly_sets_below_minimum']
+
+    calls = []
+    def reject_for_test(*args, **kwargs):
+        calls.append(kwargs)
+        return {'feasible': False, 'status': 'infeasible', 'instruction': 'No test candidate.'}
+    monkeypatch.setattr(joint_planning, 'solve_prescribed_week', reject_for_test)
+
+    allocation.auto_allocate_workout(result, equipment, messages)
+
+    assert calls
+
+
+def test_automatic_solver_preserves_and_rejects_carried_redistribution(monkeypatch):
+    from workout_generator_pkg import allocation, joint_planning
+    from workout_generator_pkg.planning_tools import set_workout_requirements
+    from workout_generator_pkg.repair_contract import (build_repair_contract, expand_redistributions,
+        repair_contract_errors)
+
+    equipment, requirements, _, draft = planning_case()
+    requirements.update(sessionsPerWeek=3,
+        auditTargets={'weeklyEffectiveSets': {'chest': {'minimum': 15, 'maximum': 18}},
+            'perSessionEffectiveSets': {'chest': {'minimum': 4, 'maximum': 6}},
+            'maximumSessionSeconds': 1000})
+    stored = set_workout_requirements(requirements,
+        [{'role': 'user', 'content': 'Plan three full-body sessions with similar work.'}], equipment)
+    draft['requirementsId'] = stored['requirementsId']
+    first = copy.deepcopy(draft['workouts'][0]['exercises'][0])
+    first['numWorkSets'] = 4
+    draft['workouts'] = [
+        {'name': name, 'description': 'Full body', 'timesCompletedInAWeek': 1,
+         'exercises': [copy.deepcopy(first)]}
+        for name in ('A', 'B', 'C')]
+    messages, result = _audited_messages(equipment, stored, draft)
+    _, manifest = expand_redistributions({'exerciseRedistributions': [{
+        'exerciseRefs': ['EXERCISE_0', 'EXERCISE_1', 'EXERCISE_2'],
+        'workoutRefs': ['WORKOUT_0', 'WORKOUT_1', 'WORKOUT_2']}]}, draft)
+    contract = build_repair_contract([], draft, stored['requirements'], manifest,
+        requirements_id=stored['requirementsId'])
+    result['repairContract'] = contract
+    assert repair_contract_errors(contract, result['submittedDraft']) == []
+
+    unconserved = copy.deepcopy(draft['workouts'])
+    unconserved[0]['exercises'][0]['numWorkSets'] = 6
+    unconserved[1]['exercises'][0]['numWorkSets'] = 0
+    unconserved[2]['exercises'][0]['numWorkSets'] = 4
+    solver_calls = []
+
+    def solve(*args, **kwargs):
+        solver_calls.append(kwargs)
+        return {'feasible': True, 'status': 'optimal', 'sessions': unconserved,
+            'problemFingerprint': 'controlled-unconserved-candidate'}
+
+    monkeypatch.setattr(joint_planning, 'solve_prescribed_week', solve)
+    result['errors'] = [{'code': 'volume_below_target'}]
+    allocated = allocation.auto_allocate_workout(result, equipment, messages)
+
+    assert solver_calls
+    assert solver_calls[0]['redistribution_constraints'] == [
+        {key: contract['redistributions'][0][key] for key in (
+            'recipeSignature', 'weeklyWorkSets', 'exactSetTargets', 'targetWorkoutIndexes')
+            if key in contract['redistributions'][0]}]
+    assert allocated['passed'] is False
+    assert allocated['repairContract'] == contract
+    assert any(error.get('code') == 'carried_repair_contract_changed'
+               for error in allocated.get('errors', []))
 
 
 def test_legacy_allocator_bounds_cannot_widen_approved_count_limits():

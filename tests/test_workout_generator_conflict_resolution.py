@@ -74,6 +74,331 @@ def test_relaxed_volume_is_tightened_to_audited_output_and_reviewed():
     assert '15 vs 16 effective sets (shortfall 1)' in preview
 
 
+def test_unresolved_preference_compares_exact_baseline_with_authorized_single_path(monkeypatch):
+    from workout_generator_pkg import joint_planning
+    from workout_generator_pkg.plan_review import REVIEW_VERSION
+
+    equipment, requirements, sessions = _alternative_inputs()
+    requirements['objectiveOrder'] = ['demand_distribution', 'duration_balance']
+    solver_calls = []
+    solver_options = []
+
+    def solve(workouts, candidate_requirements, *args, **kwargs):
+        solver_calls.append(copy.deepcopy(candidate_requirements))
+        solver_options.append(copy.deepcopy(kwargs))
+        candidate_sessions = copy.deepcopy(sessions)
+        candidate_sessions[0]['exercises'][0]['numWorkSets'] -= 1
+        return {'feasible': True, 'status': 'optimal', 'sessions': candidate_sessions,
+            'audit': {'errors': [], 'weeklyVolume': {'chest': {'effective': 15}},
+                'weeklyCoverageSets': {'horizontal_push': 3},
+                'workouts': [{'sessionId': 'A', 'estimatedSeconds': 3600,
+                    'volume': {'chest': {'effective': 5}}}]}}
+
+    monkeypatch.setattr(joint_planning, 'solve_prescribed_week', solve)
+    baseline_review = {'passed': False, 'version': REVIEW_VERSION,
+        'preview': 'Exact current audited baseline plan.'}
+    baseline = {'sessions': copy.deepcopy(sessions),
+        'audit': {'errors': [], 'weeklyVolume': {'chest': {'effective': 16}},
+            'weeklyCoverageSets': {'horizontal_push': 4},
+            'workouts': [{'sessionId': 'A', 'estimatedSeconds': 3700,
+                'volume': {'chest': {'effective': 6}}}]},
+        'review': baseline_review, 'priorityExecution': {'completed': True},
+        'objectiveProgress': {'distribution': 'needs_correction'},
+        'sourceWorkingSetBudget': {'source': 'user_approved', 'variableWeeklyWorkingSets': 72}}
+
+    def review_candidate(workouts, candidate_requirements, receipt):
+        assert candidate_requirements['auditTargets']['weeklyEffectiveSets']['chest']['minimum'] == 15
+        return {'passed': True, 'review': {'version': REVIEW_VERSION},
+            'preview': 'Reviewed authorized alternative plan.'}
+
+    result = diagnose_conflict_and_propose(requirements_id='REQ_PREFERENCE',
+        base_draft_id='DRAFT_PREFERENCE', workouts=copy.deepcopy(sessions),
+        requirements=requirements, equipment=equipment, restriction_policy=None,
+        review_candidate=review_candidate, preference_baseline=baseline,
+        unresolved_preferences=[{'concernId': 'BALANCE_1', 'status': 'needs_correction'}],
+        max_solver_attempts=8)
+
+    assert result['outcome'] == 'alternatives_ready', result
+    assert len(solver_calls) <= 2  # Relax, then tighten to the audited output.
+    assert all(call.get('source_working_set_budget') == baseline['sourceWorkingSetBudget']
+        for call in solver_options)
+    assert all(call['auditTargets']['weeklyEffectiveSets']['chest']['minimum'] != 16
+        for call in solver_calls)  # The unchanged baseline is never re-solved.
+    assert result['baseline']['workouts'] == sessions
+    proposal = result['proposals'][0]
+    assert proposal['requirements']['objectiveOrder'] == requirements['objectiveOrder']
+    assert proposal['changes'] == [{
+        'path': '/auditTargets/weeklyEffectiveSets/chest/minimum', 'from': 16,
+        'to': 15, 'basis': 'audited candidate volume'}]
+    assert proposal['baselineComparison']['selection'] == 'facts_only_requires_user_judgment'
+    assert proposal['baselineComparison']['sourceWorkingSetBudget'] == baseline['sourceWorkingSetBudget']
+    assert proposal['baselineComparison']['candidateSourceWorkingSetBudget'] == baseline['sourceWorkingSetBudget']
+    assert proposal['baselineComparison']['auditDeltas']['weeklyEffectiveSets']['chest'] == {
+        'baseline': 16, 'candidate': 15, 'delta': -1}
+    assert proposal['baselineComparison']['auditDeltas']['perSessionEffectiveSets']['A']['chest'] == {
+        'baseline': 6, 'candidate': 5, 'delta': -1}
+    assert proposal['baselineComparison']['auditDeltas']['weeklyWorkingSets']['delta'] == -1
+    assert proposal['baselineComparison']['auditDeltas']['weeklyWorkingSetsByDefinition']['LIBRARY_0'] == {
+        'baseline': 24, 'candidate': 23, 'delta': -1}
+    assert proposal['baselineComparison']['auditDeltas']['weeklyCoverageSets']['horizontal_push'] == {
+        'baseline': 4, 'candidate': 3, 'delta': -1}
+    preview = render_alternative_preview(proposal)
+    assert 'Comparison to the currently reviewed candidate (facts only; no automatic ranking)' in preview
+    assert 'Baseline reviewed plan:' in preview
+
+    concern_only = diagnose_conflict_and_propose(requirements_id='REQ_PREFERENCE',
+        base_draft_id='DRAFT_PREFERENCE', workouts=copy.deepcopy(sessions),
+        requirements=requirements, equipment=equipment, restriction_policy=None,
+        review_candidate=review_candidate, preference_baseline=baseline,
+        unresolved_preferences=[{'concernId': 'BALANCE_1', 'status': 'needs_correction'}],
+        max_solver_attempts=8)
+    assert concern_only['outcome'] == 'alternatives_ready', concern_only
+
+
+def test_selected_priority_comparison_reports_conditional_ordered_solver_scenarios(monkeypatch):
+    from workout_generator_pkg import joint_planning
+
+    equipment, requirements, sessions = prescription_case()
+    fixed_workouts, variable_sessions = copy.deepcopy(sessions[:1]), copy.deepcopy(sessions[1:])
+    requirements['objectiveOrder'] = [
+        'demand_distribution', 'duration_balance', 'source_balance',
+        'exercise_distribution', 'workload_economy', 'distribution']
+    baseline_audit = {'errors': [], 'weeklyWorkingSets': 12,
+        'weeklyVolume': {'chest': {'effective': 16}},
+        'weeklyCoverageSets': {'horizontal_push': 6},
+        'workouts': [{'sessionId': 'A', 'estimatedSeconds': 3600,
+            'volume': {'chest': {'effective': 8}}, 'coverageSets': {'horizontal_push': 3}}]}
+    baseline = {'sessions': copy.deepcopy(sessions), 'audit': baseline_audit,
+        'review': {'passed': True, 'preview': 'Exact reviewed baseline.'},
+        'priorityExecution': {'approvedPriorities': []},
+        'exerciseDistribution': {'profiles': [{'roles': ['HAMSTRING'],
+            'weeklyWorkingSetsByFamily': {'NORDIC': 14, 'HIP_HINGE': 2}}]},
+        'coverageBalance': [{'first': 'push', 'second': 'pull', 'status': 'optimal'}],
+        'objectiveProgress': [],
+        'sourceWorkingSetBudget': {'source': 'user_approved', 'variableWeeklyWorkingSets': 12},
+        'candidatePool': {'preparationId': 'PREP_1', 'scope': 'prepared variable recipe menu',
+            'sessions': copy.deepcopy(variable_sessions), 'fixedWorkouts': copy.deepcopy(fixed_workouts),
+            'sourceWorkingSetBudget': {'source': 'user_approved', 'variableWeeklyWorkingSets': 12},
+            'candidateUniverseCoverage': {'status': 'incomplete',
+                'missingByReason': {'native_warmup_unavailable': ['LIBRARY_191']}}}}
+    calls = []
+
+    def solve(workouts, candidate_requirements, *args, **kwargs):
+        calls.append((copy.deepcopy(workouts), copy.deepcopy(candidate_requirements), copy.deepcopy(kwargs)))
+        candidate = copy.deepcopy(variable_sessions)
+        candidate[0]['exercises'][0]['numWorkSets'] -= 1
+        return {'feasible': True, 'status': 'optimal', 'sessions': candidate,
+            'audit': {'errors': [], 'weeklyWorkingSets': 11,
+                'weeklyVolume': {'chest': {'effective': 15}},
+                'weeklyCoverageSets': {'horizontal_push': 5},
+                'workouts': [{'sessionId': 'A', 'estimatedSeconds': 3500,
+                    'volume': {'chest': {'effective': 7}}, 'coverageSets': {'horizontal_push': 2}}]},
+            'priorityExecution': {'approvedPriorities': []},
+            'objectiveProgress': [{'goal': name, 'status': 'optimal', 'value': index}
+                for index, name in enumerate(candidate_requirements['objectiveOrder'])],
+            'objectiveOrderUsed': list(candidate_requirements['objectiveOrder']),
+            'exerciseDistribution': {'profiles': [{'roles': ['HAMSTRING'],
+                'weeklyWorkingSetsByFamily': {'NORDIC': 12, 'HIP_HINGE': 4}}]},
+            'coverageBalance': [{'first': 'push', 'second': 'pull', 'status': 'optimal'}]}
+
+    monkeypatch.setattr(joint_planning, 'solve_prescribed_week', solve)
+    result = diagnose_conflict_and_propose(requirements_id='REQ_PRIORITY_COMPARE',
+        base_draft_id='DRAFT_PRIORITY_COMPARE', workouts=copy.deepcopy(sessions),
+        requirements=requirements, equipment=equipment, restriction_policy=None,
+        review_candidate=lambda *_args: pytest.fail('Diagnostic scenarios must not be semantically approved.'),
+        preference_baseline=baseline,
+        unresolved_preferences=[{'concernId': 'BALANCE_1', 'status': 'needs_correction'},
+            {'priority': 'distribution', 'basis': 'requested_comparison'}],
+        max_solver_attempts=8)
+
+    comparison = result['priorityComparison']
+    assert comparison['exportable'] is False
+    assert comparison['semanticReview'] == 'not_run_for_diagnostic_scenarios'
+    assert comparison['scope'].startswith('the retained, provenance-validated executable candidate pool')
+    assert comparison['candidatePoolScope'] == baseline['candidatePool']['scope']
+    assert comparison['candidateUniverseCoverage']['status'] == 'incomplete'
+    assert comparison['candidateUniverseCoverage']['missingByReason'] == {
+        'native_warmup_unavailable': ['LIBRARY_191']}
+    assert [scenario['objectiveOrder'] for scenario in comparison['scenarios']] == [
+        requirements['objectiveOrder'],
+        ['demand_distribution', 'duration_balance', 'source_balance',
+         'exercise_distribution', 'distribution', 'workload_economy'],
+        ['demand_distribution', 'duration_balance', 'source_balance',
+         'distribution', 'exercise_distribution', 'workload_economy'],
+        ['demand_distribution', 'duration_balance', 'distribution',
+         'source_balance', 'exercise_distribution', 'workload_economy'],
+        ['demand_distribution', 'distribution', 'duration_balance',
+         'source_balance', 'exercise_distribution', 'workload_economy'],
+        ['distribution', 'demand_distribution', 'duration_balance',
+         'source_balance', 'exercise_distribution', 'workload_economy'],
+    ]
+    assert len(calls) == 6
+    for candidate_workouts, candidate_requirements, kwargs in calls:
+        assert candidate_workouts == variable_sessions
+        assert {key: value for key, value in candidate_requirements.items()
+                if key != 'objectiveOrder'} == {key: value for key, value in requirements.items()
+                    if key != 'objectiveOrder'}
+        assert kwargs['source_working_set_budget'] == baseline['sourceWorkingSetBudget']
+        assert kwargs['existing'] == {'workouts': fixed_workouts}
+    candidate = comparison['scenarios'][0]['candidate']
+    assert candidate['semanticReview'] == 'not_run'
+    assert comparison['scenarios'][0]['auditDeltas']['weeklyEffectiveSets']['chest'] == {
+        'baseline': 16, 'candidate': 15, 'delta': -1}
+    assert comparison['scenarios'][0]['baselineExerciseDistribution']['profiles'][0][
+        'weeklyWorkingSetsByFamily']['NORDIC'] == 14
+    assert comparison['scenarios'][0]['candidateExerciseDistribution']['profiles'][0][
+        'weeklyWorkingSetsByFamily']['NORDIC'] == 12
+    assert comparison['scenarios'][0]['candidateCoverageBalance'] == [
+        {'first': 'push', 'second': 'pull', 'status': 'optimal'}]
+    assert comparison['scenarios'][1]['releasedPrecedenceAgainst'] == ['workload_economy']
+    assert comparison['scenarios'][-1]['releasedPrecedenceAgainst'] == [
+        'demand_distribution', 'duration_balance', 'source_balance',
+        'exercise_distribution', 'workload_economy']
+    assert 'proposals' not in result
+
+
+def test_priority_scenario_infeasible_or_unproven_is_not_a_conflict_claim(monkeypatch):
+    from workout_generator_pkg import joint_planning
+
+    equipment, requirements, sessions = prescription_case()
+    requirements['objectiveOrder'] = ['demand_distribution', 'duration_balance', 'source_balance']
+    baseline = {'sessions': copy.deepcopy(sessions), 'audit': {'errors': [], 'workouts': []},
+        'review': {'passed': True}, 'priorityExecution': {}, 'objectiveProgress': [],
+        'sourceWorkingSetBudget': {'source': 'user_approved', 'variableWeeklyWorkingSets': 12}}
+    calls = []
+
+    def solve(_workouts, candidate_requirements, *args, **kwargs):
+        order = candidate_requirements['objectiveOrder']
+        calls.append(order)
+        if order == requirements['objectiveOrder']:
+            return {'feasible': True, 'status': 'optimal', 'sessions': copy.deepcopy(sessions),
+                'audit': {'errors': [], 'workouts': []}}
+        if order[0] == 'demand_distribution':
+            return {'feasible': False, 'status': 'infeasible'}
+        return {'feasible': False, 'status': 'unproven'}
+
+    monkeypatch.setattr(joint_planning, 'solve_prescribed_week', solve)
+    result = diagnose_conflict_and_propose(requirements_id='REQ_PRIORITY_STATUS',
+        base_draft_id='DRAFT_PRIORITY_STATUS', workouts=copy.deepcopy(sessions),
+        requirements=requirements, equipment=equipment, restriction_policy=None,
+        review_candidate=_review, preference_baseline=baseline,
+        unresolved_preferences=[{'priority': 'source_balance'}], max_solver_attempts=8)
+
+    scenarios = result['priorityComparison']['scenarios']
+    assert [item['outcome'] for item in scenarios] == [
+        'native_feasible_audited_candidate',
+        'infeasible_within_supplied_menu_for_this_priority_order',
+        'unproven',
+    ]
+    assert result['priorityComparison']['searchComplete'] is False
+    assert result['outcome'] == 'unresolved'
+    assert 'proposals' not in result
+
+
+def test_priority_comparison_timeout_and_attempt_budget_remain_unproven(monkeypatch):
+    from workout_generator_pkg import joint_planning
+
+    equipment, requirements, sessions = prescription_case()
+    requirements['objectiveOrder'] = ['demand_distribution', 'duration_balance', 'source_balance']
+    baseline = {'sessions': copy.deepcopy(sessions), 'audit': {'errors': [], 'workouts': []},
+        'review': {'passed': True}, 'priorityExecution': {}, 'objectiveProgress': [],
+        'sourceWorkingSetBudget': {'source': 'user_approved', 'variableWeeklyWorkingSets': 12}}
+    calls = []
+
+    def solve(_workouts, candidate_requirements, *args, **kwargs):
+        calls.append(candidate_requirements['objectiveOrder'])
+        if len(calls) == 1:
+            return {'feasible': True, 'status': 'optimal', 'sessions': copy.deepcopy(sessions),
+                'audit': {'errors': [], 'workouts': []}}
+        raise TimeoutError('controlled timeout')
+
+    monkeypatch.setattr(joint_planning, 'solve_prescribed_week', solve)
+    result = diagnose_conflict_and_propose(requirements_id='REQ_PRIORITY_TIMEOUT',
+        base_draft_id='DRAFT_PRIORITY_TIMEOUT', workouts=copy.deepcopy(sessions),
+        requirements=requirements, equipment=equipment, restriction_policy=None,
+        review_candidate=_review, preference_baseline=baseline,
+        unresolved_preferences=[{'priority': 'source_balance'}], max_solver_attempts=2)
+
+    comparison = result['priorityComparison']
+    assert comparison['scenarios'][1]['outcome'] == 'unproven'
+    assert comparison['searchComplete'] is False
+    assert comparison['unexploredScenarios'] == ['release:source_balance_before_demand_distribution']
+    assert result['searchComplete'] is False
+    assert any(attempt.get('reason') == 'solver_timeout' for attempt in result['attempts'])
+    assert result['outcome'] == 'unresolved'
+    assert 'proposals' not in result
+
+
+def test_unverified_candidate_pool_falls_back_to_exact_supplied_menu(monkeypatch):
+    from workout_generator_pkg import joint_planning
+
+    equipment, requirements, sessions = prescription_case()
+    requirements['objectiveOrder'] = ['duration_balance']
+    baseline_budget = {'source': 'user_approved', 'variableWeeklyWorkingSets': 12}
+    baseline = {'sessions': copy.deepcopy(sessions), 'audit': {'errors': [], 'workouts': []},
+        'review': {'passed': True}, 'priorityExecution': {}, 'objectiveProgress': [],
+        'sourceWorkingSetBudget': baseline_budget,
+        'candidatePool': {'preparationId': 'PREP_STALE', 'scope': 'stale pool',
+            'sessions': [{'name': 'UNTRUSTED', 'timesCompletedInAWeek': 1, 'exercises': []}],
+            'fixedWorkouts': [], 'sourceWorkingSetBudget': {
+                'source': 'user_approved', 'variableWeeklyWorkingSets': 99}}}
+    calls = []
+
+    def solve(workouts, candidate_requirements, *args, **kwargs):
+        calls.append((copy.deepcopy(workouts), copy.deepcopy(kwargs)))
+        return {'feasible': True, 'status': 'optimal', 'sessions': copy.deepcopy(sessions),
+            'audit': {'errors': [], 'workouts': []}}
+
+    monkeypatch.setattr(joint_planning, 'solve_prescribed_week', solve)
+    result = diagnose_conflict_and_propose(requirements_id='REQ_POOL_FALLBACK',
+        base_draft_id='DRAFT_POOL_FALLBACK', workouts=copy.deepcopy(sessions),
+        requirements=requirements, equipment=equipment, restriction_policy=None,
+        review_candidate=_review, preference_baseline=baseline,
+        unresolved_preferences=[{'priority': 'duration_balance'}], max_solver_attempts=2)
+
+    assert len(calls) == 1
+    assert calls[0][0] == sessions
+    assert 'existing' not in calls[0][1]
+    comparison = result['priorityComparison']
+    assert comparison['scope'].startswith('the exact supplied executable menu')
+    assert 'candidatePoolScope' not in comparison
+
+
+def test_unresolved_preference_without_relaxation_permission_keeps_baseline(monkeypatch):
+    from workout_generator_pkg import joint_planning
+
+    equipment, requirements, sessions = prescription_case()
+    requirements['relaxationPermissions'] = []
+    baseline = {'sessions': copy.deepcopy(sessions),
+        'audit': {'errors': [], 'weeklyCoverageSets': {}},
+        'review': {'passed': False, 'preview': 'Current reviewed plan.'},
+        'priorityExecution': {}, 'objectiveProgress': {},
+        'sourceWorkingSetBudget': {'source': 'user_approved', 'variableWeeklyWorkingSets': 72}}
+    messages = [
+        {'role': 'assistant', 'tool_calls': [{'id': 'audit', 'type': 'function',
+            'function': {'name': 'audit_workout_plan', 'arguments': '{}'}}]},
+        {'role': 'tool', 'tool_call_id': 'audit', 'content': json.dumps({
+            'requirementsId': 'REQ_NO_PERMISSION', 'currentDraftId': 'DRAFT_NO_PERMISSION',
+            'passed': True, 'submittedDraft': {'workouts': sessions}, 'errors': []})}]
+
+    def unexpected_solver(*args, **kwargs):
+        raise AssertionError('No permission means no relaxation solve is allowed.')
+
+    monkeypatch.setattr(joint_planning, 'solve_prescribed_week', unexpected_solver)
+    monkeypatch.setattr('workout_generator_pkg.conflict_resolution._candidate_menu_expansion_is_verified',
+        lambda *args, **kwargs: True)
+    result = diagnose_conflict_and_propose(requirements_id='REQ_NO_PERMISSION',
+        base_draft_id='DRAFT_NO_PERMISSION', workouts=copy.deepcopy(sessions),
+        requirements=requirements, equipment=equipment, restriction_policy=None,
+        review_candidate=_review, messages=messages, preference_baseline=baseline,
+        unresolved_preferences=[{'concernId': 'BALANCE_2', 'status': 'needs_correction'}])
+
+    assert result['outcome'] == 'unresolved', result
+    assert result['baseline']['workouts'] == sessions
+    assert result['baseline']['approvedRequirementsHash']
+    assert 'No explicitly authorized numeric relaxation path' in result['reason']
+
+
 def test_menu_scoped_proposal_binds_the_current_count_conflict():
     equipment, requirements, sessions = _alternative_inputs()
     from workout_generator_pkg.allocation import allocation_input_fingerprint
@@ -635,6 +960,9 @@ def test_program_guidance_is_reviewed_rendered_bound_and_approved_with_alternati
     altered = copy.deepcopy(proposal)
     altered['programGuidance'] += ' Change the plan.'
     assert ('ALT_' + _hash(_proposal_core(altered))[:24]) != proposal['proposalId']
+    comparison_altered = copy.deepcopy(proposal)
+    comparison_altered['jointCandidateComparison'] = {'decision': 'retain_baseline'}
+    assert ('ALT_' + _hash(_proposal_core(comparison_altered))[:24]) != proposal['proposalId']
 
     stored_messages = copy.deepcopy(messages) + [
         {'role': 'assistant', 'tool_calls': [{'id': 'proposal', 'function': {

@@ -1,0 +1,42 @@
+{
+  "findings": [
+    {
+      "message": "Full Body A places the 5-set Barbell Front Squat supersetted with 5 sets of Nordic Hamstring Curl as the opening block, and the plan's own duration/backup accounting shows multiple sessions near the 90-minute ceiling with calibration time included. The Nordic is an eccentric-emphasis, unsupported-trunk bodyweight movement prescribed at 5 sets in A and 5 in C with no comparable history; combined with unrelated later evidence gaps this leaves weekly fatigue distribution unverified, not proven deficient.",
+      "reason": "Weekly schedules (DECISION_0) accepted the evidence gap: no starting loads, no comparable history for most movements, no recovery capacity. The session-level estimates remain unverified code estimates, so repeated high-demand exposures on trunk-dependent work cannot be verified as tolerable. This is uncertainty, not an established violation.",
+      "evidenceRefs": [
+        "FACT_4571",
+        "FACT_450",
+        "FACT_560",
+        "FACT_249",
+        "FACT_90"
+      ],
+      "concernGroup": "NEW",
+      "decisionId": "DECISION_0",
+      "basis": "uncertainty",
+      "disposition": "advisory",
+      "errorKind": "none"
+    },
+    {
+      "message": "Lateral delt and vertical pull each meet the approved 6-set weekly programming floor across all three sessions, but the aggregate 'shoulders' credit is 28.5 effective sets, far above the 15-set minimum. That excess stems from pressing and rowing secondary credits (unspecified deltoid heads), not from dedicated deltoid work; whether the pattern yields adequate or excessive local shoulder loading is unverified because per-head regional evidence is incomplete.",
+      "reason": "The plan documents aggregate shoulder 28.5 effective sets against a 15-set minimum with no hard maximum. Dedicated lateral raise exposure is 6 sets and rear-delt role exposure is 12 sets from incline rows; anterior deltoid has only 1.0 sourced set. Per-head totals are unknown, so no defect or suitability conclusion can be drawn.",
+      "evidenceRefs": [
+        "FACT_23",
+        "FACT_791",
+        "FACT_787",
+        "FACT_560",
+        "FACT_687",
+        "FACT_813"
+      ],
+      "concernGroup": "NEW",
+      "decisionId": "none",
+      "basis": "uncertainty",
+      "disposition": "advisory",
+      "errorKind": "none"
+    }
+  ],
+  "sourceCoverage": {
+    "SOURCE_0": true,
+    "SOURCE_2": true,
+    "SOURCE_4": true
+  }
+}

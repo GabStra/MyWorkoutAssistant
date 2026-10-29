@@ -1,4 +1,9 @@
+import copy
+
 from workout_generator_pkg.joint_planning import _constrain_first_block_order, _execution_order
+from workout_generator_pkg.programming_guidelines import (
+    audit_execution_rules, execution_block_priority,
+)
 import pytest
 
 
@@ -23,7 +28,8 @@ def _ordering_model(blocks, rules=()):
 
 def _assert_model_accepts_order(blocks, variables, constraints, selected, first_order, rules=()):
     values = {index: int(index in selected) for block in blocks for index in block['options']}
-    rank_order = sorted(range(len(blocks)), key=lambda index: (blocks[index]['sourceRank'], index))
+    rank_order = sorted(range(len(blocks)), key=lambda index: (
+        blocks[index]['recipe']['orderPriority'], blocks[index]['sourceRank'], index))
     ready = {index: int(index in selected and all(
         predecessor not in selected for predecessor in _predecessors(blocks, index, rules)))
         for index in range(len(blocks))}
@@ -55,7 +61,8 @@ def _predecessors(blocks, index, rules):
 
 def _blocks(count):
     return [{'options': [index], 'first': 2 * count + index, 'sourceRank': count - index,
-             'recipe': {'roles': {f'role-{index}'}, 'sourcePositions': [[0, index]],
+             'recipe': {'roles': {f'role-{index}'}, 'orderPriority': 0,
+                        'sourcePositions': [[0, index]],
                         'identity': [f'LIBRARY_{index}']}}
             for index in range(count)]
 
@@ -91,6 +98,8 @@ def test_approved_order_readiness_preserves_stable_topological_first_block():
 
 def test_compact_ordering_matches_constructor_for_every_small_selection():
     blocks = _blocks(4)
+    for block, priority in zip(blocks, (3, 2, 0, 1)):
+        block['recipe']['orderPriority'] = priority
     blocks[0]['recipe']['roles'] = {'after'}
     blocks[2]['recipe']['roles'] = {'before'}
     for rules in ([], [{'kind': 'order', 'before': 'before', 'after': 'after'}]):
@@ -130,3 +139,81 @@ def test_compact_ordering_keeps_first_block_setup_deduction_exact():
     assert approved_order['audit']['workouts'][0]['estimatedSeconds'] == 1320
     assert source_order['audit']['workouts'][0]['estimatedSeconds'] - approved_order[
         'audit']['workouts'][0]['estimatedSeconds'] == 300
+
+
+def test_compound_core_and_mixed_supersets_use_primary_library_metadata():
+    core = {'exerciseCategory': 'MODERATE_COMPOUND', 'muscleGroups': ['FRONT_ABS']}
+    heavy = {'exerciseCategory': 'HEAVY_COMPOUND', 'muscleGroups': ['FRONT_QUADRICEPS'],
+             'secondaryMuscleGroups': ['FRONT_ABS']}
+    lateral = {'exerciseCategory': 'ISOLATION', 'muscleGroups': ['FRONT_DELTOIDS']}
+    moderate = {'exerciseCategory': 'MODERATE_COMPOUND', 'muscleGroups': ['BACK_HAMSTRING']}
+    assert execution_block_priority([core]) == 3
+    assert execution_block_priority([heavy]) == 0
+    assert execution_block_priority([lateral]) == 2
+    assert execution_block_priority([moderate]) == 1
+    assert execution_block_priority([core, heavy]) == 0
+    assert execution_block_priority([{}]) == 0
+
+
+def test_audit_blocks_bad_default_order_and_respects_explicit_overrides():
+    exercises = [{'superset': None, 'satisfiesCoverage': ['core']},
+                 {'superset': None, 'satisfiesCoverage': ['main']}]
+    draft = {'workouts': [{'name': 'Day', 'exercises': exercises}]}
+    plan = {'workouts': [{'exerciseIds': ['core', 'main']}], 'exercises': [
+        {'id': 'core', 'exerciseCategory': 'MODERATE_COMPOUND', 'muscleGroups': ['FRONT_ABS']},
+        {'id': 'main', 'exerciseCategory': 'HEAVY_COMPOUND', 'muscleGroups': ['FRONT_QUADRICEPS']}]}
+    report = {'issues': [], 'errors': []}
+    audit_execution_rules(draft, {}, report, plan)
+    assert [error['code'] for error in report['errors']] == ['execution_order']
+    assert report['errors'][0]['beforeIndices'] == [1]
+    assert report['errors'][0]['afterIndices'] == [0]
+    report = {'issues': [], 'errors': []}
+    audit_execution_rules(draft, {'executionRules': [
+        {'kind': 'order', 'before': 'core', 'after': 'main'}]}, report, plan)
+    assert report['errors'] == []
+
+
+def test_default_order_changes_solver_first_setup_and_passes_final_native_audit():
+    from test_workout_generator_joint_prescriptions import two_recipe_order_case
+    from workout_generator_pkg import joint_planning
+
+    equipment, requirements, sessions = two_recipe_order_case()
+    definitions = sorted(equipment['exerciseDefinitions'], key=lambda item: item['id'])
+    definitions[0]['exerciseCategory'] = 'ISOLATION'
+    definitions[1]['exerciseCategory'] = 'HEAVY_COMPOUND'
+    for item in sessions[0]['exercises']:
+        item.pop('placementNotes', None)
+    requirements['auditTargets']['maximumSessionSeconds'] = 1700
+    result = joint_planning.solve_prescribed_week(sessions, requirements, equipment)
+    assert result['feasible'], result
+    assert [item['definition_id'] for item in result['sessions'][0]['exercises']] == ['LIBRARY_1', 'LIBRARY_0']
+    assert result['audit']['errors'] == []
+    assert result['audit']['workouts'][0]['estimatedSeconds'] == 1320
+
+
+def test_superset_member_order_preserves_rest_slots_and_exact_source_lineage():
+    from test_workout_generator_joint_prescriptions import two_recipe_order_case
+    from workout_generator_pkg import joint_planning
+
+    equipment, requirements, sessions = two_recipe_order_case()
+    definitions = sorted(equipment['exerciseDefinitions'], key=lambda item: item['id'])
+    definitions[0]['exerciseCategory'] = 'ISOLATION'
+    definitions[1]['exerciseCategory'] = 'HEAVY_COMPOUND'
+    for index, item in enumerate(sessions[0]['exercises']):
+        item.pop('placementNotes', None)
+        item.update(superset='PAIR', restBetweenSetsSeconds=0,
+            restAfterSupersetExerciseSeconds=20 if index == 0 else 100,
+            restAfterExerciseSeconds=0 if index == 0 else 17,
+            setupSeconds=17 if index == 0 else 83)
+    original = copy.deepcopy(sessions)
+    result = joint_planning.solve_prescribed_week(sessions, requirements, equipment, preserve_source_selection=True)
+    assert result['feasible'], result
+    items = result['sessions'][0]['exercises']
+    assert [item['definition_id'] for item in items] == ['LIBRARY_1', 'LIBRARY_0']
+    assert items[0]['superset'] == items[1]['superset'] is not None
+    assert [item['restAfterSupersetExerciseSeconds'] for item in items] == [20, 100]
+    assert [item['restAfterExerciseSeconds'] for item in items] == [0, 17]
+    assert [item['setupSeconds'] for item in items] == [83, 17]
+    assert result['occurrenceLineage'] == [[[0, 1], [0, 0]]]
+    assert result['audit']['errors'] == []
+    assert sessions == original

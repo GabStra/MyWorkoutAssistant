@@ -33,19 +33,11 @@ def _run_discovery(monkeypatch, context, audited, messages, boundary, findings,
         data = json.loads(request[-1]['content'])
         captured['data'] = data
         captured['schema'] = options['output_schema']
-        source_schema = options['output_schema']['properties'].get('requirementAssessments', {}).get('properties', {})
+        source_schema = options['output_schema']['properties'].get('sourceCoverage', {}).get('properties', {})
         source_key = next(iter(source_schema), None)
         rows = findings(data) if callable(findings) else findings
         payload = {'findings': copy.deepcopy(rows)}
-        if source_key:
-            source_ref = data['sourceMessages'][source_key]['_reviewRef']
-            payload['requirementAssessments'] = {key: {
-                'status': source_status,
-                'reason': 'The source is represented by the cited plan concern.' if source_status == 'needs_correction'
-                    else 'The controlled candidate is consistent with this source.',
-                'evidencePaths': [source_ref] if source_status == 'needs_correction'
-                    else [data['audit']['_reviewRef']],
-            } for key in source_schema}
+        payload['sourceCoverage'] = {key: True for key in source_schema}
         if resolutions is not None:
             payload['blockerResolutions'] = copy.deepcopy(resolutions(data) if callable(resolutions) else resolutions)
         from jsonschema import validate
@@ -73,25 +65,48 @@ def _run_discovery(monkeypatch, context, audited, messages, boundary, findings,
     return reviewed, captured
 
 
-def test_same_group_rewordings_merge_and_distinct_same_path_concerns_do_not(monkeypatch):
+def test_python_assigns_each_new_finding_a_distinct_identity(monkeypatch):
     equipment, messages, audited, boundary, context = _case()
     rows = lambda data: [
-        _finding('NEW_0', data['draft']['exercises'][0]['_reviewRef'], basis='established_violation', message='The sequence creates a recovery concern.'),
-        _finding('NEW_0', data['draft']['exercises'][0]['_reviewRef'], basis='established_violation', message='Reworded: the same sequence may compromise recovery.'),
-        _finding('NEW_1', data['draft']['exercises'][0]['_reviewRef'], basis='established_violation', message='A separate setup concern cites this same occurrence.'),
+        {'message': message, 'reason': 'The current sequence is source-relevant.',
+         'evidenceRefs': [data['draft']['exercises'][0]['_reviewRef']], 'concernGroup': 'NEW',
+         'decisionId': 'none', 'basis': 'established_violation', 'disposition': 'repair',
+         'errorKind': 'none', 'repairDimensions': ['ordering'], 'repairObjectiveChoiceIds': []}
+        for message in ('The sequence creates a recovery concern.',
+            'Reworded: the same sequence may compromise recovery.',
+            'A separate setup concern cites this same occurrence.')
     ]
     receipt, _ = _run_discovery(monkeypatch, context, audited, messages, boundary, rows)
-    assert len(receipt['findings']) == 2
-    assert receipt['findings'][0]['concernGroupId'] != receipt['findings'][1]['concernGroupId']
-    assert 'Reworded:' in receipt['findings'][0]['message']
-    assert receipt['assessment']['groups'][0]['findingIndexes'] == [0]
-    assert receipt['assessment']['groups'][1]['findingIndexes'] == [1]
+    assert len(receipt['findings']) == 3
+    assert [finding['concernGroup'] for finding in receipt['findings']] == ['NEW_0', 'NEW_1', 'NEW_2']
+    assert len({finding['concernGroupId'] for finding in receipt['findings']}) == 3
+    assert [group['findingIndexes'] for group in receipt['assessment']['groups']] == [[0], [1], [2]]
+
+
+def test_reused_new_marker_cannot_merge_different_dispositions(monkeypatch):
+    equipment, messages, audited, boundary, context = _case()
+    def rows(data):
+        ref = data['draft']['exercises'][0]['_reviewRef']
+        return [
+            {'message': 'A supported candidate defect.', 'reason': 'A source conflict remains.',
+             'evidenceRefs': [ref], 'concernGroup': 'NEW', 'decisionId': 'none',
+             'basis': 'established_violation', 'disposition': 'repair', 'errorKind': 'none',
+             'repairDimensions': ['ordering'], 'repairObjectiveChoiceIds': []},
+            {'message': 'A separate uncertain concern.', 'reason': 'Personal response is unknown.',
+             'evidenceRefs': [ref], 'concernGroup': 'NEW', 'decisionId': 'none',
+             'basis': 'uncertainty', 'disposition': 'advisory', 'errorKind': 'none'},
+        ]
+    receipt, captured = _run_discovery(monkeypatch, context, audited, messages, boundary, rows)
+    assert all('NEW' in variant['properties']['concernGroup']['enum']
+        for variant in captured['schema']['properties']['findings']['items']['anyOf'])
+    assert [finding['concernGroup'] for finding in receipt['findings']] == ['NEW_0', 'NEW_1']
+    assert [group['disposition'] for group in receipt['assessment']['groups']] == ['repair', 'advisory']
 
 
 def test_needs_correction_requires_native_source_cited_concern_not_synthetic_duplicate(monkeypatch):
     equipment, messages, audited, boundary, context = _case()
     def supported_finding(data):
-        finding = _finding('NEW_0', data['draft']['exercises'][0]['_reviewRef'], basis='established_violation')
+        finding = _finding('NEW', data['draft']['exercises'][0]['_reviewRef'], basis='established_violation')
         finding['evidencePaths'].append(data['sourceMessages']['SOURCE_0']['_reviewRef'])
         return [finding]
     receipt, _ = _run_discovery(monkeypatch, context, audited, messages, boundary,
@@ -101,84 +116,37 @@ def test_needs_correction_requires_native_source_cited_concern_not_synthetic_dup
     assert receipt['requirementAssessments']['SOURCE_0']['findingIndexes'] == [0]
     assert receipt['assessment']['groups'][0]['disposition'] == 'repair'
 
-    with pytest.raises(ValueError, match='must be represented by a cited review concern'):
-        _run_discovery(monkeypatch, context, audited, messages, boundary, lambda data: [], source_status='needs_correction')
+    empty, _ = _run_discovery(monkeypatch, context, audited, messages, boundary, lambda data: [])
+    assert empty['sourceCoverage'] == {'SOURCE_0': True}
 
 
-@pytest.mark.parametrize('authority_kind', ['source', 'requirement', 'decision'])
-def test_soft_tradeoff_is_terminal_only_with_same_group_authority_and_current_evidence(monkeypatch, authority_kind):
-    equipment, messages, audited, boundary, context = _case()
-    prior_id = 'CONCERN_previous'
-    if authority_kind == 'decision':
-        context['resolvedDecisions']['DECISION_0'] = {
-            'choice': 'Keep the approved exercise choice.', 'sourceReferences': ['SOURCE_0'],
-            'sourceCountAtResolution': len(context['sourceMessages'])}
-    context['reviewChecklist'] = {'findings': {'OBLIGATION_previous': {
-        'finding': {'concernGroupId': prior_id, 'severity': 'warning', 'basis': 'uncertainty',
-            'action': 'repair', 'path': '/draft/exercises/0', 'evidencePaths': ['/draft/exercises/0'],
-            'message': 'The optional distribution concern.', 'repair': '', 'muscleTargets': []},
-        'changedDraftPaths': [], 'sourceCount': len(context['sourceMessages']),
-    }}}
-    def authority_ref(data):
-        if authority_kind == 'source':
-            return data['sourceMessages']['SOURCE_0']['_reviewRef']
-        if authority_kind == 'requirement':
-            return data['requirements']['executionRules'][0]['_reviewRef']
-        return data['resolvedDecisions']['DECISION_0']['_reviewRef']
-    def rows(data):
-        source_ref = authority_ref(data)
-        current_ref = data['draft']['exercises'][0]['_reviewRef']
-        finding = _finding('ISSUE_0', source_ref, basis='soft_tradeoff', action='advisory',
-            message='This optional distribution preference is a disclosed tradeoff.')
-        finding['evidencePaths'].append(current_ref)
-        if authority_kind == 'decision':
-            finding['decisionId'] = 'DECISION_0'
-        return [finding]
-    def resolutions(data):
-        source_ref = authority_ref(data)
-        current_ref = data['draft']['exercises'][0]['_reviewRef']
-        return {'ISSUE_0': {'status': 'accepted_soft_tradeoff', 'reason': 'The optional preference is explicitly disclosed.',
-                    'evidencePaths': [source_ref, current_ref]}}
-    receipt, _ = _run_discovery(monkeypatch, context, audited, messages, boundary, rows,
-        resolutions=resolutions)
-    assert receipt['scopeResults']['execution']['blockerResolutions']['OBLIGATION_previous']['status'] == 'accepted_soft_tradeoff'
-    assert receipt['findings'][0]['concernGroupId'] == prior_id
-    assert receipt['assessment']['groups'][0]['disposition'] == 'advisory'
+def test_terminal_soft_tradeoff_needs_same_concern_adjudication_not_generic_or_unrelated_decision():
+    concern_id = 'CONCERN_distribution'
+    paths = ['/requirements/executionRules/0', '/draft/exercises/0']
+    context = {'sourceMessages': {'SOURCE_0': {'role': 'user'}}, 'resolvedDecisions': {}}
+    finding = {'basis': 'soft_tradeoff', 'concernGroupId': concern_id, 'decisionId': None}
 
-    projected = copy.deepcopy(audited)
-    projected['review'] = receipt
-    audit_call = {'role': 'assistant', 'tool_calls': [{'id': 'reviewed', 'type': 'function',
-        'function': {'name': 'audit_workout_plan', 'arguments': '{}'}}]}
-    history = [*messages, audit_call, {'role': 'tool', 'tool_call_id': 'reviewed',
-        'content': json.dumps(projected)}]
-    ledger = review._review_checklist(projected, history)
-    assert list(ledger['acceptedSoftTradeoffs']) == [prior_id]
-    accepted = ledger['acceptedSoftTradeoffs'][prior_id]
-    assert accepted['finding']['basis'] == 'soft_tradeoff'
-    assert accepted['assessment']['reason'] == 'The cited concern is supported by this candidate.'
-    assert accepted['assessment']['evidencePaths']
+    assert not review._soft_tradeoff_terminal_evidence(context, finding, paths)
 
-    projected['reviewChecklist'] = copy.deepcopy(ledger)
-    context2 = review._context(projected, history, equipment, None, boundary)
-    context2['reviewChecklist']['acceptedSoftTradeoffs'][prior_id]['changedDraftPaths'] = [
-        '/workouts/0/exercises/0']
-    def strengthened(data):
-        finding = _finding('TRADEOFF_0', data['draft']['exercises'][0]['_reviewRef'],
-            basis='established_violation', message='The updated evidence now establishes a source conflict.')
-        finding['evidencePaths'].append(data['sourceMessages']['SOURCE_0']['_reviewRef'])
-        return [finding]
-    stronger_review, _ = _run_discovery(monkeypatch, context2, projected, history, boundary, strengthened)
-    assert stronger_review['findings'][0]['concernGroupId'] == prior_id
-    stronger_result = copy.deepcopy(projected)
-    stronger_result['review'] = stronger_review
-    next_call = {'role': 'assistant', 'tool_calls': [{'id': 'reviewed-again', 'type': 'function',
-        'function': {'name': 'audit_workout_plan', 'arguments': '{}'}}]}
-    stronger_history = [*history, next_call, {'role': 'tool', 'tool_call_id': 'reviewed-again',
-        'content': json.dumps(stronger_result)}]
-    reopened_ledger = review._review_checklist(stronger_result, stronger_history)
-    assert not reopened_ledger['acceptedSoftTradeoffs']
-    assert len(reopened_ledger['findings']) == 1
-    assert next(iter(reopened_ledger['findings'].values()))['finding']['basis'] == 'established_violation'
+    context['resolvedDecisions']['DECISION_0'] = {
+        'choice': 'Accept this concern for this candidate.', 'sourceReferences': ['SOURCE_0'],
+        'sourceCountAtResolution': 1, 'acceptedConcernGroupId': concern_id}
+    finding['decisionId'] = 'DECISION_0'
+    assert review._soft_tradeoff_terminal_evidence(context, finding,
+        ['/resolvedDecisions/DECISION_0', '/draft/exercises/0'])
+    context['sourceMessages']['SOURCE_1'] = {'role': 'user', 'content': 'CONFIRM REQUIREMENTS'}
+    assert review._soft_tradeoff_terminal_evidence(context, finding,
+        ['/resolvedDecisions/DECISION_0', '/draft/exercises/0'])
+    context['resolvedDecisions']['DECISION_0']['acceptedConcernGroupId'] = 'CONCERN_unrelated'
+    assert not review._soft_tradeoff_terminal_evidence(context, finding,
+        ['/resolvedDecisions/DECISION_0', '/draft/exercises/0'])
+
+    context['reviewChecklist'] = {'acceptedSoftTradeoffs': {concern_id: {
+        'finding': {'concernGroupId': concern_id, 'basis': 'soft_tradeoff'}}}}
+    finding['decisionId'] = None
+    assert review._soft_tradeoff_terminal_evidence(context, finding, ['/draft/exercises/0'])
+    finding['concernGroupId'] = 'CONCERN_other'
+    assert not review._soft_tradeoff_terminal_evidence(context, finding, ['/draft/exercises/0'])
 
 
 @pytest.mark.parametrize('evidence_case', ['missing_authority', 'missing_current', 'invalid_decision_provenance'])
@@ -279,21 +247,33 @@ def test_accepted_tradeoff_stays_closed_until_its_evidence_changes_then_can_be_r
         'assessment': {'reason': 'Accepted with disclosed tradeoff.', 'evidencePaths': ['/draft/exercises/0']},
         'changedDraftPaths': [], 'sourceCount': len(context['sourceMessages']),
     }}}
-    unchanged, captured = _run_discovery(monkeypatch, context, audited, messages, boundary, lambda data: [])
-    assert not any(value.startswith('TRADEOFF_') for value in
-        captured['schema']['properties']['findings']['items']['properties']['concernGroup']['enum'])
+
+    def unchanged_echo(data):
+        return [{'message': 'Previously accepted soft preference.',
+            'reason': 'No new evidence changes the tradeoff.',
+            'evidenceRefs': [data['draft']['exercises'][0]['_reviewRef']],
+            'concernGroup': 'TRADEOFF_0', 'decisionId': 'none', 'basis': 'soft_tradeoff',
+            'disposition': 'advisory', 'errorKind': 'none'}]
+
+    unchanged, captured = _run_discovery(monkeypatch, context, audited, messages, boundary, unchanged_echo)
+    assert captured['data']['previousAcceptedSoftTradeoffs']['TRADEOFF_0']['changedEvidenceRefs'] == []
+    assert unchanged['findings'] == []
 
     context['reviewChecklist']['acceptedSoftTradeoffs'][concern_id]['changedDraftPaths'] = ['/workouts/0/name']
-    unchanged, captured = _run_discovery(monkeypatch, context, audited, messages, boundary, lambda data: [])
-    assert not any(value.startswith('TRADEOFF_') for value in
-        captured['schema']['properties']['findings']['items']['properties']['concernGroup']['enum'])
+    unchanged, captured = _run_discovery(monkeypatch, context, audited, messages, boundary, unchanged_echo)
+    assert captured['data']['previousAcceptedSoftTradeoffs']['TRADEOFF_0']['changedEvidenceRefs'] == []
+    assert unchanged['findings'] == []
 
     context['reviewChecklist']['acceptedSoftTradeoffs'][concern_id]['changedDraftPaths'] = ['/workouts/0/exercises/0']
     def stronger(data):
-        return [_finding('TRADEOFF_0', data['draft']['exercises'][0]['_reviewRef'],
-            basis='established_violation', message='New current evidence establishes a source conflict.')]
+        return [{'message': 'New current evidence establishes a source conflict.',
+            'reason': 'The changed exercise now conflicts with the current source.',
+            'evidenceRefs': [data['draft']['exercises'][0]['_reviewRef']],
+            'concernGroup': 'TRADEOFF_0', 'decisionId': 'none', 'basis': 'established_violation',
+            'disposition': 'repair', 'errorKind': 'none', 'repairDimensions': ['ordering'],
+            'repairObjectiveChoiceIds': []}]
     reopened, captured = _run_discovery(monkeypatch, context, audited, messages, boundary, stronger)
-    assert 'TRADEOFF_0' in captured['schema']['properties']['findings']['items']['properties']['concernGroup']['enum']
+    assert 'TRADEOFF_0' in captured['data']['previousAcceptedSoftTradeoffs']
     assert reopened['findings'][0]['concernGroupId'] == concern_id
     assert reopened['assessment']['groups'][0]['disposition'] == 'repair'
 
@@ -339,3 +319,76 @@ def test_saved_msg58_60_duplicate_cluster_uses_explicit_identity_not_message_tex
     ledger = review._review_checklist(second_result, history)
     assert ledger is not None and len(ledger['findings']) == 1
     assert next(iter(ledger['findings'].values()))['finding']['concernGroupId'] == 'CONCERN_B_cluster'
+
+
+def test_source_only_requirements_refresh_carries_obligation_only_with_reused_same_candidate_proof():
+    _, messages, audited, _, _ = _case()
+    old_requirements_call, old_requirements = review._latest_result(messages, 'set_workout_requirements')
+    prior = copy.deepcopy(audited)
+    prior['requirementsId'] = old_requirements['requirementsId']
+    prior['submittedDraft']['requirementsId'] = old_requirements['requirementsId']
+    prior['resolvedDecisions'] = {}
+    prior['coordinatedJointPlanning'] = {
+        'problemFingerprint': 'same-objective-domain',
+        'solvedPrescriptionHash': 'same-solved-prescription',
+    }
+    prior_finding = {'message': 'The prior setup assertion needs fresh adjudication.',
+        'reason': 'Earlier review treated unknown station spacing as a defect.',
+        'severity': 'blocking', 'basis': 'material_uncertainty', 'action': 'repair',
+        'path': '/draft/exercises/0', 'evidencePaths': ['/draft/exercises/0'],
+        'concernGroupId': 'CONCERN_setup', 'reviewScope': 'semantic'}
+    prior['review'] = {'version': review.REVIEW_VERSION, 'instructionBoundary': len(messages) - 1,
+        'inputHash': 'prior-review', 'findings': [prior_finding],
+        'assessment': {'groups': [{'findingIndexes': [0], 'disposition': 'repair'}]},
+        'scopeResults': {}}
+    audit_call = {'id': 'prior-audit', 'type': 'function',
+        'function': {'name': 'audit_workout_plan', 'arguments': '{}'}}
+    history = [*messages, {'role': 'assistant', 'tool_calls': [audit_call]},
+        {'role': 'tool', 'tool_call_id': 'prior-audit', 'content': json.dumps(prior)},
+        {'role': 'user', 'content': 'Clarification: station positions are unknown; accept this setup uncertainty for this candidate.'}]
+    refresh_call = {'id': 'refresh-requirements', 'type': 'function',
+        'function': {'name': 'set_workout_requirements', 'arguments': '{}'}}
+    refreshed_requirements = copy.deepcopy(old_requirements)
+    refreshed_requirements['requirementsId'] = 'REQUIREMENTS_source_refresh'
+    history.extend([{'role': 'assistant', 'tool_calls': [refresh_call]},
+        {'role': 'tool', 'tool_call_id': 'refresh-requirements',
+            'content': json.dumps(refreshed_requirements)}])
+
+    current = copy.deepcopy(audited)
+    current['requirementsId'] = 'REQUIREMENTS_source_refresh'
+    current['submittedDraft']['requirementsId'] = 'REQUIREMENTS_source_refresh'
+    current['resolvedDecisions'] = {'DECISION_new': {'choice': 'Accept disclosed setup uncertainty.'}}
+    current['coordinatedJointPlanning'] = {
+        'problemFingerprint': 'same-objective-domain',
+        'solvedPrescriptionHash': 'same-solved-prescription',
+        'reusedForValidatedCandidate': True,
+    }
+    carried = review._review_checklist(current, history)
+    assert carried is not None
+    assert len(carried['findings']) == 1
+    assert next(iter(carried['findings'].values()))['finding']['concernGroupId'] == 'CONCERN_setup'
+
+    changed_proof = copy.deepcopy(current)
+    changed_proof['coordinatedJointPlanning']['problemFingerprint'] = 'different-objective-domain'
+    assert review._review_checklist(changed_proof, history) is None
+
+
+def test_saved_native_source_refresh_retains_prior_setup_obligation():
+    path = Path('build/workout_concentration_20261026/review_source_correction_resume_v3/workouts/conversation_sessions/71cc1068-f6a3-4056-945b-99fec5c88a4d/messages.json')
+    messages = json.loads(path.read_text(encoding='utf-8'))
+    current = next(json.loads(message['content']) for message in reversed(messages)
+        if message.get('role') == 'tool' and isinstance(message.get('content'), str)
+        and message['content'].startswith('{')
+        and (lambda receipt: isinstance(receipt.get('submittedDraft'), dict)
+             and receipt.get('coordinatedJointPlanning', {}).get('reusedForValidatedCandidate'))(
+                 json.loads(message['content'])))
+
+    ledger = review._review_checklist(current, messages)
+    assert ledger is not None
+    setup_keys = [key for key, entry in ledger['findings'].items()
+        if 'Session A equipment sequencing' in entry['finding'].get('message', '')]
+    assert len(setup_keys) == 1
+    assert ledger['findings'][setup_keys[0]]['finding']['action'] == 'repair'
+    issue_aliases = {f'ISSUE_{index}': key for index, key in enumerate(sorted(ledger['findings']))}
+    assert any(key == setup_keys[0] and alias.startswith('ISSUE_')
+        for alias, key in issue_aliases.items())

@@ -1,0 +1,591 @@
+{
+  "byDefinitionId": {
+    "f0861ff6-c6c8-589a-beaf-4f5336f4befb": {
+      "exerciseFamilyId": "30303e2d-bf30-5cab-b4c7-605726e50931",
+      "source": "https://pubmed.ncbi.nlm.nih.gov/19002072/",
+      "basis": "The study directly compares barbell back and front squats. Shared squat-family identity does not establish equal loads, stimulus or personal capacity."
+    },
+    "2692280b-4775-5d6e-abf9-fec2a637f023": {
+      "exerciseFamilyId": "27e7555c-cfb4-5d80-9e66-5544abd12e36",
+      "source": "https://pubmed.ncbi.nlm.nih.gov/26134664/",
+      "basis": "The study compares unilateral and bilateral rows and directly includes unilateral free-weight rowing. Grouped as horizontal-row variation; it does not imply equal trunk demands.",
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": false,
+          "source": "https://www.acefitness.org/resources/pros/expert-articles/5047/strength-training-workout-for-beginners/"
+        }
+      }
+    },
+    "2d45746e-27f6-5b4a-9f94-a25c6ca9ef45": {
+      "anatomy": {
+        "primarySubregions": [
+          "deltoid_posterior"
+        ],
+        "secondarySubregions": [],
+        "source": "https://pubmed.ncbi.nlm.nih.gov/23302754/",
+        "basis": "The study identifies the reverse-fly exercise as a horizontal shoulder-abduction exercise strengthening the posterior deltoid. It studied a machine variant; this is a movement-level attribution, not a claim of identical stimulus."
+      },
+      "exerciseFamilyId": "823806fd-7ce7-53d9-b0ee-896a33ba55f6",
+      "source": "https://pubmed.ncbi.nlm.nih.gov/23302754/",
+      "basis": "The study examines reverse-fly movement for posterior-deltoid work; grouping the unilateral version is based on shared fly action, not equal stimulus.",
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": true,
+          "source": "https://www.acefitness.org/resources/pros/expert-articles/4901/summer-boot-camp-arms-workout/"
+        }
+      }
+    },
+    "3c366a30-29b9-5b1d-86d6-3bc55935584a": {
+      "exerciseFamilyId": "27e7555c-cfb4-5d80-9e66-5544abd12e36",
+      "source": "https://pubmed.ncbi.nlm.nih.gov/19197209/",
+      "basis": "The study directly compares inverted and standing bent-over rows. The library-named dumbbell row variants share the horizontal-row action but remain mechanically distinct variants. Family grouping supports exercise-variation counting only; it does not assert equal trunk demand.",
+      "anatomy": {
+        "primarySubregions": [
+          "latissimus_dorsi",
+          "upper_back"
+        ],
+        "secondarySubregions": [],
+        "source": "https://pubmed.ncbi.nlm.nih.gov/19197209/",
+        "basis": "A direct comparison measured latissimus dorsi and upper-back activation during standing bent-over and inverted rows. Those are the primary back regions represented here; the study does not establish long-term superiority."
+      },
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": true,
+          "source": "https://pubmed.ncbi.nlm.nih.gov/19197209/"
+        }
+      }
+    },
+    "46b322a6-cee1-55eb-90ca-2df679f72999": {
+      "exerciseFamilyId": "de82c18e-6540-5ee9-898e-2963de85af95",
+      "source": "https://doi.org/10.4085/1062-6050-0010.22",
+      "basis": "The study analyzes the standard Nordic hamstring exercise alongside loaded and single-legged versions as variations within one Nordic hamstring exercise progression. Family identity only; no dose, fatigue, or personal suitability claim."
+    },
+    "52bdefb2-9475-5d2a-a8c4-06f6aaf2d73a": {
+      "exerciseFamilyId": "4c1c484b-b1ac-5c9f-8a08-76b55d2eb142",
+      "source": "https://pubmed.ncbi.nlm.nih.gov/28828073/",
+      "basis": "The study compares traditional and suspension pull-ups as vertical-pull variations; family identity does not imply equal load or ability.",
+      "anatomy": {
+        "primarySubregions": [
+          "latissimus_dorsi",
+          "upper_back"
+        ],
+        "secondarySubregions": [
+          "deltoid_posterior"
+        ],
+        "source": "https://pubmed.ncbi.nlm.nih.gov/28828073/",
+        "basis": "The study measured latissimus dorsi, posterior deltoid, and middle trapezius during standard and suspension pull-ups. Lats and upper-back are primary back regions; posterior deltoid is assisting. Acute activation is not a dose or personal-suitability finding."
+      },
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": true,
+          "source": "https://www.nasm.org/resource-center/exercise-library/pull-up"
+        }
+      }
+    },
+    "531463a1-bb50-5265-8eda-13fbf9a1b7e2": {
+      "anatomy": {
+        "primarySubregions": [
+          "deltoid_lateral"
+        ],
+        "secondarySubregions": [],
+        "source": "https://pubmed.ncbi.nlm.nih.gov/33312291/",
+        "basis": "In the exercise comparison, lateral raises produced higher medial-deltoid activation than bench press and dumbbell fly. The study supports lateral-deltoid attribution but does not quantify a training dose."
+      },
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": true,
+          "source": "https://www.acefitness.org/resources/everyone/exercise-library/26/lateral-raise/"
+        }
+      },
+      "exerciseFamilyId": "c086dec9-6095-55b5-a32e-2db47ccd10e0",
+      "source": "https://pubmed.ncbi.nlm.nih.gov/33312291/",
+      "basis": "The study directly includes lateral raises among shoulder exercises; this identity does not quantify dose or suitability."
+    },
+    "683216a5-72dd-5200-9fb9-8e0ece4b969d": {
+      "exerciseFamilyId": "2cfb5552-bd13-5413-aa1d-f0f829dabec6",
+      "source": "https://cscca.org/content.aspx?club_id=408309&module_id=732309&page_id=22",
+      "basis": "The CSCCa identifies the barbell Romanian deadlift as a standing hip hinge. It is kept distinct from a floor deadlift and from knee-flexion Nordics.",
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": true,
+          "source": "https://cscca.org/content.aspx?club_id=408309&module_id=732309&page_id=22"
+        }
+      }
+    },
+    "70936155-740f-5a29-a2f7-947fbcca0b96": {
+      "exerciseFamilyId": "4c1c484b-b1ac-5c9f-8a08-76b55d2eb142",
+      "source": "https://pubmed.ncbi.nlm.nih.gov/28828073/",
+      "basis": "Grouped with traditional pull-ups as a vertical pulling variation; suspension stability is not assumed equivalent.",
+      "anatomy": {
+        "primarySubregions": [
+          "latissimus_dorsi",
+          "upper_back"
+        ],
+        "secondarySubregions": [
+          "deltoid_posterior"
+        ],
+        "source": "https://pubmed.ncbi.nlm.nih.gov/28828073/",
+        "basis": "The study measured latissimus dorsi, posterior deltoid, and middle trapezius during standard and suspension pull-ups. Lats and upper-back are primary back regions; posterior deltoid is assisting. Acute activation is not a dose or personal-suitability finding."
+      },
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": true,
+          "source": "https://pubmed.ncbi.nlm.nih.gov/28828073/"
+        }
+      }
+    },
+    "81b9bf9f-ba5c-5a56-b5cf-ace2c5b61664": {
+      "exerciseFamilyId": "6984c8fd-d5b1-5dad-9761-b89620f36209",
+      "source": "https://pubmed.ncbi.nlm.nih.gov/31397215/",
+      "basis": "Bench-press variants include barbell flat and dumbbell incline presses; the source tests acute muscle activation, not equal training effects.",
+      "anatomy": {
+        "primarySubregions": [
+          "pectoralis_clavicular",
+          "pectoralis_sternocostal"
+        ],
+        "secondarySubregions": [
+          "deltoid_anterior"
+        ],
+        "source": "https://pubmed.ncbi.nlm.nih.gov/31397215/",
+        "basis": "The study measured clavicular and sternocostal pectoralis major and anterior deltoid across flat and inclined free-weight presses. Regional entries follow the app library’s chest-primary and assisting-deltoid convention; acute EMG is not a hypertrophy dose."
+      },
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": false,
+          "source": "https://www.nasm.org/resource-center/exercise-library/barbell-bench-press"
+        }
+      }
+    },
+    "8b1df2da-d45d-5e13-b6a6-3e38c0da18b9": {
+      "exerciseFamilyId": "27e7555c-cfb4-5d80-9e66-5544abd12e36",
+      "source": "https://pubmed.ncbi.nlm.nih.gov/19197209/",
+      "basis": "The study directly compares inverted and standing bent-over rows. The library-named dumbbell row variants share the horizontal-row action but remain mechanically distinct variants. Family grouping supports exercise-variation counting only; it does not assert equal trunk demand.",
+      "anatomy": {
+        "primarySubregions": [
+          "latissimus_dorsi",
+          "upper_back"
+        ],
+        "secondarySubregions": [],
+        "source": "https://pubmed.ncbi.nlm.nih.gov/19197209/",
+        "basis": "A direct comparison measured latissimus dorsi and upper-back activation during standing bent-over and inverted rows. Those are the primary back regions represented here; the study does not establish long-term superiority."
+      },
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": true,
+          "source": "https://pubmed.ncbi.nlm.nih.gov/19197209/"
+        }
+      }
+    },
+    "904fc6ff-ebac-5ee6-bdfb-dd5e9835aea2": {
+      "exerciseFamilyId": "de82c18e-6540-5ee9-898e-2963de85af95",
+      "source": "https://doi.org/10.4085/1062-6050-0010.22",
+      "basis": "The study analyzes the standard Nordic hamstring exercise alongside loaded and single-legged versions as variations within one Nordic hamstring exercise progression. Family identity only; no dose, fatigue, or personal suitability claim."
+    },
+    "a4a8dc45-7ddb-5044-9834-e25fc60507c4": {
+      "exerciseFamilyId": "51c86f37-60f5-5e90-9d07-737427bf0a3f",
+      "source": "https://doi.org/10.1519/SSC.0b013e31822fa09d",
+      "basis": "The NSCA describes the hip thrust as a loaded hip-extension pattern with the upper back supported on a bench; this is distinct from a standing hinge.",
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": false,
+          "source": "https://doi.org/10.1519/SSC.0b013e31822fa09d"
+        }
+      }
+    },
+    "a782884c-2643-50fb-a29a-700854c9befd": {
+      "exerciseFamilyId": "27e7555c-cfb4-5d80-9e66-5544abd12e36",
+      "source": "https://pubmed.ncbi.nlm.nih.gov/19197209/",
+      "basis": "The study directly compares inverted and standing bent-over rows. The library-named dumbbell row variants share the horizontal-row action but remain mechanically distinct variants. Family grouping supports exercise-variation counting only; it does not assert equal trunk demand.",
+      "anatomy": {
+        "primarySubregions": [
+          "latissimus_dorsi",
+          "upper_back"
+        ],
+        "secondarySubregions": [],
+        "source": "https://pubmed.ncbi.nlm.nih.gov/19197209/",
+        "basis": "A direct comparison measured latissimus dorsi and upper-back activation during standing bent-over and inverted rows. Those are the primary back regions represented here; the study does not establish long-term superiority."
+      },
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": true,
+          "source": "https://www.acefitness.org/resources/everyone/exercise-library/12/bent-over-row/"
+        }
+      }
+    },
+    "a86b8a15-2ffd-5140-a384-58016c830edc": {},
+    "ab406af0-5c55-5ddf-b34c-b70641f14cfe": {
+      "exerciseFamilyId": "2cfb5552-bd13-5413-aa1d-f0f829dabec6",
+      "source": "https://www.nasm.org/resource-center/exercise-library/dumbbell-romanian-deadlift",
+      "basis": "NASM describes this dumbbell-pair Romanian Deadlift as a hip-hinge movement and lists barbell Romanian deadlift as a variation; it shares the Romanian Deadlift family. Family identity only; no dose, fatigue, or personal suitability claim.",
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": true,
+          "source": "https://www.nasm.org/resource-center/exercise-library/dumbbell-romanian-deadlift"
+        }
+      }
+    },
+    "b33ba61a-0435-5fb7-9533-e1201068bb5e": {
+      "exerciseFamilyId": "6984c8fd-d5b1-5dad-9761-b89620f36209",
+      "source": "https://pubmed.ncbi.nlm.nih.gov/31397215/",
+      "basis": "Bench-press variants include barbell flat and dumbbell incline presses; the source tests acute muscle activation, not equal training effects.",
+      "anatomy": {
+        "primarySubregions": [
+          "pectoralis_clavicular",
+          "pectoralis_sternocostal"
+        ],
+        "secondarySubregions": [
+          "deltoid_anterior"
+        ],
+        "source": "https://pubmed.ncbi.nlm.nih.gov/31397215/",
+        "basis": "The study measured clavicular and sternocostal pectoralis major and anterior deltoid across flat and inclined free-weight presses. Regional entries follow the app library’s chest-primary and assisting-deltoid convention; acute EMG is not a hypertrophy dose."
+      },
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": false,
+          "source": "https://www.nasm.org/resource-center/exercise-library/barbell-bench-press"
+        }
+      }
+    },
+    "c43df18d-b03e-5c4c-8554-c720c7b2ae19": {
+      "exerciseFamilyId": "de82c18e-6540-5ee9-898e-2963de85af95",
+      "source": "https://doi.org/10.4085/1062-6050-0010.22",
+      "basis": "The standard Nordic hamstring exercise and its loaded or unilateral progressions are grouped as one family. No fatigue or individual tolerance inference.",
+      "programmingDemands": {
+        "eccentric_emphasis": {
+          "present": true,
+          "source": "https://pubmed.ncbi.nlm.nih.gov/35984720/"
+        },
+        "unsupported_trunk": {
+          "present": true,
+          "source": "https://pubmed.ncbi.nlm.nih.gov/31644582/"
+        }
+      }
+    },
+    "d2c20f36-35c5-5b89-9277-e3005b2ac9d8": {
+      "exerciseFamilyId": "4c1c484b-b1ac-5c9f-8a08-76b55d2eb142",
+      "source": "https://pubmed.ncbi.nlm.nih.gov/28011412/",
+      "basis": "The study compares pronated and supinated pull-up grips, including the chin-up variation. Grouped as a vertical pull-up variation; this does not assert identical loading or athlete ability.",
+      "anatomy": {
+        "primarySubregions": [
+          "latissimus_dorsi"
+        ],
+        "secondarySubregions": [],
+        "source": "https://pubmed.ncbi.nlm.nih.gov/24245055/",
+        "basis": "The kinematic/EMG comparison includes chin-ups and reports latissimus dorsi activation. Upper-back and posterior-deltoid attribution remains unknown for this exact grip variant."
+      },
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": true,
+          "source": "https://pubmed.ncbi.nlm.nih.gov/24245055/"
+        }
+      }
+    },
+    "fc597804-3e3b-52b2-ae05-e57561f2dace": {
+      "exerciseFamilyId": "6984c8fd-d5b1-5dad-9761-b89620f36209",
+      "source": "https://pubmed.ncbi.nlm.nih.gov/31397215/",
+      "basis": "A controlled EMG comparison tested horizontal and inclined free-weight bench presses with barbell and dumbbell implementations; grouped as bench-press variations. Family identity only; findings do not establish equal stimulus or suitability.",
+      "anatomy": {
+        "primarySubregions": [
+          "pectoralis_clavicular",
+          "pectoralis_sternocostal"
+        ],
+        "secondarySubregions": [
+          "deltoid_anterior"
+        ],
+        "source": "https://pubmed.ncbi.nlm.nih.gov/31397215/",
+        "basis": "The study measured clavicular and sternocostal pectoralis major and anterior deltoid across flat and inclined free-weight presses. Regional entries follow the app library’s chest-primary and assisting-deltoid convention; acute EMG is not a hypertrophy dose."
+      },
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": false,
+          "source": "https://pubmed.ncbi.nlm.nih.gov/31397215/"
+        }
+      }
+    },
+    "fedad881-86d9-59a8-b93c-08f30f24fd5e": {
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": true,
+          "source": "https://www.nasm.org/resource-center/blog/training/best-abs-exercises"
+        }
+      },
+      "exerciseFamilyId": "07fcecde-67c8-549a-9522-3eb46f62cfd8",
+      "source": "https://www.nasm.org/resource-center/blog/training/best-abs-exercises",
+      "basis": "The rollout is a distinct rolling trunk-flexion/anti-extension exercise; this metadata does not represent a fatigue score."
+    },
+    "7dd91414-c838-5750-b2f2-909665497ad5": {
+      "exerciseFamilyId": "30303e2d-bf30-5cab-b4c7-605726e50931",
+      "source": "https://pubmed.ncbi.nlm.nih.gov/19002072/",
+      "basis": "The study directly examines barbell front squat mechanics alongside back squat; grouped with the barbell hack squat as squat-pattern variants, without asserting equal mechanics.",
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": true,
+          "source": "https://pubmed.ncbi.nlm.nih.gov/19002072/"
+        }
+      }
+    },
+    "bee658cf-bfbd-5e54-982f-df4b21d4ca1d": {
+      "exerciseFamilyId": "8be3ba29-2aa3-58f3-9a21-d37f0328e7c0",
+      "source": "https://www.nasm.org/resource-center/exercise-library/barbell-bicep-curl",
+      "basis": "Barbell and dumbbell curl variants share elbow-flexion action; family identity does not claim equal resistance profile.",
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": true,
+          "source": "https://www.nasm.org/resource-center/exercise-library/barbell-bicep-curl"
+        }
+      }
+    },
+    "08ff7158-4c63-5792-bd83-fbe52c5888fd": {
+      "exerciseFamilyId": "dd607712-6da5-5cf8-aced-fe6c0d30fe3e",
+      "source": "https://www.acefitness.org/resources/everyone/exercise-library/333/tricep-pressdown/",
+      "basis": "This is a standing cable elbow-extension movement; kept separate from overhead dumbbell extension variants.",
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": true,
+          "source": "https://www.acefitness.org/resources/everyone/exercise-library/333/tricep-pressdown/"
+        }
+      }
+    },
+    "bc095e45-b949-57d3-aa8d-b3235a575ff1": {
+      "exerciseFamilyId": "007032c9-9500-5865-b610-9ad2e9e94019",
+      "source": "https://www.acefitness.org/resources/everyone/exercise-library/51/calf-raises/",
+      "basis": "Barbell and dumbbell standing calf raises share loaded ankle plantar-flexion; barbell and dumbbell loading are not asserted equivalent.",
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": true,
+          "source": "https://www.acefitness.org/resources/everyone/exercise-library/51/calf-raises/"
+        }
+      }
+    },
+    "8b6b9813-39b1-5c86-89bf-22ab6828556e": {
+      "exerciseFamilyId": "78b2924e-68d3-5655-b015-b01aeaf00b47",
+      "source": "https://doi.org/10.1519/SSC.0000000000000324",
+      "basis": "The NSCA article explicitly identifies the standing barbell overhead press; family identity is limited to that named pattern.",
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": true,
+          "source": "https://doi.org/10.1519/SSC.0000000000000324"
+        }
+      },
+      "anatomy": {
+        "primarySubregions": [
+          "deltoid_anterior"
+        ],
+        "secondarySubregions": [
+          "deltoid_lateral"
+        ],
+        "source": "https://pubmed.ncbi.nlm.nih.gov/35936912/",
+        "basis": "The study compares shoulder-press variations and measures anterior and medial deltoid activation. These are positive regional attributions for the press pattern, not a numerical dose or claim of equal activation across variants."
+      }
+    },
+    "43876a73-3e7e-5455-babe-3067ae11ca86": {
+      "exerciseFamilyId": "27e7555c-cfb4-5d80-9e66-5544abd12e36",
+      "source": "https://pubmed.ncbi.nlm.nih.gov/19197209/",
+      "basis": "The Pendlay row is grouped with horizontal rows. The cited study covers bent-over/inverted rows, not the Pendlay technique specifically; this is a movement-family inference only.",
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": true,
+          "source": "https://www.acefitness.org/resources/everyone/exercise-library/12/bent-over-row/"
+        }
+      }
+    },
+    "9cadcbaf-2d08-580c-9565-9921d6a06755": {
+      "exerciseFamilyId": "9e431603-217f-5fc7-903c-d189813521ca",
+      "source": "https://www.acefitness.org/resources/everyone/exercise-library/366/bulgarian-split-squat/",
+      "basis": "The ACE definition describes the Bulgarian split squat as a unilateral split-squat pattern; family identity does not make its balance demands interchangeable with bilateral squats.",
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": true,
+          "source": "https://www.acefitness.org/resources/everyone/exercise-library/366/bulgarian-split-squat/"
+        }
+      }
+    },
+    "db613e3b-34ed-542a-95ff-e300c32537ad": {
+      "exerciseFamilyId": "f3e7bfb7-33f6-5e91-82dc-05457b6737ef",
+      "source": "https://www.healthline.com/health/fitness-exercise/oblique-workout",
+      "basis": "The dumbbell side bend is a standing lateral-trunk-flexion movement. It is kept separate from anti-extension and anti-lateral-flexion core exercises.",
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": true,
+          "source": "https://www.healthline.com/health/fitness-exercise/oblique-workout"
+        }
+      }
+    },
+    "e0255620-1647-51d1-9590-1bcc98dc6c78": {
+      "exerciseFamilyId": "8be3ba29-2aa3-58f3-9a21-d37f0328e7c0",
+      "source": "https://www.nasm.org/resource-center/exercise-library/barbell-bicep-curl",
+      "basis": "Grouped with other curls by the shared standing elbow-flexion task, not by exact load or muscle stimulus.",
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": true,
+          "source": "https://www.acefitness.org/resources/everyone/exercise-library/70/bicep-curl/"
+        }
+      }
+    },
+    "4c2a8ef5-2ffd-5140-a384-58016c830edc": {
+      "exerciseFamilyId": "1a28e676-3d99-595e-904d-3526218eb356",
+      "source": "https://www.acefitness.org/resources/everyone/exercise-library/74/triceps-extension/",
+      "basis": "The overhead dumbbell extension is grouped with lying dumbbell elbow-extension variants; the shoulder position and support remain distinct.",
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": true,
+          "source": "https://www.acefitness.org/resources/everyone/exercise-library/74/triceps-extension/"
+        }
+      }
+    },
+    "9d6bcd5d-220f-561b-d6a5-acb6392b88a5": {
+      "exerciseFamilyId": "007032c9-9500-5865-b610-9ad2e9e94019",
+      "source": "https://www.acefitness.org/resources/everyone/exercise-library/51/calf-raises/",
+      "basis": "Grouped with barbell calf raise by standing ankle plantar-flexion; loading and stability are not asserted equivalent.",
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": true,
+          "source": "https://www.mayoclinic.org/healthy-lifestyle/fitness/multimedia/calf-raise/vid-20084681"
+        }
+      }
+    },
+    "46054dfb-ed13-59bf-820a-7761a28254c4": {
+      "exerciseFamilyId": "30303e2d-bf30-5cab-b4c7-605726e50931",
+      "source": "https://www.muscleandfitness.com/workouts/leg-exercises/how-barbell-hack-squat/",
+      "basis": "The barbell hack squat is a standing knee-and-hip extension with the bar behind the legs. Grouped as a squat-pattern variant; this is not a claim of identical loading.",
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": true,
+          "source": "https://barbend.com/hack-squat/"
+        }
+      }
+    },
+    "2fe1ff29-a880-5095-9fa9-c8fa8785f482": {
+      "exerciseFamilyId": "27e7555c-cfb4-5d80-9e66-5544abd12e36",
+      "source": "https://www.menshealth.com/fitness/a27736363/incline-bench-row/",
+      "basis": "Grouped with horizontal rows by the elbow-driven pull. The incline bench changes trunk support, which is independently tagged.",
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": false,
+          "source": "https://www.menshealth.com/fitness/a27736363/incline-bench-row/"
+        }
+      }
+    },
+    "9366e34d-1d16-5a83-b5d9-5fb224cb8918": {
+      "exerciseFamilyId": "823806fd-7ce7-53d9-b0ee-896a33ba55f6",
+      "source": "https://pubmed.ncbi.nlm.nih.gov/23302754/",
+      "basis": "The single-arm version shares the reverse-fly shoulder-abduction pattern; the cited study measured a machine variant, so this is not equal-stimulus evidence.",
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": true,
+          "source": "https://www.acefitness.org/resources/pros/expert-articles/4901/summer-boot-camp-arms-workout/"
+        }
+      }
+    },
+    "8de092d3-b561-5728-9d0f-08dabb7a2717": {
+      "exerciseFamilyId": "8be3ba29-2aa3-58f3-9a21-d37f0328e7c0",
+      "source": "https://www.nasm.org/resource-center/exercise-library/barbell-bicep-curl",
+      "basis": "Grouped with other curls by the shared standing elbow-flexion task; unilateral execution is not asserted identical.",
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": true,
+          "source": "https://www.acefitness.org/resources/everyone/exercise-library/70/bicep-curl/"
+        }
+      }
+    },
+    "fdd120b5-3489-5f3c-9ac9-b63c200d7815": {
+      "exerciseFamilyId": "1a28e676-3d99-595e-904d-3526218eb356",
+      "source": "https://www.acefitness.org/resources/everyone/exercise-library/74/triceps-extension/",
+      "basis": "Grouped with overhead dumbbell extension by elbow extension against dumbbell resistance; lying support and shoulder position are distinct.",
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": false,
+          "source": "https://www.muscleandfitness.com/exercise/workouts/arm-exercises/dumbbell-lying-triceps-extension/"
+        }
+      }
+    },
+    "1aced67d-66ed-5ecf-af3d-1e6a3fd5139d": {
+      "exerciseFamilyId": "99d4e251-3fa0-520b-b61d-7b1aa408b2c8",
+      "source": "https://pubmed.ncbi.nlm.nih.gov/40497251/",
+      "basis": "The study directly compares sumo and conventional floor deadlift techniques; sumo remains distinct from Romanian deadlift.",
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": true,
+          "source": "https://pubmed.ncbi.nlm.nih.gov/40497251/"
+        }
+      }
+    },
+    "e748a3ed-02ae-5bd5-8a44-85f8be69f68c": {
+      "exerciseFamilyId": "a880113e-58f2-5560-99b2-5c56a7e30464",
+      "source": "https://pubmed.ncbi.nlm.nih.gov/33239937/",
+      "basis": "The study directly evaluates dumbbell flyes as a single-joint horizontal-adduction exercise, distinct from pressing. Acute EMG is not long-term equivalence.",
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": false,
+          "source": "https://www.acefitness.org/resources/everyone/exercise-library/21/lying-chest-fly/"
+        }
+      }
+    },
+    "856a78ee-11fe-5cf9-9a4d-3fc876a1387c": {
+      "exerciseFamilyId": "30303e2d-bf30-5cab-b4c7-605726e50931",
+      "source": "https://www.mayoclinic.org/healthy-lifestyle/fitness/multimedia/squat/vid-20084682",
+      "basis": "The standard dumbbell squat is a standing knee-and-hip squat, grouped with the reviewed squat-pattern variations. This family grouping does not assert equal loading or stimulus.",
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": true,
+          "source": "https://www.mayoclinic.org/healthy-lifestyle/fitness/multimedia/squat/vid-20084682"
+        }
+      }
+    },
+    "9d6bcd5d-220f-561d-b6a5-acb6392b88a5": {
+      "exerciseFamilyId": "007032c9-9500-5865-b610-9ad2e9e94019",
+      "source": "https://www.mayoclinic.org/healthy-lifestyle/fitness/multimedia/calf-raise/vid-20084681",
+      "basis": "Mayo Clinic describes the dumbbell calf raise as the standing calf-raise movement with a dumbbell in each hand; grouped with the barbell standing variation as a calf-raise family.",
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": true,
+          "source": "https://www.mayoclinic.org/healthy-lifestyle/fitness/multimedia/calf-raise/vid-20084681"
+        }
+      }
+    },
+    "aea27563-40b8-5946-a446-0f36f0a1886c": {
+      "exerciseFamilyId": "e962f13f-91b0-57c0-9222-81bcb2cf5715",
+      "source": "https://repositorio.ufla.br/items/6617a7f9-0715-43c2-b46e-81ead7a40c6a",
+      "basis": "A university research repository record reports a direct barbell-versus-dumbbell pullover comparison, supporting one pullover family across those loading implements. It does not claim equal long-term effect.",
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": false,
+          "source": "https://www.healthline.com/health/fitness/dumbbell-pullover"
+        }
+      }
+    },
+    "af217e72-a5bb-5778-8859-0cdc62715bc3": {
+      "exerciseFamilyId": "6984c8fd-d5b1-5dad-9761-b89620f36209",
+      "source": "https://www.muscleandfitness.com/exercise/workouts/chest-exercises/barbell-floor-press/",
+      "basis": "The floor press is explicitly described as a barbell chest press whose range is limited by the floor; grouped with the reviewed bench-press family as a horizontal pressing variation, without asserting equal range or stimulus.",
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": false,
+          "source": "https://www.muscleandfitness.com/exercise/workouts/chest-exercises/barbell-floor-press/"
+        }
+      }
+    },
+    "b2f12a8f-8799-534b-9482-fd4c676a9c95": {
+      "exerciseFamilyId": "1a28e676-3d99-595e-904d-3526218eb356",
+      "source": "https://cgsc.contentdm.oclc.org/digital/api/collection/p4013coll2/id/1253/download",
+      "basis": "The training manual describes the standing barbell overhead triceps extension; grouped with reviewed elbow-extension variations because the exercise is defined by loaded elbow extension. The family does not assert equal joint position or stimulus.",
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": true,
+          "source": "https://cgsc.contentdm.oclc.org/digital/api/collection/p4013coll2/id/1253/download"
+        }
+      }
+    },
+    "b62e3191-3414-5a99-a3c9-0c6a3b2a5392": {
+      "exerciseFamilyId": "78b2924e-68d3-5655-a015-b01aeaf00b47",
+      "source": "https://pubmed.ncbi.nlm.nih.gov/23096062/",
+      "basis": "The study directly compares barbell and dumbbell shoulder presses, including seated configurations; grouped with the overhead-press family while preserving implement and posture differences.",
+      "programmingDemands": {
+        "unsupported_trunk": {
+          "present": false,
+          "source": "https://www.acefitness.org/resources/everyone/exercise-library/45/seated-overhead-press/"
+        }
+      }
+    }
+  }
+}

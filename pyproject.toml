@@ -40,6 +40,9 @@ exercise-motion = "exercise_motion_pkg.cli:main"
 [tool.setuptools]
 packages = ["exercise_motion_pkg", "workout_history_mcp", "workout_generator_pkg", "motion_annotation_pkg"]
 
+[tool.setuptools.package-data]
+workout_generator_pkg = ["exercise_family_annotations.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

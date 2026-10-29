@@ -1,0 +1,55 @@
+# Remaining output issues: ownership and verification
+
+The retained v5 export is valid under its approved requirements, but is not proof of optimal programming or unaided completion. It contains 14 Nordic sets (4/3/7) and horizontal-pull exposure of 3/2/7. Preserve that export and its conversation as historical evidence.
+
+## Causes established from the retained artifacts
+
+- **Unchanged revalidation dropped solver evidence.** Message 50 and the final reviewed message 61 contain the identical submitted draft. The prior solve preserved source selection, but revalidation requested reuse as an unlocked-selection solve. Both the allocator and shell now validate exact-artifact reuse under the recorded selection domain and current requirements, library, history, restrictions and numerical authority. Changed prescriptions or an explicitly changed source cap cannot reuse it. This retains evidence; it makes no new optimality claim.
+- **Ordering compliance had two owners.** Native code already audits block and superset-member ordering, while semantic review still invited a competing organizational rule. The integrated and legacy review requests now reserve compliance to the deterministic audit. Sequence remains relevant to semantic fatigue and priority interference; passing the organizational audit does not establish pairing suitability.
+- **Weekly movement relationships are not session distribution.** The approved source-balance rules compare weekly role totals. The existing dose-preserving role-placement stage handles session distribution separately. Moving that stage ahead of selection would prematurely lock weekly recipe doses and disable subsequent variety and workload objectives, so that apparent fix was rejected.
+- **A worst-role-only score has a balance plateau.** A controlled fixed-dose case gives identical objective values when an immovable role determines the worst imbalance, even if another role can be spread evenly instead of concentrated. The correction uses the existing solver machinery to minimize the remaining role-profile peak sum after preserving the worst-role result. It must retain identical profile identity in optimization and candidate comparison; coincident observed counts are not a valid identity. This changes structural tie-breaking, not weekly dose, fatigue estimation or binding requirements.
+- **Muscle equalization could override the desired movement distribution.** In this program, horizontal pulling 3/6/3 combined with vertical pulling 3/0/3 equalizes aggregate back sets at 6/6/6. Running muscle equalization first prevents the later role-placement step from choosing more even horizontal pulling. When workload economy precedes a final approved `distribution` priority, the shared solver/comparison order now performs dose-preserving worst-role and profile-sum polishing before muscle equalization. Selection, family and workload stages have already completed. Other priority configurations retain their previous internal order; no later approved priority may be disabled by an early dose lock.
+- **Ordering-only repair could rewrite unrelated programming.** The shell previously sent a successful canonical ordering correction back through joint selection and dosage optimization. It now compares the entire proposed draft with the deterministic canonical order of the source, using the current library even if a failed review stripped its plan index. Only an exact ordering correction that passes the full native audit takes the audit-only path. Count, load, timing-prescription, membership or other non-order changes cannot use this shortcut. Superset recovery stays attached to its sequence slots. A changed order does not inherit an optimization claim unless the separate proof-reuse check accepts it.
+- **Nordic reliance cannot be diagnosed from the selected plan alone.** The retained preparation already offered a broad, reviewed recipe pool; a singleton knee-flexion role in the exported plan is not proof that alternatives were accidentally dropped. The existing continuous weekly-volume diagnostic gives a 12-set lower bound for the Nordic credit profile under the retained eligible pool and approved bands. Its active weekly target boundaries are now carried into the programming disclosure. They are simultaneous witness facts, not proof that any single boundary causes the bound or that changing it yields a better executable plan.
+
+## Verification
+
+`build/workout_remaining_issues_20261027/reuse_replay.py` replays the actual message-50 solver proof against the final unchanged draft. It demonstrates the original rejection, successful current reuse and rejection after a count change, with network access prohibited and the retained conversation bytes unchanged.
+
+The same replay corrects the actual message-42 ordering failure without solving, preserves weekly volume and coverage, and passes the native audit with estimates of 4869/4965/5110 seconds (241-second spread). Focused shell regressions cover source receipts with and without a plan index. Final scoped verification: 27 selected tests passed; all seven edited runtime modules and their edited tests compiled. No paid provider calls or new export were made for these fixes.
+
+The retained exact-proof replay before the structural objective change is preserved in `reuse_replay_pre_tiebreak_result.json`. After that change, the existing objective fingerprint correctly rejects old optimality evidence; the current replay reports that rejection rather than claiming an old solve proves the new objective. Same-policy reuse remains covered by the focused regressions.
+
+Executable comparisons are recorded separately under the same build directory. A continuous bound, an incumbent returned at a timeout, a numerical audit and a semantic review have different scopes; none should be reported as the others. Hypothetical requirement changes remain diagnostic and do not alter approved requirements.
+
+The current-code re-solve of the retained selected recipe source proves the supplied-menu objective hierarchy optimal at 92 weekly working sets and 14 Nordic sets, with Nordic exposure 5/5/4 and horizontal pulling 3/3/6. Thus better session placement than the final export exists without reducing Nordic reliance. This is an optimum for the supplied finite recipes and stated objectives, not minimum possible Nordic work.
+
+The one-variable executable counterfactual (`glute20_counterfactual_result.json`) changes only the glute upper bound from 18 to 20 for diagnosis. Its audited result has 13 Nordic sets (4/5/4), 19 effective glute sets, 93 total working sets, and a 279-second duration spread. All solver stages were optimal within that recipe source. It violates the actual approved glute maximum and is not a replacement plan. The result establishes that this ceiling affects the selected solution; it does not establish that changing the ceiling alone solves the quality goal. No requirements or retained outputs were changed.
+
+The final broader diagnostic uses the retained typed worker recipes, not the preparation skeleton (which intentionally lacks executable rep fields). Those saved workers omit one prepared reference, Bulgarian Split Squat; no prescription was fabricated to fill it. The known-incomplete recipe pool yields a native-audited 92-set plan with 14 Nordic sets (4/5/5), horizontal pulling 4/2/6, and 4869/4965/5110-second estimates. Selection stages completed; muscle distribution and subsequent role placement remained feasible rather than proven optimal. This is useful scoped evidence, not a production-complete pool, semantic approval or a new export. Exercise-family scores from different candidate-pool contexts cannot be directly compared.
+
+The output-quality goal therefore remains open: the implemented ownership fixes prevent unrelated regressions and misleading completion claims, but neither the broader retained pool nor the one ceiling change establishes a satisfactory reduction in Nordic reliance. Do not turn that unresolved preference into a new arbitrary cap, a fabricated fatigue score or a silent relaxation.
+
+An additional isolated diagnostic (`nordic_cap12_selected_source_result.json`) proves that the exact selected recipe source cannot meet the approved hard requirements with at most 12 Nordic sets. This is a source-specific integer lower bound of at least 13, not a global menu/library bound and not proof that the normally selected 14 sets are necessary. RDLs contribute hamstring credit but do not qualify as knee-flexion exercises. Their absence from this selected source alone does not prove a menu-selection defect; the broader retained worker pool already contains them.
+
+## Final movement-first validation
+
+`movement_first_selected_source_result.json` records the final current-code solve of the same selected-source inputs, with approved requirements, actual history, native calibration mode and source budget preserved. All objective stages were optimal, and runtime hashes stayed unchanged during that replay. Per-exercise weekly doses remained exactly equal to the pre-fix solve:
+
+| Measure | Before internal ordering/tie-break fix | Final replay |
+|---|---:|---:|
+| Largest role-profile peak surplus | 2 | 1.3333 sets per occurrence |
+| Sum of role-profile peak surpluses, same 16-profile context | 14.6667 | 7.6667 |
+| Horizontal pulling | 3/3/6 | 4/4/4 |
+| Lateral-delt work | 2/0/4 | 2/2/2 |
+| Vertical pulling | 3/3/0 | 3/3/0 |
+| Total weekly work | 92 | 92 |
+| Nordic weekly work | 14 | 14 (5/5/4) |
+
+Final horizontal pushing is 4/4/4 and vertical pushing 2/2/2. Estimated durations are 4820/5117/5039 seconds (297-second spread), within the approved 300-second similarity tolerance and 90-minute hard cap. Independent native audit has zero issues/errors. Muscle-distribution cost rises from 22 to 88 because movement placement now takes precedence during dose-preserving polishing; do not call every dimension improved.
+
+The final broader-pool feasibility-only witness (`worker_pool_nordic12_feasibility_result.json`) has 12 Nordic sets and passes numerical/execution audit. It proves that this supplied pool's hard constraints do not force more than 12; it does not prove a good 12-set plan. Preferences were disabled. Its Nordic distribution is 10/0/2, and its known unsupported-trunk peak is 34 versus baseline 17 under the same full-worker-pool classified definition set. That observed difference is not proof that the tradeoff is necessary. The solver source changed during this diagnostic for the internal-order guard; exact start/end hashes are retained, so it must not be described as a stable-current-runtime optimization run.
+
+No new export or independent semantic model review was performed. Fresh unaided reliability, individual capacity/recovery, measured durations and an overall preferable reduction in Nordic reliance remain unverified.
+
+Personal exercise capacity, recovery and measured session duration still require observations. Generator changes cannot manufacture those facts.

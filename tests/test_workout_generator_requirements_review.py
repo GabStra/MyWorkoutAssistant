@@ -7,10 +7,28 @@ import pytest
 from workout_generator_pkg import plan_review as review
 from workout_generator_pkg.interactive_shell import handle_function_call, _messages_for_api
 from workout_generator_pkg.planning_tools import (
-    SET_WORKOUT_REQUIREMENTS_TOOL, requirement_sources, requirements_approved, set_workout_requirements,
+    SET_WORKOUT_REQUIREMENTS_TOOL, _latest_result, active_requirement_result,
+    approved_requirement_base, latest_requirement_candidate, requirement_sources,
+    requirements_approved, set_workout_requirements,
 )
 from test_workout_generator_planning_tools import planning_case, requirement_messages
 from test_workout_generator_planning_decisions import _without_review_refs
+
+
+def test_review_uses_executable_balance_default_without_mutating_requirements():
+    _, _, candidate, _ = planning_case()
+    candidate['requirements']['executionRules'] = [{
+        'kind': 'coverageBalance', 'first': 'horizontal_pull',
+        'second': 'vertical_pull', 'scope': 'weekly'}]
+    original = copy.deepcopy(candidate)
+    explicit = copy.deepcopy(candidate)
+    explicit['requirements']['executionRules'][0]['relationship'] = 'balanced'
+
+    assert review._requirements_context(candidate) == review._requirements_context(explicit)
+    assert candidate == original
+
+    explicit['requirements']['executionRules'][0]['relationship'] = 'first_not_less_than_second'
+    assert review._requirements_context(explicit) != review._requirements_context(candidate)
 
 
 def test_minimum_policy_reaches_extraction_and_independent_review():
@@ -24,6 +42,7 @@ def test_minimum_policy_reaches_extraction_and_independent_review():
     assert MINIMUM_TARGET_POLICY in CANONICAL_PLANNING_INSTRUCTION
     assert MINIMUM_TARGET_POLICY in review._REQUIREMENTS_PROMPT
     assert 'Do not require or reconstruct a prose ledger' in review._REQUIREMENTS_PROMPT
+    assert 'exercise_distribution means spreading prescribed working-set exposure' in review._REQUIREMENTS_PROMPT
     assert 'Verify requirementAccounting covers EVERY explicit instruction' not in review._REQUIREMENTS_PROMPT
 
 
@@ -34,6 +53,127 @@ def _record(messages, result):
     if result.get('requirementsPreview'):
         messages.append({'role': 'assistant', 'content': result['requirementsPreview'],
                          'canonicalRequirementsPreview': result['requirementsId']})
+
+
+def _append_failed_unrequested_decision(messages, approved, *, updates=None):
+    proposed = copy.deepcopy(approved)
+    proposed.update({
+        'requirementsId': 'REQUIREMENTS_rejected_decision_attempt',
+        'baseRequirementsId': approved['requirementsId'],
+        'passed': False,
+        'sourceReview': {**copy.deepcopy(approved['sourceReview']), 'passed': False},
+        'jointDecisionReview': {'passed': False},
+        'proposedDecisions': {'DECISION_0': {'choice': 'unapproved'}},
+    })
+    if updates:
+        proposed['requirements'] = copy.deepcopy(approved['requirements'])
+        proposed['requirements']['objectiveOrder'] = ['distribution']
+    call_id = 'failed-requirements-proposal'
+    messages.extend([
+        {'role': 'assistant', 'tool_calls': [{'id': call_id, 'function': {'name': 'set_workout_requirements',
+            'arguments': json.dumps({'baseRequirementsId': approved['requirementsId'],
+                'updates': updates or {}, 'planningDecisions': {'decisions': [{'topic': 'unknown demand',
+                    'choice': 'unavailable', 'sourceReferences': ['SOURCE_0']}]}})}}]},
+        {'role': 'tool', 'tool_call_id': call_id, 'content': json.dumps(proposed)},
+    ])
+    return proposed
+
+
+def test_rejected_control_only_decision_proposal_keeps_existing_approved_requirements_active():
+    _, arguments, _, _ = planning_case()
+    approved = set_workout_requirements(arguments, [{'role': 'user', 'content': 'Plan 5-6 chest sets.'}])
+    messages = requirement_messages(approved)
+    _, approved = _latest_result(messages, 'set_workout_requirements')
+    audit_id = 'existing-audited-source'
+    messages.extend([
+        {'role': 'assistant', 'tool_calls': [{'id': audit_id, 'function': {
+            'name': 'audit_workout_plan', 'arguments': '{}'}}]},
+        {'role': 'tool', 'tool_call_id': audit_id, 'content': json.dumps({
+            'requirementsId': approved['requirementsId'], 'passed': False,
+            'submittedDraft': {'requirementsId': approved['requirementsId'], 'workouts': [{}]}})},
+        {'role': 'user', 'content': '/continue'},
+    ])
+    failed = _append_failed_unrequested_decision(messages, approved)
+
+    candidate_index, candidate = latest_requirement_candidate(messages)
+    active_index, active = active_requirement_result(messages)
+
+    assert candidate_index > active_index
+    assert candidate['requirementsId'] == failed['requirementsId']
+    assert active['requirementsId'] == approved['requirementsId']
+    assert _latest_result(messages, 'set_workout_requirements') == (active_index, active)
+    assert requirements_approved(messages)
+
+
+def test_unreviewed_direct_requirement_result_keeps_original_extraction_behavior():
+    result = {'requirementsId': 'REQUIREMENTS_direct', 'requirements': {'objectiveOrder': ['strength']}}
+    messages = [
+        {'role': 'assistant', 'tool_calls': [{'id': 'direct-requirements', 'function': {
+            'name': 'set_workout_requirements', 'arguments': '{}'}}]},
+        {'role': 'tool', 'tool_call_id': 'direct-requirements', 'content': json.dumps(result)},
+    ]
+
+    assert active_requirement_result(messages) == (1, result)
+    assert _latest_result(messages, 'set_workout_requirements') == (1, result)
+
+
+@pytest.mark.parametrize('later_user_message', [
+    'CONFIRM GENERATE',
+    'My answer: accept the disclosed tradeoff',
+])
+def test_later_gate_answers_do_not_reactivate_rejected_decision_candidate(later_user_message):
+    _, arguments, _, _ = planning_case()
+    approved = set_workout_requirements(arguments, [{'role': 'user', 'content': 'Plan 5-6 chest sets.'}])
+    messages = requirement_messages(approved)
+    _, approved = _latest_result(messages, 'set_workout_requirements')
+    audit_id = 'existing-audited-source'
+    messages.extend([
+        {'role': 'assistant', 'tool_calls': [{'id': audit_id, 'function': {
+            'name': 'audit_workout_plan', 'arguments': '{}'}}]},
+        {'role': 'tool', 'tool_call_id': audit_id, 'content': json.dumps({
+            'requirementsId': approved['requirementsId'], 'passed': False,
+            'submittedDraft': {'requirementsId': approved['requirementsId'], 'workouts': [{}]}})},
+        {'role': 'user', 'content': '/continue'},
+    ])
+    failed = _append_failed_unrequested_decision(messages, approved)
+    messages.append({'role': 'user', 'content': later_user_message})
+
+    active_index, active = active_requirement_result(messages)
+
+    assert active_index < len(messages) - 2
+    assert active['requirementsId'] == approved['requirementsId']
+    assert active['requirementsId'] != failed['requirementsId']
+
+
+@pytest.mark.parametrize('new_user_instruction,updates', [
+    (True, {}),
+    (False, {'objectiveOrder': ['distribution']}),
+])
+def test_rejected_decision_proposal_does_not_hide_a_new_user_edit_or_changed_requirement_candidate(
+        new_user_instruction, updates):
+    _, arguments, _, _ = planning_case()
+    approved = set_workout_requirements(arguments, [{'role': 'user', 'content': 'Plan 5-6 chest sets.'}])
+    messages = requirement_messages(approved)
+    _, approved = _latest_result(messages, 'set_workout_requirements')
+    audit_id = 'existing-audited-source'
+    messages.extend([
+        {'role': 'assistant', 'tool_calls': [{'id': audit_id, 'function': {
+            'name': 'audit_workout_plan', 'arguments': '{}'}}]},
+        {'role': 'tool', 'tool_call_id': audit_id, 'content': json.dumps({
+            'requirementsId': approved['requirementsId'], 'passed': False,
+            'submittedDraft': {'requirementsId': approved['requirementsId'], 'workouts': [{}]}})},
+    ])
+    if new_user_instruction:
+        messages.append({'role': 'user', 'content': 'Change the weekly chest target.'})
+    messages.append({'role': 'user', 'content': '/continue'})
+    failed = _append_failed_unrequested_decision(messages, approved, updates=updates)
+
+    index, active = _latest_result(messages, 'set_workout_requirements')
+
+    assert active['requirementsId'] == failed['requirementsId']
+    assert active['requirementsId'] != approved['requirementsId']
+    assert index == latest_requirement_candidate(messages)[0]
+    assert not requirements_approved(messages)
 
 
 def test_planner_and_requirements_reviewer_share_actual_numerical_capabilities(monkeypatch):
@@ -376,6 +516,51 @@ def test_requirements_source_review_configures_bounded_wrapper_recovery(monkeypa
     assert options_seen[0]['reasoning_effort'] == 'low'
     assert options_seen[0]['max_tokens'] == 8192
     assert options_seen[0]['retry'] is True
+
+
+@pytest.mark.parametrize('source_is_supported', [True, False])
+def test_source_citation_recovery_selects_only_user_source_and_classifies_by_owned_path(monkeypatch, source_is_supported):
+    equipment, arguments, _, _ = planning_case()
+    messages = [{'role': 'user', 'content': 'Plan 5-6 chest sets.'}]
+    candidate = set_workout_requirements(arguments, messages, equipment)
+    proposal = {'decisions': {'DECISION_0': {'topic': 'Volume preference',
+        'choice': 'Preserve the user requested volume.', 'sourceReferences': ['SOURCE_0'],
+        'sourceCountAtResolution': 1}}, 'newDecisionIds': ['DECISION_0']}
+    monkeypatch.setattr(review, 'propose_decisions', lambda *_args, **_kwargs: copy.deepcopy(proposal))
+    calls = []
+
+    def respond(_client, request, **options):
+        calls.append((request, options))
+        if len(calls) == 1:
+            context = json.loads(request[-1]['content'])
+            return json.dumps({'findings': [{
+                'severity': 'blocking', 'basis': 'uncertainty', 'action': 'clarify',
+                'path': context['requirements']['_reviewRef'], 'decisionId': 'DECISION_0',
+                'message': 'A source-backed requirement needs clarification.',
+                'evidencePaths': [context['requirements']['executionRules'][0]['_reviewRef']],
+                'repair': 'Ask a focused clarification question.'}]}), None, None
+        selection_request = json.loads(request[-1]['content'])
+        selection_schema = options['output_schema']
+        choices = selection_schema['properties']['findingSourceReferences']['properties']['FINDING_A']['enum']
+        source_ref = next(ref for ref in choices if ref != 'NONE') if source_is_supported else 'NONE'
+        if source_is_supported:
+            assert source_ref in selection_request['sources']
+        return json.dumps({'findingSourceReferences': {'FINDING_A': source_ref}}), None, None
+
+    monkeypatch.setattr(review, '_review_call', respond)
+    result = review.review_requirements(None, candidate, messages, planning_decisions=proposal)
+
+    assert len(calls) == 2
+    assert calls[1][1]['output_schema']['properties']['findingSourceReferences']['properties']['FINDING_A']['enum']
+    assert not result['passed']
+    assert bool(result['sourceReview'].get('failure')) is (not source_is_supported)
+    finding = result['sourceReview']['findings'][0]
+    assert finding['path'] == '/requirements'
+    assert finding['decisionId'] == 'DECISION_0'
+    assert finding['action'] == 'clarify'
+    assert finding['severity'] == 'blocking'
+    assert ('/sourceMessages/SOURCE_0' in finding['evidencePaths']) is source_is_supported
+    assert result['decisions'] == {}
 
 
 def test_informational_source_finding_does_not_block_or_request_reconstruction(monkeypatch):

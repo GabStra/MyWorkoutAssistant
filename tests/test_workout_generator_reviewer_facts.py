@@ -134,6 +134,81 @@ def test_review_references_do_not_advertise_the_uncitable_context_wrapper():
     assert '_reviewRef' not in context
 
 
+def test_independent_review_uses_compact_semantic_refs_mapped_to_exact_paths():
+    context = {
+        'sourceMessages': {'SOURCE_0': {'role': 'user', 'content': 'Three days weekly.'}},
+        'requirements': {'sessionsPerWeek': 3, 'executionRules': [{'kind': 'rest'}]},
+        'finalArtifact': {'workouts': [
+            {'name': 'Full Body A', 'components': [{'type': 'Superset', 'exercises': [
+                {'type': 'Exercise', 'id': 'EXERCISE_0'}]}]},
+            {'name': 'Full Body B', 'components': [{'type': 'Superset', 'exercises': [
+                {'type': 'Exercise', 'id': 'EXERCISE_1'}]}]}],
+            'programGuidance': 'Use the prescribed rest.'},
+        'programmingSummary': {
+            'sessions': [{'name': 'Full Body A', 'timingComponents': {'estimatedTotalSeconds': 4571}},
+                         {'name': 'Full Body B', 'timingComponents': {'estimatedTotalSeconds': 4000}}],
+            'exposures': {'LIBRARY_229': {'occurrences': [{'workingSets': 5}]}}},
+        'history': {'LIBRARY_229': {'status': 'missing'}},
+        'audit': {'workouts': [{'name': 'Full Body A'}, {'name': 'Full Body B'}]},
+        'draft': {'exercises': [{'id': 'EXERCISE_0'}, {'id': 'EXERCISE_1'}],
+                  'libraryDefinitions': {'LIBRARY_229': {'name': 'Nordic Curl'}}},
+    }
+    request, facts = plan_review._with_semantic_review_refs(context)
+
+    assert facts['FINAL_ARTIFACT'] == '/finalArtifact'
+    assert facts['FINAL_SESSION_A'] == '/finalArtifact/workouts/0'
+    assert facts['FINAL_BLOCK_A_0'] == '/finalArtifact/workouts/0/components/0'
+    assert facts['FINAL_EXERCISE_A_0_0'] == '/finalArtifact/workouts/0/components/0/exercises/0'
+    assert facts['SUMMARY_SESSION_A'] == '/programmingSummary/sessions/0'
+    assert facts['SUMMARY_EXPOSURE_LIBRARY_229'] == '/programmingSummary/exposures/LIBRARY_229'
+    assert facts['HISTORY_LIBRARY_229'] == '/history/LIBRARY_229'
+    assert facts['EXERCISE_0'] == '/draft/exercises/0'
+    assert 'FACT_4571' not in facts and all(not key.startswith('FACT_') for key in facts)
+    assert request['finalArtifact']['workouts'][0]['_reviewRef'] == 'FINAL_SESSION_A'
+    assert request['programmingSummary']['sessions'][0]['_reviewRef'] == 'SUMMARY_SESSION_A'
+    assert '_reviewRef' not in request['programmingSummary']['sessions'][0]['timingComponents']
+    assert not plan_review._specific_changed_review_evidence('/finalArtifact')
+    assert not plan_review._specific_changed_review_evidence('/finalArtifact/workouts/0')
+    assert not plan_review._specific_changed_review_evidence('/finalArtifact/workouts/0/components/0', context)
+    assert plan_review._specific_changed_review_evidence('/finalArtifact/workouts/0/components/0/exercises/0')
+
+
+def test_saved_invalid_advisory_ref_is_rejected_then_corrected_without_changing_judgment():
+    from pathlib import Path
+    from jsonschema import ValidationError, validate
+
+    fixture = Path(__file__).parent / 'fixtures' / 'workout_review_invalid_evidence.json'
+    saved = json.loads(fixture.read_text(encoding='utf-8'))
+    assert 'FACT_4571' in saved['findings'][0]['evidenceRefs']
+
+    facts = {'FINAL_SESSION_A': '/finalArtifact/workouts/0',
+             'SUMMARY_SESSION_A': '/programmingSummary/sessions/0'}
+    evidence_schema = {'type': 'array', 'items': {'type': 'string', 'enum': sorted(facts)}}
+    response_schema = {'type': 'object', 'properties': {'findings': {'type': 'array', 'items': {
+        'anyOf': [{'type': 'object', 'properties': {
+            'disposition': {'type': 'string', 'enum': ['advisory']},
+            'evidenceRefs': evidence_schema},
+            'required': ['disposition', 'evidenceRefs'], 'additionalProperties': True}]}}},
+        'required': ['findings'], 'additionalProperties': True}
+    with pytest.raises(ValidationError):
+        validate(saved, response_schema)
+    validate(saved, plan_review._review_schema_for_reference_salvage(response_schema))
+
+    correction_schema = plan_review._review_correction_schema(saved, response_schema, {}, facts, [])
+    assert set(correction_schema['properties']['findingCorrections']['properties']) == {'FINDING_0', 'FINDING_1'}
+    correction = {'findingCorrections': {
+        'FINDING_0': {'evidenceRefs': ['FINAL_SESSION_A']},
+        'FINDING_1': {'evidenceRefs': ['SUMMARY_SESSION_A']}}}
+    merged = plan_review._merge_review_correction(saved, correction, correction_schema, facts)
+
+    assert [item['message'] for item in merged['findings']] == [item['message'] for item in saved['findings']]
+    assert [item['disposition'] for item in merged['findings']] == [item['disposition'] for item in saved['findings']]
+    assert [item['evidenceRefs'] for item in merged['findings']] == [
+        ['FINAL_SESSION_A'], ['SUMMARY_SESSION_A']]
+    assert facts[merged['findings'][0]['evidenceRefs'][0]] == '/finalArtifact/workouts/0'
+    assert 'FACT_4571' not in facts
+
+
 def test_audit_capability_guidance_respects_explicit_combined_region_agreement():
     from workout_generator_pkg.generation_audit import audit_policy, muscle_metadata_policy
     supported = {
@@ -662,6 +737,8 @@ def test_programming_summary_exposes_hard_coverage_and_qualitative_balance_facts
         'scope': 'weekly', 'firstSets': 4, 'secondSets': 3, 'deviation': 1,
         'status': 'residual_at_approved_optimum',
         'scopeOfProof': 'Submitted recipes and hard constraints only; other menus were not searched.'}]
+    requirements['auditTargets'] = {'weeklyEffectiveSets': {
+        'chest': {'minimum': 4, 'maximum': 5}, 'back': {'minimum': 3, 'maximum': 5}}}
 
     summary = build_programming_summary(report, report, source_draft, plan_index, review_draft, {}, {},
         final_artifact=final_artifact, requirements=requirements, priority_execution=priority_execution,
@@ -670,7 +747,28 @@ def test_programming_summary_exposes_hard_coverage_and_qualitative_balance_facts
     assert [(item['key'], item['weeklyWorkingSets'], item['scope']) for item in summary['coverageRequirements']] == [
         ('horizontal_push', 4, 'weekly'), ('horizontal_pull', 3, 'weekly')]
     assert summary['coverageRequirements'][0]['intent'] == 'development'
-    assert 'not by themselves establish adequate development' in summary['coverageRequirements'][0]['interpretation']
+    assert 'do not by themselves establish adequate development' in summary['coverageRequirements'][0]['interpretation']
+    assert summary['priorityExecution'] == priority_execution
+    credit_bounds = summary['volumeCreditCoupling']
+    assert credit_bounds['status'] == 'proven'
+    assert {profile['members'][0]['id']: profile['minimumWeeklyWorkingSets']
+        for profile in credit_bounds['profileLowerBounds']} == {'def_press': 4, 'def_row': 3}
+    priority_execution['developmentEmphasis'] = {
+        'owner': 'joint_solver', 'status': 'optimal', 'roleKeys': ['horizontal_push'],
+        'minimumWeeklyWorkingSets': 3,
+        'sourceBudget': {'source': 'code_preparation_hard_feasible_set_allocation_plus_existing_source_sessions',
+            'variableSourceWorkingSets': 22, 'fixedExistingWorkingSets': 4,
+            'sourceBudgetWeeklyWorkingSets': 26, 'variableMenuCapWorkingSets': 22},
+    }
+    development_summary = build_programming_summary(report, report, source_draft, plan_index,
+        review_draft, {}, {}, final_artifact=final_artifact, requirements=requirements,
+        priority_execution=priority_execution, priority_tradeoffs=priority_tradeoffs)
+    development_interpretation = development_summary['coverageRequirements'][0]['interpretation']
+    assert 'relative weekly raw-set exposure across horizontal push within the reported source-set budget' in development_interpretation
+    assert 'Source budget (code-prepared workout allocation plus existing sessions)' in development_interpretation
+    assert 'variable-menu cap is 22 weekly sets' in development_interpretation
+    assert 'selected minimum was 3 raw working sets/week' in development_interpretation
+    assert 'sets no minimum and does not establish adequate development' in development_interpretation
     assert summary['coverageRequirements'][1]['intent'] == 'inclusion'
     assert summary['coverageBalanceEvidence'][0]['workingSets'] == {'horizontal_push': 4, 'horizontal_pull': 3}
     assert summary['coverageBalanceEvidence'][0]['relationship'] == 'balanced'
@@ -681,7 +779,6 @@ def test_programming_summary_exposes_hard_coverage_and_qualitative_balance_facts
     assert summary['coverageBalanceEvidence'][1]['sessions'][0]['comparisonOutcome'] == 'met'
     assert 'no numeric tolerance' in summary['coverageBalanceEvidence'][0]['interpretation']
     assert 'unequal counts alone are not a violation' in summary['coverageBalanceEvidence'][0]['interpretation'].lower()
-    assert summary['priorityExecution'] == priority_execution
     assert summary['priorityTradeoffs'] == priority_tradeoffs
     press_occurrence = summary['exposures']['def_press']['occurrences'][0]
     assert press_occurrence['primaryMuscles'] == ['FRONT_CHEST']

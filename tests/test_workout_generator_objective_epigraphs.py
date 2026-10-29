@@ -43,6 +43,63 @@ def test_objective_epigraphs_are_tightened_before_stage_scores_are_locked():
     assert tightened == [3, 6, 6, 4500, 3900, 15, 4, 1]
 
 
+def test_narrow_continuous_epigraph_interval_keeps_solver_value_for_full_tolerance_check():
+    variables = [{'lower': 0, 'upper': 10, 'integer': False,
+                  'domainIdentity': {'kind': 'duration_balance_bound', 'bound': 'maximum'}}]
+    features = [
+        (('duration_balance', 0, 'maximum'), 1.00000005, float('inf'), 0, {0: 1}),
+        (('duration_balance', 1, 'minimum'), -float('inf'), 1, 0, {0: 1}),
+    ]
+
+    tightened = _canonicalize_objective_epigraphs(
+        variables, features, [1.000000025], [('duration_balance', {0: 1})])
+
+    assert tightened == [1.000000025]
+
+
+def test_unscored_role_peak_epigraph_is_clamped_to_its_exact_feasible_interval():
+    variables = [
+        {'lower': 0, 'upper': 10, 'integer': False,
+         'domainIdentity': {'kind': 'role_concentration_profile_peak', 'profile': 7}},
+        {'lower': 0, 'upper': 10, 'integer': True,
+         'domainIdentity': {'kind': 'recipe_option'}},
+    ]
+    features = [
+        (('role_concentration_profile_peak', 7, 'session', 2), -float('inf'), 0, 3,
+         {0: -1}),
+    ]
+
+    tightened = _canonicalize_objective_epigraphs(
+        variables, features, [2.999999898593373, 1], [('distribution', {})])
+
+    assert tightened == [3, 1]
+
+
+def test_complete_epigraph_row_failure_reports_identity_activity_and_slack():
+    variables = [
+        {'lower': 0, 'upper': 10, 'integer': False,
+         'domainIdentity': {'kind': 'role_concentration_profile_peak'}},
+        {'lower': 0, 'upper': 10, 'integer': True,
+         'domainIdentity': {'kind': 'recipe_option'}},
+    ]
+    features = [
+        (('role_concentration_profile_peak', 7, 'session', 2), -float('inf'), 0, 3,
+         {0: -1}),
+        (('hard_test_row', 4), 0, 0, 0, {1: 2}),
+    ]
+
+    try:
+        _canonicalize_objective_epigraphs(variables, features, [2.999999898593373, 1], [])
+    except RuntimeError as error:
+        message = str(error)
+    else:
+        raise AssertionError('A material source-row violation must remain rejected.')
+
+    assert "('hard_test_row', 4)" in message
+    assert 'activity=2' in message
+    assert 'slack=(2.0, -2.0)' in message
+
+
 def test_prior_stage_slack_is_tightened_before_the_next_objective_receives_its_incumbent(monkeypatch):
     equipment, requirements, sessions, _ = _distribution_solver_case([7, 1])
     requirements['objectiveOrder'] = ['duration_balance', 'distribution']

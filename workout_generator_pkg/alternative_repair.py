@@ -28,6 +28,7 @@ from .restriction_policy import effective_restrictions
 def _joint_repair_summary(receipt):
     summary = {key: copy.deepcopy(receipt[key]) for key in (
         'feasible', 'status', 'problemFingerprint', 'recipeCount', 'optionCount',
+        'objectiveInputFingerprint', 'solvedPrescriptionHash', 'sourceWorkingSetBudget',
         'consideredConstraints', 'objectiveProgress', 'solverDiagnostics', 'elapsedSeconds', 'instruction',
         'preserveSourceSelection', 'selectionPolicyVersion',
         'redistributionOptimization',
@@ -293,7 +294,8 @@ def _append_hypothetical_requirements(messages, candidate, original_record, equi
     return local
 
 
-def _reviewed_proposal(candidate, workouts, audit, review, original_requirements):
+def _reviewed_proposal(candidate, workouts, audit, review, original_requirements,
+                       joint_candidate_comparison=None):
     from .conflict_resolution import (_hash, _proposal_core,
         _shortfalls_against_original_requirements)
 
@@ -303,6 +305,8 @@ def _reviewed_proposal(candidate, workouts, audit, review, original_requirements
     proposal['baseDraftId'] = candidate.get('sourceDraftId', proposal['baseDraftId'])
     proposal['originalRequirementsId'] = candidate['originalRequirementsId']
     proposal['programGuidance'] = candidate.get('programGuidance', '')
+    if isinstance(candidate.get('recipeQualification'), dict):
+        proposal['recipeQualification'] = copy.deepcopy(candidate['recipeQualification'])
     if isinstance(candidate.get('repairContract'), dict):
         proposal['repairContract'] = copy.deepcopy(candidate['repairContract'])
     if isinstance(candidate.get('jointSolve'), dict):
@@ -314,6 +318,8 @@ def _reviewed_proposal(candidate, workouts, audit, review, original_requirements
         shortfallsAgainstOriginalRequirements=_shortfalls_against_original_requirements(
             audit, original_requirements, candidate.get('changes', [])),
         claim='Validated against the proposed requirements; original-target shortfalls are shown. No global optimum is claimed.')
+    if isinstance(joint_candidate_comparison, dict):
+        proposal['jointCandidateComparison'] = copy.deepcopy(joint_candidate_comparison)
     proposal['proposalId'] = 'ALT_' + _hash(_proposal_core(proposal))[:24]
     return proposal
 
@@ -706,6 +712,72 @@ def execute_repair(arguments, task, messages, equipment, history, allow_educated
     program_guidance_changed = materialized_program_guidance != original_program_guidance
     compiled_source_occurrences = _compiled_source_occurrences(submission, compiled['patch'])
 
+    # Reject malformed model fields before invoking recipe qualification. The
+    # latter can require a provider call, so shape errors must stay on the
+    # cheap, deterministic path.
+    from .joint_planning import candidate_menu_fingerprint
+    preflight_arguments = {'requirementsId': candidate['requirementsId'],
+        'name': candidate.get('candidateName', 'Workout alternative'), 'workouts': copy.deepcopy(workouts)}
+    if isinstance(materialized_program_guidance, str) and materialized_program_guidance.strip():
+        preflight_arguments['programGuidance'] = materialized_program_guidance
+    try:
+        _validate_draft_schema(preflight_arguments, candidate['requirements'].get('workingSetRIR'))
+    except PlanningInputError as error:
+        result = {'passed': False, 'outcome': 'unresolved', 'attemptStatus': 'repair_failed',
+            'repairCandidateId': candidate['repairCandidateId'],
+            'originalRequirementsId': candidate['originalRequirementsId'], 'requirementsId': candidate['requirementsId'],
+            'baseDraftId': candidate.get('sourceDraftId', candidate['baseDraftId']),
+            'requirements': copy.deepcopy(candidate['requirements']), 'changes': copy.deepcopy(candidate['changes']),
+            'workouts': copy.deepcopy(workouts), 'candidateMenuFingerprint': candidate['candidateMenuFingerprint'],
+            'submittedMenuFingerprint': candidate_menu_fingerprint(workouts),
+            'libraryFingerprint': candidate['libraryFingerprint'],
+            'trainingHistoryFingerprint': candidate['trainingHistoryFingerprint'],
+            'candidateSnapshot': copy.deepcopy(candidate), 'repairOperations': compiled.get('patch', []),
+            'findingsAssessment': copy.deepcopy(candidate.get('findingsAssessment')),
+            'reviewFindings': copy.deepcopy(candidate.get('reviewFindings', [])),
+            'operationReferences': operation_refs, 'submittedEdits': submitted_edits,
+            'errors': copy.deepcopy(error.errors or [{'code': error.code, 'path': error.path,
+                'message': str(error), 'repair': error.repair}]),
+            'reason': 'The submitted repair has invalid executable fields and cannot enter recipe qualification or joint solving. Correct the listed fields; no feasibility or requirement conflict was established.'}
+        if rejected_attempt_edits is not None:
+            result['rejectedAttemptEdits'] = rejected_attempt_edits
+        if replaced_submitted_edits is not None:
+            result['replacedSubmittedEdits'] = replaced_submitted_edits
+        return result
+
+    independent_review = candidate.get('independentReview') or candidate.get('review') or {}
+    active_assessment = candidate.get('findingsAssessment') or independent_review.get('assessment')
+    qualification_review_owner = {'review': independent_review,
+        'findingsAssessment': active_assessment,
+        'submittedDraft': {'workouts': copy.deepcopy(candidate['workouts'])}}
+    from .allocation import _qualification_review_feedback, qualify_workout_recipes
+    review_feedback = _qualification_review_feedback(active_assessment, qualification_review_owner)
+    source_workout_count = len(candidate['workouts'])
+    try:
+        qualified_workouts, recipe_qualification = qualify_workout_recipes(
+            client, candidate['workouts'] + workouts,
+            {'requirementsId': candidate['requirementsId'],
+             'requirements': candidate['requirements']}, equipment, messages, history, logger,
+            review_feedback_by_definition=review_feedback,
+            cached_qualification=candidate.get('recipeQualification'))
+    except (KeyError, TypeError, ValueError) as error:
+        candidate['recipeQualificationFailure'] = str(error)
+        return {'passed': False, 'outcome': 'unresolved', 'attemptStatus': 'qualification_failed',
+            'failureStage': 'recipe_qualification', 'repairCandidateId': candidate['repairCandidateId'],
+            'originalRequirementsId': candidate['originalRequirementsId'],
+            'requirementsId': candidate['requirementsId'],
+            'baseDraftId': candidate.get('sourceDraftId', candidate['baseDraftId']),
+            'requirements': copy.deepcopy(candidate.get('requirements')),
+            'candidateSnapshot': copy.deepcopy(candidate),
+            'errors': [{'code': 'recipe_qualification_unresolved', 'message': str(error)}],
+            'reason': 'The repaired menu has no complete pinned role evidence. Preserve the candidate and repair edits; do not solve, audit, or approve roles inferred from model claims.'}
+    candidate['workouts'] = qualified_workouts[:source_workout_count]
+    candidate['recipeQualification'] = copy.deepcopy(recipe_qualification)
+    from .joint_planning import candidate_menu_fingerprint
+    candidate['candidateMenuFingerprint'] = candidate_menu_fingerprint(candidate['workouts'])
+    workouts = qualified_workouts[source_workout_count:]
+    materialized_submission['workouts'] = copy.deepcopy(workouts)
+
     from .repair_contract import (RepairContractError, build_repair_contract,
         carry_repair_contract, repair_contract_errors)
     submitted_edits = copy.deepcopy(proposal_context.get('submittedEdits', compile_arguments.get('edits', {})))
@@ -716,8 +788,6 @@ def execute_repair(arguments, task, messages, equipment, history, allow_educated
         assessment_draft.setdefault('name', candidate.get('name') or 'Workout')
         assessment_context = assessment_validation_context(assessment_draft,
             candidate['requirements'], equipment or {}, candidate.get('restrictionPolicy', {}))
-        independent_review = candidate.get('independentReview') or candidate.get('review') or {}
-        active_assessment = candidate.get('findingsAssessment') or independent_review.get('assessment')
         validated_review = {**independent_review, 'assessment': active_assessment}
         if not isinstance(validated_review.get('findings'), list):
             raise RepairContractError('assessment_refresh_required',
@@ -805,14 +875,31 @@ def execute_repair(arguments, task, messages, equipment, history, allow_educated
         if replaced_submitted_edits is not None:
             result['replacedSubmittedEdits'] = replaced_submitted_edits
         return result
-    from .repair_capabilities import preserve_source_selection_for_repair
-    from .repair_execution import solve_repair_candidate
+    from .repair_capabilities import (assessment_repairs_dimension, exercise_selection_changed,
+        preserve_source_selection_for_repair)
+    from .repair_execution import _repair_source_working_set_budget, solve_repair_candidate
+    validated_source_working_set_budget = None
+    if candidate.get('requirementsId') != original_record.get('requirementsId'):
+        from .planning_tools import latest_draft_submission
+        source_draft, source_draft_id = latest_draft_submission(messages, equipment)
+        if (isinstance(source_draft, dict)
+                and source_draft_id == candidate.get('sourceDraftId', candidate.get('baseDraftId'))):
+            validated_source_working_set_budget = _repair_source_working_set_budget(
+                source_draft.get('workouts', []), original_requirements, equipment,
+                effective_restrictions(original_record, equipment),
+                requirements_id=original_record['requirementsId'],
+                allow_educated_load_guesses=allow_educated_load_guesses,
+                training_history=history, messages=messages,
+                redistribution_constraints=[])
     joint, repair_contract, carry_error, contract_errors = solve_repair_candidate(
         workouts, candidate['requirements'], equipment, candidate.get('restrictionPolicy', {}),
         repair_contract=repair_contract, requirements_id=candidate['requirementsId'],
         allow_educated_load_guesses=allow_educated_load_guesses,
-        preserve_source_selection=preserve_source_selection_for_repair(),
+        preserve_source_selection=preserve_source_selection_for_repair(selection_repair=(
+            assessment_repairs_dimension(active_assessment, 'exercise_selection')
+            and exercise_selection_changed(candidate.get('workouts', []), workouts))),
         training_history=history, messages=messages,
+        validated_source_working_set_budget=validated_source_working_set_budget,
         redistribution_constraints=[{key: copy.deepcopy(group[key]) for key in (
             'recipeSignature', 'weeklyWorkSets', 'exactSetTargets', 'targetWorkoutIndexes') if key in group}
             for group in repair_contract.get('redistributions', [])])
@@ -824,6 +911,7 @@ def execute_repair(arguments, task, messages, equipment, history, allow_educated
         'submittedMenuFingerprint': candidate_menu_fingerprint(workouts),
         'libraryFingerprint': candidate['libraryFingerprint'],
         'trainingHistoryFingerprint': candidate['trainingHistoryFingerprint'],
+        'recipeQualification': copy.deepcopy(recipe_qualification),
         'candidateSnapshot': copy.deepcopy(candidate), 'jointSolve': _joint_repair_summary(joint),
         'repairContract': copy.deepcopy(repair_contract),
         'findingsAssessment': copy.deepcopy(candidate.get('findingsAssessment')),
@@ -835,12 +923,18 @@ def execute_repair(arguments, task, messages, equipment, history, allow_educated
     if replaced_submitted_edits is not None:
         result['replacedSubmittedEdits'] = replaced_submitted_edits
     if not joint.get('feasible'):
-        if repair_contract.get('redistributions'):
+        if repair_contract.get('redistributions') and joint.get('status') == 'infeasible':
             result.update(outcome='unresolved', attemptStatus='repair_failed',
                 failureStage='repair_objective_solver', repairContract=copy.deepcopy(repair_contract),
                 errors=[{'code': 'redistribution_solver_infeasible',
                     'message': 'The submitted redistribution could not satisfy the fixed approved constraints while conserving its source prescriptions. Revise the exercise placement or menu; this does not establish a requirement conflict.'}],
                 reason='The solver could not satisfy the explicit redistribution outcome together with the fixed approved constraints. Revise the structure while preserving the exercise totals; no trade-off or impossibility was established.')
+            return result
+        if repair_contract.get('redistributions'):
+            result.update(outcome='unresolved', attemptStatus='joint_repair_unresolved',
+                errors=copy.deepcopy(joint.get('errors') or [{'code': 'joint_repair_unresolved',
+                    'message': joint.get('instruction', 'The bounded joint repair solve did not establish feasibility or infeasibility.')}]),
+                reason='The bounded repair solve did not establish feasibility or infeasibility. Preserve the candidate and solver diagnostics; no redistribution conflict was established.')
             return result
         has_rejected_options = bool(joint.get('rejectedOptions'))
         proven_infeasible = joint.get('status') == 'infeasible' and not has_rejected_options
@@ -1035,7 +1129,24 @@ def execute_repair(arguments, task, messages, equipment, history, allow_educated
                 reason='The repaired alternative still has actionable review findings; it remains hypothetical and cannot be approved.')
         return result
 
-    proposal = _reviewed_proposal(materialized_candidate, solved_workouts, audit, review, original_requirements)
+    joint_candidate_comparison = None
+    if (candidate.get('requirementsId') == original_record.get('requirementsId')
+            and candidate.get('requirements') == original_requirements):
+        from .planning_tools import latest_draft_submission, latest_draft_audit
+        source_draft, source_draft_id = latest_draft_submission(messages, equipment)
+        if source_draft_id == candidate.get('sourceDraftId', candidate.get('baseDraftId')):
+            _, source_audit = latest_draft_audit(messages, source_draft)
+            from .repair_execution import compare_reviewed_joint_candidate
+            joint_candidate_comparison = compare_reviewed_joint_candidate(
+                source_audit, review, requirements=original_requirements,
+                requirements_id=candidate['requirementsId'], equipment=equipment,
+                messages=messages, training_history=history,
+                restriction_policy=candidate.get('restrictionPolicy', {}),
+                source_working_set_budget=joint.get('sourceWorkingSetBudget'),
+                qualification=recipe_qualification,
+                review_feedback_by_definition=review_feedback)
+    proposal = _reviewed_proposal(materialized_candidate, solved_workouts, audit, review,
+        original_requirements, joint_candidate_comparison)
     result.update(passed=True, outcome='alternatives_ready', repairStatus='repaired_and_reviewed', proposal=proposal,
         preview=review['preview'], reason='The alternative passed full numerical audit and a fresh independent review. It still requires explicit user approval.')
     return result
