@@ -167,7 +167,7 @@ dependencies {
     // Data / utils
     implementation("androidx.room:room-ktx:2.8.5")
     implementation("com.google.guava:guava:33.7.2-android")
-    implementation("com.google.code.gson:gson:2.14.0")
+    implementation("com.google.code.gson:gson:2.15.0")
 
     // Polar SDK + Rx
     implementation("com.github.polarofficial:polar-ble-sdk:6.8.0")

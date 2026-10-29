@@ -174,8 +174,8 @@ dependencies {
 
     implementation("androidx.room:room-runtime:2.8.5")
     ksp("androidx.room:room-compiler:2.8.5")
-    implementation("com.google.ai.edge.litertlm:litertlm-android:0.18.0")
-    implementation("com.openai:openai-java:4.79.0")
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.18.1")
+    implementation("com.openai:openai-java:4.94.0")
     implementation("com.github.jeziellago:compose-markdown:0.5.8")
 
     // Polar SDK + Rx
@@ -183,7 +183,7 @@ dependencies {
     implementation("io.reactivex.rxjava3:rxjava:3.1.12")
 
     // Misc
-    implementation("com.google.code.gson:gson:2.14.0")
+    implementation("com.google.code.gson:gson:2.15.0")
     implementation("com.patrykandpatrick.vico:compose:3.3.1")
     implementation("com.kizitonwose.calendar:compose:2.10.1")
     implementation("androidx.health.connect:connect-client:1.1.0")
