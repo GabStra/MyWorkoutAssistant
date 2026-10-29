@@ -73,6 +73,27 @@ def normalize_scene_placement(payload):
                 frame[key][name] = (rotation.apply(value) - origin).tolist()
         for name, value in frame.get('boneSides', {}).items():
             frame['boneSides'][name] = rotation.apply(value).tolist()
+        for orientation in frame.get('shoeOrientation', {}).values():
+            if not isinstance(orientation, dict):
+                continue
+            forward_values = np.asarray(orientation.get('forward'), dtype=float)
+            side_values = np.asarray(orientation.get('side'), dtype=float)
+            if (forward_values.shape != (3,) or side_values.shape != (3,)
+                    or not np.all(np.isfinite(forward_values))
+                    or not np.all(np.isfinite(side_values))):
+                continue
+            forward = rotation.apply(forward_values)
+            side = rotation.apply(side_values)
+            forward_length = float(np.linalg.norm(forward))
+            if forward_length <= 1e-12:
+                continue
+            forward /= forward_length
+            side -= forward * float(np.dot(side, forward))
+            side_length = float(np.linalg.norm(side))
+            if side_length <= 1e-12:
+                continue
+            orientation['forward'] = forward.tolist()
+            orientation['side'] = (side / side_length).tolist()
     rig = result['fixedRig']
     for side in ('left', 'right'):
         track = (rig.get('contactFootTracks') or {}).get(side)

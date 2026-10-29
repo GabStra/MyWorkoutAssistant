@@ -55,6 +55,8 @@ class MovementSceneLoadingTest {
         }
         val loaded = call("parseWearSkeleton", payload.toString())
         val actual = field(loaded, "fixedRig") as FixedRigPlayback
+        val firstFrame = (field(loaded, "frames") as List<*>).first()
+        assertEquals(emptyMap<String, Any>(), field(firstFrame!!, "shoeOrientation"))
         for (cursor in listOf(0.0, 1.25, 7.5)) {
             expected.sample(cursor, true).forEach { (name, point) ->
                 point.forEachIndexed { axis, coordinate ->
@@ -66,6 +68,107 @@ class MovementSceneLoadingTest {
         val scene = call("toStableRenderedSceneCameraFrame", loaded, palette, 15f)
         val target = checkNotNull(field(scene, "target"))
         assertTrue(kotlin.math.abs(field(target, "x") as Float) < 10f)
+    }
+
+    @Test
+    fun shoeMaterialBasisLoadsAndInterpolatesAsAnOrthonormalFrame() {
+        val payload = payload()
+        val frames = payload.getAsJsonArray("frames")
+        frames[0].asJsonObject.add("shoeOrientation", shoeOrientation(
+            forward = listOf(0f, 0f, 1f),
+            side = listOf(1f, 0f, 0f),
+        ))
+        frames[1].asJsonObject.add("shoeOrientation", shoeOrientation(
+            forward = listOf(0.2f, 0f, 0.98f),
+            side = listOf(0.98f, 0f, -0.2f),
+        ))
+
+        val skeleton = call("parseWearSkeleton", payload.toString())
+        val frame = call("frameAt", skeleton, 0.5)
+        val orientations = field(frame, "shoeOrientation") as Map<*, *>
+        val left = checkNotNull(orientations["left"])
+        val forward = field(left, "forward")
+        val side = field(left, "side")
+        val forwardLength = vectorLength(forward)
+        val sideLength = vectorLength(side)
+        val dot = vectorDot(forward, side)
+        assertEquals(1f, forwardLength, 1e-5f)
+        assertEquals(1f, sideLength, 1e-5f)
+        assertEquals(0f, dot, 1e-5f)
+        assertTrue((field(checkNotNull(forward), "z") as Float) > 0.99f)
+        assertTrue((field(checkNotNull(side), "x") as Float) > 0.99f)
+    }
+
+    @Test
+    fun explicitShoeBasisKeepsForefootPivotAndIgnoresStaticRestPitch() {
+        val meshClass = Class.forName("com.gabstra.myworkoutassistant.motionrenderer.GeneratedLowPolyMesh")
+        val vecClass = Class.forName("com.gabstra.myworkoutassistant.motionrenderer.WearSkeletonVec3")
+        fun vector(x: Float, y: Float, z: Float): Any = vecClass.declaredConstructors.single().apply {
+            isAccessible = true
+        }.newInstance(x, y, z)
+        val ankle = vector(0f, 0f, 0f)
+        val foot = vector(0f, 0f, 0.2f)
+        val axesClass = Class.forName("com.gabstra.myworkoutassistant.motionrenderer.BodyAxes")
+        val axes = axesClass.declaredConstructors.single().apply { isAccessible = true }
+            .newInstance(vector(-1f, 0f, 0f), vector(0f, 1f, 0f), vector(0f, 0f, 1f))
+        val orientationClass = Class.forName("com.gabstra.myworkoutassistant.motionrenderer.WearSkeletonShoeOrientation")
+        val orientation = orientationClass.declaredConstructors.single().apply { isAccessible = true }
+            .newInstance(vector(0f, 0f, 1f), vector(-1f, 0f, 0f))
+        val palette = call("createSkeletonPalette", Color.White.value.toLong())
+        val renderShoe = renderer.declaredMethods.single {
+            it.name == "addShoeBlockFromNames" && it.parameterCount == 10
+        }.apply { isAccessible = true }
+        fun build(restPitch: Float): List<Any> {
+            val mesh = meshClass.declaredConstructors.single { it.parameterCount == 0 }
+                .apply { isAccessible = true }.newInstance()
+            renderShoe.invoke(
+                null,
+                mesh,
+                mapOf("left_ankle" to ankle, "left_foot" to foot),
+                "left_ankle",
+                "left_foot",
+                axes,
+                0.3f,
+                palette,
+                null,
+                restPitch,
+                orientation,
+            )
+            @Suppress("UNCHECKED_CAST")
+            return field(mesh, "vertices") as List<Any>
+        }
+        val unpitchedVertices = build(0f)
+        val pitchedVertices = build(0.7f)
+        assertEquals(unpitchedVertices.size, pitchedVertices.size)
+        unpitchedVertices.zip(pitchedVertices).forEach { (before, after) ->
+            for (axis in listOf("x", "y", "z")) {
+                assertEquals(field(before, axis) as Float, field(after, axis) as Float, 1e-6f)
+            }
+        }
+        val maximumForward = unpitchedVertices.maxOf { field(it, "z") as Float }
+        assertEquals(0.2f + 0.056f * 0.20f, maximumForward, 1e-5f)
+    }
+
+    private fun shoeOrientation(forward: List<Float>, side: List<Float>) = JsonObject().apply {
+        add("left", JsonObject().apply {
+            add("forward", JsonArray().apply { forward.forEach(::add) })
+            add("side", JsonArray().apply { side.forEach(::add) })
+        })
+    }
+
+    private fun vectorLength(vector: Any?): Float {
+        val x = field(checkNotNull(vector), "x") as Float
+        val y = field(checkNotNull(vector), "y") as Float
+        val z = field(checkNotNull(vector), "z") as Float
+        return kotlin.math.sqrt(x * x + y * y + z * z)
+    }
+
+    private fun vectorDot(first: Any?, second: Any?): Float {
+        val a = checkNotNull(first)
+        val b = checkNotNull(second)
+        return (field(a, "x") as Float) * (field(b, "x") as Float) +
+            (field(a, "y") as Float) * (field(b, "y") as Float) +
+            (field(a, "z") as Float) * (field(b, "z") as Float)
     }
 
     @Test

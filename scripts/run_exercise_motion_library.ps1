@@ -140,6 +140,7 @@ $definitionPreflightArguments = @(
     "--definition-effective-plan-json", $definitionPreflightEffectivePlanPath,
     "--definition-readiness-report-json", $definitionPreflightReportPath,
     "--source-budget-workspace-root", ([System.IO.Path]::GetFullPath($WorkspaceRoot)),
+    "--source-review-turn-id", $script:LibraryRunId,
     "--source-review-timeout-seconds", "$SourceReviewTimeoutSeconds",
     "--exercise-timeout-seconds", "$ExerciseTimeoutSeconds",
     "--max-source-window-attempts", "$MaxSourceWindowAttempts",
@@ -302,8 +303,7 @@ function Write-RunState {
     foreach ($statusName in $counts.Keys) {
         if ($statusName -ne "postponed") { $terminalCount += [int]$counts[$statusName] }
     }
-    $totalCount = 0
-    try { $library = Get-Content -LiteralPath $resolvedLibraryJson -Raw | ConvertFrom-ReconstructionJson; $totalCount = @($library.exercises).Count } catch { }
+    $totalCount = @($definitionExerciseList.exercises).Count
     $state = [ordered]@{
         schemaVersion = 2
         runId = $script:LibraryRunId

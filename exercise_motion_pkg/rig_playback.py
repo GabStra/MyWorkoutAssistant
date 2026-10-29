@@ -139,6 +139,8 @@ def rig_contact_targets(points, names, pinned, offsets, *, stationary_positions=
     # source-clock-mapped full-sole pins from the shared material calibration.
     patch = evidence.get('footPatchEvidence') or {}
     state_indices = evidence.get('_fitFrameStateIndices')
+    from .contact_constraints import fit_frame_foot_patch_states_by_side
+    fit_patch_states = fit_frame_foot_patch_states_by_side(evidence, len(points))
     if state_indices is None:
         # Clockless legacy evidence has one unambiguous mapping only when its
         # native rows and fit rows have identical length. Route that case
@@ -170,11 +172,17 @@ def rig_contact_targets(points, names, pinned, offsets, *, stationary_positions=
                     continue
                 if not np.isfinite(pitch) or not np.isfinite(bone_length) or bone_length <= 1e-8:
                     continue
-                mapped_full_sole = np.asarray([
-                    0 <= index < len(states)
-                    and str(states[index]).casefold() == 'full_sole'
-                    for index in state_indices
-                ], dtype=bool)
+                aligned_states = fit_patch_states.get(side)
+                if aligned_states is not None:
+                    mapped_full_sole = np.asarray([
+                        state == 'full_sole' for state in aligned_states
+                    ], dtype=bool)
+                else:
+                    mapped_full_sole = np.asarray([
+                        0 <= index < len(states)
+                        and str(states[index]).casefold() == 'full_sole'
+                        for index in state_indices
+                    ], dtype=bool)
                 ankle, foot = names.index(f'{side}_ankle'), names.index(f'{side}_foot')
                 active = pinned[:, ankle] & pinned[:, foot] & mapped_full_sole
                 if not np.any(active):
@@ -298,6 +306,62 @@ def free_joint_floor_clearance_lift(rig, floor, pinned, *, cyclic, subdivisions=
     if not np.isfinite(lowest):
         return 0.0
     return max(0.0, float(floor) - lowest)
+
+
+def free_material_floor_clearance_lift(payload, pinned, *, cyclic, subdivisions=4):
+    """Measure outsole clearance on dense playback, excluding verified plants."""
+    floor = payload.get('renderFloorY')
+    pitches = payload.get('footRestPitchRadians') or {}
+    if floor is None:
+        return 0.0
+
+    from .foot_geometry import _sample_material_foot_geometry, foot_scale_from_pose, shoe_vertices
+    from .contact_constraints import (
+        contact_frame_bounds, motion_space_support_evidence, motion_support_contacts,
+        observed_ground_contact_mask,
+    )
+
+    rig = payload['fixedRig']
+    frames, names = payload['frames'], payload['jointNames']
+    count = len(frames)
+    pinned = np.asarray(pinned, dtype=bool)
+    if pinned.shape != (count, len(names)):
+        raise ValueError('pinned mask must match playback frame and joint counts')
+    cursors = np.arange(count * subdivisions if cyclic else (count - 1) * subdivisions + 1) / subdivisions
+    points = sample_rig(rig, cursors, wrap=cyclic)
+    first = np.floor(cursors).astype(int)
+    last = np.ceil(cursors).astype(int) % count
+    evidence = motion_space_support_evidence(payload)
+    ground = observed_ground_contact_mask(evidence, names, count)
+    full_sole = np.zeros_like(ground)
+    for contact in motion_support_contacts(evidence):
+        if contact.get('contactState') == 'full_sole' and contact.get('jointName') in names:
+            start, end = contact_frame_bounds(contact, count)
+            full_sole[start:end + 1, names.index(contact['jointName'])] = True
+
+    axes = _sample_material_foot_geometry(payload, cursors, points)
+    scale = foot_scale_from_pose(
+        np.asarray([frames[0]['joints'][name] for name in names]), names)
+    maximum_lift = 0.0
+    for side in ('left', 'right'):
+        ankle_name, toe_name = f'{side}_ankle', f'{side}_foot'
+        if ankle_name not in names or toe_name not in names:
+            continue
+        pitch = float(pitches.get(side, 0.))
+        ankle, toe = names.index(ankle_name), names.index(toe_name)
+        planted = (pinned[first, ankle] & pinned[first, toe]
+                   & pinned[last, ankle] & pinned[last, toe]
+                   & full_sole[first, toe] & full_sole[last, toe]
+                   & ground[first, toe] & ground[last, toe])
+        free = ~planted
+        if not np.any(free):
+            continue
+        vertices = shoe_vertices(
+            points[:, ankle], points[:, toe], axes[side]['lateral'], float(pitch), scale,
+            orientation=axes[side].get('orientation'))
+        minimum = float(vertices[free, :, 1].min())
+        maximum_lift = max(maximum_lift, float(floor) - minimum)
+    return max(0.0, maximum_lift)
 
 
 def validate_rig_playback(payload, *, subdivisions=4):
@@ -427,30 +491,66 @@ def validate_rig_playback(payload, *, subdivisions=4):
     physical['passed'] = not physical['events']
     variation=max(float(np.ptp(np.linalg.norm(points[:,j]-points[:,parent],axis=-1)))
                   for j,parent in enumerate(rig['parents']) if parent>=0)
+    from .rig_interpolation import INTERPOLATION, LEGACY_INTERPOLATION
+    velocity_jump = None
+    seam_velocity_jump = None
+    seam_velocity_limit = None
+    velocity_continuous = True
+    if cyclic:
+        from .rig_interpolation import frame_boundary_velocity_jump
+        seam_velocity_jump = frame_boundary_velocity_jump(
+            lambda query: sample_rig(rig, query, wrap=True), [0], fps)
+        if rig.get('interpolation') in (INTERPOLATION, LEGACY_INTERPOLATION):
+            knots = np.arange(count)
+            velocity_jump = frame_boundary_velocity_jump(
+                lambda query: sample_rig(rig, query, wrap=True), knots, fps)
+            velocity_continuous = velocity_jump < .001 * scale
+            seam_velocity_limit = .001 * scale
+        else:
+            from .loop_seam import MAX_VELOCITY_MISMATCH_BODY_RATIO
+            seam_velocity_limit = MAX_VELOCITY_MISMATCH_BODY_RATIO * scale
+    elif rig.get('interpolation') in (INTERPOLATION, LEGACY_INTERPOLATION):
+        from .rig_interpolation import frame_boundary_velocity_jump
+        knots = np.arange(1, count-1)
+        if len(knots):
+            velocity_jump = frame_boundary_velocity_jump(
+                lambda query: sample_rig(rig, query, wrap=False), knots, fps)
+        velocity_continuous = velocity_jump is None or velocity_jump < .001 * scale
     from .loop_seam import seam_quality_metrics
-    seam_metrics = seam_quality_metrics(originals, fps=fps, scale=scale)
+    seam_metrics = seam_quality_metrics(
+        originals, fps=fps, scale=scale, rendered_velocity_jump=seam_velocity_jump,
+        rendered_velocity_limit=seam_velocity_limit)
     seam_safe = seam_metrics['seamContinuous']
     from .equipment_constraints import validate_grip
     equipment = validate_grip(points, names, payload.get('equipmentConstraints') or {})
     from .support_geometry import validate_support_geometry, validate_supported_shoe_orientation
-    body_support = validate_support_geometry(payload, points, names)
-    shoe_orientation = validate_supported_shoe_orientation(payload)
+    # Evaluate support both on exported knots and on the rendered path. Timed
+    # contact evidence is mapped by cursor for dense samples; untimed observed
+    # torso/hand geometry still receives its whole-clip check.
+    stored_body_support = validate_support_geometry(payload, originals, names)
+    dense_body_support = validate_support_geometry(
+        payload, points, names, frame_positions=cursors)
+    stored_shoe_orientation = validate_supported_shoe_orientation(payload)
+    dense_shoe_orientation = validate_supported_shoe_orientation(
+        payload, points=points, cursors=cursors)
+    body_support = {
+        **stored_body_support,
+        'passed': stored_body_support.get('passed') is True
+                  and dense_body_support.get('passed') is True,
+        'densePlayback': dense_body_support,
+    }
+    shoe_orientation = {
+        **stored_shoe_orientation,
+        'passed': stored_shoe_orientation.get('passed') is True
+                  and dense_shoe_orientation.get('passed') is True,
+        'densePlayback': dense_shoe_orientation,
+    }
     from .foot_geometry import validate_material_shoes
     material_shoes = validate_material_shoes(
         payload, points, cursors, floor_limit=PLAYBACK_FLOOR_LIMIT_METERS,
         contact_limit=PLAYBACK_CONTACT_LIMIT_METERS)
     from .support_alignment import validate_payload_alignment
     alignment = validate_payload_alignment(payload, points, cursors)
-    from .rig_interpolation import INTERPOLATION, LEGACY_INTERPOLATION
-    velocity_jump = None
-    velocity_continuous = True
-    if rig.get('interpolation') in (INTERPOLATION, LEGACY_INTERPOLATION):
-        knots = np.arange(count) if cyclic else np.arange(1, count-1)
-        if len(knots):
-            from .rig_interpolation import frame_boundary_velocity_jump
-            velocity_jump = frame_boundary_velocity_jump(
-                lambda cursors: sample_rig(rig, cursors, wrap=cyclic), knots, fps)
-            velocity_continuous = velocity_jump < .001*scale
     passed=(sample_error<1e-7 and physical['passed']
             and contact_error<=PLAYBACK_CONTACT_LIMIT_METERS
             and vertical_error<=PLAYBACK_FLOOR_LIMIT_METERS

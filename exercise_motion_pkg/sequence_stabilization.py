@@ -157,7 +157,7 @@ def pose_digest(payload):
     support = _without_fit_local_timing_metadata(motion_space_support_evidence(
         payload, evidence_override=payload.get('sourceFootSupportEvidence') or {}))
     contents = {'fps': payload.get('fps'), 'jointNames': payload.get('jointNames'),
-                'frames': [{k: f.get(k) for k in ('timeSec', 'joints', 'sourceJoints', 'cameraPlacementReferenceJoints', 'controlledSourceJoints', 'controlledArticulationReferenceJoints', 'correctedAnatomicalReferenceJoints', 'supportCorrectedReferenceJoints', 'supportContactReferenceJoints', 'supportAlignmentReferenceJoints')} for f in payload.get('frames', [])],
+                'frames': [{k: f.get(k) for k in ('timeSec', 'joints', 'sourceJoints', 'cameraPlacementReferenceJoints', 'controlledSourceJoints', 'controlledArticulationReferenceJoints', 'correctedAnatomicalReferenceJoints', 'supportCorrectedReferenceJoints', 'supportContactReferenceJoints', 'supportAlignmentReferenceJoints', 'shoeOrientation')} for f in payload.get('frames', [])],
                 'supports': support, 'floor': payload.get('renderFloorY'),
                 'fixedRig': payload.get('fixedRig'), 'loop': payload.get('loop'),
                 'footRestPitchRadians': payload.get('footRestPitchRadians')}

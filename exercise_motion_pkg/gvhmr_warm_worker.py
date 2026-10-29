@@ -14,9 +14,12 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+from functools import lru_cache
 import gc
+import hashlib
 import json
 import os
+import shutil
 import sys
 import threading
 import time
@@ -44,6 +47,8 @@ GVHMR_ROOT = Path("/opt/gvhmr")
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Warm GVHMR worker for repeated motion extraction jobs.")
     parser.add_argument("--state-dir", required=True, help="Mounted worker state directory.")
+    parser.add_argument("--stage-mode", choices=("combined", "preprocess", "predict"), default="combined")
+    parser.add_argument("--gpu-device", default="0", help="Host physical GPU index selected by the supervisor.")
     parser.add_argument("--poll-seconds", type=float, default=0.5)
     return parser.parse_args()
 
@@ -147,7 +152,127 @@ def recover_interrupted_running_jobs(state_dir: Path) -> list[dict[str, Any]]:
     return recovered
 
 
-def load_gvhmr_once() -> dict[str, Any]:
+@lru_cache(maxsize=64)
+def _sha256_file_cached(path: str, size: int, modified_ns: int) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _sha256_file(path: Path) -> str:
+    resolved = Path(path).resolve()
+    stat = resolved.stat()
+    return _sha256_file_cached(str(resolved), stat.st_size, stat.st_mtime_ns)
+
+
+def _tree_file_manifest(root: Path) -> list[dict[str, Any]]:
+    return [
+        {"path": path.relative_to(root).as_posix(), "size": path.stat().st_size, "sha256": _sha256_file(path)}
+        for path in sorted(root.rglob("*")) if path.is_file()
+    ]
+
+
+def _required_preprocess_paths(cfg: Any) -> list[Path]:
+    paths = [Path(cfg.paths.bbx), Path(cfg.paths.vitpose), Path(cfg.paths.vit_features)]
+    if not bool(cfg.static_cam):
+        paths.append(Path(cfg.paths.slam))
+    return paths
+
+
+def _preprocess_artifacts(cfg: Any) -> list[dict[str, Any]]:
+    root = Path(cfg.preprocess_dir).resolve()
+    for path in _required_preprocess_paths(cfg):
+        if not path.is_file() or not path.resolve().is_relative_to(root):
+            raise RuntimeError(f"GVHMR preprocessing is incomplete or escaped its cache directory: {path}")
+    artifacts = _tree_file_manifest(root)
+    artifact_paths = {entry["path"] for entry in artifacts}
+    required = {path.resolve().relative_to(root).as_posix() for path in _required_preprocess_paths(cfg)}
+    if not required.issubset(artifact_paths):
+        raise RuntimeError("GVHMR preprocessing handoff is missing required artifacts")
+    return artifacts
+
+
+def _preprocess_manifest_path(cfg: Any) -> Path:
+    return Path(cfg.output_dir) / "preprocess_manifest.json"
+
+
+def _clear_preprocess_cache(cfg: Any) -> None:
+    preprocess_root = Path(cfg.preprocess_dir).resolve()
+    output_dir = Path(cfg.output_dir).resolve()
+    if not preprocess_root.is_relative_to(output_dir):
+        raise RuntimeError(f"GVHMR preprocessing path escaped the configured output directory: {preprocess_root}")
+    if preprocess_root.exists():
+        shutil.rmtree(preprocess_root)
+    preprocess_root.mkdir(parents=True, exist_ok=True)
+
+
+def _source_copy_needs_refresh(
+    *, source_video: Path, copied_video: Path, source_receipt: Path,
+    source_frame_count: int, copied_frame_count: int | None,
+) -> bool:
+    try:
+        receipt = json.loads(source_receipt.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        receipt = None
+    return (
+        not copied_video.is_file()
+        or copied_frame_count != source_frame_count
+        or not isinstance(receipt, dict)
+        or receipt.get("sha256") != _sha256_file(source_video)
+        or receipt.get("copiedSha256") != _sha256_file(copied_video)
+    )
+
+
+def _preprocess_identity(
+    *, cfg: Any, video_path: Path, static_cam: bool, image_identity: str,
+    inference_script: Path,
+) -> dict[str, Any]:
+    checkpoint = Path(str(cfg.ckpt_path))
+    if not checkpoint.is_file():
+        raise RuntimeError(f"GVHMR checkpoint identity is unavailable: {checkpoint}")
+    worker_script = Path(__file__).resolve()
+    return {
+        "inputVideoSha256": _sha256_file(video_path),
+        "staticCamera": bool(static_cam),
+        "checkpointPath": checkpoint.name,
+        "checkpointSha256": _sha256_file(checkpoint),
+        "imageIdentity": image_identity,
+        "workerSha256": _sha256_file(worker_script),
+        "inferenceBridgeSha256": _sha256_file(inference_script),
+        "config": {
+            "fMm": float(cfg.f_mm) if cfg.f_mm is not None else None,
+            "useDpvo": bool(cfg.use_dpvo),
+            "staticCamera": bool(cfg.static_cam),
+        },
+    }
+
+
+def _verify_preprocess_manifest(
+    *, cfg: Any, video_path: Path, static_cam: bool, image_identity: str,
+    inference_script: Path,
+) -> bool:
+    manifest_path = _preprocess_manifest_path(cfg)
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest.get("version") != 1 or manifest.get("identity") != _preprocess_identity(
+            cfg=cfg, video_path=video_path, static_cam=static_cam,
+            image_identity=image_identity, inference_script=inference_script,
+        ):
+            return False
+        artifacts = manifest.get("artifacts")
+        if not isinstance(artifacts, list) or not artifacts:
+            return False
+        current = _preprocess_artifacts(cfg)
+        if not current or current != artifacts:
+            return False
+        return True
+    except (OSError, ValueError, TypeError, AttributeError, RuntimeError):
+        return False
+
+
+def load_gvhmr_once(stage_mode: str = "combined") -> dict[str, Any]:
     started = time.perf_counter()
     for path in (str(GVHMR_ROOT), str(Path(__file__).resolve().parent)):
         if path not in sys.path:
@@ -168,8 +293,8 @@ def load_gvhmr_once() -> dict[str, Any]:
 
     # The one-shot path sets no TF32/cuDNN toggles; keep warm-worker numerics equal.
 
-    # Eagerly construct every preprocessing model plus the prediction model so
-    # ready.json reflects true readiness and the first job pays only execution.
+    # The split preprocessing worker releases each model after its upstream
+    # preprocessing step; the predictor retains only the small HMR4D model.
     preprocessing_models: dict[str, Any] = {}
     preprocessing_load_seconds = 0.0
 
@@ -186,19 +311,24 @@ def load_gvhmr_once() -> dict[str, Any]:
 
         return constructor
 
-    for class_name in ("Tracker", "VitPoseExtractor", "Extractor"):
-        original = getattr(demo_module, class_name)
-        setattr(demo_module, class_name, cached_constructor(class_name, original))
-        getattr(demo_module, class_name)()
+    if stage_mode == "combined":
+        for class_name in ("Tracker", "VitPoseExtractor", "Extractor"):
+            original = getattr(demo_module, class_name)
+            setattr(demo_module, class_name, cached_constructor(class_name, original))
+            getattr(demo_module, class_name)()
 
     model_cfg_started = time.perf_counter()
     with initialize_config_module(version_base="1.3", config_module="hmr4d.configs"):
         register_store_gvhmr()
         startup_cfg = compose(config_name="demo", overrides=["video_name=warm_worker_startup"])
-    model: Any = hydra.utils.instantiate(startup_cfg.model, _recursive_=False)
-    model.load_pretrained_model(startup_cfg.ckpt_path)
-    model = model.eval().cuda()
-    timings["modelSetupSeconds"] = time.perf_counter() - model_cfg_started
+    model: Any = None
+    if stage_mode != "preprocess":
+        model = hydra.utils.instantiate(startup_cfg.model, _recursive_=False)
+        model.load_pretrained_model(startup_cfg.ckpt_path)
+        model = model.eval().cuda()
+    timings[
+        "preprocessWorkerConfigSeconds" if stage_mode == "preprocess" else "modelSetupSeconds"
+    ] = time.perf_counter() - model_cfg_started
 
     gpu_name = None
     try:
@@ -208,8 +338,12 @@ def load_gvhmr_once() -> dict[str, Any]:
     return {
         "demo": demo_module,
         "model": model,
+        "stageMode": stage_mode,
+        "imageIdentity": os.environ.get("GVHMR_IMAGE_IDENTITY", "unknown"),
+        "inferenceScript": Path(__file__).resolve().with_name("gvhmr_inference.py"),
         "ckptPath": str(startup_cfg.ckpt_path),
         "timings": timings,
+        "startupTimings": dict(timings),
         "composeCfg": compose,
         "initializeConfigModule": initialize_config_module,
         "registerStoreGvhmr": register_store_gvhmr,
@@ -276,13 +410,34 @@ def compose_job_cfg(state: dict[str, Any], video_path: Path, output_root: Path, 
     Path(cfg.preprocess_dir).mkdir(parents=True, exist_ok=True)
 
     Log.info(f"[Copy Video] {video_path} -> {cfg.video_path}")
-    if not Path(cfg.video_path).exists() or get_video_lwh(video_path)[0] != get_video_lwh(cfg.video_path)[0]:
+    source_video_hash = _sha256_file(video_path)
+    copied_video = Path(cfg.video_path)
+    source_receipt = copied_video.with_suffix(copied_video.suffix + ".source.json")
+    copied_frame_count = get_video_lwh(copied_video)[0] if copied_video.exists() else None
+    refresh_source = _source_copy_needs_refresh(
+        source_video=video_path, copied_video=copied_video, source_receipt=source_receipt,
+        source_frame_count=length, copied_frame_count=copied_frame_count,
+    )
+    if refresh_source:
+        _clear_preprocess_cache(cfg)
+        cached_prediction = Path(str(cfg.paths.hmr4d_results)).resolve()
+        if not cached_prediction.is_relative_to(Path(cfg.output_dir).resolve()):
+            raise RuntimeError(f"GVHMR prediction path escaped the configured output directory: {cached_prediction}")
+        cached_prediction.unlink(missing_ok=True)
+        old_export = output_root.resolve() / video_path.stem / "reconstruction_output.pkl"
+        if old_export.exists():
+            old_export.unlink()
         reader = get_video_reader(video_path)
         writer = get_writer(cfg.video_path, fps=30, crf=state["demo"].CRF)
         for img in tqdm(reader, total=get_video_lwh(video_path)[0], desc="Copy"):
             writer.write_frame(img)
         writer.close()
         reader.close()
+        write_json(source_receipt, {
+            "sha256": source_video_hash,
+            "copiedSha256": _sha256_file(copied_video),
+            "frameCount": length,
+        })
     return cfg
 
 
@@ -307,7 +462,8 @@ def process_job(job_path: Path, result_dir: Path, job_logs_dir: Path, state: dic
         output_root = Path(str(job["outputRoot"]))
         static_cam = bool(job.get("staticCam", True))
         keep_source_betas = bool(job.get("keepSourceBetas", False))
-        timings: dict[str, float] = dict(state["timings"])
+        timing_snapshot = dict(state["timings"])
+        timings: dict[str, float] = {}
         with stdout_log.open("w", encoding="utf-8") as stdout_handle, stderr_log.open(
             "w", encoding="utf-8"
         ) as stderr_handle:
@@ -316,54 +472,91 @@ def process_job(job_path: Path, result_dir: Path, job_logs_dir: Path, state: dic
                 cfg = compose_job_cfg(state, video_path, output_root, static_cam)
                 timings["configSeconds"] = time.perf_counter() - phase_started
 
-                phase_started = time.perf_counter()
-                state["demo"].run_preprocess(cfg)
-                timings["preprocessSeconds"] = time.perf_counter() - phase_started
+                stage_mode = state["stageMode"]
+                image_identity = str(job.get("imageIdentity") or state["imageIdentity"])
+                if stage_mode in {"combined", "preprocess"}:
+                    preprocess_cache_valid = stage_mode == "preprocess" and _verify_preprocess_manifest(
+                        cfg=cfg, video_path=video_path, static_cam=static_cam,
+                        image_identity=image_identity, inference_script=state["inferenceScript"],
+                    )
+                    if preprocess_cache_valid:
+                        timings["preprocessCacheHit"] = 1.0
+                    else:
+                        if stage_mode == "preprocess":
+                            _clear_preprocess_cache(cfg)
+                        phase_started = time.perf_counter()
+                        state["demo"].run_preprocess(cfg)
+                        timings["preprocessSeconds"] = time.perf_counter() - phase_started
+                        if stage_mode == "preprocess":
+                            artifacts = _preprocess_artifacts(cfg)
+                            identity = _preprocess_identity(
+                                cfg=cfg, video_path=video_path, static_cam=static_cam,
+                                image_identity=image_identity, inference_script=state["inferenceScript"],
+                            )
+                            write_json(_preprocess_manifest_path(cfg), {
+                                "version": 1,
+                                "identity": identity,
+                                "artifacts": artifacts,
+                            })
+                elif not _verify_preprocess_manifest(
+                    cfg=cfg, video_path=video_path, static_cam=static_cam,
+                    image_identity=image_identity, inference_script=state["inferenceScript"],
+                ):
+                    raise RuntimeError("GVHMR preprocessing handoff is missing, stale, or modified")
 
-                phase_started = time.perf_counter()
-                data = state["demo"].load_data_dict(cfg)
-                timings["loadDataSeconds"] = time.perf_counter() - phase_started
-
-                results_path = Path(cfg.paths.hmr4d_results)
-                if results_path.exists():
-                    from hmr4d.utils.pylogger import Log
-
-                    Log.info(f"[HMR4D] Results already exist at {results_path}")
-                    timings["predictionSeconds"] = 0.0
-                    timings["savePredictionSeconds"] = 0.0
+                if stage_mode == "preprocess":
+                    output_pkl = None
+                    export_summary = None
+                    preprocess_manifest = _preprocess_manifest_path(cfg)
                 else:
-                    import torch
-
-                    from hmr4d.utils.net_utils import detach_to_cpu
-                    from hmr4d.utils.pylogger import Log
-
-                    Log.info("[HMR4D] Predicting")
                     phase_started = time.perf_counter()
-                    prediction = detach_to_cpu(state["model"].predict(data, static_cam=cfg.static_cam))
-                    timings["predictionSeconds"] = time.perf_counter() - phase_started
-                    phase_started = time.perf_counter()
-                    results_path.parent.mkdir(parents=True, exist_ok=True)
-                    torch.save(prediction, results_path)
-                    timings["savePredictionSeconds"] = time.perf_counter() - phase_started
+                    data = state["demo"].load_data_dict(cfg)
+                    timings["loadDataSeconds"] = time.perf_counter() - phase_started
 
-                phase_started = time.perf_counter()
-                output_pkl = output_root.resolve() / video_path.stem / "reconstruction_output.pkl"
-                export_summary = export_gvhmr_results_pkl(
-                    results_path, output_pkl, keep_source_betas=keep_source_betas
-                )
-                timings["exportSeconds"] = time.perf_counter() - phase_started
-        if not output_pkl.exists():
+                    results_path = Path(cfg.paths.hmr4d_results)
+                    if results_path.exists() and stage_mode == "combined":
+                        from hmr4d.utils.pylogger import Log
+
+                        Log.info(f"[HMR4D] Results already exist at {results_path}")
+                        timings["predictionSeconds"] = 0.0
+                        timings["savePredictionSeconds"] = 0.0
+                    else:
+                        import torch
+
+                        from hmr4d.utils.net_utils import detach_to_cpu
+                        from hmr4d.utils.pylogger import Log
+
+                        Log.info("[HMR4D] Predicting")
+                        phase_started = time.perf_counter()
+                        prediction = detach_to_cpu(state["model"].predict(data, static_cam=cfg.static_cam))
+                        timings["predictionSeconds"] = time.perf_counter() - phase_started
+                        phase_started = time.perf_counter()
+                        results_path.parent.mkdir(parents=True, exist_ok=True)
+                        torch.save(prediction, results_path)
+                        timings["savePredictionSeconds"] = time.perf_counter() - phase_started
+
+                    phase_started = time.perf_counter()
+                    output_pkl = output_root.resolve() / video_path.stem / "reconstruction_output.pkl"
+                    export_summary = export_gvhmr_results_pkl(
+                        results_path, output_pkl, keep_source_betas=keep_source_betas
+                    )
+                    timings["exportSeconds"] = time.perf_counter() - phase_started
+                    preprocess_manifest = _preprocess_manifest_path(cfg) if stage_mode == "predict" else None
+        if output_pkl is not None and not output_pkl.exists():
             raise RuntimeError(f"GVHMR worker finished without writing {output_pkl}")
-        payload.update(
-            {
-                "status": "completed",
-                "outputDir": str(output_root / video_path.stem),
-                "resultsPkl": str(output_pkl),
-                "exportSummary": export_summary,
-                "elapsedSeconds": round(time.perf_counter() - started, 3),
-                "timings": {key: round(value, 3) for key, value in timings.items()},
-            }
-        )
+        for key, value in state["timings"].items():
+            if key not in state["startupTimings"]:
+                timings[key] = max(0.0, value - timing_snapshot.get(key, 0.0))
+        payload.update({
+            "status": "completed",
+            "outputDir": str(output_root / video_path.stem),
+            "resultsPkl": str(output_pkl) if output_pkl is not None else None,
+            "preprocessManifest": str(preprocess_manifest) if preprocess_manifest else None,
+            "exportSummary": export_summary,
+            "elapsedSeconds": round(time.perf_counter() - started, 3),
+            "timings": {key: round(value, 3) for key, value in timings.items()},
+            "startupTimings": {key: round(value, 3) for key, value in state["startupTimings"].items()},
+        })
     except BaseException as exc:
         payload.update(
             {
@@ -433,7 +626,7 @@ def main() -> int:
         print(f"Pruned {pruned_jobs} retained terminal GVHMR job record(s).", flush=True)
 
     try:
-        state = load_gvhmr_once()
+        state = load_gvhmr_once(args.stage_mode)
     except Exception as exc:
         write_json(
             state_dir / "startup_error.json",
@@ -453,6 +646,9 @@ def main() -> int:
             "pid": os.getpid(),
             "loadSeconds": state["loadSeconds"],
             "gpuName": state["gpuName"],
+            "gpuDevice": args.gpu_device,
+            "stageMode": state["stageMode"],
+            "imageIdentity": state["imageIdentity"],
         },
     )
     print(f"{RESULT_PREFIX} {json.dumps({'status': 'ready', 'loadSeconds': state['loadSeconds']})}", flush=True)

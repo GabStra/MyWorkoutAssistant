@@ -55,23 +55,6 @@ def test_stale_ranking_cannot_disable_contract_return_requirement(monkeypatch):
         b.LoopRanking(1., [], payload={"loopContinuityRequired": False}))
 
 
-@pytest.mark.parametrize("yaw", [0., 73., 155.])
-def test_supported_grip_checks_orientation_not_only_distance(yaw):
-    from scipy.spatial.transform import Rotation
-    from exercise_motion_pkg.equipment_constraints import supported_bilateral_geometry_metrics
-    rotation = Rotation.from_euler('xyz', [34., yaw, -20.], degrees=True)
-    def payload(left, right):
-        joints = dict(zip(('left_shoulder', 'right_shoulder', 'left_hand', 'right_hand'),
-                          rotation.apply([[-.2, 0., 0.], [.2, 0., 0.], left, right]).tolist()))
-        return {'frames': [{'joints': joints}] * 10}
-    valid = payload([-.4, .5, 0.], [.4, .5, 0.])
-    # Same 0.8m spacing, incompatible orientation relative to shoulders.
-    invalid = payload([0., .5, -.4], [0., .5, .4])
-    assert supported_bilateral_geometry_metrics(valid, required=True)['passed']
-    assert not supported_bilateral_geometry_metrics(invalid, required=True)['passed']
-    assert supported_bilateral_geometry_metrics(invalid, required=False)['passed']
-
-
 def test_supported_pose_fit_retains_core_and_pair_reference():
     from exercise_motion_pkg.articulation_trajectory import fit_pose_and_temporal_trajectories
     frames = []

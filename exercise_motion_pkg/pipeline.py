@@ -154,6 +154,7 @@ class GenerateRequest:
     workspace: Path
     youtube_url: str | None = None
     video_path: Path | None = None
+    source_frame_clock_path: Path | None = None
     reconstruction_results_pkl: Path | None = None
     reuse_reconstruction_cache: bool = True
     reconstruction_global_cache_dir: Path | None = None
@@ -163,6 +164,7 @@ class GenerateRequest:
     reconstruction_docker_gpus: str = "all"
     reconstruction_docker_shm_size: str = DEFAULT_RECONSTRUCTION_DOCKER_SHM_SIZE
     use_warm_gvhmr_worker: bool = False
+    gvhmr_stage_split: bool = False
     gvhmr_worker_session_dir: Path | None = None
     gvhmr_worker_mount_root: Path | None = None
     gvhmr_worker_timeout_seconds: float | None = None
@@ -213,8 +215,11 @@ class GenerateRequest:
     # Attach to the supervisor-owned shared llama.cpp server for any vision
     # inference (SHARED_LLAMA_SERVER.md); default off keeps per-session servers.
     shared_llama_server: bool = False
+    shared_llama_server_session_dir: Path | None = None
 
     def __post_init__(self) -> None:
+        if self.gvhmr_stage_split and not (self.use_warm_gvhmr_worker and self.shared_llama_server):
+            raise ValueError("GVHMR stage split requires warm workers and a supervised shared llama server.")
         if self.motion_reconstruction_backend != "gvhmr":
             raise ValueError("Only the GVHMR reconstruction backend is supported.")
         if self.spinepose_merge_mode != "motion":
@@ -246,6 +251,52 @@ class ReconstructionResultsSource:
     path: Path
     cache_status: str
     should_run_reconstruction: bool
+
+
+def _source_pose_on_motion_clock(
+    source_pose: dict[str, Any] | None,
+    *,
+    source_pose_reference_path: Path | None,
+    source_frame_clock_path: Path | None,
+    input_video_path: Path,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str | None]:
+    """Bind cut-local pose samples to the exact parent exposures used by motion.
+
+    A requested cut start is not an exposure timestamp. The mapping is accepted
+    only when the selected video, pose reference, parent video, and both frame
+    clock receipts agree through the shared verifier.
+    """
+    if not isinstance(source_pose, dict):
+        return None, None, None
+    if source_pose_reference_path is None:
+        return None, None, "source_pose_reference_path_unavailable"
+    try:
+        from .pose_fidelity import _canonical_source_pose_timeline
+        from .source_frame_clock import (
+            load_verified_source_frame_clock,
+            source_frame_clock_path_for_video,
+            verified_source_timeline_mapping,
+        )
+
+        clock_path = source_frame_clock_path or source_frame_clock_path_for_video(input_video_path)
+        receipt = load_verified_source_frame_clock(clock_path, expected_video_path=input_video_path)
+        mapping = verified_source_timeline_mapping(
+            workspace=source_pose_reference_path.expanduser().resolve().parent.parent,
+            source_pose=source_pose,
+            clock_receipt=receipt,
+            expected_motion_video_path=input_video_path,
+        )
+        if mapping is None:
+            return None, None, "source_timeline_mapping_unavailable"
+        mapped_pose, mapping_error = _canonical_source_pose_timeline(
+            source_pose,
+            {"sourcePoseCameraReference": {"sourceTimelineMapping": mapping}},
+        )
+        if mapping_error or not isinstance(mapped_pose, dict):
+            return None, None, mapping_error or "source_timeline_mapping_unavailable"
+        return mapped_pose, mapping, None
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, OverflowError) as error:
+        return None, None, f"source_timeline_mapping_unavailable:{type(error).__name__}"
 
 
 @dataclass(frozen=True)
@@ -675,6 +726,7 @@ def run_generation_pipeline(
         "pipeline.py", "cleanup.py", "temporal_contact_solver.py", "structural_refinement.py", "video_world_alignment.py",
         "unidepth_runner.py",
         "preview.py", "reconstruction_convert.py", "reconstruction_retarget_source.py", "ground.py", "models.py",
+        "source_frame_clock.py",
         "spinepose_reconstruction_correction.py", "foot_kinematics.py", "contact_constraints.py", "contact_trajectory.py", "articulation_trajectory.py",
         "motion_io.py", "reconstruction_compat.py", "retarget_contract.py", "reconstruction_runner.py", "pose_fidelity.py",
         "anatomical_repair.py", "chain_depth_correction.py",
@@ -757,6 +809,11 @@ def _run_generation_pipeline_uncached(
     record_timing("preparePreviewRuntimeSeconds", stage_started)
     stage_started = time.perf_counter()
     input_video_path = prepare_input_video(request, paths)
+    from .source_frame_clock import source_frame_clock_path_for_video
+
+    prepared_source_frame_clock_path = source_frame_clock_path_for_video(input_video_path)
+    if not prepared_source_frame_clock_path.is_file():
+        prepared_source_frame_clock_path = None
     record_timing("prepareInputVideoSeconds", stage_started)
     spinepose_source = resolve_spinepose_json_source(
         request=request,
@@ -835,6 +892,9 @@ def _run_generation_pipeline_uncached(
                         docker_shm_size=request.reconstruction_docker_shm_size,
                         timeout_seconds=request.reconstruction_timeout_seconds,
                         use_warm_worker=request.use_warm_gvhmr_worker,
+                        **({"stage_split": True,
+                            "shared_llama_session_dir": request.shared_llama_server_session_dir}
+                           if request.gvhmr_stage_split else {}),
                         warm_worker_session_dir=request.gvhmr_worker_session_dir,
                         warm_worker_mount_root=request.gvhmr_worker_mount_root,
                         warm_worker_timeout_seconds=request.gvhmr_worker_timeout_seconds,
@@ -844,7 +904,7 @@ def _run_generation_pipeline_uncached(
 
             reconstruction_result = (
                 run_reconstruction_exclusive(invoke_reconstruction)
-                if run_reconstruction_exclusive is not None
+                if run_reconstruction_exclusive is not None and not request.gvhmr_stage_split
                 else invoke_reconstruction()
             )
             record_timing("reconstructionRunSeconds", stage_started)
@@ -898,6 +958,7 @@ def _run_generation_pipeline_uncached(
                 if request.motion_reconstruction_backend == "gvhmr"
                 else "RECONSTRUCTION"
             ),
+            source_frame_clock_path=prepared_source_frame_clock_path,
         )
         record_timing("normalizeReconstructionOutputSeconds", stage_started)
         stage_started = time.perf_counter()
@@ -1024,6 +1085,7 @@ def _run_generation_pipeline_uncached(
             if source_pose_reference_path is not None and source_pose_reference_path.is_file()
             else None
         )
+        source_pose_temporal_extent_authorized = isinstance(source_pose_payload, dict)
         from .source_pose_evidence import verify_source_pose
         source_pose_payload = verify_source_pose(source_pose_payload, input_video_path)
         # Keep the validated source timeline intact during reconstruction and
@@ -1066,6 +1128,22 @@ def _run_generation_pipeline_uncached(
                 .casefold(),
             }
             timings["videoWorldAlignment"] = video_alignment_metadata
+        source_timeline_mapping = None
+        if isinstance(source_pose_payload, dict):
+            source_pose_payload, source_timeline_mapping, source_timeline_error = (
+                _source_pose_on_motion_clock(
+                    source_pose_payload,
+                    source_pose_reference_path=source_pose_reference_path,
+                    source_frame_clock_path=prepared_source_frame_clock_path,
+                    input_video_path=input_video_path,
+                )
+            )
+            timings["sourcePoseTimeline"] = {
+                "available": source_timeline_mapping is not None,
+                **({"reason": source_timeline_error} if source_timeline_error else {}),
+                **({"mappingKind": source_timeline_mapping.get("mappingKind")}
+                   if source_timeline_mapping else {}),
+            }
         stage_started = time.perf_counter()
         tuning_input_clip = canonicalize_camera_motion_clip(
             raw_clip,
@@ -1075,6 +1153,14 @@ def _run_generation_pipeline_uncached(
                 else "reconstruction_opencv_camera"
             ),
         )
+        if source_timeline_mapping is not None:
+            tuning_input_clip = replace(
+                tuning_input_clip,
+                metadata={
+                    **tuning_input_clip.metadata,
+                    "sourceTimelineMapping": source_timeline_mapping,
+                },
+            )
         record_timing("canonicalizeMotionCoordinatesSeconds", stage_started)
         stage_started = time.perf_counter()
         cleaned_clip, cleanup_stats = cleanup_motion_clip(
@@ -1088,7 +1174,7 @@ def _run_generation_pipeline_uncached(
             support_mode_hint=request.support_mode_hint,
             # Source-reviewed timing belongs to the source selection stage.
             # Static trimming here would invalidate every downstream time map.
-            preserve_temporal_extent=isinstance(source_pose_payload, dict),
+            preserve_temporal_extent=source_pose_temporal_extent_authorized,
         )
         record_timing("cleanupMotionSeconds", stage_started)
         stage_started = time.perf_counter()
@@ -1172,6 +1258,9 @@ def _run_generation_pipeline_uncached(
                     MotionFrame(
                         time_sec=frame.time_sec,
                         joints={name: tuple(map(float, row[i])) for i, name in enumerate(joint_names)},
+                        source_time_sec=frame.source_time_sec,
+                        source_frame_index=frame.source_frame_index,
+                inference_frame_index=frame.inference_frame_index,
                     )
                     for frame, row in zip(cleaned_clip.frames, corrected)
                 ],
@@ -1407,7 +1496,8 @@ def crop_motion_clip_to_input_window(
         fps=clip.fps,
         joint_names=clip.joint_names,
         frames=[
-            MotionFrame(time_sec=max(0.0, frame.time_sec - first_time), joints=frame.joints)
+            MotionFrame(time_sec=max(0.0, frame.time_sec - first_time), joints=frame.joints,
+                        source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index)
             for frame in retained
         ],
         source=clip.source,
@@ -1463,6 +1553,9 @@ def canonicalize_camera_motion_clip(
         frames = [
             MotionFrame(
                 time_sec=frame.time_sec,
+                source_time_sec=frame.source_time_sec,
+                source_frame_index=frame.source_frame_index,
+                inference_frame_index=frame.inference_frame_index,
                 joints={
                     joint_name: (point[0], -point[1], -point[2])
                     for joint_name, point in frame.joints.items()
@@ -1869,6 +1962,24 @@ def _has_spinepose_json_frames(path: Path) -> bool:
 
 
 def prepare_input_video(request: GenerateRequest, paths: PipelinePaths) -> Path:
+    from .source_frame_clock import (
+        rebind_existing_source_frame_clock_for_video_copy,
+    )
+
+    def preserve_clock_across_exact_copy(
+        source_path: Path,
+        output_path: Path,
+        *,
+        source_clock_path: Path | None = None,
+        transform: str,
+    ) -> None:
+        rebind_existing_source_frame_clock_for_video_copy(
+            source_video_path=source_path,
+            output_video_path=output_path,
+            source_clock_path=source_clock_path,
+            transform=transform,
+        )
+
     def maybe_trim_segment(path: Path) -> Path:
         if request.source_start_seconds is None and request.source_end_seconds is None:
             return path
@@ -1898,10 +2009,19 @@ def prepare_input_video(request: GenerateRequest, paths: PipelinePaths) -> Path:
         if not source.exists():
             raise FileNotFoundError(f"Input video not found: {source}")
         destination = paths.input_dir / source.name
-        if source == destination.resolve():
-            sanitized = sanitize_video_for_processing(destination)
-        else:
+        if source != destination.resolve():
             shutil.copy2(source, destination)
-            sanitized = sanitize_video_for_processing(destination)
+        preserve_clock_across_exact_copy(
+            source,
+            destination,
+            source_clock_path=request.source_frame_clock_path,
+            transform="prepare_input_video_copy",
+        )
+        sanitized = sanitize_video_for_processing(destination)
+        preserve_clock_across_exact_copy(
+            destination,
+            sanitized,
+            transform="prepare_input_video_sanitization_copy",
+        )
         return maybe_trim_segment(sanitized)
     raise ValueError("Either youtube_url or video_path must be provided.")

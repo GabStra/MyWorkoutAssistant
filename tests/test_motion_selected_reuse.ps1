@@ -1,5 +1,6 @@
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
+. (Join-Path $root 'scripts/reconstruction_compat.ps1')
 $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $root 'scripts/run_exercise_motion_workout_plan.ps1'), [ref]$null, [ref]$errors)
 if ($errors.Count) { throw ($errors | Out-String) }
@@ -7,6 +8,7 @@ foreach ($name in @(
     'Write-AtomicJsonDocument',
     'Get-SelectedOutputArtifacts',
     'Test-SourceSelectionClearanceCurrent',
+    'Get-ExpectedSourceClearanceContractSha256',
     'Remove-IntermediateArtifactFile',
     'Remove-ExerciseIntermediateArtifacts',
     'Get-ExistingSelectedSummary',
@@ -51,6 +53,14 @@ try {
     $marker | ConvertTo-Json | Set-Content $markerPath
     $item = [pscustomobject]@{ exerciseWorkspace=$fixture; bakeWorkspace=(Join-Path $fixture 'bake'); exerciseSlug='squat'; exerciseName='Squat'; exerciseId='squat-id'; currentContractSha256=('0' * 64) }
     if (-not (Get-ExistingSelectedSummary $item)) { throw 'Current validation must permit explicitly source-validation-disabled lineage.' }
+    $marker.status = 'needs_manual_review'
+    $marker.selectionValidationPolicyVersion = 69
+    $marker | ConvertTo-Json | Set-Content $markerPath
+    if (-not (Test-SelectionNeedsPolicyReaudit $item)) { throw 'An old negative selection-policy verdict must trigger retained-artifact re-audit.' }
+    $marker.selectionValidationPolicyVersion = 70
+    $marker | ConvertTo-Json | Set-Content $markerPath
+    if (Test-SelectionNeedsPolicyReaudit $item) { throw 'A current negative verdict must remain terminal under unchanged policies.' }
+    $marker.status = 'valid'
     $marker.sourceSelectionPolicyVersion = $SourceSelectionPolicyVersion - 1
     $marker | ConvertTo-Json | Set-Content $markerPath
     if (Get-ExistingSelectedSummary $item) { throw 'A stale source-policy marker was reused.' }

@@ -15,6 +15,7 @@ import numpy as np
 # Envelope validation must use the same precision after converting to degrees;
 # this is solver roundoff tolerance, separate from source/anatomical allowances.
 ANGLE_NUMERICAL_TOLERANCE_RADIANS = 1e-6
+_INVALID_SOURCE_TIMELINE_MAPPING = object()
 _FIT_SUPPORT_EVIDENCE_OVERRIDE: ContextVar[tuple[str, dict[str, Any]] | None] = ContextVar(
     "fit_support_evidence_override",
     default=None,
@@ -221,7 +222,309 @@ def motion_space_support_evidence(
     return _fit_local_timed_support_evidence(payload, mapped)
 
 
-def mapped_foot_patch_state_indices(evidence, frame_times, frame_count=None):
+def _verified_patch_source_end_exclusive(patch, native_times, native_count):
+    """Return verified absolute media end, or None when the final exposure is unknown."""
+    try:
+        source_fps = float(patch.get('sourceFps'))
+        source_origin = float(patch.get('sourceTimeOriginSec', native_times[0]))
+        raw_count = patch.get('sourceFrameCount')
+        if isinstance(raw_count, bool):
+            return None
+        declared_count = None if raw_count is None else int(raw_count)
+        if (raw_count is not None
+                and (not np.isfinite(float(raw_count))
+                     or float(raw_count) != declared_count)):
+            return None
+        declared_duration = patch.get('sourceVideoDurationSec')
+        declared_duration = (None if declared_duration is None
+                             else float(declared_duration))
+    except (TypeError, ValueError, OverflowError, IndexError):
+        return None
+    if (not np.isfinite(source_fps) or source_fps <= 0.
+            or not np.isfinite(source_origin)
+            or (declared_count is not None and declared_count != native_count)
+            or (declared_duration is not None
+                and (not np.isfinite(declared_duration) or declared_duration <= 0.))):
+        return None
+
+    end_from_count = (source_origin + declared_count / source_fps
+                      if declared_count is not None else None)
+    end_from_duration = (source_origin + declared_duration
+                         if declared_duration is not None else None)
+    if (end_from_count is not None and end_from_duration is not None
+            and not np.isclose(end_from_count, end_from_duration, rtol=1e-9, atol=1e-6)):
+        return None
+    source_end_exclusive = (end_from_duration if end_from_duration is not None
+                            else end_from_count)
+    if source_end_exclusive is None:
+        return None
+    expected_last_start = source_end_exclusive - 1. / source_fps
+    if (not np.isclose(float(native_times[-1]), expected_last_start,
+                       rtol=1e-9, atol=1e-6)
+            or float(native_times[0]) < source_origin - 1e-6):
+        return None
+    return float(source_end_exclusive)
+
+
+def _source_timeline_mapping_for_payload(payload):
+    camera_reference = (payload or {}).get('sourcePoseCameraReference')
+    if not isinstance(camera_reference, dict):
+        return None
+    if 'sourceTimelineMapping' not in camera_reference:
+        return None
+    mapping = camera_reference.get('sourceTimelineMapping')
+    return mapping if isinstance(mapping, dict) else _INVALID_SOURCE_TIMELINE_MAPPING
+
+
+def _foot_patch_fit_time_offset(evidence, source_timeline_mapping=None):
+    """Return a scalar offset only when the two evidence clocks truly differ by one origin.
+
+    Selected cuts need per-exposure lineage: their requested cut start is not
+    necessarily the first decoded exposure. Callers handling selected-cut
+    evidence must use ``_foot_patch_times_in_parent_clock`` instead.
+    """
+    mapping = source_timeline_mapping
+    if mapping is None:
+        mapping = (evidence or {}).get('_fitSourceTimelineMapping')
+    if mapping is None:
+        return 0.0
+    if (not isinstance(mapping, dict)
+            or mapping.get('schemaVersion') != 1
+            or mapping.get('verified') is not True
+            or mapping.get('mappingKind') != 'selected_segment_to_parent_source'):
+        return None
+    selected_sha = str(mapping.get('selectedSegmentSha256') or '').casefold()
+    parent_sha = str(mapping.get('parentSourceSha256') or '').casefold()
+    evidence_sha = str((evidence or {}).get('sourceVideoSha256') or '').casefold()
+    patch = (evidence or {}).get('footPatchEvidence') or {}
+    patch_sha = str(patch.get('sourceVideoSha256') or evidence_sha).casefold()
+    try:
+        selected_start = float(mapping.get('selectedStartSeconds'))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    valid_hashes = all(
+        len(value) == 64 and all(character in '0123456789abcdef' for character in value)
+        for value in (selected_sha, parent_sha)
+    )
+    if (not valid_hashes or not np.isfinite(selected_start) or selected_start < 0.0
+            or not evidence_sha or patch_sha != evidence_sha):
+        return None
+    if patch_sha == selected_sha:
+        return None
+    if patch_sha == parent_sha:
+        return 0.0
+    return None
+
+
+def _validated_selected_frame_lineage(mapping):
+    """Return ordered, receipt-bound selected-frame exposure lineage or None."""
+    if (not isinstance(mapping, dict)
+            or mapping.get('schemaVersion') != 1
+            or mapping.get('verified') is not True
+            or mapping.get('mappingKind') != 'selected_segment_to_parent_source'):
+        return None
+    receipt_sha = str(mapping.get('selectedFrameClockReceiptSha256') or '').casefold()
+    selected_sha = str(mapping.get('selectedSegmentSha256') or '').casefold()
+    parent_sha = str(mapping.get('parentSourceSha256') or '').casefold()
+    valid_hash = lambda value: len(value) == 64 and all(
+        character in '0123456789abcdef' for character in value)
+    if not all(valid_hash(value) for value in (receipt_sha, selected_sha, parent_sha)):
+        return None
+    rows = mapping.get('selectedFrameLineage')
+    if not isinstance(rows, list) or not rows:
+        return None
+    normalized = []
+    previous_selected_time = previous_parent_time = -float('inf')
+    for expected_index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            return None
+        selected_index = row.get('selectedFrameIndex')
+        parent_index = row.get('parentSourceFrameIndex')
+        try:
+            selected_time = float(row.get('selectedFrameTimeSec'))
+            parent_time = float(row.get('parentSourceTimeSec'))
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if (type(selected_index) is not int or selected_index != expected_index
+                or type(parent_index) is not int or parent_index < 0
+                or not np.isfinite(selected_time) or selected_time < 0.
+                or not np.isfinite(parent_time) or parent_time < 0.
+                or selected_time <= previous_selected_time
+                or parent_time < previous_parent_time):
+            return None
+        normalized.append((selected_index, selected_time, parent_index, parent_time))
+        previous_selected_time, previous_parent_time = selected_time, parent_time
+    declared_count = mapping.get('selectedFrameCount')
+    if declared_count is not None and declared_count != len(normalized):
+        return None
+    return normalized
+
+
+def _foot_patch_times_in_parent_clock(evidence, source_timeline_mapping, source_times):
+    """Map selected-cut exposure times to exact parent PTS; never use cut-start arithmetic."""
+    mapping = source_timeline_mapping
+    if mapping is None:
+        mapping = (evidence or {}).get('_fitSourceTimelineMapping')
+    try:
+        times = np.asarray(source_times, dtype=float)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if times.ndim != 1 or not np.isfinite(times).all():
+        return None
+    if mapping is None:
+        return times
+    if (not isinstance(mapping, dict)
+            or mapping.get('schemaVersion') != 1
+            or mapping.get('verified') is not True
+            or mapping.get('mappingKind') != 'selected_segment_to_parent_source'):
+        return None
+    selected_sha = str(mapping.get('selectedSegmentSha256') or '').casefold()
+    parent_sha = str(mapping.get('parentSourceSha256') or '').casefold()
+    evidence_sha = str((evidence or {}).get('sourceVideoSha256') or '').casefold()
+    patch = (evidence or {}).get('footPatchEvidence') or {}
+    patch_sha = str(patch.get('sourceVideoSha256') or evidence_sha).casefold()
+    if (not evidence_sha or patch_sha != evidence_sha
+            or len(selected_sha) != 64 or len(parent_sha) != 64):
+        return None
+    if patch_sha == parent_sha:
+        return times
+    if patch_sha != selected_sha:
+        return None
+    lineage = _validated_selected_frame_lineage(mapping)
+    try:
+        fps = float(patch.get('sourceFps'))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if lineage is None or not np.isfinite(fps) or fps <= 0.:
+        return None
+    mapped = np.full(times.shape, np.nan, dtype=float)
+    for position, local_time in enumerate(times):
+        local_index = int(round(float(local_time) * fps))
+        if (local_index < 0 or local_index >= len(lineage)
+                or abs(float(local_time) - local_index / fps) > 1e-6):
+            return None
+        selected_index, selected_time, _, parent_time = lineage[local_index]
+        if (selected_index != local_index
+                or abs(selected_time - float(local_time)) > 1e-6):
+            return None
+        mapped[position] = parent_time
+    if np.any(np.diff(mapped) < -1e-9):
+        return None
+    return mapped
+
+
+def _source_exposure_groups(native_times, *, epsilon=1e-9):
+    """Group selected rows that represent the same verified parent exposure."""
+    groups = []
+    for index, value in enumerate(native_times):
+        if groups and abs(float(value) - groups[-1][2]) <= epsilon:
+            start, end, timestamp = groups[-1]
+            groups[-1] = (start, index, timestamp)
+        else:
+            groups.append((index, index, float(value)))
+    return groups
+
+
+def _source_clock_fps(evidence, mapping):
+    patch = (evidence or {}).get('footPatchEvidence') or {}
+    if mapping is not None:
+        patch_sha = str(patch.get('sourceVideoSha256')
+                        or (evidence or {}).get('sourceVideoSha256') or '').casefold()
+        selected_sha = str(mapping.get('selectedSegmentSha256') or '').casefold() \
+            if isinstance(mapping, dict) else ''
+        if patch_sha == selected_sha:
+            try:
+                value = float(mapping.get('parentSourceFps'))
+            except (TypeError, ValueError, OverflowError):
+                return None
+            return value if np.isfinite(value) and value > 0. else None
+    try:
+        value = float(patch.get('sourceFps'))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return value if np.isfinite(value) and value > 0. else None
+
+
+def _foot_patch_end_exclusive_in_parent_clock(
+    evidence, source_timeline_mapping, native_times, native_count,
+):
+    mapping = source_timeline_mapping
+    if mapping is None:
+        mapping = (evidence or {}).get('_fitSourceTimelineMapping')
+    if mapping is None:
+        return _verified_patch_source_end_exclusive(
+            (evidence or {}).get('footPatchEvidence') or {}, native_times, native_count)
+    patch = (evidence or {}).get('footPatchEvidence') or {}
+    evidence_sha = str((evidence or {}).get('sourceVideoSha256') or '').casefold()
+    patch_sha = str(patch.get('sourceVideoSha256') or evidence_sha).casefold()
+    parent_sha = str(mapping.get('parentSourceSha256') or '').casefold() \
+        if isinstance(mapping, dict) else ''
+    selected_sha = str(mapping.get('selectedSegmentSha256') or '').casefold() \
+        if isinstance(mapping, dict) else ''
+    if patch_sha == parent_sha:
+        return _verified_patch_source_end_exclusive(patch, native_times, native_count)
+    if patch_sha != selected_sha:
+        return None
+    lineage = _validated_selected_frame_lineage(mapping)
+    if lineage is None or len(native_times) != native_count or native_count == 0:
+        return None
+    try:
+        parent_fps = float(mapping.get('parentSourceFps'))
+        local_times = np.asarray(patch.get('sourceTimesSec'), dtype=float)
+        source_fps = float(patch.get('sourceFps'))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if (not np.isfinite(parent_fps) or parent_fps <= 0.
+            or not np.isfinite(source_fps) or source_fps <= 0.
+            or local_times.shape != (native_count,) or not np.isfinite(local_times).all()):
+        return None
+    final_local_index = int(round(float(local_times[-1]) * source_fps))
+    if final_local_index < 0 or final_local_index >= len(lineage):
+        return None
+    return lineage[final_local_index][3] + 1. / parent_fps
+
+
+def _body_timeline_parent_exposure_time(row, source_timeline_mapping, evidence_sha):
+    """Resolve a timed observer row by its selected output frame identity."""
+    if source_timeline_mapping is None:
+        return float(row['sourceTimeSec'])
+    mapping = source_timeline_mapping
+    selected_sha = str(mapping.get('selectedSegmentSha256') or '').casefold() \
+        if isinstance(mapping, dict) else ''
+    parent_sha = str(mapping.get('parentSourceSha256') or '').casefold() \
+        if isinstance(mapping, dict) else ''
+    if evidence_sha == parent_sha:
+        return float(row['sourceTimeSec'])
+    if evidence_sha != selected_sha:
+        return None
+    lineage = _validated_selected_frame_lineage(mapping)
+    if lineage is None:
+        return None
+    selected_index = row.get('sourceFrameIndex')
+    try:
+        selected_fps = float(row.get('sourceFps'))
+        selected_time = float(row.get('sourceTimeSec'))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if (type(selected_index) is not int or selected_index < 0
+            or selected_index >= len(lineage)
+            or not np.isfinite(selected_fps) or selected_fps <= 0.
+            or abs(selected_time - selected_index / selected_fps) > 1e-6):
+        return None
+    lineage_index, lineage_time, _, parent_time = lineage[selected_index]
+    if (lineage_index != selected_index
+            or abs(lineage_time - selected_time) > 1e-6):
+        return None
+    return parent_time
+
+
+def mapped_foot_patch_state_indices(
+    evidence,
+    frame_times,
+    frame_count=None,
+    *,
+    source_timeline_mapping=None,
+):
     """Map fit source-clock samples to native patch rows; unresolved rows are -1.
 
     Absolute source-video timestamps are required whenever either track declares
@@ -239,18 +542,27 @@ def mapped_foot_patch_state_indices(evidence, frame_times, frame_count=None):
     if not isinstance(states, list) or not states or len(times) != count:
         return unresolved
 
+    # A verified cut mapping is authoritative only for timestamped evidence.
+    # Do not let the legacy equal-length/index fallback bypass a present but
+    # mismatched mapping or manufacture an index identity across two clocks.
+    fit_time_offset = _foot_patch_fit_time_offset(evidence, source_timeline_mapping)
+    # Selected-cut source times must be mapped by exact frame lineage below.
+    mapping = source_timeline_mapping
+    if mapping is None:
+        mapping = (evidence or {}).get('_fitSourceTimelineMapping')
+    if fit_time_offset is None and mapping is None:
+        return unresolved
     patch_declares_clock = (
         patch.get('sourceTimeBasis') is not None
         or patch.get('sourceTimesSec') is not None
     )
     fit_has_clock = any(value is not None for value in times)
     if not patch_declares_clock and not fit_has_clock:
-        if len(states) == count:
+        if len(states) == count and mapping is None:
             return np.arange(count, dtype=int)
         return unresolved
     if patch.get('sourceTimeBasis') != 'absolute_source_video':
         return unresolved
-
     native_times = patch.get('sourceTimesSec')
     if not isinstance(native_times, list) or len(native_times) != len(states):
         return unresolved
@@ -261,7 +573,10 @@ def mapped_foot_patch_state_indices(evidence, frame_times, frame_count=None):
     ):
         return unresolved
     try:
-        native_times = np.asarray(native_times, dtype=float)
+        native_times = _foot_patch_times_in_parent_clock(
+            evidence, source_timeline_mapping, native_times)
+        if native_times is None:
+            return unresolved
         fit_times = np.asarray([
             np.nan if value is None else float(value) for value in times
         ], dtype=float)
@@ -269,32 +584,89 @@ def mapped_foot_patch_state_indices(evidence, frame_times, frame_count=None):
     except (TypeError, ValueError, OverflowError):
         return unresolved
     if (not np.isfinite(native_times).all() or not np.isfinite(fps) or fps <= 0.
-            or np.any(np.diff(native_times) <= 0.)):
+            or np.any(np.diff(native_times) < -1e-9)):
         return unresolved
-    tolerance = .5 / fps + 1e-6
+    exposure_groups = _source_exposure_groups(native_times)
+    exposure_times = np.asarray([group[2] for group in exposure_groups], dtype=float)
+    group_states_consistent = []
+    for start, end, _timestamp in exposure_groups:
+        consistent = True
+        for side in ('left', 'right'):
+            side_record = states_by_side.get(side)
+            side_states = side_record.get('states') if isinstance(side_record, dict) else None
+            if not isinstance(side_states, list):
+                continue
+            if len(side_states) != len(states):
+                consistent = False
+                break
+            if len({str(state).casefold() for state in side_states[start:end + 1]}) > 1:
+                consistent = False
+                break
+        group_states_consistent.append(consistent)
+    # The last native timestamp is the start of the last decoded frame, not the
+    # clip boundary. Extend coverage only when the producer retained exact
+    # frame-count/FPS (or explicit duration) metadata for that same video.
+    source_end_exclusive = _foot_patch_end_exclusive_in_parent_clock(
+        evidence, source_timeline_mapping, native_times, len(states))
+    if (source_end_exclusive is None
+            and ('sourceFrameCount' in patch or 'sourceVideoDurationSec' in patch)):
+        return unresolved
+
     mapped = unresolved.copy()
     for frame_index, time_value in enumerate(fit_times):
         if not np.isfinite(time_value):
             continue
-        # Tolerance resolves resampling only inside observed coverage. It never
-        # extends support before the first or after the last source observation.
-        if time_value < native_times[0] - 1e-9 or time_value > native_times[-1] + 1e-9:
+        if source_end_exclusive is None:
+            if time_value < exposure_times[0] - 1e-9 or time_value > exposure_times[-1] + 1e-9:
+                continue
+            group_index = int(np.argmin(np.abs(exposure_times - time_value)))
+            if (group_states_consistent[group_index]
+                    and abs(float(exposure_times[group_index] - time_value)) <= .5 / fps + 1e-6):
+                mapped[frame_index] = exposure_groups[group_index][0]
             continue
-        native_index = int(np.argmin(np.abs(native_times - time_value)))
-        if abs(float(native_times[native_index] - time_value)) <= tolerance:
-            mapped[frame_index] = native_index
+        if time_value < exposure_times[0] - 1e-9:
+            continue
+        # Keep the existing nearest-observation mapping for interior samples.
+        # Only the previously clipped final exposure gets special handling.
+        if time_value <= exposure_times[-1] + 1e-9:
+            group_index = int(np.argmin(np.abs(exposure_times - time_value)))
+            if (group_states_consistent[group_index]
+                    and abs(float(exposure_times[group_index] - time_value)) <= .5 / fps + 1e-6):
+                mapped[frame_index] = exposure_groups[group_index][0]
+            continue
+        if (source_end_exclusive is not None and group_states_consistent[-1]
+                and time_value < source_end_exclusive - 1e-9
+                and time_value - exposure_times[-1] < 1.0 / _source_clock_fps(
+                    evidence, mapping) - 1e-9):
+            mapped[frame_index] = exposure_groups[-1][0]
     return mapped
 
 
-def _fit_patch_contact_runs(evidence, frame_times, native_times, native_count):
+def _fit_patch_contact_runs(
+    evidence,
+    frame_times,
+    native_times,
+    native_count,
+    *,
+    source_timeline_mapping=None,
+):
     """Build conservative timed contact runs from both source observations."""
     patch = (evidence or {}).get('footPatchEvidence') or {}
     states_by_side = patch.get('feet') or {}
     unresolved = [(-1, -1)] * len(frame_times)
     if patch.get('sourceTimeBasis') != 'absolute_source_video':
         return unresolved, {}, ({}, {})
+    fit_time_offset = _foot_patch_fit_time_offset(evidence, source_timeline_mapping)
+    mapping = source_timeline_mapping
+    if mapping is None:
+        mapping = (evidence or {}).get('_fitSourceTimelineMapping')
+    if fit_time_offset is None and mapping is None:
+        return unresolved, {}, ({}, {})
     try:
-        native_times = np.asarray(native_times, dtype=float)
+        native_times = _foot_patch_times_in_parent_clock(
+            evidence, source_timeline_mapping, native_times)
+        if native_times is None:
+            return unresolved, {}, ({}, {})
         source_fps = float(patch.get('sourceFps'))
         fit_times = np.asarray([
             np.nan if value is None else float(value) for value in frame_times
@@ -309,27 +681,68 @@ def _fit_patch_contact_runs(evidence, frame_times, native_times, native_count):
         return unresolved, {}, ({}, {})
     if (native_times.shape != (native_count,) or not np.isfinite(native_times).all()
             or not np.isfinite(source_fps) or source_fps <= 0.
-            or np.any(np.diff(native_times) <= 0.)):
+            or np.any(np.diff(native_times) < -1e-9)):
         return unresolved, {}, ({}, {})
+    exposure_groups = _source_exposure_groups(native_times)
+    exposure_times = np.asarray([group[2] for group in exposure_groups], dtype=float)
+    state_group_consistent = []
+    for start, end, _timestamp in exposure_groups:
+        consistent = True
+        for side in ('left', 'right'):
+            side_record = states_by_side.get(side)
+            side_states = side_record.get('states') if isinstance(side_record, dict) else None
+            if not isinstance(side_states, list):
+                continue
+            if (len(side_states) != native_count
+                    or len({str(state).casefold() for state in side_states[start:end + 1]}) > 1):
+                consistent = False
+                break
+        state_group_consistent.append(consistent)
 
     # A bracket is either one exact native observation or the two observations
     # surrounding the fit time. Large/dropout gaps and out-of-coverage times
     # stay unresolved rather than carrying contact authority across them.
     brackets = [(-1, -1)] * frame_count
     max_gap = 1.5 / source_fps + 1e-6
+    parent_fps = _source_clock_fps(evidence, mapping)
+    if parent_fps is None:
+        return unresolved, {}, ({}, {})
+    source_end_exclusive = _foot_patch_end_exclusive_in_parent_clock(
+        evidence, source_timeline_mapping, native_times, native_count)
+    if (source_end_exclusive is None
+            and ('sourceFrameCount' in patch or 'sourceVideoDurationSec' in patch)):
+        return unresolved, {}, ({}, {})
     for frame_index, time_value in enumerate(fit_times):
-        if (not np.isfinite(time_value) or time_value < native_times[0] - 1e-9
-                or time_value > native_times[-1] + 1e-9):
+        if not np.isfinite(time_value) or time_value < exposure_times[0] - 1e-9:
             continue
-        upper = int(np.searchsorted(native_times, time_value, side='left'))
-        if (upper < native_count
-                and abs(float(native_times[upper] - time_value)) <= 1e-9):
-            brackets[frame_index] = (upper, upper)
+        if source_end_exclusive is None:
+            if time_value > exposure_times[-1] + 1e-9:
+                continue
+        elif time_value >= source_end_exclusive - 1e-9:
+            continue
+        if time_value > exposure_times[-1] + 1e-9:
+            final_exposure_end = min(source_end_exclusive,
+                                     float(exposure_times[-1]) + 1.0 / parent_fps)
+            if time_value < final_exposure_end - 1e-9 and state_group_consistent[-1]:
+                final_index = exposure_groups[-1][0]
+                brackets[frame_index] = (final_index, final_index)
+            continue
+        upper = int(np.searchsorted(exposure_times, time_value, side='left'))
+        nearest = min(max(upper, 0), len(exposure_groups) - 1)
+        if upper > 0 and abs(float(exposure_times[upper - 1] - time_value)) < abs(
+                float(exposure_times[nearest] - time_value)):
+            nearest = upper - 1
+        if abs(float(exposure_times[nearest] - time_value)) <= 1e-9:
+            if state_group_consistent[nearest]:
+                representative = exposure_groups[nearest][0]
+                brackets[frame_index] = (representative, representative)
             continue
         lower = upper - 1
-        if (lower >= 0 and upper < native_count
-                and native_times[upper] - native_times[lower] <= max_gap):
-            brackets[frame_index] = (lower, upper)
+        if (lower >= 0 and upper < len(exposure_groups)
+                and state_group_consistent[lower] and state_group_consistent[upper]
+                and exposure_times[upper] - exposure_times[lower] <= max_gap):
+            brackets[frame_index] = (
+                exposure_groups[lower][0], exposure_groups[upper][0])
 
     # Each observed interval contributes anchor identity only at rows whose
     # actual patch state agrees with that interval. Conflicting identities are
@@ -340,6 +753,7 @@ def _fit_patch_contact_runs(evidence, frame_times, native_times, native_count):
         states = side_record.get('states') if isinstance(side_record, dict) else None
         if not isinstance(states, list) or len(states) != native_count:
             continue
+        states = list(states)
         toe_anchor = [None] * native_count
         ankle_anchor = [None] * native_count
         for key in ('contacts', 'supportContacts'):
@@ -369,6 +783,14 @@ def _fit_patch_contact_runs(evidence, frame_times, native_times, native_count):
                         if group is not None:
                             ankle_anchor[row] = (group if ankle_anchor[row] in (None, group)
                                                  else False)
+        for group_index, (start, end, _timestamp) in enumerate(exposure_groups):
+            representative = exposure_groups[group_index][0]
+            if not state_group_consistent[group_index]:
+                states[representative] = 'unknown'
+            for anchors in (toe_anchor, ankle_anchor):
+                if len(set(anchors[start:end + 1])) > 1:
+                    anchors[representative] = False
+                    states[representative] = 'unknown'
         owners[side] = (states, toe_anchor, ankle_anchor)
 
     toe_bridges = {}
@@ -446,17 +868,31 @@ def _fit_local_timed_support_evidence(payload, evidence):
     has_fit_clock = any(frame.get('sourceTimeSec') is not None
                         for frame in frames if isinstance(frame, dict))
     if (not has_patch_clock and not has_fit_clock
-            and len(representative) == len(frames)):
+            and len(representative) == len(frames)
+            and _source_timeline_mapping_for_payload(payload) is None):
         # Equal-length clockless legacy tracks have an unambiguous index map.
         # Keep their canonical view compact; consumers already use indices.
         return evidence
+    source_timeline_mapping = _source_timeline_mapping_for_payload(payload)
     evidence = _without_fit_local_timing_metadata(evidence)
-    state_indices = mapped_foot_patch_state_indices(evidence, frame_times, len(frames))
+    if source_timeline_mapping is not None:
+        evidence = {**evidence, '_fitSourceTimelineMapping': source_timeline_mapping}
+    state_indices = mapped_foot_patch_state_indices(
+        evidence,
+        frame_times,
+        len(frames),
+        source_timeline_mapping=source_timeline_mapping,
+    )
     result = deepcopy(evidence)
     result['_fitFrameStateIndices'] = state_indices.tolist()
     result['_fitFrameCount'] = len(frames)
     brackets, owners, bridges = _fit_patch_contact_runs(
-        evidence, frame_times, patch.get('sourceTimesSec'), len(representative))
+        evidence,
+        frame_times,
+        patch.get('sourceTimesSec'),
+        len(representative),
+        source_timeline_mapping=source_timeline_mapping,
+    )
 
     # Convert observed patch interval ratios through their native observation
     # rows. A fit sample between native rows is owned only when both bracket
@@ -521,6 +957,179 @@ def _fit_local_timed_support_evidence(payload, evidence):
             contact['_fitFrameRuns'] = _contiguous_runs(active)
             contact['_fitFrameCount'] = len(frames)
 
+    # Source-pose ankle contacts carry absolute source-video times. Their
+    # startRatio/endRatio describe native patch-row ratios, so scaling those
+    # ratios by the fitted frame count would move them on resampled or sparse
+    # fit clocks. Map their inclusive native interval through the same
+    # hash-bound source clock used for foot-patch observations instead.
+    patch_source_digest = str(patch.get('sourceVideoSha256') or '').casefold()
+    evidence_source_digest = str(evidence.get('sourceVideoSha256') or '').casefold()
+    for key in ('contacts', 'supportContacts'):
+        records = result.get(key)
+        if not isinstance(records, list):
+            continue
+        for contact in records:
+            if (isinstance(contact, dict)
+                    and contact.get('anchorKind') == 'ankle'
+                    and contact.get('sourceTimeBasis') == 'absolute_source_video'):
+                # Fail closed even if a digest/clock below cannot be verified;
+                # otherwise the legacy ratio fallback would reintroduce the
+                # exact retiming error this path is meant to remove.
+                contact['_fitFrameRuns'] = []
+                contact['_fitFrameCount'] = len(frames)
+    if patch_source_digest and patch_source_digest == evidence_source_digest:
+        fit_times = []
+        for value in frame_times:
+            try:
+                parsed = float(value)
+            except (TypeError, ValueError, OverflowError):
+                parsed = float('nan')
+            fit_times.append(parsed if np.isfinite(parsed) else float('nan'))
+        fit_times = np.asarray(fit_times, dtype=float)
+        native_times = patch.get('sourceTimesSec')
+        try:
+            native_times = _foot_patch_times_in_parent_clock(
+                evidence, source_timeline_mapping, native_times)
+            if native_times is None:
+                native_times = np.asarray([], dtype=float)
+            source_fps = float(patch.get('sourceFps'))
+        except (TypeError, ValueError, OverflowError):
+            native_times = np.asarray([], dtype=float)
+            source_fps = float('nan')
+        if (native_times.ndim == 1 and native_times.size == len(representative)
+                and np.isfinite(native_times).all() and np.isfinite(source_fps)
+                and source_fps > 0. and np.all(np.diff(native_times) >= -1e-9)):
+            timestamp_epsilon = 1e-6
+            for key in ('contacts', 'supportContacts'):
+                records = result.get(key)
+                if not isinstance(records, list):
+                    continue
+                for contact in records:
+                    if (not isinstance(contact, dict)
+                            or contact.get('anchorKind') != 'ankle'
+                            or contact.get('sourceTimeBasis') != 'absolute_source_video'):
+                        continue
+                    try:
+                        start_time = float(contact.get('sourcePoseStartTimeSec'))
+                        end_time = float(contact.get('sourcePoseEndTimeSec'))
+                    except (TypeError, ValueError, OverflowError):
+                        contact['_fitFrameRuns'] = []
+                        contact['_fitFrameCount'] = len(frames)
+                        continue
+                    if (not np.isfinite(start_time) or not np.isfinite(end_time)
+                            or start_time > end_time):
+                        contact['_fitFrameRuns'] = []
+                        contact['_fitFrameCount'] = len(frames)
+                        continue
+                    try:
+                        mapped_interval = _foot_patch_times_in_parent_clock(
+                            evidence, source_timeline_mapping, [start_time, end_time])
+                    except (TypeError, ValueError, OverflowError):
+                        mapped_interval = None
+                    if mapped_interval is None or len(mapped_interval) != 2:
+                        contact['_fitFrameRuns'] = []
+                        contact['_fitFrameCount'] = len(frames)
+                        continue
+                    start_time, end_time = map(float, mapped_interval)
+                    native_start = int(np.argmin(np.abs(native_times - start_time)))
+                    native_end = int(np.argmin(np.abs(native_times - end_time)))
+                    if abs(float(native_times[native_start]) - start_time) > timestamp_epsilon:
+                        contact['_fitFrameRuns'] = []
+                        contact['_fitFrameCount'] = len(frames)
+                        continue
+                    if abs(float(native_times[native_end]) - end_time) > timestamp_epsilon:
+                        # The sparse source-pose endpoint may be exactly the
+                        # media end. Accept it only when patch metadata proves
+                        # that this is the final decoded exposure.
+                        media_end = _foot_patch_end_exclusive_in_parent_clock(
+                            evidence, source_timeline_mapping, native_times,
+                            len(representative))
+                        if (media_end is None
+                                or abs(end_time - media_end) > 1e-6):
+                            contact['_fitFrameRuns'] = []
+                            contact['_fitFrameCount'] = len(frames)
+                            continue
+                        native_end = len(native_times) - 1
+                    if native_start > native_end:
+                        contact['_fitFrameRuns'] = []
+                        contact['_fitFrameCount'] = len(frames)
+                        continue
+                    # Fit rows are timed samples, not native patch indices.
+                    # Use the absolute source interval directly so adaptive
+                    # or resampled fit clocks do not inherit native ratios.
+                    # Only timestamp precision is tolerated at the boundaries;
+                    # a pre-contact fitted pose does not inherit contact from
+                    # the following source exposure. Synthetic bridge rows
+                    # have NaN times.
+                    active = (np.isfinite(fit_times)
+                              & (fit_times >= start_time - timestamp_epsilon)
+                              & (fit_times <= end_time + timestamp_epsilon))
+                    contact['_fitFrameRuns'] = _contiguous_runs(active)
+                    contact['_fitFrameCount'] = len(frames)
+
+    # Exact source-timeline observations are rematerialized only after the
+    # fit clock has been mapped. The canonical evidence cleanup above removes
+    # their previous fit-local bounds, so omitting this call silently drops
+    # valid one-frame contacts from the actual solver input.
+    from .body_support_observation import materialize_timed_visual_contact_points
+    materialize_timed_visual_contact_points(result, frames, payload.get('jointNames'))
+
+    # Keep a fit-clock view of patch states for consumers that condition
+    # source articulation. A verified exact point may resolve an unknown row,
+    # but may not contradict known patch evidence or extend a contact interval.
+    aligned_states = {}
+    exact_by_frame = {}
+    for contact in result.get('supportContacts') or []:
+        if (not isinstance(contact, dict)
+                or contact.get('supportKind') != 'exact_timed_visual_contact'):
+            continue
+        bounds = contact.get('_fitFrameBounds')
+        joint = str(contact.get('jointName') or '')
+        side, separator, part = joint.partition('_')
+        state = str(contact.get('contactState') or '').casefold()
+        if (not separator or part != 'foot' or side not in {'left', 'right'}
+                or not isinstance(bounds, list) or len(bounds) != 2
+                or bounds[0] != bounds[1] or state not in {'full_sole', 'toe_only'}):
+            continue
+        try:
+            frame_index = int(bounds[0])
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if not 0 <= frame_index < len(frames):
+            continue
+        exact_by_frame.setdefault((side, frame_index), []).append((contact, state))
+
+    conflicts = []
+    for side in ('left', 'right'):
+        foot = states_by_side.get(side) or {}
+        states = foot.get('states') if isinstance(foot, dict) else None
+        if not isinstance(states, list):
+            continue
+        aligned = ['unknown'] * len(frames)
+        for frame_index, native_index in enumerate(state_indices):
+            if 0 <= native_index < len(states):
+                aligned[frame_index] = str(states[native_index]).casefold()
+        for (point_side, frame_index), points in exact_by_frame.items():
+            if point_side != side:
+                continue
+            point_states = {state for _contact, state in points}
+            native_state = aligned[frame_index]
+            native_known = native_state not in {'', 'unknown', 'unobserved', 'none'}
+            if len(point_states) != 1 or (native_known and native_state not in point_states):
+                conflicts.append({'side': side, 'frameIndex': frame_index,
+                                  'nativeState': native_state,
+                                  'timelineStates': sorted(point_states)})
+                for contact, _state in points:
+                    contact['_fitFrameBounds'] = None
+                aligned[frame_index] = 'unknown'
+                continue
+            if not native_known:
+                aligned[frame_index] = next(iter(point_states))
+        aligned_states[side] = aligned
+    result['_fitFrameFootPatchStatesBySide'] = aligned_states
+    if conflicts:
+        result['_fitTimedContactStateConflicts'] = conflicts
+
     # The toe anchor persists across adjacent full-sole/toe-only observations
     # with the same identity. Emit it as a toe-only bridge so the ankle remains
     # governed by the stricter full-sole interval above.
@@ -566,21 +1175,44 @@ def _contiguous_runs(mask):
     return [[int(run[0]), int(run[-1])] for run in np.split(indexes, breaks)]
 
 
+def fit_frame_foot_patch_states_by_side(evidence, frame_count):
+    """Return the validated ephemeral patch-state view aligned to fit frames."""
+    aligned = (evidence or {}).get('_fitFrameFootPatchStatesBySide')
+    if not isinstance(aligned, dict):
+        return {}
+    result = {}
+    for side in ('left', 'right'):
+        states = aligned.get(side)
+        if isinstance(states, list) and len(states) == int(frame_count):
+            result[side] = tuple(str(state).casefold() for state in states)
+    return result
+
+
 def _without_fit_local_timing_metadata(evidence):
     """Strip derived fit-clock fields before validating a canonical cache hash."""
     cleaned = deepcopy(evidence)
     if not isinstance(cleaned, dict):
         return cleaned
+    generated_support_collection = (
+        cleaned.pop('_fitGeneratedSupportContactsCollection', False) is True
+    )
     cleaned.pop('_fitFrameStateIndices', None)
     cleaned.pop('_fitFrameCount', None)
+    cleaned.pop('_fitSourceTimelineMapping', None)
+    cleaned.pop('_fitFrameFootPatchStatesBySide', None)
+    cleaned.pop('_fitTimedContactStateConflicts', None)
     for key in ('contacts', 'supportContacts'):
         records = cleaned.get(key)
         if not isinstance(records, list):
             continue
         cleaned[key] = [contact for contact in records
                         if not (isinstance(contact, dict)
-                                and contact.get('_fitGeneratedBridge') is True)]
-        for contact in cleaned[key]:
+                                and (contact.get('_fitGeneratedBridge') is True
+                                     or contact.get('supportKind')
+                                     == 'exact_timed_visual_contact'))]
+        if key == 'supportContacts' and generated_support_collection and not cleaned[key]:
+            cleaned.pop(key, None)
+        for contact in cleaned.get(key, []):
             if isinstance(contact, dict):
                 contact.pop('_fitFrameBounds', None)
                 contact.pop('_fitFrameRuns', None)
@@ -654,6 +1286,12 @@ def is_stationary_contact(contact: dict[str, Any]) -> bool:
 
 
 def contact_frame_bounds(contact: dict[str, Any], count: int) -> tuple[int, int]:
+    if (contact.get("supportKind") == "exact_timed_visual_contact"
+            and "_fitFrameBounds" not in contact):
+        # Source-readiness records may carry an exact observed timestamp before
+        # a fit timeline exists. Never let them fall through to the legacy
+        # full-range frame defaults.
+        return 0, -1
     if '_fitFrameBounds' in contact:
         if contact.get('_fitFrameCount') not in (None, count):
             return 0, -1
@@ -722,9 +1360,9 @@ def is_observed_ground_contact(contact, evidence):
         return surface in {'ground', 'floor', 'ground_plane'}
     if contact.get('supportKind') == 'observed_foot_patch':
         observation = (evidence or {}).get('bodySupportObservation') or {}
-        observed = observation.get('observation') if isinstance(observation, dict) else None
-        if (isinstance(observation, dict) and observation.get('status') == 'observed'
-                and isinstance(observed, dict)):
+        from .body_support_observation import validated_body_support_answer
+        observed = validated_body_support_answer(observation)
+        if observed is not None:
             side = str(contact.get('jointName') or '').split('_', 1)[0]
             observed_surface = str(observed.get(f'{side}FootSurface') or '').strip().lower()
             if observed_surface:

@@ -19,7 +19,9 @@ def bilateral_source():
 
 
 def test_stationary_bilateral_hold_needs_no_motion_correlation():
-    assert source_arm_symmetry_evidence(bilateral_source())["accepted"]
+    evidence = source_arm_symmetry_evidence(bilateral_source())
+    assert evidence["accepted"]
+    assert evidence["authorityScope"] == "2d_projection_diagnostic_only"
 
 
 def test_intentional_asymmetry_and_missing_evidence_are_not_symmetrized():
@@ -47,29 +49,17 @@ def test_export_validator_detects_pose_corruption_despite_stable_hand_spacing():
     assert not exported_arm_symmetry_metrics(bilateral_source())["severe"]
 
 
-def test_source_confirmed_asymmetry_cannot_be_overruled_by_vision_approval(tmp_path, monkeypatch):
+def test_2d_arm_symmetry_is_not_a_hard_3d_pose_authority():
     from exercise_motion_pkg import bake_and_rank as b
 
-    item = b.ReviewItem(
-        exercise_index=0, candidate_rank=0, loop_index=-1, exercise_name="Example",
-        candidate_title="Example", candidate_workspace=tmp_path, preview_html_path=tmp_path / "preview.html",
-        skeleton_path=tmp_path / "skeleton.json", review_video_path=tmp_path / "review.webm",
-        duration_sec=1, loop_start_seconds=0, loop_end_seconds=1, candidate={},
+    source = bilateral_source()
+    for frame in source["frames"]:
+        frame["joints"]["right_elbow"] = [.7, 1.2, .4]
+    assert source_arm_symmetry_evidence(source)["accepted"] is False
+    assert exported_arm_symmetry_metrics(source)["severe"] is True
+    assert "materialized_source_confirmed_arm_asymmetry" not in (
+        b.FINAL_OUTPUT_HARD_DETERMINISTIC_REJECTION_REASONS
     )
-    reason = "materialized_source_confirmed_arm_asymmetry"
-    monkeypatch.setattr(b, "materialized_output_acceptance_metrics", lambda *args: {
-        "passed": False, "rejectionReasons": [reason],
-    })
-    monkeypatch.setattr(b, "validate_final_output_with_caption_images",
-                        lambda *args, **kwargs: pytest.fail("Hard constraint must block before vision approval"))
-    _, ranking = b.apply_materialized_output_acceptance_gate(
-        (item, b.LoopRanking(score=.95, reasons=[], payload={}, model_score=.95)),
-        request=b.BakeAndRankRequest(candidates_json=tmp_path / "candidates.json", workspace=tmp_path,
-                                    body_model_root=None, final_output_validation=True),
-        final_output_caption_images=lambda **kwargs: "{}",
-    )
-    assert ranking.payload["materializedOutputRejected"]
-    assert reason in ranking.payload["materializedHardRejectionReasons"]
 
 
 def camera_clip():
@@ -137,7 +127,7 @@ def test_rigid_implement_uses_rolled_shoulder_plane_without_changing_limb_length
                      [np.sin(angle), np.cos(angle), 0], [0, 0, 1]])
     points = {name: tuple(roll @ point) for name, point in points.items()}
     clip = MotionClip(30, list(points), [MotionFrame(i / 30, dict(points)) for i in range(12)])
-    result, _ = _stabilize_rigid_paired_hand_spacing(clip, supported_bilateral=True)
+    result, _ = _stabilize_rigid_paired_hand_spacing(clip)
     metrics = exported_arm_symmetry_metrics({"frames": [{"joints": f.joints} for f in result.frames]})
     assert metrics["medianElbowDifferenceDegrees"] < 1e-5
     for before, after in zip(clip.frames, result.frames):

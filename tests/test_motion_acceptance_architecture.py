@@ -7,12 +7,14 @@ import pytest
 
 from exercise_motion_pkg.acceptance import (decide_acceptance, selected_artifact_identity,
                                            source_contract_clearance_sha256,
-                                           invalidate_retained_acceptance, promote_verified_artifact)
+                                           invalidate_retained_acceptance, promote_verified_artifact,
+                                           selected_bake_code_problem)
 from exercise_motion_pkg.contract_authority import contract_field_authority
 from exercise_motion_pkg.review_consensus import corroborate_rejection
 from exercise_motion_pkg.models import MotionClip, MotionFrame
 from exercise_motion_pkg.structural_refinement import enforce_final_structural_invariant
 from exercise_motion_pkg import bake_and_rank as bake
+from scripts.promote_validated_motion_artifact import current_promotion_policies
 
 
 def _attach_current_source_clearance(tmp_path, source, manifest):
@@ -100,6 +102,152 @@ def test_identity_changes_for_source_skeleton_contract_and_policy(tmp_path):
     assert identity() == original
     (tmp_path / "other_selected_input.mp4").write_bytes(b"ambiguous")
     assert identity() is None
+
+
+@pytest.mark.parametrize(
+    "fit_report,expected_problem",
+    [
+        (
+            {"applied": True, "strategy": "fixed_rig_controlled_motion_v125_selector_consistent_temporal_feasibility"},
+            "controlled_motion_fit_strategy_mismatch",
+        ),
+        (
+            {"applied": True, "strategy": "fixed_rig_controlled_motion_v126_unknown_heel_direction_continuity"},
+            "controlled_motion_fit_receipt_invalid",
+        ),
+    ],
+)
+def test_selected_artifact_identity_rejects_stale_or_invalid_applied_fit(
+    tmp_path, fit_report, expected_problem,
+):
+    from exercise_motion_pkg.acceptance import selected_fit_receipt_problem
+    from exercise_motion_pkg.controlled_motion import CONTROLLED_MOTION_STRATEGY
+
+    source = tmp_path / "x_selected_input.mp4"
+    skeleton = tmp_path / "x_wear_skeleton.json"
+    source.write_bytes(b"source")
+    skeleton.write_text(json.dumps({"controlledMotionFit": fit_report}))
+    manifest = {
+        "preReconstructionSourceValidationEnabled": True,
+        "sourceSelectionPolicyVersion": bake.SOURCE_SELECTION_POLICY_VERSION,
+        "selected": {
+            "loopIndex": 0,
+            "exerciseName": "Example",
+            "ranking": {"payload": {}},
+            "sourceSelectionClearance": {
+                "status": "cleared",
+                "sourceSelectionPolicyVersion": bake.SOURCE_SELECTION_POLICY_VERSION,
+                "sourceSelectionClearancePolicyVersion": bake.SOURCE_SELECTION_CLEARANCE_POLICY_VERSION,
+                "authorizedCandidateId": "A",
+            },
+        },
+    }
+    _attach_current_source_clearance(tmp_path, source, manifest)
+    policies = {
+        "selection": bake.SELECTION_VALIDATION_POLICY_VERSION,
+        "visual": bake.FINAL_OUTPUT_VALIDATION_POLICY_VERSION,
+        "source": bake.SOURCE_SELECTION_POLICY_VERSION,
+        "controlledMotionFit": CONTROLLED_MOTION_STRATEGY,
+    }
+
+    assert selected_fit_receipt_problem(
+        json.loads(skeleton.read_text()), CONTROLLED_MOTION_STRATEGY,
+    ) == expected_problem
+    assert selected_artifact_identity(tmp_path, manifest, policies=policies) is None
+
+
+def test_selected_artifact_identity_allows_no_applied_fit_with_current_fit_policy(tmp_path):
+    source = tmp_path / "x_selected_input.mp4"
+    skeleton = tmp_path / "x_wear_skeleton.json"
+    source.write_bytes(b"source")
+    skeleton.write_text("{}")
+    manifest = {
+        "preReconstructionSourceValidationEnabled": True,
+        "sourceSelectionPolicyVersion": bake.SOURCE_SELECTION_POLICY_VERSION,
+        "selected": {
+            "loopIndex": 0,
+            "exerciseName": "Example",
+            "ranking": {"payload": {}},
+            "sourceSelectionClearance": {
+                "status": "cleared",
+                "sourceSelectionPolicyVersion": bake.SOURCE_SELECTION_POLICY_VERSION,
+                "sourceSelectionClearancePolicyVersion": bake.SOURCE_SELECTION_CLEARANCE_POLICY_VERSION,
+                "authorizedCandidateId": "A",
+            },
+        },
+    }
+    _attach_current_source_clearance(tmp_path, source, manifest)
+    from exercise_motion_pkg.controlled_motion import CONTROLLED_MOTION_STRATEGY
+
+    identity = selected_artifact_identity(
+        tmp_path,
+        manifest,
+        policies={"controlledMotionFit": CONTROLLED_MOTION_STRATEGY},
+    )
+
+    assert identity is not None
+    assert identity["policies"]["controlledMotionFit"] == CONTROLLED_MOTION_STRATEGY
+
+
+def test_selected_artifact_identity_rejects_old_bake_processing_signature(tmp_path):
+    source = tmp_path / "x_selected_input.mp4"
+    skeleton = tmp_path / "x_wear_skeleton.json"
+    source.write_bytes(b"source")
+    skeleton.write_text(json.dumps({"selectedSectionBakePathCodeDigest": "old"}))
+    manifest = {
+        "preReconstructionSourceValidationEnabled": True,
+        "sourceSelectionPolicyVersion": bake.SOURCE_SELECTION_POLICY_VERSION,
+        "selected": {
+            "loopIndex": 0,
+            "exerciseName": "Example",
+            "ranking": {"payload": {}},
+            "sourceSelectionClearance": {
+                "status": "cleared",
+                "sourceSelectionPolicyVersion": bake.SOURCE_SELECTION_POLICY_VERSION,
+                "sourceSelectionClearancePolicyVersion": bake.SOURCE_SELECTION_CLEARANCE_POLICY_VERSION,
+                "authorizedCandidateId": "A",
+            },
+        },
+    }
+    _attach_current_source_clearance(tmp_path, source, manifest)
+
+    assert selected_bake_code_problem({}, "current") == "selected_bake_processing_digest_mismatch"
+    assert selected_bake_code_problem({"selectedSectionBakePathCodeDigest": "old"}, "current") == (
+        "selected_bake_processing_digest_mismatch"
+    )
+    assert selected_bake_code_problem(
+        {"selectedSectionBakePathCodeDigest": "current"}, "current",
+    ) is None
+    assert selected_artifact_identity(
+        tmp_path, manifest, policies={"bakeCode": "current"},
+    ) is None
+
+    skeleton.write_text(json.dumps({"selectedSectionBakePathCodeDigest": "current"}))
+    assert selected_artifact_identity(
+        tmp_path, manifest, policies={"bakeCode": "current"},
+    ) is not None
+
+
+def test_selected_bake_processing_signature_tracks_pipeline_and_chain_depth_code(tmp_path, monkeypatch):
+    from exercise_motion_pkg import fit_runtime
+
+    bake_source = tmp_path / "bake_and_rank.py"
+    bake_source.write_text("def bake_preview_loops_with_playwright(): pass\n", encoding="utf-8")
+    pipeline = tmp_path / "pipeline.py"
+    chain_depth = tmp_path / "chain_depth_correction.py"
+    pipeline.write_text("pipeline version one\n", encoding="utf-8")
+    chain_depth.write_text("chain version one\n", encoding="utf-8")
+    monkeypatch.setattr(fit_runtime, "fit_cache_source_paths", lambda: ())
+    monkeypatch.setattr(bake, "__file__", str(bake_source))
+
+    original = bake._selected_section_bake_code_digest()["sha256"]
+    pipeline.write_text("pipeline version two\n", encoding="utf-8")
+    pipeline_changed = bake._selected_section_bake_code_digest()["sha256"]
+    chain_depth.write_text("chain version two\n", encoding="utf-8")
+    both_changed = bake._selected_section_bake_code_digest()["sha256"]
+
+    assert pipeline_changed != original
+    assert both_changed != pipeline_changed
 
 
 def test_normal_selection_identity_requires_current_source_clearance(tmp_path):
@@ -222,7 +370,20 @@ def test_promotion_rejects_stale_evidence_and_preserves_previous_selection(tmp_p
     (source / "x_selected_input.mp4").write_bytes(b"source")
     skeleton = source / "x_wear_skeleton.json"
     skeleton.write_text("{}")
-    manifest = {"selected": {"ranking": {"payload": {}}}}
+    manifest = {
+        "sourceSelectionPolicyVersion": bake.SOURCE_SELECTION_POLICY_VERSION,
+        "selected": {
+            "exerciseName": "Example",
+            "ranking": {"payload": {}},
+            "sourceSelectionClearance": {
+                "status": "cleared",
+                "sourceSelectionPolicyVersion": bake.SOURCE_SELECTION_POLICY_VERSION,
+                "sourceSelectionClearancePolicyVersion": bake.SOURCE_SELECTION_CLEARANCE_POLICY_VERSION,
+                "authorizedCandidateId": "A",
+            },
+        },
+    }
+    _attach_current_source_clearance(tmp_path, source / "x_selected_input.mp4", manifest)
     (source / "selection_manifest.json").write_text(json.dumps(manifest))
     identity = selected_artifact_identity(source, manifest, policies={"visual": 1})
     (source / "revalidation.json").write_text(json.dumps({"status": "valid", "artifactIdentity": identity}))
@@ -238,6 +399,16 @@ def test_promotion_rejects_stale_evidence_and_preserves_previous_selection(tmp_p
     assert saved["selected"]["ranking"]["payload"]["acceptanceDecision"]["status"] == "needs_manual_review"
     with pytest.raises(ValueError):
         promote_verified_artifact(destination, tmp_path / "another", policies={"visual": 1})
+
+
+def test_promotion_policy_binds_current_source_clearance_version():
+    policies = current_promotion_policies()
+    assert policies["source"] == bake.SOURCE_SELECTION_POLICY_VERSION
+    from exercise_motion_pkg.controlled_motion import CONTROLLED_MOTION_STRATEGY
+
+    assert policies["controlledMotionFit"] == CONTROLLED_MOTION_STRATEGY
+    assert policies["bakeCode"] == bake._selected_section_bake_code_digest()["sha256"]
+    assert bake.SELECTION_VALIDATION_POLICY_VERSION == 139
 
 
 @pytest.mark.parametrize("payload", [{}, {"approved": "true"},

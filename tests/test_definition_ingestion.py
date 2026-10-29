@@ -9,7 +9,7 @@ from exercise_motion_pkg.definition_ingestion import (
     prepare_workout_plan_definition_readiness,
     require_definition_readiness,
 )
-from exercise_motion_pkg.definition_review import _target_fingerprint
+from exercise_motion_pkg.definition_review import _target_fingerprint, approve_definition_review
 from exercise_motion_pkg.youtube import load_workout_plan_exercises
 
 
@@ -83,6 +83,86 @@ def test_exact_approved_definition_is_reused_and_unresolved_stays_unresolved(tmp
     assert report["unresolvedReviewQueue"][0]["exerciseId"] == "squat"
     with pytest.raises(ValueError, match="1 selected exercise"):
         require_definition_readiness(report)
+
+
+def test_normalized_review_proposal_is_reused_without_rewriting_review_artifact(tmp_path):
+    source_plan, _registry, review_path = _approved_registry(tmp_path)
+    review_bytes = review_path.read_bytes()
+    review = json.loads(review_bytes)
+    review["definition"]["definingAction"] = "  Extend the hips and legs, then pull the bar to the upper chest.  "
+    review["definition"]["variantQualifiers"] = ["  clean grip  "]
+    review_path.write_text(json.dumps(review, indent=2), encoding="utf-8")
+    approved_review_bytes = review_path.read_bytes()
+    registry = tmp_path / "approved-normalized-plan.json"
+
+    approve_definition_review(
+        plan_path=source_plan,
+        exercise_id="pull",
+        review_path=review_path,
+        output_path=registry,
+    )
+    _effective, _entries, report = prepare_workout_plan_definition_readiness(
+        plan_path=source_plan,
+        approved_registry_path=registry,
+    )
+
+    assert report["readyCount"] == 1
+    assert report["unresolvedCount"] == 1
+    assert review_path.read_bytes() == approved_review_bytes
+    assert review_bytes != approved_review_bytes
+
+
+def test_explicit_approved_phase_graph_is_reused_only_when_review_hash_matches(tmp_path):
+    source_plan, _registry, review_path = _approved_registry(tmp_path)
+    review = json.loads(review_path.read_text(encoding="utf-8"))
+    review["definition"]["requiredPhases"] = ["Pull from floor", "Receive at upper chest"]
+    _write(review_path, review)
+    registry = tmp_path / "approved-phases-plan.json"
+    approve_definition_review(
+        plan_path=source_plan,
+        exercise_id="pull",
+        review_path=review_path,
+        output_path=registry,
+    )
+
+    _effective, _entries, report = prepare_workout_plan_definition_readiness(
+        plan_path=source_plan,
+        approved_registry_path=registry,
+    )
+    assert report["readyCount"] == 1
+    assert report["unresolvedCount"] == 1
+
+    payload = json.loads(registry.read_text(encoding="utf-8"))
+    definition = payload["exerciseDefinitions"][0]["motionContext"]["exerciseDefinition"]
+    definition["requiredPhases"] = ["Unreviewed phase graph"]
+    _write(registry, payload)
+    _effective, _entries, mismatched_report = prepare_workout_plan_definition_readiness(
+        plan_path=source_plan,
+        approved_registry_path=registry,
+    )
+    assert mismatched_report["readyCount"] == 0
+    assert mismatched_report["unresolvedReviewQueue"][0]["reason"] == (
+        "approved_definition_differs_from_reviewed_proposal"
+    )
+
+
+def test_review_proposal_with_extra_fields_is_not_reused(tmp_path):
+    source_plan, registry, review_path = _approved_registry(tmp_path)
+    review = json.loads(review_path.read_text(encoding="utf-8"))
+    review["definition"]["unreviewedExtra"] = "must not be ignored"
+    _write(review_path, review)
+    definition = json.loads(registry.read_text(encoding="utf-8"))
+    approved = definition["exerciseDefinitions"][0]["motionContext"]["exerciseDefinition"]
+    approved["review"]["reviewArtifactSha256"] = hashlib.sha256(review_path.read_bytes()).hexdigest()
+    _write(registry, definition)
+
+    _effective, _entries, report = prepare_workout_plan_definition_readiness(
+        plan_path=source_plan,
+        approved_registry_path=registry,
+    )
+
+    assert report["readyCount"] == 0
+    assert report["unresolvedReviewQueue"][0]["reason"] == "approved_definition_review_proposal_invalid"
 
 
 def test_target_change_does_not_reuse_approved_definition(tmp_path):

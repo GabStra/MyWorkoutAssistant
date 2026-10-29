@@ -12,7 +12,7 @@ param(
     [int]$LlamaCppSpecDraftNMax = 3,
     [ValidateSet("cpu", "gpu")]
     [string]$LlamaCppBackend = "gpu",
-    [string]$LlamaCppServerCommand = "C:\\Users\\gabri\\Documents\\llama.cpp\\build-master\\bin\\Release\\llama-server.exe",
+    [string]$LlamaCppServerCommand = "C:\\llama.cpp\\build-master\\bin\\Release\\llama-server.exe",
     [int]$LlamaCppServerPort = 8090,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
     [int]$LlamaCppNPredict = 512,
@@ -79,7 +79,7 @@ function Get-LlamaCppServerCommand {
     if (-not [string]::IsNullOrWhiteSpace($ConfiguredCommand)) {
         return $ConfiguredCommand
     }
-    $fallback = "C:\Users\gabri\Documents\llama.cpp\build-master\bin\Release\llama-server.exe"
+    $fallback = "C:\llama.cpp\build-master\bin\Release\llama-server.exe"
     if (Test-Path -LiteralPath $fallback) {
         return $fallback
     }

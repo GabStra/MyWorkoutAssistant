@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from exercise_motion_pkg.models import MotionClip, MotionFrame, Point3
@@ -168,7 +168,7 @@ def _smooth_reference_clip(
                 continue
             active_window = root_window if joint_name == root_joint else window
             smoothed_joints[joint_name] = _window_average(clip.frames, joint_name=joint_name, center_index=index, window=active_window)
-        smoothed_frames.append(MotionFrame(time_sec=frame.time_sec, joints=smoothed_joints))
+        smoothed_frames.append(replace(frame, joints=smoothed_joints))
     metadata = dict(clip.metadata)
     metadata["physicsBundle"] = {
         "smoothingWindow": window,

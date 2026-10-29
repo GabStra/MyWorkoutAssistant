@@ -71,6 +71,9 @@ def _rotate_clip_about_axis(
         rotated_frames.append(
             MotionFrame(
                 time_sec=frame.time_sec,
+                source_time_sec=frame.source_time_sec,
+                source_frame_index=frame.source_frame_index,
+                inference_frame_index=frame.inference_frame_index,
                 joints={
                     name: _rotate_point_rodigues(
                         pt, pivot=pivot, axis=axis, angle_radians=angle_radians
@@ -468,7 +471,7 @@ def _rotate_frame_about_contact_pair(
         )
         for name, point in frame.joints.items()
     }
-    return MotionFrame(time_sec=frame.time_sec, joints=rotated_joints)
+    return MotionFrame(time_sec=frame.time_sec, joints=rotated_joints, source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index)
 
 
 def _interpolate_contact_corrections(
@@ -836,6 +839,9 @@ def solve_temporal_contact_rigid_world_alignment(
         grounded_frames.append(
             MotionFrame(
                 time_sec=frame.time_sec,
+                source_time_sec=frame.source_time_sec,
+                source_frame_index=frame.source_frame_index,
+                inference_frame_index=frame.inference_frame_index,
                 joints={
                     name: (point[0], point[1] + non_penetration_lift, point[2])
                     for name, point in rigidly_grounded_joints.items()

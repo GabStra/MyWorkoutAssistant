@@ -79,6 +79,12 @@ def _frame_state(specs, frame, translation):
     margins, target_knees = [], []
     unreachable = False
     for spec in specs:
+        if 'activeContact' in spec and not spec['activeContact'][frame]:
+            # A free/unknown frame does not own a support IK target. Carry its
+            # source knee with the root track, leaving its articulation intact.
+            margins.extend((np.pi, np.pi))
+            target_knees.append(spec['knee'][frame] + translation)
+            continue
         hip = spec['hip'][frame] + translation
         ankle = spec['targetAnkle'][frame] + (
             translation if spec['ankleFollowsRoot'][frame] else 0.)
@@ -301,6 +307,8 @@ def _encode_root_adjusted_pose(rig, coordinates, specs, offsets):
         margins_by_frame[frame] = margins
         translation = offsets[frame]
         for spec, knee in zip(specs, knees):
+            if 'activeContact' in spec and not spec['activeContact'][frame]:
+                continue
             hip_i, knee_i, ankle_i, toe_i = spec['indices']
             targets[frame, hip_i] = spec['hip'][frame] + translation
             targets[frame, knee_i] = knee

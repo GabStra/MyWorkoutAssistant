@@ -302,7 +302,7 @@ def apply_spinepose_to_motion_clip(
                 frame_changed = True
         if frame_changed:
             applied_frames += 1
-        fused_frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints))
+        fused_frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints, source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
 
     max_applied_displacement = max(displacements) if displacements else 0.0
     mean_abs_displacement = sum(displacements) / len(displacements) if displacements else 0.0

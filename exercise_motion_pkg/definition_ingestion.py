@@ -105,9 +105,16 @@ def _target_is_exactly_reviewed(
     reviewed_definition = review.get("definition")
     if not isinstance(reviewed_definition, dict):
         return False, "approved_definition_review_proposal_missing", None
-    for key in ("definingAction", "completionMode", "variantQualifiers"):
-        if reviewed_definition.get(key, [] if key == "variantQualifiers" else None) != approved_definition.get(
-                key, [] if key == "variantQualifiers" else None):
+    if set(reviewed_definition) - {"definingAction", "completionMode", "variantQualifiers", "requiredPhases"}:
+        return False, "approved_definition_review_proposal_invalid", None
+    normalized_reviewed_definition = exercise_motion_context_action_definition(
+        {"exerciseDefinition": reviewed_definition}
+    )
+    if normalized_reviewed_definition is None:
+        return False, "approved_definition_review_proposal_invalid", None
+    for key in ("definingAction", "completionMode", "variantQualifiers", "requiredPhases"):
+        if normalized_reviewed_definition.get(key, [] if key in {"variantQualifiers", "requiredPhases"} else None) != approved_definition.get(
+                key, [] if key in {"variantQualifiers", "requiredPhases"} else None):
             return False, "approved_definition_differs_from_reviewed_proposal", None
     if (review.get("proposalContractSha256")
             != approval.get("proposalContractSha256")):

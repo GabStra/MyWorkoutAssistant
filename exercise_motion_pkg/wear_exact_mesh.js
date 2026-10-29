@@ -341,10 +341,12 @@
 
     function wearDirectionalRing(
       mesh, center, side, depth, halfWidth, frontDepth, backDepth,
-      backCenterBias = null, cornerBevel = 0, backWidthScale = 1, roundedProfile = false
+      backCenterBias = null, cornerBevel = 0, backWidthScale = 1, roundedProfile = false,
+      frontWidthScale = 1
     ) {
       const backCenter = backCenterBias ? center.clone().add(backCenterBias) : center;
       const backHalfWidth = halfWidth * Math.max(1, backWidthScale);
+      const frontHalfWidth = halfWidth * frontWidthScale;
       if (roundedProfile) {
         // Eight elliptical facets keep volume without the beveled box's broad flat front.
         return [[.94,.34],[.15,.99],[-.15,.99],[-.94,.34],
@@ -354,8 +356,8 @@
             .addScaledVector(depth, z * (z < 0 ? backDepth : frontDepth))));
       }
       const corners = [
-        center.clone().addScaledVector(side, halfWidth).addScaledVector(depth, frontDepth),
-        center.clone().addScaledVector(side, -halfWidth).addScaledVector(depth, frontDepth),
+        center.clone().addScaledVector(side, frontHalfWidth).addScaledVector(depth, frontDepth),
+        center.clone().addScaledVector(side, -frontHalfWidth).addScaledVector(depth, frontDepth),
         backCenter.clone().addScaledVector(side, -backHalfWidth).addScaledVector(depth, -backDepth),
         backCenter.clone().addScaledVector(side, backHalfWidth).addScaledVector(depth, -backDepth),
       ];
@@ -476,8 +478,12 @@
       if (!wearCapNames.has(name)) return 0;
       if (name.includes("hip")) return width * .12;
       if (name.includes("shoulder")) return width * .12;
-      if (name.includes("ankle")) return width * 1.10;
+      if (name.includes("ankle")) return wearAnkleJointCapRadius(width) * .85;
       return width * .08;
+    }
+
+    function wearAnkleJointCapRadius(width) {
+      return width * .44 * .90;
     }
 
     function wearSegment(
@@ -524,14 +530,21 @@
       }
     }
 
-    function wearShoe(mesh, ankle, foot, axes, footScale, fill, knee = null, preferredSide = null, restPitch = null) {
+    function wearShoe(mesh, ankle, foot, axes, footScale, fill, knee = null, preferredSide = null, restPitch = null, materialOrientation = null) {
       if (!ankle || !foot) return null;
       const worldUp = new THREE.Vector3(0, 1, 0);
       const footVector = foot.clone().sub(ankle);
       const footLength = footVector.length();
-      const footForward = footLength > .0001
+      let footForward = footLength > .0001
         ? footVector.multiplyScalar(1 / footLength)
         : wearUnit(axes.forward, new THREE.Vector3(0, 0, 1));
+      const hasMaterialOrientation = Array.isArray(materialOrientation?.forward)
+        && materialOrientation.forward.length >= 3
+        && Array.isArray(materialOrientation?.side)
+        && materialOrientation.side.length >= 3;
+      if (hasMaterialOrientation) {
+        footForward = wearUnit(new THREE.Vector3(...materialOrientation.forward), footForward);
+      }
       const shinUp = knee ? knee.clone().sub(ankle) : worldUp;
       const defaultShoeUp = wearUnit(
         shinUp.clone().addScaledVector(footForward, -shinUp.dot(footForward)),
@@ -542,10 +555,13 @@
         axes.side
       );
       // Box-ring winding expects side x up to oppose the forward extrusion.
-      const footSide = preferredSide
-        ? wearUnit(preferredSide.clone().addScaledVector(footForward, -preferredSide.dot(footForward)), fallbackSide)
+      const materialSide = hasMaterialOrientation
+        ? new THREE.Vector3(...materialOrientation.side)
+        : preferredSide;
+      const footSide = materialSide
+        ? wearUnit(materialSide.clone().addScaledVector(footForward, -materialSide.dot(footForward)), fallbackSide)
         : wearUnit(footForward.clone().cross(defaultShoeUp), fallbackSide);
-      const calibrated = Number.isFinite(restPitch);
+      const calibrated = !hasMaterialOrientation && Number.isFinite(restPitch);
       if (calibrated) footForward.applyAxisAngle(footSide, -restPitch);
       const shoeUp = wearUnit(footSide.clone().cross(footForward), defaultShoeUp);
       const shoeScale = footLength > .0001 ? footLength : footScale * .60;
@@ -555,7 +571,7 @@
       const height = Math.max(shoeScale * .28, footScale * .15);
       // The ankle-to-forefoot bone slopes down even in a flat stance. A
       // calibrated sole pivots at its material forefoot, not at the ankle.
-      const origin = calibrated
+      const origin = calibrated || hasMaterialOrientation
         ? foot.clone().addScaledVector(footForward, -length)
         : ankle.clone().addScaledVector(footForward, -shoeScale * .08);
       const profile = [
@@ -570,7 +586,7 @@
           .addScaledVector(shoeUp, height * (upScale + .60));
         return wearDirectionalRing(
           mesh, center, footSide, shoeUp,
-          halfWidth * widthScale, height * heightScale, height * heightScale, null, .30
+          halfWidth * widthScale, height * heightScale, height * heightScale, null, .30, 1, false, .88
         );
       });
       for (let index = 0; index < rings.length - 1; index += 1) {
@@ -583,32 +599,9 @@
         .lerp(mesh.vertices[toeRing[4]], .5).addScaledVector(footForward, height * .20));
       wearFan(mesh, rearTip, rings[0], fill);
       wearFan(mesh, toeTip, [...toeRing].reverse(), fill);
-      // Intersect the shin axis with the shoe's actual upper profile.
-      const shinDirection = wearUnit(shinUp.clone(), shoeUp);
-      const axisForward = shinDirection.dot(footForward);
-      const axisUp = shinDirection.dot(shoeUp);
-      let surfaceDistance = null;
-      for (let i = 0; i < profile.length - 1; i++) {
-        const rear = profile[i], front = profile[i + 1];
-        const offset = origin.clone().sub(ankle);
-        const rearForward = length * rear[0] + offset.dot(footForward);
-        const frontForward = length * front[0] + offset.dot(footForward);
-        const rearTop = height * (rear[1] + .60 + rear[3]) + offset.dot(shoeUp);
-        const frontTop = height * (front[1] + .60 + front[3]) + offset.dot(shoeUp);
-        const slope = (frontTop - rearTop) / (frontForward - rearForward);
-        const denominator = axisUp - slope * axisForward;
-        if (Math.abs(denominator) > .0001) {
-          const distance = (rearTop - slope * rearForward) / denominator;
-          const forward = distance * axisForward;
-          if (forward >= rearForward && forward <= frontForward) {
-            surfaceDistance = Math.max(surfaceDistance ?? distance, distance);
-          }
-        }
-      }
-      return ankle.clone().addScaledVector(shinDirection, surfaceDistance ?? 0);
     }
 
-    function wearBuildHumanoid(joints, preferredLimbSides = null, preferredBodyAxes = null, footRestPitches = {}) {
+    function wearBuildHumanoid(joints, preferredLimbSides = null, preferredBodyAxes = null, footRestPitches = {}, shoeOrientation = {}) {
       const required = [
         "pelvis", "neck", "head", "left_hip", "right_hip",
         "left_shoulder", "right_shoulder",
@@ -933,22 +926,10 @@
       };
       addHand("left_wrist", "left_hand", "left_elbow");
       addHand("right_wrist", "right_hand", "right_elbow");
-      const leftFootSurface = wearShoe(mesh, joints.left_ankle, joints.left_foot, axes, footScale, primary,
-        joints.left_knee, limbSides.get("left_ankle->left_foot"), footRestPitches.left ?? null);
-      const rightFootSurface = wearShoe(mesh, joints.right_ankle, joints.right_foot, axes, footScale, primary,
-        joints.right_knee, limbSides.get("right_ankle->right_foot"), footRestPitches.right ?? null);
-      const ankleCapCenter = (kneeName, ankleName, footSurface) => {
-        const knee = joints[kneeName];
-        const ankle = joints[ankleName];
-        if (!knee || !ankle) return ankle;
-        const shin = ankle.clone().sub(knee);
-        const shinLength = shin.length();
-        if (shinLength <= .0001) return ankle;
-        const endWidth = segmentWidth(kneeName, ankleName, .165);
-        const clearance = Math.min(wearClearance(ankleName, endWidth), shinLength * .15);
-        const shinEnd = ankle.clone().addScaledVector(shin.multiplyScalar(1 / shinLength), -clearance);
-        return shinEnd.lerp(footSurface ?? ankle, .5);
-      };
+      wearShoe(mesh, joints.left_ankle, joints.left_foot, axes, footScale, primary,
+        joints.left_knee, limbSides.get("left_ankle->left_foot"), footRestPitches.left ?? null, shoeOrientation.left ?? null);
+      wearShoe(mesh, joints.right_ankle, joints.right_foot, axes, footScale, primary,
+        joints.right_knee, limbSides.get("right_ankle->right_foot"), footRestPitches.right ?? null, shoeOrientation.right ?? null);
       if (joints.left_elbow) wearSphere(mesh, joints.left_elbow, axes, Math.max(
         segmentWidth("left_shoulder", "left_elbow", .225),
         segmentWidth("left_elbow", "left_wrist", .235)
@@ -977,16 +958,16 @@
       ) * .40, joint);
       if (joints.left_ankle) wearSphere(
         mesh,
-        ankleCapCenter("left_knee", "left_ankle", leftFootSurface),
+        joints.left_ankle,
         axes,
-        segmentWidth("left_knee", "left_ankle", .165) * .44 * .90,
+        wearAnkleJointCapRadius(segmentWidth("left_knee", "left_ankle", .165)),
         joint
       );
       if (joints.right_ankle) wearSphere(
         mesh,
-        ankleCapCenter("right_knee", "right_ankle", rightFootSurface),
+        joints.right_ankle,
         axes,
-        segmentWidth("right_knee", "right_ankle", .165) * .44 * .90,
+        wearAnkleJointCapRadius(segmentWidth("right_knee", "right_ankle", .165)),
         joint
       );
       return mesh;
@@ -1044,7 +1025,7 @@
       }
       wearApplyExportedSoleSides(frame, stableSides);
       const stableBodyAxes = wearStableBodyAxesByFrame[resolvedFrameIndex] ?? null;
-      const generated = wearBuildHumanoid(joints, stableSides, stableBodyAxes, playbackState.footRestPitchRadians ?? {});
+      const generated = wearBuildHumanoid(joints, stableSides, stableBodyAxes, playbackState.footRestPitchRadians ?? {}, frame.shoeOrientation ?? {});
       if (!generated) {
         wearExactMesh.visible = false;
         return;

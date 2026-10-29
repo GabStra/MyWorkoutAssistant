@@ -32,10 +32,20 @@ def ensure_warm_worker_ready(
     session_dir: Path,
     *,
     timeout_seconds: float,
+    deadline: float | None = None,
     lazy_start_env_var: str = "EXERCISE_MOTION_RECONSTRUCTION_LAZY_START",
     label: str = "GVHMR",
 ) -> None:
     """Ask the supervising wrapper to start the worker only on a cache miss."""
+    if deadline is None:
+        from exercise_motion_pkg.motion_scheduler import current_gpu_stage_deadline
+
+        deadline = current_gpu_stage_deadline()
+    if deadline is not None:
+        remaining = deadline - time.perf_counter()
+        if remaining <= 0.0:
+            raise TimeoutError(f"Candidate deadline expired before supervised {label} worker readiness.")
+        timeout_seconds = min(timeout_seconds, remaining)
     ready_path = session_dir / "ready.json"
     try:
         if ready_path.exists() and not any((session_dir / name).exists() for name in ("stop", "stopped.json")):
@@ -47,14 +57,16 @@ def ensure_warm_worker_ready(
         raise RuntimeError(f"Warm {label} worker is not ready: {ready_path}")
     request_path = session_dir / "start_requested.json"
     request_path.write_text(json.dumps({"requestedBy": os.getpid()}), encoding="utf-8")
-    deadline = time.monotonic() + timeout_seconds
+    startup_deadline = time.perf_counter() + timeout_seconds
+    if deadline is not None:
+        startup_deadline = min(startup_deadline, deadline)
     try:
-        while time.monotonic() < deadline:
+        while time.perf_counter() < startup_deadline:
             # The supervisor removes the request only after successful startup.
             if not request_path.exists() and ready_path.exists():
                 assert_warm_worker_heartbeat(session_dir / "heartbeat.json")
                 return
-            time.sleep(0.25)
+            time.sleep(min(0.25, max(0.0, startup_deadline - time.perf_counter())))
         raise TimeoutError(f"Timed out waiting for supervised {label} worker startup")
     finally:
         request_path.unlink(missing_ok=True)

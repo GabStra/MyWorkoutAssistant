@@ -13,6 +13,7 @@ import tempfile
 import threading
 import time
 import traceback
+from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field, replace as dataclass_replace
 from datetime import datetime, timezone
@@ -691,17 +692,65 @@ def sanitize_video_for_processing(video_path: Path) -> Path:
 
 def sanitize_downloaded_video(video_path: Path) -> Path:
     from .stage_cache import cache_key, load_stage, save_stage, stage_lock
+    from .source_frame_clock import source_frame_clock_path_for_video
 
     checkpoint = video_path.with_name(video_path.stem + "_sanitized.checkpoint.json")
-    key = cache_key({"policyVersion": 1}, [video_path])
+    source_clock_path = source_frame_clock_path_for_video(video_path)
+    cache_inputs = [video_path]
+    if source_clock_path.is_file():
+        cache_inputs.append(source_clock_path)
+    key = cache_key({"policyVersion": 2}, cache_inputs)
     with stage_lock(checkpoint):
         cached = load_stage(checkpoint, key)
         if cached is not None:
-            return Path(cached["videoPath"])
-        result = _sanitize_downloaded_video_uncached(video_path)
-        if result != video_path:
+            result = Path(cached["videoPath"])
+        else:
+            result = _sanitize_downloaded_video_uncached(video_path)
+        _propagate_sanitized_video_source_clock(video_path, result)
+        if cached is None and result != video_path:
             save_stage(checkpoint, key, {"videoPath": str(result)}, [result])
         return result
+
+
+def _propagate_sanitized_video_source_clock(
+    source_video_path: Path,
+    sanitized_video_path: Path,
+) -> None:
+    from .source_frame_clock import (
+        rebind_existing_source_frame_clock_for_video_copy,
+        rebind_source_frame_clock_for_exact_transcode,
+        sha256_file,
+        source_frame_clock_path_for_video,
+    )
+
+    source_video_path = source_video_path.expanduser().resolve()
+    sanitized_video_path = sanitized_video_path.expanduser().resolve()
+    if source_video_path == sanitized_video_path:
+        return
+    source_clock_path = source_frame_clock_path_for_video(source_video_path)
+    output_clock_path = source_frame_clock_path_for_video(sanitized_video_path)
+    if not source_clock_path.is_file():
+        output_clock_path.unlink(missing_ok=True)
+        return
+    try:
+        if sha256_file(source_video_path) == sha256_file(sanitized_video_path):
+            clock_path = rebind_existing_source_frame_clock_for_video_copy(
+                source_video_path=source_video_path,
+                output_video_path=sanitized_video_path,
+                transform="sanitize_downloaded_video_copy",
+                source_clock_path=source_clock_path,
+            )
+        else:
+            clock_path = rebind_source_frame_clock_for_exact_transcode(
+                source_video_path=source_video_path,
+                output_video_path=sanitized_video_path,
+                source_clock_path=source_clock_path,
+                transform="sanitize_downloaded_video_reencode_exact_decoded_pts",
+            )
+        if clock_path is None:
+            output_clock_path.unlink(missing_ok=True)
+    except (OSError, ValueError, TypeError):
+        output_clock_path.unlink(missing_ok=True)
 
 
 def _sanitize_downloaded_video_uncached(video_path: Path) -> Path:
@@ -789,8 +838,6 @@ def _finalize_sanitized_video(temp_path: Path, final_path: Path, fallback_path: 
     if not temp_path.exists() or temp_path.stat().st_size == 0:
         if temp_path.exists():
             temp_path.unlink(missing_ok=True)
-        if final_path.exists():
-            return final_path
         return fallback_path
     temp_path.replace(final_path)
     return final_path
@@ -4846,14 +4893,75 @@ def exercise_motion_context_action_definition(context: Any) -> dict[str, Any] | 
     result["variantQualifiers"] = cleaned_contract_string_list(
         definition.get("variantQualifiers"), limit=6, item_limit=120,
     )
-    result["requiredPhases"] = normalize_required_phase_labels(definition.get("requiredPhases")) or [
-        result["definingAction"]
-    ]
+    required_phases = normalize_required_phase_labels(definition.get("requiredPhases"))
+    if required_phases:
+        result["requiredPhases"] = required_phases
+        result["requiredPhasesAuthority"] = "structured_definition"
     return result
 
 
 def exercise_motion_context_has_action_definition(context: Any) -> bool:
     return exercise_motion_context_action_definition(context) is not None
+
+
+def reconcile_exercise_motion_contract_definition(
+    contract: dict[str, Any], exercise: ExerciseEntry,
+) -> dict[str, Any]:
+    """Bind action authority to this exact exercise context on every admission path."""
+    contract_context = contract.get("motionContext")
+    if isinstance(contract_context, dict) and not exercise_motion_context_identity_matches(
+        contract_context, exercise.motion_context, exercise.name,
+    ):
+        raise ValueError("exercise motion contract belongs to a different exercise definition")
+    result = dict(contract)
+    definition = exercise_motion_context_action_definition(exercise.motion_context)
+    if definition is None:
+        if result.get("actionDefinitionAuthority") == "structured_definition":
+            result["actionDefinitionAuthority"] = "unresolved"
+        return result
+    result.update({key: value for key, value in definition.items() if value or key not in {
+        "variantQualifiers", "requiredPhases",
+    }})
+    if definition.get("requiredPhases"):
+        approved_phases = normalize_required_phase_labels(definition["requiredPhases"])
+        result["requiredPhases"] = approved_phases
+        result["requiredPhasesAuthority"] = "structured_definition"
+        topology = result.get("movementTopology")
+        if isinstance(topology, dict):
+            # A cached generated topology may still hold the old collapsed
+            # model graph. The reviewed phase labels are authoritative, so
+            # rebuild only its phase nodes and preserve endpoint policy.
+            result["movementTopology"] = {
+                **topology,
+                "phases": [
+                    {"id": f"phase_{index + 1:02d}", "label": label}
+                    for index, label in enumerate(approved_phases)
+                ],
+            }
+    elif result.get("requiredPhases"):
+        result["requiredPhasesAuthority"] = "contract_proposal"
+        if normalize_exercise_movement_type(result.get("movementType")) == "transition_sequence" and len(
+            normalize_required_phase_labels(result["requiredPhases"])
+        ) < 2:
+            result.pop("requiredPhases", None)
+            result.pop("movementTopology", None)
+            result["requiredPhasesAuthority"] = "unresolved"
+    result["actionDefinitionAuthority"] = "structured_definition"
+    result["requiresReturnToStart"] = definition["completionMode"] == "return_to_start"
+    result["motionContext"] = exercise.motion_context
+    result["advisoryText"] = synthesize_exercise_motion_advisory_text(result)
+    return result
+
+
+def exercise_motion_context_identity_matches(
+    left: dict[str, Any], right: dict[str, Any], exercise_name: str,
+) -> bool:
+    if left == right:
+        return True
+    return exercise_motion_contract_prompt_identity_matches(
+        {"exerciseName": exercise_name, "advisoryText": "context identity", "motionContext": left},
+        {"exerciseName": exercise_name, "advisoryText": "context identity", "motionContext": right},
+    )
 
 
 def exercise_motion_action_definition_review_reason(contract: dict[str, Any] | None) -> str | None:
@@ -4868,6 +4976,11 @@ def exercise_motion_action_definition_review_reason(contract: dict[str, Any] | N
     phases = normalize_required_phase_labels(contract.get("requiredPhases"))
     status = str(contract.get("actionDefinitionStatus") or "").strip().casefold()
     complete = bool(action or phases) and status != "uncertain"
+    if (
+        normalize_exercise_movement_type(contract.get("movementType")) == "transition_sequence"
+        and len(phases) < 2
+    ):
+        return "target_action_phase_graph_unresolved"
     return None if trusted and complete else "target_action_definition_unresolved"
 
 
@@ -4907,6 +5020,11 @@ def normalize_exercise_motion_contract(
     }:
         raise ValueError("Candidate observations cannot define the requested exercise contract.")
     validate_contract_text_shapes(payload)
+    supplied_context = payload.get("motionContext")
+    if isinstance(supplied_context, dict) and not exercise_motion_context_identity_matches(
+        supplied_context, exercise.motion_context, exercise.name,
+    ):
+        raise ValueError("exercise motion contract belongs to a different exercise definition")
     if payload.get("contractScope") == "definition_only":
         definition_keys = {
             "contractScope", "advisoryText", "movementType", "groundContactMode",
@@ -4939,6 +5057,7 @@ def normalize_exercise_motion_contract(
     if payload.get("contractScope") == "definition_only":
         contract["contractScope"] = "definition_only"
     contract["contractPolicyVersion"] = EXERCISE_MOTION_CONTRACT_POLICY_VERSION
+    contract = reconcile_exercise_motion_contract_definition(contract, exercise)
     return contract
 
 
@@ -5367,6 +5486,8 @@ def normalized_exercise_motion_contract_fields(payload: dict[str, Any]) -> dict[
     required_phases = normalize_required_phase_labels(
         first_contract_value(payload, "requiredPhases", "phases", "completePhases")
     )
+    if required_phases:
+        fields["requiredPhasesAuthority"] = "contract_proposal"
     variant_qualifiers = cleaned_contract_string_list(
         first_contract_value(payload, "variantQualifiers", "requiredVariantQualifiers"),
         limit=6,
@@ -5377,9 +5498,7 @@ def normalized_exercise_motion_contract_fields(payload: dict[str, Any]) -> dict[
     action_definition_status = str(payload.get("actionDefinitionStatus") or "").strip().casefold()
     if action_definition_status not in {"defined", "uncertain"}:
         action_definition_status = "defined" if required_phases or fields.get("definingAction") else "uncertain"
-    if not required_phases and fields.get("definingAction"):
-        required_phases = [fields["definingAction"]]
-    if not required_phases:
+    if not required_phases and not fields.get("definingAction"):
         action_definition_status = "uncertain"
     fields["actionDefinitionStatus"] = action_definition_status
     if payload.get("actionDefinitionAuthority") in {"structured_definition", "trusted", "unresolved"}:
@@ -5476,6 +5595,24 @@ EXERCISE_MOTION_CONTRACT_POLICY_VERSION = 37
 EXERCISE_MOTION_CONTRACT_CACHE_VERSION = 16
 
 
+def canonicalize_exercise_motion_context(context: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Normalize approval timestamps for semantic identities without changing receipt hashes."""
+    if not isinstance(context, dict):
+        return context
+    result = deepcopy(context)
+    definition = result.get("exerciseDefinition")
+    review = definition.get("review") if isinstance(definition, dict) else None
+    approved_at = review.get("approvedAtUtc") if isinstance(review, dict) else None
+    if isinstance(approved_at, str):
+        try:
+            parsed = datetime.fromisoformat(approved_at.replace("Z", "+00:00"))
+            if parsed.utcoffset() is not None:
+                review["approvedAtUtc"] = parsed.astimezone(timezone.utc).isoformat()
+        except ValueError:
+            pass
+    return result
+
+
 def exercise_motion_contract_cache_key_payload(
     exercise: ExerciseEntry,
     settings: YouTubeRankingSettings,
@@ -5494,7 +5631,7 @@ def exercise_motion_contract_cache_key_payload(
         "schemaVersion": EXERCISE_MOTION_CONTRACT_CACHE_VERSION,
         "contractPolicyVersion": EXERCISE_MOTION_CONTRACT_POLICY_VERSION,
         "exerciseName": exercise.name,
-        "motionContext": exercise.motion_context,
+        "motionContext": canonicalize_exercise_motion_context(exercise.motion_context),
         "model": contract_settings.llama_cpp_model,
         "mmproj": contract_settings.llama_cpp_mmproj,
     }
@@ -5626,7 +5763,10 @@ def load_cached_exercise_motion_contract(
     contract = payload.get("contract")
     if not isinstance(contract, dict):
         return None
-    contract = dict(contract)
+    try:
+        contract = reconcile_exercise_motion_contract_definition(dict(contract), exercise)
+    except ValueError:
+        return None
     reconcile_pose_constraints_with_endpoint_state(contract)
     if not exercise_motion_contract_is_usable(contract, exercise=exercise):
         return None
@@ -5678,15 +5818,28 @@ def load_seed_exercise_motion_contract_from_candidates_json(
     for item in exercises:
         if not isinstance(item, dict) or not exercise_payload_matches_entry(item, exercise):
             continue
+        item_context = item.get("motionContext")
+        if isinstance(item_context, dict) and not exercise_motion_context_identity_matches(
+            item_context, exercise.motion_context, exercise.name,
+        ):
+            continue
         contract = item.get("exerciseMotionContract")
-        if exercise_motion_contract_is_usable(contract if isinstance(contract, dict) else None, exercise=exercise):
-            seeded = normalize_exercise_motion_contract(
-                contract,
-                exercise=exercise,
-                source="seeded_candidates_json",
-            )
-            seeded["cacheStatus"] = "seeded_candidates_json"
-            return seeded
+        if isinstance(contract, dict):
+            if not exercise_motion_contract_is_usable(contract, exercise=exercise):
+                continue
+            try:
+                seeded = normalize_exercise_motion_contract(
+                    contract,
+                    exercise=exercise,
+                    source="seeded_candidates_json",
+                )
+            except ValueError:
+                continue
+            if isinstance(contract.get("youtubeQueryAliases"), list):
+                seeded["youtubeQueryAliases"] = contract["youtubeQueryAliases"]
+            if exercise_motion_contract_is_usable(seeded, exercise=exercise):
+                seeded["cacheStatus"] = "seeded_candidates_json"
+                return seeded
         # Candidate payloads are observations, not an authoritative contract backup.
     return None
 
@@ -6209,11 +6362,11 @@ def exercise_motion_contract_quality_issues(
         for phase in phase_labels
     ):
         issues.append("required phase contains schema labels or truncated text")
-    if phase_labels and completion_mode == "return_to_start" and not re.search(
-        r"\b(?:return|returns|returned|back)\b",
-        phase_text,
+    if (
+        normalize_exercise_movement_type(contract.get("movementType")) == "transition_sequence"
+        and len(phase_labels) < 2
     ):
-        issues.append("return_to_start contract has no explicit return-to-start phase")
+        issues.append("transition sequence requires an ordered phase graph")
     if completion_mode == "distinct_end_state":
         start_state = normalize_exercise_name(str(contract.get("validStartState") or ""))
         end_state = normalize_exercise_name(str(contract.get("validEndState") or ""))
@@ -6388,6 +6541,57 @@ def exercise_motion_contract_prompt_sha256(contract: dict[str, Any] | None) -> s
         allow_nan=False,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def exercise_motion_contract_prompt_identity_matches(
+    left: dict[str, Any] | None,
+    right: dict[str, Any] | None,
+) -> bool:
+    """Compare semantic prompt identities while ignoring generated source labels.
+
+    The persisted prompt hash remains byte/structure-sensitive for receipt verification;
+    this comparison only normalizes equivalent approval UTC offsets and the generated
+    ``Source: ...`` provenance header. Exercise instructions remain exact.
+    """
+    left_prompt = exercise_motion_contract_for_prompt(left)
+    right_prompt = exercise_motion_contract_for_prompt(right)
+    if left_prompt is None or right_prompt is None:
+        return left_prompt == right_prompt
+
+    provenance_sources = {
+        "llm",
+        "reused_candidate_contract",
+        "bake_and_rank_llm",
+        "migrated_definition_contract",
+        "exercise_definition",
+        "deterministic_fallback",
+        "segment_detection_fallback",
+        "baseline_fallback_after_deterministic_planning_failure",
+    }
+
+    def canonicalize(
+        contract: dict[str, Any],
+        prompt: dict[str, Any],
+    ) -> dict[str, Any]:
+        result = deepcopy(prompt)
+        result["motionContext"] = canonicalize_exercise_motion_context(
+            result.get("motionContext")
+        )
+        source = str(contract.get("source") or "").strip().casefold()
+        advisory = result.get("advisoryText")
+        if source in provenance_sources and isinstance(advisory, str):
+            source_label = readable_contract_value(source).strip().casefold()
+            first_line, separator, remainder = advisory.partition("\n")
+            header = first_line.partition(":")
+            if (
+                separator
+                and header[0].strip().casefold() == "source"
+                and header[2].strip().casefold() == source_label
+            ):
+                result["advisoryText"] = remainder
+        return result
+
+    return canonicalize(left or {}, left_prompt) == canonicalize(right or {}, right_prompt)
 
 
 def exercise_motion_contract_prompt_body(prompt_contract: dict[str, Any]) -> str:
@@ -8090,8 +8294,8 @@ def llama_cpp_server_reasoning_flag_conflict(command_line: str, *, disable_reaso
         re.search(r"(?:^|\s)--reasoning(?:\s+|=)on(?:\s|$)", normalized)
         or re.search(r"(?:^|\s)--reasoning-format(?:\s+|=)deepseek(?:\s|$)", normalized)
     )
-    # llama.cpp accepts per-request reasoning_format=none on a server that was
-    # started with reasoning enabled, so no-reasoning calls can safely reuse it.
+    # Per-request enable_thinking=false allows no-reasoning calls to reuse this
+    # server; reasoning_format controls tag parsing rather than model thinking.
     if not disable_reasoning and reasoning_off:
         return "started with reasoning disabled"
     return None
@@ -9401,10 +9605,19 @@ def search_youtube_with_empty_retries(
 
 
 class LlamaCppVisionRanker:
-    def __init__(self, settings: YouTubeRankingSettings) -> None:
+    def __init__(
+        self,
+        settings: YouTubeRankingSettings,
+        *,
+        startup_timeout_seconds: float | None = None,
+    ) -> None:
         from exercise_motion_pkg.segment_detection import LlamaCppVisionClient
 
         self.settings = settings
+        self._source_startup_deadline = (
+            None if startup_timeout_seconds is None
+            else time.monotonic() + max(0.0, float(startup_timeout_seconds))
+        )
         self.process: subprocess.Popen[str] | None = None
         self._server_process_owner = None
         self.server_log_path: Path | None = None
@@ -9417,6 +9630,10 @@ class LlamaCppVisionRanker:
                     gpu_lock = GlobalGpuLock(
                         stage="llama_cpp_server",
                         on_force_release=self._emergency_release_gpu,
+                        deadline=(
+                            None if startup_timeout_seconds is None
+                            else time.perf_counter() + max(0.0, float(startup_timeout_seconds))
+                        ),
                     )
                     self.gpu_lock_wait_seconds = gpu_lock.__enter__()
                     self.gpu_lock = gpu_lock
@@ -9480,6 +9697,20 @@ class LlamaCppVisionRanker:
         gpu_lock = self.gpu_lock
         self.gpu_lock = None
         gpu_lock.__exit__(None, None, None)
+
+    def _startup_deadline(self, timeout_seconds: float) -> float:
+        deadline = time.monotonic() + max(0.0, float(timeout_seconds))
+        if self._source_startup_deadline is not None:
+            deadline = min(deadline, self._source_startup_deadline)
+        return deadline
+
+    def _startup_probe_timeout(self, max_timeout_seconds: float) -> float:
+        if self._source_startup_deadline is None:
+            return max_timeout_seconds
+        remaining = self._source_startup_deadline - time.monotonic()
+        if remaining <= 0.0:
+            raise TimeoutError("Source review wait budget expired during llama.cpp startup.")
+        return min(max_timeout_seconds, remaining)
 
     def _emergency_release_gpu(self) -> None:
         # The global GPU lock force-released this ranker after it starved other
@@ -9548,6 +9779,11 @@ class LlamaCppVisionRanker:
             self._ensure_server()
 
     def _ensure_server(self) -> None:
+        if (
+            self._source_startup_deadline is not None
+            and time.monotonic() >= self._source_startup_deadline
+        ):
+            raise TimeoutError("Source review wait budget expired during llama.cpp startup.")
         server_payload = self._server_models_payload()
         if server_payload is not None:
             try:
@@ -9570,9 +9806,9 @@ class LlamaCppVisionRanker:
                 )
                 if not stopped:
                     raise
-                deadline = time.monotonic() + 10.0
+                deadline = self._startup_deadline(10.0)
                 while time.monotonic() < deadline and self._server_models_payload() is not None:
-                    time.sleep(0.2)
+                    time.sleep(min(0.2, max(0.0, deadline - time.monotonic())))
         if self._attaches_shared_server():
             # Attach mode never spawns a server; wait for the supervisor's
             # (re)start - e.g. after an exclusive phase released the GPU.
@@ -9704,7 +9940,7 @@ class LlamaCppVisionRanker:
                     continue
                 args_without_mtp.append(argument)
         creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-        deadline = time.monotonic() + self.settings.llama_cpp_server_startup_timeout_seconds
+        deadline = self._startup_deadline(self.settings.llama_cpp_server_startup_timeout_seconds)
         last_chat_error: str | None = None
         active_args = args
         mtp_fallback_used = False
@@ -9738,7 +9974,7 @@ class LlamaCppVisionRanker:
                     chat_ready, last_chat_error = self._chat_completions_ready()
                     if chat_ready:
                         return
-                time.sleep(1.0)
+                time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
             if self.process.poll() is None:
                 break
             self.process.wait()
@@ -9780,8 +10016,10 @@ class LlamaCppVisionRanker:
     def _wait_for_supervised_server(self) -> None:
         """Attach mode: wait for the supervisor's server (re)start; never spawn."""
         startup_timeout = self.settings.llama_cpp_server_startup_timeout_seconds
-        deadline = time.monotonic() + startup_timeout
+        deadline = self._startup_deadline(startup_timeout)
         hard_deadline = time.monotonic() + max(startup_timeout, FOREIGN_GENERATION_MAX_WAIT_SECONDS)
+        if self._source_startup_deadline is not None:
+            hard_deadline = min(hard_deadline, self._source_startup_deadline)
         shared_session_dir = resolve_shared_llama_session_dir(
             None, base_url=self.settings.llama_cpp_base_url
         )
@@ -9797,7 +10035,7 @@ class LlamaCppVisionRanker:
                 # quiesced this server); the supervised restart lands when it
                 # ends, so keep waiting instead of failing the attach.
                 deadline = min(hard_deadline, time.monotonic() + startup_timeout)
-            time.sleep(1.0)
+            time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
         raise RuntimeError(
             "Shared llama.cpp server at "
             f"{self.settings.llama_cpp_base_url} did not become ready within "
@@ -9809,13 +10047,13 @@ class LlamaCppVisionRanker:
     def _wait_for_chat_completions_ready(self) -> None:
         if self.settings.llama_cpp_base_url is None:
             return
-        deadline = time.monotonic() + self.settings.llama_cpp_server_startup_timeout_seconds
+        deadline = self._startup_deadline(self.settings.llama_cpp_server_startup_timeout_seconds)
         last_error: str | None = None
         while time.monotonic() < deadline:
             ready, last_error = self._chat_completions_ready()
             if ready:
                 return
-            time.sleep(1.0)
+            time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
         detail = f" Last chat readiness error: {last_error}" if last_error else ""
         raise RuntimeError(
             f"llama-server chat completions endpoint at {self.settings.llama_cpp_base_url} "
@@ -9829,6 +10067,7 @@ class LlamaCppVisionRanker:
             LLAMA_CPP_CHAT_READY_PROBE_TIMEOUT_SECONDS,
             max(1.0, float(self.settings.llama_cpp_request_timeout_seconds)),
         )
+        timeout = self._startup_probe_timeout(timeout)
         payload: dict[str, Any] = {
             "model": self.settings.llama_cpp_model,
             "messages": [{"role": "user", "content": "Reply with OK."}],
@@ -9863,7 +10102,10 @@ class LlamaCppVisionRanker:
         if self.settings.llama_cpp_base_url is None:
             return False
         try:
-            response = httpx.get(f"{self.settings.llama_cpp_base_url.rstrip('/')}/v1/models", timeout=5.0)
+            response = httpx.get(
+                f"{self.settings.llama_cpp_base_url.rstrip('/')}/v1/models",
+                timeout=self._startup_probe_timeout(5.0),
+            )
             return response.status_code < 500
         except httpx.HTTPError:
             return False
@@ -9872,10 +10114,11 @@ class LlamaCppVisionRanker:
         if self.settings.llama_cpp_base_url is None:
             return None
         try:
-            health = httpx.get(f"{self.settings.llama_cpp_base_url.rstrip('/')}/health", timeout=5.0)
+            timeout = self._startup_probe_timeout(5.0)
+            health = httpx.get(f"{self.settings.llama_cpp_base_url.rstrip('/')}/health", timeout=timeout)
             if health.status_code != 200:
                 return None
-            response = httpx.get(f"{self.settings.llama_cpp_base_url.rstrip('/')}/v1/models", timeout=5.0)
+            response = httpx.get(f"{self.settings.llama_cpp_base_url.rstrip('/')}/v1/models", timeout=timeout)
             if response.status_code >= 500:
                 return None
             response.raise_for_status()

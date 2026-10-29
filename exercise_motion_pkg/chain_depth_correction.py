@@ -230,9 +230,9 @@ def _solve_chain_rotation(
                         best, best_error = angles, error
                         improved = True
     if best == (0.0, 0.0):
-        return None, best_error, best_error
+        return None, best_error, _chain_errors(matches, projection, root, distal)[0]
     matrix = _rotation_matrix(axes[1], best[1]) @ _rotation_matrix(axes[0], best[0])
-    return matrix, best_error, _chain_errors(matches, projection, root, distal)[0]
+    return matrix, best_error, _chain_errors(matches, projection, root, distal, matrix)[0]
 
 
 def correct_distal_chain_depth(
@@ -311,7 +311,7 @@ def correct_distal_chain_depth(
             chain_report["reason"] = "signature_not_detected"
             report["chains"][label] = chain_report
             continue
-        matrix, distal_after, _ = _solve_chain_rotation(
+        matrix, _, distal_after = _solve_chain_rotation(
             matches, projection, root, distal, axes
         )
         chain_report["distalErrorBodyRatioAfter"] = round(distal_after, 4)

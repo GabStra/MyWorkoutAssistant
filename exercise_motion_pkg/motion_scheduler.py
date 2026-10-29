@@ -27,6 +27,9 @@ _STOP = object()
 _GPU_STAGE_DEADLINE: ContextVar[float | None] = ContextVar(
     "motion_gpu_stage_deadline", default=None
 )
+_CANDIDATE_DEADLINE: ContextVar[float | None] = ContextVar(
+    "motion_candidate_deadline", default=None
+)
 MACHINE_CPU_SLOT_WAIT_TIMEOUT_SECONDS = 6 * 60 * 60
 MACHINE_CPU_SLOT_LOCK_DIR_ENV_VAR = "EXERCISE_MOTION_CPU_SLOT_LOCK_DIR"
 
@@ -63,8 +66,31 @@ def _try_acquire_machine_cpu_slot():
 
 
 def current_gpu_stage_deadline() -> float | None:
-    """Return the absolute monotonic deadline of the active GPU stage, if any."""
-    return _GPU_STAGE_DEADLINE.get()
+    """Return the earliest active candidate or GPU-stage deadline."""
+    deadlines = [value for value in (_GPU_STAGE_DEADLINE.get(), _CANDIDATE_DEADLINE.get()) if value is not None]
+    return min(deadlines) if deadlines else None
+
+
+def set_current_candidate_deadline(deadline: float | None) -> None:
+    """Expose a caller-owned candidate deadline to synchronous shared helpers."""
+    _CANDIDATE_DEADLINE.set(None if deadline is None else float(deadline))
+
+
+@contextmanager
+def candidate_deadline_scope(deadline: float | None) -> Iterator[None]:
+    """Apply a candidate deadline for one operation and restore its caller context."""
+    token = _CANDIDATE_DEADLINE.set(None if deadline is None else float(deadline))
+    try:
+        yield
+    finally:
+        _CANDIDATE_DEADLINE.reset(token)
+
+
+def monotonic_deadline_from_perf_counter(deadline: float | None) -> float | None:
+    """Translate a candidate deadline to the monotonic clock used by file locks."""
+    if deadline is None:
+        return None
+    return time.monotonic() + float(deadline) - time.perf_counter()
 
 
 def timeout_with_candidate_deadline(

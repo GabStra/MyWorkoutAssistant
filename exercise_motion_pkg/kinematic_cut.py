@@ -1347,7 +1347,7 @@ def _quiet_pose_index(frames: Sequence[PoseFrame], run: tuple[int, int]) -> int 
     for index in range(run[0], run[1] + 1):
         velocity = _pose_boundary_velocity(frames, index)
         if velocity is not None:
-            candidates.append((velocity[1], index))
+            candidates.append((velocity[2], index))
     if not candidates:
         return None
     return min(candidates)[1]
@@ -1356,7 +1356,8 @@ def _quiet_pose_index(frames: Sequence[PoseFrame], run: tuple[int, int]) -> int 
 def _pose_boundary_velocity(
     frames: Sequence[PoseFrame],
     index: int,
-) -> tuple[np.ndarray, float] | None:
+    required_joints: Sequence[str] | None = None,
+) -> tuple[tuple[str, ...], np.ndarray, float] | None:
     """Return a confidence-qualified, torso-normalized local pose velocity."""
     left_index = max(0, index - 1)
     right_index = min(len(frames) - 1, index + 1)
@@ -1373,14 +1374,15 @@ def _pose_boundary_velocity(
     elapsed = right.time_seconds - left.time_seconds
     if elapsed <= 0.0 or elapsed > 2.0 * max_gap:
         return None
-    common = [
+    common = tuple(
         joint
         for joint in FEATURE_JOINTS
         if joint in left.keypoints
         and joint in right.keypoints
         and left.keypoints[joint][2] >= MIN_KEYPOINT_CONFIDENCE
         and right.keypoints[joint][2] >= MIN_KEYPOINT_CONFIDENCE
-    ]
+        and (required_joints is None or joint in required_joints)
+    )
     if len(common) < MIN_CORE_JOINTS:
         return None
     scale = _median_body_scale(frames[max(0, index - 2) : min(len(frames), index + 3)])
@@ -1393,7 +1395,7 @@ def _pose_boundary_velocity(
         dtype=np.float64,
     )
     speed = float(np.linalg.norm(velocity) / math.sqrt(len(common)))
-    return velocity, speed
+    return common, velocity, speed
 
 
 def _loop_boundary_motion_compatibility(
@@ -1405,8 +1407,15 @@ def _loop_boundary_motion_compatibility(
     end = _pose_boundary_velocity(frames, end_index)
     if start is None or end is None:
         return None
-    start_velocity, start_speed = start
-    end_velocity, end_speed = end
+    shared_joints = tuple(joint for joint in start[0] if joint in end[0])
+    if len(shared_joints) < MIN_CORE_JOINTS:
+        return None
+    start = _pose_boundary_velocity(frames, start_index, shared_joints)
+    end = _pose_boundary_velocity(frames, end_index, shared_joints)
+    if start is None or end is None:
+        return None
+    start_velocity, start_speed = start[1], start[2]
+    end_velocity, end_speed = end[1], end[2]
     quiet = LOOP_BOUNDARY_QUIET_SPEED_TORSO_PER_SECOND
     if start_speed <= quiet and end_speed <= quiet:
         direction_similarity = 1.0

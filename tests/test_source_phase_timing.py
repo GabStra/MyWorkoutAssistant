@@ -128,7 +128,7 @@ def test_candidate_must_cover_every_cited_bin_and_duplicate_times_are_allowed():
     )["eligible"]
 
 
-def test_missing_timing_ids_do_not_change_existing_topology_approval():
+def test_missing_timing_ids_keep_hard_gated_topology_unresolved():
     topology = {
         "completionMode": "distinct_end_state",
         "phaseEvidenceHardGate": True,
@@ -150,9 +150,69 @@ def test_missing_timing_ids_do_not_change_existing_topology_approval():
         topology,
         frame_inventory=[],
     )
-    assert reasons == []
+    assert reasons == ["source_cut_contract_phase_timing_unresolved"]
     assert evidence["actionPhaseEvidenceComplete"] is True
     assert evidence["phaseTimingEvidence"]["status"] == "unresolved"
+
+
+def test_single_whole_action_evidence_cannot_approve_a_four_phase_transition():
+    topology = {
+        "completionMode": "distinct_end_state",
+        "phaseEvidenceHardGate": True,
+        "endpointEvidenceRequired": True,
+        "boundaryStateHardGate": False,
+        "startState": {"id": "start", "label": "plank"},
+        "endState": {"id": "end", "label": "overhead press"},
+        "phases": [
+            {"id": "phase_01", "label": "push-up"},
+            {"id": "phase_02", "label": "row on each side"},
+            {"id": "phase_03", "label": "squat clean"},
+            {"id": "phase_04", "label": "overhead press"},
+        ],
+    }
+    evidence, reasons, _ = bake.topology_evidence_rejection_reasons(
+        {
+            "startStateMatch": "match",
+            "endStateMatch": "match",
+            "phaseEvidence": [{
+                "phaseId": "phase_01", "visible": True, "position": 0.5,
+                "evidence": "One broad sentence claims the whole sequence is visible.",
+                "evidenceFrameIds": [],
+            }],
+        },
+        topology,
+        frame_inventory=[],
+    )
+
+    assert evidence["observedPhaseIds"] == ["phase_01"]
+    assert evidence["phaseTimingEvidence"]["status"] == "unresolved"
+    assert "source_cut_contract_phase_sequence_mismatch" in reasons
+    assert "source_cut_contract_phase_timing_unresolved" in reasons
+
+
+def test_ordered_phases_can_share_a_transition_frame_but_need_distinct_timed_evidence():
+    frames = [
+        {"id": f"A:{index + 1}", "timestampSeconds": index * 0.2}
+        for index in range(4)
+    ]
+    shared_boundary = temporal_observation_bins(
+        [
+            {"phaseId": "p1", "visible": True, "evidenceFrameIds": ["A:1", "A:2"]},
+            {"phaseId": "p2", "visible": True, "evidenceFrameIds": ["A:2", "A:3"]},
+        ],
+        ["p1", "p2"], frames, id_field="phaseId", require_visible=True,
+    )
+    same_evidence = temporal_observation_bins(
+        [
+            {"phaseId": "p1", "visible": True, "evidenceFrameIds": ["A:2"]},
+            {"phaseId": "p2", "visible": True, "evidenceFrameIds": ["A:2"]},
+        ],
+        ["p1", "p2"], frames, id_field="phaseId", require_visible=True,
+    )
+
+    assert shared_boundary["status"] == "sampled"
+    assert same_evidence["status"] == "unresolved"
+    assert "observation_order_not_established" in same_evidence["errors"]
 
 
 def test_scorecard_persists_exact_phase_and_equipment_bins_without_changing_approval(tmp_path):
@@ -215,8 +275,10 @@ def test_scorecard_persists_exact_phase_and_equipment_bins_without_changing_appr
         equipment_timing_requirement_ids=["equipment_1", "equipment_2"],
         source_time_offset_seconds=5.0,
     )
-    assert bake.source_cut_ranking_has_vlm_approval(legacy_ranking)
-    assert legacy_ranking.payload["selectedScorecard"]["movementTopologyEvidence"][
+    assert not bake.source_cut_ranking_has_vlm_approval(legacy_ranking)
+    rejected_row = legacy_ranking.payload["sourceCutScorecardCandidates"][0]
+    assert "source_cut_contract_phase_timing_unresolved" in rejected_row["rejectionReasons"]
+    assert rejected_row["movementTopologyEvidence"][
         "phaseTimingEvidence"]["status"] == "unresolved"
 
 
@@ -232,6 +294,7 @@ def test_prompt_supplies_only_manifest_ids_not_inferred_timestamps(tmp_path):
         exercise_motion_contract={
             "completionMode": "distinct_end_state",
             "definingAction": "Move the loaded bar through the prescribed action.",
+            "requiredPhases": ["raise the bar"],
             "actionDefinitionAuthority": "structured_definition",
             "actionDefinitionStatus": "defined",
             "requiredAccessories": [],

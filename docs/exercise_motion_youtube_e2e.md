@@ -184,6 +184,94 @@ exclusive on a 12 GB GPU. The defaults can be tuned with `-StagedWaveSize`,
 The llama.cpp server uses eight HTTP worker threads by default, leaving the other
 logical CPU threads available for candidate downloads, FFmpeg, and orchestration.
 
+For the experimental two-GPU arrangement, set
+`$env:EXERCISE_MOTION_EXCLUSIVE_GPU_DEVICE = '1'` and add
+`-GvhmrStageSplit -SharedLlamaServer` to the workout-plan command. This requires
+staged waves, warm workers, GPU locking, and two distinct physical devices.
+Preprocessing uses the selected secondary GPU with one heavy model resident at a
+time. Prediction uses GPU 0 alongside the resident llama.cpp server; model requests
+pause while prediction runs. At most two candidates enter the split pipeline, so
+preprocessing the next candidate can overlap prediction of the current one.
+The default remains the single reconstruction worker until controlled production
+tests establish both rendered quality and time to an accepted movement.
+Handoffs bind the exact source, configuration, model image, code and artifact bytes;
+changed inputs require fresh evidence rather than silently reusing approval.
+
+Source review uses semantic requirement descriptions across repetitions, alternating
+pairs, distinct-end sequences, holds, travel and ongoing cycles. Logical phase IDs
+stay inside code; the model selects from the supplied descriptions and source-frame
+choices. Code still validates frame identities, sample coverage, equipment quantity
+and required sequence order. A phase and a variant describing the same visible fact
+can share one observation; repeated occurrences of the same phase remain unresolved
+unless they have distinct semantic context.
+
+When exact pose evidence establishes a single unanchored two-phase return cycle,
+code supplies its start, excursion and return images and derives completion from
+the measured cycle plus observed actions. The source review and interval-action
+review use separate cached questions with the same cyclic-boundary policy. Other
+movement types retain their completion and endpoint checks rather than being forced
+into this geometry. A source-evidence policy upgrade can require fresh review;
+structural library coverage does not establish rendered movement quality.
+
+For sequences with three or more required phases, code proposes intervals from
+confidence-qualified, separate left/right articulation tracks. Each interval review
+receives chronological source samples, including the samples between its turning
+points. The model selects qualitative action descriptions, without supplying times
+or frame references. Code constructs exact citations and finds nonoverlapping ordered
+coverage; one interval labelled with multiple actions cannot establish their order.
+Both halves of an excursion remain candidates, since different actions can occupy
+opposite directions. The 15-degree proposal prominence suppresses noisy candidates;
+it neither approves an action nor changes source motion. Occlusion gaps are not
+interpolated. Missing proposals or ambiguous labels remain unresolved.
+Code proposes one coherent measured sequence before requesting action semantics,
+rather than querying every overlapping interval hypothesis. Each phase receives
+individual original-resolution images containing its measured motion witnesses,
+endpoints and turning-point neighbors. The retained live replay showed that contact
+sheets could confuse push-ups and alternating rows even with the same prompt and
+schema. The model still has to confirm each action; the measured proposal cannot
+approve itself. Unresolved or contradicted observations leave the sequence unresolved
+within the existing source-turn budget. Equipment and clean-content questions use
+uniform source images without unrelated motion-sheet attachments.
+The clean-content question also receives the reviewed defining action and required
+actions; without that context it cannot distinguish a prescribed transition from
+unrelated exercise or setup.
+Independent decisions are cached against source bytes, model, contract, images and
+exact sample times. Equivalent phase and variant requirements share observed evidence.
+Action labels enter that coverage only after their measured completion witnesses
+pass. Currently supported action grammar covers push-ups, rows, squat cleans and
+overhead presses: returns toward the observed entry state, separate left/right
+excursions where required, a catch near the shoulders, and a terminal overhead
+reach with arm extension. Unsupported action completion remains unresolved rather
+than falling back to a label as proof. These are necessary two-dimensional motion
+observations, not proof of exercise identity or three-dimensional form.
+Only actual confident samples provide witnesses; an upper-arm track can corroborate
+a row with an uncertain wrist. No missing joint is synthesized, and adjacent
+observations must remain within the existing half-second gap limit.
+Unchanged unresolved interval observations are cached as unresolved; new imagery
+or other changed question evidence is required to ask again. Aggregate approvals
+are separately versioned from these reusable semantic observations. A compound
+phase cannot acquire proof from a predicate covering only one of its actions.
+Other semantic facts still return a single observation object with code-owned
+identity, so duplicate requirement rows cannot replace another fact.
+When the phase list is explicitly approved, its coverage also owns composite-action
+coverage; inferred complex phase proposals cannot add obligations to the reviewed
+definition or replace the defining-action review. The measured two-phase cycle path
+remains separate.
+An explicit `all_uniform_samples` choice on a supported clean-interval claim expands
+to the exact provided samples in code. Missing or mixed coverage remains unresolved.
+
+Explicit overhead-press requirements additionally need corroborating landmarks from
+the hash-verified source video. The check uses confident, visible head and arm
+observations relative to the torso axis, and verifies that the cited samples
+actually cover the observed overhead reach. This is a necessary observation, not
+proof of a press or a three-dimensional lockout. Relevant phase reviews receive
+individual source frames around the measured event. Cropping, uncertain tracking,
+or unsupported citations leave the source unresolved for a clearer interval or
+human review; they do not trigger reconstruction or relax the requirement.
+Other actions currently rely on the narrow visual review and existing source
+checks, rather than claiming an independent pose predicate that has not been
+implemented and validated. Generated movement fidelity remains a separate gate.
+
 The wrapper resumes by default. Each successful exercise is materialized under its
 own workspace immediately, and aggregate progress is checkpointed after every
 terminal exercise. If the process is interrupted, run the same command again;
@@ -381,9 +469,17 @@ Then inspect:
 
 - `youtube_candidates.json` or `selected/debug/youtube_candidates.full.json` for source selection and VLM source scores.
 - `candidate_decisions.jsonl` for batch-by-batch YouTube candidate decisions.
-- `<candidate>/input/selected_segment.mp4` to verify the source fed into reconstruction.
+- The exact source path in `<candidate>/segment_detection/exact_source_phase_validation.json` and its matching pose-reference/video hashes. A retained workspace may omit `input/selected_segment.mp4`; a parent `source/source.mp4` is usable only when its bytes match that exact reference.
 - `<candidate>/review/ranking.json` to see final preview scoring.
 - `<candidate>/segment_detection/segment_selection.json` when the source cut is wrong.
 - `<candidate>/review/**/contact_sheet_*.jpg` when the VLM cut decision is suspect.
 
 If the run selected nothing, keep the failed workspace and rerun with `-ArtifactRetention full` only when the compact evidence is not enough.
+
+For foot sliding, trace source observations through the fit-frame contact mask before running another reconstruction. Compound actions can contain local standing episodes without any joint staying stationary throughout the clip. These episodes need grounded posture corroboration; a stationary ankle alone does not establish a fixed heel, toe, or shoe heading.
+
+Support classification can refresh from hash-bound retained pose and landmark observations without repeating source approval or model inference. Uncertain full-sole motion may be corroborated by independent heel/toe texture tracks over that exact interval. Contact states and interval bounds stay unchanged; only a verified material receipt authorizes stationary material anchors. Anchor identities must survive the native-source-to-fit clock mapping, including fractional frame-rate differences.
+
+Carry source interval timestamps through sparse pose sampling and inference-video normalization. A sample-count ratio or normalized playback FPS cannot identify the original source exposure. Source comparisons and contact masks must use the retained source clock; synthetic bridge frames do not inherit observed support.
+
+Inspect `sourceSupportAuthority`, `contactConstraintEvidence`, and `trajectoryFitEvidence` in the fit report. Zero constrained samples are not verified planting; unresolved evidence stays distinct from an optional check or compatibility-only geometric fit. Dense floor correction must measure the same shoe vertices and orientation as playback validation, while preserving observed plants. A polish step may not retain a new failure in a previously passing source or physical check, including individual contact and floor limits inside an already-failing playback result.

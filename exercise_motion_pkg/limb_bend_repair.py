@@ -6,7 +6,7 @@ import math
 
 import numpy as np
 
-from .models import MotionClip, MotionFrame
+from .models import MotionClip
 
 
 def repair_limb_bend_bursts(clip: MotionClip, *, maximum_burst_seconds: float = .12) -> tuple[MotionClip, dict]:
@@ -18,7 +18,7 @@ def repair_limb_bend_bursts(clip: MotionClip, *, maximum_burst_seconds: float = 
             or any(not math.isfinite(frame.time_sec) for frame in clip.frames)
             or any(after.time_sec <= before.time_sec for before, after in zip(clip.frames, clip.frames[1:]))):
         return clip, {"applied": False, "events": []}
-    frames = [MotionFrame(frame.time_sec, dict(frame.joints)) for frame in clip.frames]
+    frames = [replace(frame, joints=dict(frame.joints)) for frame in clip.frames]
     bases = []
     for frame in clip.frames:
         body = _body_local_frame(frame)

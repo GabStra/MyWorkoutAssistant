@@ -23,6 +23,7 @@ import os
 import tempfile
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -33,6 +34,8 @@ from exercise_motion_pkg.process_lock import InterProcessFileLock
 SHARED_LLAMA_SESSION_DIR_ENV_VAR = "EXERCISE_MOTION_SHARED_LLAMA_SESSION_DIR"
 INFLIGHT_DIRECTORY_NAME = "in-flight"
 STOP_INTENT_FILE_NAME = "stop_intent.json"
+RESIDENT_COMPUTE_INTENT_FILE_NAME = "resident_compute_intent.json"
+RESIDENT_COMPUTE_LOCK_FILE_NAME = "resident_compute.lock"
 START_REQUEST_FILE_NAME = "start_requested.json"
 STOPPED_FILE_NAME = "stopped.json"
 READY_FILE_NAME = "ready.json"
@@ -47,6 +50,7 @@ GENERATION_HOLDERS_DIRECTORY_NAME = "generation-holders"
 # case stopping the server is harmless).
 DRAIN_SETTLE_SECONDS = 0.25
 POLL_SECONDS = 0.25
+RESIDENT_COMPUTE_WAIT_SECONDS = 240.0
 
 
 def _parse_base_url_port(base_url: str | None) -> str:
@@ -55,6 +59,15 @@ def _parse_base_url_port(base_url: str | None) -> str:
     except ValueError:
         return "default"
     return str(port)
+
+
+def _inherited_monotonic_deadline() -> float | None:
+    from exercise_motion_pkg.motion_scheduler import (
+        current_gpu_stage_deadline,
+        monotonic_deadline_from_perf_counter,
+    )
+
+    return monotonic_deadline_from_perf_counter(current_gpu_stage_deadline())
 
 
 def default_shared_llama_session_dir(base_url: str | None) -> Path:
@@ -129,6 +142,22 @@ def _owner_is_live(payload: dict[str, object] | None) -> bool:
     return True
 
 
+def _resident_compute_owner_is_live(payload: dict[str, object] | None) -> bool:
+    """Require matching process identity before honoring a compute reservation."""
+    if payload is None:
+        return False
+    pid = payload.get("pid")
+    expected_identity = payload.get("processIdentity")
+    if not isinstance(pid, int) or pid <= 0 or not isinstance(expected_identity, int):
+        return False
+    actual_identity = process_identity(pid)
+    return (
+        actual_identity is not None
+        and actual_identity == expected_identity
+        and (pid == os.getpid() or process_is_running(pid))
+    )
+
+
 def write_generation_holder_marker(session_dir: Path, *, holder: str) -> Path:
     """Announce that this process is running an exclusive generation phase.
 
@@ -184,7 +213,7 @@ class InflightSnapshot:
 
 
 class SharedLlamaExclusivePhaseActive(RuntimeError):
-    """A foreign exclusive phase still held the shared server past the wait budget.
+    """An admission-blocking GPU phase exceeded the request wait budget.
 
     Raised by the client-level request publisher's admission gate when a live
     stop-intent owned by another process does not clear within the request's
@@ -276,6 +305,16 @@ class SharedLlamaServerCoordinator:
         """True while any live process has declared an exclusive GPU phase."""
         return _owner_is_live(_read_json(self.session_dir / STOP_INTENT_FILE_NAME))
 
+    def resident_compute_intent_live(self) -> bool:
+        """True while a live process owns the no-unload GPU compute reservation."""
+        path = self.session_dir / RESIDENT_COMPUTE_INTENT_FILE_NAME
+        payload = _read_json(path)
+        if _resident_compute_owner_is_live(payload):
+            return True
+        if payload is not None:
+            _remove(path)
+        return False
+
     def foreign_stop_intent_live(self) -> bool:
         """True while a *foreign* live process holds an exclusive GPU phase.
 
@@ -297,11 +336,17 @@ class SharedLlamaServerCoordinator:
         payload = _read_json(intent_path)
         return payload is not None and payload.get("pid") == os.getpid()
 
-    def _transition_lock(self) -> InterProcessFileLock:
+    def _transition_lock(self, *, deadline: float | None = None) -> InterProcessFileLock:
+        timeout = TRANSITION_LOCK_TIMEOUT_SECONDS
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0.0:
+                raise TimeoutError("Candidate deadline expired waiting for shared llama transition lock.")
+            timeout = min(timeout, remaining)
         return InterProcessFileLock(
             self.session_dir / TRANSITION_LOCK_FILE_NAME,
             stage="shared_llama_transition",
-            timeout_seconds=TRANSITION_LOCK_TIMEOUT_SECONDS,
+            timeout_seconds=timeout,
             stale_after_seconds=TRANSITION_LOCK_TIMEOUT_SECONDS,
             poll_interval_seconds=self._poll_seconds,
         )
@@ -320,9 +365,11 @@ class SharedLlamaServerCoordinator:
             self._counted_active_requests = max(0, self._counted_active_requests - 1)
             self.publish_active_requests(self._counted_active_requests)
 
-    def try_begin_counted_request(self) -> bool:
-        with self._transition_lock():
-            if self.foreign_stop_intent_live():
+    def try_begin_counted_request(self, *, deadline: float | None = None) -> bool:
+        if deadline is None:
+            deadline = _inherited_monotonic_deadline()
+        with self._transition_lock(deadline=deadline):
+            if self.foreign_stop_intent_live() or self.resident_compute_intent_live():
                 return False
             self.begin_counted_request()
             return True
@@ -336,32 +383,46 @@ class SharedLlamaServerCoordinator:
         """Count one in-flight request, gated on live foreign exclusive phases.
 
         Mirrors ``LazyLlamaCppVisionSession``'s caption admission: wait while a
-        live foreign stop-intent exists (bounded by ``max_wait_seconds``; None
+        live admission-blocking intent exists (bounded by ``max_wait_seconds``; None
         waits indefinitely), then publish the counter *before* the wrapped
         request starts so the drainer's settle window observes it.
         """
         started = time.monotonic()
+        deadline = (
+            None
+            if max_wait_seconds is None
+            else started + max(0.0, float(max_wait_seconds))
+        )
+        inherited_deadline = _inherited_monotonic_deadline()
+        if inherited_deadline is not None:
+            deadline = inherited_deadline if deadline is None else min(deadline, inherited_deadline)
         while True:
-            remaining = None if max_wait_seconds is None else max(0.0, max_wait_seconds - (time.monotonic() - started))
-            self._wait_out_foreign_stop_intent(remaining)
+            remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+            if remaining is not None and remaining <= 0.0:
+                raise SharedLlamaExclusivePhaseActive(
+                    "shared llama request admission exceeded its wait budget "
+                    f"of {max_wait_seconds}s"
+                )
+            self._wait_out_admission_intents(remaining)
             # Publish under the same lock as stop intent; no request may slip into a GPU handoff.
-            if self.try_begin_counted_request():
+            if self.try_begin_counted_request(deadline=deadline):
                 break
         try:
             yield
         finally:
             self.end_counted_request()
 
-    def _wait_out_foreign_stop_intent(self, max_wait_seconds: float | None) -> None:
+    def _wait_out_admission_intents(self, max_wait_seconds: float | None) -> None:
         deadline = (
             time.monotonic() + max(0.0, float(max_wait_seconds))
             if max_wait_seconds is not None
             else None
         )
-        while self.foreign_stop_intent_live():
+        while self.foreign_stop_intent_live() or self.resident_compute_intent_live():
             if deadline is not None and time.monotonic() >= deadline:
                 raise SharedLlamaExclusivePhaseActive(
-                    "shared llama server held by a foreign exclusive GPU phase for "
+                    "shared llama request admission blocked by an exclusive GPU phase "
+                    "or resident compute reservation for "
                     f"longer than the {max_wait_seconds}s request wait budget"
                 )
             time.sleep(self._poll_seconds)
@@ -369,13 +430,16 @@ class SharedLlamaServerCoordinator:
     # --- in-flight observation ---------------------------------------------
 
     def inflight_snapshots(self) -> list[InflightSnapshot]:
+        return self._inflight_snapshots(include_current=False)
+
+    def _inflight_snapshots(self, *, include_current: bool) -> list[InflightSnapshot]:
         snapshots: list[InflightSnapshot] = []
         try:
             counter_paths = sorted(self._inflight_dir.glob("*.json"))
         except OSError:
             return snapshots
         for counter_path in counter_paths:
-            if counter_path == self._counter_path:
+            if counter_path == self._counter_path and not include_current:
                 continue
             payload = _read_json(counter_path)
             if payload is None:
@@ -390,9 +454,37 @@ class SharedLlamaServerCoordinator:
             ))
         return snapshots
 
+    def drain_all_inflight(self, *, deadline: float) -> None:
+        """Wait for every attached request, including this process, to finish."""
+        settled_observations = 0
+        while True:
+            snapshots = self._inflight_snapshots(include_current=True)
+            for snapshot in snapshots:
+                if not snapshot.live:
+                    _remove(snapshot.path)
+            if sum(s.active_requests for s in snapshots if s.live) == 0:
+                settled_observations += 1
+                if settled_observations >= 2:
+                    return
+                if time.monotonic() + DRAIN_SETTLE_SECONDS > deadline:
+                    raise TimeoutError("Timed out settling shared llama requests before resident GPU compute.")
+                time.sleep(DRAIN_SETTLE_SECONDS)
+                continue
+            settled_observations = 0
+            if time.monotonic() >= deadline:
+                owners = [
+                    f"pid={s.pid} activeRequests={s.active_requests}"
+                    for s in snapshots if s.live and s.active_requests > 0
+                ]
+                raise TimeoutError(
+                    "Timed out draining shared llama requests before resident GPU compute: "
+                    + ", ".join(owners)
+                )
+            time.sleep(min(self._poll_seconds, max(0.0, deadline - time.monotonic())))
+
     # --- exclusive quiesce --------------------------------------------------
 
-    def begin_exclusive_phase(self) -> QuiesceSummary:
+    def begin_exclusive_phase(self, *, deadline: float | None = None) -> QuiesceSummary:
         """Publish intent atomically against startup, drain requests, and stop.
 
         Blocks until every live attached process reports zero in-flight VLM
@@ -402,11 +494,16 @@ class SharedLlamaServerCoordinator:
         start the server between its admission check and readiness.
         """
         summary = QuiesceSummary()
+        if deadline is None:
+            deadline = _inherited_monotonic_deadline()
         started = time.monotonic()
         intent_path = self.session_dir / STOP_INTENT_FILE_NAME
         next_wait_log = started + 5.0
+        acquired = False
         while True:
-            with self._transition_lock():
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError("Candidate deadline expired waiting to begin shared llama exclusive phase.")
+            with self._transition_lock(deadline=deadline):
                 acquired = self._try_acquire_stop_intent(intent_path, summary)
                 if acquired:
                     with self._counted_lock:
@@ -420,22 +517,46 @@ class SharedLlamaServerCoordinator:
             if time.monotonic() >= next_wait_log:
                 self._record_quiesce_blocker(summary, "stop_intent", _read_json(intent_path), started)
                 next_wait_log = time.monotonic() + 5.0
-            time.sleep(self._poll_seconds)
-        self._drain_foreign_inflight(summary)
-        summary.stopped_server = self._stop_shared_server()
-        _write_json_atomic(self.session_dir / STOPPED_FILE_NAME, {
-            "stoppedByPid": os.getpid(),
-            "stoppedAtUnixSeconds": time.time(),
-        })
+            sleep_seconds = self._poll_seconds
+            if deadline is not None:
+                sleep_seconds = min(sleep_seconds, max(0.0, deadline - time.monotonic()))
+            time.sleep(sleep_seconds)
+        stopped_server = False
+        try:
+            self._drain_foreign_inflight(summary, deadline=deadline)
+            summary.stopped_server = self._stop_shared_server()
+            stopped_server = summary.stopped_server
+            _write_json_atomic(self.session_dir / STOPPED_FILE_NAME, {
+                "stoppedByPid": os.getpid(),
+                "stoppedAtUnixSeconds": time.time(),
+            })
+        except BaseException as error:
+            # Never leave a live stop intent behind when the candidate budget
+            # expires before exclusive work starts.
+            try:
+                with self._transition_lock(deadline=time.monotonic() + 5.0):
+                    if self._owns_stop_intent(intent_path):
+                        _remove(intent_path)
+                        if stopped_server:
+                            self._request_restart()
+                        with self._counted_lock:
+                            self.publish_active_requests(self._counted_active_requests)
+            except TimeoutError as cleanup_error:
+                if hasattr(error, "add_note"):
+                    error.add_note(f"Could not clear shared llama stop intent within cleanup grace: {cleanup_error}")
+            raise
         summary.waited_seconds = time.monotonic() - started
         self.quiesce_wait_seconds += summary.waited_seconds
         self.quiesce_count += 1
         return summary
 
-    def end_exclusive_phase(self) -> None:
+    def end_exclusive_phase(self, *, deadline: float | None = None) -> None:
         """Release the GPU back to vision work and ask for the server restart."""
         intent_path = self.session_dir / STOP_INTENT_FILE_NAME
-        with self._transition_lock():
+        cleanup_deadline = time.monotonic() + 5.0
+        if deadline is not None:
+            cleanup_deadline = max(cleanup_deadline, deadline)
+        with self._transition_lock(deadline=cleanup_deadline):
             if self._owns_stop_intent(intent_path):
                 _remove(intent_path)
             self._request_restart()
@@ -447,6 +568,8 @@ class SharedLlamaServerCoordinator:
         intent_path: Path,
         summary: QuiesceSummary,
     ) -> bool:
+        if self.resident_compute_intent_live():
+            return False
         payload = _read_json(intent_path)
         if (
             payload is not None
@@ -464,11 +587,13 @@ class SharedLlamaServerCoordinator:
         winner = _read_json(intent_path)
         return winner is not None and winner.get("pid") == os.getpid()
 
-    def _drain_foreign_inflight(self, summary: QuiesceSummary) -> None:
+    def _drain_foreign_inflight(self, summary: QuiesceSummary, *, deadline: float | None = None) -> None:
         settled_observations = 0
         started = time.monotonic()
         next_wait_log = started + 5.0
         while True:
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError("Candidate deadline expired draining shared llama requests.")
             snapshots = self.inflight_snapshots()
             # Crashed clients leave their counters behind; drop them so the
             # directory stays meaningful and a recycled pid starts clean.
@@ -482,7 +607,10 @@ class SharedLlamaServerCoordinator:
                 settled_observations += 1
                 if settled_observations >= 2:
                     return
-                time.sleep(DRAIN_SETTLE_SECONDS)
+                sleep_seconds = DRAIN_SETTLE_SECONDS
+                if deadline is not None:
+                    sleep_seconds = min(sleep_seconds, max(0.0, deadline - time.monotonic()))
+                time.sleep(sleep_seconds)
                 continue
             self.peak_foreign_active_requests = max(
                 self.peak_foreign_active_requests,
@@ -494,7 +622,10 @@ class SharedLlamaServerCoordinator:
                     if snapshot.live and snapshot.active_requests > 0:
                         self._record_quiesce_blocker(summary, "inflight", _read_json(snapshot.path), started)
                 next_wait_log = time.monotonic() + 5.0
-            time.sleep(self._poll_seconds)
+            sleep_seconds = self._poll_seconds
+            if deadline is not None:
+                sleep_seconds = min(sleep_seconds, max(0.0, deadline - time.monotonic()))
+            time.sleep(sleep_seconds)
 
     def _record_quiesce_blocker(self, summary, phase, owner, started):
         if owner is None:
@@ -562,6 +693,83 @@ _publisher_coordinator: SharedLlamaServerCoordinator | None = None
 _publisher_refcount = 0
 _publisher_atexit_registered = False
 _publisher_thread_suppression = threading.local()
+
+
+@contextlib.contextmanager
+def resident_gpu_compute_scope(
+    session_dir: Path,
+    *,
+    deadline: float | None = None,
+):
+    """Reserve compute beside a warm llama server without unloading it.
+
+    ``deadline`` is an absolute ``time.perf_counter()`` deadline for acquiring
+    the reservation and draining existing requests. It is capped by any
+    inherited candidate or GPU-stage deadline. With no deadline, waiting is
+    capped at ``RESIDENT_COMPUTE_WAIT_SECONDS``. The wrapped GPU operation
+    must enforce its own runtime budget.
+    """
+    resolved = Path(session_dir).expanduser().resolve()
+    coordinator = shared_llama_coordinator_for(resolved, base_url=None)
+    coordinator.register()
+    from exercise_motion_pkg.motion_scheduler import monotonic_deadline_from_perf_counter
+
+    inherited_deadline = _inherited_monotonic_deadline()
+    explicit_deadline = monotonic_deadline_from_perf_counter(deadline)
+    if explicit_deadline is not None and inherited_deadline is not None:
+        wait_deadline = min(explicit_deadline, inherited_deadline)
+    else:
+        wait_deadline = (
+            explicit_deadline
+            or inherited_deadline
+            or time.monotonic() + RESIDENT_COMPUTE_WAIT_SECONDS
+        )
+    lock_path = resolved / RESIDENT_COMPUTE_LOCK_FILE_NAME
+    lock = InterProcessFileLock(
+        lock_path,
+        stage="resident_gpu_compute",
+        timeout_seconds=max(0.0, wait_deadline - time.monotonic()),
+        stale_after_seconds=RESIDENT_COMPUTE_WAIT_SECONDS,
+        poll_interval_seconds=coordinator._poll_seconds,
+    )
+    with lock:
+        marker = resolved / RESIDENT_COMPUTE_INTENT_FILE_NAME
+        token = uuid.uuid4().hex
+        while True:
+            if time.monotonic() >= wait_deadline:
+                raise TimeoutError("Timed out waiting to reserve resident GPU compute.")
+            published = False
+            with coordinator._transition_lock(deadline=wait_deadline):
+                if not coordinator.stop_intent_live():
+                    existing = _read_json(marker)
+                    if not _resident_compute_owner_is_live(existing):
+                        _remove(marker)
+                    else:
+                        existing = None
+                    if existing is None:
+                        _write_json_atomic(marker, {
+                            "pid": os.getpid(),
+                            "processIdentity": process_identity(os.getpid()),
+                            "intentToken": token,
+                            "requestedAtUnixSeconds": time.time(),
+                        })
+                        published = True
+            if published:
+                break
+            time.sleep(min(coordinator._poll_seconds, max(0.0, wait_deadline - time.monotonic())))
+        try:
+            coordinator.drain_all_inflight(deadline=wait_deadline)
+            yield
+        finally:
+            with coordinator._transition_lock(deadline=time.monotonic() + 5.0):
+                existing = _read_json(marker)
+                if (
+                    existing is not None
+                    and existing.get("pid") == os.getpid()
+                    and existing.get("processIdentity") == process_identity(os.getpid())
+                    and existing.get("intentToken") == token
+                ):
+                    _remove(marker)
 
 
 def shared_llama_coordinator_for(

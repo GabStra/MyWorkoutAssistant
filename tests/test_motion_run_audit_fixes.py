@@ -257,11 +257,56 @@ def test_artifact_state_records_full_clip_cycle_selection_and_rebake():
             changed_endpoint_state,
             movement_payload=changed_endpoint,
         )
-
     from exercise_motion_pkg.artifact_state import validate_artifact_history
 
     with pytest.raises(ValueError, match="Invalid movement artifact transition"):
         validate_artifact_history([bake.FULL_CLIP_BAKE, bake.CYCLIC_REBAKE])
+
+
+def test_cycle_artifact_binds_local_selection_to_exact_native_source_interval():
+    from exercise_motion_pkg.artifact_state import cycle_selection_evidence
+
+    fps = 30.0
+    parent = _artifact_test_payload(
+        start_frame=62, end_frame=153, frame_count=92, loop_enabled=False)
+    parent["source"]["frameCount"] = 92
+    interval = {
+        "type": "detected_cycle",
+        "startFrame": 0,
+        "endFrame": 88,
+        "startTimeSec": 0.0,
+        "endTimeSec": 88 / fps,
+        "durationSec": 88 / fps,
+    }
+    cycle = _artifact_test_payload(
+        start_frame=62, end_frame=150, frame_count=89, loop_enabled=True)
+    cycle["source"]["frameCount"] = 92
+    evidence = cycle_selection_evidence(parent, interval)
+
+    assert evidence["cycleSelection"]["interval"] == interval
+    assert evidence["cycleSelection"]["sourceInterval"] == {
+        "type": "detected_cycle",
+        "startFrame": 62,
+        "endFrame": 150,
+        "startTimeSec": 62 / fps,
+        "endTimeSec": 150 / fps,
+        "durationSec": 88 / fps,
+    }
+    state = bake.artifact_state_for_baked_payload(
+        cycle,
+        contract={"completionMode": "return_to_start", "requiresReturnToStart": True},
+        selection_class=bake.CYCLE_SELECTION,
+        selection_evidence=evidence,
+    )
+    assert state["lineageComplete"] is True
+
+    changed = json.loads(json.dumps(cycle))
+    changed["frames"][-1]["sourceFrameIndex"] = 149
+    changed_state = json.loads(json.dumps(state))
+    from exercise_motion_pkg.artifact_state import baked_payload_identity
+    changed_state["selectionEvidence"]["cyclicRebake"] = baked_payload_identity(changed)
+    with pytest.raises(ValueError, match="interval does not match its selected-cycle evidence"):
+        bake.validate_artifact_state(changed_state, movement_payload=changed)
 
 
 def test_retained_cycle_fit_lineage_uses_materialized_frames_not_preflight_bounds(
@@ -1136,6 +1181,104 @@ def test_bounded_selection_identity_binds_source_parent_payload():
             source_parent_payload=parent_b,
         )
 
+
+def test_bounded_selection_maps_local_interval_to_native_parent_lineage():
+    from exercise_motion_pkg.artifact_state import (
+        BOUNDED_MOVEMENT_SELECTION,
+        bounded_movement_selection_evidence,
+        validate_artifact_state,
+    )
+
+    fps = 30.0
+    interval = {
+        "type": "exact_source_movement_instance",
+        "startFrame": 5,
+        "endFrame": 45,
+        "startTimeSec": 5 / fps,
+        "endTimeSec": 45 / fps,
+        "durationSec": 40 / fps,
+    }
+    # Parent preview time starts at zero, but its frame identities and native
+    # exposure times begin later in the source recording.
+    source_parent = _artifact_test_payload(
+        start_frame=100,
+        end_frame=159,
+        frame_count=60,
+        loop_enabled=False,
+    )
+    evidence = bounded_movement_selection_evidence(
+        interval,
+        source_parent_payload=source_parent,
+    )
+    assert evidence["interval"] == interval
+    source_interval = evidence["sourceInterval"]
+    assert source_interval["type"] == "exact_source_movement_instance"
+    assert (source_interval["startFrame"], source_interval["endFrame"]) == (105, 145)
+    assert source_interval["startTimeSec"] == pytest.approx(105 / fps)
+    assert source_interval["endTimeSec"] == pytest.approx(145 / fps)
+    assert source_interval["durationSec"] == pytest.approx(40 / fps)
+
+    selected_payload = _artifact_test_payload(
+        start_frame=105,
+        end_frame=145,
+        frame_count=41,
+        loop_enabled=False,
+    )
+    state = bake.artifact_state_for_baked_payload(
+        selected_payload,
+        contract={"completionMode": "distinct_end_state"},
+        selection_class=BOUNDED_MOVEMENT_SELECTION,
+        selection_evidence={"boundedMovementSelection": evidence},
+        source_parent_payload=source_parent,
+    )
+    selected_payload["artifactState"] = state
+    assert state["lineageComplete"] is True
+    validate_artifact_state(
+        state,
+        movement_payload=selected_payload,
+        source_parent_payload=source_parent,
+    )
+    from exercise_motion_pkg.controlled_motion import _fit_source_interval_selection
+    fit_selection = _fit_source_interval_selection(selected_payload)
+    assert fit_selection["available"] is True
+    assert fit_selection["interval"]["startFrame"] == 5
+    assert fit_selection["sourceInterval"]["startFrame"] == 105
+    assert fit_selection["sourceInterval"]["endFrame"] == 145
+
+    tampered_payload = json.loads(json.dumps(selected_payload))
+    tampered_payload["artifactState"]["selectionEvidence"][
+        "boundedMovementSelection"]["sourceInterval"]["startFrame"] += 1
+    tampered_fit_selection = _fit_source_interval_selection(tampered_payload)
+    assert tampered_fit_selection == {
+        "available": False,
+        "reason": "selected_source_interval_identity_invalid",
+    }
+
+    tampered_parent = json.loads(json.dumps(source_parent))
+    tampered_parent["frames"][5]["sourceTimeSec"] += 1 / fps
+    with pytest.raises(ValueError, match="source-parent identity does not match"):
+        validate_artifact_state(
+            state,
+            movement_payload=selected_payload,
+            source_parent_payload=tampered_parent,
+        )
+
+    from exercise_motion_pkg.artifact_state import _selection_id
+    tampered_state = json.loads(json.dumps(state))
+    tampered_selection = tampered_state["selectionEvidence"]["boundedMovementSelection"]
+    tampered_selection["sourceInterval"]["startFrame"] += 1
+    tampered_selection["selectionId"] = _selection_id({
+        "sourceParentContentSha256": tampered_selection["sourceParent"]["contentSha256"],
+        "interval": tampered_selection["interval"],
+        "sourceInterval": tampered_selection["sourceInterval"],
+    })
+    with pytest.raises(ValueError, match="source interval does not match its parent"):
+        validate_artifact_state(
+            tampered_state,
+            movement_payload=selected_payload,
+            source_parent_payload=source_parent,
+        )
+
 def test_final_review_window_must_match_selected_cycle_interval():
     from exercise_motion_pkg.artifact_state import cycle_selection_evidence
 
@@ -1630,19 +1773,21 @@ def test_final_fit_source_projection_constraint_uses_retained_camera_and_timesta
 
     names = (
         "left_shoulder", "right_shoulder", "left_hip", "right_hip",
-        "left_knee", "right_knee",
+        "left_knee", "right_knee", "pelvis",
     )
     frame_count = 7
-    times = np.arange(frame_count, dtype=float) / 10.
+    playback_times = np.arange(frame_count, dtype=float) / 10.
+    source_relative_times = np.arange(frame_count, dtype=float) / 29.97
+    source_relative_times[3] = source_relative_times[2]  # repeated prepared exposure
     source_origin = 17.0
     points = np.zeros((frame_count, len(names), 3), dtype=float)
     bases = np.asarray([
         [-.2, 1.4, 0.], [.2, 1.4, 0.], [-.15, 1., 0.], [.15, 1., 0.],
-        [-.15, .5, 0.], [.15, .5, 0.],
+        [-.15, .5, 0.], [.15, .5, 0.], [0., .95, 0.],
     ])
     source_frames = []
     fit_frames = []
-    for frame_index, timestamp in enumerate(times):
+    for frame_index, timestamp in enumerate(source_relative_times):
         points[frame_index] = bases + np.asarray([timestamp * .08, timestamp * .02, 0.])
         observed = {
             name: [float(points[frame_index, joint, 0] + .5),
@@ -1655,8 +1800,12 @@ def test_final_fit_source_projection_constraint_uses_retained_camera_and_timesta
             "jointConfidence": {name: 1. for name in names},
         })
         fit_frames.append({
-            "timeSec": float(timestamp),
+            "timeSec": float(playback_times[frame_index]),
             "sourceTimeSec": float(source_origin + timestamp),
+            "cameraPlacementReferenceJoints": {
+                name: points[frame_index, joint].tolist()
+                for joint, name in enumerate(names)
+            },
         })
     payload = {
         "fps": 10.,
@@ -1669,6 +1818,19 @@ def test_final_fit_source_projection_constraint_uses_retained_camera_and_timesta
                 "sourceTimeOriginSec": source_origin,
                 "frames": source_frames,
             },
+            "coordinateReference": {
+                "frames": [
+                    {
+                        "timeSec": float(playback_times[index]),
+                        "sourceTimeSec": float(source_origin + timestamp),
+                        "joints": {
+                            name: points[index, joint].tolist()
+                            for joint, name in enumerate(names)
+                        },
+                    }
+                    for index, timestamp in enumerate(source_relative_times)
+                ],
+            },
             "camera": {
                 "cameraRotation": np.eye(3).tolist(),
                 "cameraImageTransform": [1., 0., 0., 0., .5, .5],
@@ -1679,12 +1841,12 @@ def test_final_fit_source_projection_constraint_uses_retained_camera_and_timesta
     constraint = _prepare_source_projection_fit_constraints(
         payload, fit_frames, names, points, np.zeros((frame_count, len(names)), dtype=bool), 1.7,
     )
-    assert constraint["available"] is True
+    assert constraint["available"] is True, constraint
     assert constraint["observationCount"] == frame_count * len(names)
     assert np.max(np.abs(_source_projection_fit_rows(points, constraint))) < 1e-8
 
     moved = points.copy()
-    moved[3, names.index("left_shoulder"), 0] += .1
+    moved[4, names.index("left_shoulder"), 0] += .1
     assert np.linalg.norm(_source_projection_fit_rows(moved, constraint)) > .01
 
 

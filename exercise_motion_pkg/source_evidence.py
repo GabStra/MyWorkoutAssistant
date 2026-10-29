@@ -8,7 +8,8 @@ from pathlib import Path
 from typing import Any
 
 
-POLICY_VERSION = 3
+POLICY_VERSION = 14
+ALL_UNIFORM_SAMPLES = 'all_uniform_samples'
 MAX_TIMING_EVIDENCE_SAMPLE_GAP_SECONDS = 1.0
 MAX_OBSERVED_OBJECT_COUNT = 2_147_483_647
 
@@ -112,12 +113,28 @@ def temporal_observation_bins(
         for row in ordered_rows
         for item in row['sampleBins']
     ]
-    phase_ordered = all(
-        max(left['timestampSeconds'] for left in earlier['sampleBins'])
-        < min(right['timestampSeconds'] for right in later['sampleBins'])
-        for earlier, later in zip(ordered_rows, ordered_rows[1:])
-        if earlier['sampleBins'] and later['sampleBins']
-    ) if ordered else True
+    phase_times = [
+        sorted({item['timestampSeconds'] for item in row['sampleBins']})
+        for row in ordered_rows
+    ]
+    # A transition frame may legitimately support both neighboring actions.
+    # Still require every action to have at least one distinct time sample and
+    # require the centers of those samples to follow the approved order.
+    unique_phase_times = [
+        [timestamp for timestamp in times if sum(timestamp in other for other in phase_times) == 1]
+        for times in phase_times
+    ]
+    centers = [
+        sum(times) / len(times) if times else None
+        for times in phase_times
+    ]
+    phase_ordered = (
+        all(unique_phase_times)
+        and all(
+            isinstance(left, (int, float)) and isinstance(right, (int, float)) and left < right
+            for left, right in zip(centers, centers[1:])
+        )
+    ) if ordered and len(ordered_rows) > 1 else True
     if not phase_ordered and len(ordered_rows) > 1:
         errors.append('observation_order_not_established')
     timeline = sorted({
@@ -209,7 +226,15 @@ def source_requirements(contract: dict[str, Any], equipment: list[dict[str, Any]
     if not action:
         raise ValueError('Source review needs a defined action')
     requirements = [{'id': 'action', 'description': action, 'minimumDistinctFrameCount': 2}]
-    for index, phase in enumerate(contract.get('requiredPhases') or []):
+    phases = contract.get('requiredPhases') or []
+    context = contract.get('motionContext') or {}
+    definition = context.get('exerciseDefinition') or {}
+    if ((contract.get('completionMode') in {'stable_hold', 'active_travel'} or len(phases) >= 3)
+            and definition.get('definingAction')
+            and contract.get('requiredPhasesAuthority') not in {'structured_definition', 'trusted'}):
+        # Inferred sequence/entry checklists cannot add obligations to a reviewed action.
+        phases = definition.get('requiredPhases') or []
+    for index, phase in enumerate(phases):
         if isinstance(phase, str) and phase.strip().rstrip('.') != action.rstrip('.'):
             requirements.append({'id': f'phase_{index + 1}', 'description': phase.strip()})
     for index, qualifier in enumerate(contract.get('variantQualifiers') or []):
@@ -234,6 +259,114 @@ def source_requirements(contract: dict[str, Any], equipment: list[dict[str, Any]
         {'id': 'clean_interval', 'description': 'Uniformly sampled frames show exercise content or normal between-repetition transitions, without instruction gestures, unrelated exercise, setup or cleanup. A prescribed active hold is exercise content.'},
     ])
     return requirements
+
+
+def permits_cyclic_phase_order(contract: dict[str, Any] | None) -> bool:
+    """A return-to-start cycle may be cut at any point unless its start is prescribed."""
+    if not isinstance(contract, dict) or contract.get('completionMode') != 'return_to_start':
+        return False
+    if str(contract.get('movementType') or '').strip().casefold() != 'repetition':
+        return False
+    # Pose constraints and start/end labels can be generated advisory fields.
+    # Only explicit library/user/manual provenance can anchor the cut boundary.
+    explicit_authority = (
+        str(contract.get('authority') or '').casefold() == 'explicit'
+        or str(contract.get('source') or '').casefold()
+        in {'exercise_definition', 'user', 'manual', 'library'}
+    )
+    if not explicit_authority:
+        return True
+    if contract.get('startPoseConstraints'):
+        return False
+    if any(str(contract.get(key) or '').strip()
+           for key in ('validStartState', 'requiredStartPosture', 'startState')):
+        return False
+    topology = contract.get('movementTopology')
+    topology_start = topology.get('startState') if isinstance(topology, dict) else None
+    if isinstance(topology_start, dict):
+        label = str(topology_start.get('label') or '').strip().casefold()
+        if label and label != 'unspecified':
+            return False
+    return True
+
+
+def return_cycle_evidence_choices(phase_metrics: dict[str, Any] | None,
+                                  pose_reference: dict[str, Any] | None,
+                                  frames: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Bind a simple two-phase return cycle to verified pose extrema and source-frame IDs."""
+    if not isinstance(phase_metrics, dict) or not isinstance(pose_reference, dict):
+        return None
+    if (phase_metrics.get('required') is not True or phase_metrics.get('passed') is not True
+            or phase_metrics.get('hasCompleteMajorCycle') is not True
+            or phase_metrics.get('hasSingleMajorCycle') is not True
+            or not isinstance(phase_metrics.get('phaseSignalEvidence'), dict)
+            or phase_metrics['phaseSignalEvidence'].get('resolved') is not True):
+        return None
+    sequence = phase_metrics.get('majorPhaseSequence')
+    if sequence not in (['low', 'high', 'low'], ['high', 'low', 'high']):
+        return None
+    pose_frames = pose_reference.get('frames')
+    if (not isinstance(pose_frames, list) or len(pose_frames) < 3
+            or phase_metrics.get('sampleCount') != len(pose_frames)):
+        return None
+    timestamps = [frame.get('sourceTimeSec') if isinstance(frame, dict) else None
+                  for frame in pose_frames]
+    if any(not isinstance(value, (int, float)) or not math.isfinite(value) for value in timestamps):
+        return None
+    if any(right <= left for left, right in zip(timestamps, timestamps[1:])):
+        return None
+    extremum_key = 'maxFrameIndex' if sequence == ['low', 'high', 'low'] else 'minFrameIndex'
+    extremum_index = phase_metrics.get(extremum_key)
+    edge_margin = phase_metrics.get('edgeMarginFrameCount')
+    if (type(extremum_index) is not int or type(edge_margin) is not int
+            or extremum_index < edge_margin or extremum_index > len(pose_frames) - 1 - edge_margin):
+        return None
+    if not frames:
+        return None
+    available_frames = [frame for frame in frames if isinstance(frame, dict)
+                        and isinstance(frame.get('timestampSeconds'), (int, float))
+                        and math.isfinite(frame['timestampSeconds'])]
+    if not available_frames:
+        return None
+
+    boundary_tolerance = pose_reference.get('sourcePoseSampleBoundaryToleranceSeconds')
+    if not isinstance(boundary_tolerance, (int, float)) or not math.isfinite(boundary_tolerance):
+        gaps = [right - left for left, right in zip(timestamps, timestamps[1:])]
+        if not gaps:
+            return None
+        boundary_tolerance = min(gaps) / 2.0
+
+    def nearest_frame(pose_time: float) -> dict[str, Any] | None:
+        frame = min(available_frames, key=lambda frame: (
+            abs(float(frame['timestampSeconds']) - pose_time),
+            0 if frame.get('sampling') == 'motion' else 1,
+            str(frame.get('id') or ''),
+        ))
+        if abs(float(frame['timestampSeconds']) - pose_time) > float(boundary_tolerance):
+            return None
+        return frame
+
+    role_names = ('start', 'excursion', 'return')
+    role_indices = (0, extremum_index, len(pose_frames) - 1)
+    role_frames = {name: nearest_frame(float(timestamps[index]))
+                   for name, index in zip(role_names, role_indices)}
+    if any(frame is None for frame in role_frames.values()):
+        return None
+    role_ids = [str(role_frames[name].get('id') or '') for name in role_names]
+    role_times = [float(role_frames[name]['timestampSeconds']) for name in role_names]
+    if (any(not frame_id for frame_id in role_ids) or len(set(role_ids)) != 3
+            or not role_times[0] < role_times[1] < role_times[2]):
+        return None
+    return {
+        'choiceId': 'verified_return_cycle',
+        'sequence': list(sequence),
+        'roleFrameIds': dict(zip(role_names, role_ids)),
+        'roleTimes': dict(zip(role_names, role_times)),
+        'spanChoices': [
+            {'spanChoiceId': 'cycle_span_1', 'frameIds': [role_ids[0], role_ids[1]]},
+            {'spanChoiceId': 'cycle_span_2', 'frameIds': [role_ids[1], role_ids[2]]},
+        ],
+    }
 
 
 def evidence_frame_id_limit(requirement: dict[str, Any], requirements: list[dict[str, Any]],
@@ -261,7 +394,7 @@ def evidence_frame_id_limit(requirement: dict[str, Any], requirements: list[dict
 
 
 def evidence_response_token_budget(requirements: list[dict[str, Any]],
-                                   frames: list[dict[str, Any]]) -> int:
+                                   frames: list[dict[str, Any]], *, semantic_labels: bool = False) -> int:
     """Size the response allowance from the largest schema-valid compact reply."""
     if not requirements or not frames:
         return 256
@@ -273,7 +406,8 @@ def evidence_response_token_budget(requirements: list[dict[str, Any]],
             eligible_frames = [frame for frame in frames if frame.get('sampling') == 'uniform']
         longest_ids = sorted((str(frame['id']) for frame in eligible_frames), key=len, reverse=True)
         row = {
-            'requirementId': requirement['id'],
+            **({'requirement': requirement['description']} if semantic_labels else
+               {'requirementId': requirement['id']}),
             'verdict': 'supported',
             'evidenceFrameIds': longest_ids[:limit],
         }
@@ -286,12 +420,17 @@ def evidence_response_token_budget(requirements: list[dict[str, Any]],
     return max(256, len(maximum_json.encode('utf-8')) + 512)
 
 
-def evidence_schema(requirements: list[dict[str, Any]], frames: list[dict[str, Any]]) -> dict[str, Any]:
+def evidence_schema(requirements: list[dict[str, Any]], frames: list[dict[str, Any]], *,
+                    cycle_choices: dict[str, Any] | None = None,
+                    semantic_labels: bool = False) -> dict[str, Any]:
     observation_schemas = []
     for requirement in requirements:
         eligible_frames = frames
         if requirement.get('id') == 'clean_interval':
             eligible_frames = [frame for frame in frames if frame.get('sampling') == 'uniform']
+        elif requirement.get('id') == 'completion' and isinstance(cycle_choices, dict):
+            role_ids = set((cycle_choices.get('roleFrameIds') or {}).values())
+            eligible_frames = [frame for frame in frames if frame.get('id') in role_ids]
         properties = {
             'requirementId': {'type': 'string', 'enum': [requirement['id']]},
             'verdict': {'type': 'string', 'enum': ['supported', 'contradicted', 'unresolved']},
@@ -305,25 +444,72 @@ def evidence_schema(requirements: list[dict[str, Any]], frames: list[dict[str, A
             properties['observedObjectCount'] = {
                 'type': 'integer', 'minimum': 0, 'maximum': MAX_OBSERVED_OBJECT_COUNT,
             }
+        identity_field = 'requirement' if semantic_labels else 'requirementId'
+        if semantic_labels:
+            properties.pop('requirementId')
+            properties['requirement'] = {'type': 'string', 'enum': [requirement['description']]}
+            if requirement['id'] == 'clean_interval':
+                properties['evidenceFrameIds']['items']['enum'].append(ALL_UNIFORM_SAMPLES)
         observation_schemas.append({
             'type': 'object', 'additionalProperties': False,
-            'required': ['requirementId', 'verdict', 'evidenceFrameIds'],
+            'required': [identity_field, 'verdict', 'evidenceFrameIds'],
             'properties': properties,
         })
+    if semantic_labels:
+        # The same visible fact can satisfy a phase and a variant without
+        # asking twice; retain the strictest evidence bounds of both owners.
+        by_label = {}
+        for row in observation_schemas:
+            label = row['properties']['requirement']['enum'][0]
+            if label not in by_label:
+                by_label[label] = row
+                continue
+            existing = by_label[label]['properties']
+            evidence = existing['evidenceFrameIds']
+            other = row['properties']['evidenceFrameIds']
+            evidence['maxItems'] = min(evidence['maxItems'], other['maxItems'])
+            evidence['items']['enum'] = [value for value in evidence['items']['enum']
+                                         if value in other['items']['enum']]
+            if 'observedObjectCount' in row['properties']:
+                existing['observedObjectCount'] = row['properties']['observedObjectCount']
+        observation_schemas = list(by_label.values())
     return {'type': 'object', 'additionalProperties': False, 'required': ['observations'], 'properties': {
-        'observations': {'type': 'array', 'minItems': len(requirements), 'maxItems': len(requirements), 'items': {
+        'observations': {'type': 'array', 'minItems': len(observation_schemas), 'maxItems': len(observation_schemas), 'items': {
             'oneOf': observation_schemas,
         }},
     }}
 
 
-def evidence_prompt(requirements: list[dict[str, Any]], frames: list[dict[str, Any]]) -> str:
+def evidence_prompt(requirements: list[dict[str, Any]], frames: list[dict[str, Any]], *,
+                    allow_cyclic_phase_order: bool = False,
+                    cycle_choices: dict[str, Any] | None = None,
+                    semantic_labels: bool = False) -> str:
+    identity_instruction = ('For each supplied requirement description select supported, contradicted or unresolved. '
+                            'Requirement descriptions identify semantic claims, not their chronological positions. '
+                            if semantic_labels else
+                            'For each exact requirementId return supported, contradicted or unresolved. ')
+    display_requirements = ([{**{key: value for key, value in row.items() if key != 'id'},
+                             'kind': next((kind for kind in ('phase', 'variant', 'equipment')
+                                           if row['id'].startswith(kind + '_')), row['id'])}
+                             for row in requirements]
+                            if semantic_labels else requirements)
+    if semantic_labels:
+        unique = {}
+        for row in display_requirements:
+            label = row['description']
+            if label not in unique:
+                unique[label] = row
+            else:
+                for bound in ('minimumDistinctFrameCount', 'minimumObjectCount'):
+                    if bound in row:
+                        unique[label][bound] = max(row[bound], unique[label].get(bound, 0))
+        display_requirements = list(unique.values())
     return (
         'Inspect the supplied source images directly. Return structured source evidence, never an exercise name '
         'or another reviewer\'s description. Requirements below are exhaustive; do not invent start height, '
         'stance, catch or other variant requirements. Equipment roles specify required use and object count. '
         'A support surface requires actual body contact; background equipment does not establish use. '
-        'For each exact requirementId return supported, contradicted or unresolved and only the minimum exact '
+        + identity_instruction + 'Cite only the minimum exact '
         'evidenceFrameIds needed to establish it. Reuse the same frame ID for overlapping roles instead of '
         'listing redundant examples. '
         'For equipment requirements also return observedObjectCount as an integer count of the required '
@@ -335,24 +521,77 @@ def evidence_prompt(requirements: list[dict[str, Any]], frames: list[dict[str, A
         'Action and completion require at least the minimumDistinctFrameCount shown in that requirement, at '
         'distinct chronological source times, not one pose. A return_to_start completion needs evidence of '
         'meaningful start, action excursion and return; do not invent exact event timestamps. Cite no more than '
-        'that minimum plus one sample for each separately required phase. phase_ requirements '
+        'that minimum plus one sample for each separately required phase. The supplied action phases '
         'are ordered: cite no more than two samples for each phase from the same execution, '
-        'not a mixture of different repetitions. Clean interval evidence must cover all supplied uniform frames. '
-        'For clean_interval, cite every uniform frame ID and no motion frame IDs. '
-        'Images are supplied in uniform order followed by motion order; image numbers in the inventory are local '
+        'not a mixture of different repetitions. '
+        + ('For this return-to-start cycle, the selected interval may begin mid-cycle: accept exactly one cyclic '
+           'rotation of the listed phase order when every phase has a distinct, non-overlapping chronological '
+           'span within the same complete cycle. Interpret the defining action cyclically too: its first '
+           'verb does not prescribe the first frame. All required actions and the return must still be '
+           'visible. Explicit start/end requirements and variant qualifiers remain mandatory; rotation '
+           'does not waive them. Do not accept arbitrary reordering. '
+           if allow_cyclic_phase_order else '')
+        + ('For completion, a separate verified source-pose cycle is available. Cite every supplied '
+           'role-bound frame ID for start, interior excursion and return; if the images do not confirm '
+           'that complete cycle, mark completion unresolved. For phase requirements, one bounded correction '
+           'may assign each phase only to one of the code-provided cycle spans. '
+           if isinstance(cycle_choices, dict) else '')
+        + (('For the clean-interval requirement, select evidenceFrameIds ["all_uniform_samples"] only '
+            'when every supplied uniform sample was inspected and supports the verdict. Code expands '
+            'that choice to the exact sampled frame IDs. A contradiction must cite the specific offending '
+            'uniform frame IDs; uncertain visibility remains unresolved. '
+            if semantic_labels else 'Clean interval evidence must cover all supplied uniform frames. '
+            'For clean_interval, cite every uniform frame ID and no motion frame IDs. ')
+           if any(row['id'] == 'clean_interval' for row in requirements) else '')
+        + 'Images are supplied in uniform order followed by motion order; image numbers in the inventory are local '
         'to each sampling group. tileNumber is the number printed in the image. '
         'Never invent timestamps or frame IDs. Return only JSON matching the supplied schema.\n'
-        'Requirements: ' + json.dumps(requirements) + '\nFrame inventory: ' + json.dumps(frames)
-        + '\nSchema: ' + json.dumps(evidence_schema(requirements, frames))
+        'Requirements: ' + json.dumps(display_requirements) + '\nFrame inventory: ' + json.dumps(frames)
+        + '\nSchema: ' + json.dumps(evidence_schema(requirements, frames, cycle_choices=cycle_choices,
+                                                   semantic_labels=semantic_labels))
     )
 
 
+def resolve_semantic_evidence(payload: Any, requirements: list[dict[str, Any]],
+                              frames: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Keep logical requirement identities inside code for every completion mode."""
+    by_label = {}
+    for row in requirements:
+        by_label.setdefault(row['description'], []).append(row['id'])
+    if any(sum(rid.startswith('phase_') for rid in ids) > 1 for ids in by_label.values()):
+        # Repeated occurrences of the same action need separate temporal context.
+        return {'observations': []}
+    if not isinstance(payload, dict) or set(payload) != {'observations'}:
+        return {'observations': []}
+    observations = payload['observations']
+    if not isinstance(observations, list):
+        return {'observations': []}
+    normalized = []
+    for row in observations:
+        if (not isinstance(row, dict) or set(row) - {'requirement', 'verdict', 'evidenceFrameIds', 'observedObjectCount'}
+                or not {'requirement', 'verdict', 'evidenceFrameIds'}.issubset(row)
+                or not isinstance(row['requirement'], str) or row['requirement'] not in by_label):
+            return {'observations': []}
+        if isinstance(row['evidenceFrameIds'], list) and ALL_UNIFORM_SAMPLES in row['evidenceFrameIds']:
+            if (by_label[row['requirement']] != ['clean_interval'] or row['verdict'] != 'supported'
+                    or row['evidenceFrameIds'] != [ALL_UNIFORM_SAMPLES] or not frames):
+                return {'observations': []}
+            row = {**row, 'evidenceFrameIds': [frame['id'] for frame in frames
+                                             if frame.get('sampling') == 'uniform']}
+        normalized.extend({**{key: value for key, value in row.items() if key != 'requirement'},
+                           'requirementId': rid} for rid in by_label[row['requirement']])
+    return {'observations': normalized}
+
+
 def aggregate_evidence(payload: Any, requirements: list[dict[str, Any]],
-                       frames: list[dict[str, Any]]) -> dict[str, Any]:
+                       frames: list[dict[str, Any]], *,
+                       allow_cyclic_phase_order: bool = False,
+                       cycle_choices: dict[str, Any] | None = None) -> dict[str, Any]:
     expected = {r['id'] for r in requirements}
     available = {f['id']: f for f in frames}
     observations = payload.get('observations') if isinstance(payload, dict) else None
     errors = []
+    correction_ids = set()
     resolved = {}
     if not isinstance(payload, dict) or set(payload) != {'observations'} or not isinstance(observations, list):
         errors.append('invalid_observation_schema')
@@ -395,11 +634,20 @@ def aggregate_evidence(payload: Any, requirements: list[dict[str, Any]],
             minimum_distinct = max(2, int(requirement.get('minimumDistinctFrameCount', 2)))
             if len({available[i]['timestampSeconds'] for i in ids}) < minimum_distinct:
                 errors.append('sequence_evidence_missing')
+                if rid == 'completion':
+                    correction_ids.add(rid)
+                continue
+        if rid == 'completion' and verdict == 'supported' and isinstance(cycle_choices, dict):
+            role_ids = set((cycle_choices.get('roleFrameIds') or {}).values())
+            if not role_ids.issubset(ids):
+                errors.append('cycle_role_evidence_missing')
+                correction_ids.add(rid)
                 continue
         if rid == 'clean_interval' and verdict == 'supported':
             uniform_ids = {f['id'] for f in frames if f['sampling'] == 'uniform'}
             if not uniform_ids.issubset(ids):
                 errors.append('uniform_coverage_missing')
+                correction_ids.add(rid)
                 continue
         if rid == 'clean_interval' and any(available[i].get('sampling') != 'uniform' for i in ids):
             errors.append('clean_interval_motion_frame_not_allowed')
@@ -408,7 +656,8 @@ def aggregate_evidence(payload: Any, requirements: list[dict[str, Any]],
             errors.append('too_many_frame_references')
             continue
         resolved[rid] = observation
-    previous_span = None
+    failed_phase_ids = set()
+    phase_spans = []
     for requirement in requirements:
         rid = requirement['id']
         observation = resolved.get(rid)
@@ -416,13 +665,163 @@ def aggregate_evidence(payload: Any, requirements: list[dict[str, Any]],
             continue
         times = [available[i]['timestampSeconds'] for i in observation['evidenceFrameIds']]
         span = min(times), max(times)
-        if previous_span is not None and (span[0] < previous_span[1] or span[0] <= previous_span[0]):
+        phase_spans.append((rid, int(rid.removeprefix('phase_')), span))
+    if len(phase_spans) == sum(r['id'].startswith('phase_') for r in requirements) and len(phase_spans) > 1:
+        chronological = sorted(phase_spans, key=lambda entry: (entry[2][0], entry[2][1]))
+        no_overlap = all(left[2][1] <= right[2][0]
+                         for left, right in zip(chronological, chronological[1:]))
+        indices = [entry[1] for entry in chronological]
+        ordered = indices == sorted(indices)
+        if allow_cyclic_phase_order:
+            # A valid cut may rotate the prescribed order once, but it cannot
+            # skip, duplicate, or arbitrarily permute phase identities.
+            expected_indices = [int(r['id'].removeprefix('phase_'))
+                                for r in requirements if r['id'].startswith('phase_')]
+            ordered = any(indices == expected_indices[offset:] + expected_indices[:offset]
+                          for offset in range(len(expected_indices)))
+        if not no_overlap or not ordered:
             errors.append('phase_order_not_established')
-        previous_span = span
-    unresolved = sorted(expected - resolved.keys() | {k for k, v in resolved.items() if v['verdict'] == 'unresolved'})
+            failed_phase_ids.update(entry[0] for entry in phase_spans)
+    correction_ids.update(failed_phase_ids)
+    correction_ids.update(
+        rid for rid, observation in resolved.items()
+        if (rid == 'completion' or rid.startswith('phase_')) and observation['verdict'] == 'unresolved'
+    )
+    unresolved = sorted(expected - resolved.keys() | {k for k, v in resolved.items() if v['verdict'] == 'unresolved'}
+                        | failed_phase_ids)
     contradicted = sorted(k for k, v in resolved.items() if v['verdict'] == 'contradicted')
     # A malformed reply cannot supply a conclusive rejection either.
     status = 'incomplete' if errors or unresolved else 'rejected' if contradicted else 'passed'
     return {'passed': status == 'passed', 'reviewStatus': status, 'errors': errors,
             'unresolvedRequirementIds': unresolved, 'contradictedRequirementIds': contradicted,
+            'correctionRequirementIds': sorted(correction_ids),
             'observations': list(resolved.values())}
+
+
+_INTERVAL_ACTION_FIELDS = ('earlier_interval_action', 'later_interval_action')
+
+
+def cycle_semantic_question(requirements: list[dict[str, Any]], frames: list[dict[str, Any]],
+                            *, first_role_image: int) -> tuple[str, dict[str, Any]]:
+    """Ask for observed actions, never a mapping between numbered phase namespaces."""
+    phases = [row for row in requirements if row['id'].startswith('phase_')]
+    labels = [row['description'] for row in phases]
+    if len(labels) != 2 or len(set(labels)) != 2 or 'unresolved' in labels:
+        raise ValueError('A measured two-phase cycle needs two distinct action descriptions')
+    schema = {'type': 'object', 'additionalProperties': False,
+              'required': list(_INTERVAL_ACTION_FIELDS),
+              'properties': {field: {'type': 'string', 'enum': [*labels, 'unresolved']}
+                             for field in _INTERVAL_ACTION_FIELDS}}
+    prompt = (
+        f'The three supplied images (attachments {first_role_image}, {first_role_image + 1}, '
+        f'{first_role_image + 2}) are chronological source frames: start, measured interior '
+        'excursion, return. For each interval select the action visibly occurring between its '
+        'endpoint images. earlier_interval_action means start to excursion; '
+        'later_interval_action means excursion to return. Choose the action description from '
+        'the supplied choices, not its order in the definition. Do not assume the clip begins '
+        'standing. Use unresolved if the action is not visually established. Code independently '
+        'verified cycle timing and return; do not recalculate completeness or output any numeric '
+        'references. Choices: ' + json.dumps([*labels, 'unresolved'])
+        + '\nOutput schema: ' + json.dumps(schema)
+    )
+    return prompt, schema
+
+
+def resolve_cycle_semantics(payload: Any, requirements: list[dict[str, Any]],
+                            frames: list[dict[str, Any]], cycle_choices: dict[str, Any]) -> dict[str, Any]:
+    """Bind semantic selections to measured spans and derive completion in code."""
+    semantic = [row for row in requirements if row['id'] != 'completion'
+                and not row['id'].startswith('phase_')]
+    expected = set(_INTERVAL_ACTION_FIELDS) | ({'observations'} if semantic else set())
+    if not isinstance(payload, dict) or set(payload) != expected:
+        return {'observations': []}
+    rows = payload.get('observations', [])
+    if semantic and aggregate_evidence({'observations': rows}, semantic,
+            [frame for frame in frames if frame['sampling'] == 'uniform'])['errors']:
+        return {'observations': []}
+    phases = [row for row in requirements if row['id'].startswith('phase_')]
+    by_label = {row['description']: row['id'] for row in phases}
+    if len(phases) != 2 or len(by_label) != 2 or 'unresolved' in by_label:
+        return {'observations': []}
+    selections = [payload.get(field) for field in _INTERVAL_ACTION_FIELDS]
+    if any(not isinstance(label, str) or label not in {*by_label, 'unresolved'} for label in selections):
+        return {'observations': []}
+    spans = cycle_choices.get('spanChoices', [])
+    role_ids = cycle_choices.get('roleFrameIds', {})
+    if (len(spans) != 2 or set(role_ids) != {'start', 'excursion', 'return'}
+            or any(not isinstance(span, dict) or not isinstance(span.get('frameIds'), list)
+                   or len(span['frameIds']) != 2 for span in spans)):
+        return {'observations': []}
+    resolved = len(set(selections)) == 2 and set(selections) == set(by_label)
+    result = list(rows)
+    if resolved:
+        result.extend({'requirementId': by_label[label], 'verdict': 'supported',
+                       'evidenceFrameIds': list(span['frameIds'])}
+                      for label, span in zip(selections, spans))
+    else:
+        result.extend({'requirementId': phase['id'], 'verdict': 'unresolved', 'evidenceFrameIds': []}
+                      for phase in phases)
+    if any(row['id'] == 'completion' for row in requirements):
+        result.append({'requirementId': 'completion',
+                       'verdict': 'supported' if resolved else 'unresolved',
+                       'evidenceFrameIds': [role_ids[key] for key in ('start', 'excursion', 'return')]
+                       if resolved else []})
+    return {'observations': result}
+
+
+def correct_incomplete_evidence(payload: Any, requirements: list[dict[str, Any]],
+                                frames: list[dict[str, Any]],
+                                request_correction: Any, *,
+                                allow_cyclic_phase_order: bool = False,
+                                cycle_choices: dict[str, Any] | None = None) -> tuple[Any, dict[str, Any]]:
+    """Make one targeted follow-up for incomplete temporal evidence."""
+    initial = aggregate_evidence(payload, requirements, frames,
+                                 allow_cyclic_phase_order=allow_cyclic_phase_order,
+                                 cycle_choices=cycle_choices)
+    correction_ids = initial['correctionRequirementIds']
+    correctable_errors = {'sequence_evidence_missing', 'phase_order_not_established',
+                          'cycle_role_evidence_missing', 'uniform_coverage_missing'}
+    if not correction_ids or any(error not in correctable_errors for error in initial['errors']):
+        return payload, {'attempted': False, 'requirementIds': [], 'before': initial,
+                         'after': initial}
+    by_id = {requirement['id']: requirement for requirement in requirements}
+    targeted = [by_id[rid] for rid in correction_ids if rid in by_id]
+    if not targeted:
+        return payload, {'attempted': False, 'requirementIds': [], 'before': initial,
+                         'after': initial}
+    use_cycle_choices = isinstance(cycle_choices, dict) and any(
+        row['id'].startswith('phase_') or row['id'] == 'completion' for row in targeted)
+    if use_cycle_choices:
+        targeted = [row for row in requirements
+                    if row['id'].startswith('phase_') or row['id'] == 'completion']
+        prompt, correction_schema = cycle_semantic_question(targeted, frames, first_role_image=1)
+    else:
+        prompt = evidence_prompt(targeted, frames,
+                                 allow_cyclic_phase_order=allow_cyclic_phase_order,
+                                 semantic_labels=True)
+        prompt += ('\nMake one bounded correction for only these requirements. Prior validator errors: '
+                   + json.dumps(initial['errors']))
+        correction_schema = evidence_schema(targeted, frames, semantic_labels=True)
+    targeted_ids = {row['id'] for row in targeted}
+    corrected_payload = request_correction(targeted, frames, prompt, correction_schema)
+    if use_cycle_choices:
+        corrected_payload = resolve_cycle_semantics(corrected_payload, targeted, frames, cycle_choices)
+    else:
+        corrected_payload = resolve_semantic_evidence(corrected_payload, targeted, frames)
+    corrected = aggregate_evidence(corrected_payload, targeted, frames,
+                                   allow_cyclic_phase_order=allow_cyclic_phase_order,
+                                   cycle_choices=cycle_choices)
+    if corrected['reviewStatus'] == 'incomplete':
+        # Do not salvage rows from a malformed or partial follow-up: doing so
+        # could turn an invalid structured response into a passing merged one.
+        return payload, {'attempted': True, 'requirementIds': [r['id'] for r in targeted],
+                         'before': initial, 'correction': corrected, 'after': initial}
+    retained = [row for row in (payload.get('observations', []) if isinstance(payload, dict) else [])
+                if isinstance(row, dict) and row.get('requirementId') not in targeted_ids]
+    replacements = corrected_payload.get('observations', []) if isinstance(corrected_payload, dict) else []
+    merged = {'observations': retained + [row for row in replacements if isinstance(row, dict)]}
+    after = aggregate_evidence(merged, requirements, frames,
+                               allow_cyclic_phase_order=allow_cyclic_phase_order,
+                               cycle_choices=cycle_choices)
+    return merged, {'attempted': True, 'requirementIds': [r['id'] for r in targeted],
+                    'before': initial, 'correction': corrected, 'after': after}

@@ -169,7 +169,7 @@ def call_llama_cpp_for_duration_estimate(
                     "temperature": 0.0,
                     "max_tokens": 512,
                     "response_format": {"type": "json_object"},
-                    "reasoning_format": "none",
+                    "reasoning_format": "deepseek",
                     "chat_template_kwargs": {"enable_thinking": False},
                 },
                 timeout=request_timeout_seconds,

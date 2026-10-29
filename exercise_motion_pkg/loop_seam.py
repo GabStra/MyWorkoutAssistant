@@ -22,18 +22,33 @@ def seam_errors(points):
     return step, excess, np.stack((step - incoming, outgoing - step))
 
 
-def seam_quality_metrics(points, *, fps, scale):
-    """Shared stored-sample restart limits for fitting and final playback."""
+def seam_quality_metrics(points, *, fps, scale, rendered_velocity_jump=None,
+                         rendered_velocity_limit=None):
+    """Keep sample proxies for ranking; use rendered derivatives for playback."""
     step, excess, increments = seam_errors(points)
     step_excess = float(np.max(excess))
     velocity = float(np.max(np.linalg.norm(increments, axis=-1))) * fps
     step_limit = MAX_STEP_EXCESS_BODY_RATIO * scale
     velocity_limit = MAX_VELOCITY_MISMATCH_BODY_RATIO * scale
+    proxy_continuous = step_excess < step_limit and velocity < velocity_limit
+    if rendered_velocity_limit is None:
+        rendered_velocity_limit = .001 * scale
+    seam_continuous = (
+        step_excess < step_limit
+        and (rendered_velocity_jump < rendered_velocity_limit
+             if rendered_velocity_jump is not None else velocity < velocity_limit)
+    )
     return {
         'seamPositionJumpMeters': float(np.max(np.linalg.norm(step, axis=-1))),
         'seamStepExcessMeters': step_excess,
         'seamStepExcessLimitMeters': float(step_limit),
         'seamVelocityMismatchMetersPerSecond': velocity,
         'seamVelocityMismatchLimitMetersPerSecond': float(velocity_limit),
-        'seamContinuous': bool(step_excess < step_limit and velocity < velocity_limit),
+        'seamProxyContinuous': bool(proxy_continuous),
+        'seamRenderedVelocityJumpMetersPerSecond': (
+            None if rendered_velocity_jump is None else float(rendered_velocity_jump)),
+        'seamRenderedVelocityJumpLimitMetersPerSecond': float(rendered_velocity_limit),
+        'seamVerdictSource': 'rendered_interpolation' if rendered_velocity_jump is not None
+        else 'stored_sample_proxy',
+        'seamContinuous': bool(seam_continuous),
     }

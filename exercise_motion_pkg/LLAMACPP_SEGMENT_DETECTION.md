@@ -8,7 +8,7 @@ The local llama.cpp defaults are:
 
 - Model: `C:\Users\gabri\Downloads\Qwen3.5-9B-UD-Q4_K_XL.gguf`
 - Vision projector: `C:\Users\gabri\Downloads\mmproj-BF16(6).gguf`
-- Server: `C:\Users\gabri\Documents\llama.cpp\build-master\bin\Release\llama-server.exe`
+- Server: `C:\llama.cpp\build-master\bin\Release\llama-server.exe`
 
 Text-only requests use the model without the projector. Image and video-frame
 requests use the same model with its matching projector. Keep both files

@@ -36,7 +36,7 @@ def test_service_overlaps_cpu_preparation_with_next_gpu_phase_and_isolates_logs(
     gpu_active = []
     reviews = []
 
-    def execute(request, *, render_executor, accelerator_phase):
+    def execute(request, *, render_executor, accelerator_phase, on_progress=None):
         name = request['waveId']
         with accelerator_phase(name, 'source_and_generation'):
             assert not gpu_active
@@ -753,6 +753,144 @@ def test_queue_service_exits_after_bounded_idle_timeout(tmp_path: Path):
     assert state["processIdentity"] is not None
 
 
+def test_service_persists_thread_stacks_after_an_advertised_operation_deadline(
+    tmp_path: Path, monkeypatch,
+):
+    from exercise_motion_pkg import staged_wave_service as service
+
+    queue = tmp_path / "queue"
+    requests = queue / "requests"
+    requests.mkdir(parents=True)
+    (requests / "deadline.json").write_text(json.dumps({
+        "requestId": "deadline",
+        "runId": "run-deadline",
+        "waveId": "run-deadline-wave-0001",
+    }), encoding="utf-8")
+    entered = threading.Event()
+    release = threading.Event()
+
+    def block_inside_deadlined_phase(request, *, render_executor, accelerator_phase, on_progress=None):
+        with accelerator_phase(
+            request["waveId"], "source_validation", deadline=time.perf_counter() + 0.05,
+        ):
+            entered.set()
+            release.wait(3)
+        return {}
+
+    monkeypatch.setattr(service, "_execute_wave_request", block_inside_deadlined_phase)
+    monkeypatch.setattr(service, "STALLED_OPERATION_GRACE_SECONDS", 0.0)
+    result = {}
+    worker = threading.Thread(target=lambda: result.setdefault(
+        "processed",
+        run_staged_wave_service(
+            queue, poll_interval_seconds=0.01, idle_timeout_seconds=0.05,
+        ),
+    ))
+    worker.start()
+    assert entered.wait(2)
+    state_path = queue / "worker_state.json"
+    diagnostic = None
+    deadline = time.monotonic() + 4
+    while time.monotonic() < deadline:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        if state.get("stalledOperation", {}).get("diagnosticPath"):
+            diagnostic = Path(state["stalledOperation"]["diagnosticPath"])
+            break
+        time.sleep(0.02)
+    assert diagnostic is not None and diagnostic.is_file()
+    captured = json.loads(diagnostic.read_text(encoding="utf-8"))
+    assert captured["requestId"] == "deadline"
+    assert captured["phase"] == "source_validation"
+    assert any("block_inside_deadlined_phase" in "".join(thread["stack"]) for thread in captured["threads"])
+
+    release.set()
+    worker.join(timeout=3)
+    assert not worker.is_alive()
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["status"] == "stopped"
+    assert state["activeRequests"] == []
+    assert "stalledOperation" not in state
+
+
+def test_service_supervises_split_mode_source_checkpoint_without_accelerator_phase(
+    tmp_path: Path, monkeypatch,
+):
+    """The source call in split-GVHMR mode is outside accelerator_phase."""
+    from exercise_motion_pkg import staged_wave_service as service
+
+    queue = tmp_path / "queue"
+    requests = queue / "requests"
+    requests.mkdir(parents=True)
+    checkpoint_path = tmp_path / "staged_wave_checkpoint.json"
+    checkpoint_bytes = json.dumps({
+        "stage": "source_validation",
+        "items": [{
+            "exerciseName": "Retained exercise",
+            "sourceActivity": {
+                "operation": "preparing and validating source video",
+                "videoId": "retained-video",
+                "candidateKey": "retained-exercise:retained-candidate",
+                "threadId": 4242,
+                "operationDeadlineEpoch": time.time() - 0.2,
+            },
+        }],
+    }).encode("utf-8")
+    checkpoint_path.write_bytes(checkpoint_bytes)
+    (requests / "source-hang.json").write_text(json.dumps({
+        "requestId": "source-hang",
+        "runId": "source-hang-run",
+        "waveId": "source-hang-wave-0001",
+        "checkpointPath": str(checkpoint_path),
+    }), encoding="utf-8")
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocked_source_call(request, *, render_executor, accelerator_phase, on_progress=None):
+        # Deliberately make no accelerator_phase call: this reproduces the
+        # split-mode source path that escaped phase-only supervision.
+        entered.set()
+        release.wait(3)
+        return {}
+
+    monkeypatch.setattr(service, "_execute_wave_request", blocked_source_call)
+    monkeypatch.setattr(service, "STALLED_OPERATION_GRACE_SECONDS", 0.0)
+    result = {}
+    worker = threading.Thread(target=lambda: result.setdefault(
+        "processed",
+        run_staged_wave_service(
+            queue, poll_interval_seconds=0.01, idle_timeout_seconds=0.05,
+        ),
+    ))
+    worker.start()
+    assert entered.wait(2)
+    state_path = queue / "worker_state.json"
+    diagnostic = None
+    deadline = time.monotonic() + 4
+    while time.monotonic() < deadline:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        if state.get("stalledOperation", {}).get("diagnosticPath"):
+            diagnostic = Path(state["stalledOperation"]["diagnosticPath"])
+            break
+        time.sleep(0.02)
+    assert diagnostic is not None and diagnostic.is_file()
+    captured = json.loads(diagnostic.read_text(encoding="utf-8"))
+    assert captured["operationDeadlineEpoch"] == pytest.approx(
+        json.loads(checkpoint_bytes)["items"][0]["sourceActivity"]["operationDeadlineEpoch"]
+    )
+    assert captured["sourceActivities"][0]["videoId"] == "retained-video"
+    assert captured["sourceActivities"][0]["candidateKey"] == "retained-exercise:retained-candidate"
+    assert captured["sourceActivities"][0]["threadId"] == 4242
+    assert any("blocked_source_call" in "".join(thread["stack"]) for thread in captured["threads"])
+
+    release.set()
+    worker.join(timeout=3)
+    assert not worker.is_alive()
+    assert checkpoint_path.read_bytes() == checkpoint_bytes
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["activeRequests"] == []
+    assert "stalledOperation" not in state
+
+
 def test_queue_service_drops_requests_marked_cancelled_by_the_supervisor(tmp_path: Path):
     queue_root = tmp_path / "queue"
     requests = queue_root / "requests"
@@ -966,3 +1104,90 @@ def test_gpu_gate_preserves_candidate_deadline_while_queued():
                 pytest.fail("Expired candidate acquired the GPU")
         assert gate.users == 1
         assert gate.review_waiters == 0
+
+
+def test_gpu_gate_allows_only_explicit_distinct_gpu_lanes_to_overlap():
+    from concurrent.futures import ThreadPoolExecutor
+    from exercise_motion_pkg.staged_wave_service import WaveGpuGate
+
+    gate = WaveGpuGate()
+    barrier = threading.Barrier(2, timeout=3)
+
+    def run(lane):
+        with gate.phase("wave", lane, gpu_lane=lane):
+            barrier.wait()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        llama = executor.submit(run, "llama")
+        reconstruction = executor.submit(run, "reconstruction")
+        llama.result(timeout=4)
+        reconstruction.result(timeout=4)
+
+
+def test_gpu_gate_global_phase_remains_exclusive_with_named_lanes():
+    from concurrent.futures import ThreadPoolExecutor
+    from exercise_motion_pkg.staged_wave_service import WaveGpuGate
+
+    gate = WaveGpuGate()
+    attempted = threading.Event()
+    acquired = threading.Event()
+
+    def named_lane():
+        attempted.set()
+        with gate.phase("split", "reconstruction", gpu_lane="reconstruction"):
+            acquired.set()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with gate.phase("legacy", "whole_wave"):
+            job = executor.submit(named_lane)
+            assert attempted.wait(2)
+            assert not acquired.wait(0.05)
+        job.result(timeout=3)
+    assert acquired.is_set()
+
+    attempted.clear()
+    acquired.clear()
+
+    def global_lane():
+        attempted.set()
+        with gate.phase("legacy-next", "whole_wave"):
+            acquired.set()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with gate.phase("split", "reconstruction", gpu_lane="reconstruction"):
+            job = executor.submit(global_lane)
+            assert attempted.wait(2)
+            assert not acquired.wait(0.05)
+        job.result(timeout=3)
+    assert acquired.is_set()
+
+
+def test_gpu_gate_keeps_final_review_priority_within_its_lane():
+    from concurrent.futures import ThreadPoolExecutor
+    from exercise_motion_pkg.staged_wave_service import WaveGpuGate
+
+    gate = WaveGpuGate()
+    order = []
+
+    def run(stage):
+        with gate.phase("next", stage, gpu_lane="llama"):
+            order.append(stage)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        with gate.phase("current", "source_and_generation", gpu_lane="llama"):
+            source = executor.submit(run, "source_and_generation")
+            with gate.condition:
+                assert gate.condition.wait_for(
+                    lambda: gate._lanes["llama"]["users"] == 1
+                    and gate._lanes["llama"]["review_waiters"] == 0,
+                    timeout=2,
+                )
+            review = executor.submit(run, "final_review")
+            with gate.condition:
+                assert gate.condition.wait_for(
+                    lambda: gate._lanes["llama"]["review_waiters"] == 1,
+                    timeout=2,
+                )
+        review.result(timeout=3)
+        source.result(timeout=3)
+    assert order == ["final_review", "source_and_generation"]

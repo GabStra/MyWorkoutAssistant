@@ -198,6 +198,27 @@ def test_unknown_support_blocks_instead_of_inventing_contacts():
     assert validate_support_geometry(current)['rejectionReasons'] == ['supported_body_evidence_unresolved']
 
 
+def test_unresolved_source_frame_indexes_keep_empty_anchor_tracks_sized():
+    from exercise_motion_pkg.support_geometry import support_contact_masks
+
+    evidence = {
+        '_fitFrameStateIndices': [-1, -1, -1],
+        'footPatchEvidence': {
+            'available': True,
+            'feet': {'left': {'states': []}},
+        },
+    }
+
+    masks, anchor_ids = support_contact_masks(
+        evidence, ['left_ankle'], 3, frame_positions=[0., 1., 2.],
+    )
+
+    assert masks.shape == (3, 1)
+    assert not masks.any()
+    assert anchor_ids.shape == (3, 1)
+    assert all(value is None for value in anchor_ids.flat)
+
+
 def test_incomplete_confirmed_support_cannot_silently_pass():
     for value in ([], ['missing_joint']):
         current = supported_payload()
@@ -405,6 +426,44 @@ def test_material_shoe_orientation_accepts_source_neutral_pitch():
     assert validate_supported_shoe_orientation(payload)['passed']
 
 
+def test_dense_shoe_orientation_checks_interpolated_full_sole_roll():
+    from exercise_motion_pkg.support_geometry import validate_supported_shoe_orientation
+
+    names = ['left_knee', 'left_ankle', 'left_foot']
+    frames = [{
+        'joints': {'left_knee': [0., 1., 0.], 'left_ankle': [0., 0., 0.],
+                   'left_foot': [.2, 0., 0.]},
+        'boneSides': {'left_ankle->left_foot': [0., 0., 1.]},
+    } for _ in range(2)]
+    support = {'required': True, 'status': 'confirmed',
+        'stationaryJoints': ['left_ankle', 'left_foot'],
+        'soleContacts': [{'joints': names, 'normal': [0., 1., 0.]}]}
+    payload = {'jointNames': names, 'frames': frames,
+        'footRestPitchRadians': {'left': 0.},
+        'sourceFootSupportEvidence': {
+            'bodySupport': support,
+            'contacts': [{'jointName': 'left_foot', 'contactState': 'full_sole',
+                'contactMotion': 'stationary', 'verticalOnly': False,
+                '_fitFrameBounds': [0, 1], '_fitFrameCount': 2}],
+            'footPatchEvidence': {'available': True, 'feet': {
+                'left': {'states': ['full_sole', 'full_sole']}}},
+            '_fitFrameStateIndices': [0, 1], '_fitFrameCount': 2,
+        }}
+    stored = validate_supported_shoe_orientation(payload)
+    assert stored['passed'], stored
+
+    dense = np.asarray([[frame['joints'][name] for name in names]
+                        for frame in frames])
+    midpoint = dense[0].copy()
+    midpoint[names.index('left_ankle'), 1] = .03
+    dense = np.stack([dense[0], midpoint, dense[1]])
+    report = validate_supported_shoe_orientation(
+        payload, points=dense, cursors=[0., .5, 1.])
+
+    assert not report['passed'], report
+    assert report['maximumOrientationErrorMeters'] > .005
+
+
 def test_full_sole_without_calibrated_material_pitch_remains_unresolved():
     from exercise_motion_pkg.support_geometry import (
         geometry_errors, validate_support_geometry, validate_supported_shoe_orientation,
@@ -428,6 +487,304 @@ def test_full_sole_without_calibrated_material_pitch_remains_unresolved():
     orientation = validate_supported_shoe_orientation(payload)
     assert not orientation['passed']
     assert orientation['reason'] == 'sole_orientation_unavailable'
+
+
+def test_timed_toe_only_does_not_require_stale_full_sole_pitch():
+    from exercise_motion_pkg.support_geometry import validate_supported_shoe_orientation
+
+    payload = _timed_sole_support_payload(frame_count=5)
+    source = payload['sourceFootSupportEvidence']
+    source['contacts'][0]['contactState'] = 'toe_only'
+    source['footPatchEvidence']['feet']['left']['states'] = ['toe_only'] * 4 + ['unknown']
+    # Toe-only contact does not establish ankle stationarity.
+    source['bodySupport']['stationaryJoints'].remove('left_ankle')
+    payload['footRestPitchRadians'].pop('left')
+    for frame in payload['frames']:
+        frame['boneSides'] = {
+            'left_ankle->left_foot': [0., 0., 1.],
+            'right_ankle->right_foot': [0., 0., 1.],
+        }
+
+    geometry = validate_support_geometry(payload)
+    orientation = validate_supported_shoe_orientation(payload)
+
+    assert geometry['passed'], geometry
+    assert orientation['passed'], orientation
+
+
+def test_timed_full_sole_orientation_ignores_state_less_materialized_ankle_anchor():
+    from exercise_motion_pkg.support_geometry import validate_supported_shoe_orientation
+
+    payload = _timed_sole_support_payload(frame_count=5)
+    for frame in payload['frames']:
+        frame['boneSides'] = {
+            'left_ankle->left_foot': [0., 0., 1.],
+            'right_ankle->right_foot': [0., 0., 1.],
+        }
+
+    orientation = validate_supported_shoe_orientation(payload)
+
+    assert orientation['passed'], orientation
+
+
+def _timed_sole_support_payload(frame_count=83):
+    names = ['left_knee', 'left_ankle', 'left_foot',
+             'right_knee', 'right_ankle', 'right_foot']
+    frames = []
+    for _ in range(frame_count):
+        frames.append({'joints': {
+            'left_knee': [0., 1., 0.], 'left_ankle': [0., 0., -.2],
+            'left_foot': [.2, 0., -.2],
+            'right_knee': [0., 1., .4], 'right_ankle': [0., 0., .2],
+            'right_foot': [.2, 0., .2],
+        }})
+    contacts = []
+    for side in ('left', 'right'):
+        contacts.append({
+            'jointName': f'{side}_foot', 'contactState': 'full_sole',
+            'contactMotion': 'stationary', 'verticalOnly': False,
+            'anchorGroupId': f'{side}:foot:0',
+            'ankleAnchorGroupId': f'{side}:ankle:0',
+            '_fitFrameBounds': [0, frame_count - 2],
+            '_fitFrameCount': frame_count,
+        })
+    support = {
+        'required': True, 'status': 'confirmed',
+        'stationaryJoints': ['left_ankle', 'left_foot', 'right_ankle', 'right_foot'],
+        'coplanarGroups': [
+            {'joints': [f'{side}_foot'], 'normal': [0., 1., 0.], 'planeOffsetMeters': 0.}
+            for side in ('left', 'right')
+        ],
+        'soleContacts': [
+            {'joints': [f'{side}_knee', f'{side}_ankle', f'{side}_foot'],
+             'normal': [0., 1., 0.]}
+            for side in ('left', 'right')
+        ],
+    }
+    return {
+        'jointNames': names, 'fps': 25., 'frames': frames,
+        'footRestPitchRadians': {'left': 0., 'right': 0.},
+        'sourceFootSupportEvidence': {
+            'bodySupport': support, 'contacts': contacts,
+            'footPatchEvidence': {'available': True, 'feet': {
+                side: {'states': ['full_sole'] * (frame_count - 1) + ['unknown']}
+                for side in ('left', 'right')
+            }},
+            '_fitFrameStateIndices': list(range(frame_count)),
+            '_fitFrameCount': frame_count,
+        },
+    }
+
+
+def test_support_geometry_does_not_plant_unknown_endpoint_frame():
+    payload = _timed_sole_support_payload()
+    names = payload['jointNames']
+    # This is an unobserved endpoint, so reconstructed ankle drift and a
+    # changed shoe pitch there cannot be promoted into a support failure.
+    payload['frames'][-1]['joints']['left_ankle'][0] = .008
+    payload['frames'][-1]['joints']['left_foot'][0] = .195
+
+    report = validate_support_geometry(payload)
+
+    assert report['passed'], report
+    assert report['activeContactFrameCountByJoint']['left_ankle'] == 82
+    assert report['maximumStationaryJointRangeMeters'] < 1e-9
+    assert report['maximumSurfaceErrorMeters'] < 1e-9
+
+
+def test_support_geometry_keeps_strict_drift_gate_during_active_contact():
+    payload = _timed_sole_support_payload()
+    names = payload['jointNames']
+    for name in ('left_ankle', 'left_foot'):
+        payload['frames'][40]['joints'][name][0] += .006
+
+    report = validate_support_geometry(payload)
+
+    assert not report['passed']
+    assert 'supported_body_moves' in report['rejectionReasons']
+    assert report['maximumStationaryJointRangeMeters'] > .005
+
+
+def test_support_geometry_checks_stationarity_per_distinct_contact_anchor():
+    payload = _timed_sole_support_payload()
+    contacts = payload['sourceFootSupportEvidence']['contacts']
+    for side in ('left', 'right'):
+        name = f'{side}_foot'
+        ankle_name = f'{side}_ankle'
+        contacts[:] = [contact for contact in contacts if not contact['jointName'].startswith(side)]
+        contacts.extend([
+            {'jointName': name, 'contactState': 'full_sole', 'contactMotion': 'stationary',
+             'verticalOnly': False, 'anchorGroupId': f'{side}:foot:0',
+             'ankleAnchorGroupId': f'{side}:ankle:0', '_fitFrameBounds': [0, 40],
+             '_fitFrameCount': 83},
+            {'jointName': name, 'contactState': 'full_sole', 'contactMotion': 'stationary',
+             'verticalOnly': False, 'anchorGroupId': f'{side}:foot:1',
+             'ankleAnchorGroupId': f'{side}:ankle:1', '_fitFrameBounds': [41, 81],
+             '_fitFrameCount': 83},
+        ])
+        for frame in payload['frames'][41:82]:
+            frame['joints'][name][2] += .1
+            frame['joints'][ankle_name][2] += .1
+            frame['joints'][f'{side}_knee'][2] += .1
+
+    report = validate_support_geometry(payload)
+
+    assert report['passed'], report
+    assert report['maximumStationaryJointRangeMeters'] < 1e-9
+
+
+def test_toe_only_contact_does_not_impose_full_sole_geometry_or_orientation():
+    from exercise_motion_pkg.support_geometry import validate_supported_shoe_orientation
+
+    payload = _timed_sole_support_payload(frame_count=2)
+    source = payload['sourceFootSupportEvidence']
+    for contact in source['contacts']:
+        contact.update(contactState='toe_only', verticalOnly=False)
+        contact['_fitFrameBounds'] = [0, 1]
+    for side in ('left', 'right'):
+        source['footPatchEvidence']['feet'][side]['states'] = ['toe_only', 'toe_only']
+    # A planted toe can coexist with heel rise. Material whole-sole geometry
+    # must not flatten this pose or judge its ankle-to-toe line as a full sole.
+    payload['frames'][0]['joints']['left_ankle'][1] = .04
+    names = payload['jointNames']
+    evidence = {**source['bodySupport'], **source}
+    errors = geometry_errors(
+        np.asarray([[frame['joints'][name] for name in names]
+                    for frame in payload['frames']]), names, evidence)
+    np.testing.assert_allclose(errors[:, :2], 0.)
+
+    report = validate_supported_shoe_orientation(payload)
+
+    assert report == {'required': False, 'passed': True,
+                      'reason': 'no_active_full_sole_contact'}
+
+
+def test_timed_foot_patch_preserves_independent_untimed_torso_support():
+    payload = _timed_sole_support_payload()
+    support = payload['sourceFootSupportEvidence']['bodySupport']
+    support['stationaryJoints'].append('pelvis')
+    payload['jointNames'].append('pelvis')
+    for frame in payload['frames']:
+        frame['joints']['pelvis'] = [0., 1., 0.]
+    report = validate_support_geometry(payload)
+    assert report['passed'], report
+
+    payload['frames'][40]['joints']['pelvis'][0] += .006
+    report = validate_support_geometry(payload)
+    assert not report['passed']
+    assert 'supported_body_moves' in report['rejectionReasons']
+
+
+def test_dense_playback_support_masks_follow_stored_contact_clock():
+    from exercise_motion_pkg.support_geometry import support_contact_masks
+
+    payload = _timed_sole_support_payload()
+    source = payload['sourceFootSupportEvidence']
+    evidence = {**source['bodySupport'], **source}
+    positions = np.arange(83 * 4 - 3, dtype=float) / 4.
+    masks, _ = support_contact_masks(
+        evidence, payload['jointNames'], len(positions), frame_positions=positions)
+    left_foot = payload['jointNames'].index('left_foot')
+    assert masks[np.flatnonzero(positions == 81.)[0], left_foot]
+    assert not masks[np.flatnonzero(positions == 81.25)[0], left_foot]
+    assert not masks[np.flatnonzero(positions == 82.)[0], left_foot]
+
+
+def test_support_timing_scope_is_per_joint_for_raw_contact_and_legacy_torso():
+    from exercise_motion_pkg.support_geometry import support_contact_masks
+
+    names = ['left_ankle', 'left_foot', 'pelvis']
+    evidence = {
+        'required': True,
+        'status': 'confirmed',
+        'stationaryJoints': names,
+        'contacts': [{'jointName': 'left_foot', 'contactState': 'full_sole',
+                      'contactMotion': 'stationary', 'verticalOnly': False,
+                      'startRatio': .25, 'endRatio': .75}],
+    }
+
+    masks, _ = support_contact_masks(evidence, names, 5)
+
+    np.testing.assert_array_equal(masks[:, names.index('left_foot')],
+                                  [False, True, True, True, False])
+    np.testing.assert_array_equal(masks[:, names.index('left_ankle')],
+                                  [False, True, True, True, False])
+    np.testing.assert_array_equal(masks[:, names.index('pelvis')], np.ones(5, dtype=bool))
+
+
+def test_timed_contact_without_sole_state_does_not_expand_legacy_sole_to_whole_clip():
+    from exercise_motion_pkg.support_geometry import (
+        full_sole_contact_masks, validate_supported_shoe_orientation,
+    )
+
+    names = ['left_knee', 'left_ankle', 'left_foot',
+             'right_knee', 'right_ankle', 'right_foot']
+    evidence = {
+        'soleContacts': [
+            {'joints': ['left_knee', 'left_ankle', 'left_foot'], 'normal': [0., 1., 0.]},
+            {'joints': ['right_knee', 'right_ankle', 'right_foot'], 'normal': [0., 1., 0.]},
+        ],
+        'contacts': [{'jointName': 'left_foot', 'contactMotion': 'stationary',
+                      '_fitFrameBounds': [0, 0], '_fitFrameCount': 2}],
+    }
+
+    masks = full_sole_contact_masks(evidence, names, 2)
+
+    assert not masks[:, names.index('left_ankle')].any()
+    assert not masks[:, names.index('left_foot')].any()
+    assert masks[:, names.index('right_ankle')].all()
+    assert masks[:, names.index('right_foot')].all()
+
+    frames = []
+    for _ in range(2):
+        frames.append({'joints': dict(zip(names, [
+            [0., 1., 0.], [0., 0., 0.], [.2, 0., 0.],
+            [0., 1., .4], [0., 0., .4], [.2, 0., .4],
+        ])), 'boneSides': {
+            'left_ankle->left_foot': [0., 0., 1.],
+            'right_ankle->right_foot': [0., 0., 1.],
+        }})
+    payload = {
+        'jointNames': names, 'frames': frames,
+        'footRestPitchRadians': {'left': 0., 'right': 0.},
+        'sourceFootSupportEvidence': {
+            'bodySupport': {
+                'required': True, 'status': 'confirmed',
+                'stationaryJoints': ['left_ankle', 'left_foot',
+                                     'right_ankle', 'right_foot'],
+                'soleContacts': evidence['soleContacts'],
+            },
+            'contacts': evidence['contacts'],
+        },
+    }
+    orientation = validate_supported_shoe_orientation(payload)
+    assert not orientation['passed']
+    assert orientation['reason'] == 'sole_contact_timing_unresolved'
+    assert orientation['unresolvedSides'] == ['left']
+
+
+def test_dense_support_geometry_still_checks_untimed_torso_plane():
+    payload = _timed_sole_support_payload()
+    support = payload['sourceFootSupportEvidence']['bodySupport']
+    support['stationaryJoints'].extend(['pelvis', 'spine'])
+    support['coplanarGroups'].append({
+        'joints': ['pelvis', 'spine'], 'normal': [0., 1., 0.],
+    })
+    names = payload['jointNames'] + ['pelvis', 'spine']
+    payload['jointNames'] = names
+    for frame in payload['frames']:
+        frame['joints'].update(pelvis=[0., 1., 0.], spine=[.1, 1., 0.])
+    stored = np.asarray([[frame['joints'][name] for name in names]
+                         for frame in payload['frames']])
+    positions = np.arange((len(stored) - 1) * 4 + 1, dtype=float) / 4.
+    dense = stored[np.clip(np.rint(positions).astype(int), 0, len(stored) - 1)]
+    dense[np.flatnonzero(positions == 40.5)[0], names.index('spine'), 1] += .01
+
+    report = validate_support_geometry(
+        payload, dense, names, frame_positions=positions)
+
+    assert not report['passed']
+    assert 'support_surface_geometry_mismatch' in report['rejectionReasons']
 
 
 def test_support_projection_repairs_reference_before_final_fit():
@@ -560,3 +917,42 @@ def test_contiguous_failing_interval_runs_group_neighbors():
     play = _playback_contact_sample_error(restored, rig, pinned, targets, cyclic=False)
     assert key < PLAYBACK_CONTACT_LIMIT_METERS
     assert play < PLAYBACK_CONTACT_LIMIT_METERS
+
+
+def test_floor_correction_clears_rendered_shoe_when_joint_centres_are_clear():
+    from exercise_motion_pkg.controlled_motion import (
+        FixedRig, _sampling_payload, apply_supported_floor_clearance,
+    )
+    from exercise_motion_pkg.rig_playback import free_material_floor_clearance_lift
+
+    fixture = json.loads((Path(__file__).parent / 'fixtures/sequence_stabilization_stance.json').read_text())
+    names = list(fixture['joints'])
+    points = np.tile([fixture['joints'][name] for name in names], (8, 1, 1))
+    points[:, :, 1] += 1.2
+    ankle, toe = names.index('left_ankle'), names.index('left_foot')
+    points[:, ankle] = [points[0, ankle, 0], .12, points[0, ankle, 2]]
+    points[:, toe] = [points[0, ankle, 0] + .021, .001, points[0, ankle, 2]]
+    rig = FixedRig(points, names)
+    points = rig.decode(rig.initial)
+    floor = 0.
+    pinned = np.zeros(points.shape[:2], dtype=bool)
+    reference = {
+        'jointNames': names, 'fps': 30., 'renderFloorY': floor,
+        'footRestPitchRadians': {},
+        'frames': [{'timeSec': index / 30., 'joints': dict(zip(names, row.tolist()))}
+                   for index, row in enumerate(points)],
+        'fixedRig': _sampling_payload(rig, rig.initial),
+    }
+    assert points[:, :, 1].min() > floor
+    before = free_material_floor_clearance_lift(reference, pinned, cyclic=False)
+    assert before > .001
+
+    corrected, lift = apply_supported_floor_clearance(
+        rig.initial, rig, pinned, points, floor, material_reference=reference)
+
+    assert lift >= before - 1e-9
+    expected = rig.initial.copy()
+    expected[:, 1] += lift
+    np.testing.assert_allclose(corrected, expected, atol=1e-12)
+    reference['fixedRig'] = _sampling_payload(rig, corrected)
+    assert free_material_floor_clearance_lift(reference, pinned, cyclic=False) < 1e-9

@@ -11,9 +11,11 @@ import ctypes
 import hashlib
 import json
 import os
+import sys
 import threading
 import time
 import traceback
+import uuid
 from typing import Any, Callable
 
 from exercise_motion_pkg.process_lock import process_identity
@@ -23,6 +25,7 @@ from exercise_motion_pkg.process_lock import InterProcessFileLock
 SERVICE_SCHEMA_VERSION = 1
 ADMISSION_LOCK_VERSION = 2
 DEFAULT_IDLE_TIMEOUT_SECONDS = 10 * 60
+STALLED_OPERATION_GRACE_SECONDS = 10.0
 AMBIGUOUS_RECOVERY_EXIT_CODE = 76
 AMBIGUOUS_RECOVERY_STATUS = "ambiguous_recovery"
 CONSUMED_RESULT_RETENTION_SECONDS = 14 * 24 * 60 * 60
@@ -43,9 +46,10 @@ class WaveGpuGate:
         self.owner = None
         self.users = 0
         self.review_waiters = 0
+        self._lanes = {"__global__": {"owner": None, "users": 0, "review_waiters": 0}}
 
     @contextmanager
-    def phase(self, wave_id, stage, cancelled=lambda: False, *, deadline=None):
+    def phase(self, wave_id, stage, cancelled=lambda: False, *, deadline=None, gpu_lane=None):
         if stage == "cpu_preparation":
             yield cancelled
             return
@@ -56,41 +60,74 @@ class WaveGpuGate:
 
         key = (wave_id, stage)
         review = stage == "final_review"
+        lane_name = str(gpu_lane) if gpu_lane is not None else "__global__"
         queued_at = time.perf_counter()
         next_wait_log = queued_at + 5.0
         with self.condition:
+            lane = self._lanes.setdefault(
+                lane_name, {"owner": None, "users": 0, "review_waiters": 0}
+            )
             if review:
-                self.review_waiters += 1
+                lane["review_waiters"] += 1
+                if lane_name == "__global__":
+                    self.review_waiters += 1
             try:
-                while (self.owner is not None and not (review and self.owner == key)) or (
-                    not review and self.review_waiters > 0
-                ):
+                while True:
+                    global_lane = self._lanes["__global__"]
+                    other_named_lanes_busy = any(
+                        name != "__global__" and state["users"] > 0
+                        for name, state in self._lanes.items()
+                    )
+                    exclusive_conflict = (
+                        other_named_lanes_busy
+                        if lane_name == "__global__"
+                        else global_lane["users"] > 0 or global_lane["review_waiters"] > 0
+                    )
+                    review_waiters = (
+                        sum(state["review_waiters"] for state in self._lanes.values())
+                        if lane_name == "__global__"
+                        else lane["review_waiters"] + global_lane["review_waiters"]
+                    )
+                    same_lane_conflict = lane["owner"] is not None and not (
+                        review and lane["owner"] == key
+                    )
+                    if not same_lane_conflict and not exclusive_conflict and (review or not review_waiters):
+                        break
                     if cancelled():
                         raise KeyboardInterrupt("Motion run was cancelled waiting for the GPU")
                     check_deadline()
                     if time.perf_counter() >= next_wait_log:
                         print(json.dumps({"event": "wave_gpu_admission_wait", "waveId": wave_id,
-                                          "requestedPhase": stage, "owner": self.owner,
-                                          "reviewWaiters": self.review_waiters,
+                                          "requestedPhase": stage, "gpuLane": gpu_lane,
+                                          "owner": lane["owner"],
+                                          "reviewWaiters": lane["review_waiters"],
                                           "waitSeconds": round(time.perf_counter() - queued_at, 3)}), flush=True)
                         next_wait_log = time.perf_counter() + 5.0
                     self.condition.wait(timeout=0.25)
                 check_deadline()
                 if cancelled():
                     raise KeyboardInterrupt("Motion run was cancelled before the next GPU phase")
-                self.owner = key
-                self.users += 1
+                lane["owner"] = key
+                lane["users"] += 1
+                if lane_name == "__global__":
+                    self.owner = lane["owner"]
+                    self.users = lane["users"]
             finally:
                 if review:
-                    self.review_waiters -= 1
+                    lane["review_waiters"] -= 1
+                    if lane_name == "__global__":
+                        self.review_waiters -= 1
                 self.condition.notify_all()
         try:
             yield
         finally:
             with self.condition:
-                self.users -= 1
-                if not self.users:
-                    self.owner = None
+                lane["users"] -= 1
+                if not lane["users"]:
+                    lane["owner"] = None
+                if lane_name == "__global__":
+                    self.users = lane["users"]
+                    self.owner = lane["owner"]
                 self.condition.notify_all()
 
 
@@ -220,6 +257,7 @@ def _execute_wave_request(
     *,
     render_executor: ThreadPoolExecutor,
     accelerator_phase=None,
+    on_progress: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     from exercise_motion_pkg.cli import build_parser, run_staged_bake_wave_manifest
 
@@ -229,9 +267,14 @@ def _execute_wave_request(
     args = build_parser().parse_args(arguments)
     if args.command != "bake-and-rank" or args.staged_wave_manifest is None:
         raise ValueError("Staged-wave service request must describe a bake-and-rank manifest")
+    def report_progress(message: str) -> None:
+        print(message, flush=True)
+        if on_progress is not None:
+            on_progress(str(message))
+
     report = run_staged_bake_wave_manifest(
         args,
-        progress=lambda message: print(message, flush=True),
+        progress=report_progress,
         render_executor=render_executor,
         accelerator_phase=accelerator_phase,
     )
@@ -553,9 +596,137 @@ def _run_staged_wave_service_locked(
                 snapshot["updatedAtEpoch"] = time.time()
             _write_json_atomic(state_path, snapshot)
 
+    def capture_expired_operation_stacks() -> None:
+        now_epoch = time.time()
+        with state_lock:
+            active = [dict(value) for value in active_requests.values()]
+        for entry in active:
+            checkpoint_path = entry.get("checkpointPath")
+            source_activities = []
+            checkpoint_stage = None
+            if checkpoint_path:
+                try:
+                    checkpoint = json.loads(Path(checkpoint_path).read_text(encoding="utf-8"))
+                    checkpoint_stage = checkpoint.get("stage")
+                    for item_state in checkpoint.get("items", []):
+                        activity = item_state.get("sourceActivity")
+                        if isinstance(activity, dict):
+                            deadline = activity.get("operationDeadlineEpoch")
+                            if isinstance(deadline, (int, float)) and deadline > 0:
+                                source_activities.append({
+                                    "deadlineEpoch": float(deadline),
+                                    "exerciseName": item_state.get("exerciseName"),
+                                    "operation": activity.get("operation"),
+                                    "videoId": activity.get("videoId"),
+                                    "candidateKey": activity.get("candidateKey"),
+                                    "threadId": activity.get("threadId"),
+                                })
+                except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                    pass
+            active_phase_deadlines = list((entry.get("activeDeadlines") or {}).values())
+            known_deadlines = [
+                *[
+                    {**deadline, "owner": "accelerator_phase"}
+                    for deadline in active_phase_deadlines
+                ],
+                *[
+                    {**activity, "owner": "source_activity_checkpoint"}
+                    for activity in source_activities
+                ],
+            ]
+            known_deadlines.sort(key=lambda value: float(value["deadlineEpoch"]))
+            earliest_deadline = known_deadlines[0] if known_deadlines else None
+            with state_lock:
+                current = active_requests.get(str(entry.get("requestId")))
+                if current is not None:
+                    current["sourceActivities"] = source_activities
+                    if earliest_deadline:
+                        current["operationDeadlineEpoch"] = earliest_deadline["deadlineEpoch"]
+                        current["operationDeadlineSource"] = earliest_deadline["owner"]
+                        current["phase"] = checkpoint_stage or current.get("phase")
+                        current["lastProgress"] = (
+                            f"{earliest_deadline.get('exerciseName', '')}: {earliest_deadline.get('operation', current.get('phase'))}"
+                        )[:1000]
+                        if current.get("stallDiagnosticDeadlineEpoch") != earliest_deadline["deadlineEpoch"]:
+                            current.pop("stallDiagnosticPath", None)
+                            current.pop("stallDiagnosticError", None)
+                            current.pop("operationDeadlineExceededAtEpoch", None)
+                            current.pop("stallDiagnosticDeadlineEpoch", None)
+                            stalled = state.get("stalledOperation")
+                            if isinstance(stalled, dict) and stalled.get("requestId") == entry.get("requestId"):
+                                state.pop("stalledOperation", None)
+                    else:
+                        current.pop("operationDeadlineEpoch", None)
+                        current.pop("operationDeadlineSource", None)
+                        current.pop("stallDiagnosticPath", None)
+                        current.pop("stallDiagnosticError", None)
+                        current.pop("operationDeadlineExceededAtEpoch", None)
+                        current.pop("stallDiagnosticDeadlineEpoch", None)
+                        stalled = state.get("stalledOperation")
+                        if isinstance(stalled, dict) and stalled.get("requestId") == entry.get("requestId"):
+                            state.pop("stalledOperation", None)
+            publish_active_state()
+            deadline_epoch = earliest_deadline.get("deadlineEpoch") if earliest_deadline else None
+            if (
+                not isinstance(deadline_epoch, (int, float))
+                or now_epoch < float(deadline_epoch) + STALLED_OPERATION_GRACE_SECONDS
+                or entry.get("stallDiagnosticPath")
+            ):
+                continue
+            frames = sys._current_frames()
+            stacks = []
+            for thread in threading.enumerate():
+                frame = frames.get(thread.ident)
+                if frame is None:
+                    continue
+                stacks.append({
+                    "threadName": thread.name,
+                    "threadId": thread.ident,
+                    "stack": traceback.format_list(traceback.extract_stack(frame)),
+                })
+            diagnostic_path = queue_root / "diagnostics" / (
+                f"expired-operation-{entry.get('requestId')}-{int(now_epoch)}.json"
+            )
+            diagnostic = {
+                "requestId": entry.get("requestId"),
+                "waveId": entry.get("waveId"),
+                "runId": entry.get("runId"),
+                "phase": entry.get("phase"),
+                "operation": entry.get("lastProgress"),
+                "operationStartedAtEpoch": entry.get("operationStartedAtEpoch"),
+                "operationDeadlineEpoch": deadline_epoch,
+                "activeDeadlines": known_deadlines,
+                "sourceActivities": source_activities,
+                "capturedAtEpoch": now_epoch,
+                "threads": stacks,
+            }
+            try:
+                _write_json_atomic(diagnostic_path, diagnostic)
+                diagnostic_error = None
+            except OSError as exc:
+                diagnostic_error = f"{type(exc).__name__}: {exc}"
+            with state_lock:
+                current = active_requests.get(str(entry.get("requestId")))
+                if current is not None:
+                    current["stallDiagnosticPath"] = str(diagnostic_path)
+                    current["stallDiagnosticError"] = diagnostic_error
+                    current["operationDeadlineExceededAtEpoch"] = now_epoch
+                    current["stallDiagnosticDeadlineEpoch"] = deadline_epoch
+            with state_lock:
+                state["stalledOperation"] = {
+                    "requestId": entry.get("requestId"),
+                    "waveId": entry.get("waveId"),
+                    "deadlineEpoch": deadline_epoch,
+                    "detectedAtEpoch": now_epoch,
+                    "diagnosticPath": str(diagnostic_path),
+                    "diagnosticError": diagnostic_error,
+                }
+            publish_active_state()
+
     def heartbeat() -> None:
         while not heartbeat_stop.is_set():
             try:
+                capture_expired_operation_stacks()
                 write_state_snapshot()
             except OSError:
                 # The service continues only while its run workspace remains writable.
@@ -567,7 +738,6 @@ def _run_staged_wave_service_locked(
         name="staged-wave-service-heartbeat",
         daemon=True,
     )
-    heartbeat_thread.start()
     from exercise_motion_pkg.resource_budget import render_prefetch_worker_limit
 
     render_executor = ThreadPoolExecutor(
@@ -594,54 +764,98 @@ def _run_staged_wave_service_locked(
             )
         write_state_snapshot()
 
+    heartbeat_thread.start()
+
     def process_request(claimed_path):
         try:
             return process_claimed_request(claimed_path)
         finally:
             with state_lock:
                 active_requests.pop(claimed_path.stem, None)
+                stalled = state.get("stalledOperation")
+                if isinstance(stalled, dict) and stalled.get("requestId") == claimed_path.stem:
+                    state.pop("stalledOperation", None)
             publish_active_state()
 
     def process_claimed_request(claimed_path):
         request_key = claimed_path.stem
 
+        def record_progress(message: str) -> None:
+            with state_lock:
+                entry = active_requests.get(request_key)
+                if entry is not None:
+                    entry["lastProgress"] = message[:1000]
+                    entry["lastProgressAtEpoch"] = time.time()
+            publish_active_state()
+
         @contextmanager
-        def accelerator_phase(wave_id, stage, *, deadline=None):
+        def accelerator_phase(wave_id, stage, *, deadline=None, gpu_lane=None):
             nonlocal gpu_owner, gpu_lease_count
+            operation_started_at = time.time()
             with state_lock:
                 entry = active_requests[request_key]
                 run_id = entry.get("runId")
+                active_deadline = (
+                    {
+                        "deadlineEpoch": time.time() + max(0.0, float(deadline) - time.perf_counter()),
+                        "stage": stage,
+                        "startedAtEpoch": operation_started_at,
+                        "threadId": threading.get_ident(),
+                    }
+                    if deadline is not None
+                    else None
+                )
+                deadline_token = uuid.uuid4().hex
+                if active_deadline is not None:
+                    entry.setdefault("activeDeadlines", {})[deadline_token] = active_deadline
                 if gpu_owner is None or gpu_owner.get("requestId") != request_key:
                     entry["phase"] = stage if stage == "cpu_preparation" else "waiting_gpu"
                     entry["waitingForPhase"] = stage
+                    entry["operationStartedAtEpoch"] = operation_started_at
             publish_active_state()
             cancelled = lambda: bool(run_id and (cancelled_runs / f"{run_id}.json").exists())
-            with gpu_gate.phase(wave_id, stage, cancelled, deadline=deadline):
-                if stage == "cpu_preparation":
-                    yield cancelled
-                    return
-                with state_lock:
-                    entry.pop("waitingForPhase", None)
-                    entry["phase"] = stage
-                    gpu_lease_count += 1
-                    gpu_owner = dict(entry)
-                publish_active_state()
-                try:
-                    yield
-                finally:
+            try:
+                with gpu_gate.phase(
+                    wave_id, stage, cancelled, deadline=deadline, gpu_lane=gpu_lane,
+                ):
+                    if stage == "cpu_preparation":
+                        yield cancelled
+                        return
                     with state_lock:
-                        gpu_lease_count -= 1
-                        if not gpu_lease_count:
-                            entry["phase"] = "cpu_preparation"
-                            gpu_owner = None
+                        entry.pop("waitingForPhase", None)
+                        entry["phase"] = stage
+                        gpu_lease_count += 1
+                        gpu_owner = dict(entry)
                     publish_active_state()
+                    try:
+                        yield
+                    finally:
+                        with state_lock:
+                            gpu_lease_count -= 1
+                            if not gpu_lease_count:
+                                entry["phase"] = "cpu_preparation"
+                                gpu_owner = None
+                        publish_active_state()
+            finally:
+                with state_lock:
+                    active_deadlines = entry.get("activeDeadlines")
+                    if active_deadlines is not None:
+                        active_deadlines.pop(deadline_token, None)
+                        if not active_deadlines:
+                            entry.pop("activeDeadlines", None)
+                    if entry.get("operationStartedAtEpoch") == operation_started_at:
+                        entry.pop("operationStartedAtEpoch", None)
+                publish_active_state()
 
         def execute(request):
             if execute_wave is not None:
                 with accelerator_phase(request["waveId"], "whole_wave"):
                     return execute_wave(request)
             return _execute_wave_request(
-                request, render_executor=render_executor, accelerator_phase=accelerator_phase,
+                request,
+                render_executor=render_executor,
+                accelerator_phase=accelerator_phase,
+                on_progress=record_progress,
             )
 
         request_path = requests / claimed_path.name
@@ -672,6 +886,7 @@ def _run_staged_wave_service_locked(
             # periodic heartbeat alone leaves a shutdown race window.
             with state_lock:
                 active_requests[request_key]["waveId"] = wave_id_value
+                active_requests[request_key]["checkpointPath"] = request_payload.get("checkpointPath")
             publish_active_state()
             log_path_value = request_payload.get("logPath")
             log_path = Path(str(log_path_value)) if log_path_value else None
@@ -802,6 +1017,8 @@ def _run_staged_wave_service_locked(
                         "waveId": payload.get("waveId"),
                         "runId": payload.get("runId"),
                         "phase": "starting",
+                "operationStartedAtEpoch": time.time(),
+                "lastProgressAtEpoch": time.time(),
                         "allowCpuPhaseOverlap": payload.get("allowCpuPhaseOverlap") is True,
                     }
                 publish_active_state()

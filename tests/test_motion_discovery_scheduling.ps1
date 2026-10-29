@@ -52,7 +52,7 @@ $decision = [scriptblock]::Create((@(
     (Get-AssignmentText '$shouldYieldDiscoveryForStagedWave'),
     (Get-AssignmentText '$canLaunchDiscovery'), (Get-AssignmentText '$canLaunchBake'),
     (Get-AssignmentText '$discoveryAndDownloadDrained'), (Get-AssignmentText '$canStartStagedWave'),
-    '@{ ready=$stagedWaveReady; discover=$canLaunchDiscovery; bake=$canStartStagedWave }'
+    '@{ ready=$stagedWaveReady; yield=$shouldYieldDiscoveryForStagedWave; discover=$canLaunchDiscovery; bake=$canStartStagedWave }'
 ) -join "`n"))
 $overlapPolicy = [scriptblock]::Create((Get-AssignmentText '$effectiveGpuDiscoveryBakeOverlap') + "`n`$effectiveGpuDiscoveryBakeOverlap")
 $splitPlacementRows = @('0, GPU-LLAMA', '1, GPU-RECON')
@@ -129,24 +129,28 @@ $pendingSourceDownloadItems = @()
 $pendingFallbackSourceDownloadItems = @()
 $sourceDownloadRunningJobs = @()
 $result = & $decision
-if (-not $result.ready -or -not $result.bake -or $result.discover) { throw 'An admitted singleton must dispatch immediately and request discovery yield on the shared GPU.' }
+if (-not $result.ready -or -not $result.yield -or -not $result.bake -or $result.discover) { throw 'A singleton with no active source review must dispatch immediately.' }
 $avoidGpuDiscoveryBakeOverlap = $false
 $result = & $decision
-if (-not $result.ready -or -not $result.bake -or -not $result.discover) { throw 'An explicitly safe overlap mode must not yield discovery for an admitted wave.' }
+if (-not $result.ready -or $result.yield -or -not $result.bake -or -not $result.discover) { throw 'An explicitly safe overlap mode must not yield discovery for an admitted wave.' }
 $avoidGpuDiscoveryBakeOverlap = $true
 $discoveryRunningJobs = @(1)
 $result = & $decision
-if (-not $result.ready -or $result.bake -or $result.discover) { throw 'A ready item must request a discovery yield and wait for the active GPU owner.' }
+if (-not $result.ready -or $result.yield -or $result.bake -or $result.discover) { throw 'A ready item must drain active source work without admitting queued work or starting reconstruction.' }
+$pendingBakeItems = @(1..32)
+$result = & $decision
+if (-not $result.yield -or $result.bake -or $result.discover) { throw 'A full ready queue must request cooperative yield at the configured cap.' }
 $discoveryRunningJobs = @()
 $pendingBakeItems = @()
 $result = & $decision
 if ($result.ready -or $result.bake) { throw 'Empty batch must not start.' }
 $pendingBakeItems = @(1..32)
+$discoveryRunningJobs = @()
 $result = & $decision
 if (-not $result.ready -or -not $result.bake) { throw 'Full batch should start immediately.' }
 $effectiveMaxConcurrentStagedWaves = 0
 $result = & $decision
-if (-not $result.ready -or $result.bake -or -not $result.discover) { throw 'Discovery must continue when no staged-wave slot is available.' }
+if (-not $result.ready -or $result.bake -or $result.discover) { throw 'A ready cohort must wait for GPU admission without starting more GPU discovery.' }
 $effectiveMaxConcurrentStagedWaves = 1
 
 # Handoff drains ready work only up to StagedWaveSize.

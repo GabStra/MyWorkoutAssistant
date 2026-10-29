@@ -638,6 +638,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional movement workspace used to check each exercise's retained source-review budget offline.",
     )
     list_plan_exercises.add_argument("--source-review-timeout-seconds", type=float, default=180.0)
+    list_plan_exercises.add_argument("--source-review-turn-id", default=None)
     list_plan_exercises.add_argument("--exercise-timeout-seconds", type=float, default=0.0)
     list_plan_exercises.add_argument("--max-source-window-attempts", type=int, default=0)
 
@@ -768,6 +769,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--warm-gvhmr-worker",
         action="store_true",
         help="Submit GVHMR jobs to a pre-started warm GVHMR worker instead of one Docker run per candidate.",
+    )
+    bake_and_rank.add_argument(
+        "--gvhmr-stage-split",
+        action="store_true",
+        help="Run GVHMR preprocessing on the secondary GPU and prediction on the primary GPU through the warm split-stage worker.",
     )
     bake_and_rank.add_argument(
         "--gvhmr-worker-session-dir",
@@ -1301,6 +1307,7 @@ def build_bake_and_rank_request(args: argparse.Namespace) -> BakeAndRankRequest:
         "reuse_reconstruction_cache": not args.no_reuse_reconstruction_cache,
         "reuse_previous_terminal_results": args.reuse_previous_terminal_results,
         "use_warm_gvhmr_worker": args.warm_gvhmr_worker,
+        "gvhmr_stage_split": args.gvhmr_stage_split,
         "motion_reconstruction_backend": args.motion_reconstructor,
         "spinepose_enabled": spinepose_enabled,
         "spinepose_json_dir": Path(args.spinepose_json_dir) if args.spinepose_json_dir else None,
@@ -1394,6 +1401,7 @@ def run_staged_bake_wave_manifest(
                 exercise_id=exercise_id,
                 exercise_name=exercise_name,
                 run_id=str(wave_payload.get("runId") or "") or None,
+                source_review_turn_id=str(wave_payload.get("sourceReviewTurnId") or "") or None,
                 request=replace(
                     request,
                     candidates_json=candidates_json,
@@ -1665,6 +1673,7 @@ def main() -> None:
                     source_review_timeout_seconds=args.source_review_timeout_seconds,
                     exercise_timeout_seconds=args.exercise_timeout_seconds,
                     max_source_window_attempts=args.max_source_window_attempts,
+                    turn_identity=args.source_review_turn_id,
                 )
                 budget["status"] = "ready" if budget["ready"] else "needs_source_review"
                 budget["workspaceSlug"] = workspace_slug

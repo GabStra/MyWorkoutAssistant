@@ -51,7 +51,10 @@ def exclusive_gpu_device() -> str | None:
         )
     count = visible_gpu_count()
     if count is not None and device_index >= count:
-        return None
+        raise ValueError(
+            f"{EXCLUSIVE_GPU_DEVICE_ENV_VAR} selects CUDA device {device_index}, "
+            f"but only {count} device(s) are visible."
+        )
     return str(device_index)
 
 
@@ -319,7 +322,16 @@ def small_gpu_stage_lock(stage: str, *, min_free_mib: int) -> Iterator[SmallGpuL
         # Nested inside an already-granted section that owns VRAM clearance.
         yield SmallGpuLease(granted=True, free_mib=query_free_gpu_memory_mib())
         return
-    with _SMALL_OP_SERIALIZE:
+    from exercise_motion_pkg.motion_scheduler import current_gpu_stage_deadline
+
+    deadline = current_gpu_stage_deadline()
+    if deadline is None:
+        acquired = _SMALL_OP_SERIALIZE.acquire()
+    else:
+        acquired = _SMALL_OP_SERIALIZE.acquire(timeout=max(0.0, deadline - time.perf_counter()))
+    if not acquired:
+        raise TimeoutError(f"Candidate deadline expired waiting for small GPU stage lock: {stage}")
+    try:
         wait_for_gpu_cooling(stage)
         free_mib = query_free_gpu_memory_mib()
         if free_mib is None or free_mib < min_free_mib:
@@ -330,6 +342,8 @@ def small_gpu_stage_lock(stage: str, *, min_free_mib: int) -> Iterator[SmallGpuL
             yield SmallGpuLease(granted=True, free_mib=free_mib)
         finally:
             _SMALL_OP_CONTEXT.stage = None
+    finally:
+        _SMALL_OP_SERIALIZE.release()
 
 
 def _gpu_lock_log(message: str) -> None:
@@ -422,6 +436,14 @@ class GlobalGpuLock:
         self._handle: int | None = None
         self._force_released = False
         self.on_force_release = on_force_release
+        try:
+            from exercise_motion_pkg.motion_scheduler import current_gpu_stage_deadline
+
+            inherited_deadline = current_gpu_stage_deadline()
+            if inherited_deadline is not None:
+                deadline = inherited_deadline if deadline is None else min(deadline, inherited_deadline)
+        except ImportError:
+            pass
         self.deadline = deadline
 
     def _acquired(self) -> float:

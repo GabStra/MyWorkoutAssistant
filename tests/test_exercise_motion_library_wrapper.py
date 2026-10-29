@@ -10,6 +10,37 @@ import pytest
 REPO_ROOT = Path(__file__).parents[1]
 
 
+def test_library_run_state_counts_the_normalized_exercise_inventory():
+    result = subprocess.run(
+        ["pwsh", "-NoProfile", "-Command", r'''
+$ErrorActionPreference = 'Stop'
+$errors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile(
+    (Join-Path (Get-Location) 'scripts/run_exercise_motion_library.ps1'), [ref]$null, [ref]$errors)
+if ($errors.Count) { throw ($errors | Out-String) }
+foreach ($name in @('Write-RunState')) {
+    $node = $ast.Find({ param($n)
+        $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name
+    }.GetNewClosure(), $true)
+    . ([scriptblock]::Create($node.Extent.Text))
+}
+function Write-AtomicJson { param($Path, $Value); $script:state = $Value }
+$script:LibraryStateInitialized = $true
+$script:LibraryRunOutcome = 'running'
+$definitionExerciseList = [pscustomobject]@{ exercises = @(1..306 | ForEach-Object { @{ id = $_ } }) }
+$resolvedLibraryJson = 'must-not-reparse-the-raw-library-format.json'
+$statePath = 'unused.json'
+Write-RunState -Phase 'first_pass_started'
+$script:state | ConvertTo-Json -Depth 8 -Compress
+'''],
+        cwd=REPO_ROOT, check=True, capture_output=True, text=True, timeout=30,
+    )
+    state = json.loads(result.stdout)
+    assert state["totalExerciseCount"] == 306
+    assert state["pendingExerciseCount"] == 306
+    assert state["terminalExerciseCount"] == 0
+
+
 @pytest.mark.parametrize("exclusive_gpu_device, shared_server", [("", False), ("1", True)])
 def test_library_wrapper_shares_vision_for_split_gpu_with_one_wave(
     monkeypatch, exclusive_gpu_device, shared_server

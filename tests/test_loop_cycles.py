@@ -219,6 +219,30 @@ def test_rank_loop_cycles_rejects_unpolishable_source_wrap():
     assert all(c['sourceWrapOverLimitRatio'] <= MAX_RANKED_SOURCE_WRAP_RATIO + 1e-9 for c in choices)
 
 
+def test_rank_loop_cycles_defers_only_contact_anchored_wrap_to_initializer():
+    from exercise_motion_pkg.loop_seam import MAX_RANKED_SOURCE_WRAP_RATIO
+
+    payload = repeated_motion()
+    for name, point in payload['frames'][59]['joints'].items():
+        payload['frames'][59]['joints'][name] = [point[0] + 0.25, point[1], point[2]]
+    payload['sourceFootSupportEvidence'] = {'contacts': [
+        {'jointName': side + '_foot', 'contactState': 'full_sole',
+         'contactMotion': 'stationary', 'startRatio': 0., 'endRatio': 1.}
+        for side in ('left', 'right')
+    ]}
+
+    ordinary = rank_loop_cycles(payload, max_candidates=5)
+    assert all(choice['sourceWrapOverLimitRatio'] <= MAX_RANKED_SOURCE_WRAP_RATIO + 1e-9
+               for choice in ordinary)
+
+    deferred = rank_loop_cycles(
+        payload, max_candidates=5, allow_repairable_support_wrap=True)
+    repaired = [choice for choice in deferred
+                if choice['sourceWrapDeferredToSupportInitialization']]
+    assert repaired
+    assert all(choice['minimumRetainedRangeRatio'] >= .9 for choice in repaired)
+
+
 def test_contact_intervals_are_clipped_rebased_and_not_duplicated():
     payload = repeated_motion()
     payload['sourceFootSupportEvidence'] = {

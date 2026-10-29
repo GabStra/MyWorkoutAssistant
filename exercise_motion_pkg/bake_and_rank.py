@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from exercise_motion_pkg.reconstruction_compat import loads_reconstruction_metadata
 
-from exercise_motion_pkg.acceptance import AcceptanceDecision, decide_acceptance, selected_artifact_identity
+from exercise_motion_pkg.acceptance import (
+    AcceptanceDecision,
+    decide_acceptance,
+    selected_artifact_identity,
+    selected_fit_receipt_problem,
+)
 from exercise_motion_pkg.artifact_state import (
     BOUNDED_MOVEMENT_REBAKE,
     BOUNDED_MOVEMENT_SELECTION,
@@ -62,7 +67,7 @@ import threading
 import traceback
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from functools import lru_cache
@@ -76,14 +81,16 @@ from urllib.parse import urlencode
 REVIEW_VIDEO_FFMPEG_TIMEOUT_SECONDS = 120.0
 
 from exercise_motion_pkg.contact_sheet_guidance import CONTACT_SHEET_READING_INSTRUCTIONS
-from exercise_motion_pkg.bilateral_evidence import exported_arm_symmetry_metrics, source_arm_symmetry_evidence
 from exercise_motion_pkg.contact_sheet_crop import persistent_border_crop
 from exercise_motion_pkg.contact_constraints import is_observed_ground_contact, is_stationary_contact
 from exercise_motion_pkg.foot_contact_observation import (
+    POLICY_VERSION as FOOT_CONTACT_POLICY_VERSION,
     add_observed_foot_contacts,
     copy_foot_landmark_cache,
+    load_cached_foot_landmarks,
     observe_foot_landmarks,
 )
+from exercise_motion_pkg.source_support_tracking import FOOT_MATERIAL_POLICY_VERSION
 from exercise_motion_pkg.foot_kinematics import HEEL_BEHIND_ANKLE_RATIO, source_knee_angle_bounds
 from exercise_motion_pkg.kinematic_cut import (
     DEFAULT_SPAN_PAD_SECONDS,
@@ -106,6 +113,7 @@ from exercise_motion_pkg.motion_io import load_motion_json
 from exercise_motion_pkg.models import MotionClip, MotionFrame
 from exercise_motion_pkg.render_geometry import UNIFORM_CAPSULE_RADIUS, support_surface_height
 from exercise_motion_pkg.structural_refinement import (
+    SOURCE_ARTICULATION_MAX_PREVENTED_EXCESS_DEGREES,
     constrain_to_source_articulation_envelope,
     stabilize_distal_foot_heading,
     stabilize_forefoot_ground_contacts,
@@ -178,6 +186,7 @@ from exercise_motion_pkg.segment_detection import (
     draw_contact_sheet_tile_label,
     extract_json_object,
     extract_window_frames,
+    extract_window_frames_with_ffmpeg,
     iter_detection_windows,
     linspace_times,
     save_detection_result,
@@ -245,6 +254,7 @@ from exercise_motion_pkg.youtube import (
     exercise_motion_contract_unusable_reason,
     exercise_motion_contract_uses_candidate_evidence,
     exercise_motion_contract_for_prompt,
+    exercise_motion_contract_prompt_identity_matches,
     exercise_motion_contract_prompt_sha256,
     exercise_motion_contract_prompt_body,
     exercise_motion_contract_quality_issues,
@@ -298,7 +308,7 @@ ADAPTIVE_PREVIEW_SETTINGS_MAX_CONTACT_SHEET_FRAMES = 20
 DEFAULT_DENSE_REVIEW_VIDEO_FPS = 30.0
 MAX_DENSE_REVIEW_VIDEO_FRAMES = 180
 SELECTED_SECTION_REVIEW_VIDEO_LOOP_REPEATS = 1
-SELECTED_SECTION_BAKE_CACHE_VERSION = 43
+SELECTED_SECTION_BAKE_CACHE_VERSION = 45
 SELECTED_SECTION_REVIEW_VIDEO_CACHE_VERSION = 6
 SELECTED_SOURCE_SECTION_FULL_SPAN_TOLERANCE_SECONDS = 0.08
 SELECTED_SOURCE_SECTION_MIN_DURATION_SECONDS = 0.05
@@ -561,7 +571,7 @@ SOURCE_CUT_MIN_ESTIMATED_DURATION_RATIO = 1.0
 SOURCE_CUT_ROBUST_MIN_SECONDS = 1.5
 SOURCE_CUT_ROBUST_MIN_ESTIMATED_DURATION_RATIO = 1.0
 ACTIVE_TRAVEL_SOURCE_CUT_MIN_SECONDS = 2.0
-SOURCE_SELECTION_POLICY_VERSION = 68
+SOURCE_SELECTION_POLICY_VERSION = 69
 SOURCE_SELECTION_CLEARANCE_POLICY_VERSION = 2
 
 SOURCE_OVERLAY_VISIBILITY_INSTRUCTIONS = (
@@ -618,7 +628,7 @@ SOURCE_CUT_BOUNDARY_AUDIT_FRAME_COUNT = 12
 SOURCE_CUT_BOUNDARY_AUDIT_TILE_WIDTH = 480
 SOURCE_CUT_BOUNDARY_AUDIT_JPEG_QUALITY = 92
 DEFAULT_FINAL_OUTPUT_VALIDATION_MIN_SCORE = 0.90
-SELECTION_VALIDATION_POLICY_VERSION = 136
+SELECTION_VALIDATION_POLICY_VERSION = 139
 FINAL_OUTPUT_VALIDATION_POLICY_VERSION = 82
 RETAINED_SELECTED_REVALIDATION_VERSION = 21
 # These policy versions isolate source-review caches from unrelated edits to
@@ -678,7 +688,6 @@ FINAL_OUTPUT_HARD_DETERMINISTIC_REJECTION_REASONS = frozenset(
         "materialized_hand_lock_arm_distortion",
         "materialized_paired_hands_distortion",
         "materialized_loop_bridge_pose_mismatch",
-        "materialized_source_confirmed_arm_asymmetry",
         "materialized_paired_hands_source_baseline_unavailable",
         "materialized_source_confirmed_support_sliding",
         "materialized_source_confirmed_support_unverifiable",
@@ -1332,61 +1341,282 @@ def candidate_result_has_terminal_quality_decision(result: dict[str, Any]) -> bo
     return False
 
 
+_TERMINAL_DECISION_CODE_INPUTS = (
+    "bake_and_rank.py", "stage_cache.py", "youtube.py", "pose_prefilter.py", "kinematic_cut.py",
+    "source_evidence.py", "source_action_evidence.py", "segment_detection.py",
+    "source_frame_clock.py", "pipeline.py", "pose_fidelity.py", "preview.py",
+    "wear_exact_mesh.js", "temporal_quality.py", "structural_refinement.py",
+    "foot_kinematics.py", "contact_constraints.py", "foot_contact_observation.py",
+    "articulation_trajectory.py", "contact_trajectory.py", "physical_validation.py",
+    "anatomical_repair.py", "whole_body_repair.py", "sequence_stabilization.py",
+    "controlled_motion.py", "contact_heel_pitch.py", "contact_heel_repair.py",
+    "contact_interpolation.py", "joint_plant_initialization.py", "artifact_state.py",
+    "motion_placement.py", "scene_placement.py", "rig_playback.py", "foot_geometry.py",
+    "rig_interpolation.py", "loop_cycles.py", "loop_seam.py", "repetition_phase.py",
+)
+
+
+@lru_cache(maxsize=64)
+def _cached_terminal_media_sha256(
+    resolved_path: str,
+    size_bytes: int,
+    modified_ns: int,
+    changed_ns: int,
+) -> str:
+    """Hash large immutable media/model inputs once per file version per process."""
+    digest = hashlib.sha256()
+    with Path(resolved_path).open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+_TERMINAL_BOOKKEEPING_KEYS = {
+    "createdAt", "updatedAt", "recordedAt", "completedAt", "generatedAt",
+    "savedAt", "wallTime", "elapsedSeconds", "timings", "timingSeconds",
+    "executionSeconds", "manifestUpdatedAt", "waveId", "runId", "attemptId",
+    "traceId", "candidateJsonPath", "selectedCandidateJsonPath", "candidateWorkspace",
+    "workspacePath",
+}
+
+
+def _without_terminal_bookkeeping(item: Any) -> Any:
+    if isinstance(item, dict):
+        return {
+            key: _without_terminal_bookkeeping(nested)
+            for key, nested in item.items()
+            if key not in _TERMINAL_BOOKKEEPING_KEYS
+        }
+    if isinstance(item, list):
+        return [_without_terminal_bookkeeping(nested) for nested in item]
+    return item
+
+
+def _terminal_decision_json_identity(path: Path) -> str | None:
+    try:
+        value = loads_reconstruction_metadata(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return None
+
+    encoded = json.dumps(_without_terminal_bookkeeping(value), sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def candidate_decision_identity(
+    candidate: RankedCandidate | dict[str, Any],
+    request: BakeAndRankRequest,
+    prepared_video_path: Path | None = None,
+) -> str | None:
+    """Fingerprint the evidence and active policy behind a candidate quality decision.
+
+    A terminal decision can be reused only while the exact source bytes, interval,
+    exercise contract, evidence, runtime quality settings, and decision code match.
+    Missing source bytes are a cache miss rather than permission to trust a URL.
+    """
+    from .stage_cache import cache_key
+
+    if isinstance(candidate, RankedCandidate):
+        ranked = candidate
+        payload = candidate.candidate
+    elif isinstance(candidate, dict):
+        payload = candidate.get("candidate") if isinstance(candidate.get("candidate"), dict) else candidate
+        exercise_id = str(candidate.get("exerciseId") or candidate.get("exerciseName") or "exercise")
+        exercise_name = str(candidate.get("exerciseName") or exercise_id)
+        ranked = RankedCandidate(
+            exercise_index=parse_optional_int(candidate.get("exerciseIndex")) or 0,
+            candidate_rank=parse_optional_int(candidate.get("candidateRank")) or 0,
+            exercise_id=exercise_id,
+            exercise_name=exercise_name,
+            exercise_slug=slugify(exercise_id),
+            candidate=payload,
+        )
+    else:
+        return None
+
+    candidate_workspace = request.workspace / ranked.workspace_slug
+    retained_selected_video = candidate_workspace / "input" / "selected_segment.mp4"
+    source_path = Path(prepared_video_path) if prepared_video_path is not None else (
+        retained_selected_video if retained_selected_video.is_file() else ranked.video_path
+    )
+    if source_path is None or not source_path.is_file():
+        return None
+    source_path = source_path.expanduser().resolve()
+    if prepared_video_path is not None and source_path.parent.name == "input":
+        candidate_workspace = source_path.parent.parent
+
+    evidence_paths = [
+        candidate_workspace / "segment_detection" / "segment_selection.json",
+        candidate_workspace / "segment_detection" / "exact_source_pose_reference.json",
+        candidate_workspace / "segment_detection" / "exact_source_phase_validation.json",
+        source_path.with_suffix(".source_frame_clock.json"),
+    ]
+    # Bind a parent-source clock receipt as well as the selected-cut receipt.
+    # The selected pose can be cut-relative while reconstruction is already on
+    # the parent clock, so either receipt changing must reopen the decision.
+    selection_path = candidate_workspace / "segment_detection" / "segment_selection.json"
+    try:
+        selection = loads_reconstruction_metadata(selection_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        selection = {}
+    parent_source_value = selection.get("sourceVideoPath") if isinstance(selection, dict) else None
+    parent_source_path = Path(str(parent_source_value)).expanduser() if parent_source_value else None
+    cleaned_path = candidate_workspace / "cleaned" / "motion.cleaned.json"
+    semantic_cleaned_evidence = None
+    try:
+        cleaned = loads_reconstruction_metadata(cleaned_path.read_text(encoding="utf-8"))
+        reconstruction = cleaned.get("metadata", {}).get("reconstruction", {})
+        clock_identity = reconstruction.get("sourceFrameClock", {}) if isinstance(reconstruction, dict) else {}
+        clock_output = clock_identity.get("outputVideoPath") if isinstance(clock_identity, dict) else None
+        if clock_output:
+            evidence_paths.append(source_frame_clock_path_for_video(Path(str(clock_output))))
+        camera = cleaned.get("metadata", {}).get("structuralRefinement", {}).get(
+            "sourceGuidedArticulation", {}).get("cameraRegistration", {})
+        semantic_cleaned_evidence = {
+            "sourceClock": {
+                key: clock_identity.get(key)
+                for key in ("sourceVideoSha256", "outputVideoSha256")
+            } if isinstance(clock_identity, dict) else None,
+            "sourceCameraRegistration": camera if isinstance(camera, dict) else None,
+        }
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    evidence_root = candidate_workspace / "segment_detection"
+    if evidence_root.is_dir():
+        evidence_paths.extend(evidence_root.glob("body_support/*.json"))
+        evidence_paths.extend(evidence_root.glob("pre_reconstruction_source_candidates/source_candidate_*/contact_sheet_evidence.json"))
+        evidence_paths.extend(evidence_root.glob("pre_reconstruction_source_candidates/source_candidate_*/boundary_review.json"))
+    code_paths = [Path(__file__).with_name(name) for name in _TERMINAL_DECISION_CODE_INPUTS]
+    # Keep large media/model SHA-256 values as explicit identity inputs. A
+    # process-local memo avoids rereading the same source/model on each wave;
+    # the file content hash remains the identity value and stat data only keys
+    # this ephemeral digest memo.
+    media_identities: dict[str, dict[str, str]] = {}
+
+    def add_media_identity(label: str, path: Path | None) -> None:
+        if path is None:
+            return
+        try:
+            resolved = path.expanduser().resolve()
+            if not resolved.is_file():
+                return
+            stat = resolved.stat()
+            media_identities[label] = {
+                "sha256": _cached_terminal_media_sha256(
+                    str(resolved), stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns,
+                ),
+            }
+        except OSError:
+            return
+
+    add_media_identity("selectedVideo", source_path)
+    add_media_identity("parentSourceVideo", parent_source_path)
+    for label, value in (
+        ("bodyModel", request.body_model_root),
+        ("llamaModel", request.llama_cpp_model),
+        ("llamaMmproj", request.llama_cpp_mmproj),
+    ):
+        add_media_identity(label, Path(value) if value is not None else None)
+    if request.body_model_root is not None:
+        body_root = Path(request.body_model_root).expanduser()
+        if body_root.is_dir():
+            body_files = []
+            try:
+                for model_file in sorted(path for path in body_root.rglob("*") if path.is_file()):
+                    resolved = model_file.resolve()
+                    stat = resolved.stat()
+                    body_files.append({
+                        "relativePath": resolved.relative_to(body_root.resolve()).as_posix(),
+                        "sha256": _cached_terminal_media_sha256(
+                            str(resolved), stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns,
+                        ),
+                    })
+            except OSError:
+                body_files = []
+            if body_files:
+                media_identities["bodyModelDirectory"] = {
+                    "sha256": hashlib.sha256(
+                        json.dumps(body_files, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                    ).hexdigest(),
+                }
+
+    json_evidence_identities: dict[str, str] = {}
+    small_evidence_paths: list[Path] = []
+    for evidence_path in evidence_paths:
+        if evidence_path.suffix.casefold() == ".json":
+            evidence_identity = _terminal_decision_json_identity(evidence_path)
+            if evidence_identity is not None:
+                try:
+                    label = evidence_path.resolve().relative_to(candidate_workspace.resolve()).as_posix()
+                except ValueError:
+                    label = evidence_path.name
+                json_evidence_identities[label] = evidence_identity
+        else:
+            small_evidence_paths.append(evidence_path)
+    code_content_identities: dict[str, dict[str, str] | dict[str, bool]] = {}
+    for code_path in code_paths:
+        try:
+            resolved = code_path.resolve()
+            if not resolved.is_file():
+                code_content_identities[code_path.name] = {"exists": False}
+                continue
+            stat = resolved.stat()
+            code_content_identities[code_path.name] = {
+                "sha256": _cached_terminal_media_sha256(
+                    str(resolved), stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns,
+                ),
+            }
+        except OSError:
+            code_content_identities[code_path.name] = {"exists": False}
+    inputs = small_evidence_paths
+
+    try:
+        candidate_contract = exercise_motion_contract_from_candidate(payload)
+    except (TypeError, ValueError, AttributeError):
+        candidate_contract = None
+    settings = {
+        "schemaVersion": 1,
+        "mediaContentIdentities": media_identities,
+        "decisionCodeContentIdentities": code_content_identities,
+        "jsonEvidenceIdentities": json_evidence_identities,
+        "cleanedSemanticEvidence": semantic_cleaned_evidence,
+        "attemptKey": ranked_candidate_attempt_key(ranked),
+        "candidateWindow": source_chunk_hint_manifest(ranked.source_chunk_hint),
+        "candidateContract": candidate_contract,
+        "authoritativeExerciseContext": request.authoritative_exercise_motion_context,
+        "sourceEvidence": {
+            key: payload.get(key)
+            for key in (
+                "sourceIntervalAuthority", "preReconstructionSourceIntervalAuthority",
+                "sourceFootSupportEvidence", "sourceActionEvidence",
+            )
+            if payload.get(key) is not None
+        },
+        "qualitySettings": {
+            key: getattr(request, key)
+            for key in (
+                "motion_reconstruction_backend", "structural_refinement_enabled",
+                "structural_refinement_vertical_only", "spinepose_enabled",
+                "spinepose_mode", "spinepose_model_version", "spinepose_device",
+                "spinepose_gain", "spinepose_max_degrees", "spinepose_invert",
+                "spinepose_smoothing_window", "spinepose_merge_mode",
+                "pre_reconstruction_source_validation", "exercise_motion_contract_enabled",
+                "review_frames", "max_llm_review_items", "max_review_windows",
+                "max_loop_seconds", "min_selected_score", "motion_tuning_enabled",
+                "select_preview_section", "rank_preview_variants", "adaptive_preview_settings",
+                "max_adaptive_preview_settings", "classify_support_dominance",
+                "final_output_validation", "visual_decision_backend",
+                "final_output_review_backend", "comparative_segment_selection_enabled",
+                "two_scale_source_validation", "final_output_validation_min_score",
+                "segment_confidence_threshold", "segment_padding_seconds",
+                "segment_end_padding_seconds", "segment_min_seconds", "segment_max_seconds",
+            )
+        },
+    }
+    return cache_key(_without_terminal_bookkeeping(settings), inputs)
+
+
 def load_previous_terminal_candidate_results(workspace: Path) -> dict[str, dict[str, Any]]:
     previous: dict[str, dict[str, Any]] = {}
-
-    policy_owner_paths = (
-        Path(__file__),
-        Path(__file__).with_name("youtube.py"),
-        Path(__file__).with_name("pose_prefilter.py"),
-        Path(__file__).with_name("kinematic_cut.py"),
-        Path(__file__).with_name("source_evidence.py"),
-        Path(__file__).with_name("segment_detection.py"),
-        Path(__file__).with_name("pipeline.py"),
-        Path(__file__).with_name("pose_fidelity.py"),
-        Path(__file__).with_name("preview.py"),
-        Path(__file__).with_name("wear_exact_mesh.js"),
-        Path(__file__).with_name("temporal_quality.py"),
-        Path(__file__).with_name("structural_refinement.py"),
-        Path(__file__).with_name("foot_kinematics.py"),
-        Path(__file__).with_name("contact_constraints.py"),
-        Path(__file__).with_name("foot_contact_observation.py"),
-        Path(__file__).with_name("articulation_trajectory.py"),
-        Path(__file__).with_name("contact_trajectory.py"),
-        Path(__file__).with_name("physical_validation.py"),
-        Path(__file__).with_name("anatomical_repair.py"),
-        Path(__file__).with_name("whole_body_repair.py"),
-        Path(__file__).with_name("sequence_stabilization.py"),
-        Path(__file__).with_name("controlled_motion.py"),
-        Path(__file__).with_name("contact_heel_pitch.py"),
-        Path(__file__).with_name("contact_heel_repair.py"),
-        Path(__file__).with_name("contact_interpolation.py"),
-        Path(__file__).with_name("joint_plant_initialization.py"),
-        Path(__file__).with_name("artifact_state.py"),
-        Path(__file__).with_name("motion_placement.py"),
-        Path(__file__).with_name("scene_placement.py"),
-        Path(__file__).with_name("rig_playback.py"),
-        Path(__file__).with_name("foot_geometry.py"),
-        Path(__file__).with_name("rig_interpolation.py"),
-        Path(__file__).with_name("loop_cycles.py"),
-        Path(__file__).with_name("loop_seam.py"),
-        Path(__file__).with_name("repetition_phase.py"),
-    )
-    policy_owner_mtimes: list[float] = []
-    for policy_owner_path in policy_owner_paths:
-        try:
-            policy_owner_mtimes.append(policy_owner_path.stat().st_mtime)
-        except OSError:
-            continue
-    active_policy_mtime = max(policy_owner_mtimes, default=0.0)
-
-    def manifest_uses_current_policy(path: Path) -> bool:
-        if active_policy_mtime <= 0.0:
-            return True
-        try:
-            return path.stat().st_mtime + 1e-6 >= active_policy_mtime
-        except OSError:
-            return False
 
     def add_result(result: dict[str, Any]) -> None:
         from .source_review_authority import candidate_needs_authority_replay
@@ -1405,18 +1635,24 @@ def load_previous_terminal_candidate_results(workspace: Path) -> dict[str, dict[
                     and previous_final_status not in TERMINAL_FINAL_SELECTION_STATUSES
                 ):
                     return
+                if not isinstance(result.get("candidateDecisionIdentity"), str) or not result.get(
+                    "candidateDecisionIdentity"
+                ):
+                    return
                 key = candidate_result_attempt_key(result)
                 if key:
                     previous.setdefault(key, result)
                 return
-        if not candidate_result_has_terminal_quality_decision(result):
+        if (not candidate_result_has_terminal_quality_decision(result)
+                or not isinstance(result.get("candidateDecisionIdentity"), str)
+                or not result.get("candidateDecisionIdentity")):
             return
         key = candidate_result_attempt_key(result)
         if key:
             previous.setdefault(key, result)
 
     selection_path = workspace / "selection_manifest.json"
-    if selection_path.exists() and manifest_uses_current_policy(selection_path):
+    if selection_path.exists():
         try:
             manifest = loads_reconstruction_metadata(selection_path.read_text(encoding="utf-8"))
         except Exception:
@@ -1432,8 +1668,6 @@ def load_previous_terminal_candidate_results(workspace: Path) -> dict[str, dict[
     except OSError:
         bake_manifest_paths = []
     for manifest_path in bake_manifest_paths:
-        if not manifest_uses_current_policy(manifest_path):
-            continue
         try:
             result = loads_reconstruction_metadata(manifest_path.read_text(encoding="utf-8"))
         except Exception:
@@ -1441,6 +1675,42 @@ def load_previous_terminal_candidate_results(workspace: Path) -> dict[str, dict[
         if isinstance(result, dict):
             add_result(result)
     return previous
+
+
+def attach_candidate_decision_identities(
+    candidate_results: list[dict[str, Any]],
+    *,
+    request: BakeAndRankRequest,
+    prepared_candidate_video_paths: Mapping[str, Path] | None = None,
+) -> None:
+    """Persist the exact evidence/policy identity beside candidate outcomes."""
+    for result in candidate_results:
+        candidate = result.get("candidate")
+        if not isinstance(candidate, dict):
+            continue
+        exercise_id = str(result.get("exerciseId") or result.get("exerciseName") or "exercise")
+        exercise_name = str(result.get("exerciseName") or exercise_id)
+        ranked = RankedCandidate(
+            exercise_index=parse_optional_int(result.get("exerciseIndex")) or 0,
+            candidate_rank=parse_optional_int(result.get("candidateRank")) or 0,
+            exercise_id=exercise_id,
+            exercise_name=exercise_name,
+            exercise_slug=slugify(exercise_id),
+            candidate=candidate,
+        )
+        prepared = (
+            prepared_candidate_video_paths.get(ranked.workspace_slug)
+            if prepared_candidate_video_paths is not None else None
+        )
+        if prepared is None:
+            candidate_workspace = result.get("candidateWorkspace")
+            if candidate_workspace:
+                selected_video = Path(str(candidate_workspace)) / "input" / "selected_segment.mp4"
+                if selected_video.is_file():
+                    prepared = selected_video
+        identity = candidate_decision_identity(ranked, request, prepared)
+        if identity is not None:
+            result["candidateDecisionIdentity"] = identity
 
 
 def build_skipped_previous_terminal_result(
@@ -1462,6 +1732,7 @@ def build_skipped_previous_terminal_result(
         "previousStatus": previous_result.get("status"),
         "previousFinalSelectionStatus": previous_result.get("finalSelectionStatus"),
         "previousTerminalResult": copy.deepcopy(previous_result),
+        "candidateDecisionIdentity": previous_result.get("candidateDecisionIdentity"),
         "previousAttemptKey": ranked_candidate_attempt_key(ranked_candidate),
         "reviewSourceClips": [],
         "rejectedSourceClips": [],
@@ -1513,6 +1784,7 @@ def ranked_candidates_to_process_with_previous_terminal_skips(
     *,
     request: BakeAndRankRequest,
     fallback_ready_target: int,
+    prepared_candidate_video_paths: Mapping[str, Path] | None = None,
 ) -> tuple[list[tuple[int, RankedCandidate]], dict[int, dict[str, Any]]]:
     previous_terminal_results = (
         load_previous_terminal_candidate_results(request.workspace)
@@ -1525,7 +1797,15 @@ def ranked_candidates_to_process_with_previous_terminal_skips(
     for original_index, ranked_candidate in enumerate(candidates):
         attempt_key = ranked_candidate_attempt_key(ranked_candidate)
         previous_terminal_result = previous_terminal_results.get(attempt_key)
-        if previous_terminal_result is not None:
+        prepared_video_path = (
+            prepared_candidate_video_paths.get(ranked_candidate.workspace_slug)
+            if prepared_candidate_video_paths is not None else None
+        )
+        current_identity = candidate_decision_identity(
+            ranked_candidate, request, prepared_video_path
+        )
+        if (previous_terminal_result is not None and current_identity is not None
+                and previous_terminal_result.get("candidateDecisionIdentity") == current_identity):
             skipped_by_original_index[original_index] = build_skipped_previous_terminal_result(
                 ranked_candidate,
                 previous_terminal_result,
@@ -2617,6 +2897,54 @@ class BakedLoopArtifact:
     artifact_class: str = ""
 
 
+def _preview_parent_source_frame_bounds(
+    preview_payload: dict[str, Any] | None,
+    local_frame_bounds: tuple[int, int] | None,
+) -> tuple[int, int] | None:
+    """Map a preview-local frame cut to its retained parent source-frame IDs."""
+    frames = preview_payload.get("frames") if isinstance(preview_payload, dict) else None
+    if not isinstance(frames, list) or local_frame_bounds is None:
+        return None
+    start, end = local_frame_bounds
+    if start < 0 or end < start or end >= len(frames):
+        return None
+    selected = (frames[start], frames[end])
+    values = [frame.get("sourceFrameIndex") for frame in selected if isinstance(frame, dict)]
+    if len(values) != 2 or any(type(value) is not int for value in values):
+        return None
+    return values[0], values[1]
+
+
+def _baked_source_frame_bounds_match(
+    baked_payload: dict[str, Any],
+    *,
+    local_frame_bounds: tuple[int, int],
+    expected_parent_bounds: tuple[int, int] | None,
+) -> bool:
+    """Check an exact cut's local frame count and retained parent-frame identity."""
+    if expected_parent_bounds is None:
+        return False
+    frames = baked_payload.get("frames")
+    start, end = local_frame_bounds
+    if not isinstance(frames, list) or len(frames) != end - start + 1 or not frames:
+        return False
+    source_indexes = [
+        frame.get("sourceFrameIndex") if isinstance(frame, dict) else None
+        for frame in frames
+    ]
+    if any(type(value) is not int for value in source_indexes):
+        return False
+    actual = (source_indexes[0], source_indexes[-1])
+    loop = baked_payload.get("loop")
+    if not isinstance(loop, dict):
+        return False
+    return (
+        actual == expected_parent_bounds
+        and loop.get("sourceStartFrame") == expected_parent_bounds[0]
+        and loop.get("sourceEndFrame") == expected_parent_bounds[1]
+    )
+
+
 @dataclass(frozen=True)
 class KinematicSafeBakeResult:
     artifact: BakedLoopArtifact
@@ -3076,6 +3404,7 @@ class BakeAndRankRequest:
     reconstruction_docker_gpus: str = "all"
     reconstruction_docker_shm_size: str = DEFAULT_RECONSTRUCTION_DOCKER_SHM_SIZE
     use_warm_gvhmr_worker: bool = False
+    gvhmr_stage_split: bool = False
     gvhmr_worker_session_dir: Path | None = None
     gvhmr_worker_mount_root: Path | None = None
     gvhmr_worker_timeout_seconds: float | None = None
@@ -3189,6 +3518,8 @@ class BakeAndRankRequest:
     artifact_retention: str = ARTIFACT_RETENTION_DEBUG
 
     def __post_init__(self) -> None:
+        if self.gvhmr_stage_split and not (self.use_warm_gvhmr_worker and self.shared_llama_server):
+            raise ValueError("GVHMR stage split requires warm workers and a supervised shared llama server.")
         if self.visual_decision_backend != "qwen-chat" or self.final_output_review_backend not in {
             None,
             "qwen-chat",
@@ -3378,9 +3709,18 @@ class LazyLlamaCppVisionSession:
             f"vision_candidate_deadline_{id(self)}",
             default=None,
         )
+        self._candidate_deadline_wait_callbacks: ContextVar[Callable[[float], float | None] | None] = ContextVar(
+            f"vision_candidate_deadline_wait_callback_{id(self)}",
+            default=None,
+        )
+        self._candidate_wait_remaining_callbacks: ContextVar[Callable[[], float] | None] = ContextVar(
+            f"vision_candidate_wait_remaining_callback_{id(self)}",
+            default=None,
+        )
         self._endpoint_observations = ObservationCache()
         self._session_started_at = time.perf_counter()
         self._lifecycle_events: list[dict[str, Any]] = []
+        self._compatibility_events: list[dict[str, Any]] = []
         self._ranker_close_event_count = 0
 
     def _record_lifecycle_event_locked(self, event: str, **details: Any) -> None:
@@ -3396,9 +3736,20 @@ class LazyLlamaCppVisionSession:
         if len(self._lifecycle_events) > VISION_LIFECYCLE_EVENT_LIMIT:
             del self._lifecycle_events[: len(self._lifecycle_events) - VISION_LIFECYCLE_EVENT_LIMIT]
 
-    def set_candidate_deadline(self, deadline: float | None) -> None:
+    def set_candidate_deadline(
+        self,
+        deadline: float | None,
+        *,
+        on_wait: Callable[[float], float | None] | None = None,
+        wait_remaining: Callable[[], float] | None = None,
+    ) -> None:
         with self._condition:
             self._candidate_deadlines.set(deadline)
+            self._candidate_deadline_wait_callbacks.set(on_wait)
+            self._candidate_wait_remaining_callbacks.set(wait_remaining)
+        from exercise_motion_pkg.motion_scheduler import set_current_candidate_deadline
+
+        set_current_candidate_deadline(deadline)
 
     def caption_endpoint_images(self, *, frame_paths: list[Path], prompt: str, **kwargs: Any) -> str:
         """Reuse exact, deterministic observations across overlapping windows and GPU swaps."""
@@ -3441,14 +3792,19 @@ class LazyLlamaCppVisionSession:
         # A live cross-process stop-intent means the shared server is stopping
         # or stopped for an exclusive GPU phase; hold new VLM admissions until
         # the owning process releases it.
-        return self._shared is not None and self._shared.stop_intent_live()
+        return self._shared is not None and (
+            self._shared.stop_intent_live() or self._shared.resident_compute_intent_live())
 
     def _shared_request_admitted_locked(self) -> bool:
         # Sessions count admitted requests through the coordinator's counted
         # scopes (not absolute publishes) so concurrent client-level counts in
         # this same pid add up instead of clobbering each other.
         if self._shared is not None:
-            return self._shared.try_begin_counted_request()
+            from exercise_motion_pkg.motion_scheduler import monotonic_deadline_from_perf_counter
+
+            return self._shared.try_begin_counted_request(
+                deadline=monotonic_deadline_from_perf_counter(self._candidate_deadlines.get())
+            )
         return True
 
     def _shared_request_released_locked(self) -> None:
@@ -3458,6 +3814,29 @@ class LazyLlamaCppVisionSession:
     def caption_images(self, *args: Any, **kwargs: Any) -> str:
         queued_at = time.perf_counter()
         with self._condition:
+            wait_checkpoint = queued_at
+
+            def account_wait() -> float | None:
+                nonlocal wait_checkpoint
+                now = time.perf_counter()
+                waited = max(0.0, now - wait_checkpoint)
+                wait_checkpoint = now
+                callback = self._candidate_deadline_wait_callbacks.get()
+                deadline = self._candidate_deadlines.get()
+                if callback is not None:
+                    deadline = callback(waited)
+                    self._candidate_deadlines.set(deadline)
+                    from exercise_motion_pkg.motion_scheduler import set_current_candidate_deadline
+
+                    set_current_candidate_deadline(deadline)
+                return deadline
+
+            def remaining_wait_seconds() -> float | None:
+                callback = self._candidate_wait_remaining_callbacks.get()
+                if callback is None:
+                    return None
+                return max(0.0, float(callback()))
+
             while True:
                 # Once CUDA-exclusive work is queued, drain it before admitting
                 # another VLM request. This turns N per-exercise model swaps into
@@ -3474,18 +3853,40 @@ class LazyLlamaCppVisionSession:
                     deadline = self._candidate_deadlines.get()
                     if deadline is not None and time.perf_counter() >= deadline:
                         raise CandidateWallTimeBudgetExpired("Candidate budget expired waiting for a VLM slot.")
-                    self._condition.wait(timeout=0.25)
+                    wait_timeout = 0.25
+                    remaining_wait = remaining_wait_seconds()
+                    if remaining_wait is not None:
+                        if remaining_wait <= 0.0:
+                            account_wait()
+                        wait_timeout = min(wait_timeout, remaining_wait)
+                    self._condition.wait(timeout=wait_timeout)
+                    account_wait()
                 if self._closed:
                     raise RuntimeError("llama.cpp vision session was already closed.")
                 if self._ranker is None:
                     self._release_cached_exclusive_models()
+                    # Releasing cached CUDA allocations is local preparation,
+                    # not time spent waiting for the shared VLM lease/startup.
+                    wait_checkpoint = time.perf_counter()
                     stage_started = time.perf_counter()
                     startup_id = self.startup_count + 1
                     self._record_lifecycle_event_locked(
                         "ranker_starting",
                         startupId=startup_id,
                     )
-                    self._ranker = LlamaCppVisionRanker(self.settings)
+                    remaining_wait = remaining_wait_seconds()
+                    if remaining_wait is not None and remaining_wait <= 0.0:
+                        account_wait()
+                    try:
+                        if remaining_wait is None:
+                            self._ranker = LlamaCppVisionRanker(self.settings)
+                        else:
+                            self._ranker = LlamaCppVisionRanker(
+                                self.settings,
+                                startup_timeout_seconds=remaining_wait,
+                            )
+                    finally:
+                        account_wait()
                     startup_seconds = elapsed_seconds(stage_started)
                     gpu_lock_wait_seconds = getattr(
                         self._ranker,
@@ -3504,9 +3905,15 @@ class LazyLlamaCppVisionSession:
                         startupSeconds=round(startup_seconds, 3),
                         gpuLockWaitSeconds=round(float(gpu_lock_wait_seconds), 3),
                     )
+                    deadline = self._candidate_deadlines.get()
+                    if deadline is not None and time.perf_counter() >= deadline:
+                        raise CandidateWallTimeBudgetExpired(
+                            "Candidate budget expired waiting for VLM startup."
+                        )
                 ranker = self._ranker
                 if not self._shared_request_admitted_locked():
                     self._condition.wait(timeout=0.25)
+                    account_wait()
                     continue
                 self._active_calls += 1
                 self._peak_active_calls = max(self._peak_active_calls, self._active_calls)
@@ -3617,6 +4024,16 @@ class LazyLlamaCppVisionSession:
         small_stage: str | None = None,
         small_min_free_mib: int | None = None,
     ) -> Any:
+        deadline = self._candidate_deadlines.get()
+
+        def wait_for_condition() -> None:
+            if deadline is not None and time.perf_counter() >= deadline:
+                raise CandidateWallTimeBudgetExpired(
+                    "Candidate budget expired waiting for exclusive GPU admission."
+                )
+            remaining = None if deadline is None else max(0.0, deadline - time.perf_counter())
+            self._condition.wait(timeout=0.25 if remaining is None else min(0.25, remaining))
+
         if small_stage is not None and small_min_free_mib is not None:
             operation_result = self._try_small_gpu_co_resident(
                 operation,
@@ -3635,7 +4052,7 @@ class LazyLlamaCppVisionSession:
             quiesce_summary: QuiesceSummary | None = None
             try:
                 while self._reconstruction_active:
-                    self._condition.wait()
+                    wait_for_condition()
                 self._reconstruction_active = True
                 if not self._exclusive_batch_open:
                     self._exclusive_batch_open = True
@@ -3645,7 +4062,7 @@ class LazyLlamaCppVisionSession:
                         exclusiveBatchId=self.exclusive_batch_count,
                     )
                 while self._active_calls > 0:
-                    self._condition.wait()
+                    wait_for_condition()
                 if self._shared is not None:
                     # Shared mode: stop-intent -> drain attached processes'
                     # in-flight requests -> stop the supervisor's server. The
@@ -3655,7 +4072,11 @@ class LazyLlamaCppVisionSession:
                         "shared_exclusive_quiesce_started",
                         exclusiveBatchId=self.exclusive_batch_count,
                     )
-                    quiesce_summary = self._shared.begin_exclusive_phase()
+                    from exercise_motion_pkg.motion_scheduler import monotonic_deadline_from_perf_counter
+
+                    quiesce_summary = self._shared.begin_exclusive_phase(
+                        deadline=monotonic_deadline_from_perf_counter(deadline)
+                    )
                     self._record_lifecycle_event_locked(
                         "shared_exclusive_quiesce_finished",
                         exclusiveBatchId=self.exclusive_batch_count,
@@ -3668,7 +4089,7 @@ class LazyLlamaCppVisionSession:
                 self._close_ranker_locked(force_stop_server=True, final_close=False)
             except Exception:
                 if quiesce_summary is not None:
-                    self._release_shared_exclusive_locked()
+                    self._release_shared_exclusive_locked(deadline=deadline)
                 self._reconstruction_active = False
                 self._exclusive_batch_open = False
                 self._condition.notify_all()
@@ -3701,18 +4122,20 @@ class LazyLlamaCppVisionSession:
                     if self._exclusive_waiters == 0:
                         self._exclusive_batch_open = False
                         if self._shared is not None:
-                            self._release_shared_exclusive_locked()
+                            self._release_shared_exclusive_locked(deadline=deadline)
                         self._record_lifecycle_event_locked(
                             "exclusive_gpu_batch_finished",
                             exclusiveBatchId=self.exclusive_batch_count,
                         )
                     self._condition.notify_all()
 
-    def _release_shared_exclusive_locked(self) -> None:
+    def _release_shared_exclusive_locked(self, *, deadline: float | None = None) -> None:
         """End a shared exclusive phase: reopen admissions, request restart."""
         if self._shared is None:
             return
-        self._shared.end_exclusive_phase()
+        from exercise_motion_pkg.motion_scheduler import monotonic_deadline_from_perf_counter
+
+        self._shared.end_exclusive_phase(deadline=monotonic_deadline_from_perf_counter(deadline))
         self._record_lifecycle_event_locked(
             "shared_restart_requested",
             restartRequestCount=self._shared.restart_request_count,
@@ -3744,6 +4167,16 @@ class LazyLlamaCppVisionSession:
             shared_metrics = (
                 self._shared.metrics() if self._shared is not None else None
             )
+            active_compatibility_events = (
+                self._ranker.client.compatibility_events_snapshot()
+                if self._ranker is not None
+                and callable(getattr(self._ranker.client, "compatibility_events_snapshot", None))
+                else []
+            )
+            compatibility_events = [
+                *self._compatibility_events,
+                *active_compatibility_events,
+            ]
         return {
             "visionQueueWaitSeconds": round(self.queue_wait_seconds, 3),
             "visionRequestSeconds": round(self.request_seconds, 3),
@@ -3762,6 +4195,7 @@ class LazyLlamaCppVisionSession:
             "coResidentGpuOomFallbackCount": self.co_resident_oom_fallback_count,
             **({"sharedVisionSession": shared_metrics} if shared_metrics is not None else {}),
             "visionLifecycleEvents": lifecycle_events,
+            "visionCompatibilityEvents": compatibility_events,
             "configuredParallelCallLimit": self._max_active_calls,
             "peakParallelCallCount": self._peak_active_calls,
             "endpointObservationCache": self._endpoint_observations.metrics(),
@@ -3829,6 +4263,13 @@ class LazyLlamaCppVisionSession:
             return
         ranker = self._ranker
         self._ranker = None
+        compatibility_snapshot = getattr(
+            getattr(ranker, "client", None),
+            "compatibility_events_snapshot",
+            None,
+        )
+        if callable(compatibility_snapshot):
+            self._compatibility_events.extend(compatibility_snapshot())
         if force_stop_server:
             ranker.close(force_stop_server=True)
         else:
@@ -3883,9 +4324,11 @@ def recompute_contract_dependent_materialized_metrics(
     caption_images: Callable[..., str] | None,
 ) -> dict[str, Any]:
     source_pose_reference = (
-        prepared_metrics.get("_sourcePoseReference")
+        source_pose_reference_from_phase_metrics(
+            prepared_metrics,
+            source_video_path=selected_input_video_path_for_review_item(item),
+        )
         if isinstance(prepared_metrics, dict)
-        and isinstance(prepared_metrics.get("_sourcePoseReference"), dict)
         else None
     )
     return materialized_metrics_with_gpu_handoff(item, ranking,
@@ -4611,6 +5054,42 @@ def set_caption_candidate_deadline(
             sessions[id(owner)] = owner
     for session in sessions.values():
         session.set_candidate_deadline(deadline)
+
+
+@contextmanager
+def caption_candidate_deadline_scope(
+    callbacks: Iterable[Callable[..., Any] | None],
+    deadline: float | None,
+):
+    """Apply one candidate deadline to its sessions and restore caller context."""
+    callbacks = tuple(callbacks)
+    sessions: dict[int, LazyLlamaCppVisionSession] = {}
+    for callback in callbacks:
+        owner = getattr(callback, "__self__", None)
+        if isinstance(owner, LazyLlamaCppVisionSession):
+            sessions[id(owner)] = owner
+    from exercise_motion_pkg.motion_scheduler import candidate_deadline_scope
+
+    previous = [(
+        session,
+        session._candidate_deadlines.get(),
+        session._candidate_deadline_wait_callbacks.get(),
+        session._candidate_wait_remaining_callbacks.get(),
+    ) for session in sessions.values()]
+    with candidate_deadline_scope(deadline):
+        try:
+            set_caption_candidate_deadline(callbacks, deadline)
+            # set_candidate_deadline clears optional wait callbacks by default;
+            # candidate scopes retain any caller-owned callbacks.
+            for session, _old_deadline, old_wait, old_remaining in previous:
+                session._candidate_deadline_wait_callbacks.set(old_wait)
+                session._candidate_wait_remaining_callbacks.set(old_remaining)
+            yield
+        finally:
+            for session, old_deadline, old_wait, old_remaining in reversed(previous):
+                session._candidate_deadlines.set(old_deadline)
+                session._candidate_deadline_wait_callbacks.set(old_wait)
+                session._candidate_wait_remaining_callbacks.set(old_remaining)
 
 
 _PROGRESS_ACTIVITY: ContextVar[Callable[[str], None] | None] = ContextVar(
@@ -5526,16 +6005,13 @@ def source_selection_clearance_for_workspace(
     if source_stage_ran and expected_exercise_name is not None:
         source_exercise_name = str(source_manifest.get("exerciseName") or "")
         source_contract = source_manifest.get("exerciseMotionContract")
-        expected_prompt_contract = exercise_motion_contract_for_prompt(expected_contract)
-        source_prompt_contract = (
-            exercise_motion_contract_for_prompt(source_contract)
-            if isinstance(source_contract, dict)
-            else None
-        )
         if (
             normalize_exercise_name(source_exercise_name)
             != normalize_exercise_name(expected_exercise_name)
-            or expected_prompt_contract != source_prompt_contract
+            or not exercise_motion_contract_prompt_identity_matches(
+                source_contract if isinstance(source_contract, dict) else None,
+                expected_contract,
+            )
         ):
             return {
                 "status": "needs_source_review",
@@ -5856,11 +6332,7 @@ def source_selection_clearance_for_workspace(
             if expected_exercise_name is not None else None
         ),
         "exerciseMotionContractSha256": (
-            hashlib.sha256(json.dumps(
-                exercise_motion_contract_for_prompt(expected_contract),
-                sort_keys=True, separators=(",", ":"), ensure_ascii=False,
-                allow_nan=False,
-            ).encode("utf-8")).hexdigest()
+            exercise_motion_contract_prompt_sha256(source_manifest.get("exerciseMotionContract"))
             if expected_exercise_name is not None else None
         ),
         "authorizedCandidateId": (
@@ -5879,6 +6351,43 @@ def apply_materialized_output_acceptance_gate(
     deterministic_metrics: dict[str, Any] | None = None,
 ) -> SelectedArtifact:
     item, ranking = selected
+    previous_payload = dict(ranking.payload or {}) if ranking is not None else {}
+    previous_rejection_reasons = set(
+        payload_string_list(previous_payload.get("materializedOutputRejectionReasons"))
+        + payload_string_list(previous_payload.get("materializedHardRejectionReasons"))
+    )
+    previous_warnings = set(payload_string_list(previous_payload.get("materializedWarnings")))
+    previous_validation = previous_payload.get("finalOutputValidation")
+    if isinstance(previous_validation, dict):
+        for key in ("hardRejectionReasons", "rejectionReasons", "deterministicBlockingReasons"):
+            previous_rejection_reasons.update(payload_string_list(previous_validation.get(key)))
+        for key in ("warningReasons", "warnings"):
+            previous_warnings.update(payload_string_list(previous_validation.get(key)))
+    previous_owned_reasons = previous_rejection_reasons | previous_warnings | {
+        "materialized_output_rejected",
+        "materialized_output_selected_with_warnings",
+    }
+    source_ranking_reasons = [
+        reason
+        for reason in (ranking.reasons if ranking is not None else [])
+        if reason not in previous_owned_reasons
+    ]
+
+    def preserve_source_candidate_scores(payload: dict[str, Any]) -> None:
+        # Keep the original ranker's score attribution before the legacy score
+        # fields are refreshed with the current materialized decision. These
+        # fields are stable across repeated revalidation passes.
+        source_score = parse_optional_float(payload.get("sourceCandidateScore"))
+        if source_score is None:
+            source_score = parse_optional_float(payload.get("score"))
+        if source_score is not None:
+            payload["sourceCandidateScore"] = source_score
+        source_model_score = parse_optional_float(payload.get("sourceCandidateModelScore"))
+        if source_model_score is None:
+            source_model_score = parse_optional_float(payload.get("modelScore"))
+        if source_model_score is not None:
+            payload["sourceCandidateModelScore"] = source_model_score
+
     source_clearance = source_selection_clearance_for_review_item(
         item,
         required=request.pre_reconstruction_source_validation,
@@ -5909,6 +6418,7 @@ def apply_materialized_output_acceptance_gate(
         ranking = LoopRanking(score=0.0, reasons=["artifact_class_gate_required"], payload={})
     if not class_gate["passed"]:
         payload = dict(ranking.payload or {})
+        preserve_source_candidate_scores(payload)
         rejection_reasons = dedupe_text(
             list(class_gate.get("rejectionReasons") or [])
             + ([f"required_artifact_class_{required_class}"] if required_class is not None else [])
@@ -5935,8 +6445,16 @@ def apply_materialized_output_acceptance_gate(
         payload["materializedOutputRejectionReasons"] = rejection_reasons
         payload["materializedHardRejectionReasons"] = rejection_reasons
         payload["materializedWarnings"] = []
+        payload["score"] = 0.0
+        payload["modelScore"] = 0.0
         payload["manualBoundaryReviewRequired"] = False
-        return item, replace(ranking, score=0.0, model_score=0.0, payload=payload)
+        return item, replace(
+            ranking,
+            score=0.0,
+            reasons=dedupe_text([*source_ranking_reasons, "materialized_output_rejected", *rejection_reasons]),
+            model_score=0.0,
+            payload=payload,
+        )
     persist_reconciled_review_item_artifact_state(item, artifact_state)
     if selected[1] is None:
         if source_clearance.get("status") in {"cleared", "not_required"}:
@@ -5989,6 +6507,7 @@ def apply_materialized_output_acceptance_gate(
     if not request.final_output_validation:
         deterministic_rejections = [reason for reason in deterministic_rejections
                                    if reason not in MATERIALIZED_NON_BLOCKING_WHEN_VALIDATION_DISABLED]
+    preserve_source_candidate_scores(payload)
     decision = decide_acceptance(
         metrics, final_validation,
         deterministic_rejections=deterministic_rejections,
@@ -6036,12 +6555,17 @@ def apply_materialized_output_acceptance_gate(
             # selection unit tests). Still keep the acceptance gate and
             # rejection/warning reasons.
             weighted_score = float(ranking.score)
+        payload["score"] = weighted_score
+        payload["modelScore"] = weighted_score
+        payload["materializedOutputRejectionReasons"] = []
+        payload["materializedHardRejectionReasons"] = []
+        payload["materializedWarnings"] = warning_reasons
         payload["selectionScoreComponents"] = score_components
         payload["materializedOutputRejected"] = False
         accepted_reasons = (
-            dedupe_text([*ranking.reasons, "materialized_output_selected_with_warnings"])
+            dedupe_text([*source_ranking_reasons, "materialized_output_selected_with_warnings"])
             if warning_reasons
-            else ranking.reasons
+            else source_ranking_reasons
         )
         return (
             item,
@@ -6065,13 +6589,17 @@ def apply_materialized_output_acceptance_gate(
         ),
     )
     capped_score = min(ranking.score, score_cap)
+    payload["score"] = capped_score
+    payload["modelScore"] = capped_score
     payload["materializedOutputRejected"] = True
     payload["materializedOutputRejectionReasons"] = hard_rejection_reasons
+    payload["materializedHardRejectionReasons"] = hard_rejection_reasons
+    payload["materializedWarnings"] = warning_reasons
     return (
         item,
         LoopRanking(
             score=capped_score,
-            reasons=dedupe_text([*ranking.reasons, "materialized_output_rejected", *hard_rejection_reasons]),
+            reasons=dedupe_text([*source_ranking_reasons, "materialized_output_rejected", *hard_rejection_reasons]),
             raw_response=ranking.raw_response,
             payload=payload,
             model_score=capped_score,
@@ -8567,6 +9095,30 @@ def source_review_model_identity(settings: Any) -> dict[str, Any] | None:
     return vlm_settings_with_file_identities(identity)
 
 
+def source_cycle_role_frames(video: Path, choices: dict[str, Any], output_dir: Path) -> list[Path]:
+    """Reuse exact role images only while their source, seek targets and bytes match."""
+    times = [float(choices['roleTimes'][role]) for role in ('start', 'excursion', 'return')]
+    return source_review_sample_frames(video, times, output_dir)
+
+
+def source_review_sample_frames(video: Path, times: list[float], output_dir: Path) -> list[Path]:
+    """Extract code-selected context without trusting model-generated timestamps."""
+    from exercise_motion_pkg.stage_cache import cache_key, cached_paths
+
+    key = cache_key({
+        'stage': 'source-review-sample-images-v1',
+        'times': times, 'maxWidth': 960,
+    }, [video])
+    def extract() -> list[Path]:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        paths = extract_window_frames_with_ffmpeg(video_path=video, times=times,
+                                                  max_frame_width=960, output_dir=output_dir)
+        if len(paths) != len(times):
+            raise ValueError('Source review context images could not all be extracted')
+        return paths
+    return cached_paths(output_dir / 'checkpoint.json', key, extract)
+
+
 def validate_two_scale_source_with_caption_images(
     item: ReviewItem,
     *,
@@ -8599,14 +9151,20 @@ def validate_two_scale_source_with_caption_images(
         else None
     )
     effective_contract = exercise_motion_contract or candidate_contract
+    fallback_pose_reference = item.candidate_workspace / 'segment_detection' / 'exact_source_pose_reference.json'
     key = cache_key({"exercise": item.exercise_name, "contract": effective_contract,
         "model": model_settings, "window": [window.start_seconds, window.end_seconds],
         "reviewPolicyVersion": SOURCE_REVIEW_AGGREGATE_CACHE_POLICY_VERSION,
         "sourceEvidencePolicyVersion": SOURCE_EVIDENCE_POLICY_VERSION,
         "endpoints": source_pose_endpoint_features,
         "phase": {k: v for k, v in (source_phase_metrics or {}).items()
-                  if k in {"required", "passed", "hasSingleMajorCycle", "hasCompleteMajorCycle"}}},
+                  if k in {"required", "passed", "hasSingleMajorCycle", "hasCompleteMajorCycle",
+                           "phaseSignalEvidence", "majorPhaseSequence", "sampleCount", "maxFrameIndex",
+                           "minFrameIndex", "edgeMarginFrameCount", "sourceVideoPath"}}},
         [video, *uniform_sheet_paths, *source_equipment_detail_frames(uniform_sheet_paths),
+         *([fallback_pose_reference] if fallback_pose_reference.is_file() else []),
+         *([Path(str(source_phase_metrics['sourcePoseReferencePath']))]
+           if source_phase_metrics and source_phase_metrics.get('sourcePoseReferencePath') else []),
          *(path.parent / "contact_sheet_evidence.json" for path in uniform_sheet_paths)])
     directory = item.candidate_workspace / "source-review-cache" / key
     checkpoint = directory / "checkpoint.json"
@@ -8646,6 +9204,8 @@ def validate_two_scale_source_with_caption_images(
                 outputs.extend(dict.fromkeys(Path(path).parent / "contact_sheet_evidence.json"
                     for name in ("uniformContactSheetPaths", "motionContactSheetPaths")
                     for path in result.get(name, [])))
+            outputs.extend(Path(path) for path in result.get('sourceCycleRoleImagePaths', []))
+            outputs.extend(Path(path) for path in result.get('sourceActionReviewImagePaths', []))
             save_stage(checkpoint, key, result, outputs)
         return result
 
@@ -8691,6 +9251,146 @@ def cache_repaired_source_review(validation: dict[str, Any], repair: dict[str, A
                    for path in validation.get(name, [])]
         save_stage(checkpoint, cache["key"], validation, outputs)
     return True
+
+
+def _retained_structured_source_evidence(
+    item: ReviewItem,
+    *,
+    source_interval: DetectionWindow,
+    exercise_motion_contract: dict[str, Any],
+    prompt: str,
+    uniform_sheet_paths: list[Path],
+    motion_sheet_paths: list[Path],
+    frame_inventory: list[dict[str, Any]],
+) -> tuple[str, dict[str, Any]] | None:
+    """Reuse a retained approval only when its complete visual request is identical.
+
+    This is approval-evidence reuse, not a model-response cache hit: the original
+    model identity is not needed to establish that the already-approved interval
+    and evidence are unchanged. The raw structured answer is reparsed and
+    reaggregated by the current policy at the call site.
+    """
+    candidate = item.candidate if isinstance(item.candidate, dict) else {}
+    reference = candidate.get("retainedSourceInterval")
+    if not isinstance(reference, dict) or reference.get("schemaVersion") != 1:
+        return None
+    source_workspace = Path(str(reference.get("workspace") or "")).expanduser().resolve()
+    import_path = item.candidate_workspace / "segment_detection" / "retained_source_interval_import.json"
+    try:
+        self_import = item.candidate_workspace.expanduser().resolve() == source_workspace
+        if import_path.exists():
+            imported = loads_reconstruction_metadata(import_path.read_text(encoding="utf-8"))
+            if not isinstance(imported, dict) or (
+                Path(str(imported.get("sourceWorkspace") or "")).expanduser().resolve() != source_workspace
+                or imported.get("sourceVideoSha256") != reference.get("sourceVideoSha256")
+                or imported.get("segmentSelectionSha256") != reference.get("segmentSelectionSha256")
+                or imported.get("selectedSegmentSha256") != reference.get("selectedSegmentSha256")
+                or imported.get("exerciseMotionContractSha256") != reference.get("exerciseMotionContractSha256")
+            ):
+                return None
+        elif not self_import:
+            return None
+        selection_path = source_workspace / "segment_detection" / "segment_selection.json"
+        selected_segment = source_workspace / "input" / "selected_segment.mp4"
+        if (
+            file_sha256(selection_path) != str(reference.get("segmentSelectionSha256") or "").casefold()
+            or file_sha256(selected_segment) != str(reference.get("selectedSegmentSha256") or "").casefold()
+            or exercise_motion_contract_prompt_sha256(exercise_motion_contract)
+            != str(reference.get("exerciseMotionContractSha256") or "").casefold()
+        ):
+            return None
+        selection = loads_reconstruction_metadata(selection_path.read_text(encoding="utf-8"))
+        original_source_path = Path(str(selection.get("sourceVideoPath") or "")).expanduser()
+        if (
+            not original_source_path.is_file()
+            or file_sha256(original_source_path) != str(reference.get("sourceVideoSha256") or "").casefold()
+        ):
+            return None
+        selected_source = final_output_source_video_window(item)
+        if selected_source is None:
+            return None
+        selected_source_path, selected_source_window = selected_source
+        if (
+            file_sha256(selected_source_path) != file_sha256(selected_segment)
+            or abs(selected_source_window.start_seconds - source_interval.start_seconds) > 0.001
+            or abs(selected_source_window.end_seconds - source_interval.end_seconds) > 0.001
+        ):
+            return None
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
+
+    from exercise_motion_pkg.stage_cache import load_stage
+    from exercise_motion_pkg.source_evidence import POLICY_VERSION
+
+    matches: list[tuple[str, dict[str, Any]]] = []
+    expected_image_hashes = [file_sha256(path) for path in [*uniform_sheet_paths, *motion_sheet_paths]]
+    expected_contract_hash = exercise_motion_contract_prompt_sha256(exercise_motion_contract)
+    for checkpoint in sorted((source_workspace / "source-review-cache").glob("*/checkpoint.json")):
+        key = checkpoint.parent.name
+        cached = load_stage(checkpoint, key)
+        if not isinstance(cached, dict):
+            continue
+        if (
+            cached.get("reviewStatus") != "passed"
+            or cached.get("sourceEvidencePolicyVersion") != POLICY_VERSION
+            or cached.get("missingEvidenceReasons")
+            or cached.get("error")
+        ):
+            continue
+        cached_interval = cached.get("sourceIntervalSeconds")
+        if not isinstance(cached_interval, list) or len(cached_interval) != 2:
+            continue
+        try:
+            if abs(float(cached_interval[0]) - source_interval.start_seconds) > 0.001 or abs(
+                float(cached_interval[1]) - source_interval.end_seconds
+            ) > 0.001:
+                continue
+        except (TypeError, ValueError):
+            continue
+        cached_contract = cached.get("exerciseMotionContract")
+        if (
+            not isinstance(cached_contract, dict)
+            or exercise_motion_contract_prompt_sha256(cached_contract) != expected_contract_hash
+            or cached.get("frameInventory") != frame_inventory
+        ):
+            continue
+        cached_images = [
+            Path(path)
+            for name in ("uniformContactSheetPaths", "motionContactSheetPaths")
+            for path in cached.get(name, [])
+        ]
+        if len(cached_images) != len(expected_image_hashes):
+            continue
+        try:
+            if [file_sha256(path) for path in cached_images] != expected_image_hashes:
+                continue
+            cached_prompt = (checkpoint.parent / "source_evidence_prompt.txt").read_text(encoding="utf-8")
+        except (OSError, ValueError):
+            continue
+        if cached_prompt != prompt:
+            continue
+        gate = cached.get("gates", {}).get("structuredEvidence", {})
+        if not isinstance(gate, dict) or gate.get("reviewStatus") != "passed":
+            continue
+        raw = gate.get("rawResponse") if isinstance(gate, dict) else None
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        try:
+            parsed = extract_json_object(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            # A stale or corrupt cached answer is incomplete evidence; it must
+            # not prevent another independently valid retained approval from
+            # being considered, and must never be selected as an approval.
+            continue
+        if not isinstance(parsed, dict) or not isinstance(parsed.get("observations"), list):
+            continue
+        matches.append((raw, parsed))
+    if not matches:
+        return None
+    # Repeated retained checkpoints can serialize the same structured judgment
+    # differently. Reuse one only when the parsed evidence is identical;
+    # conflicting judgments stay unresolved instead of choosing arbitrarily.
+    return matches[0] if all(parsed == matches[0][1] for _, parsed in matches[1:]) else None
 
 
 def _validate_two_scale_source_uncached(
@@ -8761,8 +9461,10 @@ def _validate_two_scale_source_uncached(
             },
         }
     from exercise_motion_pkg.source_evidence import (
-        POLICY_VERSION as EVIDENCE_POLICY_VERSION, aggregate_evidence, evidence_inventory,
-        evidence_prompt, evidence_response_token_budget, evidence_schema, source_requirements,
+        POLICY_VERSION as EVIDENCE_POLICY_VERSION, aggregate_evidence, correct_incomplete_evidence,
+        cycle_semantic_question, resolve_cycle_semantics, resolve_semantic_evidence, evidence_inventory,
+        evidence_prompt, evidence_response_token_budget, evidence_schema, permits_cyclic_phase_order,
+        return_cycle_evidence_choices, source_requirements,
     )
     from exercise_motion_pkg.review_questions import answer_question
     result = {
@@ -8785,21 +9487,344 @@ def _validate_two_scale_source_uncached(
             "rejectionReasons": ["two_scale_source_structured_evidence_incomplete"],
             "error": str(exc)})
     else:
-        prompt = evidence_prompt(requirements, frames)
-        schema = evidence_schema(requirements, frames)
-        response_token_budget = evidence_response_token_budget(requirements, frames)
+        allow_cyclic_phase_order = permits_cyclic_phase_order(specific_contract)
+        phase_requirements = [row for row in requirements if row['id'].startswith('phase_')]
+        reviewed_phases = ((specific_contract.get('motionContext') or {}).get('exerciseDefinition') or {}).get('requiredPhases')
+        phase_owned_action = len(phase_requirements) >= 3 and (
+            specific_contract.get('requiredPhasesAuthority') in {'structured_definition', 'trusted'}
+            or bool(reviewed_phases) and reviewed_phases == specific_contract.get('requiredPhases'))
+        from exercise_motion_pkg.source_action_evidence import (
+            action_pose_grounding, required_pose_checks, articulation_event_intervals, ordered_event_coverage,
+            event_action_completion, event_review_sample_times, EVENT_SEMANTICS_POLICY_VERSION)
+
+        current_video = getattr(item, 'source_review_video_path', None) or (
+            item.candidate_workspace / 'input' / 'selected_segment.mp4')
+        reference_path = (source_phase_metrics or {}).get('sourcePoseReferencePath') or (
+            item.candidate_workspace / 'segment_detection' / 'exact_source_pose_reference.json')
+        needs_action_pose = any(required_pose_checks(row['description']) for row in requirements)
+        verified_pose = (load_verified_source_pose_reference(Path(str(reference_path)), current_video)
+                         if needs_action_pose or len(phase_requirements) >= 3 else None)
+        phase_checks = {check for row in requirements if row['id'].startswith('phase_')
+                        for check in required_pose_checks(row['description'])}
+        grounding_requirements = [row for row in requirements if row['id'] != 'action'
+            or not phase_owned_action or not set(required_pose_checks(row['description'])).issubset(phase_checks)]
+        pose_grounding = action_pose_grounding(grounding_requirements, verified_pose)
+        pose_grounding['sourceVideoSha256'] = (file_sha256(current_video)
+            if needs_action_pose and current_video.is_file() else None)
+        if not pose_grounding['passed']:
+            # No model answer can supply a missing independent observation.
+            result.update({'passed': False, 'reviewStatus': 'incomplete',
+                'requirements': requirements, 'frameInventory': frames,
+                'missingEvidenceReasons': ['two_scale_source_structured_evidence_incomplete'],
+                'rejectionReasons': ['two_scale_source_structured_evidence_incomplete'],
+                'gates': {'actionPoseEvidence': pose_grounding},
+                'sourceReviewDisposition': 'expand_visible_source_or_human_review'})
+            output_dir.mkdir(parents=True, exist_ok=True)
+            (output_dir / 'two_scale_source_validation.json').write_text(
+                json.dumps(result, indent=2), encoding='utf-8')
+            return result
+        cycle_choices = None
+        phase_labels = [row['description'] for row in phase_requirements]
+        if (allow_cyclic_phase_order and len(phase_labels) == len(set(phase_labels)) == 2
+                and 'unresolved' not in phase_labels and isinstance(source_phase_metrics, dict)):
+            reference_path_value = source_phase_metrics.get('sourcePoseReferencePath')
+            metrics_video_value = source_phase_metrics.get('sourceVideoPath')
+            current_video = item.source_review_video_path or (item.candidate_workspace / 'input' / 'selected_segment.mp4')
+            metrics_video = Path(str(metrics_video_value)) if metrics_video_value else current_video
+            try:
+                same_video = (metrics_video.resolve() == current_video.resolve()
+                    or metrics_video.is_file() and current_video.is_file()
+                    and hashlib.sha256(metrics_video.read_bytes()).digest()
+                    == hashlib.sha256(current_video.read_bytes()).digest())
+            except OSError:
+                same_video = False
+            if same_video and reference_path_value:
+                pose_reference = load_verified_source_pose_reference(Path(str(reference_path_value)), current_video)
+                cycle_choices = return_cycle_evidence_choices(source_phase_metrics, pose_reference, frames)
+        prompt = evidence_prompt(requirements, frames,
+                                 allow_cyclic_phase_order=allow_cyclic_phase_order,
+                                 cycle_choices=cycle_choices, semantic_labels=True)
+        schema = evidence_schema(requirements, frames, cycle_choices=cycle_choices, semantic_labels=True)
+        response_token_budget = evidence_response_token_budget(requirements, frames, semantic_labels=True)
         images = [*uniform_sheet_paths, *motion_sheet_paths]
+        role_images = []
+        if cycle_choices is not None:
+            role_images = source_cycle_role_frames(current_video, cycle_choices,
+                                                   output_dir / 'cycle-role-frames')
+            images = [*uniform_sheet_paths, *role_images]
+            prompt, schema = cycle_semantic_question(requirements, frames, first_role_image=1)
+            # Bind the separately attached role images into the reusable question identity.
+            prompt += '\nRole image hashes: ' + json.dumps([file_sha256(path) for path in role_images])
+        correction_receipt = None
+        action_review_paths: list[Path] = []
+        def ask_semantic_question(name: str, targeted: list[dict[str, Any]]) -> tuple[str, Any]:
+            question_frames, question_images = frames, images
+            if all(row['id'] == 'clean_interval' or row['id'].startswith('equipment_') for row in targeted):
+                question_frames = [frame for frame in frames if frame['sampling'] == 'uniform']
+                question_images = uniform_sheet_paths
+            question = evidence_prompt(targeted, question_frames,
+                allow_cyclic_phase_order=allow_cyclic_phase_order, semantic_labels=True)
+            question = question.split('\nSchema:', 1)[0]
+            if any(row['id'] == 'clean_interval' for row in targeted):
+                question += '\nReviewed target action context: ' + json.dumps({
+                    'definingAction': specific_contract.get('definingAction'),
+                    'requiredActions': [row['description'] for row in phase_requirements]})
+            response_schema = evidence_schema(targeted, question_frames, semantic_labels=True)[
+                'properties']['observations']['items']['oneOf'][0]
+            response_schema['properties'].pop('requirement')
+            response_schema['required'].remove('requirement')
+            question = question + (
+                '\nReturn one observation object for this one visible fact. Code owns its requirement identity.\nSchema: '
+                + json.dumps(response_schema))
+            budget = evidence_response_token_budget(targeted, question_frames, semantic_labels=True)
+            def compute() -> tuple[str, Any]:
+                answer = call_caption_images_json(caption_images, frame_paths=question_images, prompt=question,
+                    max_tokens=budget, disable_reasoning=True, json_response=True,
+                    response_schema=response_schema, temperature=0.0, top_p=1.0, top_k=1)
+                observation = extract_json_object(answer)
+                if not isinstance(observation, dict) or set(observation) - {'verdict', 'evidenceFrameIds', 'observedObjectCount'}:
+                    return answer, {'observations': []}
+                wire = {'observations': [{'requirement': targeted[0]['description'], **observation}]}
+                return answer, resolve_semantic_evidence(wire, targeted, question_frames)
+            if settings is None or source_interval is None:
+                return compute()
+            return answer_question(directory=item.candidate_workspace / 'source-question-cache',
+                name=name, frames=question_images, prompt=question, max_tokens=budget,
+                operation=compute,
+                reusable=lambda value: aggregate_evidence(value, targeted, frames,
+                    allow_cyclic_phase_order=allow_cyclic_phase_order)['reviewStatus'] != 'incomplete',
+                identity={'model': source_review_model_identity(settings),
+                          'sourceEvidencePolicyVersion': EVIDENCE_POLICY_VERSION,
+                          'contract': specific_contract,
+                          'window': [source_interval.start_seconds, source_interval.end_seconds]})
+
         def operation() -> tuple[str, Any]:
+            nonlocal correction_receipt
+            if cycle_choices is not None:
+                semantic = [row for row in requirements if row['id'] != 'completion'
+                            and (row['id'] != 'action' or not phase_owned_action)
+                            and not row['id'].startswith('phase_')]
+                measured = [row for row in requirements if row not in semantic]
+                uniform_frames = [frame for frame in frames if frame['sampling'] == 'uniform']
+                def ask(name: str, paths: list[Path], question: str,
+                        response_schema: dict[str, Any], reusable: Callable[[Any], bool]) -> tuple[str, Any]:
+                    def compute() -> tuple[str, Any]:
+                        raw = call_caption_images_json(caption_images, frame_paths=paths, prompt=question,
+                            max_tokens=response_token_budget, disable_reasoning=True, json_response=True,
+                            response_schema=response_schema, temperature=0.0, top_p=1.0, top_k=1)
+                        return raw, extract_json_object(raw)
+                    if settings is None or source_interval is None:
+                        return compute()
+                    return answer_question(directory=item.candidate_workspace / 'source-question-cache',
+                        name=name, frames=paths, prompt=question, max_tokens=response_token_budget,
+                        operation=compute, reusable=reusable,
+                        identity={'model': source_review_model_identity(settings),
+                                  'sourceEvidencePolicyVersion': EVIDENCE_POLICY_VERSION,
+                                  'contract': specific_contract,
+                                  'window': [source_interval.start_seconds, source_interval.end_seconds]})
+                source_raw, source_payload = ask('measured-cycle-source-semantics', uniform_sheet_paths,
+                    evidence_prompt(semantic, uniform_frames, allow_cyclic_phase_order=True),
+                    evidence_schema(semantic, uniform_frames),
+                    lambda value: aggregate_evidence(value, semantic, uniform_frames)['reviewStatus'] != 'incomplete')
+                interval_raw, interval_payload = ask('measured-cycle-interval-actions', role_images, prompt, schema,
+                    lambda value: aggregate_evidence(
+                        resolve_cycle_semantics(value, measured, frames, cycle_choices), measured, frames,
+                        allow_cyclic_phase_order=True, cycle_choices=cycle_choices)['reviewStatus'] != 'incomplete')
+                combined = ({**source_payload, **interval_payload}
+                            if isinstance(source_payload, dict) and set(source_payload) == {'observations'}
+                            and isinstance(interval_payload, dict)
+                            and set(interval_payload) == set(schema['properties']) else None)
+                merged_payload = resolve_cycle_semantics(combined, requirements, frames, cycle_choices)
+                correction_receipt = {
+                    'attempted': False, 'mode': 'measured_cycle_semantics',
+                    'completionAuthority': 'verified_source_pose_cycle_and_observed_actions',
+                    'sourceSemanticsRawResponse': source_raw, 'intervalSemanticsRawResponse': interval_raw,
+                    'roleImagePaths': [str(path) for path in role_images],
+                    'roleImageSha256': [file_sha256(path) for path in role_images],
+                }
+                return json.dumps(merged_payload, separators=(',', ':')), merged_payload
+            if len(phase_requirements) >= 3:
+                # Each action has its own visual decision; completion is code-owned coverage.
+                events = articulation_event_intervals(verified_pose)
+                completion_checks = {event['id']: {phase['description']: event_action_completion(
+                    phase['description'], verified_pose, event) for phase in phase_requirements} for event in events}
+                potential_labels = {event_id: [label for label, check in checks.items() if check['passed']]
+                                    for event_id, checks in completion_checks.items()}
+                potential_coverage = ordered_event_coverage(phase_requirements, events, potential_labels,
+                    allow_cyclic_order=allow_cyclic_phase_order)
+                if not potential_coverage:
+                    correction_receipt = {'attempted': False, 'mode': 'measured_event_sequence',
+                        'unresolvedReason': 'measured_action_completion_not_established',
+                        'eventCompletionEvidence': completion_checks}
+                    unresolved = {'observations': [{'requirementId': row['id'], 'verdict': 'unresolved',
+                        'evidenceFrameIds': []} for row in requirements]}
+                    return json.dumps(unresolved), unresolved
+                phase_labels = {row['description'] for row in phase_requirements}
+                semantic = [row for row in requirements if row['id'] != 'completion'
+                            and (row['id'] != 'action' or not phase_owned_action)
+                            and not row['id'].startswith('phase_') and row['description'] not in phase_labels]
+                observations = []
+                source_receipts = []
+                facts = {}
+                for row in semantic:
+                    facts.setdefault(row['description'], []).append(row)
+                for group in facts.values():
+                    source_raw, source_payload = ask_semantic_question('sequence-source-' + group[0]['id'], group)
+                    observations.extend(source_payload.get('observations', []))
+                    source_receipts.append({'requirementIds': [row['id'] for row in group], 'rawResponse': source_raw})
+                receipts = []
+                labels = {}
+                source_hash = file_sha256(current_video) if current_video.is_file() else None
+                choices = list(dict.fromkeys(row['description'] for row in phase_requirements))
+                event_schema = {'type': 'object', 'additionalProperties': False,
+                    'required': ['observedActions', 'unresolved'], 'properties': {
+                        'observedActions': {'type': 'array', 'uniqueItems': True,
+                            'items': {'type': 'string', 'enum': choices}},
+                        'unresolved': {'type': 'boolean'}}}
+                event_prompt = ('The attached images show ONE measured source interval in chronological order, '
+                    'reading each contact sheet left to right, top to bottom. '
+                    'Select only actions visibly completed WITHIN these images. A posture alone does not prove an action. '
+                    'Select multiple actions only if each is visibly completed here, including every side when required. '
+                    'If cropped, ambiguous, or incomplete, set unresolved=true and return no actions. '
+                    'Do not locate actions elsewhere or supply timestamps or frame references. '
+                    'The measured interval is a proposal, not proof. Action choices: ' + json.dumps(choices)
+                    + '\nSchema: ' + json.dumps(event_schema))
+                def valid_event(value):
+                    return (isinstance(value, dict) and set(value) == {'observedActions', 'unresolved'}
+                        and type(value['unresolved']) is bool and isinstance(value['observedActions'], list)
+                        and all(isinstance(label, str) and label in choices for label in value['observedActions'])
+                        and len(set(value['observedActions'])) == len(value['observedActions'])
+                        and not (value['unresolved'] and value['observedActions']))
+                def ask_event(event, event_images):
+                    def compute_event():
+                        answer = call_caption_images_json(caption_images, frame_paths=event_images,
+                            prompt=event_prompt, max_tokens=512 + len(json.dumps(choices)), disable_reasoning=True,
+                            json_response=True, response_schema=event_schema, temperature=0., top_p=1., top_k=1)
+                        return answer, extract_json_object(answer)
+                    if settings is None or source_interval is None:
+                        return compute_event()
+                    else:
+                        return answer_question(
+                            directory=item.candidate_workspace / 'source-question-cache', name='sequence-event',
+                            frames=event_images, prompt=event_prompt, max_tokens=512 + len(json.dumps(choices)),
+                            operation=compute_event, reusable=valid_event,
+                            identity={'model': source_review_model_identity(settings),
+                                'sourceEvidencePolicyVersion': EVENT_SEMANTICS_POLICY_VERSION,
+                                'sourceVideoSha256': source_hash, 'times': event['times'],
+                                'contract': specific_contract})
+                # Review the coherent measured sequence, not every overlapping
+                # hypothesis. Original frames preserve the detail lost in mosaics.
+                for phase, event in zip(phase_requirements, potential_coverage):
+                    sample_times = event_review_sample_times(event, completion_checks[event['id']][phase['description']])
+                    event_images = source_review_sample_frames(current_video, sample_times,
+                        output_dir / 'event-context' / event['id'])
+                    action_review_paths.extend(event_images)
+                    event_raw, value = ask_event(event, event_images)
+                    observed = value['observedActions'] if valid_event(value) and not value['unresolved'] else []
+                    labels[event['id']] = [label for label in observed if completion_checks[event['id']][label]['passed']]
+                    receipts.append({**event, 'reviewSampleTimes': sample_times,
+                        'rawResponse': event_raw, 'observedActions': observed, 'eligibleActions': labels[event['id']],
+                        'completionEvidence': completion_checks[event['id']],
+                        'imagePaths': [str(path) for path in event_images],
+                        'imageSha256': [file_sha256(path) for path in event_images],
+                        'sampleImagePaths': [str(path) for path in event_images],
+                        'sampleImageSha256': [file_sha256(path) for path in event_images]})
+                selected = ordered_event_coverage(phase_requirements, events, labels,
+                    allow_cyclic_order=allow_cyclic_phase_order)
+                for index, phase in enumerate(phase_requirements):
+                    ids = []
+                    if selected:
+                        event = selected[index]
+                        # These references are constructed from exact extracted samples, never model citations.
+                        receipt = next(row for row in receipts if row['id'] == event['id'])
+                        for number, sample_index in ((0, 0), (2, -1)):
+                            frame_id = f"event:{event['id']}:{number}"
+                            if not any(frame['id'] == frame_id for frame in frames):
+                                frames.append({'id': frame_id, 'sampling': 'event',
+                                    'image': 1 if sample_index == 0 else len(receipt['sampleImagePaths']),
+                                    'tileNumber': 1, 'timestampSeconds': event['times'][number],
+                                    'framePath': receipt['sampleImagePaths'][sample_index],
+                                    'sheetSha256': receipt['sampleImageSha256'][sample_index]})
+                            ids.append(frame_id)
+                    for owner in [phase, *[row for row in requirements if row['id'] != phase['id']
+                            and not row['id'].startswith('phase_') and row['description'] == phase['description']]]:
+                        if any(row['requirementId'] == owner['id'] for row in observations):
+                            continue
+                        observations.append({'requirementId': owner['id'],
+                            'verdict': 'supported' if selected else 'unresolved', 'evidenceFrameIds': ids})
+                phase_payload = {'observations': [row for row in observations
+                                                  if row.get('requirementId', '').startswith('phase_')]}
+                phase_evidence = aggregate_evidence(phase_payload, phase_requirements, frames,
+                    allow_cyclic_phase_order=allow_cyclic_phase_order)
+                by_id = {row.get('requirementId'): row for row in phase_payload['observations']}
+                complete = (phase_evidence['passed'] and all(
+                    by_id.get(row['id'], {}).get('verdict') == 'supported' for row in phase_requirements))
+                times = {frame['id']: frame['timestampSeconds'] for frame in frames}
+                cited = sorted({frame_id for row in phase_payload['observations']
+                                for frame_id in row.get('evidenceFrameIds', []) if frame_id in times},
+                               key=lambda frame_id: times[frame_id])
+                endpoints = list(dict.fromkeys(cited[index] for index in (0, len(cited) // 2, -1))) if cited else []
+                observations.append({'requirementId': 'completion',
+                    'verdict': 'supported' if complete else 'unresolved',
+                    'evidenceFrameIds': endpoints if complete else []})
+                if phase_owned_action:
+                    observations.append({'requirementId': 'action',
+                        'verdict': 'supported' if complete else 'unresolved',
+                        'evidenceFrameIds': endpoints if complete else []})
+                merged_payload = {'observations': observations}
+                correction_receipt = {'attempted': False, 'mode': 'measured_event_sequence',
+                    'completionAuthority': 'ordered_measured_intervals_with_observed_actions',
+                    'sourceSemanticQuestions': source_receipts, 'eventQuestions': receipts,
+                    'eventCompletionEvidence': completion_checks,
+                    'selectedEventIds': [event['id'] for event in selected],
+                    'unresolvedReason': None if selected else 'measured_action_sequence_not_established'}
+                return json.dumps(merged_payload, separators=(',', ':')), merged_payload
             raw = call_caption_images_json(caption_images, frame_paths=images, prompt=prompt,
                 max_tokens=response_token_budget, disable_reasoning=True, json_response=True,
                 response_schema=schema, temperature=0.0, top_p=1.0, top_k=1)
-            return raw, extract_json_object(raw)
+            initial_payload = resolve_semantic_evidence(extract_json_object(raw), requirements, frames)
+            correction_raw = None
+            def request_correction(targeted_requirements: list[dict[str, Any]],
+                                   targeted_frames: list[dict[str, Any]],
+                                   correction_prompt: str, correction_schema: dict[str, Any]) -> Any:
+                nonlocal correction_raw
+                correction_budget = evidence_response_token_budget(targeted_requirements, targeted_frames,
+                                                                     semantic_labels=True)
+                correction_raw = call_caption_images_json(caption_images, frame_paths=images,
+                    prompt=correction_prompt, max_tokens=correction_budget, disable_reasoning=True,
+                    json_response=True, response_schema=correction_schema, temperature=0.0,
+                    top_p=1.0, top_k=1)
+                return extract_json_object(correction_raw)
+            merged_payload, correction_receipt = correct_incomplete_evidence(
+                initial_payload, requirements, frames, request_correction,
+                allow_cyclic_phase_order=allow_cyclic_phase_order,
+                cycle_choices=cycle_choices)
+            correction_receipt = {**correction_receipt, 'mode': 'semantic_requirement_labels',
+                                  'initialRawResponse': raw, 'correctionRawResponse': correction_raw}
+            return json.dumps(merged_payload, separators=(',', ':')), merged_payload
         settings = getattr(getattr(caption_images, "__self__", None), "settings", None)
-        if settings is not None and source_interval is not None:
+        retained_evidence = (
+            _retained_structured_source_evidence(item, source_interval=source_interval,
+                exercise_motion_contract=specific_contract, prompt=prompt,
+                uniform_sheet_paths=uniform_sheet_paths, motion_sheet_paths=motion_sheet_paths,
+                frame_inventory=frames)
+            if source_interval is not None and isinstance(specific_contract, dict) and len(phase_requirements) < 3
+            else None
+        )
+        if retained_evidence is not None:
+            raw, payload = retained_evidence
+            result["sourceEvidenceReuse"] = {
+                "kind": "retained_approved_interval",
+                "reparsedUnderCurrentPolicy": True,
+                "sourceEvidencePolicyVersion": EVIDENCE_POLICY_VERSION,
+            }
+        elif settings is not None and source_interval is not None and len(phase_requirements) < 3:
             raw, payload = answer_question(directory=item.candidate_workspace / "source-question-cache",
                 name="structured-evidence", frames=images, prompt=prompt, max_tokens=response_token_budget,
                 operation=operation,
-                reusable=lambda value: aggregate_evidence(value, requirements, frames)["reviewStatus"] != "incomplete",
+                reusable=lambda value: aggregate_evidence(value, requirements, frames,
+                    allow_cyclic_phase_order=allow_cyclic_phase_order,
+                    cycle_choices=cycle_choices)["reviewStatus"] != "incomplete",
                 identity={"model": source_review_model_identity(settings),
                           "policy": SOURCE_REVIEW_QUESTION_CACHE_POLICY_VERSION,
                           "sourceEvidencePolicyVersion": EVIDENCE_POLICY_VERSION,
@@ -8807,7 +9832,11 @@ def _validate_two_scale_source_uncached(
                           "window": [source_interval.start_seconds, source_interval.end_seconds]})
         else:
             raw, payload = operation()
-        evidence = aggregate_evidence(payload, requirements, frames)
+        evidence = aggregate_evidence(payload, requirements, frames,
+                                      allow_cyclic_phase_order=allow_cyclic_phase_order,
+                                      cycle_choices=cycle_choices)
+        pose_grounding = {**pose_grounding, **action_pose_grounding(
+            grounding_requirements, verified_pose, frames=frames, observations=evidence['observations'])}
         endpoint_validation = validate_source_pose_endpoints_against_contract(
             source_pose_endpoint_features, specific_contract, phase_metrics=source_phase_metrics)
         reasons = []
@@ -8815,16 +9844,23 @@ def _validate_two_scale_source_uncached(
             reasons.append("two_scale_source_structured_evidence_incomplete")
         elif evidence["reviewStatus"] == "rejected":
             reasons.append("two_scale_source_structured_evidence_contradicted")
+        if not pose_grounding['passed'] and 'two_scale_source_structured_evidence_incomplete' not in reasons:
+            reasons.append('two_scale_source_structured_evidence_incomplete')
         if endpoint_validation.get("available") and not endpoint_validation.get("passed", True):
             reasons.append("two_scale_source_pose_contract_mismatch")
         result.update({"passed": not reasons,
-            "reviewStatus": "incomplete" if evidence["reviewStatus"] == "incomplete" else "rejected" if reasons else "passed",
+            "reviewStatus": "incomplete" if evidence["reviewStatus"] == "incomplete" or not pose_grounding['passed'] else "rejected" if reasons else "passed",
             "missingEvidenceReasons": missing_validation_evidence_reasons(reasons),
             "rejectionReasons": reasons,
             "requirements": requirements, "frameInventory": frames,
+            "sourceCycleEvidenceChoices": cycle_choices,
+            "sourceCycleRoleImagePaths": [str(path) for path in role_images],
+            "sourceActionReviewImagePaths": [str(path) for path in dict.fromkeys(action_review_paths)],
             "evidenceResponseTokenBudget": response_token_budget,
-            "gates": {"structuredEvidence": {**evidence, "response": payload, "rawResponse": raw},
-                      "deterministicPoseEndpoints": endpoint_validation}})
+            "gates": {"structuredEvidence": {**evidence, "response": payload, "rawResponse": raw,
+                                                "correction": correction_receipt},
+                      "deterministicPoseEndpoints": endpoint_validation,
+                      "actionPoseEvidence": pose_grounding}})
         output_dir.mkdir(parents=True, exist_ok=True)
         (output_dir / "source_evidence_prompt.txt").write_text(prompt, encoding="utf-8")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -9871,7 +10907,9 @@ def materialized_output_acceptance_metrics(
         if not materialized_camera_is_canonical(export_payload):
             rejection_reasons.append("materialized_noncanonical_camera")
         leg_articulation = baked_leg_articulation_preservation_metrics(export_payload)
-        if leg_articulation.get("invalidSupportReference") or leg_articulation.get("maximumPreventedExcessDegrees", 0.0) > 5.0:
+        if (leg_articulation.get("invalidSupportReference")
+                or leg_articulation.get("maximumPreventedExcessDegrees", 0.0)
+                > SOURCE_ARTICULATION_MAX_PREVENTED_EXCESS_DEGREES):
             rejection_reasons.append("materialized_leg_articulation_changed_by_cleanup")
         orientation_metrics = deterministic_scene_orientation_hint_from_payload(
             export_payload,
@@ -10143,22 +11181,6 @@ def materialized_output_acceptance_metrics(
         lock_planted_hands=bool(item.settings_options.get("lockPlantedHands")),
         rigid_paired_hands_required=rigid_paired_hands_required,
     )
-    source_symmetry = source_arm_symmetry_evidence(source_pose_reference)
-    output_symmetry = exported_arm_symmetry_metrics(export_payload or {})
-    paired_hands_metrics["sourceArmSymmetryEvidence"] = source_symmetry
-    paired_hands_metrics["exportedArmSymmetry"] = output_symmetry
-    from .equipment_constraints import supported_bilateral_geometry_metrics
-    from .support_geometry import support_evidence
-    observed_support = support_evidence(export_payload or {})
-    supported_pair = supported_bilateral_geometry_metrics(
-        export_payload or {}, required=(rigid_paired_hands_required
-            and observed_support.get('status') == 'confirmed'
-            and bool({'pelvis', 'left_shoulder', 'right_shoulder'}.intersection(
-                observed_support.get('stationaryJoints') or []))))
-    paired_hands_metrics["supportedBilateralGeometry"] = supported_pair
-    paired_hands_blocking = paired_hands_blocking or not supported_pair["passed"]
-    if rigid_paired_hands_required and source_symmetry["accepted"] and output_symmetry["severe"]:
-        rejection_reasons.append("materialized_source_confirmed_arm_asymmetry")
     paired_hands_metrics["blockingPairedHandsDistortion"] = paired_hands_blocking
     paired_hands_metrics["validationMode"] = (
         "locked_endpoints"
@@ -10664,23 +11686,153 @@ def pre_reconstruction_exact_source_phase_reference_metrics(
     return load_pre_reconstruction_exact_source_phase_metrics(item.candidate_workspace)
 
 
+def source_pose_support_contract_fingerprint(
+    exercise_motion_contract: dict[str, Any] | None,
+) -> str | None:
+    if not isinstance(exercise_motion_contract, dict):
+        return None
+    topology = exercise_motion_contract.get("movementTopology")
+    relevant = {
+        "groundContactMode": exercise_motion_contract.get("groundContactMode"),
+        "completionMode": exercise_motion_contract.get("completionMode"),
+        "validStartState": exercise_motion_contract.get("validStartState"),
+        "validEndState": exercise_motion_contract.get("validEndState"),
+        "movementTopology": topology,
+    }
+    payload = json.dumps(relevant, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def clear_stale_foot_patch_claims(evidence: dict[str, Any]) -> dict[str, Any]:
+    """Discard patch-derived foot claims when matching cached observations are absent."""
+    result = dict(evidence)
+    contacts = [item for item in result.get("contacts", [])
+                if isinstance(item, dict)
+                and not str(item.get("jointName") or "").endswith(("_ankle", "_foot", "_heel"))]
+    source_candidates = result.get("footContactCandidates")
+    if isinstance(source_candidates, list):
+        contacts.extend(item for item in source_candidates if isinstance(item, dict))
+    result["contacts"] = contacts
+    result.pop("footPatchEvidence", None)
+    result["footPatchEvidenceUnavailable"] = "matching_cached_observations_unavailable"
+    feet = result.get("feet")
+    if isinstance(feet, dict):
+        result["feet"] = {
+            side: ({**foot, "continuousSupport": False,
+                    "supportSplitByUnresolvedFootPatch": True}
+                   if isinstance(foot, dict) else foot)
+            for side, foot in feet.items()
+        }
+    return result
+
+
 def pre_reconstruction_source_foot_support_evidence(
     candidate_workspace: Path,
+    *,
+    exercise_motion_contract: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     metrics = load_pre_reconstruction_exact_source_phase_metrics(candidate_workspace)
     evidence = metrics.get("sourceFootSupportEvidence") if isinstance(metrics, dict) else None
     source_reference = candidate_workspace / "segment_detection" / "exact_source_pose_reference.json"
-    source_video = candidate_workspace / "input" / "selected_segment.mp4"
-    raw_path = candidate_workspace / "raw" / "motion.raw.json"
-    if isinstance(evidence, dict) and source_reference.is_file() and source_video.is_file() and raw_path.is_file():
-        reference = loads_reconstruction_metadata(source_reference.read_text(encoding="utf-8"))
-        raw = loads_reconstruction_metadata(raw_path.read_text(encoding="utf-8"))
-        alignment = raw.get("metadata", {}).get("videoWorldAlignment", {})
-        if isinstance(reference.get("pose"), dict):
-            evidence = add_observed_foot_contacts(
-                evidence, observe_foot_landmarks(source_video), reference["pose"],
-                alignment.get("cameraGroundPlane", {}).get("normal"), alignment,
-            )
+    selected_video = candidate_workspace / "input" / "selected_segment.mp4"
+    if not isinstance(evidence, dict):
+        return None
+    unresolved = {
+        "source": "exact_selected_source_video_yolo_pose",
+        "reason": "source_support_evidence_stale_source_identity_unverified",
+        "feet": {},
+        "contacts": [],
+        "supportContacts": [],
+        "sourceSupportEvidenceStale": True,
+    }
+    if not source_reference.is_file():
+        return unresolved
+    reference = loads_reconstruction_metadata(source_reference.read_text(encoding="utf-8"))
+    source_video = verified_source_video_for_pose_reference(
+        source_reference, selected_video, reference,
+    )
+    pose = load_verified_source_pose_reference(source_reference, source_video)
+    if source_video is None or pose is None:
+        return unresolved
+    matching_source_hash = hashlib.sha256(source_video.read_bytes()).hexdigest()
+    expected_contract_fingerprint = source_pose_support_contract_fingerprint(
+        exercise_motion_contract,
+    )
+    cached_body_support = evidence.get("bodySupportObservation")
+    if isinstance(cached_body_support, dict):
+        from .body_support_observation import validated_body_support_answer
+        if (str(cached_body_support.get("sourceVideoSha256") or "").casefold()
+                != matching_source_hash
+                or validated_body_support_answer(cached_body_support) is None):
+            evidence = {key: value for key, value in evidence.items()
+                        if key != "bodySupportObservation"}
+
+    patch_evidence = evidence.get("footPatchEvidence")
+    support_refreshed = False
+    if (evidence.get("sourcePoseSupportEvidencePolicyVersion")
+            != SOURCE_POSE_SUPPORT_EVIDENCE_POLICY_VERSION
+            or evidence.get("sourceVideoSha256") != matching_source_hash
+            or evidence.get("sourcePoseSupportContractFingerprint")
+            != expected_contract_fingerprint):
+        refreshed = source_pose_stationary_support_evidence(
+            pose, exercise_motion_contract=exercise_motion_contract,
+        )
+        refreshed["sourcePoseSupportEvidencePolicyVersion"] = (
+            SOURCE_POSE_SUPPORT_EVIDENCE_POLICY_VERSION
+        )
+        refreshed["sourcePoseSupportContractFingerprint"] = expected_contract_fingerprint
+        refreshed["sourceVideoSha256"] = matching_source_hash
+        old_body_support = evidence.get("bodySupportObservation")
+        source_hash = str(reference.get("sourceVideoSha256") or "").casefold()
+        if (isinstance(old_body_support, dict)
+                and str(old_body_support.get("sourceVideoSha256") or "").casefold() == source_hash):
+            from .body_support_observation import validated_body_support_answer
+            if validated_body_support_answer(old_body_support) is not None:
+                refreshed["bodySupportObservation"] = old_body_support
+        evidence = refreshed
+        patch_evidence = None
+        support_refreshed = True
+
+    if (not isinstance(patch_evidence, dict)
+            or patch_evidence.get("policyVersion") != FOOT_CONTACT_POLICY_VERSION
+            or evidence.get("sourceMaterialStationarityPolicyVersion")
+            != FOOT_MATERIAL_POLICY_VERSION):
+        observations = load_cached_foot_landmarks(source_video)
+        if observations is not None:
+            raw_path = candidate_workspace / "raw" / "motion.raw.json"
+            if raw_path.is_file():
+                raw = loads_reconstruction_metadata(raw_path.read_text(encoding="utf-8"))
+                raw_metadata = raw.get("metadata") if isinstance(raw, dict) else None
+                alignment = (raw_metadata.get("videoWorldAlignment")
+                             if isinstance(raw_metadata, dict) else None)
+                video_hash = matching_source_hash
+                alignment_hash = (
+                    alignment.get("sourceVideoSha256")
+                    if isinstance(alignment, dict)
+                    else None
+                ) or (raw_metadata.get("sourceVideoSha256")
+                      if isinstance(raw_metadata, dict) else None)
+                if (isinstance(alignment, dict)
+                        and str(alignment_hash or "").casefold() == video_hash):
+                    evidence = add_observed_foot_contacts(
+                        evidence, observations, pose,
+                        alignment.get("cameraGroundPlane", {}).get("normal"), alignment,
+                        source_video_path=source_video,
+                    )
+                else:
+                    evidence = add_observed_foot_contacts(
+                        evidence, observations, pose, source_video_path=source_video,
+                    )
+            else:
+                evidence = add_observed_foot_contacts(
+                    evidence, observations, pose, source_video_path=source_video,
+                )
+        elif not support_refreshed:
+            evidence = clear_stale_foot_patch_claims(evidence)
+        else:
+            for foot in (evidence.get("feet") or {}).values():
+                if isinstance(foot, dict):
+                    foot["continuousSupport"] = False
     return dict(evidence) if isinstance(evidence, dict) else None
 
 
@@ -10694,25 +11846,59 @@ def authoritative_source_foot_support_evidence(
     contact intervals. Exact source-video analysis must therefore win over both
     the pre-RECONSTRUCTION cache and the settings snapshot used to bake the old preview.
     """
+    candidate = getattr(item, "candidate", None)
+    support_contract = (
+        exercise_motion_contract_from_candidate(candidate)
+        if isinstance(candidate, dict)
+        else None
+    )
     if isinstance(source_video_phase_metrics, dict):
         fresh_evidence = source_video_phase_metrics.get("sourceFootSupportEvidence")
+        video_value = source_video_phase_metrics.get("sourceVideoPath")
+        video_path = Path(str(video_value)) if video_value else (
+            item.candidate_workspace / "input" / "selected_segment.mp4"
+        )
+        fresh_video_hash = (
+            hashlib.sha256(video_path.read_bytes()).hexdigest()
+            if video_path.is_file()
+            else None
+        )
+        if (isinstance(fresh_evidence, dict)
+                and fresh_evidence.get("sourcePoseSupportEvidencePolicyVersion")
+                == SOURCE_POSE_SUPPORT_EVIDENCE_POLICY_VERSION
+                and isinstance(fresh_evidence.get("footPatchEvidence"), dict)
+                and fresh_evidence["footPatchEvidence"].get("policyVersion")
+                == FOOT_CONTACT_POLICY_VERSION
+                and fresh_evidence.get("sourceMaterialStationarityPolicyVersion")
+                == FOOT_MATERIAL_POLICY_VERSION):
+            if (fresh_evidence.get("sourceVideoSha256") != fresh_video_hash
+                    or fresh_evidence.get("sourcePoseSupportContractFingerprint")
+                    != source_pose_support_contract_fingerprint(support_contract)):
+                fresh_evidence = None
         if isinstance(fresh_evidence, dict):
             # Fresh pixel analysis runs independently of reconstruction, so it
             # initially lacks the measured camera ground plane. Apply that
             # plane before fresh evidence supersedes the grounded cached path.
-            video_value = source_video_phase_metrics.get("sourceVideoPath")
-            video_path = Path(str(video_value)) if video_value else (
-                item.candidate_workspace / "input" / "selected_segment.mp4"
-            )
             raw_path = item.candidate_workspace / "raw" / "motion.raw.json"
             pose = source_pose_reference_from_phase_metrics(source_video_phase_metrics)
             if raw_path.is_file() and video_value and isinstance(pose, dict):
                 raw = loads_reconstruction_metadata(raw_path.read_text(encoding="utf-8"))
-                alignment = raw.get("metadata", {}).get("videoWorldAlignment", {})
+                raw_metadata = raw.get("metadata", {}) if isinstance(raw, dict) else {}
+                alignment = raw_metadata.get("videoWorldAlignment", {})
                 normal = alignment.get("cameraGroundPlane", {}).get("normal")
-                if normal is not None and video_path.is_file():
+                source_digest = (
+                    hashlib.sha256(video_path.read_bytes()).hexdigest()
+                    if video_path.is_file()
+                    else None
+                )
+                alignment_digest = (
+                    alignment.get("sourceVideoSha256") or raw_metadata.get("sourceVideoSha256")
+                )
+                if (normal is not None and source_digest is not None
+                        and str(alignment_digest or "").casefold() == source_digest):
                     fresh_evidence = add_observed_foot_contacts(
                         fresh_evidence, observe_foot_landmarks(video_path), pose, normal,
+                        source_video_path=video_path,
                     )
                     # Do not pass parent per-frame depth observations: this
                     # exact video may be a cropped child with different timing.
@@ -10722,7 +11908,10 @@ def authoritative_source_foot_support_evidence(
             )
             return dict(fresh_evidence), "exact_selected_source_video"
 
-    cached_evidence = pre_reconstruction_source_foot_support_evidence(item.candidate_workspace)
+    cached_evidence = pre_reconstruction_source_foot_support_evidence(
+        item.candidate_workspace,
+        exercise_motion_contract=support_contract,
+    )
     if isinstance(cached_evidence, dict):
         return cached_evidence, "pre_reconstruction_exact_source_cache"
 
@@ -10744,12 +11933,13 @@ def _attach_matching_cached_body_support_observation(
     """Carry only source-reviewed contact semantics across a landmark refresh."""
     if not source_video_path.is_file():
         return fresh_evidence
-    from .body_support_observation import POLICY_VERSION, observe_body_support
+    from .body_support_observation import (
+        POLICY_VERSION, observe_body_support, validated_body_support_answer,
+    )
 
     observed = observe_body_support(source_video_path, None, cache_dir)
     expected_digest = hashlib.sha256(source_video_path.read_bytes()).hexdigest()
-    if (not isinstance(observed, dict)
-            or observed.get("status") != "observed"
+    if (validated_body_support_answer(observed) is None
             or observed.get("policyVersion") != POLICY_VERSION
             or observed.get("sourceVideoSha256") != expected_digest):
         return fresh_evidence
@@ -11777,9 +12967,22 @@ def source_pose_phase_completeness_metrics(
         source_pose_payload,
         exercise_motion_contract=target_motion_contract_from_ranking_payload(ranking_payload),
     )
+    source_foot_support_evidence["sourcePoseSupportEvidencePolicyVersion"] = (
+        SOURCE_POSE_SUPPORT_EVIDENCE_POLICY_VERSION
+    )
+    source_foot_support_evidence["sourcePoseSupportContractFingerprint"] = (
+        source_pose_support_contract_fingerprint(
+            target_motion_contract_from_ranking_payload(ranking_payload),
+        )
+    )
+    if source_video_path is not None and source_video_path.is_file():
+        source_foot_support_evidence["sourceVideoSha256"] = hashlib.sha256(
+            source_video_path.read_bytes()
+        ).hexdigest()
     if source_video_path is not None and source_video_path.is_file():
         source_foot_support_evidence = add_observed_foot_contacts(
             source_foot_support_evidence, observe_foot_landmarks(source_video_path), source_pose_payload,
+            source_video_path=source_video_path,
         )
     source_pose_endpoints = source_pose_endpoint_feature_summary(source_pose_payload)
     result = {
@@ -11790,6 +12993,7 @@ def source_pose_phase_completeness_metrics(
             if source_video_path is not None
             else None
         ),
+        "sourceVideoSha256": source_foot_support_evidence.get("sourceVideoSha256"),
         "poseSampleCount": (
             pose_sample_count
             if pose_sample_count is not None
@@ -11814,42 +13018,113 @@ def source_pose_phase_completeness_metrics(
     return result
 
 
+def verified_source_video_for_pose_reference(
+    reference_path: Path,
+    source_video_path: Path | None,
+    reference: dict[str, Any],
+) -> Path | None:
+    """Resolve a pose reference only to its hash-matching video or exact validation provenance."""
+    expected_hash = str(reference.get("sourceVideoSha256") or "").casefold()
+    if len(expected_hash) != 64:
+        return None
+
+    try:
+        if source_video_path is not None and source_video_path.is_file():
+            if hashlib.sha256(source_video_path.read_bytes()).hexdigest() == expected_hash:
+                return source_video_path
+
+        # A candidate may not retain the copied selected_segment.mp4. Its exact
+        # validation record is the only fallback authority for the source path.
+        validation_path = reference_path.parent / "exact_source_phase_validation.json"
+        validation = loads_reconstruction_metadata(validation_path.read_text(encoding="utf-8"))
+        metrics = validation.get("metrics") or {}
+        provenance_reference_path = metrics.get("sourcePoseReferencePath")
+        provenance_video_path = metrics.get("sourceVideoPath")
+        if not provenance_reference_path or not provenance_video_path:
+            return None
+        provenance_reference = Path(str(provenance_reference_path)).expanduser()
+        if not provenance_reference.is_absolute():
+            provenance_reference = validation_path.parent / provenance_reference
+        if not provenance_reference.is_file() or hashlib.sha256(
+            provenance_reference.read_bytes()
+        ).hexdigest() != hashlib.sha256(reference_path.read_bytes()).hexdigest():
+            return None
+        if str(metrics.get("sourceVideoSha256") or "").casefold() != expected_hash:
+            return None
+        provenance_video = Path(str(provenance_video_path)).expanduser()
+        if not provenance_video.is_absolute():
+            provenance_video = validation_path.parent / provenance_video
+        if not provenance_video.is_file() or hashlib.sha256(
+            provenance_video.read_bytes()
+        ).hexdigest() != expected_hash:
+            return None
+        return provenance_video
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
+
+
 def load_verified_source_pose_reference(reference_path: Path, source_video_path: Path | None) -> dict[str, Any] | None:
     """A reference belongs to exact video bytes, not merely a candidate folder."""
-    if source_video_path is None or not source_video_path.is_file():
-        return None
     try:
         reference = loads_reconstruction_metadata(reference_path.read_text(encoding="utf-8"))
-        expected_hash = reference.get("sourceVideoSha256")
-        if not expected_hash or expected_hash != hashlib.sha256(source_video_path.read_bytes()).hexdigest():
+        verified_video_path = verified_source_video_for_pose_reference(
+            reference_path,
+            source_video_path,
+            reference,
+        )
+        if verified_video_path is None:
             return None
         pose = reference.get("pose")
         if isinstance(pose, dict) and pose.get("coordinateSpace") == "normalized_image_xy":
             # Older references can be upgraded from the exact hash-verified
             # video without rerunning the detector or trusting guessed geometry.
-            metadata = read_basic_video_metadata(source_video_path)
+            metadata = read_basic_video_metadata(verified_video_path)
             pose = {**pose, "imageWidth": metadata.width, "imageHeight": metadata.height}
         from .source_pose_evidence import verify_source_pose
-        return verify_source_pose(pose, source_video_path) if isinstance(pose, dict) else None
+        return verify_source_pose(pose, verified_video_path) if isinstance(pose, dict) else None
     except (OSError, ValueError, TypeError, AttributeError):
         return None
 
 
 def source_pose_reference_from_phase_metrics(
     metrics: dict[str, Any] | None,
+    *,
+    source_video_path: Path | None = None,
 ) -> dict[str, Any] | None:
     if not isinstance(metrics, dict):
         return None
+    video_path = source_video_path
+    if video_path is None:
+        value = metrics.get("sourceVideoPath")
+        video_path = Path(str(value)).expanduser() if value else None
     embedded = metrics.get("_sourcePoseReference")
     if isinstance(embedded, dict):
-        return embedded
+        reference_path_value = metrics.get("sourcePoseReferencePath")
+        if reference_path_value:
+            return load_verified_source_pose_reference(
+                Path(str(reference_path_value)).expanduser().resolve(),
+                video_path,
+            )
+        expected_hash = str(
+            metrics.get("sourceVideoSha256")
+            or ((metrics.get("sourceFootSupportEvidence") or {}).get("sourceVideoSha256"))
+            or ""
+        ).casefold()
+        if (video_path is None or not video_path.is_file() or len(expected_hash) != 64):
+            return None
+        try:
+            if hashlib.sha256(video_path.read_bytes()).hexdigest() != expected_hash:
+                return None
+            from .source_pose_evidence import verify_source_pose
+            return verify_source_pose(embedded, video_path)
+        except (OSError, ValueError, TypeError, AttributeError):
+            return None
     reference_path_value = metrics.get("sourcePoseReferencePath")
     if not reference_path_value:
         return None
-    source_video = metrics.get("sourceVideoPath")
     return load_verified_source_pose_reference(
         Path(str(reference_path_value)).expanduser().resolve(),
-        Path(str(source_video)) if source_video else None,
+        video_path,
     )
 
 
@@ -12995,15 +14270,12 @@ def observed_ground_support_plane_y(
         observation = source_foot_support_evidence.get("bodySupportObservation") or {}
         if not isinstance(body_support, dict):
             body_support = {}
-        if not isinstance(observation, dict):
-            observation = {}
-        observation_answer = observation.get("observation") or {}
-        if not isinstance(observation_answer, dict):
-            observation_answer = {}
+        from .body_support_observation import validated_body_support_answer
+        observation_answer = validated_body_support_answer(observation) or {}
         confirmed_ground_feet = {
             f"{side}_foot"
             for side in ("left", "right")
-            if observation.get("status") == "observed"
+            if observation_answer
             and observation_answer.get(f"{side}Foot")
             in {"stationary_full_sole", "stationary_forefoot"}
             and observation_answer.get(f"{side}FootSurface") == "ground"
@@ -16950,19 +18222,51 @@ def compute_loop_bridge_quality_metrics_from_payload(
     severe = max_severity >= 1.0
     playback_seam = None
     if payload.get('fixedRig'):
-        import numpy as np
-        from .loop_seam import seam_quality_metrics
-        from .physical_validation import body_scale
-        points = np.asarray([[frame['joints'][name] for name in joint_names] for frame in frames])
-        playback_seam = seam_quality_metrics(
-            points, fps=float(payload['fps']), scale=body_scale(points, joint_names))
-        # Fitted motion must obey the production restart limits, including
-        # velocity. Legacy displacement-only thresholds can miss a sharp hitch.
-        severe = not playback_seam['seamContinuous']
-        max_severity = max(
-            playback_seam['seamStepExcessMeters'] / playback_seam['seamStepExcessLimitMeters'],
-            playback_seam['seamVelocityMismatchMetersPerSecond']
-            / playback_seam['seamVelocityMismatchLimitMetersPerSecond'])
+        if frames_override is None:
+            from .rig_playback import validate_rig_playback
+            playback = validate_rig_playback(payload)
+            playback_seam = {
+                key: playback[key]
+                for key in (
+                    'seamContinuous', 'seamRenderedVelocityJumpMetersPerSecond',
+                    'seamRenderedVelocityJumpLimitMetersPerSecond',
+                    'seamStepExcessMeters', 'seamStepExcessLimitMeters',
+                    'seamProxyContinuous',
+                    'seamVelocityMismatchMetersPerSecond',
+                    'seamVelocityMismatchLimitMetersPerSecond',
+                )
+                if key in playback
+            }
+            # The terminal materialized gate follows the same production rig
+            # sampler as fitting. Missing playback evidence fails closed.
+            severe = playback.get('seamContinuous') is not True
+            step_limit = playback.get('seamStepExcessLimitMeters')
+            velocity_limit = playback.get('seamRenderedVelocityJumpLimitMetersPerSecond')
+            rendered_jump = playback.get('seamRenderedVelocityJumpMetersPerSecond')
+            if (step_limit is not None and float(step_limit) > 0
+                    and velocity_limit is not None and float(velocity_limit) > 0
+                    and rendered_jump is not None):
+                max_severity = max(
+                    float(playback.get('seamStepExcessMeters') or 0.) / float(step_limit),
+                    float(rendered_jump) / float(velocity_limit),
+                )
+            else:
+                severe = True
+                max_severity = max(max_severity, 1.)
+        else:
+            # Review-window ranking has sliced frames but no corresponding
+            # fixed-rig track. Keep the stored proxy diagnostic-only here.
+            import numpy as np
+            from .loop_seam import seam_quality_metrics
+            from .physical_validation import body_scale
+            points = np.asarray([[frame['joints'][name] for name in joint_names] for frame in frames])
+            playback_seam = seam_quality_metrics(
+                points, fps=float(payload['fps']), scale=body_scale(points, joint_names))
+            severe = not playback_seam['seamContinuous']
+            max_severity = max(
+                playback_seam['seamStepExcessMeters'] / playback_seam['seamStepExcessLimitMeters'],
+                playback_seam['seamVelocityMismatchMetersPerSecond']
+                / playback_seam['seamVelocityMismatchLimitMetersPerSecond'])
     return {
         "loopBridgeQualityScore": clamp_unit(1.0 / max(max_severity, 1.0)),
         "playbackSeam": playback_seam,
@@ -18087,6 +19391,7 @@ def run_bake_and_rank_pipeline(
         "classifySupportDominance": request.classify_support_dominance,
         "useReconstructionDocker": request.use_reconstruction_docker,
         "useWarmGvhmrWorker": request.use_warm_gvhmr_worker,
+        "gvhmrStageSplit": request.gvhmr_stage_split,
         "gvhmrWorkerSessionDir": str(request.gvhmr_worker_session_dir) if request.gvhmr_worker_session_dir is not None else None,
         "gvhmrWorkerMountRoot": str(request.gvhmr_worker_mount_root) if request.gvhmr_worker_mount_root is not None else None,
         "reconstructionTimeoutSeconds": request.reconstruction_timeout_seconds,
@@ -18361,6 +19666,11 @@ def run_bake_and_rank_pipeline(
             }
         )
     write_candidate_ranking_manifests(ranked_review_entries)
+    attach_candidate_decision_identities(
+        candidate_results,
+        request=request,
+        prepared_candidate_video_paths=prepared_candidate_video_paths,
+    )
     selected_preview_paths = write_selected_result_preview_htmls(request.workspace, selected_results)
 
     selection_manifest = build_selection_manifest(
@@ -19147,6 +20457,7 @@ def revalidate_library_workspace(
 
     def current_artifact_identity(exercise_workspace: Path) -> dict[str, Any] | None:
         from .preview import preview_runtime_signature
+        from .controlled_motion import CONTROLLED_MOTION_STRATEGY
 
         directory = exercise_workspace / "selected"
         try:
@@ -19159,7 +20470,9 @@ def revalidate_library_workspace(
                 policies={"selection": SELECTION_VALIDATION_POLICY_VERSION,
                           "visual": FINAL_OUTPUT_VALIDATION_POLICY_VERSION,
                           "source": SOURCE_SELECTION_POLICY_VERSION,
-                          "renderer": preview_runtime_signature()},
+                          "renderer": preview_runtime_signature(),
+                          "controlledMotionFit": CONTROLLED_MOTION_STRATEGY,
+                          "bakeCode": _selected_section_bake_code_digest()["sha256"]},
             )
         except (OSError, ValueError, TypeError):
             return None
@@ -19369,6 +20682,27 @@ def revalidate_library_workspace(
             ):
                 raise ValueError("Retained selected artifact has no ranking evidence")
             item = review_item_from_manifest(previous_selected_entry)
+            if item.skeleton_path.exists():
+                try:
+                    selected_payload = loads_reconstruction_metadata(
+                        item.skeleton_path.read_text(encoding="utf-8")
+                    )
+                except (OSError, json.JSONDecodeError):
+                    return "invalid", ["selected_controlled_motion_fit_receipt_unreadable"]
+                from .controlled_motion import CONTROLLED_MOTION_STRATEGY
+
+                fit_problem = selected_fit_receipt_problem(
+                    selected_payload, CONTROLLED_MOTION_STRATEGY,
+                )
+                if fit_problem is not None:
+                    return "invalid", [fit_problem]
+                from .acceptance import selected_bake_code_problem
+
+                bake_problem = selected_bake_code_problem(
+                    selected_payload, _selected_section_bake_code_digest()["sha256"],
+                )
+                if bake_problem is not None:
+                    return "invalid", [bake_problem]
             ranking = ranking_with_motion_context(
                 ranking_from_manifest(previous_selected_entry["ranking"]),
                 context,
@@ -21259,7 +22593,15 @@ def process_ranked_candidates_until_final_selection(
             continue
         attempt_key = ranked_candidate_attempt_key(ranked_candidate)
         previous_terminal_result = previous_terminal_results.get(attempt_key)
-        if previous_terminal_result is not None:
+        prepared_video_path = (
+            prepared_candidate_video_paths.get(ranked_candidate.workspace_slug)
+            if prepared_candidate_video_paths is not None else None
+        )
+        current_identity = candidate_decision_identity(
+            ranked_candidate, request, prepared_video_path
+        )
+        if (previous_terminal_result is not None and current_identity is not None
+                and previous_terminal_result.get("candidateDecisionIdentity") == current_identity):
             result = build_skipped_previous_terminal_result(ranked_candidate, previous_terminal_result)
             candidate_results.append(result)
             selection_attempts.append(
@@ -21332,10 +22674,10 @@ def process_ranked_candidates_until_final_selection(
             final_output_caption_images,
             support_dominance_classifier,
         )
-        set_caption_candidate_deadline(deadline_callbacks, candidate_deadline)
         if candidate_deadline is not None:
             process_kwargs["deadline"] = candidate_deadline
-        result = process_ranked_candidate(ranked_candidate, **process_kwargs)
+        with caption_candidate_deadline_scope(deadline_callbacks, candidate_deadline):
+            result = process_ranked_candidate(ranked_candidate, **process_kwargs)
         if result.get("reconstructionAttempted") is True:
             reconstruction_candidate_attempt_count += 1
             timings["reconstructionCandidateAttemptCount"] = (
@@ -21465,7 +22807,11 @@ def process_ranked_candidates_until_final_selection(
             ]
         else:
             stage_started = time.perf_counter()
-            local_rankings = effective_ranker(local_review_items, request)
+            with caption_candidate_deadline_scope(
+                (*deadline_callbacks, effective_ranker),
+                candidate_deadline,
+            ):
+                local_rankings = effective_ranker(local_review_items, request)
             timings["reviewRankingSeconds"] = round(
                 float(timings["reviewRankingSeconds"]) + elapsed_seconds(stage_started),
                 3,
@@ -21479,35 +22825,35 @@ def process_ranked_candidates_until_final_selection(
         # adaptive retry that is intended to recover it.  Explicit candidate
         # and exercise wall-time limits still cap all requests through the
         # candidate deadline computed above.
-        set_caption_candidate_deadline(
+        stage_started = time.perf_counter()
+        with caption_candidate_deadline_scope(
             (final_output_caption_images,),
             candidate_deadline,
-        )
-        stage_started = time.perf_counter()
-        if max_selected_results > 1:
-            remaining_result_slots = max(1, max_selected_results - len(accepted_results))
-            choose_kwargs: dict[str, Any] = {
-                "request": request,
-                "max_results": remaining_result_slots,
-            }
-            if final_output_caption_images is not None:
-                choose_kwargs["final_output_caption_images"] = final_output_caption_images
-            local_selected_results, local_rejected_best = choose_top_materialized_review_items(
-                local_review_items,
-                local_rankings,
-                **choose_kwargs,
-            )
-            selected = local_selected_results[0] if local_selected_results else None
-        else:
-            choose_kwargs = {"request": request}
-            if final_output_caption_images is not None:
-                choose_kwargs["final_output_caption_images"] = final_output_caption_images
-            selected, local_rejected_best = choose_best_materialized_review_item(
-                local_review_items,
-                local_rankings,
-                **choose_kwargs,
-            )
-            local_selected_results = [selected] if selected is not None else []
+        ):
+            if max_selected_results > 1:
+                remaining_result_slots = max(1, max_selected_results - len(accepted_results))
+                choose_kwargs: dict[str, Any] = {
+                    "request": request,
+                    "max_results": remaining_result_slots,
+                }
+                if final_output_caption_images is not None:
+                    choose_kwargs["final_output_caption_images"] = final_output_caption_images
+                local_selected_results, local_rejected_best = choose_top_materialized_review_items(
+                    local_review_items,
+                    local_rankings,
+                    **choose_kwargs,
+                )
+                selected = local_selected_results[0] if local_selected_results else None
+            else:
+                choose_kwargs = {"request": request}
+                if final_output_caption_images is not None:
+                    choose_kwargs["final_output_caption_images"] = final_output_caption_images
+                selected, local_rejected_best = choose_best_materialized_review_item(
+                    local_review_items,
+                    local_rankings,
+                    **choose_kwargs,
+                )
+                local_selected_results = [selected] if selected is not None else []
         if local_rankings:
             # The per-candidate chooser records materialized acceptance data
             # back into its list; mirror those replacements into the ordered
@@ -21863,6 +23209,7 @@ def process_ranked_candidates_for_selection(
     candidates_to_process, skipped_by_original_index = ranked_candidates_to_process_with_previous_terminal_skips(
         candidates,
         request=request,
+        prepared_candidate_video_paths=prepared_candidate_video_paths,
         # When pre-RECONSTRUCTION validation is enabled, we still want to limit *which
         # candidates* get processed to the configured fallback budget. The
         # additional `candidate_attempt_limit` headroom is reserved for
@@ -22134,6 +23481,19 @@ def incomplete_controlled_fit_diagnostics(baked_artifacts):
     return None
 
 
+def _candidate_processing_exception_metadata(exc: Exception, stage: str) -> dict[str, Any]:
+    metadata: dict[str, Any] = {"exceptionType": type(exc).__name__}
+    if stage != "browser_bake":
+        return metadata
+    if isinstance(exc, ValueError):
+        metadata["processingRetryPolicy"] = "terminal_deterministic"
+    elif isinstance(exc, (TimeoutError, ConnectionError, BrokenPipeError, ChildProcessError)):
+        metadata["processingRetryPolicy"] = "retry_transient"
+    if "processingRetryPolicy" in metadata:
+        metadata["failureOwner"] = "motion_output"
+    return metadata
+
+
 def process_ranked_candidate(
     ranked_candidate: RankedCandidate,
     *,
@@ -22290,7 +23650,8 @@ def process_ranked_candidate(
         )
         result_payload["preReconstructionSourceIntervalAuthority"] = source_interval_authority
         source_foot_support_evidence = pre_reconstruction_source_foot_support_evidence(
-            candidate_workspace
+            candidate_workspace,
+            exercise_motion_contract=preview_exercise_motion_contract,
         )
         result_payload["sourceFootSupportEvidence"] = source_foot_support_evidence
         eligible = build_candidate_review_eligible_loops(
@@ -22713,13 +24074,22 @@ def process_ranked_candidate(
         result_payload["failureStage"] = active_stage
         record_timing_seconds(result_payload, f"{active_stage}FailedSeconds", stage_started)
         result_payload["status"] = "failed"
-        result_payload["failures"].append(
-            {
-                "reason": "candidate_failed",
-                "message": str(exc),
-                "traceback": traceback.format_exc(),
-            }
-        )
+        failure = {
+            "reason": "candidate_failed",
+            "failureStage": active_stage,
+            "message": str(exc),
+            "traceback": traceback.format_exc(),
+        }
+        exception_metadata = _candidate_processing_exception_metadata(exc, active_stage)
+        failure.update(exception_metadata)
+        result_payload["failureExceptionType"] = exception_metadata["exceptionType"]
+        if exception_metadata.get("failureOwner"):
+            result_payload["failureOwner"] = exception_metadata["failureOwner"]
+        if exception_metadata.get("processingRetryPolicy"):
+            result_payload["processingRetryPolicy"] = exception_metadata[
+                "processingRetryPolicy"
+            ]
+        result_payload["failures"].append(failure)
         record_timing_seconds(result_payload, "totalSeconds", candidate_started)
         write_candidate_bake_manifest(candidate_workspace, result_payload)
         return result_payload
@@ -22926,11 +24296,25 @@ def generate_candidate_motion(
         inference_video_path=reconstruction_video_path,
         selected_start_seconds=float(output_crop_start_seconds or 0.0),
     )
+    if reconstruction_video_path != unstabilized_reconstruction_video_path:
+        rebind_reconstruction_source_frame_clock(
+            input_video_path=unstabilized_reconstruction_video_path,
+            output_video_path=reconstruction_video_path,
+            transform="yolo_track_stabilization",
+        )
+    pre_orientation_video_path = reconstruction_video_path
     reconstruction_video_path, reconstruction_output_rotation_degrees = normalize_reconstruction_input_orientation(
         ranked_candidate=ranked_candidate,
         candidate_workspace=request.workspace / ranked_candidate.workspace_slug,
         selected_video_path=reconstruction_video_path,
     )
+    if reconstruction_video_path != pre_orientation_video_path:
+        rebind_reconstruction_source_frame_clock(
+            input_video_path=pre_orientation_video_path,
+            output_video_path=reconstruction_video_path,
+            transform="explicit_orientation_normalization",
+        )
+    source_frame_clock_path = source_frame_clock_path_for_video(reconstruction_video_path)
     source_preparation_seconds = elapsed_seconds(source_started)
     exercise_motion_contract = exercise_motion_contract_from_candidate(ranked_candidate.candidate)
     ground_contact_mode = str(
@@ -22945,6 +24329,7 @@ def generate_candidate_motion(
         exercise_slug=ranked_candidate.workspace_slug,
         workspace=request.workspace,
         video_path=reconstruction_video_path,
+        source_frame_clock_path=source_frame_clock_path,
         body_model_root=request.body_model_root,
         reuse_reconstruction_cache=request.reuse_reconstruction_cache,
         use_reconstruction_docker=request.use_reconstruction_docker,
@@ -22952,6 +24337,7 @@ def generate_candidate_motion(
         reconstruction_docker_gpus=request.reconstruction_docker_gpus,
         reconstruction_docker_shm_size=request.reconstruction_docker_shm_size,
         use_warm_gvhmr_worker=request.use_warm_gvhmr_worker,
+        gvhmr_stage_split=request.gvhmr_stage_split,
         gvhmr_worker_session_dir=request.gvhmr_worker_session_dir,
         gvhmr_worker_mount_root=request.gvhmr_worker_mount_root,
         gvhmr_worker_timeout_seconds=request.gvhmr_worker_timeout_seconds,
@@ -22996,6 +24382,12 @@ def generate_candidate_motion(
             candidate_workspace / "segment_detection" / "exact_source_pose_reference.json"
         ),
         candidate_deadline=candidate_deadline,
+        shared_llama_server=request.shared_llama_server,
+        shared_llama_server_session_dir=(
+            resolve_shared_llama_session_dir(
+                request.shared_llama_server_session_dir, base_url=request.llama_cpp_base_url)
+            if request.gvhmr_stage_split else request.shared_llama_server_session_dir
+        ),
     )
     def validate_raw_motion(path: Path) -> None:
         gate = evaluate_raw_reconstruction_motion_gate(
@@ -23025,6 +24417,7 @@ def generate_candidate_motion(
         fallback_request = replace(
             generation_request,
             video_path=unstabilized_reconstruction_video_path,
+            source_frame_clock_path=source_frame_clock_path_for_video(unstabilized_reconstruction_video_path),
         )
         result = run_generation(fallback_request)
         record_reconstruction_stabilization_fallback(
@@ -23267,15 +24660,22 @@ def prepare_reconstruction_inference_video(
     padding_seconds: float = RECONSTRUCTION_INFERENCE_CONTEXT_PADDING_SECONDS,
 ) -> tuple[Path, float | None, float | None]:
     """Add source context and normalize to RECONSTRUCTION's 30 FPS timeline contract."""
+    selection_path = candidate_workspace / "segment_detection" / "segment_selection.json"
+    try:
+        selection = loads_reconstruction_metadata(selection_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        selection = None
+    selected_clock = ensure_selected_cut_source_clock(
+        candidate_workspace=candidate_workspace,
+        selected_video_path=selected_video_path,
+        selection=selection if isinstance(selection, dict) else None,
+    )
     if padding_seconds <= 0.0:
         return normalize_reconstruction_input_frame_rate(
             candidate_workspace=candidate_workspace,
             selected_video_path=selected_video_path,
         ), None, None
-    selection_path = candidate_workspace / "segment_detection" / "segment_selection.json"
-    try:
-        selection = loads_reconstruction_metadata(selection_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    if not isinstance(selection, dict):
         return normalize_reconstruction_input_frame_rate(
             candidate_workspace=candidate_workspace,
             selected_video_path=selected_video_path,
@@ -23322,12 +24722,62 @@ def prepare_reconstruction_inference_video(
     output_path = candidate_workspace / "input" / "reconstruction_inference_segment.mp4"
     prepare_cached_reconstruction_video(source_path=source_path, output_path=output_path,
                               start_seconds=inference_start, end_seconds=inference_end)
-    # Detection timestamps can extend slightly beyond the downloaded file's
-    # decodable duration (for example when YouTube metadata rounds a 19.0s
-    # source up to 20s).  The inference interval is already clamped above, so
-    # keep the requested output window on that same local timeline.  Otherwise
-    # RECONSTRUCTION can cover every input frame and still be rejected for not reaching a
-    # crop end that does not exist in the inference video.
+    # Requested trim timestamps can precede the first decoded exposure. Use
+    # hash-bound frame clocks when this exact selected cut has retained source
+    # pose evidence; never compare that evidence against a guessed local clock.
+    from .source_frame_clock import (
+        load_verified_source_frame_clock,
+        source_exposure_crop_window,
+        source_frame_clock_path_for_video,
+    )
+
+    inference_clock = None
+    try:
+        inference_clock = load_verified_source_frame_clock(
+            source_frame_clock_path_for_video(output_path),
+            expected_video_path=output_path,
+        )
+    except (OSError, ValueError, TypeError, KeyError) as error:
+        exact_pose_reference = (
+            candidate_workspace / "segment_detection" / "exact_source_pose_reference.json"
+        )
+        if exact_pose_reference.is_file():
+            raise ValueError(
+                "source_timeline_mapping_unresolved_before_reconstruction_prefit: "
+                f"inference-context clock is invalid ({type(error).__name__})"
+            ) from error
+
+    expected_parent_sha256 = (
+        str(inference_clock.get("sourceVideoSha256"))
+        if inference_clock is not None else None
+    )
+    if selected_clock is not None and inference_clock is not None and (
+        selected_clock.get("sourceVideoSha256") != expected_parent_sha256
+        or selected_clock.get("sourceVideoPath") != inference_clock.get("sourceVideoPath")
+    ):
+        selected_clock = ensure_selected_cut_source_clock(
+            candidate_workspace=candidate_workspace,
+            selected_video_path=selected_video_path,
+            selection=selection,
+            expected_parent_sha256=expected_parent_sha256,
+        )
+    if selected_clock is not None:
+        try:
+            if inference_clock is None:
+                raise ValueError("inference-context clock is unavailable")
+            crop_start, crop_end = source_exposure_crop_window(selected_clock, inference_clock)
+            return output_path, crop_start, crop_end
+        except (OSError, ValueError, TypeError, KeyError) as error:
+            exact_pose_reference = (
+                candidate_workspace / "segment_detection" / "exact_source_pose_reference.json"
+            )
+            if exact_pose_reference.is_file():
+                raise ValueError(
+                    "source_timeline_mapping_unresolved_before_reconstruction_prefit: "
+                    f"{error}"
+                ) from error
+    # Legacy inputs without exact source-pose evidence retain their historical
+    # crop behavior; no source-timeline comparison is authorized for them.
     effective_selected_start = min(max(selected_start, inference_start), inference_end)
     effective_selected_end = min(max(selected_end, effective_selected_start), inference_end)
     crop_start = effective_selected_start - inference_start
@@ -23335,18 +24785,110 @@ def prepare_reconstruction_inference_video(
     return output_path, crop_start, crop_end
 
 
+def ensure_selected_cut_source_clock(
+    *,
+    candidate_workspace: Path,
+    selected_video_path: Path,
+    selection: dict[str, Any] | None,
+    expected_parent_sha256: str | None = None,
+) -> dict[str, Any] | None:
+    """Load or safely recover selected-cut lineage before any cache fast path."""
+    from .source_frame_clock import (
+        load_verified_source_frame_clock,
+        recover_materialized_cut_clock,
+        source_frame_clock_path_for_video,
+        write_source_frame_clock,
+    )
+
+    selected_video_path = selected_video_path.expanduser().resolve()
+    exact_pose_reference = (
+        candidate_workspace / "segment_detection" / "exact_source_pose_reference.json"
+    )
+    has_exact_pose = exact_pose_reference.is_file()
+    clock_path = source_frame_clock_path_for_video(selected_video_path)
+    clock = None
+    try:
+        clock = load_verified_source_frame_clock(clock_path, expected_video_path=selected_video_path)
+        if (
+            isinstance(selection, dict)
+            and str(selection.get("selectedSegmentSha256") or "").casefold()
+            != str(clock.get("outputVideoSha256") or "").casefold()
+        ):
+            clock = None
+        if expected_parent_sha256 and clock is not None:
+            if str(clock.get("sourceVideoSha256") or "").casefold() != expected_parent_sha256.casefold():
+                clock = None
+    except (OSError, ValueError, TypeError, KeyError):
+        clock = None
+
+    needs_parent_binding = bool(
+        has_exact_pose
+        and (
+            not isinstance(selection, dict)
+            or clock is None
+            or Path(str(clock.get("sourceVideoPath") or "")).expanduser().resolve() == selected_video_path
+        )
+    )
+    if clock is not None and not needs_parent_binding:
+        return clock
+    if isinstance(selection, dict):
+        try:
+            recovered = recover_materialized_cut_clock(
+                selection=selection,
+                selected_video_path=selected_video_path,
+                expected_parent_sha256=expected_parent_sha256,
+            )
+            write_source_frame_clock(recovered, output_path=clock_path)
+            return recovered
+        except (OSError, ValueError, TypeError, KeyError) as error:
+            if has_exact_pose:
+                raise ValueError(
+                    "source_timeline_mapping_unresolved_before_reconstruction_prefit: "
+                    f"{error}"
+                ) from error
+    elif has_exact_pose:
+        raise ValueError(
+            "source_timeline_mapping_unresolved_before_reconstruction_prefit: "
+            "selected-cut receipt is unavailable"
+        )
+    return clock
+
+
 def normalize_reconstruction_input_frame_rate(
     *,
     candidate_workspace: Path,
     selected_video_path: Path,
 ) -> Path:
+    from .source_frame_clock import (
+        build_source_frame_clock,
+        load_verified_source_frame_clock,
+        write_source_frame_clock,
+    )
+
     try:
         metadata = read_basic_video_metadata(selected_video_path)
     except Exception:
         return selected_video_path
     if abs(metadata.fps - 30.0) <= 0.01:
+        clock_path = source_frame_clock_path_for_video(selected_video_path)
+        if clock_path.is_file():
+            # A no-op normalization must not replace a selected-cut→parent
+            # clock with a self-clock. Verify and retain the exact receipt.
+            load_verified_source_frame_clock(clock_path, expected_video_path=selected_video_path)
+        else:
+            # With no upstream lineage available, a self-clock is still a
+            # truthful description of this exact input's local exposures.
+            receipt = build_source_frame_clock(
+                source_video_path=selected_video_path,
+                output_video_path=selected_video_path,
+                crop_start_seconds=0.0,
+                output_fps=metadata.fps,
+            )
+            write_source_frame_clock(receipt, output_path=clock_path)
         return selected_video_path
     output_path = candidate_workspace / "input" / "reconstruction_inference_segment.mp4"
+    # The lower-level preparation composes its output→input map through any
+    # verified upstream receipt, retaining the approved parent clock.
     prepare_cached_reconstruction_video(source_path=selected_video_path, output_path=output_path,
                               start_seconds=0.0, end_seconds=metadata.duration_seconds)
     return output_path
@@ -23355,16 +24897,81 @@ def normalize_reconstruction_input_frame_rate(
 def prepare_cached_reconstruction_video(*, source_path: Path, output_path: Path,
                               start_seconds: float, end_seconds: float) -> None:
     from .stage_cache import cache_key, load_stage, save_stage, stage_lock
+    from .source_frame_clock import (
+        build_source_frame_clock,
+        compose_source_frame_clocks,
+        load_verified_source_frame_clock,
+        write_source_frame_clock,
+    )
+
+    upstream_clock = None
+    upstream_clock_path = source_frame_clock_path_for_video(source_path)
+    if upstream_clock_path.is_file():
+        upstream_clock = load_verified_source_frame_clock(
+            upstream_clock_path,
+            expected_video_path=source_path,
+        )
 
     checkpoint = output_path.with_suffix(".checkpoint.json")
     key = cache_key({"startSeconds": start_seconds, "endSeconds": end_seconds,
                      "fps": 30.0, "policyVersion": 1}, [source_path])
     with stage_lock(checkpoint):
-        if load_stage(checkpoint, key) is not None:
-            return
-        trim_video(source_path=source_path, output_path=output_path,
-                   start_seconds=start_seconds, end_seconds=end_seconds, target_fps=30.0)
-        save_stage(checkpoint, key, {"videoPath": str(output_path)}, [output_path])
+        if load_stage(checkpoint, key) is None:
+            trim_video(source_path=source_path, output_path=output_path,
+                       start_seconds=start_seconds, end_seconds=end_seconds, target_fps=30.0)
+            save_stage(checkpoint, key, {"videoPath": str(output_path)}, [output_path])
+        receipt = build_source_frame_clock(
+            source_video_path=source_path,
+            output_video_path=output_path,
+            crop_start_seconds=start_seconds,
+            output_fps=30.0,
+        )
+        if upstream_clock is not None:
+            receipt = compose_source_frame_clocks(upstream_clock, receipt)
+        write_source_frame_clock(receipt, output_path=source_frame_clock_path_for_video(output_path))
+
+
+def source_frame_clock_path_for_video(video_path: Path) -> Path:
+    from .source_frame_clock import source_frame_clock_path_for_video as clock_path_for_video
+
+    return clock_path_for_video(video_path)
+
+
+def rebind_reconstruction_source_frame_clock(
+    *,
+    input_video_path: Path,
+    output_video_path: Path,
+    transform: str,
+) -> Path:
+    from .source_frame_clock import (
+        load_verified_source_frame_clock,
+        rebind_source_frame_clock,
+        write_source_frame_clock,
+    )
+
+    input_clock_path = source_frame_clock_path_for_video(input_video_path)
+    receipt = load_verified_source_frame_clock(input_clock_path, expected_video_path=input_video_path)
+    rebound = rebind_source_frame_clock(receipt, output_video_path=output_video_path, transform=transform)
+    output_clock_path = source_frame_clock_path_for_video(output_video_path)
+    write_source_frame_clock(rebound, output_path=output_clock_path)
+    return output_clock_path
+
+
+def rebind_existing_source_frame_clock_for_video_copy(
+    *,
+    source_video_path: Path,
+    output_video_path: Path,
+    transform: str,
+) -> Path | None:
+    """Carry only a valid existing clock across a byte-preserving video copy."""
+    from .source_frame_clock import (
+        rebind_existing_source_frame_clock_for_video_copy as rebind_copy,
+    )
+    return rebind_copy(
+        source_video_path=source_video_path,
+        output_video_path=output_video_path,
+        transform=transform,
+    )
 
 
 def build_full_clip_eligible_loop(cleaned_clip: Any) -> EligibleLoop:
@@ -23893,6 +25500,64 @@ def prepare_candidate_input_video(
     if pre_reconstruction_validation_enabled and request.exercise_motion_contract_enabled:
         require_current_source_contract(exercise_motion_contract, ranked_candidate)
     source_dir = candidate_workspace / "source"
+    if ranked_candidate.candidate.get("retainedSourceInterval") is not None and (
+        not request.pre_reconstruction_source_validation
+        or not request.exercise_motion_contract_enabled
+    ):
+        raise ValueError("Retained exact source interval requires current source validation and exercise contract")
+    retained_segment = materialize_retained_source_interval(
+        ranked_candidate,
+        candidate_workspace=candidate_workspace,
+        exercise_motion_contract=exercise_motion_contract,
+    )
+    if retained_segment is not None:
+        cached_segment_selection = candidate_workspace / "segment_detection" / "segment_selection.json"
+        if not cached_source_selection_matches_validation_mode(
+            cached_segment_selection,
+            pre_reconstruction_source_validation=True,
+            exercise_motion_contract_enabled=True,
+            exercise=ExerciseEntry(
+                exercise_id=ranked_candidate.exercise_id,
+                name=ranked_candidate.exercise_name,
+                slug=ranked_candidate.exercise_slug,
+            ),
+            expected_contract=exercise_motion_contract,
+        ):
+            raise ValueError("Imported source interval is unresolved under the current source policy")
+        authority = pre_reconstruction_source_interval_authority(
+            candidate_workspace=candidate_workspace,
+            exercise_motion_contract=exercise_motion_contract,
+        )
+        if authority.get("authoritative") is not True:
+            raise ValueError(
+                "Imported source interval is unresolved: "
+                + str(authority.get("reason") or "current interval authority unavailable")
+            )
+        cached_exercise_motion_contract = exercise_motion_contract_from_segment_selection(
+            cached_segment_selection
+        )
+        if cached_exercise_motion_contract is None:
+            raise ValueError("Imported source interval has no reusable exercise contract")
+        exact_phase_validation = validate_exact_source_with_cached_gpu_handoff(
+            caption_images=pre_reconstruction_caption_images,
+            source_video_path=retained_segment,
+            exercise_name=ranked_candidate.exercise_name,
+            exercise_motion_contract=cached_exercise_motion_contract,
+            cache_path=(candidate_workspace / "segment_detection" / "exact_source_phase_validation.json"),
+            shared_cache_dir=(
+                candidate_workspace.parent
+                / "source-review-cache"
+                / "exact-source-phase"
+            ),
+        )
+        promote_and_require_exact_source_phase_validation(
+            candidate_workspace=candidate_workspace,
+            validation=exact_phase_validation,
+            exercise_motion_contract=cached_exercise_motion_contract,
+            rejection_context="Retained exact-source validation rejected the imported interval",
+        )
+        return retained_segment
+
     source_video_path = copy_or_download_candidate_source(
         ranked_candidate,
         source_dir,
@@ -24352,9 +26017,9 @@ def cached_source_selection_matches_validation_mode(
             or exercise_motion_contract_uses_candidate_evidence(contract)
         ):
             return False
-        if expected_contract is not None and (
-            exercise_motion_contract_prompt_sha256(contract)
-            != exercise_motion_contract_prompt_sha256(expected_contract)
+        if expected_contract is not None and not exercise_motion_contract_prompt_identity_matches(
+            contract,
+            expected_contract,
         ):
             return False
     exact_validation = payload.get("exactSourcePhaseValidation")
@@ -24368,6 +26033,222 @@ def cached_source_selection_matches_validation_mode(
     if not exact_source_validation_effectively_passed(exact_validation):
         return False
     return True
+
+
+def materialize_retained_source_interval(
+    ranked_candidate: RankedCandidate,
+    *,
+    candidate_workspace: Path,
+    exercise_motion_contract: dict[str, Any] | None,
+) -> Path | None:
+    """Import a previously approved exact cut when its complete evidence still matches."""
+    reference = ranked_candidate.candidate.get("retainedSourceInterval")
+    if reference is None:
+        return None
+    if not isinstance(reference, dict) or reference.get("schemaVersion") != 1:
+        raise ValueError("Retained source interval reference has an unsupported schema")
+
+    def require(condition: bool, reason: str) -> None:
+        if not condition:
+            raise ValueError(f"Retained source interval is unresolved: {reason}")
+
+    source_workspace = Path(str(reference.get("workspace") or "")).expanduser().resolve()
+    selection_path = source_workspace / "segment_detection" / "segment_selection.json"
+    selected_segment = source_workspace / "input" / "selected_segment.mp4"
+    source_payload_path = source_workspace / "segment_detection" / "exact_source_phase_validation.json"
+    pose_reference_path = source_workspace / "segment_detection" / "exact_source_pose_reference.json"
+
+    require(source_workspace.is_dir(), "retained source workspace is missing")
+    require(reference.get("videoId") == ranked_candidate.video_id, "candidate video identity changed")
+    require(reference.get("exerciseId") == ranked_candidate.exercise_id, "exercise identity changed")
+    require(reference.get("exerciseName") == ranked_candidate.exercise_name, "exercise name changed")
+    reference_contract_sha = str(reference.get("exerciseMotionContractSha256") or "").casefold()
+    require(
+        len(reference_contract_sha) == 64
+        and all(character in "0123456789abcdef" for character in reference_contract_sha),
+        "retained exercise configuration receipt is missing or invalid",
+    )
+    for path in (selection_path, selected_segment, source_payload_path, pose_reference_path):
+        require(path.is_file(), f"retained evidence is missing: {path.name}")
+
+    selection_bytes = selection_path.read_bytes()
+    require(
+        hashlib.sha256(selection_bytes).hexdigest() == str(reference.get("segmentSelectionSha256") or "").casefold(),
+        "segment selection receipt changed",
+    )
+    selected_sha = file_sha256(selected_segment)
+    require(selected_sha == str(reference.get("selectedSegmentSha256") or "").casefold(), "approved segment bytes changed")
+    try:
+        selection = loads_reconstruction_metadata(selection_bytes.decode("utf-8-sig"))
+    except Exception as exc:
+        raise ValueError("Retained source interval is unresolved: selection receipt is invalid") from exc
+
+    require(selection.get("exerciseName") == ranked_candidate.exercise_name, "retained approval names another exercise")
+    require(selection.get("selectedSegmentSha256") == selected_sha, "selection receipt does not bind the retained segment bytes")
+    require(
+        Path(str(selection.get("selectedSegmentPath") or "")).expanduser().resolve() == selected_segment.resolve(),
+        "selection receipt names a different selected segment",
+    )
+    source_video_value = selection.get("sourceVideoPath")
+    require(bool(source_video_value), "original source identity is missing")
+    source_video_path = Path(str(source_video_value)).expanduser().resolve()
+    require(source_video_path.is_file(), "original source video is missing")
+    source_video_sha = file_sha256(source_video_path)
+    require(source_video_sha == str(reference.get("sourceVideoSha256") or "").casefold(), "original source video changed")
+    candidate_source_path = ranked_candidate.video_path
+    require(candidate_source_path is not None, "prepared candidate has no source video path")
+    candidate_source_path = candidate_source_path.expanduser().resolve()
+    require(candidate_source_path.is_file(), "prepared candidate source video is missing")
+    require(
+        file_sha256(candidate_source_path) == source_video_sha,
+        "prepared candidate source video does not match the approved original",
+    )
+
+    scorecard = selection.get("sourceCutRanking")
+    require(isinstance(scorecard, dict), "source cut review is missing")
+    ranking_payload = scorecard.get("payload")
+    require(isinstance(ranking_payload, dict), "source cut review evidence is incomplete")
+    require(
+        ranking_payload.get("sourceCutOriginalVideoSha256") == source_video_sha,
+        "source review was performed against different video bytes",
+    )
+    require(
+        ranking_payload.get("sourceCutOriginalVideoSha256After") == source_video_sha,
+        "source video changed during interval review",
+    )
+    reviewed_source_path = ranking_payload.get("sourceCutOriginalVideoPath")
+    require(
+        bool(reviewed_source_path)
+        and Path(str(reviewed_source_path)).expanduser().resolve() == source_video_path,
+        "source review does not identify the retained original video",
+    )
+    reviewed_video_path = ranking_payload.get("sourceCutReviewVideoPath")
+    require(bool(reviewed_video_path), "source review video is missing")
+    reviewed_video_path = Path(str(reviewed_video_path)).expanduser().resolve()
+    require(reviewed_video_path.is_file(), "source review video is missing")
+    reviewed_video_sha = file_sha256(reviewed_video_path)
+    require(
+        reviewed_video_sha == ranking_payload.get("sourceCutReviewVideoSha256")
+        == ranking_payload.get("sourceCutReviewVideoSha256After"),
+        "reviewed source video changed",
+    )
+    ranking = LoopRanking(
+        score=float(scorecard.get("score") or 0.0),
+        reasons=list(scorecard.get("reasons") or []),
+        raw_response=str(scorecard.get("rawResponse") or ""),
+        payload=ranking_payload,
+    )
+    require(source_cut_ranking_has_vlm_approval(ranking), "selected source interval has no current approval")
+    from .source_review_authority import SOURCE_REVIEW_AUTHORITY_VERSION
+    require(
+        ranking_payload.get("sourceReviewAuthorityVersion") == SOURCE_REVIEW_AUTHORITY_VERSION,
+        "source review authority policy is stale",
+    )
+    selected_span = selection.get("selectedSpanInOriginalSource") or selection.get("selectedSpan")
+    require(isinstance(selected_span, dict), "approved interval boundaries are missing")
+    for key, ranking_key in (
+        ("startSeconds", "selected_section_start_seconds"),
+        ("endSeconds", "selected_section_end_seconds"),
+    ):
+        try:
+            interval_value = float(selected_span[key])
+            reviewed_value = float(ranking_payload[ranking_key])
+        except (KeyError, TypeError, ValueError):
+            require(False, "reviewed interval boundaries are incomplete")
+        require(abs(interval_value - reviewed_value) <= 0.001, "reviewed and selected intervals differ")
+
+    contract = selection.get("exerciseMotionContract")
+    require(isinstance(contract, dict), "reviewed exercise configuration is missing")
+    require(
+        exercise_motion_contract_prompt_sha256(contract).casefold() == reference_contract_sha,
+        "saved approved exercise configuration receipt changed",
+    )
+    require(
+        exercise_motion_contract_prompt_identity_matches(contract, exercise_motion_contract),
+        "reviewed exercise configuration no longer matches",
+    )
+    require(
+        cached_source_selection_matches_validation_mode(
+            selection_path,
+            pre_reconstruction_source_validation=True,
+            exercise_motion_contract_enabled=True,
+            exercise=ExerciseEntry(
+                exercise_id=ranked_candidate.exercise_id,
+                name=ranked_candidate.exercise_name,
+                slug=ranked_candidate.exercise_slug,
+            ),
+            expected_contract=exercise_motion_contract,
+        ),
+        "source selection or exact pose validation is stale or incomplete",
+    )
+    authority = pre_reconstruction_source_interval_authority(
+        candidate_workspace=source_workspace,
+        exercise_motion_contract=exercise_motion_contract,
+    )
+    require(authority.get("authoritative") is True, str(authority.get("reason") or "interval authority unavailable"))
+
+    if candidate_workspace.expanduser().resolve() == source_workspace:
+        return selected_segment
+
+    destination_segment = candidate_workspace / "input" / "selected_segment.mp4"
+    destination_segment.parent.mkdir(parents=True, exist_ok=True)
+    destination_detection = candidate_workspace / "segment_detection"
+    destination_detection.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(selected_segment, destination_segment)
+    rebind_existing_source_frame_clock_for_video_copy(
+        source_video_path=selected_segment,
+        output_video_path=destination_segment,
+        transform="retained_selected_source_interval_copy",
+    )
+    require(file_sha256(destination_segment) == selected_sha, "imported segment changed while copying")
+    for retained_path in (selection_path, source_payload_path, pose_reference_path):
+        shutil.copy2(retained_path, destination_detection / retained_path.name)
+
+    copied_selection_path = destination_detection / selection_path.name
+    copied_selection = loads_reconstruction_metadata(copied_selection_path.read_text(encoding="utf-8"))
+    copied_selection["selectedSegmentPath"] = str(destination_segment.resolve())
+    copied_selection["selectedSegmentSha256"] = selected_sha
+    write_json_atomic(copied_selection_path, copied_selection)
+    write_json_atomic(destination_detection / "retained_source_interval_import.json", {
+        "schemaVersion": 1,
+        "sourceWorkspace": str(source_workspace),
+        "sourceVideoSha256": source_video_sha,
+        "segmentSelectionSha256": reference["segmentSelectionSha256"],
+        "selectedSegmentSha256": selected_sha,
+        "exerciseMotionContractSha256": reference["exerciseMotionContractSha256"],
+        "videoId": ranked_candidate.video_id,
+        "exerciseId": ranked_candidate.exercise_id,
+        "selectedSpan": selection.get("selectedSpan"),
+        "sourceSelectionPolicyVersion": selection.get("sourceSelectionPolicyVersion"),
+        "exactSourcePhaseValidationPolicyVersion": (
+            (selection.get("exactSourcePhaseValidation") or {}).get("validationPolicyVersion")
+        ),
+    })
+
+    copied_phase_path = destination_detection / source_payload_path.name
+    copied_phase = loads_reconstruction_metadata(copied_phase_path.read_text(encoding="utf-8"))
+    pose_reference_destination = destination_detection / pose_reference_path.name
+    copied_phase_metrics = copied_phase.get("metrics")
+    if isinstance(copied_phase_metrics, dict):
+        copied_phase_metrics["sourceVideoPath"] = str(destination_segment.resolve())
+        copied_phase_metrics["sourcePoseReferencePath"] = str(pose_reference_destination.resolve())
+    else:
+        copied_phase["sourceVideoPath"] = str(destination_segment.resolve())
+        copied_phase["sourcePoseReferencePath"] = str(pose_reference_destination.resolve())
+    write_json_atomic(copied_phase_path, copied_phase)
+
+    copied_selection = loads_reconstruction_metadata(copied_selection_path.read_text(encoding="utf-8"))
+    embedded_phase = copied_selection.get("exactSourcePhaseValidation")
+    if isinstance(embedded_phase, dict):
+        embedded_metrics = embedded_phase.get("metrics")
+        if isinstance(embedded_metrics, dict):
+            embedded_metrics["sourceVideoPath"] = str(destination_segment.resolve())
+            embedded_metrics["sourcePoseReferencePath"] = str(pose_reference_destination.resolve())
+        else:
+            embedded_phase["sourceVideoPath"] = str(destination_segment.resolve())
+            embedded_phase["sourcePoseReferencePath"] = str(pose_reference_destination.resolve())
+        write_json_atomic(copied_selection_path, copied_selection)
+    return destination_segment
 
 
 def exercise_motion_contract_from_segment_selection(
@@ -26517,6 +28398,11 @@ def choose_pre_reconstruction_source_cut_or_reject(
         if confirmed_video_path.resolve() != selected_segment_path.resolve():
             shutil.copy2(confirmed_video_path, selected_segment_path)
             copy_foot_landmark_cache(confirmed_video_path, selected_segment_path)
+            rebind_existing_source_frame_clock_for_video_copy(
+                source_video_path=confirmed_video_path,
+                output_video_path=selected_segment_path,
+                transform="confirmed_source_cut_copy",
+            )
         selected_segment_materialization = (
             ranking_payload.get("sourceCutDeterministicConfirmationSelectedMaterialization")
             or "deterministic_confirmation_copy"
@@ -26546,6 +28432,15 @@ def choose_pre_reconstruction_source_cut_or_reject(
     selection_manifest_path = segment_dir / "segment_selection.json"
     selection_manifest = loads_reconstruction_metadata(selection_manifest_path.read_text(encoding="utf-8"))
     selection_manifest["selectedSegmentMaterialization"] = selected_segment_materialization
+    if selected_segment_materialization in {"trimmed_source_window", "source_copy_full_range"}:
+        from .source_frame_clock import sha256_file
+
+        selection_manifest.update({
+            "selectedSegmentSourceVideoPath": str(detection_source_video_path.resolve()),
+            "selectedSegmentSourceVideoSha256": sha256_file(detection_source_video_path),
+            "selectedSegmentCropStartSeconds": float(start_seconds),
+            "selectedSegmentCropEndSeconds": float(end_seconds),
+        })
     selection_manifest_path.write_text(json.dumps(selection_manifest, indent=2), encoding="utf-8")
     exact_phase_validation = promote_and_require_exact_source_phase_validation(
         candidate_workspace=candidate_workspace,
@@ -27280,6 +29175,11 @@ def materialize_source_video_interval(
     if covers_full_source:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source_path, output_path)
+        write_materialized_source_interval_clock(
+            source_path=source_path,
+            output_path=output_path,
+            start_seconds=0.0,
+        )
         return "source_copy_full_range"
     trim_video(
         source_path=source_path,
@@ -27287,7 +29187,45 @@ def materialize_source_video_interval(
         start_seconds=start_seconds,
         end_seconds=end_seconds,
     )
+    write_materialized_source_interval_clock(
+        source_path=source_path,
+        output_path=output_path,
+        start_seconds=start_seconds,
+    )
     return "trimmed_source_window"
+
+
+def write_materialized_source_interval_clock(
+    *,
+    source_path: Path,
+    output_path: Path,
+    start_seconds: float,
+    source_origin_seconds: float = 0.0,
+) -> Path | None:
+    """Persist a verified CFR frame mapping for a source cut when available.
+
+    The selected interval's requested start remains selection metadata. The
+    receipt records the actual first decoded source frame and exposure time.
+    VFR inputs stay usable for review/reconstruction but receive no fabricated
+    CFR clock, so downstream source-aligned checks remain unresolved.
+    """
+    from .source_frame_clock import build_source_frame_clock, write_source_frame_clock
+
+    try:
+        metadata = read_basic_video_metadata(output_path)
+        receipt = build_source_frame_clock(
+            source_video_path=source_path,
+            output_video_path=output_path,
+            crop_start_seconds=max(0.0, float(start_seconds)),
+            output_fps=float(metadata.fps),
+            source_origin_seconds=float(source_origin_seconds),
+        )
+        return write_source_frame_clock(
+            receipt,
+            output_path=source_frame_clock_path_for_video(output_path),
+        )
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return None
 
 
 def trim_ranked_source_chunk_hint(
@@ -27309,6 +29247,8 @@ def trim_ranked_source_chunk_hint(
         start_seconds=source_chunk_hint.start_seconds,
         end_seconds=source_chunk_hint.end_seconds,
     )
+    from .source_frame_clock import sha256_file
+
     segment_dir = candidate_workspace / "segment_detection"
     segment_dir.mkdir(parents=True, exist_ok=True)
     (segment_dir / "segment_selection.json").write_text(
@@ -27320,11 +29260,16 @@ def trim_ranked_source_chunk_hint(
                 "fallbackReason": fallback_reason,
                 "sourceVideoPath": str(source_video_path),
                 "selectedSegmentPath": str(selected_segment_path),
+                "selectedSegmentSha256": sha256_file(selected_segment_path),
                 "selectedSegmentMaterialization": (
                     materialization
                     if materialization == "source_copy_full_range"
                     else "trimmed_ranked_window"
                 ),
+                "selectedSegmentSourceVideoPath": str(source_video_path.resolve()),
+                "selectedSegmentSourceVideoSha256": sha256_file(source_video_path),
+                "selectedSegmentCropStartSeconds": float(source_chunk_hint.start_seconds),
+                "selectedSegmentCropEndSeconds": float(source_chunk_hint.end_seconds),
                 "exerciseName": ranked_candidate.exercise_name,
                 "selectedSpanInOriginalSource": {
                     "startSeconds": source_chunk_hint.start_seconds,
@@ -27359,6 +29304,14 @@ def write_source_chunk_hint_segment_fallback(
     selected_segment_path = candidate_workspace / "input" / "selected_segment.mp4"
     selected_segment_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(detection_source_video_path, selected_segment_path)
+    from .source_frame_clock import sha256_file
+
+    detection_duration = read_basic_video_metadata(detection_source_video_path).duration_seconds
+    rebind_existing_source_frame_clock_for_video_copy(
+        source_video_path=detection_source_video_path,
+        output_video_path=selected_segment_path,
+        transform="source_chunk_hint_fallback_copy",
+    )
     payload = {
         "role": "final_single_rep_segment",
         "source": "segment_detection_fallback",
@@ -27366,6 +29319,12 @@ def write_source_chunk_hint_segment_fallback(
         "sourceVideoPath": str(source_video_path),
         "detectionSourceVideoPath": str(detection_source_video_path),
         "selectedSegmentPath": str(selected_segment_path),
+        "selectedSegmentSha256": sha256_file(selected_segment_path),
+        "selectedSegmentMaterialization": "source_copy_full_range",
+        "selectedSegmentSourceVideoPath": str(detection_source_video_path.resolve()),
+        "selectedSegmentSourceVideoSha256": sha256_file(detection_source_video_path),
+        "selectedSegmentCropStartSeconds": 0.0,
+        "selectedSegmentCropEndSeconds": detection_duration,
         "exerciseName": ranked_candidate.exercise_name,
         "fallbackReason": "source_segment_detection_failed_inside_strong_source_chunk",
         "fallbackErrorType": type(error).__name__,
@@ -27453,6 +29412,151 @@ def baked_source_support_evidence(
         return None
     evidence = copy.deepcopy(evidence)
     frames = [frame for frame in payload.get("frames", []) if not frame.get("syntheticLoopBridge")]
+    camera_reference = payload.get("sourcePoseCameraReference") or {}
+    timeline_mapping = camera_reference.get("sourceTimelineMapping") if isinstance(camera_reference, dict) else None
+    evidence_video_sha = str(evidence.get("sourceVideoSha256") or "").casefold()
+    patch_evidence = evidence.get("footPatchEvidence")
+    patch_video_sha = str((patch_evidence or {}).get("sourceVideoSha256") or evidence_video_sha).casefold()
+    patch_times = (patch_evidence or {}).get("sourceTimesSec")
+    if (
+        isinstance(timeline_mapping, dict)
+        and timeline_mapping.get("schemaVersion") == 1
+        and timeline_mapping.get("verified") is True
+        and timeline_mapping.get("mappingKind") == "selected_segment_to_parent_source"
+    ):
+        from .contact_constraints import (
+            _foot_patch_times_in_parent_clock,
+            _validated_selected_frame_lineage,
+        )
+        selected_sha = str(timeline_mapping.get("selectedSegmentSha256") or "").casefold()
+        parent_sha = str(timeline_mapping.get("parentSourceSha256") or "").casefold()
+        valid_patch_times = (
+            isinstance(patch_times, list)
+            and len(patch_times) >= 2
+            and all(parse_optional_float(value) is not None for value in patch_times)
+            and all(float(value) >= float(patch_times[index - 1]) for index, value in enumerate(patch_times) if index)
+        )
+        parent_patch_times = (
+            _foot_patch_times_in_parent_clock(evidence, timeline_mapping, patch_times)
+            if valid_patch_times else None
+        )
+        lineage = _validated_selected_frame_lineage(timeline_mapping)
+        exact_timeline = (
+            len(selected_sha) == 64
+            and len(parent_sha) == 64
+            and evidence_video_sha in {selected_sha, parent_sha}
+            and patch_video_sha == evidence_video_sha
+            and valid_patch_times
+            and parent_patch_times is not None
+            and lineage is not None
+            and bool(frames)
+        )
+        if exact_timeline:
+            patch_start = float(parent_patch_times[0])
+            patch_end = float(parent_patch_times[-1])
+            parent_fps = parse_optional_float(timeline_mapping.get("parentSourceFps"))
+            if parent_fps is None or parent_fps <= 0.0:
+                exact_timeline = False
+        if exact_timeline:
+            time_tolerance = 0.500001 / parent_fps + 1e-7
+            parent_exposures = {}
+            for _, _, parent_index, parent_time in lineage:
+                parent_exposures.setdefault(parent_index, set()).add(parent_time)
+            all_parent_times = [parent_time for _, _, _, parent_time in lineage]
+            native_times = []
+            for frame in frames:
+                source_time = parse_optional_float(frame.get("sourceTimeSec"))
+                source_index = parse_optional_int(frame.get("sourceFrameIndex"))
+                if source_time is None:
+                    native_times.append(None)
+                elif source_index is not None:
+                    candidates = parent_exposures.get(source_index) or set()
+                    native_times.append(source_time if any(
+                        abs(source_time - exposure_time) <= 1e-6 for exposure_time in candidates
+                    ) else None)
+                else:
+                    native_times.append(source_time if any(
+                        abs(source_time - exposure_time) <= 1e-6 for exposure_time in all_parent_times
+                    ) else None)
+            local_denominator = max(1, len(frames) - 1)
+
+            def rebase_contacts_by_time(records: list[Any]) -> list[dict[str, Any]]:
+                clipped: list[dict[str, Any]] = []
+                for row in records:
+                    if not isinstance(row, dict):
+                        continue
+                    if row.get("supportKind") == "observed_foot_patch":
+                        clipped.append(row)
+                        continue
+                    ratio_start = parse_optional_float(row.get("startRatio"))
+                    ratio_end = parse_optional_float(row.get("endRatio"))
+                    if ratio_start is None or ratio_end is None or not 0.0 <= ratio_start <= ratio_end <= 1.0:
+                        continue
+                    contact_start = parse_optional_float(row.get("sourceStartTimeSec"))
+                    contact_end = parse_optional_float(row.get("sourceEndTimeSec"))
+                    if contact_start is None or contact_end is None or contact_end < contact_start:
+                        contact_start = patch_start + ratio_start * (patch_end - patch_start)
+                        contact_end = patch_start + ratio_end * (patch_end - patch_start)
+                    else:
+                        mapped_bounds = _foot_patch_times_in_parent_clock(
+                            evidence, timeline_mapping, [contact_start, contact_end],
+                        )
+                        if mapped_bounds is None:
+                            continue
+                        contact_start, contact_end = map(float, mapped_bounds)
+                    active_indices = [
+                        index for index, source_time in enumerate(native_times)
+                        if source_time is not None
+                        and contact_start - time_tolerance <= source_time <= contact_end + time_tolerance
+                    ]
+                    if not active_indices:
+                        continue
+                    local_start, local_end = active_indices[0], active_indices[-1]
+                    clipped.append({
+                        **row,
+                        "startFrame": local_start,
+                        "endFrame": local_end,
+                        "startRatio": local_start / local_denominator,
+                        "endRatio": local_end / local_denominator,
+                        "sourceStartTimeSec": contact_start,
+                        "sourceEndTimeSec": contact_end,
+                    })
+                return clipped
+
+            def rebase_timed(node: dict[str, Any]) -> None:
+                for key, value in list(node.items()):
+                    if key in {"contacts", "supportContacts", "contactIntervals", "footContactCandidates"} and isinstance(value, list):
+                        node[key] = rebase_contacts_by_time(value)
+                    elif key == "footPatchEvidence":
+                        # Keep the native observation track intact; only summary intervals are cut-local.
+                        continue
+                    elif isinstance(value, dict):
+                        rebase_timed(value)
+
+            rebase_timed(evidence)
+            evidence["previewCrop"] = {
+                "sourceStartTimeSec": next((value for value in native_times if value is not None), None),
+                "sourceEndTimeSec": next((value for value in reversed(native_times) if value is not None), None),
+                "sourceTimelineMapping": "verified_selected_cut_to_parent",
+                "selectedFrameClockReceiptSha256": timeline_mapping.get("selectedFrameClockReceiptSha256"),
+            }
+            return evidence
+        if isinstance(timeline_mapping, dict):
+            def mark_timed_mapping_unresolved(node: dict[str, Any]) -> None:
+                for key, value in list(node.items()):
+                    if key in {"contacts", "supportContacts", "contactIntervals", "footContactCandidates"} and isinstance(value, list):
+                        node[key] = []
+                    elif key == "footPatchEvidence":
+                        continue
+                    elif isinstance(value, dict):
+                        mark_timed_mapping_unresolved(value)
+
+            mark_timed_mapping_unresolved(evidence)
+            evidence["previewCrop"] = {
+                "sourceTimelineMapping": "unresolved",
+                "sourceTimelineMappingReason": "contact_evidence_clock_or_video_identity_mismatch",
+            }
+            return evidence
     count = (payload.get("source") or {}).get("frameCount")
     if frames and isinstance(count, (int, float)) and count > 1:
         start = parse_optional_float(frames[0].get("sourceFrameIndex"))
@@ -27576,6 +29680,8 @@ def constrain_baked_payload_to_source_articulation(
     exercise_motion_contract: dict[str, Any] | None = None,
     source_pose_reference: dict[str, Any] | None = None,
     timeout_seconds: float | None = None,
+    fit_input_capture_directory: Path | None = None,
+    fit_input_variant_identity: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, object]]:
     """Constrain browser IK using each baked frame's pre-IK source joints."""
     if exercise_motion_contract is not None:
@@ -27729,7 +29835,95 @@ def constrain_baked_payload_to_source_articulation(
                 "elapsedSeconds": 0.,
             }
         else:
-            fitted, fit_report = fit_controlled_motion(working, **fit_kwargs)
+            fit_call_kwargs = dict(fit_kwargs)
+            from .controlled_motion import (
+                CONTROLLED_MOTION_STRATEGY,
+                controlled_motion_fit_source_evidence_digest,
+            )
+            from .sequence_stabilization import pose_digest
+
+            solver_input_pose_digest = pose_digest(working)
+            solver_input_payload_digest = hashlib.sha256(
+                json.dumps(working, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+            solver_source_evidence_digest = controlled_motion_fit_source_evidence_digest(working)
+            fit_input_receipt = None
+            if fit_input_capture_directory is not None:
+                variant_identity = fit_input_variant_identity or "unlabelled-fit"
+                variant_hash = hashlib.sha256(variant_identity.encode("utf-8")).hexdigest()[:6]
+                kwargs_digest = hashlib.sha256(
+                    json.dumps(fit_call_kwargs, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                ).hexdigest()
+                receipt_path = fit_input_capture_directory / (
+                    f"fit-{variant_hash}-{solver_input_payload_digest[:12]}-{kwargs_digest[:6]}.json"
+                )
+                receipt = {
+                    "schemaVersion": 1,
+                    "variantIdentity": variant_identity,
+                    "solverInputPoseDigest": solver_input_pose_digest,
+                    "solverInputPayloadDigest": solver_input_payload_digest,
+                    "sourceEvidenceDigest": solver_source_evidence_digest,
+                    "fitStrategy": CONTROLLED_MOTION_STRATEGY,
+                    "fitKwargs": fit_call_kwargs,
+                    "payload": working,
+                    "sourcePoseReference": source_pose_reference,
+                    "exerciseMotionContract": exercise_motion_contract,
+                }
+                write_json_atomic(receipt_path, receipt)
+                fit_input_receipt = {
+                    "schemaVersion": 1,
+                    "path": str(receipt_path.resolve()),
+                    "sha256": hashlib.sha256(receipt_path.read_bytes()).hexdigest(),
+                    "solverInputPoseDigest": solver_input_pose_digest,
+                    "solverInputPayloadDigest": solver_input_payload_digest,
+                }
+            capture_scope = nullcontext()
+            if fit_input_receipt is not None:
+                from .controlled_motion import capture_rejected_fit_candidate
+
+                def save_rejected_candidate(candidate, rejected_report, solver_input):
+                    if not isinstance(candidate, dict) or not candidate.get('fixedRig'):
+                        return None
+                    candidate_payload_digest = hashlib.sha256(
+                        json.dumps(candidate, sort_keys=True, separators=(',', ':')).encode('utf-8')
+                    ).hexdigest()
+                    solver_input_payload_digest = hashlib.sha256(
+                        json.dumps(solver_input, sort_keys=True, separators=(',', ':')).encode('utf-8')
+                    ).hexdigest()
+                    diagnostic_path = fit_input_capture_directory / (
+                        f"rejected-fit-{variant_hash}-{solver_input_payload_digest[:12]}-{kwargs_digest[:6]}.json"
+                    )
+                    diagnostic = {
+                        'schemaVersion': 1,
+                        'kind': 'rejected_controlled_motion_fit_diagnostic',
+                        'variantIdentity': variant_identity,
+                        'inputReceipt': fit_input_receipt,
+                        'solverInputPayloadDigest': solver_input_payload_digest,
+                        'candidatePayloadDigest': candidate_payload_digest,
+                        'candidatePoseDigest': pose_digest(candidate),
+                        'fitReport': rejected_report,
+                        'candidatePayload': candidate,
+                    }
+                    if solver_input_payload_digest != fit_input_receipt['solverInputPayloadDigest']:
+                        diagnostic['solverInputPayload'] = solver_input
+                    write_json_atomic(diagnostic_path, diagnostic)
+                    return {
+                        'schemaVersion': 1,
+                        'path': str(diagnostic_path.resolve()),
+                        'sha256': hashlib.sha256(diagnostic_path.read_bytes()).hexdigest(),
+                        'candidatePayloadDigest': candidate_payload_digest,
+                        'candidatePoseDigest': diagnostic['candidatePoseDigest'],
+                        'inputReceiptSha256': fit_input_receipt['sha256'],
+                    }
+
+                capture_scope = capture_rejected_fit_candidate(save_rejected_candidate)
+            with capture_scope:
+                fitted, fit_report = fit_controlled_motion(working, **fit_kwargs)
+            fit_report["solverInputPoseDigest"] = solver_input_pose_digest
+            fit_report["solverInputPayloadDigest"] = solver_input_payload_digest
+            fit_report["solverInputSourceEvidenceDigest"] = solver_source_evidence_digest
+            if fit_input_receipt is not None:
+                fit_report["fitInputReceipt"] = fit_input_receipt
             if selected_preflight is not None:
                 fit_report["selectedIntervalSourcePhasePreflight"] = selected_preflight
         # An unsuccessful initialization/fit must not replace the caller's pose.
@@ -27740,19 +29934,10 @@ def constrain_baked_payload_to_source_articulation(
             "fitSourceEvidenceDigest": fit_report.get("fitSourceEvidenceDigest")
             or fit_input_source_evidence_digest,
         }
-        if fit_report.get("applied"):
-            # The fit path returns here, so the animation-bandwidth smoothing
-            # that the no-fit path applies below must run before this return:
-            # the fitter re-introduces reconstruction shimmer that otherwise
-            # ships in every approved movement.
-            from .sequence_stabilization import stabilize_exported_sequence
-            result, sequence_report = stabilize_exported_sequence(result)
-            result["sequenceStabilization"] = sequence_report
-            if sequence_report.get("applied"):
-                # The stabilizer has its own physical/source-envelope gates.
-                # Bind the fit record to that accepted final pose so downstream
-                # reuse does not reject it as a stale pre-stabilization result.
-                result["controlledMotionFit"]["outputPoseDigest"] = pose_digest(result)
+        # An applied controlled fit owns the final validated geometry and source
+        # evidence. Do not run a second sequence repair after its strict gates:
+        # that repair has a different constraint set and could mutate contacts
+        # or articulation without re-running the fit's acceptance checks.
         return result, metadata
     constrained_clip, post_ik_spike_metadata = suppress_post_ik_anatomical_spikes(
         constrained_clip
@@ -28006,9 +30191,11 @@ _SELECTED_SECTION_BAKE_CODE_DIGEST_CACHE: dict[
 def _selected_section_bake_code_digest() -> dict[str, Any]:
     from .fit_runtime import fit_cache_source_paths
 
-    dependency_paths = tuple(
-        (path.name, path) for path in fit_cache_source_paths()
-    )
+    dependencies = {path.name: path for path in fit_cache_source_paths()}
+    for name in ("pipeline.py", "chain_depth_correction.py"):
+        path = Path(__file__).with_name(name)
+        dependencies[path.name] = path
+    dependency_paths = tuple(sorted(dependencies.items()))
     stats = tuple(
         (name, path.stat().st_size, path.stat().st_mtime_ns, path.stat().st_ctime_ns)
         for name, path in dependency_paths
@@ -28069,7 +30256,8 @@ def bake_preview_loops_with_playwright(
             source_foot_support_evidence = add_observed_foot_contacts(
                 source_foot_support_evidence,
                 observe_foot_landmarks(candidate_workspace / 'input' / 'selected_segment.mp4'),
-                source_pose, alignment.get('cameraGroundPlane', {}).get('normal'), alignment)
+                source_pose, alignment.get('cameraGroundPlane', {}).get('normal'), alignment,
+                source_video_path=candidate_workspace / 'input' / 'selected_segment.mp4')
         from .source_support_tracking import observe_support_relative_tracks
         source_foot_support_evidence['supportRelativePixelTracks'] = observe_support_relative_tracks(
             candidate_workspace / 'input' / 'selected_segment.mp4', source_pose,
@@ -28669,6 +30857,7 @@ def _bake_preview_loops_with_playwright_uncached(
                     and eligible_loop.loop.get("type") == "exact_source_movement_instance"
                     and not explicit_frame_range
                 )
+                full_clip_seed: dict[str, Any] | None = None
 
                 def bake_loop_range(
                     loop_index: int,
@@ -28678,6 +30867,7 @@ def _bake_preview_loops_with_playwright_uncached(
                     explicit_time_range: bool,
                     frame_range: tuple[int, int] | None = None,
                     bake_options: dict[str, Any] | None = None,
+                    expected_parent_frame_bounds: tuple[int, int] | None = None,
                 ) -> dict[str, Any]:
                     export_started = time.perf_counter()
                     baked = page.evaluate(
@@ -28701,9 +30891,10 @@ def _bake_preview_loops_with_playwright_uncached(
                             "options": options if bake_options is None else bake_options,
                         },
                     )
-                    if frame_range is not None and (
-                        baked.get("loop", {}).get("sourceStartFrame") != frame_range[0]
-                        or baked.get("loop", {}).get("sourceEndFrame") != frame_range[1]
+                    if frame_range is not None and not _baked_source_frame_bounds_match(
+                        baked,
+                        local_frame_bounds=frame_range,
+                        expected_parent_bounds=expected_parent_frame_bounds,
                     ):
                         raise ValueError(
                             "Exact source-frame bake returned bounds different from the selected interval"
@@ -28725,6 +30916,10 @@ def _bake_preview_loops_with_playwright_uncached(
                         explicit_time_range,
                         exact_frame_bounds,
                         bake_options,
+                        _preview_parent_source_frame_bounds(
+                            full_clip_seed,
+                            exact_frame_bounds,
+                        ) if exact_frame_bounds is not None else None,
                     )
 
                 lineage_evidence: dict[str, Any] = {}
@@ -28917,6 +31112,8 @@ def _bake_preview_loops_with_playwright_uncached(
                             None if deadline is None
                             else max(0.0, deadline - time.perf_counter())
                         ),
+                        fit_input_capture_directory=candidate_workspace,
+                        fit_input_variant_identity=f"loop-{eligible_loop.loop_index}-{variant_id}",
                     )
                     source_fit_elapsed = time.perf_counter() - source_fit_started
                     preview_bake_diagnostics["sourceArticulationFitSeconds"] += source_fit_elapsed
@@ -29220,6 +31417,10 @@ def _bake_preview_loops_with_playwright_uncached(
                                 timeout_seconds=(
                                     None if deadline is None
                                     else max(0.0, deadline - time.perf_counter())
+                                ),
+                                fit_input_capture_directory=candidate_workspace,
+                                fit_input_variant_identity=(
+                                    f"loop-{eligible_loop.loop_index}-{variant_id}-contact-sequence-correction"
                                 ),
                             )
                         )
@@ -29773,9 +31974,70 @@ def load_baked_source_camera_reference(workspace: Path, source_pose: dict[str, A
         camera = cleaned.get('metadata', {}).get('structuralRefinement', {}).get(
             'sourceGuidedArticulation', {}).get('cameraRegistration', {})
         if camera.get('available') and camera.get('cameraImageTransform'):
-            return {'camera': camera, 'coordinateReference': {'frames': cleaned['frames']},
-                    'sourcePose': source_pose}
+            frames = cleaned.get('frames')
+            reconstruction = cleaned.get('metadata', {}).get('reconstruction', {})
+            clock_identity = reconstruction.get('sourceFrameClock') if isinstance(reconstruction, dict) else None
+            if not isinstance(frames, list) or not isinstance(clock_identity, dict):
+                return None
+            output_path_value = clock_identity.get('outputVideoPath')
+            if not output_path_value:
+                return None
+            from .source_frame_clock import load_verified_source_frame_clock, source_references_for_frame_ids
+
+            clock_path = source_frame_clock_path_for_video(Path(str(output_path_value)))
+            try:
+                receipt = load_verified_source_frame_clock(
+                    clock_path, expected_video_path=Path(str(output_path_value)),
+                )
+                inference_ids = [int(frame['inferenceFrameIndex']) for frame in frames]
+                source_refs = source_references_for_frame_ids(receipt, inference_ids)
+            except (OSError, ValueError, TypeError, KeyError):
+                return None
+            coordinate_frames = []
+            for frame, source_ref in zip(frames, source_refs):
+                coordinate_frame = dict(frame)
+                coordinate_frame['sourceFrameIndex'] = source_ref['sourceFrameIndex']
+                coordinate_frame['sourceTimeSec'] = source_ref['sourceTimeSec']
+                coordinate_frames.append(coordinate_frame)
+            source_timeline_mapping = verified_source_timeline_mapping(
+                workspace=workspace,
+                source_pose=source_pose,
+                clock_receipt=receipt,
+                expected_motion_video_path=Path(str(output_path_value)),
+            )
+            if source_timeline_mapping is None:
+                return None
+            from .pose_fidelity import source_timeline_mapping_identity
+            expected_camera_identity = source_timeline_mapping_identity(source_timeline_mapping)
+            if (
+                expected_camera_identity is None
+                or camera.get('sourceTimelineMappingIdentity') != expected_camera_identity
+            ):
+                # A retained registration made before exact exposure lineage was
+                # available is not reusable for this source timeline.
+                return None
+            return {'camera': camera, 'coordinateReference': {'frames': coordinate_frames},
+                    'sourcePose': source_pose,
+                    'sourceTimelineMapping': source_timeline_mapping}
     return None
+
+
+def verified_source_timeline_mapping(
+    *,
+    workspace: Path,
+    source_pose: dict[str, Any],
+    clock_receipt: dict[str, Any],
+    expected_motion_video_path: Path | None = None,
+) -> dict[str, Any] | None:
+    """Compatibility wrapper for the shared source-clock provenance verifier."""
+    from .source_frame_clock import verified_source_timeline_mapping as verify_mapping
+
+    return verify_mapping(
+        workspace=workspace,
+        source_pose=source_pose,
+        clock_receipt=clock_receipt,
+        expected_motion_video_path=expected_motion_video_path,
+    )
 
 
 def preview_source_support_evidence_options(
@@ -30920,6 +33182,7 @@ DETERMINISTIC_SUPPORT_STATIONARY_RATIO_THRESHOLD = 0.08
 DETERMINISTIC_SUPPORT_LOCK_TRIAL_RATIO_THRESHOLD = 0.35
 SOURCE_POSE_SUPPORT_STATIONARY_CHUNK_RANGE_RATIO_THRESHOLD = 0.12
 SOURCE_POSE_SUPPORT_STATIONARY_ENDPOINT_RATIO_THRESHOLD = 0.08
+SOURCE_POSE_SUPPORT_EVIDENCE_POLICY_VERSION = 3
 # Repair arms must be able to act on every interval the support gate
 # evaluates, so their eligibility floor matches the gate's (>=3 samples at
 # >=60% coverage) instead of the denser bake-stage sample minimum.
@@ -31409,8 +33672,17 @@ def source_contact_intervals_from_evidence(
     if not isinstance(source_support_evidence, dict) or frame_count <= 0:
         return []
     intervals: list[dict[str, Any]] = []
-    from .contact_constraints import motion_support_contacts
+    from .contact_constraints import contact_frame_bounds, motion_support_contacts
     contact_records = motion_support_contacts(source_support_evidence)
+    # Mapped patch-state runs are authoritative, including unknown endpoints.
+    # Do not let legacy continuous-support summaries expand them to full clip.
+    patch_timing_authoritative = bool(
+        (source_support_evidence.get("footPatchEvidence") or {}).get("available") is True
+        or source_support_evidence.get("_fitFrameStateIndices") is not None
+        or any(contact.get("_fitFrameBounds") is not None
+               or contact.get("_fitFrameRuns") is not None
+               for contact in contact_records)
+    )
     if contact_records:
         for contact in contact_records:
             if not isinstance(contact, dict):
@@ -31419,20 +33691,9 @@ def source_contact_intervals_from_evidence(
             if not joint_name:
                 continue
             try:
-                start_ratio = parse_optional_float(contact.get("startRatio"))
-                end_ratio = parse_optional_float(contact.get("endRatio"))
-                start_frame = (
-                    round(max(0.0, min(1.0, start_ratio)) * (frame_count - 1))
-                    if start_ratio is not None
-                    else max(0, int(contact.get("startFrame", 0)))
-                )
-                end_frame = (
-                    round(max(0.0, min(1.0, end_ratio)) * (frame_count - 1))
-                    if end_ratio is not None
-                    else min(frame_count - 1, int(contact.get("endFrame", frame_count - 1)))
-                )
-                start_frame = max(0, min(frame_count - 1, start_frame))
-                end_frame = max(0, min(frame_count - 1, end_frame))
+                start_frame, end_frame = contact_frame_bounds(contact, frame_count)
+                if not (0 <= start_frame <= end_frame < frame_count):
+                    continue
                 confidence = max(0.0, min(1.0, float(contact.get("confidence", 1.0))))
             except (TypeError, ValueError):
                 continue
@@ -31458,7 +33719,7 @@ def source_contact_intervals_from_evidence(
     feet = source_support_evidence.get("feet")
     from .contact_constraints import has_continuous_ankle_support
     continuous_foot_joints: set[str] = set()
-    if isinstance(feet, dict):
+    if isinstance(feet, dict) and not patch_timing_authoritative:
         for side in ("left", "right"):
             foot = feet.get(side)
             if not isinstance(foot, dict) or not has_continuous_ankle_support(source_support_evidence, side):
@@ -31497,6 +33758,7 @@ def source_contact_intervals_from_evidence(
         isinstance(body_support, dict)
         and body_support.get("required")
         and body_support.get("status") == "confirmed"
+        and not patch_timing_authoritative
     ):
         stationary_joints = body_support.get("stationaryJoints")
         if isinstance(stationary_joints, list):
@@ -33301,6 +35563,8 @@ def bake_preview_time_range_with_playwright(
             export_payload,
             exercise_motion_contract=exercise_motion_contract,
             source_pose_reference=source_pose_reference,
+            fit_input_capture_directory=candidate_workspace,
+            fit_input_variant_identity=f"selected-section-{artifact_slug}",
         )
         selection_evidence = rematerialized_selection_evidence(
             parent_state=lineage_parent_state,
@@ -35003,7 +37267,12 @@ def _render_review_window_contact_sheet_uncached(
         )
         if not materialized_skeleton:
             export_payload, _ = constrain_baked_payload_to_source_articulation(
-                export_payload
+                export_payload,
+                fit_input_capture_directory=item.candidate_workspace,
+                fit_input_variant_identity=(
+                    f"final-review-{item.settings_variant_id}-"
+                    f"{window.start_seconds:.3f}-{window.end_seconds:.3f}"
+                ),
             )
         elif isinstance(export_payload, dict):
             # Retained HTML may predate support for the review camera option.
@@ -35652,8 +37921,6 @@ def movement_topology_from_contract(contract: dict[str, Any] | None) -> dict[str
         defining_action = str(contract_payload.get("definingAction") or "").strip()
         required_phases = contract_payload.get("requiredPhases")
         required_phases = required_phases if isinstance(required_phases, list) else []
-        if not required_phases and defining_action:
-            required_phases = [defining_action]
         if not required_phases:
             return None
         topology = {
@@ -38613,6 +40880,9 @@ def source_pose_temporal_foot_contacts(
                     "supportKind": "foot",
                     "sourceStartSample": start,
                     "sourceEndSample": end,
+                    "sourceStartTimeSec": frames[start].get("sourceTimeSec", frames[start].get("timeSec")),
+                    "sourceEndTimeSec": frames[end].get("sourceTimeSec", frames[end].get("timeSec")),
+                    "sourceTimeBasis": "absolute_source_video",
                     "startRatio": start / max(1, len(frames) - 1),
                     "endRatio": end / max(1, len(frames) - 1),
                     "confidence": 0.55 + 0.45 * range_confidence * coverage_confidence,
@@ -38813,6 +41083,7 @@ def source_pose_stationary_support_evidence(
         for constraints in (start_constraints, end_constraints)
         if isinstance(constraints, dict)
     }
+    support_plane_evidence: dict[str, Any] = {"source": "whole_clip_stationary_distal_support"}
     if not support_candidate_y and endpoint_support_modes.intersection(
         {"standing", "floor", "ground"}
     ):
@@ -38829,6 +41100,69 @@ def source_pose_stationary_support_evidence(
             for point in [joints.get(joint_name)]
             if is_point3(point)
         )
+        if support_candidate_y:
+            support_plane_evidence = {"source": "contract_endpoint_ground_support_mode"}
+    if not support_candidate_y:
+        ground_mode = str(
+            exercise_motion_contract.get("groundContactMode") or ""
+        ).casefold() if isinstance(exercise_motion_contract, dict) else ""
+        if (ground_mode in {"continuous", "intermittent"}
+                and not contract_requires_distinct_external_support_end_state(exercise_motion_contract)):
+            # A whole-clip stationarity gate misses valid stance evidence in
+            # transitions. Recover a plane only from a locally upright,
+            # anatomically supported posture with both ankles visible and
+            # stationary at a common lower envelope. Elevated/one-way external
+            # supports stay unresolved when the contract identifies them.
+            local_standing_indexes: set[int] = set()
+            window_size = SOURCE_POSE_CONTACT_MIN_SAMPLE_COUNT
+            for start in range(max(0, len(frames) - window_size + 1)):
+                window = frames[start : start + window_size]
+                ankle_pairs: list[tuple[list[float], list[float]]] = []
+                for frame in window:
+                    joints = frame.get("joints") if isinstance(frame, dict) else None
+                    left = joints.get("left_ankle") if isinstance(joints, dict) else None
+                    right = joints.get("right_ankle") if isinstance(joints, dict) else None
+                    if not is_point3(left) or not is_point3(right):
+                        ankle_pairs = []
+                        break
+                    ankle_pairs.append((
+                        [float(left[0]), float(left[1])],
+                        [float(right[0]), float(right[1])],
+                    ))
+                if len(ankle_pairs) != window_size:
+                    continue
+                features = source_pose_endpoint_features(window)
+                if features.get("supportMode") != "standing":
+                    continue
+                if any(
+                    math.hypot(
+                        max(pair[side][0] for pair in ankle_pairs) - min(pair[side][0] for pair in ankle_pairs),
+                        max(pair[side][1] for pair in ankle_pairs) - min(pair[side][1] for pair in ankle_pairs),
+                    ) / body_span > SOURCE_POSE_CONTACT_LOCAL_RANGE_RATIO_THRESHOLD
+                    for side in (0, 1)
+                ):
+                    continue
+                if any(
+                    abs(left[1] - right[1]) / body_span
+                    > SOURCE_POSE_CONTACT_GROUND_HEIGHT_RATIO_THRESHOLD
+                    for left, right in ankle_pairs
+                ):
+                    continue
+                local_standing_indexes.update(range(start, start + window_size))
+            support_candidate_y.extend(
+                float(joints[joint_name][1])
+                for index in sorted(local_standing_indexes)
+                for joints in [frames[index].get("joints")]
+                if isinstance(joints, dict)
+                for joint_name in ("left_ankle", "right_ankle")
+                if is_point3(joints.get(joint_name))
+            )
+            if support_candidate_y:
+                support_plane_evidence = {
+                    "source": "phase_local_standing_bilateral_ankle_lower_envelope",
+                    "sampleIndexes": sorted(local_standing_indexes),
+                    "groundContactMode": ground_mode,
+                }
     if not support_candidate_y:
         return {
             "source": "exact_selected_source_video_yolo_pose",
@@ -39126,6 +41460,7 @@ def source_pose_stationary_support_evidence(
         ),
         "bodySpan": body_span,
         "sharedSupportPlaneY": shared_ground_y,
+        "supportPlaneEvidence": support_plane_evidence,
         "temporalResolutionSufficient": temporal_resolution_sufficient,
         "maxObservationGapSeconds": max_observation_gap_seconds,
         "maxSupportedObservationGapSeconds": SOURCE_POSE_SUPPORT_MAX_OBSERVATION_GAP_SECONDS,
@@ -40430,6 +42765,8 @@ def topology_evidence_rejection_reasons(
         source_time_offset_seconds=source_time_offset_seconds,
         require_visible=True,
     )
+    if phase_evidence_hard_gate and phase_timing.get("status") != "sampled":
+        reasons.append("source_cut_contract_phase_timing_unresolved")
     if phase_evidence_hard_gate:
         if not phase_evidence_complete:
             reasons.append("source_cut_contract_phase_sequence_mismatch")
@@ -45340,7 +47677,8 @@ def rank_source_video_cut_candidates_with_caption_images(
                 if source_cut_candidate_is_kinematic(candidate)
             ]
             if kinematic_batch and not kinematic_first_pass_done:
-                vlm_shortlist = kinematic_batch[:KINEMATIC_CUT_MAX_PROPOSALS]
+                vlm_shortlist = shortlist_movement_cut_vlm_candidates(
+                    remaining_vlm_candidates, max_candidates=KINEMATIC_CUT_MAX_PROPOSALS)
                 kinematic_first_pass_done = True
             else:
                 vlm_shortlist = shortlist_movement_cut_vlm_candidates(

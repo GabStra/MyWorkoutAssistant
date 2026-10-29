@@ -30,66 +30,69 @@ def review_prepared_source(candidate: bake.RankedCandidate, *, request: bake.Bak
             endpoints, contract, phase_metrics=phase),
         "sourceTargetMotionObservabilityMetrics": phase.get("targetMotionObservabilityMetrics"),
     }
-    for attempt in range(2):
-        validation = bake.validate_two_scale_source_with_caption_images(item,
-            uniform_sheet_paths=sheets, output_dir=output, caption_images=caption_images,
-            exercise_motion_contract=contract, source_pose_endpoint_features=endpoints,
-            source_phase_metrics=phase)
-        if validation.get("passed") is True:
-            return
-        if validation.get("sourceEvidencePolicyVersion") is not None and validation.get("reviewStatus") == "incomplete":
-            evidence = validation.get("gates", {}).get("structuredEvidence", {})
-            if not evidence.get("errors"):
-                raise SourceReviewIncomplete("Source evidence unresolved; inspect or expand the retained frames before another review.")
-        reasons = validation.get("rejectionReasons", [])
-        # Preserve the existing source-evidence exceptions. These do not approve
-        # the reconstructed output; its independent checks still run later.
-        common = dict(item=item, rejection_reasons=reasons, deterministic_metrics=deterministic)
-        if (bake.two_scale_small_motion_failure_is_independent_outlier(validation=validation, **common)
-            or bake.two_scale_completeness_failure_is_independent_outlier(validation=validation, **common)
-            or bake.two_scale_identity_failure_is_independent_outlier(**common)
-            or bake.two_scale_topology_failure_is_independent_outlier(validation=validation, **common)):
-            return
-        if bake.two_scale_source_validation_needs_repair(validation):
-            repair = bake.repair_two_scale_source_disagreement(validation, item=item,
-                caption_images=caption_images, output_dir=output)
-            if repair.get("resolved") is True:
-                if bake.cache_repaired_source_review(validation, repair):
-                    return
-                repair = {
-                    **repair,
-                    "valid": False,
-                    "resolved": False,
-                    "blockingReason": "required_equipment_quantity_not_independently_verified",
-                }
-            if repair.get("valid") is True:
-                # A complete repair can resolve the disagreement negatively as
-                # well as positively. A categorical refutation of any required
-                # source claim is sufficient to reject this window; repeating
-                # the full multi-gate review cannot make that window usable.
-                refuted_reasons = []
-                origin_groups = repair.get("evidenceOriginGroups")
-                for claim in repair.get("evidenceClaims") or []:
-                    if not isinstance(claim, dict) or claim.get("valid") is not True:
-                        continue
-                    if str(claim.get("result") or "").casefold() != "refuted":
-                        continue
-                    claim_id = str(claim.get("id") or "")
-                    reasons = origin_groups.get(claim_id) if isinstance(origin_groups, dict) else None
-                    if isinstance(reasons, list):
-                        refuted_reasons.extend(str(reason) for reason in reasons if str(reason))
-                refuted_reasons = bake.dedupe_text(refuted_reasons)
-                if refuted_reasons:
-                    raise bake.SourceCandidateRejected(
-                        "Source disagreement review confirmed rejection: "
-                        + ", ".join(refuted_reasons),
-                        reason_tags=refuted_reasons,
-                        evidence={"validation": validation, "repair": repair},
-                    )
-        incomplete = validation.get("reviewStatus") == "incomplete" or any(
-            reason in {"two_scale_source_frame_generation_failed", "two_scale_source_frames_missing"}
-            for reason in reasons)
-        if not incomplete:
-            raise bake.SourceCandidateRejected("Source semantic review rejected before reconstruction: " + ", ".join(reasons),
-                reason_tags=reasons, evidence=validation)
-    raise SourceReviewIncomplete("Source evidence incomplete after two reviews: " + ", ".join(reasons))
+    # validate_two_scale_source_with_caption_images owns one targeted correction
+    # pass for incomplete completion/phase citations. Repeating the full review
+    # here re-asks already settled questions and can only duplicate a bounded
+    # correction that still failed its strict validator.
+    validation = bake.validate_two_scale_source_with_caption_images(item,
+        uniform_sheet_paths=sheets, output_dir=output, caption_images=caption_images,
+        exercise_motion_contract=contract, source_pose_endpoint_features=endpoints,
+        source_phase_metrics=phase)
+    if validation.get("passed") is True:
+        return
+    if validation.get("sourceEvidencePolicyVersion") is not None and validation.get("reviewStatus") == "incomplete":
+        evidence = validation.get("gates", {}).get("structuredEvidence", {})
+        if not evidence.get("errors"):
+            raise SourceReviewIncomplete("Source evidence unresolved; inspect or expand the retained frames before another review.")
+    reasons = validation.get("rejectionReasons", [])
+    # Preserve the existing source-evidence exceptions. These do not approve
+    # the reconstructed output; its independent checks still run later.
+    common = dict(item=item, rejection_reasons=reasons, deterministic_metrics=deterministic)
+    if (bake.two_scale_small_motion_failure_is_independent_outlier(validation=validation, **common)
+        or bake.two_scale_completeness_failure_is_independent_outlier(validation=validation, **common)
+        or bake.two_scale_identity_failure_is_independent_outlier(**common)
+        or bake.two_scale_topology_failure_is_independent_outlier(validation=validation, **common)):
+        return
+    if bake.two_scale_source_validation_needs_repair(validation):
+        repair = bake.repair_two_scale_source_disagreement(validation, item=item,
+            caption_images=caption_images, output_dir=output)
+        if repair.get("resolved") is True:
+            if bake.cache_repaired_source_review(validation, repair):
+                return
+            repair = {
+                **repair,
+                "valid": False,
+                "resolved": False,
+                "blockingReason": "required_equipment_quantity_not_independently_verified",
+            }
+        if repair.get("valid") is True:
+            # A complete repair can resolve the disagreement negatively as
+            # well as positively. A categorical refutation of any required
+            # source claim is sufficient to reject this window; repeating
+            # the full multi-gate review cannot make that window usable.
+            refuted_reasons = []
+            origin_groups = repair.get("evidenceOriginGroups")
+            for claim in repair.get("evidenceClaims") or []:
+                if not isinstance(claim, dict) or claim.get("valid") is not True:
+                    continue
+                if str(claim.get("result") or "").casefold() != "refuted":
+                    continue
+                claim_id = str(claim.get("id") or "")
+                reasons = origin_groups.get(claim_id) if isinstance(origin_groups, dict) else None
+                if isinstance(reasons, list):
+                    refuted_reasons.extend(str(reason) for reason in reasons if str(reason))
+            refuted_reasons = bake.dedupe_text(refuted_reasons)
+            if refuted_reasons:
+                raise bake.SourceCandidateRejected(
+                    "Source disagreement review confirmed rejection: "
+                    + ", ".join(refuted_reasons),
+                    reason_tags=refuted_reasons,
+                    evidence={"validation": validation, "repair": repair},
+                )
+    incomplete = validation.get("reviewStatus") == "incomplete" or any(
+        reason in {"two_scale_source_frame_generation_failed", "two_scale_source_frames_missing"}
+        for reason in reasons)
+    if not incomplete:
+        raise bake.SourceCandidateRejected("Source semantic review rejected before reconstruction: " + ", ".join(reasons),
+            reason_tags=reasons, evidence=validation)
+    raise SourceReviewIncomplete("Source evidence incomplete after one bounded review: " + ", ".join(reasons))

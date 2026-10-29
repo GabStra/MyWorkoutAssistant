@@ -1,9 +1,13 @@
+import os
 from pathlib import Path
 
 
 _MODEL_DIR = Path(__file__).resolve().parents[1] / "models" / "Qwen3.5-9B-Q6_K"
-DEFAULT_LLAMA_CPP_BIN_DIR = "C:\\Users\\gabri\\Documents\\llama.cpp\\build-master\\bin\\Release"
-DEFAULT_LLAMA_CPP_SERVER_COMMAND = f"{DEFAULT_LLAMA_CPP_BIN_DIR}\\llama-server.exe"
+DEFAULT_LLAMA_CPP_BIN_DIR = "C:\\llama.cpp\\build-master\\bin\\Release"
+DEFAULT_LLAMA_CPP_SERVER_COMMAND = os.environ.get(
+    "EXERCISE_MOTION_LLAMA_CPP_SERVER_COMMAND",
+    f"{DEFAULT_LLAMA_CPP_BIN_DIR}\\llama-server.exe",
+)
 DEFAULT_LLAMA_CPP_MODEL = str(_MODEL_DIR / "Qwen3.5-9B-Q6_K.gguf")
 DEFAULT_LLAMA_CPP_MMPROJ = str(_MODEL_DIR / "mmproj-BF16.gguf")
 DEFAULT_LLAMA_CPP_MTP_MODEL = None

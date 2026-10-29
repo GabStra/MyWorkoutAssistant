@@ -18,6 +18,8 @@ def test_observed_hand_plane_requires_both_stationary_source_tracks():
             'frames': [{'joints': deepcopy(joints)} for _ in range(12)]}
     base = {'jointNames': list(joints), 'frames': [{'joints': deepcopy(joints)} for _ in range(12)],
             'sourceFootSupportEvidence': {'bodySupportObservation': {'status': 'observed',
+            'source': 'exact_source_visual_support_observation', 'sourceVideoSha256': 'fixture',
+            'policyVersion': 5,
                 'observation': {'leftHand': 'stationary_support', 'rightHand': 'stationary_support',
                                 'handsSameHorizontalSurface': True}}}}
     accepted = deepcopy(base)
@@ -47,8 +49,9 @@ def test_sparse_full_sole_review_does_not_add_full_clip_foot_anchors():
     pose = {'frames': [{'joints': deepcopy(joints)} for _ in range(12)]}
     evidence = {
         'bodySupportObservation': {
-            'status': 'observed', 'sourceVideoSha256': 'source-hash',
-            'policyVersion': 4,
+            'status': 'observed', 'source': 'exact_source_visual_support_observation',
+            'sourceVideoSha256': 'source-hash',
+            'policyVersion': POLICY_VERSION,
             'observation': {
                 'torsoSurface': 'horizontal', 'pelvisAndUpperBackSameSurface': True,
                 'pelvis': 'stationary_support', 'upperBack': 'stationary_support',
@@ -83,6 +86,8 @@ def test_observed_ground_toe_keeps_heel_pitch_free_and_rejects_release():
     base = {'jointNames': list(joints), 'renderFloorY': 0.,
             'frames': [{'joints': deepcopy(joints)} for _ in range(12)],
             'sourceFootSupportEvidence': {'bodySupportObservation': {'status': 'observed',
+            'source': 'exact_source_visual_support_observation', 'sourceVideoSha256': 'fixture',
+            'policyVersion': 5,
                 'observation': {'leftFoot': 'stationary_full_sole', 'leftFootSurface': 'ground'}}}}
     result = deepcopy(base)
     materialize_observed_ground_contacts(result, source)
@@ -163,6 +168,8 @@ def test_hash_matched_confirmed_support_adds_only_observed_stationary_ground_fee
             },
             'bodySupportObservation': {
                 'status': 'observed',
+                'source': 'exact_source_visual_support_observation',
+                'policyVersion': 5,
                 'sourceVideoSha256': video_hash,
                 'observation': {
                     'leftFoot': 'stationary_full_sole', 'leftFootSurface': 'ground',
@@ -197,8 +204,8 @@ def test_hash_matched_confirmed_support_adds_only_observed_stationary_ground_fee
         }
 
     payload = payload_for()
-    # Unequal rig-side shoe geometry must keep its plane when source labels
-    # are swapped, whether support is prepared by production or inside fit.
+    # A horizontal shoe shift cannot change the shared ground height, including
+    # when source labels are swapped between production and fit preparation.
     for frame in payload['frames']:
         frame['joints']['left_foot'][2] += .25
     direct_support = materialize_stationary_sole_support(payload)['bodySupport']
@@ -211,7 +218,7 @@ def test_hash_matched_confirmed_support_adds_only_observed_stationary_ground_fee
                 if len(group['joints']) == 1 and group['joints'][0].endswith('_foot')}
 
     assert sole_planes(rig_support) == sole_planes(direct_support)
-    assert len(set(sole_planes(rig_support).values())) == 2
+    assert set(sole_planes(rig_support).values()) == {fixture['renderFloorY']}
     for side in ('left', 'right'):
         assert sum(f'{side}_foot' in group['joints']
                    for group in rig_support['coplanarGroups']) == 1
@@ -265,7 +272,9 @@ def test_hash_matched_confirmed_support_adds_only_observed_stationary_ground_fee
 
     stale = payload_for(matching_hash=False)
     materialize_body_support(stale, source_pose)
-    assert 'right_ankle' not in stale['sourceFootSupportEvidence']['bodySupport']['stationaryJoints']
+    stale_support = stale['sourceFootSupportEvidence'].get('bodySupport') or {}
+    assert not {'left_ankle', 'left_foot', 'right_ankle', 'right_foot'}.intersection(
+        stale_support.get('stationaryJoints') or [])
 
     # Sparse unknown patch bands cannot be promoted by a full-clip ankle track
     # and five-frame visual review. Timed contacts remain available to the fitter.
@@ -340,6 +349,8 @@ def test_observed_ground_contact_needs_full_cycle_corroboration_when_patch_data_
                     'right': {'states': ['unknown']*3},
                 }},
                 'bodySupportObservation': {'status': 'observed',
+                'source': 'exact_source_visual_support_observation', 'sourceVideoSha256': 'fixture',
+                'policyVersion': 5,
                     'observation': {'leftFoot': 'stationary_full_sole',
                                     'leftFootSurface': 'ground',
                                     'rightFoot': 'stationary_full_sole',
@@ -389,7 +400,7 @@ def test_visual_contact_needs_independent_stationarity_and_keeps_moving_parts_fr
               'head': 'moving', 'leftFoot': 'moving', 'rightFoot': 'unknown'}
     base = {'jointNames': list(joints), 'frames': [{'joints': joints}],
             'sourceFootSupportEvidence': {'bodySupport': {'required': True, 'status': 'unknown'},
-            'bodySupportObservation': {'status': 'observed', 'sourceVideoSha256': 'fixture',
+            'bodySupportObservation': {'status': 'observed', 'source': 'exact_source_visual_support_observation', 'sourceVideoSha256': 'fixture',
                                        'policyVersion': POLICY_VERSION, 'observation': answer}}}
     pose = {'frames': [{'joints': deepcopy(joints)} for _ in range(12)]}
     assert body_support_source_readiness(pose)['ready']
@@ -429,7 +440,8 @@ def test_ground_sole_requires_observed_surface_and_full_selected_cycle():
                'sourceFootSupportEvidence': {
                    'contacts': [{'jointName': 'left_foot', 'contactState': 'full_sole',
                                  'contactMotion': 'stationary', 'startFrame': 2, 'endFrame': 11}],
-                   'bodySupportObservation': {'status': 'observed', 'sourceVideoSha256': 'fixture',
+                   'bodySupportObservation': {'status': 'observed', 'source': 'exact_source_visual_support_observation', 'sourceVideoSha256': 'fixture',
+                   'policyVersion': 5,
                        'observation': {'leftFoot': 'stationary_full_sole', 'leftFootSurface': 'ground'}}}}
     materialize(payload)
     assert 'bodySupport' not in payload['sourceFootSupportEvidence']
@@ -532,6 +544,8 @@ def test_fit_support_materialization_removes_stale_full_clip_foot_anchors():
             },
             'bodySupportObservation': {
                 'status': 'observed',
+                'source': 'exact_source_visual_support_observation', 'sourceVideoSha256': 'fixture',
+                'policyVersion': 5,
                 'observation': {
                     'leftFoot': 'stationary_full_sole', 'leftFootSurface': 'ground',
                     'rightFoot': 'stationary_full_sole', 'rightFootSurface': 'ground',
@@ -627,6 +641,7 @@ def test_lying_press_does_not_require_moving_shoulder_anchors():
             'bodySupport': {'required': True, 'status': 'unknown'},
             'bodySupportObservation': {
                 'status': 'observed',
+                'source': 'exact_source_visual_support_observation',
                 'sourceVideoSha256': 'fixture',
                 'policyVersion': POLICY_VERSION,
                 'observation': answer,
@@ -655,6 +670,102 @@ def test_lying_press_does_not_require_moving_shoulder_anchors():
     assert exact_source_phase_validation_rejection_reasons(validation) == []
 
 
+def test_russian_twist_v4_observation_cannot_create_support_or_clear_unknown_contacts():
+    from exercise_motion_pkg.body_support_observation import (
+        observed_body_support_contacts, remove_unobserved_torso_support,
+        validated_body_support_answer,
+    )
+    from exercise_motion_pkg.support_geometry import support_contact_readiness
+
+    observation = {
+        'status': 'observed', 'source': 'exact_source_visual_support_observation',
+        'sourceVideoSha256': '41a025927187df995dae36088a9c3e0ad7d27cfb06fa66a972eea59a8de06388',
+        'policyVersion': 4,
+        'observation': {
+            'torsoSurface': 'horizontal', 'pelvisAndUpperBackSameSurface': True,
+            'pelvis': 'stationary_support', 'upperBack': 'stationary_support',
+            'pelvisContactSurface': 'floor', 'upperBackContactSurface': 'floor',
+            'head': 'moving', 'headContactSurface': 'none',
+            'leftFoot': 'stationary_full_sole', 'leftFootSurface': 'ground',
+            'rightFoot': 'stationary_full_sole', 'rightFootSurface': 'ground',
+            'leftHand': 'stationary_support', 'rightHand': 'stationary_support',
+            'handsSameHorizontalSurface': False,
+            'observations': 'Seated upright; feet claimed planted.',
+        },
+    }
+    assert validated_body_support_answer(observation) is None
+    assert not observed_body_support_contacts(observation)
+    # Exercise the retained false claims under today's schema too. Schema
+    # validity only qualifies structured claims; the independent temporal patch
+    # must still prevent cropped shoes from becoming full-cycle foot anchors.
+    current_observation = deepcopy(observation)
+    current_observation['policyVersion'] = POLICY_VERSION
+    assert validated_body_support_answer(current_observation) is not None
+    evidence = {
+        'bodySupportObservation': current_observation,
+        'footPatchEvidence': {'available': True, 'feet': {
+            'left': {'states': ['unknown'] * 81},
+            'right': {'states': ['unknown'] * 81},
+        }},
+        'bodySupport': {
+            'required': True, 'status': 'confirmed',
+            'source': 'exact_source_contacts_and_stationary_pose_tracks',
+            'stationaryJoints': ['pelvis', 'left_shoulder', 'right_shoulder',
+                                 'left_ankle', 'left_foot', 'right_ankle', 'right_foot'],
+            'coplanarGroups': [
+                {'joints': ['pelvis', 'left_shoulder', 'right_shoulder'],
+                 'normal': [0., 1., 0.]},
+                {'joints': ['left_foot'], 'normal': [0., 1., 0.], 'planeOffsetMeters': 0.},
+                {'joints': ['right_foot'], 'normal': [0., 1., 0.], 'planeOffsetMeters': 0.},
+            ],
+            'nonPenetrationChains': [],
+            'soleContacts': [
+                {'joints': ['left_knee', 'left_ankle', 'left_foot'], 'normal': [0., 1., 0.]},
+                {'joints': ['right_knee', 'right_ankle', 'right_foot'], 'normal': [0., 1., 0.]},
+            ],
+        },
+    }
+    remove_unobserved_torso_support(evidence)
+    assert 'bodySupport' not in evidence
+    readiness = support_contact_readiness({'sourceFootSupportEvidence': evidence})
+    assert not readiness['passed']
+    assert readiness['unresolvedSides'] == ['left', 'right']
+    assert readiness['rejectionReasons'] == ['source_support_contact_evidence_unavailable']
+    assert not {'left_ankle', 'left_foot', 'right_ankle', 'right_foot'}.intersection(
+        (evidence.get('bodySupport') or {}).get('stationaryJoints') or [])
+    # The structured torso claim remains unproven by this parser; this regression
+    # specifically verifies the independently visible foot-contact blocker.
+
+
+def test_support_observation_schema_rejects_non_string_enum_values():
+    from exercise_motion_pkg.body_support_observation import validated_body_support_answer
+
+    observed = {
+        'status': 'observed', 'source': 'exact_source_visual_support_observation',
+        'sourceVideoSha256': '41a025927187df995dae36088a9c3e0ad7d27cfb06fa66a972eea59a8de06388',
+        'policyVersion': POLICY_VERSION,
+        'observation': {'leftFoot': ['stationary_full_sole'], 'leftFootSurface': 'ground'},
+    }
+    assert validated_body_support_answer(observed) is None
+
+
+def test_v4_support_cache_is_not_reused_without_reobservation(tmp_path):
+    from exercise_motion_pkg.body_support_observation import observe_body_support
+
+    video = tmp_path / 'selected.mp4'
+    video.write_bytes(b'exact selected clip')
+    digest = __import__('hashlib').sha256(video.read_bytes()).hexdigest()
+    cache = tmp_path / 'body_support'
+    cache.mkdir()
+    (cache / f'body-support-{digest}-v4.json').write_text(json.dumps({
+        'status': 'observed', 'policyVersion': 4,
+        'sourceVideoSha256': digest, 'observation': {'leftFoot': 'stationary_full_sole'},
+    }))
+    result = observe_body_support(video, None, cache)
+    assert result['status'] == 'unknown'
+    assert result['reason'] == 'support_observer_unavailable'
+
+
 def test_confirmed_ground_sole_refreshes_stale_plane_without_duplicate_contacts():
     import numpy as np
     from exercise_motion_pkg.body_support_observation import add_ground_sole_contacts
@@ -674,3 +785,299 @@ def test_confirmed_ground_sole_refreshes_stale_plane_without_duplicate_contacts(
     assert {tuple(group['joints']) for group in support['coplanarGroups']} == {
         ('right_wrist',), ('left_foot',), ('right_foot',),
     }
+
+
+def test_timed_visual_contact_observation_binds_code_selected_side_time_and_video(tmp_path, monkeypatch):
+    import cv2
+    import numpy as np
+    from exercise_motion_pkg.body_support_observation import (
+        observe_foot_contact_timeline, validated_body_support_contact_timeline,
+    )
+
+    video = tmp_path / 'selected.mp4'
+    video.write_bytes(b'exact selected source')
+    digest = __import__('hashlib').sha256(video.read_bytes()).hexdigest()
+
+    class Capture:
+        def __init__(self, _path):
+            self.position = 0
+
+        def get(self, prop):
+            return {cv2.CAP_PROP_FPS: 30., cv2.CAP_PROP_FRAME_COUNT: 151}.get(prop, 0.)
+
+        def set(self, prop, value):
+            assert prop == cv2.CAP_PROP_POS_FRAMES
+            self.position = int(value)
+            return True
+
+        def read(self):
+            return True, np.zeros((240, 320, 3), dtype=np.uint8)
+
+        def release(self):
+            pass
+
+    monkeypatch.setattr(cv2, 'VideoCapture', Capture)
+    pose = {
+        'coordinateSpace': 'normalized_image_xy',
+        'sourceTimeOriginSec': 0.,
+        'frames': [
+            {'sourceTimeSec': float(index) * .5,
+             'joints': {'left_ankle': [.35, .82], 'right_ankle': [.65, .82],
+                        'left_hip': [.4, .5], 'right_hip': [.6, .5], 'nose': [.5, .1]},
+             'jointConfidence': {'left_ankle': .95, 'right_ankle': .95}}
+            for index in range(9)
+        ],
+    }
+    patch_times = [float(index) * .5 for index in range(9)]
+    evidence = {
+        'sourceVideoSha256': digest,
+        'footPatchEvidence': {
+            'sourceVideoSha256': digest,
+            'sourceTimeBasis': 'absolute_source_video',
+            'sourceTimeOriginSec': 0.,
+            'sourceTimesSec': patch_times,
+            'feet': {'left': {'states': ['unknown'] * len(patch_times)}},
+        },
+        'feet': {'left': {'contactIntervals': [
+            {'contactMotion': 'stationary', 'sourceTimeBasis': 'absolute_source_video',
+             'sourceStartTimeSec': 0., 'sourceEndTimeSec': 1.},
+            {'contactMotion': 'stationary', 'sourceTimeBasis': 'absolute_source_video',
+             'sourceStartTimeSec': 1.5, 'sourceEndTimeSec': 2.5},
+            {'contactMotion': 'stationary', 'sourceTimeBasis': 'absolute_source_video',
+             'sourceStartTimeSec': 3., 'sourceEndTimeSec': 4.},
+        ]}},
+    }
+    calls = []
+
+    def caption_images(*, frame_paths, response_schema, **_kwargs):
+        calls.append((frame_paths, response_schema))
+        samples = []
+        sample_ids = response_schema['properties']['samples']['items']['properties']['sampleId']['enum']
+        for sample_id in sample_ids:
+            samples.append({'sampleId': sample_id, 'contactState': 'full_sole',
+                            'surface': 'ground', 'visible': True})
+        return json.dumps({'samples': samples})
+
+    cache_dir = tmp_path / 'cache'
+    pose_reference = {'sourceVideoSha256': digest, 'pose': pose}
+    timeline = observe_foot_contact_timeline(
+        video, pose_reference, evidence, caption_images, cache_dir)
+    assert timeline['status'] == 'observed'
+    assert timeline['sourceVideoSha256'] == digest
+    assert timeline['sourceClock'] == 'video_frame_zero_seconds'
+    assert len(calls) == 1 and len(calls[0][0]) == 1
+    sample_ids = calls[0][1]['properties']['samples']['items']['properties']['sampleId']['enum']
+    assert len(sample_ids) == len(set(sample_ids)) == 9
+    atlas = cv2.imread(str(calls[0][0][0]))
+    assert atlas is not None and atlas.shape[0] > 3 * 50 and atlas.shape[1] > 3 * 50
+    rows = validated_body_support_contact_timeline(timeline, expected_video_sha256=digest)
+    assert len(rows) == 9
+    assert all(row['side'] == 'left' and row['sourceTrackStationary'] is True for row in rows)
+    assert all(row['sourceTimeSec'] == row['sourceFrameIndex'] / row['sourceFps'] for row in rows)
+    assert all(path.is_file() for path in calls[0][0])
+
+    cached = observe_foot_contact_timeline(
+        video, pose_reference, evidence, caption_images, cache_dir)
+    assert cached == timeline
+    assert len(calls) == 1
+
+    pose['frames'][0]['joints']['left_ankle'][0] += .02
+    changed_crop = observe_foot_contact_timeline(
+        video, pose_reference, evidence, caption_images, cache_dir)
+    assert changed_crop['status'] == 'observed'
+    assert len(calls) == 2  # Changed target crop cannot reuse the prior visual approval.
+
+    pose['frames'][3]['joints']['left_ankle'][0] += .02
+
+    def malformed_caption(*, frame_paths, response_schema, **_kwargs):
+        calls.append((frame_paths, response_schema))
+        return json.dumps({'samples': []})
+
+    unresolved = observe_foot_contact_timeline(
+        video, pose_reference, evidence, malformed_caption, cache_dir)
+    assert unresolved['status'] == 'unknown'
+    assert unresolved['reason'] == 'support_timeline_response_invalid'
+    assert validated_body_support_contact_timeline(unresolved) is None
+    unresolved_cached = observe_foot_contact_timeline(
+        video, pose_reference, evidence, caption_images, cache_dir)
+    assert unresolved_cached == unresolved
+    assert len(calls) == 3  # An inconclusive structured answer is not asked again.
+
+
+def test_timed_visual_contact_materializes_only_explicit_ground_sample_frames():
+    from exercise_motion_pkg.body_support_observation import (
+        materialize_timed_visual_contact_points, validated_body_support_contact_timeline,
+    )
+
+    digest = 'b' * 64
+    timeline = {
+        'schemaVersion': 1, 'policyVersion': 1,
+        'source': 'exact_source_visual_contact_timeline',
+        'sourceVideoSha256': digest, 'sourceClock': 'video_frame_zero_seconds',
+        'status': 'observed', 'requestSha256': 'request', 'responseSha256': 'response',
+        'samples': [
+            {'sampleId': 'contact-left-pose-1', 'sourceTimeSec': .5,
+             'sourceFrameIndex': 15, 'sourceFps': 30., 'sourcePoseFrameIndex': 1,
+             'side': 'left', 'contactState': 'forefoot', 'surface': 'ground',
+             'visible': True, 'sourceTrackStationary': True},
+            {'sampleId': 'contact-left-pose-2', 'sourceTimeSec': 1.,
+             'sourceFrameIndex': 30, 'sourceFps': 30., 'sourcePoseFrameIndex': 2,
+             'side': 'left', 'contactState': 'unknown', 'surface': 'unknown',
+             'visible': False, 'sourceTrackStationary': True},
+        ],
+    }
+    observed = {'status': 'observed', 'source': 'exact_source_visual_support_observation',
+                'sourceVideoSha256': digest, 'contactTimeline': timeline}
+    assert validated_body_support_contact_timeline(observed) is not None
+    evidence = {'bodySupportObservation': observed, 'sourceVideoSha256': digest}
+    frames = [{'sourceTimeSec': 0.}, {'sourceTimeSec': .5},
+              {'sourceTimeSec': 1.}, {'sourceTimeSec': 1.5}]
+    lineage = [
+        {'selectedFrameIndex': index, 'selectedFrameTimeSec': index / 30.,
+         'parentSourceFrameIndex': 211 + index,
+         'parentSourceTimeSec': (211 + index) / (30000. / 1001.)}
+        for index in range(16)
+    ]
+    evidence.update({
+        'footPatchEvidence': {'sourceVideoSha256': digest},
+        '_fitSourceTimelineMapping': {
+            'schemaVersion': 1, 'verified': True,
+            'mappingKind': 'selected_segment_to_parent_source',
+            'selectedSegmentSha256': digest, 'parentSourceSha256': 'a' * 64,
+            'selectedStartSeconds': 7.,
+            'selectedFrameClockReceiptSha256': 'c' * 64,
+            'parentSourceFps': 30000. / 1001.,
+            'selectedFrameLineage': lineage,
+        },
+    })
+    frames = [{'sourceTimeSec': (211 + index) / (30000. / 1001.)}
+              for index in range(16)]
+    materialize_timed_visual_contact_points(evidence, frames, ['left_foot'])
+    contacts = evidence['supportContacts']
+    assert len(contacts) == 1
+    assert contacts[0]['contactTimelineSampleId'] == 'contact-left-pose-1'
+    assert contacts[0]['jointName'] == 'left_foot'
+    assert contacts[0]['contactState'] == 'toe_only'
+    assert contacts[0]['_fitFrameBounds'] == [15, 15]
+    assert contacts[0]['sourceTimeSec'] == 226 / (30000. / 1001.)
+    assert contacts[0]['contactTimelineSourceTimeSec'] == .5
+    assert contacts[0]['contactTimelineSourceVideoSha256'] == digest
+
+    evidence['_fitSourceTimelineMapping']['selectedFrameLineage'] = [
+        {'selectedFrameIndex': index, 'selectedFrameTimeSec': index / 30.,
+         'parentSourceFrameIndex': 212 + index,
+         'parentSourceTimeSec': (212 + index) / (30000. / 1001.)}
+        for index in range(16)
+    ]
+    moved_frames = [{'sourceTimeSec': (212 + index) / (30000. / 1001.)}
+                    for index in range(16)]
+    materialize_timed_visual_contact_points(evidence, moved_frames, ['left_foot'])
+    assert len(evidence['supportContacts']) == 1
+    assert evidence['supportContacts'][0]['sourceTimeSec'] == 227 / (30000. / 1001.)
+    assert evidence['supportContacts'][0]['_fitFrameBounds'] == [15, 15]
+
+    evidence['bodySupportObservation']['contactTimeline']['status'] = 'unknown'
+    materialize_timed_visual_contact_points(evidence, moved_frames, ['left_foot'])
+    assert evidence['supportContacts'] == []
+
+    from exercise_motion_pkg.contact_constraints import contact_frame_bounds
+    evidence['bodySupportObservation']['contactTimeline']['status'] = 'observed'
+    source_readiness_evidence = {'bodySupportObservation': observed,
+                                 'sourceVideoSha256': digest,
+                                 'footPatchEvidence': {'sourceVideoSha256': digest}}
+    materialize_timed_visual_contact_points(source_readiness_evidence)
+    assert len(source_readiness_evidence['supportContacts']) == 1
+    assert contact_frame_bounds(source_readiness_evidence['supportContacts'][0], 10) == (0, -1)
+
+    stale = deepcopy(observed)
+    stale['contactTimeline']['sourceVideoSha256'] = 'different-video'
+    assert validated_body_support_contact_timeline(stale) is None
+
+
+def test_timed_visual_contact_requires_exposure_lineage_for_selected_cut():
+    from exercise_motion_pkg.body_support_observation import materialize_timed_visual_contact_points
+
+    digest = '9' * 64
+    evidence = {
+        'sourceVideoSha256': digest,
+        'footPatchEvidence': {'sourceVideoSha256': digest},
+        'bodySupportObservation': {
+            'source': 'exact_source_visual_support_observation', 'status': 'observed',
+            'sourceVideoSha256': digest,
+            'contactTimeline': {
+                'schemaVersion': 1, 'policyVersion': 1,
+                'source': 'exact_source_visual_contact_timeline',
+                'sourceVideoSha256': digest, 'sourceClock': 'video_frame_zero_seconds',
+                'status': 'observed', 'requestSha256': 'req', 'responseSha256': 'resp',
+                'samples': [{
+                    'sampleId': 'first-cut-frame', 'sourceTimeSec': 0.,
+                    'sourceFrameIndex': 0, 'sourceFps': 30000. / 1001.,
+                    'sourcePoseFrameIndex': 0, 'side': 'left',
+                    'contactState': 'full_sole', 'surface': 'ground',
+                    'visible': True, 'sourceTrackStationary': True,
+                }],
+            },
+        },
+        '_fitSourceTimelineMapping': {
+            'schemaVersion': 1, 'verified': True,
+            'mappingKind': 'selected_segment_to_parent_source',
+            'selectedSegmentSha256': digest, 'parentSourceSha256': '8' * 64,
+            'selectedStartSeconds': 7.01,
+            'selectedFrameClockReceiptSha256': '7' * 64,
+            'parentSourceFps': 30000. / 1001.,
+            'selectedFrameLineage': [{
+                'selectedFrameIndex': 0, 'selectedFrameTimeSec': 0.,
+                'parentSourceFrameIndex': 211,
+                'parentSourceTimeSec': 211. / (30000. / 1001.),
+            }],
+        },
+    }
+    frames = [{'sourceTimeSec': 210. / (30000. / 1001.)},
+              {'sourceTimeSec': 211. / (30000. / 1001.)}]
+    materialize_timed_visual_contact_points(evidence, frames, ['left_foot'])
+    assert len(evidence['supportContacts']) == 1
+    contact = evidence['supportContacts'][0]
+    assert contact['_fitFrameBounds'] == [1, 1]
+    assert contact['sourceTimeSec'] == 211. / (30000. / 1001.)
+    assert contact['sourceTimeSec'] != 7.01
+
+    evidence['_fitSourceTimelineMapping'].pop('selectedFrameLineage')
+    materialize_timed_visual_contact_points(evidence, frames, ['left_foot'])
+    assert evidence['supportContacts'] == []
+
+
+def test_contact_timeline_crop_marks_selected_ankle_and_keeps_label_outside_source():
+    import cv2
+    import numpy as np
+    from exercise_motion_pkg.body_support_observation import (
+        _assemble_contact_timeline_atlas, _render_contact_timeline_crop,
+    )
+
+    frame = np.full((200, 320, 3), 100, dtype=np.uint8)
+    candidate = {'side': 'left', 'sampleId': 'contact-left-pose-10',
+                 'ankle': [.5, .75]}
+    rendered, marker, bounds, header_height = _render_contact_timeline_crop(
+        cv2, frame, candidate)
+    x0, y0, x1, y1 = bounds
+    left_padding = marker[0] - (160 - x0)
+
+    assert rendered.shape[0] == header_height + (y1 - y0)
+    assert rendered.shape[1] > (x1 - x0)  # Long label gets its own full-width header.
+    assert marker == (left_padding + 160 - x0, header_height + 150 - y0)
+    # A source pixel away from the tiny crosshair remains unchanged below the header.
+    assert np.array_equal(rendered[header_height + 2, left_padding + 2], [100, 100, 100])
+    # The exact target location has the high-contrast yellow center marker.
+    assert np.all(rendered[marker[1], marker[0]] >= [0, 250, 250])
+
+    ids = [f'contact-left-pose-{index}' for index in range(9)]
+    tiles = [_render_contact_timeline_crop(
+        cv2, frame, {'side': 'left', 'sampleId': sample_id,
+                     'ankle': [.35 + index * .03, .75]})[0]
+             for index, sample_id in enumerate(ids)]
+    atlas_data = _assemble_contact_timeline_atlas(tiles, ids)
+    assert atlas_data is not None
+    atlas, positions = atlas_data
+    assert len(positions) == 9
+    for tile, (x, y, width, height) in zip(tiles, positions):
+        assert np.array_equal(atlas[y:y + height, x:x + width], tile)
+    assert _assemble_contact_timeline_atlas(tiles, ['duplicate'] * 9) is None

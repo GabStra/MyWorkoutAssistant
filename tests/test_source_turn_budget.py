@@ -8,6 +8,7 @@ import pytest
 from exercise_motion_pkg import bake_and_rank as bake
 from exercise_motion_pkg import wave_pipeline as wave
 from exercise_motion_pkg.wave_pipeline import _SourceTurnBudget
+from exercise_motion_pkg.source_turn_budget import SourceTurnWaitBudgetExpired
 
 
 class FakeClock:
@@ -71,6 +72,166 @@ def test_source_turn_attempt_limit_is_shared_across_windows_and_larger_budget_pr
     assert extended.attempts_used == 3
 
 
+def test_source_turn_budget_resumes_within_review_turn_but_resets_for_new_explicit_turn():
+    request = SimpleNamespace(
+        source_review_timeout_seconds=30.0,
+        exercise_timeout_seconds=0.0,
+        max_source_window_attempts=3,
+    )
+    first = _SourceTurnBudget(
+        request, started_at=0.0, exercise_identity="exercise", turn_identity="library-run-1"
+    )
+    first.begin_attempt()
+    persisted = first.resume_fields(now=4.0)
+
+    resumed = _SourceTurnBudget(
+        request, persisted, started_at=10.0,
+        exercise_identity="exercise", turn_identity="library-run-1",
+    )
+    assert resumed.elapsed_before == 4.0
+    assert resumed.attempts_used == 1
+
+    new_turn = _SourceTurnBudget(
+        request, persisted, started_at=10.0,
+        exercise_identity="exercise", turn_identity="library-run-2",
+    )
+    assert new_turn.elapsed_before == 0.0
+    assert new_turn.attempts_used == 0
+
+
+def test_source_turn_separates_bounded_shared_wait_from_active_review_time():
+    clock = FakeClock()
+    request = SimpleNamespace(
+        source_review_timeout_seconds=10.0,
+        exercise_timeout_seconds=0.0,
+        max_source_window_attempts=2,
+    )
+    budget = _SourceTurnBudget(request, started_at=clock.now)
+    budget.begin_attempt()
+
+    clock.now += 3.0  # source preparation and active review work
+    deadline = budget.exclude_wait(6.0)  # shared VLM admission and model startup
+    clock.now += 6.0
+    assert deadline == 16.0
+    assert budget.elapsed(clock.now) == 3.0
+
+    clock.now += 5.0  # actual model inference remains charged
+    persisted = budget.resume_fields(clock.now)
+    assert persisted["sourceTurnElapsedSeconds"] == 8.0
+    assert persisted["sourceTurnExcludedWaitSeconds"] == 6.0
+    assert persisted["sourceTurnActivePlusWaitSeconds"] == 14.0
+
+    resumed = _SourceTurnBudget(request, persisted, started_at=clock.now)
+    assert resumed.attempts_used == 1
+    assert resumed.stop_reason(clock.now) is None
+    resumed.exclude_wait(4.0)
+    clock.now += 4.0
+    assert resumed.elapsed(clock.now) == 8.0
+    with pytest.raises(SourceTurnWaitBudgetExpired):
+        resumed.exclude_wait(0.1)
+    assert resumed.stop_reason(clock.now) == "source_turn_wait_budget"
+
+    # The fixed active budget still expires after 10 seconds of charged work.
+    active_only = _SourceTurnBudget(request, persisted, started_at=clock.now)
+    clock.now += 2.0
+    assert active_only.stop_reason(clock.now) == "source_turn_deadline"
+
+
+def test_vision_queue_and_startup_wait_pause_source_budget_but_inference_is_charged(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+
+    class FakeRanker:
+        gpu_lock_wait_seconds = 0.0
+
+        def __init__(self, _settings, *, startup_timeout_seconds=None):
+            self.startup_timeout_seconds = startup_timeout_seconds
+            time.sleep(min(0.03, startup_timeout_seconds) if startup_timeout_seconds is not None else 0.03)
+            self.client = self
+
+        def caption_images(self, **_kwargs):
+            time.sleep(0.03)
+            return "reviewed"
+
+    monkeypatch.setattr(
+        bake, "build_llama_cpp_vision_settings",
+        lambda _request: SimpleNamespace(llama_cpp_parallel=1, vision_llm_workers=1),
+    )
+    monkeypatch.setattr(bake, "LlamaCppVisionRanker", FakeRanker)
+    request = bake.BakeAndRankRequest(
+        candidates_json=tmp_path / "candidates.json", workspace=tmp_path,
+        body_model_root=None, source_review_timeout_seconds=1.0,
+    )
+    session = bake.LazyLlamaCppVisionSession(request)
+    budget = _SourceTurnBudget(request)
+    with session._condition:
+        session._active_calls = 1
+
+    def release_queued_slot():
+        time.sleep(0.03)
+        with session._condition:
+            session._active_calls = 0
+            session._condition.notify_all()
+
+    release_thread = threading.Thread(target=release_queued_slot)
+    session.set_candidate_deadline(
+        budget.deadline,
+        on_wait=budget.exclude_wait,
+        wait_remaining=budget.remaining_wait_seconds,
+    )
+    release_thread.start()
+    assert session.caption_images(frame_paths=[], prompt="source review") == "reviewed"
+    release_thread.join(timeout=1)
+    session.set_candidate_deadline(None)
+
+    assert not release_thread.is_alive()
+    assert budget.excluded_wait_added >= 0.04  # queued slot plus ranker startup
+    assert 0.02 <= budget.elapsed() < 0.10  # the actual model request remains charged
+    assert 0.0 < session._ranker.startup_timeout_seconds <= budget.wait_timeout_seconds
+
+
+def test_ranker_startup_gets_only_the_remaining_source_wait_allowance(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    class FastRanker:
+        gpu_lock_wait_seconds = 0.0
+
+        def __init__(self, _settings, *, startup_timeout_seconds=None):
+            self.startup_timeout_seconds = startup_timeout_seconds
+            time.sleep(0.001)
+            self.client = self
+
+        def caption_images(self, **_kwargs):
+            time.sleep(0.02)
+            return "reviewed"
+
+    monkeypatch.setattr(
+        bake, "build_llama_cpp_vision_settings",
+        lambda _request: SimpleNamespace(llama_cpp_parallel=1, vision_llm_workers=1),
+    )
+    monkeypatch.setattr(bake, "LlamaCppVisionRanker", FastRanker)
+    request = bake.BakeAndRankRequest(
+        candidates_json=tmp_path / "candidates.json", workspace=tmp_path,
+        body_model_root=None, source_review_timeout_seconds=0.15,
+    )
+    session = bake.LazyLlamaCppVisionSession(request)
+    budget = _SourceTurnBudget(request)
+    budget.exclude_wait(0.14)
+    time.sleep(0.14)
+    session.set_candidate_deadline(
+        budget.deadline,
+        on_wait=budget.exclude_wait,
+        wait_remaining=budget.remaining_wait_seconds,
+    )
+
+    assert session.caption_images(frame_paths=[], prompt="source review") == "reviewed"
+
+    assert 0.0 < session._ranker.startup_timeout_seconds <= 0.011
+    assert budget.remaining_wait_seconds() < 0.01
+    assert 0.015 <= budget.elapsed() < 0.08
+
+
 def test_staged_source_turn_caps_inflight_caption_and_preserves_unresolved_candidate(tmp_path, monkeypatch):
     deadlines = threading.local()
     caption_calls = []
@@ -79,7 +240,7 @@ def test_staged_source_turn_caps_inflight_caption_and_preserves_unresolved_candi
         def __init__(self, _request):
             pass
 
-        def set_candidate_deadline(self, deadline):
+        def set_candidate_deadline(self, deadline, *, on_wait=None, wait_remaining=None):
             deadlines.value = deadline
 
         def caption_images(self, **kwargs):
@@ -195,7 +356,49 @@ def test_source_turn_budget_readiness_binds_context_not_candidate_pool_or_run_id
     assert changed_context["resetRequired"] is True
 
 
-def test_list_cli_marks_matching_exhausted_source_ledger_before_discovery(tmp_path, monkeypatch):
+def test_source_turn_budget_readiness_requires_matching_explicit_turn_scope(tmp_path):
+    from exercise_motion_pkg.source_turn_budget import source_turn_budget_readiness
+
+    workspace = tmp_path / "carry"
+    workspace.mkdir()
+    request = SimpleNamespace(
+        source_review_timeout_seconds=10.0,
+        exercise_timeout_seconds=0.0,
+        max_source_window_attempts=2,
+    )
+    identity = wave._source_turn_exercise_identity("carry", "Carry", {"movement": "walk"})
+    budget = _SourceTurnBudget(
+        request, exercise_identity=identity, turn_identity="library-run-1"
+    )
+    budget.begin_attempt()
+    (workspace / "source_turn_budget.json").write_text(
+        json.dumps(budget.resume_fields()), encoding="utf-8"
+    )
+
+    same_turn = source_turn_budget_readiness(
+        workspace, "carry", "Carry", {"movement": "walk"}, 10.0, 0.0, 2,
+        turn_identity="library-run-1",
+    )
+    new_turn = source_turn_budget_readiness(
+        workspace, "carry", "Carry", {"movement": "walk"}, 10.0, 0.0, 2,
+        turn_identity="library-run-2",
+    )
+    assert same_turn["ready"] is True
+    assert same_turn["attemptsUsed"] == 1
+    assert same_turn["turnScopeMatches"] is True
+    assert new_turn["ready"] is True
+    assert new_turn["attemptsUsed"] == 0
+    assert new_turn["turnScopeMatches"] is False
+    assert new_turn["resetRequired"] is True
+
+
+@pytest.mark.parametrize(
+    "cli_turn_id, expected_ready, expected_attempts",
+    [("library-run-1", False, 2), ("library-run-2", True, 0)],
+)
+def test_list_cli_scopes_exhausted_source_ledger_to_explicit_turn(
+    tmp_path, monkeypatch, cli_turn_id, expected_ready, expected_attempts
+):
     from exercise_motion_pkg.cli import main
     from exercise_motion_pkg.source_turn_budget import (
         SOURCE_TURN_BUDGET_POLICY_VERSION,
@@ -222,6 +425,7 @@ def test_list_cli_marks_matching_exhausted_source_ledger_before_discovery(tmp_pa
     (ledger_workspace / "source_turn_budget.json").write_text(json.dumps({
         "sourceTurnBudgetPolicyVersion": SOURCE_TURN_BUDGET_POLICY_VERSION,
         "sourceTurnExerciseIdentity": identity,
+        "sourceTurnScopeIdentity": "library-run-1",
         "sourceTurnElapsedSeconds": 0.0,
         "sourceTurnAttemptsUsed": 2,
         "sourceTurnTimeoutSeconds": 10.0,
@@ -235,6 +439,7 @@ def test_list_cli_marks_matching_exhausted_source_ledger_before_discovery(tmp_pa
         "--source-budget-workspace-root", str(workspace_root),
         "--source-review-timeout-seconds", "10",
         "--max-source-window-attempts", "2",
+        "--source-review-turn-id", cli_turn_id,
         "--out-json", str(listed_path),
     ])
 
@@ -242,7 +447,9 @@ def test_list_cli_marks_matching_exhausted_source_ledger_before_discovery(tmp_pa
 
     result = json.loads(listed_path.read_text(encoding="utf-8"))
     item = result["exercises"][0]["sourceReviewBudgetReadiness"]
-    assert item["status"] == "needs_source_review"
-    assert item["ready"] is False
-    assert item["stopReason"] == "source_turn_attempt_budget"
-    assert item["attemptsUsed"] == 2
+    assert item["ready"] is expected_ready
+    assert item["attemptsUsed"] == expected_attempts
+    assert item["status"] == ("ready" if expected_ready else "needs_source_review")
+    assert item["stopReason"] == (
+        None if expected_ready else "source_turn_attempt_budget"
+    )

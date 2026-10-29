@@ -59,6 +59,25 @@ def test_export_edit_approve_reload_and_resume_target_admission(files):
     assert exercise_motion_action_definition_review_reason(contract) is None
 
 
+def test_reviewed_phase_graph_is_persisted_with_the_approved_definition(files):
+    arguments, output = files
+    review = export_definition_review(**arguments)
+    phases = ["Push-up from dumbbell-handle plank", "Row on each side", "Squat clean", "Overhead press"]
+    review["definition"]["requiredPhases"] = phases
+    arguments["review_path"].write_text(json.dumps(review))
+
+    approve_definition_review(
+        **{key: value for key, value in arguments.items() if key != "candidates_path"},
+        output_path=output,
+    )
+
+    definition = load_workout_plan_exercises(output)[0].motion_context["exerciseDefinition"]
+    assert definition["requiredPhases"] == phases
+    assert definition["review"]["reviewArtifactSha256"] == hashlib.sha256(
+        arguments["review_path"].read_bytes()
+    ).hexdigest()
+
+
 @pytest.mark.parametrize("mutation", ["equipment", "invalid_definition", "wrong_exercise"])
 def test_stale_or_invalid_review_never_writes_a_plan(files, mutation):
     arguments, output = files

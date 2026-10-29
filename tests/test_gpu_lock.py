@@ -11,7 +11,10 @@ from exercise_motion_pkg.gpu_lock import (
     GPU_LOCK_PATH_ENV_VAR,
     GPU_LOCK_SAME_PROCESS_TIMEOUT_SECONDS_ENV_VAR,
     GlobalGpuLock,
+    gpu_stage_lock,
+    small_gpu_stage_lock,
 )
+from exercise_motion_pkg.motion_scheduler import set_current_candidate_deadline
 
 
 def test_global_gpu_lock_serializes_different_threads_in_same_process(
@@ -45,6 +48,47 @@ def test_global_gpu_lock_serializes_different_threads_in_same_process(
     assert not failures
     assert second_acquired.is_set()
     assert not lock_path.exists()
+
+
+def test_source_candidate_deadline_reaches_direct_gpu_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(GPU_LOCK_PATH_ENV_VAR, str(tmp_path / "gpu.lock"))
+    holding = threading.Event()
+    release = threading.Event()
+
+    def hold_gpu_lease() -> None:
+        with GlobalGpuLock(stage="test_holder"):
+            holding.set()
+            assert release.wait(timeout=2)
+
+    holder = threading.Thread(target=hold_gpu_lease)
+    holder.start()
+    assert holding.wait(timeout=2)
+    set_current_candidate_deadline(time.perf_counter() + 0.08)
+    started = time.perf_counter()
+    try:
+        with pytest.raises(TimeoutError, match="Candidate deadline expired"):
+            with gpu_stage_lock(
+                stage="source_candidate",
+                deadline=started + 10.0,
+                device=None,
+            ):
+                raise AssertionError("GPU lock unexpectedly acquired")
+        assert time.perf_counter() - started < 0.5
+    finally:
+        set_current_candidate_deadline(None)
+        release.set()
+        holder.join(timeout=2)
+    assert not holder.is_alive()
+
+
+def test_expired_candidate_deadline_rejects_immediate_small_gpu_admission() -> None:
+    set_current_candidate_deadline(time.perf_counter() - 1.0)
+    try:
+        with pytest.raises(TimeoutError, match="GPU cooling wait exceeded its budget"):
+            with small_gpu_stage_lock("expired_source_candidate", min_free_mib=1):
+                raise AssertionError("expired candidate should not enter small GPU stage")
+    finally:
+        set_current_candidate_deadline(None)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows delete-on-close sharing semantics")
@@ -462,7 +506,8 @@ def test_exclusive_gpu_device_parsing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(gpu_lock, "gpu_device_uuid", lambda index: f"GPU-test-{index}")
     assert exclusive_gpu_device() == "1"
     monkeypatch.setenv(EXCLUSIVE_GPU_DEVICE_ENV_VAR, "3")
-    assert exclusive_gpu_device() is None
+    with pytest.raises(ValueError, match=r"only 2 device\(s\) are visible"):
+        exclusive_gpu_device()
     monkeypatch.setattr(gpu_lock, "visible_gpu_count", lambda: None)
     monkeypatch.setenv(EXCLUSIVE_GPU_DEVICE_ENV_VAR, "1")
     assert exclusive_gpu_device() == "1"

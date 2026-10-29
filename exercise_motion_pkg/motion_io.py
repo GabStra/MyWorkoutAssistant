@@ -23,6 +23,9 @@ def load_motion_json(path: Path) -> MotionClip:
             MotionFrame(
                 time_sec=float(frame["timeSec"]),
                 joints={name: _tuple3(coords) for name, coords in frame["joints"].items()},
+                source_time_sec=(float(frame["sourceTimeSec"]) if frame.get("sourceTimeSec") is not None else None),
+                source_frame_index=(int(frame["sourceFrameIndex"]) if frame.get("sourceFrameIndex") is not None else None),
+                inference_frame_index=(int(frame["inferenceFrameIndex"]) if frame.get("inferenceFrameIndex") is not None else None),
             )
             for frame in data["frames"]
         ]
@@ -63,6 +66,9 @@ def save_motion_json(path: Path, clip: MotionClip) -> None:
         "frames": [
             {
                 "timeSec": frame.time_sec,
+                **({"sourceTimeSec": frame.source_time_sec} if frame.source_time_sec is not None else {}),
+                **({"sourceFrameIndex": frame.source_frame_index} if frame.source_frame_index is not None else {}),
+                **({"inferenceFrameIndex": frame.inference_frame_index} if frame.inference_frame_index is not None else {}),
                 "joints": {
                     joint_name: [coords[0], coords[1], coords[2]]
                     for joint_name, coords in frame.joints.items()

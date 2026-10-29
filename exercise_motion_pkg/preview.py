@@ -179,12 +179,6 @@ BILATERAL_SYMMETRY_REJECT_BODY_RATIO = 0.14
 BILATERAL_SYMMETRY_MAX_FRAME_BODY_RATIO = 0.20
 CENTERLINE_PROJECTION_FULL_BLEND_MAX_BODY_RATIO = 0.03
 CENTERLINE_PROJECTION_REJECT_BODY_RATIO = 0.08
-HINGE_LIMITS = (
-    ("left_shoulder", "left_elbow", "left_wrist", math.radians(15.0), math.radians(175.0), ("left_wrist", "left_hand")),
-    ("right_shoulder", "right_elbow", "right_wrist", math.radians(15.0), math.radians(175.0), ("right_wrist", "right_hand")),
-    ("left_hip", "left_knee", "left_ankle", math.radians(20.0), math.radians(175.0), ("left_ankle", "left_foot")),
-    ("right_hip", "right_knee", "right_ankle", math.radians(20.0), math.radians(175.0), ("right_ankle", "right_foot")),
-)
 MIN_LOOP_DURATION_SECONDS = 2.0
 MAX_DETECTED_LOOPS = 8
 MIN_PREVIEW_LOOP_MOTION_BODY_RATIO = 0.08
@@ -443,7 +437,10 @@ def preview_runtime_signature() -> str:
 
 def write_baked_preview_html(path: Path, payload: dict[str, object], *, three_module_path: Path | None = None) -> None:
     """Show the retained final artifact with today's renderer, without rebaking it."""
-    frames = [MotionFrame(time_sec=float(frame["timeSec"]), joints=frame["joints"])
+    frames = [MotionFrame(time_sec=float(frame["timeSec"]), joints=frame["joints"],
+                          source_time_sec=(float(frame["sourceTimeSec"]) if frame.get("sourceTimeSec") is not None else None),
+                          source_frame_index=(int(frame["sourceFrameIndex"]) if frame.get("sourceFrameIndex") is not None else None),
+                          inference_frame_index=(int(frame["inferenceFrameIndex"]) if frame.get("inferenceFrameIndex") is not None else None))
               for frame in payload["frames"]]
     clip = MotionClip(fps=float(payload["fps"]), joint_names=list(payload["jointNames"]),
                       frames=frames, metadata={"bakedWearPayload": payload})
@@ -561,6 +558,12 @@ def write_preview_html(
             {
                 "frameIndex": index,
                 "timeSec": frame.time_sec,
+                **({"sourceFrameIndex": frame.source_frame_index}
+                   if frame.source_frame_index is not None else {}),
+                **({"sourceTimeSec": frame.source_time_sec}
+                   if frame.source_time_sec is not None else {}),
+                **({"inferenceFrameIndex": frame.inference_frame_index}
+                   if frame.inference_frame_index is not None else {}),
                 "sourceJoints": frame.joints,
                 "joints": frame.joints,
             }
@@ -749,7 +752,10 @@ def _build_preview_comparison_frames(source_clip: MotionClip, preview_clip: Moti
             for joint_name, point in joints_payload.items()
             if isinstance(point, list) and len(point) >= 3
         }
-        frames.append(MotionFrame(time_sec=float(item.get("timeSec", 0.0)), joints=joints))
+        frames.append(MotionFrame(time_sec=float(item.get("timeSec", 0.0)), joints=joints,
+                                  source_time_sec=(float(item["sourceTimeSec"]) if item.get("sourceTimeSec") is not None else None),
+                                  source_frame_index=(int(item["sourceFrameIndex"]) if item.get("sourceFrameIndex") is not None else None),
+                                  inference_frame_index=(int(item["inferenceFrameIndex"]) if item.get("inferenceFrameIndex") is not None else None)))
     frames = _stabilize_preview_comparison_frames(
         source_frames=frames,
         preview_clip=preview_clip,
@@ -772,6 +778,12 @@ def _build_preview_comparison_frames(source_clip: MotionClip, preview_clip: Moti
         {
             "frameIndex": index,
             "timeSec": frame.time_sec,
+            **({"sourceFrameIndex": frame.source_frame_index}
+               if frame.source_frame_index is not None else {}),
+            **({"sourceTimeSec": frame.source_time_sec}
+               if frame.source_time_sec is not None else {}),
+            **({"inferenceFrameIndex": frame.inference_frame_index}
+               if frame.inference_frame_index is not None else {}),
             "joints": frame.joints,
         }
         for index, frame in enumerate(comparison_clip.frames)
@@ -796,6 +808,12 @@ def _build_preview_raw_comparison_frames(source_clip: MotionClip) -> list[dict[s
         raw_frames.append({
             "frameIndex": index,
             "timeSec": float(item.get("timeSec", 0.0)),
+            **({"sourceFrameIndex": int(item["sourceFrameIndex"])}
+               if item.get("sourceFrameIndex") is not None else {}),
+            **({"sourceTimeSec": float(item["sourceTimeSec"])}
+               if item.get("sourceTimeSec") is not None else {}),
+            **({"inferenceFrameIndex": int(item["inferenceFrameIndex"])}
+               if item.get("inferenceFrameIndex") is not None else {}),
             "joints": {
                 str(joint_name): (float(point[0]), float(point[1]), float(point[2]))
                 for joint_name, point in joints_payload.items()
@@ -839,7 +857,9 @@ def _stabilize_preview_comparison_frames(
                     stable_anchor[1] + source_child[1] - source_anchor[1],
                     stable_anchor[2] + source_child[2] - source_anchor[2],
                 )
-        stabilized_frames.append(MotionFrame(time_sec=source_frame.time_sec, joints=joints))
+        stabilized_frames.append(MotionFrame(time_sec=source_frame.time_sec, joints=joints,
+                                             source_time_sec=source_frame.source_time_sec,
+                                             source_frame_index=source_frame.source_frame_index, inference_frame_index=source_frame.inference_frame_index))
     return stabilized_frames
 
 
@@ -950,13 +970,14 @@ def build_wear_skeleton_payload(
     active_start_frame = int(selected_loop["startFrame"]) if selected_loop is not None else 0
     active_end_frame = int(selected_loop["endFrame"]) if selected_loop is not None else max(0, preview_clip.frame_count - 1)
     active_frames = preview_clip.frames[active_start_frame:active_end_frame + 1]
+    active_source_start_frame = active_frames[0].source_frame_index if active_frames else None
+    active_source_end_frame = active_frames[-1].source_frame_index if active_frames else None
     auto_alignment = _compute_preview_auto_alignment(
         active_frames, preserve_world_up=_clip_has_explicit_render_floor(preview_clip))
     root_joint = _find_root_joint(preview_clip)
     active_root_anchor = None if raw_motion_review else _compute_stable_root_anchor(active_frames, root_joint)
     transformed_frames = _build_wear_transformed_frames(
         active_frames=active_frames,
-        source_start_frame=active_start_frame,
         root_joint=root_joint,
         active_root_anchor=active_root_anchor,
         auto_alignment=auto_alignment,
@@ -1007,8 +1028,8 @@ def build_wear_skeleton_payload(
         "source": {
             "fps": preview_clip.fps,
             "frameCount": preview_clip.frame_count,
-            "activeStartFrame": active_start_frame,
-            "activeEndFrame": active_end_frame,
+            "activeStartFrame": active_source_start_frame,
+            "activeEndFrame": active_source_end_frame,
         },
         "fps": preview_clip.fps,
         "jointNames": preview_clip.joint_names,
@@ -1029,8 +1050,8 @@ def build_wear_skeleton_payload(
         },
         "loop": {
             "enabled": selected_loop is not None,
-            "sourceStartFrame": active_start_frame,
-            "sourceEndFrame": active_end_frame,
+            "sourceStartFrame": active_source_start_frame,
+            "sourceEndFrame": active_source_end_frame,
             "durationSec": active_duration,
         },
         "bounds": _serialize_bounds(centered_bounds),
@@ -1056,7 +1077,6 @@ def detect_preview_loops_for_clip(clip: MotionClip) -> list[dict[str, object]]:
 def _build_wear_transformed_frames(
     *,
     active_frames: list[MotionFrame],
-    source_start_frame: int,
     root_joint: str | None,
     active_root_anchor: tuple[float, float, float] | None,
     auto_alignment: list[tuple[tuple[float, float, float], float]],
@@ -1085,9 +1105,13 @@ def _build_wear_transformed_frames(
         transformed_frames.append(
             {
                 "frameIndex": index,
-                "sourceFrameIndex": source_start_frame + index,
+                **({"sourceFrameIndex": frame.source_frame_index}
+                   if frame.source_frame_index is not None else {}),
+                **({"inferenceFrameIndex": frame.inference_frame_index}
+                   if frame.inference_frame_index is not None else {}),
                 "timeSec": frame.time_sec - active_start_time,
-                "sourceTimeSec": frame.time_sec,
+                **({"sourceTimeSec": frame.source_time_sec}
+                   if frame.source_time_sec is not None else {}),
                 "rootTranslationApplied": _point_to_list(translation),
                 # Pre-IK reference in the SAME export world frame as "joints":
                 # the controlled fit and the pre-fit fidelity probe compare the
@@ -2111,6 +2135,9 @@ def _center_preview_clip_for_render(clip: MotionClip) -> MotionClip:
     centered_frames = [
         MotionFrame(
             time_sec=frame.time_sec,
+            source_time_sec=frame.source_time_sec,
+            source_frame_index=frame.source_frame_index,
+                inference_frame_index=frame.inference_frame_index,
             joints={
                 joint_name: (
                     point[0] - center[0],
@@ -2152,7 +2179,6 @@ def _apply_preview_refinement(clip: MotionClip) -> MotionClip:
     frames = _suppress_preview_outlier_frames(frames)
     frames = _suppress_translation_bursts(frames)
     frames = _stabilize_unrealistic_segment_motion(frames)
-    frames = _enforce_preview_joint_limits(frames)
     frames = _smooth_preview_frames(frames)
     frames, bilateral_symmetry = _stabilize_bilateral_joint_symmetry(frames)
     frames, horizontal_torso_stabilization = _stabilize_horizontal_rendered_torso_plane(frames)
@@ -2293,7 +2319,8 @@ def _transform_frame_for_preview(frame: MotionFrame, *, flip_vertical: bool) -> 
         joint_name: (point[0], -point[1], point[2])
         for joint_name, point in frame.joints.items()
     }
-    return MotionFrame(time_sec=frame.time_sec, joints=joints)
+    return MotionFrame(time_sec=frame.time_sec, joints=joints,
+                       source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index)
 
 
 
@@ -2475,7 +2502,9 @@ def _preserve_preview_bone_lengths(
             max_correction = max(max_correction, _point_distance(child, projected_child))
             joints[child_name] = projected_child
             corrected_joint_count += 1
-        projected_frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints))
+        projected_frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints,
+                                             source_time_sec=frame.source_time_sec,
+                                             source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
 
     return projected_frames, {
         "applied": True,
@@ -2493,139 +2522,10 @@ def _preserve_preview_bone_lengths(
 def _stabilize_bilateral_joint_symmetry(
     frames: list[MotionFrame],
 ) -> tuple[list[MotionFrame], dict[str, object]]:
-    if len(frames) < 3:
-        return frames, {"applied": False, "reason": "insufficient_frames", "pairCount": 0}
-    joint_names = set().union(*(frame.joints.keys() for frame in frames))
-    joint_pairs = sorted(
-        (joint_name, f"right_{joint_name[5:]}")
-        for joint_name in joint_names
-        if joint_name.startswith("left_") and f"right_{joint_name[5:]}" in joint_names
-    )
-    paired_joint_names = {joint_name for pair in joint_pairs for joint_name in pair}
-    centerline_joint_names = sorted(joint_names - paired_joint_names)
-    if not joint_pairs:
-        return frames, {"applied": False, "reason": "no_bilateral_joint_pairs", "pairCount": 0}
-    body_span = _median_motion_body_span(frames)
-    if body_span <= 1e-6:
-        return frames, {"applied": False, "reason": "invalid_body_span", "pairCount": len(joint_pairs)}
-
-    frame_planes = [_frame_bilateral_symmetry_plane(frame) for frame in frames]
-    pair_decisions: dict[tuple[str, str], dict[str, object]] = {}
-    for left_name, right_name in joint_pairs:
-        discrepancies: list[float] = []
-        for frame, plane in zip(frames, frame_planes, strict=True):
-            if plane is None:
-                continue
-            left = frame.joints.get(left_name)
-            right = frame.joints.get(right_name)
-            if left is None or right is None:
-                continue
-            plane_point, plane_normal = plane
-            mirrored_right = _mirror_point_across_plane(right, plane_point, plane_normal)
-            discrepancies.append(_point_distance(left, mirrored_right) / body_span)
-        median_discrepancy = _median(discrepancies) if discrepancies else math.inf
-        max_discrepancy = max(discrepancies, default=math.inf)
-        if (
-            not discrepancies
-            or median_discrepancy >= BILATERAL_SYMMETRY_REJECT_BODY_RATIO
-            or max_discrepancy >= BILATERAL_SYMMETRY_MAX_FRAME_BODY_RATIO
-        ):
-            blend = 0.0
-        elif median_discrepancy <= BILATERAL_SYMMETRY_FULL_BLEND_MAX_BODY_RATIO:
-            blend = 1.0
-        else:
-            blend = (
-                BILATERAL_SYMMETRY_REJECT_BODY_RATIO - median_discrepancy
-            ) / (
-                BILATERAL_SYMMETRY_REJECT_BODY_RATIO
-                - BILATERAL_SYMMETRY_FULL_BLEND_MAX_BODY_RATIO
-            )
-        pair_decisions[(left_name, right_name)] = {
-            "leftJoint": left_name,
-            "rightJoint": right_name,
-            "medianMirroredDiscrepancyBodyRatio": median_discrepancy,
-            "maxMirroredDiscrepancyBodyRatio": max_discrepancy,
-            "blend": max(0.0, min(1.0, blend)),
-        }
-
-    centerline_decisions: dict[str, dict[str, object]] = {}
-    for joint_name in centerline_joint_names:
-        offsets: list[float] = []
-        for frame, plane in zip(frames, frame_planes, strict=True):
-            point = frame.joints.get(joint_name)
-            if point is None or plane is None:
-                continue
-            plane_point, plane_normal = plane
-            offsets.append(abs(_dot(_subtract_points(point, plane_point), plane_normal)) / body_span)
-        median_offset = _median(offsets) if offsets else math.inf
-        max_offset = max(offsets, default=math.inf)
-        if not offsets or median_offset >= CENTERLINE_PROJECTION_REJECT_BODY_RATIO:
-            blend = 0.0
-        elif median_offset <= CENTERLINE_PROJECTION_FULL_BLEND_MAX_BODY_RATIO:
-            blend = 1.0
-        else:
-            blend = (
-                CENTERLINE_PROJECTION_REJECT_BODY_RATIO - median_offset
-            ) / (
-                CENTERLINE_PROJECTION_REJECT_BODY_RATIO
-                - CENTERLINE_PROJECTION_FULL_BLEND_MAX_BODY_RATIO
-            )
-        centerline_decisions[joint_name] = {
-            "joint": joint_name,
-            "medianPlaneOffsetBodyRatio": median_offset,
-            "maxPlaneOffsetBodyRatio": max_offset,
-            "blend": max(0.0, min(1.0, blend)),
-        }
-
-    corrected_frames: list[MotionFrame] = []
-    for frame, plane in zip(frames, frame_planes, strict=True):
-        if plane is None:
-            corrected_frames.append(frame)
-            continue
-        plane_point, plane_normal = plane
-        joints = dict(frame.joints)
-        for pair, decision in pair_decisions.items():
-            blend = float(decision["blend"])
-            if blend <= 0.0:
-                continue
-            left_name, right_name = pair
-            left = joints.get(left_name)
-            right = joints.get(right_name)
-            if left is None or right is None:
-                continue
-            mirrored_right = _mirror_point_across_plane(right, plane_point, plane_normal)
-            symmetric_left = _midpoint(left, mirrored_right)
-            symmetric_right = _mirror_point_across_plane(symmetric_left, plane_point, plane_normal)
-            joints[left_name] = _lerp_point(left, symmetric_left, blend)
-            joints[right_name] = _lerp_point(right, symmetric_right, blend)
-        for joint_name, decision in centerline_decisions.items():
-            blend = float(decision["blend"])
-            point = joints.get(joint_name)
-            if point is None or blend <= 0.0:
-                continue
-            projected = _project_point_onto_plane(point, plane_point, plane_normal)
-            joints[joint_name] = _lerp_point(point, projected, blend)
-        corrected_frames.append(MotionFrame(time_sec=frame.time_sec, joints=joints))
-
-    corrected_pairs = [decision for decision in pair_decisions.values() if float(decision["blend"]) > 0.0]
-    corrected_centerline = [
-        decision
-        for decision in centerline_decisions.values()
-        if float(decision["blend"]) > 0.0
-    ]
-    return corrected_frames, {
-        "applied": bool(corrected_pairs or corrected_centerline),
-        "reason": "geometry_gated_paired_and_centerline_joint_projection",
-        "pairCount": len(joint_pairs),
-        "correctedPairCount": len(corrected_pairs),
-        "centerlineJointCount": len(centerline_joint_names),
-        "correctedCenterlineJointCount": len(corrected_centerline),
-        "bodySpan": body_span,
-        "fullBlendMaxBodyRatio": BILATERAL_SYMMETRY_FULL_BLEND_MAX_BODY_RATIO,
-        "rejectBodyRatio": BILATERAL_SYMMETRY_REJECT_BODY_RATIO,
-        "maxFrameBodyRatio": BILATERAL_SYMMETRY_MAX_FRAME_BODY_RATIO,
-        "pairs": list(pair_decisions.values()),
-        "centerlineJoints": list(centerline_decisions.values()),
+    return frames, {
+        "applied": False,
+        "reason": "pose_symmetry_requires_independent_source_authority",
+        "pairCount": 0,
     }
 
 
@@ -2713,70 +2613,11 @@ def _lerp_point(
 def _stabilize_horizontal_rendered_torso_plane(
     frames: list[MotionFrame],
 ) -> tuple[list[MotionFrame], dict[str, object]]:
-    if _classify_torso_alignment_mode(frames) != "horizontal_plane":
-        return frames, {
-            "applied": False,
-            "reason": "torso_not_consistently_horizontal",
-            "frameCount": len(frames),
-        }
-
-    stabilized_frames: list[MotionFrame] = []
-    applied_angles_degrees: list[float] = []
-    for frame in frames:
-        plane_geometry = _rendered_torso_plane_normal_and_pivot(frame)
-        axis_geometry = _rendered_torso_axis_and_pivot(frame)
-        if plane_geometry is not None:
-            torso_plane_normal, pivot = plane_geometry
-            target_normal = (0.0, 1.0 if torso_plane_normal[1] >= 0.0 else -1.0, 0.0)
-            rotation = _rotation_between_vectors(
-                torso_plane_normal,
-                target_normal,
-                minimum_degrees=0.05,
-            )
-        elif axis_geometry is not None:
-            torso_axis, pivot = axis_geometry
-            horizontal_target = _normalize((torso_axis[0], 0.0, torso_axis[2]))
-            rotation = _rotation_between_vectors(
-                torso_axis,
-                horizontal_target,
-                minimum_degrees=0.05,
-            )
-        else:
-            stabilized_frames.append(frame)
-            continue
-        if rotation is None:
-            stabilized_frames.append(frame)
-            continue
-        axis, angle = rotation
-        stabilized_frames.append(
-            MotionFrame(
-                time_sec=frame.time_sec,
-                joints={
-                    joint_name: _add_points(
-                        _rotate_point(
-                            _subtract_points(point, pivot),
-                            axis=axis,
-                            angle=angle,
-                        ),
-                        pivot,
-                    )
-                    for joint_name, point in frame.joints.items()
-                },
-            )
-        )
-        applied_angles_degrees.append(math.degrees(angle))
-
-    return stabilized_frames, {
-        "applied": bool(applied_angles_degrees),
-        "reason": "stabilized_rendered_torso_plane_against_world_floor",
+    return frames, {
+        "applied": False,
+        "reason": "global_pose_rotation_requires_camera_or_floor_authority",
         "frameCount": len(frames),
-        "correctedFrameCount": len(applied_angles_degrees),
-        "medianCorrectionDegrees": (
-            _median(applied_angles_degrees)
-            if applied_angles_degrees
-            else 0.0
-        ),
-        "maxCorrectionDegrees": max(applied_angles_degrees, default=0.0),
+        "correctedFrameCount": 0,
     }
 
 
@@ -3185,7 +3026,8 @@ def _rotate_frame(
         joint_name: _rotate_point(point, axis=axis, angle=angle)
         for joint_name, point in frame.joints.items()
     }
-    return MotionFrame(time_sec=frame.time_sec, joints=joints)
+    return MotionFrame(time_sec=frame.time_sec, joints=joints,
+                       source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index)
 
 
 
@@ -3350,95 +3192,10 @@ def _stabilize_unrealistic_segment_motion(frames: list[MotionFrame]) -> list[Mot
                 start_point[1] + (end_point[1] - start_point[1]) * scale,
                 start_point[2] + (end_point[2] - start_point[2]) * scale,
             )
-        stabilized[frame_index] = MotionFrame(time_sec=frame.time_sec, joints=joints)
+        stabilized[frame_index] = MotionFrame(time_sec=frame.time_sec, joints=joints,
+                                              source_time_sec=frame.source_time_sec,
+                                              source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index)
     return stabilized
-
-
-def _enforce_preview_joint_limits(frames: list[MotionFrame]) -> list[MotionFrame]:
-    if not frames:
-        return frames
-    constrained: list[MotionFrame] = []
-    for frame in frames:
-        joints = dict(frame.joints)
-        for parent_name, joint_name, child_name, min_angle, max_angle, descendants in HINGE_LIMITS:
-            parent = joints.get(parent_name)
-            middle = joints.get(joint_name)
-            child = joints.get(child_name)
-            if parent is None or middle is None or child is None:
-                continue
-            corrected_child = _constrain_hinge_child(
-                parent=parent,
-                middle=middle,
-                child=child,
-                min_angle=min_angle,
-                max_angle=max_angle,
-            )
-            if corrected_child is None:
-                continue
-            delta = (
-                corrected_child[0] - child[0],
-                corrected_child[1] - child[1],
-                corrected_child[2] - child[2],
-            )
-            joints[child_name] = corrected_child
-            for descendant_name in descendants:
-                descendant = joints.get(descendant_name)
-                if descendant is None or descendant_name == child_name:
-                    continue
-                joints[descendant_name] = (
-                    descendant[0] + delta[0],
-                    descendant[1] + delta[1],
-                    descendant[2] + delta[2],
-                )
-        constrained.append(MotionFrame(time_sec=frame.time_sec, joints=joints))
-    return constrained
-
-
-
-
-
-
-
-
-def _constrain_hinge_child(
-    *,
-    parent: tuple[float, float, float],
-    middle: tuple[float, float, float],
-    child: tuple[float, float, float],
-    min_angle: float,
-    max_angle: float,
-) -> tuple[float, float, float] | None:
-    parent_vec = _subtract_points(parent, middle)
-    child_vec = _subtract_points(child, middle)
-    parent_length = _vector_length(parent_vec)
-    child_length = _vector_length(child_vec)
-    if parent_length <= 1e-6 or child_length <= 1e-6:
-        return None
-    parent_dir = _normalize(parent_vec)
-    child_dir = _normalize(child_vec)
-    current_angle = math.acos(max(-1.0, min(1.0, _dot(parent_dir, child_dir))))
-    target_angle = min(max(current_angle, min_angle), max_angle)
-    if abs(target_angle - current_angle) <= math.radians(1.0):
-        return None
-
-    plane_normal = _cross(parent_dir, child_dir)
-    if _vector_length(plane_normal) <= 1e-6:
-        fallback = (0.0, 1.0, 0.0) if abs(parent_dir[1]) < 0.9 else (1.0, 0.0, 0.0)
-        plane_normal = _cross(parent_dir, fallback)
-    plane_normal = _normalize(plane_normal)
-    plane_perpendicular = _normalize(_cross(plane_normal, parent_dir))
-    sign = 1.0 if _dot(child_dir, plane_perpendicular) >= 0.0 else -1.0
-    corrected_dir = (
-        parent_dir[0] * math.cos(target_angle) + plane_perpendicular[0] * sign * math.sin(target_angle),
-        parent_dir[1] * math.cos(target_angle) + plane_perpendicular[1] * sign * math.sin(target_angle),
-        parent_dir[2] * math.cos(target_angle) + plane_perpendicular[2] * sign * math.sin(target_angle),
-    )
-    corrected_dir = _normalize(corrected_dir)
-    return (
-        middle[0] + corrected_dir[0] * child_length,
-        middle[1] + corrected_dir[1] * child_length,
-        middle[2] + corrected_dir[2] * child_length,
-    )
 
 
 def _segment_target_lengths(frames: list[MotionFrame]) -> dict[tuple[str, str], float]:
@@ -5963,6 +5720,7 @@ def _build_html(
         timeSec: startTime * (1 - alpha) + endTime * alpha,
         syntheticLoopBridge: true,
         joints,
+        shoeOrientation: interpolateShoeOrientation(startFrame, endFrame, alpha),
       }};
     }}
 
@@ -6235,7 +5993,8 @@ def _build_html(
       startFrame,
       endFrame,
       fullFrameCount,
-      evidenceSource = sourceFootSupportEvidence
+      evidenceSource = sourceFootSupportEvidence,
+      sourceFrames = payload.frames
     ) {{
       if (!evidenceSource || typeof evidenceSource !== "object") {{
         return null;
@@ -6253,6 +6012,132 @@ def _build_html(
       const activeCount = last - first + 1;
       const denominator = Math.max(1, count - 1);
       const localDenominator = Math.max(1, activeCount - 1);
+      const timelineMapping = payload.bakedWearPayload?.sourcePoseCameraReference?.sourceTimelineMapping
+        ?? payload.bakedWearPayload?.sourceTimelineMapping
+        ?? null;
+      const selectedSegmentSha = String(timelineMapping?.selectedSegmentSha256 ?? "").toLowerCase();
+      const parentSourceSha = String(timelineMapping?.parentSourceSha256 ?? "").toLowerCase();
+      const evidenceSourceSha = String(evidence.sourceVideoSha256 ?? "").toLowerCase();
+      const lineage = Array.isArray(timelineMapping?.selectedFrameLineage)
+        ? timelineMapping.selectedFrameLineage
+        : null;
+      const selectedOutputFps = Number(timelineMapping?.selectedOutputFps);
+      const parentSourceFps = Number(timelineMapping?.parentSourceFps);
+      const receiptSha = String(timelineMapping?.selectedFrameClockReceiptSha256 ?? "").toLowerCase();
+      const lineageVerified = Boolean(
+        timelineMapping?.schemaVersion === 1
+        && timelineMapping?.verified === true
+        && timelineMapping?.mappingKind === "selected_segment_to_parent_source"
+        && /^[0-9a-f]{{64}}$/.test(selectedSegmentSha)
+        && /^[0-9a-f]{{64}}$/.test(parentSourceSha)
+        && /^[0-9a-f]{{64}}$/.test(receiptSha)
+        && Number.isFinite(selectedOutputFps) && selectedOutputFps > 0
+        && Number.isFinite(parentSourceFps) && parentSourceFps > 0
+        && Array.isArray(lineage)
+        && lineage.length === Number(timelineMapping?.selectedFrameCount)
+        && lineage.length > 0
+        && lineage.every((row, index) => Number.isInteger(row?.selectedFrameIndex)
+          && row.selectedFrameIndex === index
+          && Number.isFinite(Number(row?.selectedFrameTimeSec))
+          && Math.abs(Number(row.selectedFrameTimeSec) - index / selectedOutputFps) <= 1e-6
+          && Number.isInteger(row?.parentSourceFrameIndex) && row.parentSourceFrameIndex >= 0
+          && Number.isFinite(Number(row?.parentSourceTimeSec))
+          && (index === 0 || Number(row.parentSourceTimeSec) >= Number(lineage[index - 1].parentSourceTimeSec)))
+      );
+      const mappingVerified = Boolean(
+        lineageVerified
+        && (evidenceSourceSha === selectedSegmentSha || evidenceSourceSha === parentSourceSha)
+      );
+      const patchEvidence = evidence.footPatchEvidence && typeof evidence.footPatchEvidence === "object"
+        ? evidence.footPatchEvidence
+        : null;
+      const patchSourceSha = String(patchEvidence?.sourceVideoSha256 ?? evidenceSourceSha).toLowerCase();
+      const mapSelectedTimeToParent = (selectedTime) => {{
+        const sourceFps = Number(patchEvidence?.sourceFps);
+        if (!mappingVerified || !Number.isFinite(sourceFps) || sourceFps <= 0
+            || !Number.isFinite(selectedTime)) {{
+          return null;
+        }}
+        const selectedIndex = Math.round(selectedTime * sourceFps);
+        if (selectedIndex < 0 || selectedIndex >= lineage.length
+            || Math.abs(selectedTime - selectedIndex / sourceFps) > 1e-6) {{
+          return null;
+        }}
+        const row = lineage[selectedIndex];
+        if (row.selectedFrameIndex !== selectedIndex
+            || Math.abs(Number(row.selectedFrameTimeSec) - selectedTime) > 1e-6) {{
+          return null;
+        }}
+        return Number(row.parentSourceTimeSec);
+      }};
+      const parentExposureByIndex = new Map();
+      const parentExposureTimes = new Set();
+      if (lineageVerified) {{
+        for (const row of lineage) {{
+          const parentIndex = Number(row.parentSourceFrameIndex);
+          const parentTime = Number(row.parentSourceTimeSec);
+          const times = parentExposureByIndex.get(parentIndex) ?? new Set();
+          times.add(parentTime);
+          parentExposureByIndex.set(parentIndex, times);
+          parentExposureTimes.add(parentTime);
+        }}
+      }}
+      const nativeSourceTimes = Array.isArray(sourceFrames) ? sourceFrames.slice(first, last + 1).map((frame) => {{
+        if (frame?.syntheticLoopBridge === true || !Number.isFinite(Number(frame?.sourceTimeSec))
+            || !mappingVerified) {{
+          return null;
+        }}
+        const sourceTime = Number(frame.sourceTimeSec);
+        const sourceIndex = Number.isInteger(frame?.sourceFrameIndex) ? frame.sourceFrameIndex : null;
+        const candidates = sourceIndex == null
+          ? parentExposureTimes
+          : (parentExposureByIndex.get(sourceIndex) ?? new Set());
+        return [...candidates].some((time) => Math.abs(time - sourceTime) <= 1e-6)
+          ? sourceTime
+          : null;
+      }}) : [];
+      const patchTimes = Array.isArray(patchEvidence?.sourceTimesSec)
+        ? patchEvidence.sourceTimesSec.map(Number)
+        : [];
+      const patchTimesValid = patchTimes.length >= 2
+        && patchTimes.every(Number.isFinite)
+        && patchTimes.every((time, index) => index === 0 || time >= patchTimes[index - 1]);
+      const parentPatchTimes = patchTimesValid && patchSourceSha === selectedSegmentSha
+        ? patchTimes.map(mapSelectedTimeToParent)
+        : (patchSourceSha === parentSourceSha ? patchTimes : []);
+      const exactTimeline = Boolean(mappingVerified
+        && patchSourceSha === evidenceSourceSha
+        && nativeSourceTimes.length === activeCount
+        && patchTimesValid
+        && parentPatchTimes.length === patchTimes.length
+        && parentPatchTimes.every(Number.isFinite));
+      const patchStartTime = exactTimeline ? parentPatchTimes[0] : Number.NaN;
+      const patchEndTime = exactTimeline ? parentPatchTimes[parentPatchTimes.length - 1] : Number.NaN;
+      const patchTimeTolerance = 0.500001 / parentSourceFps + 1e-7;
+      const exactContactBounds = (contact) => {{
+        const ratioStart = Number(contact?.startRatio);
+        const ratioEnd = Number(contact?.endRatio);
+        if (!Number.isFinite(patchStartTime) || !Number.isFinite(patchEndTime)
+            || patchEndTime < patchStartTime || !Number.isFinite(ratioStart)
+            || !Number.isFinite(ratioEnd) || ratioStart < 0 || ratioEnd > 1 || ratioEnd < ratioStart) {{
+          return null;
+        }}
+        const explicitStart = Number(contact?.sourceStartTimeSec);
+        const explicitEnd = Number(contact?.sourceEndTimeSec);
+        if (Number.isFinite(explicitStart) && Number.isFinite(explicitEnd) && explicitEnd >= explicitStart) {{
+          const mappedStart = patchSourceSha === selectedSegmentSha
+            ? mapSelectedTimeToParent(explicitStart) : explicitStart;
+          const mappedEnd = patchSourceSha === selectedSegmentSha
+            ? mapSelectedTimeToParent(explicitEnd) : explicitEnd;
+          return Number.isFinite(mappedStart) && Number.isFinite(mappedEnd) && mappedEnd >= mappedStart
+            ? [mappedStart, mappedEnd]
+            : null;
+        }}
+        return [
+          patchStartTime + ratioStart * (patchEndTime - patchStartTime),
+          patchStartTime + ratioEnd * (patchEndTime - patchStartTime),
+        ];
+      }};
       const rebaseContacts = (records) => {{
         if (!Array.isArray(records)) {{
           return records;
@@ -6260,6 +6145,41 @@ def _build_html(
         return records.flatMap((contact) => {{
           if (!contact || typeof contact !== "object") {{
             return [];
+          }}
+          if (timelineMapping && !exactTimeline) {{
+            return [];
+          }}
+          if (exactTimeline) {{
+            const bounds = exactContactBounds(contact);
+            if (!bounds) {{
+              return [];
+            }}
+            const [contactStartTime, contactEndTime] = bounds;
+            const activeIndices = nativeSourceTimes.flatMap((time, index) =>
+              time !== null && Number.isFinite(time)
+                && time >= contactStartTime - patchTimeTolerance
+                && time <= contactEndTime + patchTimeTolerance
+                ? [index]
+                : []
+            );
+            if (activeIndices.length === 0) {{
+              return [];
+            }}
+            const localStart = activeIndices[0];
+            const localEnd = activeIndices[activeIndices.length - 1];
+            const rebased = {{
+              ...contact,
+              startFrame: localStart,
+              endFrame: localEnd,
+              startRatio: localStart / localDenominator,
+              endRatio: localEnd / localDenominator,
+              sourceStartTimeSec: contactStartTime,
+              sourceEndTimeSec: contactEndTime,
+            }};
+            if (contact.continuousSupport === true) {{
+              rebased.continuousSupport = activeIndices.length === activeCount;
+            }}
+            return [rebased];
           }}
           const startValue = Number(contact.startRatio);
           const endValue = Number(contact.endRatio);
@@ -6298,29 +6218,27 @@ def _build_html(
           evidence[key] = rebaseContacts(evidence[key]);
         }}
       }}
-      if (evidence.footPatchEvidence && typeof evidence.footPatchEvidence === "object") {{
-        const patches = evidence.footPatchEvidence;
-        if (Array.isArray(patches.contacts)) {{
-          patches.contacts = rebaseContacts(patches.contacts);
-        }}
-        for (const foot of Object.values(patches.feet ?? {{}})) {{
-          const states = foot?.states;
-          if (!Array.isArray(states) || states.length === 0) {{
-            continue;
-          }}
-          const stateDenominator = Math.max(1, states.length - 1);
-          const stateFirst = Math.max(0, Math.floor(first * stateDenominator / denominator));
-          const stateLast = Math.min(
-            states.length - 1,
-            Math.ceil(last * stateDenominator / denominator)
-          );
-          foot.states = states.slice(stateFirst, stateLast + 1);
-        }}
-      }}
+      // Keep footPatchEvidence as an immutable source-timeline record. Its
+      // states, patch observations, image rays, and sourceTimesSec share one
+      // native clock; slicing only one of those arrays would corrupt that
+      // evidence. The browser solver consumes the rebased top-level contact
+      // windows above, while this nested record remains auditable in source
+      // coordinates.
       evidence.previewCrop = {{
         sourceStartFrame: first,
         sourceEndFrame: last,
         sourceFrameCount: count,
+        ...(mappingVerified ? {{
+          sourceTimelineMapping: "verified_selected_cut_to_parent",
+          sourceStartTimeSec: nativeSourceTimes.find((time) => Number.isFinite(time)) ?? null,
+          sourceEndTimeSec: [...nativeSourceTimes].reverse().find((time) => Number.isFinite(time)) ?? null,
+          selectedCutStartSeconds: Number(timelineMapping?.selectedStartSeconds),
+          selectedFrameClockReceiptSha256: receiptSha,
+        }} : {{}}),
+        ...(timelineMapping && !exactTimeline ? {{
+          sourceTimelineMapping: "unresolved",
+          sourceTimelineMappingReason: "contact_evidence_clock_or_video_identity_mismatch",
+        }} : {{}}),
       }};
       return evidence;
     }}
@@ -8834,6 +8752,16 @@ def _build_html(
             boneSides[boneKey] = [side[0], -side[1], -side[2]];
           }}
         }}
+        const shoeOrientation = {{}};
+        for (const [footSide, orientation] of Object.entries(frame.shoeOrientation ?? {{}})) {{
+          if (Array.isArray(orientation?.forward) && orientation.forward.length >= 3
+            && Array.isArray(orientation?.side) && orientation.side.length >= 3) {{
+            shoeOrientation[footSide] = {{
+              forward: [orientation.forward[0], -orientation.forward[1], -orientation.forward[2]],
+              side: [orientation.side[0], -orientation.side[1], -orientation.side[2]],
+            }};
+          }}
+        }}
         return {{
           ...frame,
           joints,
@@ -8844,6 +8772,7 @@ def _build_html(
             cameraPlacementReferenceJoints: normalizeJointMap(frame.cameraPlacementReferenceJoints),
           }} : {{}}),
           boneSides,
+          shoeOrientation,
         }};
       }});
       return {{
@@ -9048,6 +8977,25 @@ def _build_html(
           }}
           boneSides[boneKey] = [rotated.x, rotated.y, rotated.z];
         }}
+        const shoeOrientation = {{}};
+        for (const [footSide, orientation] of Object.entries(frame.shoeOrientation ?? {{}})) {{
+          if (!Array.isArray(orientation?.forward) || orientation.forward.length < 3
+            || !Array.isArray(orientation?.side) || orientation.side.length < 3) continue;
+          const rotateAxis = (axis) => {{
+            const rotated = new THREE.Vector3(...axis.map(Number));
+            for (const step of rotationSequence) {{
+              const rotationAxis = Array.isArray(step?.axis) && step.axis.length >= 3
+                ? new THREE.Vector3(...step.axis.map(Number)).normalize()
+                : new THREE.Vector3(0.0, 1.0, 0.0);
+              rotated.applyAxisAngle(rotationAxis, Number(step?.radians) || 0.0);
+            }}
+            return [rotated.x, rotated.y, rotated.z];
+          }};
+          shoeOrientation[footSide] = {{
+            forward: rotateAxis(orientation.forward),
+            side: rotateAxis(orientation.side),
+          }};
+        }}
         return {{
           ...frame,
           joints,
@@ -9058,6 +9006,7 @@ def _build_html(
             cameraPlacementReferenceJoints: rotateJointMap(frame.cameraPlacementReferenceJoints),
           }} : {{}}),
           boneSides,
+          shoeOrientation,
         }};
       }});
     }}
@@ -9135,14 +9084,23 @@ def _build_html(
       let frames = activeFrames.map((frame, index) => {{
         activeRenderFrame = frame;
         const translation = getFrameBakeTranslation(frame, lockYDrift);
-        const sourceFrameIndex = Number.isInteger(frame.frameIndex) ? frame.frameIndex : index;
-        const sourcePayloadFrame = Array.isArray(payload.frames)
-          ? payload.frames[sourceFrameIndex]
+        const syntheticLoopBridge = Boolean(frame.syntheticLoopBridge);
+        const localPayloadFrameIndex = Number.isInteger(frame.frameIndex) ? frame.frameIndex : index;
+        const sourceFrameIndex = Number.isInteger(frame.sourceFrameIndex) && !syntheticLoopBridge
+          ? frame.sourceFrameIndex
+          : null;
+        const inferenceFrameIndex = Number.isInteger(frame.inferenceFrameIndex) && !syntheticLoopBridge
+          ? frame.inferenceFrameIndex
+          : null;
+        const sourcePayloadFrame = !syntheticLoopBridge && Array.isArray(payload.frames)
+          ? payload.frames[localPayloadFrameIndex]
           : null;
         const joints = {{}};
         const cameraPlacementReferenceJoints = {{}};
         const sourceJoints = {{}};
-        const rawSourceJoints = (sourcePayloadFrame?.sourceJoints ?? frame.sourceJoints) ?? null;
+        const rawSourceJoints = syntheticLoopBridge
+          ? null
+          : (sourcePayloadFrame?.sourceJoints ?? frame.sourceJoints) ?? null;
         for (const jointName of payload.jointNames) {{
           const point = frame.joints[jointName];
           if (!Array.isArray(point) || point.length < 3) {{
@@ -9175,16 +9133,44 @@ def _build_html(
             boneSides[`${{spec.start}}->${{spec.end}}`] = [side.x, side.y, side.z];
           }}
         }}
+        const shoeOrientation = {{}};
+        const placementOrigin = toBaseWorldPoint(
+          [0.0, 0.0, 0.0], translation, false, null, selectedPreviewSettings.fixedRoot
+        );
+        const transformShoeDirection = (axis) => {{
+          const values = Array.isArray(axis) ? axis.map(Number) : [];
+          if (values.length < 3 || !values.slice(0, 3).every(Number.isFinite)) return null;
+          // Difference two points through the same placement to retain only
+          // its rotation. Translations and root offsets must not affect axes.
+          const endpoint = toBaseWorldPoint(
+            values, translation, false, null, selectedPreviewSettings.fixedRoot
+          );
+          const direction = endpoint.sub(placementOrigin).normalize();
+          return direction.lengthSq() > 1e-12 ? direction : null;
+        }};
+        for (const [footSide, orientation] of Object.entries(frame.shoeOrientation ?? {{}})) {{
+          const forward = transformShoeDirection(orientation?.forward);
+          const side = transformShoeDirection(orientation?.side);
+          if (!forward || !side) continue;
+          side.addScaledVector(forward, -side.dot(forward));
+          if (side.lengthSq() <= 1e-12) continue;
+          side.normalize();
+          shoeOrientation[footSide] = {{ forward: forward.toArray(), side: side.toArray() }};
+        }}
         return {{
-          sourceFrameIndex,
+          ...(sourceFrameIndex != null ? {{ sourceFrameIndex }} : {{}}),
+          ...(inferenceFrameIndex != null ? {{ inferenceFrameIndex }} : {{}}),
           timeSec: ((frame.timeSec ?? 0) - firstSourceTime) / exportPlaybackSpeed,
-          sourceTimeSec: frame.timeSec ?? 0,
-          syntheticLoopBridge: Boolean(frame.syntheticLoopBridge),
+          ...(Number.isFinite(Number(frame.sourceTimeSec)) && !syntheticLoopBridge
+            ? {{ sourceTimeSec: Number(frame.sourceTimeSec) }}
+            : {{}}),
+          syntheticLoopBridge,
           rootTranslationApplied: translation,
           sourceJoints: Object.keys(sourceJoints).length > 0 ? sourceJoints : (rawSourceJoints ?? null),
           joints,
           cameraPlacementReferenceJoints,
           boneSides,
+          shoeOrientation,
         }};
       }});
       let elevatedSupportSurfaces = (
@@ -9243,12 +9229,21 @@ def _build_html(
       );
       const sourceTimelineFrames = frames.filter((frame) => !frame.syntheticLoopBridge);
       const timelineFrames = sourceTimelineFrames.length > 0 ? sourceTimelineFrames : frames;
-      const sourceStartFrame = timelineFrames.length > 0 ? timelineFrames[0].sourceFrameIndex : 0;
-      const sourceEndFrame = timelineFrames.length > 0 ? timelineFrames[timelineFrames.length - 1].sourceFrameIndex : sourceStartFrame;
-      const sourceStartTimeSec = timelineFrames.length > 0 ? Number(timelineFrames[0].sourceTimeSec) || 0 : 0;
-      const sourceEndTimeSec = timelineFrames.length > 0 ? Number(timelineFrames[timelineFrames.length - 1].sourceTimeSec) || sourceStartTimeSec : sourceStartTimeSec;
-      const sourceDurationSec = Math.max(0, sourceEndTimeSec - sourceStartTimeSec);
-      const durationSec = sourceDurationSec / exportPlaybackSpeed;
+      const sourceStartFrame = Number.isInteger(timelineFrames[0]?.sourceFrameIndex)
+        ? timelineFrames[0].sourceFrameIndex
+        : null;
+      const sourceEndFrame = Number.isInteger(timelineFrames[timelineFrames.length - 1]?.sourceFrameIndex)
+        ? timelineFrames[timelineFrames.length - 1].sourceFrameIndex
+        : null;
+      const sourceStartTimeSec = Number.isFinite(Number(timelineFrames[0]?.sourceTimeSec))
+        ? Number(timelineFrames[0].sourceTimeSec)
+        : null;
+      const sourceEndTimeSec = Number.isFinite(Number(timelineFrames[timelineFrames.length - 1]?.sourceTimeSec))
+        ? Number(timelineFrames[timelineFrames.length - 1].sourceTimeSec)
+        : null;
+      const firstPlaybackTimeSec = Number(timelineFrames[0]?.timeSec) || 0;
+      const lastPlaybackTimeSec = Number(timelineFrames[timelineFrames.length - 1]?.timeSec) || firstPlaybackTimeSec;
+      const durationSec = Math.max(0, lastPlaybackTimeSec - firstPlaybackTimeSec);
       const bakedBounds = computeBakedWearBounds(frames);
       refreshGroundPlacement();
       const floorPoint = grid.position.clone().applyQuaternion(sceneRotationQuaternion.clone().invert());
@@ -10567,7 +10562,7 @@ def _build_html(
           if (frame.boneSides?.[key]) sides.set(key, new THREE.Vector3(...frame.boneSides[key]));
         }}
         wearApplyExportedSoleSides(frame, sides);
-        const mesh = wearBuildHumanoid(joints, sides, wearStableBodyAxesByFrame?.[index], playbackState.footRestPitchRadians ?? {{}});
+        const mesh = wearBuildHumanoid(joints, sides, wearStableBodyAxesByFrame?.[index], playbackState.footRestPitchRadians ?? {{}}, frame.shoeOrientation ?? {{}});
         points.push(...(mesh?.vertices ?? Object.values(joints)));
       }});
       bakedMeshFitCache.set(frames, points);
@@ -10952,7 +10947,24 @@ def _build_html(
         timeSec: current.timeSec * (1 - alpha) + next.timeSec * alpha,
         joints,
         boneSides: interpolateBoneSides(current, next, joints, alpha),
+        shoeOrientation: interpolateShoeOrientation(current, next, alpha),
       }});
+    }}
+
+    function interpolateShoeOrientation(current, next, alpha) {{
+      const result = {{}};
+      for (const [footSide, first] of Object.entries(current.shoeOrientation ?? {{}})) {{
+        const second = next.shoeOrientation?.[footSide];
+        if (!Array.isArray(first?.forward) || !Array.isArray(first?.side)
+          || !Array.isArray(second?.forward) || !Array.isArray(second?.side)) continue;
+        const interpolateAxis = (a, b) => new THREE.Vector3(...a).lerp(new THREE.Vector3(...b), alpha).normalize();
+        const forward = interpolateAxis(first.forward, second.forward);
+        const side = interpolateAxis(first.side, second.side)
+          .addScaledVector(forward, -new THREE.Vector3(...first.side).lerp(new THREE.Vector3(...second.side), alpha).dot(forward))
+          .normalize();
+        result[footSide] = {{ forward: forward.toArray(), side: side.toArray() }};
+      }}
+      return result;
     }}
 
     function interpolateBoneSides(current, next, joints, alpha) {{

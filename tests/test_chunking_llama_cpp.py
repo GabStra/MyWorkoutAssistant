@@ -39,6 +39,8 @@ def test_llm_chunk_estimate_uses_llama_cpp_chat_completions(monkeypatch):
     assert calls[0][0] == "http://127.0.0.1:8090/v1/chat/completions"
     assert calls[0][1]["json"]["model"] == DEFAULT_LLAMA_CPP_MODEL
     assert calls[0][1]["json"]["response_format"] == {"type": "json_object"}
+    assert calls[0][1]["json"]["reasoning_format"] == "deepseek"
+    assert calls[0][1]["json"]["chat_template_kwargs"] == {"enable_thinking": False}
 
 
 def test_contract_chunk_hint_skips_llama_cpp_request(monkeypatch):

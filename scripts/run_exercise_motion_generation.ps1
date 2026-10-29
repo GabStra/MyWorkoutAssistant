@@ -43,7 +43,7 @@
     [string]$LlamaCppBackend = "gpu",
     [Alias("YouTubeCookies")]
     [string]$YouTubeCookiesPath,
-    [string]$LlamaCppServerCommand = "C:\\Users\\gabri\\Documents\\llama.cpp\\build-master\\bin\\Release\\llama-server.exe",
+    [string]$LlamaCppServerCommand = "C:\\llama.cpp\\build-master\\bin\\Release\\llama-server.exe",
     [int]$LlamaCppServerPort = 8090,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
     [int]$LlamaCppNPredict = 512,

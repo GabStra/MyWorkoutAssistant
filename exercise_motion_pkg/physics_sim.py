@@ -557,7 +557,7 @@ def _light_temporal_smooth(clip: MotionClip, *, root_joint: str, window: int) ->
                 weight = 1.0 / (1.0 + abs(offset))
                 weighted_points.append((neighbor, weight))
             smoothed_joints[joint_name] = _weighted_average_point(weighted_points) if weighted_points else current
-        smoothed_frames.append(MotionFrame(time_sec=frame.time_sec, joints=smoothed_joints))
+        smoothed_frames.append(MotionFrame(time_sec=frame.time_sec, joints=smoothed_joints, source_time_sec=frame.source_time_sec, source_frame_index=frame.source_frame_index, inference_frame_index=frame.inference_frame_index))
     return MotionClip(
         fps=clip.fps,
         joint_names=clip.joint_names,

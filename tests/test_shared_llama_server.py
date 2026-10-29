@@ -16,6 +16,7 @@ from exercise_motion_pkg.bake_and_rank import BakeAndRankRequest, LazyLlamaCppVi
 from exercise_motion_pkg.gpu_lock import process_identity
 from exercise_motion_pkg.shared_llama_server import (
     INFLIGHT_DIRECTORY_NAME,
+    RESIDENT_COMPUTE_INTENT_FILE_NAME,
     SHARED_LLAMA_SESSION_DIR_ENV_VAR,
     START_REQUEST_FILE_NAME,
     STOP_INTENT_FILE_NAME,
@@ -23,6 +24,8 @@ from exercise_motion_pkg.shared_llama_server import (
     SharedLlamaServerCoordinator,
     detach_shared_llama_request_publisher,
     install_shared_llama_request_publisher,
+    resident_gpu_compute_scope,
+    shared_llama_coordinator_for,
 )
 
 
@@ -331,6 +334,99 @@ def test_stale_foreign_counter_and_intent_are_reclaimed(tmp_path):
     assert not list((session_dir / INFLIGHT_DIRECTORY_NAME).glob("*.json"))
 
 
+def test_candidate_deadline_bounds_shared_transition_lock_wait(tmp_path):
+    coordinator = SharedLlamaServerCoordinator(
+        session_dir=tmp_path / "coord",
+        base_url="http://127.0.0.1:8090",
+        stop_server=lambda: pytest.fail("server must not stop before transition admission"),
+        poll_seconds=0.01,
+    )
+    held = threading.Event()
+    release = threading.Event()
+
+    def hold_transition():
+        with coordinator._transition_lock():
+            held.set()
+            assert release.wait(timeout=2)
+
+    holder = threading.Thread(target=hold_transition)
+    holder.start()
+    assert held.wait(timeout=2)
+    started = time.monotonic()
+    try:
+        with pytest.raises(TimeoutError):
+            coordinator.begin_exclusive_phase(deadline=started + 0.08)
+        assert time.monotonic() - started < 0.5
+        assert not (coordinator.session_dir / STOP_INTENT_FILE_NAME).exists()
+    finally:
+        release.set()
+        holder.join(timeout=2)
+    assert not holder.is_alive()
+
+
+def test_counted_request_budget_bounds_transition_lock_without_intent(tmp_path):
+    coordinator = SharedLlamaServerCoordinator(
+        session_dir=tmp_path / "coord",
+        base_url="http://127.0.0.1:8090",
+        stop_server=lambda: None,
+        poll_seconds=0.01,
+    )
+    held = threading.Event()
+    release = threading.Event()
+
+    def hold_transition():
+        with coordinator._transition_lock():
+            held.set()
+            assert release.wait(timeout=2)
+
+    holder = threading.Thread(target=hold_transition)
+    holder.start()
+    assert held.wait(timeout=2)
+    started = time.monotonic()
+    try:
+        with pytest.raises(TimeoutError):
+            with coordinator.counted_request_scope(max_wait_seconds=0.08):
+                raise AssertionError("request should not pass the held transition lock")
+        assert time.monotonic() - started < 0.5
+    finally:
+        release.set()
+        holder.join(timeout=2)
+    assert not holder.is_alive()
+
+
+def test_counted_request_scope_inherits_candidate_deadline(tmp_path):
+    from exercise_motion_pkg.motion_scheduler import candidate_deadline_scope
+
+    coordinator = SharedLlamaServerCoordinator(
+        session_dir=tmp_path / "coord",
+        base_url="http://127.0.0.1:8090",
+        stop_server=lambda: None,
+        poll_seconds=0.01,
+    )
+    held = threading.Event()
+    release = threading.Event()
+
+    def hold_transition():
+        with coordinator._transition_lock():
+            held.set()
+            assert release.wait(timeout=2)
+
+    holder = threading.Thread(target=hold_transition)
+    holder.start()
+    assert held.wait(timeout=2)
+    started = time.perf_counter()
+    try:
+        with candidate_deadline_scope(started + 0.08):
+            with pytest.raises(TimeoutError):
+                with coordinator.counted_request_scope():
+                    raise AssertionError("request should inherit the candidate deadline")
+        assert time.perf_counter() - started < 0.5
+    finally:
+        release.set()
+        holder.join(timeout=2)
+    assert not holder.is_alive()
+
+
 def test_exclusive_handoff_waits_for_powershell_startup_transition(tmp_path, monkeypatch):
     pwsh = shutil.which("pwsh")
     if pwsh is None:
@@ -544,7 +640,6 @@ def test_cli_flags_plumb_into_requests(tmp_path):
         "bake-and-rank",
         "--candidates-json", str(tmp_path / "candidates.json"),
         "--workspace", str(tmp_path),
-        "--reconstruction-repo-path", str(tmp_path / "reconstruction"),
         "--body-model-root", str(tmp_path / "body"),
     ]
     default_request = build_bake_and_rank_request(parser.parse_args(base_args))
@@ -730,6 +825,104 @@ def test_request_admission_rechecks_intent_under_transition_lock(tmp_path, monke
     assert not coordinator.try_begin_counted_request()
     monkeypatch.setattr(coordinator, 'foreign_stop_intent_live', lambda: False)
     assert coordinator.try_begin_counted_request()
+
+
+def test_resident_compute_drains_all_requests_and_blocks_same_process_admission(tmp_path):
+    session_dir = tmp_path / "shared-session"
+    coordinator = shared_llama_coordinator_for(session_dir, base_url=None)
+    coordinator.register()
+    # Multiple VLM requests remain admissible concurrently before a reservation.
+    assert coordinator.try_begin_counted_request()
+    assert coordinator.try_begin_counted_request()
+    assert coordinator.counted_active_requests() == 2
+    entered = threading.Event()
+    errors: list[BaseException] = []
+
+    def reserve():
+        try:
+            with resident_gpu_compute_scope(session_dir, deadline=time.perf_counter() + 5):
+                assert coordinator.counted_active_requests() == 0
+                assert not coordinator.try_begin_counted_request()
+                entered.set()
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    thread = threading.Thread(target=reserve)
+    thread.start()
+    assert _wait_until(
+        lambda: (session_dir / RESIDENT_COMPUTE_INTENT_FILE_NAME).exists(),
+        timeout_seconds=3,
+    )
+    # A new request in this same process is refused while the GPU reservation is live.
+    assert not coordinator.try_begin_counted_request()
+    coordinator.end_counted_request()
+    coordinator.end_counted_request()
+    thread.join(timeout=5)
+    assert entered.is_set()
+    assert not errors
+    assert not (session_dir / RESIDENT_COMPUTE_INTENT_FILE_NAME).exists()
+    assert not (session_dir / STOP_INTENT_FILE_NAME).exists()
+    assert not (session_dir / "start_requested.json").exists()
+
+
+def test_resident_compute_cleans_intent_after_error_and_does_not_stop_server(tmp_path):
+    session_dir = tmp_path / "shared-session"
+    stop_calls: list[bool] = []
+    coordinator = shared_llama_coordinator_for(
+        session_dir, base_url=None, stop_server=lambda: stop_calls.append(True),
+    )
+    coordinator.register()
+    with pytest.raises(RuntimeError, match="prediction failed"):
+        with resident_gpu_compute_scope(session_dir, deadline=time.perf_counter() + 3):
+            assert (session_dir / RESIDENT_COMPUTE_INTENT_FILE_NAME).exists()
+            raise RuntimeError("prediction failed")
+    assert not (session_dir / RESIDENT_COMPUTE_INTENT_FILE_NAME).exists()
+    assert not (session_dir / STOP_INTENT_FILE_NAME).exists()
+    assert not (session_dir / "start_requested.json").exists()
+    assert stop_calls == []
+
+
+def test_counted_publisher_waits_out_resident_compute_intent(tmp_path):
+    session_dir = tmp_path / "shared-session"
+    coordinator = shared_llama_coordinator_for(session_dir, base_url=None)
+    coordinator.register()
+    admitted = threading.Event()
+
+    def request():
+        with coordinator.counted_request_scope(max_wait_seconds=3):
+            admitted.set()
+
+    with resident_gpu_compute_scope(session_dir, deadline=time.perf_counter() + 3):
+        thread = threading.Thread(target=request)
+        thread.start()
+        time.sleep(0.35)
+        assert not admitted.is_set()
+    thread.join(timeout=3)
+    assert admitted.is_set()
+    assert coordinator.counted_active_requests() == 0
+
+
+def test_resident_compute_reclaims_same_pid_marker_with_stale_identity(tmp_path):
+    session_dir = tmp_path / "shared-session"
+    session_dir.mkdir()
+    marker = session_dir / RESIDENT_COMPUTE_INTENT_FILE_NAME
+    marker.write_text(json.dumps({
+        "pid": os.getpid(),
+        "processIdentity": (process_identity(os.getpid()) or 0) + 1,
+        "intentToken": "stale-owner",
+    }), encoding="utf-8")
+    with resident_gpu_compute_scope(session_dir, deadline=time.perf_counter() + 3):
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+        assert payload["intentToken"] != "stale-owner"
+
+
+def test_resident_compute_caps_explicit_deadline_to_expired_candidate(tmp_path):
+    from exercise_motion_pkg.motion_scheduler import candidate_deadline_scope
+
+    with candidate_deadline_scope(time.perf_counter() - 1):
+        with pytest.raises(TimeoutError, match="Timed out waiting to reserve resident GPU compute"):
+            with resident_gpu_compute_scope(tmp_path / "shared-session", deadline=time.perf_counter() + 30):
+                pytest.fail("expired candidate deadline must not admit resident compute")
 
 
 def test_handoff_wait_records_owner_identity(tmp_path, capsys):
@@ -927,6 +1120,7 @@ def test_supervised_server_wait_extends_for_foreign_generation(tmp_path, monkeyp
         monkeypatch.setenv("EXERCISE_MOTION_SHARED_LLAMA_SESSION_DIR", str(shared_dir))
 
         ranker = object.__new__(LlamaCppVisionRanker)
+        ranker._source_startup_deadline = None
         ranker.settings = SimpleNamespace(
             llama_cpp_base_url="http://127.0.0.1:8090",
             llama_cpp_server_startup_timeout_seconds=2.0,

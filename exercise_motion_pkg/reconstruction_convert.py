@@ -18,6 +18,7 @@ def convert_reconstruction_results_to_motion_clip(
     output_rotation_degrees: float = 0.0,
     fps: float = 30.0,
     extractor: str = "RECONSTRUCTION",
+    source_frame_clock: dict[str, object] | None = None,
 ) -> MotionClip:
     fps = validate_reconstruction_frame_rate(fps)
     ensure_legacy_smpl_runtime_compat()
@@ -83,6 +84,11 @@ def convert_reconstruction_results_to_motion_clip(
             for joint_row in joints
         ]
     normalized_frame_ids = _normalize_frame_ids(frame_ids, frame_count=frame_count)
+    source_references = None
+    if source_frame_clock is not None:
+        from .source_frame_clock import source_references_for_frame_ids
+
+        source_references = source_references_for_frame_ids(source_frame_clock, normalized_frame_ids)
     frames: list[MotionFrame] = []
     for index, joint_row in enumerate(joints):
         frame_joints = {
@@ -97,6 +103,9 @@ def convert_reconstruction_results_to_motion_clip(
             MotionFrame(
                 time_sec=float(normalized_frame_ids[index]) / fps,
                 joints=frame_joints,
+                source_time_sec=(float(source_references[index]["sourceTimeSec"]) if source_references is not None else None),
+                source_frame_index=(int(source_references[index]["sourceFrameIndex"]) if source_references is not None else None),
+                inference_frame_index=(normalized_frame_ids[index] if source_references is not None else None),
             )
         )
 
@@ -118,6 +127,12 @@ def convert_reconstruction_results_to_motion_clip(
                 "subjectId": str(resolved_subject_id),
                 "frameIds": normalized_frame_ids,
                 "sourceFps": fps,
+                **({"sourceFrameClock": {
+                    "sourceVideoPath": source_frame_clock.get("sourceVideoPath"),
+                    "sourceVideoSha256": source_frame_clock.get("sourceVideoSha256"),
+                    "outputVideoPath": source_frame_clock.get("outputVideoPath"),
+                    "outputVideoSha256": source_frame_clock.get("outputVideoSha256"),
+                }} if source_frame_clock is not None else {}),
             },
         },
     )
@@ -133,9 +148,15 @@ def normalize_reconstruction_output(
     output_rotation_degrees: float = 0.0,
     fps: float = 30.0,
     extractor: str = "RECONSTRUCTION",
+    source_frame_clock_path: Path | None = None,
 ) -> Path:
     from exercise_motion_pkg.motion_io import save_motion_json
 
+    source_frame_clock = None
+    if source_frame_clock_path is not None:
+        from .source_frame_clock import load_verified_source_frame_clock
+
+        source_frame_clock = load_verified_source_frame_clock(source_frame_clock_path)
     clip = convert_reconstruction_results_to_motion_clip(
         reconstruction_results_pkl=reconstruction_results_pkl,
         body_model_root=body_model_root,
@@ -144,6 +165,7 @@ def normalize_reconstruction_output(
         output_rotation_degrees=output_rotation_degrees,
         fps=fps,
         extractor=extractor,
+        source_frame_clock=source_frame_clock,
     )
     save_motion_json(output_json, clip)
     return output_json

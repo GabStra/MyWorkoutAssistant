@@ -9,6 +9,9 @@ Point3 = tuple[float, float, float]
 class MotionFrame:
     time_sec: float
     joints: dict[str, Point3]
+    source_time_sec: float | None = None
+    source_frame_index: int | None = None
+    inference_frame_index: int | None = None
 
 
 @dataclass(frozen=True)

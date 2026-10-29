@@ -1605,6 +1605,7 @@ class LlamaCppVisionClient:
         self._client_generation = 0
         self._recovery_lock = threading.Lock()
         self._request_condition = threading.Condition()
+        self._compatibility_events: list[dict[str, object]] = []
         self._active_http_requests = 0
         self._recovery_in_progress = False
         self._closed = False
@@ -1625,6 +1626,19 @@ class LlamaCppVisionClient:
                 client.close()
             except Exception:
                 pass
+
+    def compatibility_events_snapshot(self) -> list[dict[str, object]]:
+        with self._request_condition:
+            return [dict(event) for event in self._compatibility_events]
+
+    def _record_compatibility_event(self, event: dict[str, object]) -> None:
+        with self._request_condition:
+            self._compatibility_events.append({
+                "timestampUtc": datetime.now(timezone.utc).isoformat(),
+                **event,
+            })
+            if len(self._compatibility_events) > 128:
+                del self._compatibility_events[:-128]
 
     def detect_window(
         self,
@@ -1759,7 +1773,12 @@ class LlamaCppVisionClient:
             payload["top_k"] = effective_top_k
         use_disable_reasoning = self.disable_reasoning if disable_reasoning is None else disable_reasoning
         if use_disable_reasoning:
-            payload["reasoning_format"] = "none"
+            # Qwen's no-thinking template still emits an empty <think> prefix.
+            # llama.cpp's `none` parser leaves that token in the generated stream,
+            # where it conflicts with JSON grammar. `deepseek` extracts the empty
+            # reasoning channel while enable_thinking=False keeps reasoning off.
+            structured_output = response_schema is not None or json_response
+            payload["reasoning_format"] = "deepseek" if structured_output else "none"
             payload["chat_template_kwargs"] = {"enable_thinking": False}
         else:
             payload["reasoning_format"] = "deepseek"
@@ -1775,6 +1794,7 @@ class LlamaCppVisionClient:
         interaction = "llama-cpp vision chat completion"
         last_error: CriticalVlmInteractionError | None = None
         recovery_events: list[dict[str, object]] = []
+        reasoning_parser_retry_used = False
         for attempt_index in range(self.max_recovery_retries + 1):
             attempt_started = time.monotonic()
             attempt_client_generation = self._client_generation
@@ -1793,12 +1813,52 @@ class LlamaCppVisionClient:
                         "unsupported", "not supported", "unknown", "unrecognized", "unexpected"))
                 ]
                 compatibility_fallback_fields = unsupported_format_fields
-                if (
-                    "response_format" in payload
-                    and "unexpected empty grammar stack after accepting piece: <think>" in error_body
-                ):
-                    # Qwen's empty thought prefix can conflict with llama.cpp JSON grammar.
-                    compatibility_fallback_fields = ["response_format"]
+                if "unexpected empty grammar stack after accepting piece: <think>" in error_body:
+                    # Some llama.cpp chat templates force an empty <think> prefix
+                    # into the generated stream. With reasoning parsing disabled,
+                    # that token is outside the JSON grammar before structured
+                    # output begins. Keep thinking disabled and preserve the exact
+                    # response format, changing only the parser that extracts the
+                    # (empty) reasoning channel.
+                    can_retry_reasoning_parser = (
+                        not reasoning_parser_retry_used
+                        and payload.get("reasoning_format") == "none"
+                        and payload.get("chat_template_kwargs") == {"enable_thinking": False}
+                    )
+                    if can_retry_reasoning_parser:
+                        reasoning_parser_retry_used = True
+                        fallback_payload = dict(payload)
+                        fallback_payload["reasoning_format"] = "deepseek"
+                        compatibility_event = {
+                            "event": "reasoning_parser_compatibility_retry",
+                            "fromReasoningFormat": "none",
+                            "toReasoningFormat": "deepseek",
+                            "thinkingEnabled": False,
+                            "responseFormatPreserved": fallback_payload.get("response_format") == payload.get("response_format"),
+                            "explicitResponseSchema": response_schema is not None,
+                            "responseStatusCode": response.status_code,
+                        }
+                        self._record_compatibility_event(compatibility_event)
+                        recovery_events.append(dict(compatibility_event))
+                        remaining = (None if request_deadline is None
+                                     else request_deadline - time.monotonic())
+                        if remaining is not None and remaining <= 0:
+                            raise httpx.TimeoutException(
+                                "VLM request budget exhausted before reasoning-parser compatibility retry"
+                            )
+                        response = self._post_chat_completion(
+                            json=fallback_payload,
+                            timeout=remaining,
+                        )
+                        error_body = response.text.casefold() if response.status_code in {400, 422} else ""
+                        # This retry is intentionally one-shot. Do not fall through
+                        # to the older format-removal path for the same failure.
+                        compatibility_fallback_fields = []
+                if compatibility_fallback_fields and response_schema is not None:
+                    # Explicit source-evidence schemas carry exact, code-owned
+                    # choices. If a server rejects that schema, fail closed; a
+                    # free-form response cannot be treated as an equivalent.
+                    compatibility_fallback_fields = []
                 if compatibility_fallback_fields:
                     # Compatibility fallback must not turn thinking back on or
                     # repeat context-limit/server failures with altered semantics.
@@ -1811,6 +1871,14 @@ class LlamaCppVisionClient:
                         raise httpx.TimeoutException("VLM request budget exhausted before compatibility fallback")
                     fallback_request_kwargs: dict[str, object] = {"json": fallback_payload, "timeout": remaining}
                     response = self._post_chat_completion(**fallback_request_kwargs)
+                    compatibility_event = {
+                        "event": "legacy_format_compatibility_retry",
+                        "removedFields": list(compatibility_fallback_fields),
+                        "explicitResponseSchema": False,
+                        "responseStatusCode": response.status_code,
+                    }
+                    self._record_compatibility_event(compatibility_event)
+                    recovery_events.append(dict(compatibility_event))
                 if response.status_code >= 400:
                     body = response.text.strip()
                     if len(body) > 1200:

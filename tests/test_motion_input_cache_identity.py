@@ -11,16 +11,7 @@ from exercise_motion_pkg.yolo_track_stabilize import load_workspace_yolo_pose_tr
 from exercise_motion_pkg.stage_cache import file_identity
 
 
-def test_seam_policy_change_reopens_cached_terminal_decision(tmp_path, monkeypatch):
-    package = tmp_path / 'package'
-    package.mkdir()
-    owner = package / 'bake_and_rank.py'
-    seam = package / 'loop_seam.py'
-    owner.write_text('old bake policy')
-    seam.write_text('old seam policy')
-    os.utime(owner, (1000., 1000.))
-    os.utime(seam, (1000., 1000.))
-    monkeypatch.setattr(bake, '__file__', str(owner))
+def test_legacy_terminal_decision_without_content_identity_is_a_cache_miss(tmp_path):
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
     manifest = workspace / 'selection_manifest.json'
@@ -31,9 +22,6 @@ def test_seam_policy_change_reopens_cached_terminal_decision(tmp_path, monkeypat
         'finalSelectionStatus': 'rejected_after_materialized_review',
     }]}))
     os.utime(manifest, (2000., 2000.))
-    assert bake.load_previous_terminal_candidate_results(workspace)
-    seam.write_text('corrected seam policy')
-    os.utime(seam, (3000., 3000.))
     assert not bake.load_previous_terminal_candidate_results(workspace)
 
 

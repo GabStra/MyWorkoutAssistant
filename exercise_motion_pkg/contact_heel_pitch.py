@@ -116,7 +116,9 @@ def _measured_unknown_heel_pitches(constraint, points, names, projection, deadli
     geometry_payload = constraint.get('footGeometryPayload')
     if not image_rows or not calibration_rows or not isinstance(geometry_payload, dict):
         return [], [], {'eligibleUnknownObservationCount': 0,
-                        'resolvedUnknownGeometryCount': 0}
+                        'resolvedUnknownGeometryCount': 0,
+                        'resolvedUnknownDirectionOnlyCount': 0,
+                        'directionOnlyDetails': []}
 
     from .foot_geometry import sample_material_foot_points
 
@@ -264,9 +266,229 @@ def _measured_unknown_heel_pitches(constraint, points, names, projection, deadli
                 else:
                     detail = {**detail, 'sourceNoiseImageUnits': baseline['noise']}
                 pitches.append((enriched, float(delta)))
+
+    # Heel-image tracking can have a long gap while the toe ray remains
+    # continuously observed. A stationary, same-anchor toe is sufficient to
+    # carry *orientation* through an unknown heel sample; it does not resolve
+    # contact. Use empirical per-anchor toe-ray jitter and the existing ray
+    # cadence bound rather than extending the heel-observation bridge.
+    all_ray_rows = list(constraint.get('sourceFootRayObservations') or [])
+    ray_rows = [row for row in all_ray_rows
+                if row.get('state') in ('full_sole', 'toe_only')
+                and row.get('stationaryAnchorGroupId') is not None]
+    rays_by_key = {}
+    for row in ray_rows:
+        key = (row.get('sourceSide'), row.get('motionSide'),
+               row.get('stationaryAnchorGroupId'))
+        try:
+            ray_time = float(row['sourceTime'])
+            toe_point = np.asarray(row['toeImagePoint'], dtype=float)
+            confidence = float(row.get('confidenceWeight', 0.))
+        except (KeyError, TypeError, ValueError, OverflowError):
+            continue
+        if (not np.isfinite(ray_time) or toe_point.shape != (2,)
+                or not np.isfinite(toe_point).all() or not np.isfinite(confidence)
+                or confidence < .8):
+            continue
+        rays_by_key.setdefault(key, []).append(row)
+    for rows in rays_by_key.values():
+        rows.sort(key=lambda row: float(row['sourceTime']))
+
+    camera = ((geometry_payload.get('sourcePoseCameraReference') or {})
+              .get('sourcePose') or {})
+    try:
+        image_scale = np.asarray([float(camera['imageWidth']), float(camera['imageHeight'])])
+    except (KeyError, TypeError, ValueError, OverflowError):
+        image_scale = np.asarray([image_height, image_height])
+    if image_scale.shape != (2,) or not np.isfinite(image_scale).all() or np.any(image_scale <= 0.):
+        image_scale = np.asarray([image_height, image_height])
+
+    jitter_by_group = {}
+    ray_step_by_side = {}
+    for key, rows in rays_by_key.items():
+        times = np.asarray([float(row['sourceTime']) for row in rows], dtype=float)
+        positive = np.diff(times)
+        positive = positive[positive > 1e-8]
+        if positive.size:
+            ray_step_by_side.setdefault(key[:2], []).extend(positive.tolist())
+    for key, rows in rays_by_key.items():
+        cadence_values = ray_step_by_side.get(key[:2], [])
+        cadence = float(np.median(cadence_values)) if cadence_values else 0.
+        distances = []
+        for first, second in zip(rows, rows[1:]):
+            gap = float(second['sourceTime']) - float(first['sourceTime'])
+            if gap <= 0.:
+                continue
+            points_px = (np.asarray(first['toeImagePoint'], dtype=float) * image_scale,
+                         np.asarray(second['toeImagePoint'], dtype=float) * image_scale)
+            distances.append((gap, float(np.linalg.norm(points_px[1] - points_px[0]))))
+        bounded = [distance for gap, distance in distances
+                   if cadence > 0. and gap <= 2.5 * cadence]
+        if len(bounded) >= 3:
+            jitter_by_group[key] = float(np.percentile(bounded, 95.))
+
+    direction_only_details = []
+    resolved_keys = {(row.get('sourceSide'), round(float(row['sourceTime']), 6),
+                      row.get('motionSide')) for row, _delta in pitches}
+    for row in image_rows:
+        _check_deadline(deadline)
+        if str(row.get('state', 'unknown')).lower() != 'unknown':
+            continue
+        try:
+            source_time = float(row['sourceTime'])
+            source_vector = np.asarray(row['sourceHeelToToeVector'], dtype=float)
+            confidence = float(row['confidenceWeight'])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            continue
+        identity = (row.get('sourceSide'), round(source_time, 6), row.get('motionSide'))
+        if identity in resolved_keys or not np.isfinite(source_time):
+            continue
+        side = row.get('motionSide')
+        source_side = row.get('sourceSide')
+        if (side not in ('left', 'right') or not np.isfinite(source_vector).all()
+                or not np.isfinite(confidence) or confidence < .8):
+            continue
+        direct_ray = next((ray for ray in all_ray_rows
+                           if ray.get('sourceSide') == source_side
+                           and ray.get('motionSide') == side
+                           and str(ray.get('state', '')).lower() == 'unknown'
+                           and abs(float(ray.get('sourceTime', float('inf'))) - source_time)
+                           <= 1e-6), None)
+        if direct_ray is None:
+            continue
+        try:
+            direct_confidence = float(direct_ray['confidenceWeight'])
+            direct_point = np.asarray(direct_ray['toeImagePoint'], dtype=float) * image_scale
+        except (KeyError, TypeError, ValueError, OverflowError):
+            continue
+        if (not np.isfinite(direct_confidence) or direct_confidence < .8
+                or direct_point.shape != (2,) or not np.isfinite(direct_point).all()):
+            continue
+        try:
+            source_noise = float(row['sourceNoiseImageUnits'])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            continue
+        key_prefix = (source_side, side)
+        group_candidates = [key for key in baseline_by_group
+                            if key[:2] == key_prefix]
+        if not group_candidates:
+            continue
+        ray_cadence_values = ray_step_by_side.get(key_prefix, [])
+        ray_cadence = float(np.median(ray_cadence_values)) if ray_cadence_values else 0.
+        max_ray_gap = 2.5 * ray_cadence
+        selected = None
+        for group_key in group_candidates:
+            anchor_id = group_key[2]
+            group_rays = rays_by_key.get(group_key, [])
+            jitter = jitter_by_group.get(group_key)
+            if jitter is None or max_ray_gap <= 0.:
+                continue
+            neighbors = []
+            for ray in group_rays:
+                ray_time = float(ray['sourceTime'])
+                gap = abs(ray_time - source_time)
+                if gap <= max_ray_gap:
+                    point_px = np.asarray(ray['toeImagePoint'], dtype=float) * image_scale
+                    neighbors.append((gap, ray_time < source_time, point_px))
+            if not neighbors:
+                continue
+            nearest_gap, prior, nearest_point = min(neighbors, key=lambda item: item[0])
+            displacement_pixels = (
+                float(np.linalg.norm(direct_point - nearest_point))
+                if direct_point.shape == (2,) and np.isfinite(direct_point).all()
+                else float('inf'))
+            if (not np.isfinite(direct_point).all()
+                    or nearest_gap > max_ray_gap
+                    or displacement_pixels > jitter):
+                continue
+            selected = (group_key, anchor_id, jitter, nearest_gap, prior,
+                        displacement_pixels)
+            break
+        if selected is None:
+            continue
+        group_key, anchor_id, jitter, ray_gap, is_prior_ray, displacement_pixels = selected
+        baseline = baseline_by_group[group_key]
+        source_lift = float(np.dot(
+            source_vector - baseline['source'], baseline['liftDirection']))
+        effective_noise = max(float(source_noise), float(baseline['noise']))
+        if (not np.isfinite(source_lift) or not np.isfinite(effective_noise)
+                or abs(source_lift) > effective_noise):
+            continue
+        try:
+            cursor = float(row['leftFrame']) + float(row['alpha'])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            continue
+        ankle_index = names.index(f'{side}_ankle')
+        toe_index = names.index(f'{side}_foot')
+        left = int(np.clip(math.floor(cursor), 0, len(points) - 1))
+        right = min(left + 1, len(points) - 1)
+        alpha = cursor - math.floor(cursor)
+        native_pose = points[left] * (1. - alpha) + points[right] * alpha
+        native_bone = native_pose[toe_index] - native_pose[ankle_index]
+        native_length = float(np.linalg.norm(native_bone))
+        native_horizontal = native_bone.copy()
+        native_horizontal[1] = 0.
+        native_horizontal_length = float(np.linalg.norm(native_horizontal))
+        if native_length <= 1e-9 or native_horizontal_length <= 1e-9:
+            continue
+        native_heading = native_horizontal / native_horizontal_length
+        native_pitch = math.atan2(float(native_bone[1]), native_horizontal_length)
+        lift_direction = baseline['liftDirection']
+        a = float(np.dot(projection @ native_heading, lift_direction))
+        b = float(np.dot(projection @ np.array([0., 1., 0.]), lift_direction))
+        predicted_native_lift = (
+            -SHOE_LENGTH_RATIO * native_length
+            * (a * math.cos(native_pitch) + b * math.sin(native_pitch))
+            - float(np.dot(baseline['fit'], lift_direction))
+        )
+        native_pitch_matches_source_image = (
+            abs(predicted_native_lift - source_lift) <= effective_noise)
+        enriched = {
+            **row,
+            'motionSide': side,
+            'stationaryAnchorGroupId': anchor_id,
+            'baselineSourceVector': baseline['source'],
+            'baselineFitVector': baseline['fit'],
+            'liftDirection': baseline['liftDirection'],
+            'sourceNoiseImageUnits': max(float(source_noise), float(baseline['noise'])),
+            'toeImagePoint': direct_ray['toeImagePoint'],
+            'toeImageConfidenceWeight': direct_confidence,
+            'directionOnlyNeutralWithinNoise': True,
+            'toeStationarityEvidence': {
+                'sameAnchorGroupId': anchor_id,
+                'matchedRayGapSec': ray_gap,
+                'matchedRayWasPrior': is_prior_ray,
+                'maxRayGapSec': max_ray_gap,
+                'toeDisplacementPixels': displacement_pixels,
+                'calibratedSameAnchorJitterP95Pixels': jitter,
+                'contactResolved': False,
+            },
+            'nativePitchForwardProjectionLiftImageUnits': predicted_native_lift,
+            'nativePitchMatchesSourceImage': native_pitch_matches_source_image,
+        }
+        neutral_detail = {
+            'sourceTimeSec': source_time,
+            'sourceSide': source_side,
+            'motionSide': side,
+            'pitchDeltaDegrees': 0.,
+            'sourceLiftImageUnits': source_lift,
+            'sourceNoiseImageUnits': enriched['sourceNoiseImageUnits'],
+            'nativePitchForwardProjectionResidualImageUnits': (
+                predicted_native_lift - source_lift),
+            'nativePitchMatchesSourceImage': native_pitch_matches_source_image,
+            'resolvedAsNoiseBoundedDirectionOnly': True,
+            'contactResolved': False,
+            'toeStationarityEvidence': enriched['toeStationarityEvidence'],
+        }
+        pitches.append((enriched, 0.))
+        resolved_keys.add(identity)
+        direction_only_details.append(neutral_detail)
     return pitches, failures, {
         'eligibleUnknownObservationCount': int(eligible_count),
         'resolvedUnknownGeometryCount': int(len(pitches)),
+        'resolvedUnknownDirectionOnlyCount': sum(
+            bool(row.get('directionOnlyNeutralWithinNoise')) for row, _delta in pitches),
+        'directionOnlyDetails': direction_only_details,
     }
 
 
@@ -496,6 +718,34 @@ def propose_source_heel_pitch(rig, coordinates, payload, source_projection_const
     if pinned.shape != points.shape[:2]:
         raise ValueError('pinned mask must have shape (frames, joints)')
 
+    if 'sourceTimeOriginSec' in source_projection_constraint:
+        try:
+            declared_origin = float(source_projection_constraint['sourceTimeOriginSec'])
+        except (TypeError, ValueError, OverflowError):
+            declared_origin = float('nan')
+        if not np.isfinite(declared_origin):
+            base_directions = np.zeros((frame_count, 2, 3), dtype=float)
+            name_set = set(names)
+            for side_index, side in enumerate(('left', 'right')):
+                if not {f'{side}_ankle', f'{side}_foot'} <= name_set:
+                    continue
+                ankle, toe = names.index(f'{side}_ankle'), names.index(f'{side}_foot')
+                base_directions[:, side_index] = _unit(points[:, toe] - points[:, ankle])
+            return base_directions, {
+                'available': False, 'passed': False,
+                'reason': 'invalid_source_time_origin',
+                'eventCount': 0, 'inversionFailureCount': 0,
+                'observationCountBySide': {'left': 0, 'right': 0},
+                'pitchAuthorityMaskBySide': {
+                    side: np.zeros(frame_count, dtype=bool).tolist()
+                    for side in ('left', 'right')
+                },
+                'pitchTrajectoryMaskBySide': {
+                    side: np.zeros(frame_count, dtype=bool).tolist()
+                    for side in ('left', 'right')
+                },
+            }
+
     observations = source_projection_constraint.get('sourceFootHeelTrajectoryObservations') or []
     image_observations = source_projection_constraint.get('sourceFootHeelImageObservations') or []
     if not observations or not image_observations:
@@ -610,6 +860,14 @@ def propose_source_heel_pitch(rig, coordinates, payload, source_projection_const
         candidate_frame_times = np.asarray(frame_times_raw, dtype=float)
     except (TypeError, ValueError, OverflowError):
         candidate_frame_times = np.empty(0, dtype=float)
+    try:
+        source_time_origin = float(source_projection_constraint.get('sourceTimeOriginSec', 0.))
+    except (TypeError, ValueError, OverflowError):
+        source_time_origin = float('nan')
+    if np.isfinite(source_time_origin) and candidate_frame_times.ndim == 1:
+        candidate_frame_times = candidate_frame_times - source_time_origin
+    else:
+        candidate_frame_times = np.empty(0, dtype=float)
     if (candidate_frame_times.shape == (frame_count,)
             and np.isfinite(candidate_frame_times).all()
             and (frame_count < 2 or np.all(np.diff(candidate_frame_times) > 0.))):
@@ -640,9 +898,28 @@ def propose_source_heel_pitch(rig, coordinates, payload, source_projection_const
             continue
 
         fullsole = pinned[:, ankle_index] & pinned[:, toe_index]
+        side_geometry_pitches = []
+        for geometry_row, target_delta in unknown_geometry_pitches:
+            if geometry_row.get('motionSide') != side:
+                continue
+            if (geometry_row.get('directionOnlyNeutralWithinNoise')
+                    and geometry_row.get('nativePitchMatchesSourceImage')):
+                # Use native orientation only when its forward-projected heel
+                # lift agrees with the retained image evidence.
+                cursor = float(geometry_row['leftFrame']) + float(geometry_row['alpha'])
+                left = int(np.clip(math.floor(cursor), 0, frame_count - 1))
+                right = min(left + 1, frame_count - 1)
+                alpha = cursor - math.floor(cursor)
+                native_bone = ((points[right, toe_index] - points[right, ankle_index]) * alpha
+                               + (points[left, toe_index] - points[left, ankle_index]) * (1. - alpha))
+                native_horizontal = math.hypot(float(native_bone[0]), float(native_bone[2]))
+                if native_horizontal <= 1e-9:
+                    continue
+                target_delta = math.atan2(float(native_bone[1]), native_horizontal) - float(rest)
+            side_geometry_pitches.append((geometry_row, target_delta))
         pitch_delta, pitch_authority, pitch_trajectory, mapping_report = _shape_preserving_source_pitch(
             source_projection_constraint, frame_count, side, fullsole,
-            event_pitches, geometry_pitches=unknown_geometry_pitches,
+            event_pitches, geometry_pitches=side_geometry_pitches,
             frame_times=frame_times, fps=fps, deadline=deadline)
         count = mapping_report['observationCount']
         observation_counts[side] = count

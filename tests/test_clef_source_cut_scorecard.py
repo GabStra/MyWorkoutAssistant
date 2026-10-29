@@ -220,13 +220,11 @@ def test_dumbbell_pair_primary_type_covers_generic_title_alias_without_changing_
 
     assert requirements == [{
         "name": "Dumbbell Pair",
-        "normalizedName": "dumbbell pair",
+        "normalizedName": "dumbbell",
         "role": "active_implement",
+        "minimumObjectCount": 2,
     }]
-    assert bake.two_scale_required_equipment_names("Dumbbell Overhead Press", contract) == [
-        "dumbbell",
-        "dumbbell pair",
-    ]
+    assert bake.two_scale_required_equipment_names("Dumbbell Overhead Press", contract) == ["dumbbell"]
 
 
 def test_clef_request_error_blocks_unreviewed_candidate_but_keeps_other_valid_pass(tmp_path):
@@ -668,6 +666,80 @@ def test_materialized_clearance_is_bound_to_the_review_target_and_contract(tmp_p
     assert clearance["reason"] == "source_selection_target_or_contract_mismatch"
 
 
+def test_retained_clearance_accepts_equivalent_utc_offset_without_rewriting_receipt(tmp_path):
+    workspace, selected_segment, source_manifest_path = _write_source_clearance_fixture(tmp_path)
+    retained_contract = {
+        "exerciseName": "Example",
+        "advisoryText": "Approved exercise definition.",
+        "motionContext": {
+            "exerciseDefinition": {
+                "review": {
+                    "approvedAtUtc": "2026-10-22T13:27:56.244742+02:00",
+                    "reviewArtifactSha256": "review-artifact-a",
+                },
+            },
+        },
+    }
+    source_manifest = json.loads(source_manifest_path.read_text(encoding="utf-8"))
+    source_manifest["exerciseMotionContract"] = retained_contract
+    source_manifest_path.write_text(json.dumps(source_manifest), encoding="utf-8")
+    current_contract = json.loads(json.dumps(retained_contract))
+    current_contract["motionContext"]["exerciseDefinition"]["review"][
+        "approvedAtUtc"
+    ] = "2026-10-22T11:27:56.244742+00:00"
+
+    clearance = bake.source_selection_clearance_for_workspace(
+        workspace,
+        required=True,
+        expected_exercise_name="Example",
+        expected_contract=current_contract,
+    )
+
+    assert clearance["status"] == "cleared", clearance
+    assert clearance["exerciseMotionContractSha256"] == bake.exercise_motion_contract_prompt_sha256(
+        retained_contract
+    )
+    assert clearance["exerciseMotionContractSha256"] != bake.exercise_motion_contract_prompt_sha256(
+        current_contract
+    )
+    retained_manifest = {
+        "selected": {
+            "exerciseName": "Example",
+            "sourceSelectionClearance": clearance,
+        },
+    }
+    assert acceptance.source_selection_clearance_is_current(
+        retained_manifest,
+        source_policy_version=bake.SOURCE_SELECTION_POLICY_VERSION,
+        selected_source_path=selected_segment,
+        expected_exercise_name="Example",
+        expected_contract=current_contract,
+    )
+
+    changed_review = json.loads(json.dumps(current_contract))
+    changed_review["motionContext"]["exerciseDefinition"]["review"][
+        "reviewArtifactSha256"
+    ] = "different-review-artifact"
+    changed_time = json.loads(json.dumps(current_contract))
+    changed_time["motionContext"]["exerciseDefinition"]["review"][
+        "approvedAtUtc"
+    ] = "2026-10-22T11:27:56.244743+00:00"
+    for changed_contract in (changed_review, changed_time):
+        assert bake.source_selection_clearance_for_workspace(
+            workspace,
+            required=True,
+            expected_exercise_name="Example",
+            expected_contract=changed_contract,
+        )["status"] == "needs_source_review"
+        assert not acceptance.source_selection_clearance_is_current(
+            retained_manifest,
+            source_policy_version=bake.SOURCE_SELECTION_POLICY_VERSION,
+            selected_source_path=selected_segment,
+            expected_exercise_name="Example",
+            expected_contract=changed_contract,
+        )
+
+
 @pytest.mark.parametrize("authorized_parent", ["A", "missing-parent"])
 def test_retained_cycle_clearance_requires_exact_attempt_and_authorized_parent(
     tmp_path, authorized_parent
@@ -925,9 +997,11 @@ def test_production_cli_rejects_clef_backend_options(tmp_path):
     from exercise_motion_pkg.cli import build_parser
 
     parser = build_parser()
+    # `bake-and-rank` no longer accepts the removed reconstruction-repo-path
+    # CLI option; Docker reconstruction uses the configured body model root.
     base_args = [
         "bake-and-rank", "--candidates-json", str(tmp_path / "candidates.json"),
-        "--workspace", str(tmp_path), "--reconstruction-repo-path", str(tmp_path),
+        "--workspace", str(tmp_path),
         "--body-model-root", str(tmp_path),
     ]
     with pytest.raises(SystemExit):
@@ -958,7 +1032,7 @@ def test_production_visual_backend_defaults_to_qwen_and_manifest_defaults_are_in
 
     args = build_parser().parse_args([
         "bake-and-rank", "--candidates-json", str(tmp_path / "candidates.json"),
-        "--workspace", str(tmp_path), "--reconstruction-repo-path", str(tmp_path),
+        "--workspace", str(tmp_path),
         "--body-model-root", str(tmp_path),
     ])
     request = build_bake_and_rank_request(args)

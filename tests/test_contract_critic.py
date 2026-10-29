@@ -157,6 +157,68 @@ def test_definition_contract_does_not_promote_guessed_video_details() -> None:
     assert "startPoseConstraints" not in reused
 
 
+def test_approved_return_action_does_not_require_return_word_in_phase_labels() -> None:
+    defining_action = "Press the bar from behind the neck to overhead, then lower it behind the neck."
+    phases = ["start position behind neck", "press overhead", "lower behind neck"]
+    exercise = ExerciseEntry(
+        exercise_id="behind-neck-press",
+        name="Barbell Behind-the-Neck Press",
+        slug="barbell-behind-the-neck-press",
+        motion_context={"exerciseDefinition": {
+            "definingAction": defining_action,
+            "completionMode": "return_to_start",
+            "requiredPhases": phases,
+        }},
+    )
+    retained_response = {
+        "definingAction": defining_action,
+        "movementType": "repetition",
+        "groundContactMode": "continuous",
+        "implementSupportMode": "hands_only",
+        "handRelationship": "rigid_pair",
+        "completionMode": "return_to_start",
+        "requiredPhases": phases,
+        "actionDefinitionStatus": "defined",
+        "primaryMovingRegions": ["shoulders", "upper_limb"],
+        "referenceRegions": ["torso", "head"],
+        "primaryAxis": "vertical",
+        "motionPattern": "distal_limb_vertical",
+        "mustBeVisibleRegions": ["hands", "elbows", "shoulders", "torso", "head"],
+    }
+
+    contract = youtube.normalize_definition_exercise_motion_contract_response(
+        retained_response, exercise=exercise, source="llm",
+    )
+
+    assert contract["completionMode"] == "return_to_start"
+    assert contract["requiredPhases"] == phases
+    assert youtube.exercise_motion_contract_quality_issues(contract, exercise=exercise) == []
+    assert youtube.exercise_motion_contract_is_usable(contract, exercise=exercise)
+
+
+def test_completion_semantics_still_reject_contradictory_endpoints_and_phases() -> None:
+    constraints = _pose_fields()
+    return_contract = {
+        "completionMode": "return_to_start",
+        **constraints,
+        "requiredPhases": ["lower the bar behind the neck"],
+    }
+    return_contract["endPoseConstraints"]["stance"] = "shoulder_width"
+    assert "return_to_start endpoint pose constraints disagree" in (
+        youtube.exercise_motion_contract_quality_issues(return_contract)
+    )
+
+    distinct_contract = {
+        "completionMode": "distinct_end_state",
+        "validStartState": "standing with the bar at shoulder height",
+        "validEndState": "standing with the bar overhead",
+        "requiredPhases": ["press overhead, then return to the start"],
+    }
+    assert "distinct_end_state contract includes a return-to-start phase" in (
+        youtube.exercise_motion_contract_quality_issues(distinct_contract)
+    )
+
+
 def test_definition_contract_uses_authoritative_pair_equipment() -> None:
     exercise = ExerciseEntry(
         exercise_id="floor", name="Dumbbell Floor Press", slug="floor",

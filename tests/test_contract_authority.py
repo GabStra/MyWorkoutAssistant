@@ -85,6 +85,165 @@ def test_definition_contract_still_reuses_cache_and_top_level_seed(tmp_path, tar
     assert module.load_seed_exercise_motion_contract_from_candidates_json(seed, target)
 
 
+def test_current_approved_definition_reconciles_cached_and_seeded_contract_authority(tmp_path):
+    definition = {
+        "definingAction": "Roll the wheel forward from a kneeling brace, then draw it back to the kneeling start.",
+        "completionMode": "return_to_start",
+        "variantQualifiers": ["kneeling"],
+        "review": {
+            "status": "approved", "approvedAtUtc": "2026-10-25T08:48:08.692542+01:00",
+            "reviewArtifactSha256": "current-review",
+        },
+    }
+    target = module.ExerciseEntry(
+        exercise_id="ab-wheel", slug="ab-wheel-rollout", name="Ab Wheel Rollout",
+        motion_context={"exerciseDefinition": definition, "requiredAccessories": [{"id": "wheel"}]},
+    )
+    unresolved = {
+        "status": "generated", "source": "seeded_candidates_json", "exerciseName": target.name,
+        "contractScope": "definition_only", "contractPolicyVersion": module.EXERCISE_MOTION_CONTRACT_POLICY_VERSION,
+        "advisoryText": "Complete: Extend torso forward; Retract torso rolling implement back",
+        "movementType": "cyclic", "completionMode": "return_to_start", "requiresReturnToStart": True,
+        "actionDefinitionStatus": "defined", "actionDefinitionAuthority": "unresolved",
+        "definingAction": "Extend torso forward rolling implement",
+        "requiredPhases": ["Extend torso forward rolling implement", "Retract torso rolling implement back"],
+        "primaryMovingRegions": ["torso", "hips"],
+        "observableMotionSpec": {"primaryMovingRegions": ["torso", "hips"]},
+        "youtubeQueryAliases": [target.name], "motionContext": target.motion_context,
+    }
+    expected_action = definition["definingAction"]
+    settings = module.YouTubeRankingSettings(exercise_motion_contract_cache_dir=tmp_path / "cache")
+    cache_path = module.cache_exercise_motion_contract(target, settings, unresolved)
+    cached = module.load_cached_exercise_motion_contract(target, settings)
+    assert cache_path is not None and cached is not None
+    assert cached["actionDefinitionAuthority"] == "structured_definition"
+    assert cached["definingAction"] == expected_action
+    assert cached["requiredPhases"] == unresolved["requiredPhases"]
+    assert module.exercise_motion_action_definition_review_reason(cached) is None
+
+    seed = tmp_path / "candidates.json"
+    seed.write_text(json.dumps({"exercises": [{
+        "exerciseId": target.exercise_id, "exerciseName": target.name,
+        "motionContext": target.motion_context, "exerciseMotionContract": unresolved,
+    }]}))
+    seeded = module.load_seed_exercise_motion_contract_from_candidates_json(seed, target)
+    assert seeded is not None
+    assert seeded["actionDefinitionAuthority"] == "structured_definition"
+    assert seeded["definingAction"] == expected_action
+    assert seeded["requiredPhases"] == unresolved["requiredPhases"]
+    assert module.exercise_motion_action_definition_review_reason(seeded) is None
+
+    timezone_equivalent = deepcopy(unresolved)
+    timezone_equivalent["motionContext"]["exerciseDefinition"]["review"]["approvedAtUtc"] = (
+        "2026-10-25T07:48:08.692542Z"
+    )
+    seed.write_text(json.dumps({"exercises": [{
+        "exerciseId": target.exercise_id, "exerciseName": target.name,
+        "motionContext": target.motion_context, "exerciseMotionContract": timezone_equivalent,
+    }]}))
+    assert module.load_seed_exercise_motion_contract_from_candidates_json(seed, target) is not None
+
+    stale = deepcopy(unresolved)
+    stale["motionContext"] = {"exerciseDefinition": {**definition, "review": {
+        "status": "approved", "reviewArtifactSha256": "previous-review",
+    }}}
+    seed.write_text(json.dumps({"exercises": [{
+        "exerciseId": target.exercise_id, "exerciseName": target.name,
+        "motionContext": target.motion_context, "exerciseMotionContract": stale,
+    }]}))
+    assert module.load_seed_exercise_motion_contract_from_candidates_json(seed, target) is None
+
+
+def test_transition_sequence_does_not_promote_a_whole_action_to_its_phase_graph(target):
+    target = module.ExerciseEntry(
+        exercise_id=target.exercise_id, slug=target.slug, name=target.name,
+        motion_context={"exerciseDefinition": {
+        "definingAction": "Push-up, row on each side, then squat clean and overhead press.",
+        "completionMode": "distinct_end_state",
+        "review": {"status": "approved", "reviewArtifactSha256": "review"},
+        }},
+    )
+    proposed = {
+        "movementType": "transition_sequence", "completionMode": "distinct_end_state",
+        "actionDefinitionStatus": "defined", "actionDefinitionAuthority": "contract_proposal",
+        "definingAction": "Model paraphrase of the approved whole action.",
+        "requiredPhases": ["Push-up, row on each side, then squat clean and overhead press"],
+        "movementTopology": {"phases": [{"id": "phase_01", "label": "whole action"}]},
+    }
+
+    reconciled = module.reconcile_exercise_motion_contract_definition(proposed, target)
+    assert reconciled["definingAction"] == target.motion_context["exerciseDefinition"]["definingAction"]
+    assert "requiredPhases" not in reconciled
+    assert "movementTopology" not in reconciled
+    assert reconciled["requiredPhasesAuthority"] == "unresolved"
+    assert module.exercise_motion_action_definition_review_reason(reconciled) == "target_action_phase_graph_unresolved"
+
+
+def test_explicit_reviewed_transition_phase_graph_overrides_model_proposal(target):
+    approved_phases = ["Push-up from plank", "Row on each side", "Squat clean", "Overhead press"]
+    target = module.ExerciseEntry(
+        exercise_id=target.exercise_id, slug=target.slug, name=target.name,
+        motion_context={"exerciseDefinition": {
+        "definingAction": "Push-up, row on each side, then squat clean and overhead press.",
+        "completionMode": "distinct_end_state", "requiredPhases": approved_phases,
+        "review": {"status": "approved", "reviewArtifactSha256": "review"},
+        }},
+    )
+    reconciled = module.reconcile_exercise_motion_contract_definition({
+        "movementType": "transition_sequence", "completionMode": "distinct_end_state",
+        "actionDefinitionStatus": "defined", "requiredPhases": ["wrong phase"],
+        "movementTopology": {
+            "completionMode": "distinct_end_state",
+            "startState": {"id": "start_state", "label": "start"},
+            "phases": [{"id": "phase_01", "label": "wrong phase"}],
+            "endState": {"id": "end_state", "label": "finish"},
+        },
+    }, target)
+    assert reconciled["requiredPhases"] == approved_phases
+    assert reconciled["requiredPhasesAuthority"] == "structured_definition"
+    assert reconciled["movementTopology"]["phases"] == [
+        {"id": f"phase_{index + 1:02d}", "label": label}
+        for index, label in enumerate(approved_phases)
+    ]
+    assert module.exercise_motion_action_definition_review_reason(reconciled) is None
+
+
+def test_collapsed_transition_contract_cache_is_not_reused_under_current_policy(tmp_path, target, contract):
+    definition = {
+        "definingAction": "Push-up, row on each side, squat clean, then overhead press.",
+        "completionMode": "distinct_end_state",
+        "review": {"status": "approved", "reviewArtifactSha256": "review"},
+    }
+    target = module.ExerciseEntry(
+        exercise_id=target.exercise_id, slug=target.slug, name=target.name,
+        motion_context={"exerciseDefinition": definition},
+    )
+    stale = {
+        **contract,
+        "exerciseName": target.name,
+        "motionContext": target.motion_context,
+        "contractPolicyVersion": module.EXERCISE_MOTION_CONTRACT_POLICY_VERSION,
+        "contractScope": "definition_only",
+        "movementType": "transition_sequence",
+        "completionMode": "distinct_end_state",
+        "actionDefinitionStatus": "defined",
+        "actionDefinitionAuthority": "structured_definition",
+        "definingAction": definition["definingAction"],
+        "requiredPhases": [definition["definingAction"]],
+        "movementTopology": {"phases": [{"id": "phase_01", "label": definition["definingAction"]}]},
+    }
+    settings = module.YouTubeRankingSettings(exercise_motion_contract_cache_dir=tmp_path / "cache")
+    cache_path = module.exercise_motion_contract_cache_path(target, settings)
+    assert cache_path is not None
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(json.dumps({
+        "schemaVersion": module.EXERCISE_MOTION_CONTRACT_CACHE_VERSION,
+        "contract": stale,
+    }))
+
+    assert module.load_cached_exercise_motion_contract(target, settings) is None
+
+
 def test_contract_cache_survives_prompt_wording_changes(tmp_path, target, contract, monkeypatch):
     # Advisory prompt wording evolves with generation policy; without a policy
     # bump the exercise definition is unchanged and the cached contract must

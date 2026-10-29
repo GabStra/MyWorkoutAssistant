@@ -73,6 +73,21 @@ def test_lazy_worker_timeout_cleans_request(tmp_path, monkeypatch):
     assert not (tmp_path / "start_requested.json").exists()
 
 
+def test_candidate_deadline_caps_lazy_worker_startup(tmp_path, monkeypatch):
+    monkeypatch.setenv("EXERCISE_MOTION_GVHMR_LAZY_START", "1")
+    started = time.perf_counter()
+    with pytest.raises(TimeoutError, match="supervised GVHMR worker startup"):
+        reconstruction_runner.ensure_warm_worker_ready(
+            tmp_path,
+            timeout_seconds=30,
+            deadline=started + 0.08,
+            lazy_start_env_var="EXERCISE_MOTION_GVHMR_LAZY_START",
+            label="GVHMR",
+        )
+    assert time.perf_counter() - started < 0.5
+    assert not (tmp_path / "start_requested.json").exists()
+
+
 def test_existing_worker_needs_no_startup_request(tmp_path, monkeypatch):
     monkeypatch.delenv("EXERCISE_MOTION_GVHMR_LAZY_START", raising=False)
     write_ready(tmp_path)
@@ -93,12 +108,36 @@ def test_shared_vision_deadlines_are_independent(tmp_path):
     barrier = threading.Barrier(2)
 
     def set_deadline(value):
+        from exercise_motion_pkg.motion_scheduler import current_gpu_stage_deadline
+
         session.set_candidate_deadline(value)
         barrier.wait(timeout=2)
-        return session._candidate_deadlines.get()
+        return session._candidate_deadlines.get(), current_gpu_stage_deadline()
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        assert list(executor.map(set_deadline, [1.0, 2.0])) == [1.0, 2.0]
+        assert list(executor.map(set_deadline, [1.0, 2.0])) == [(1.0, 1.0), (2.0, 2.0)]
+
+
+def test_candidate_deadline_scope_restores_session_and_scheduler_context(tmp_path):
+    from exercise_motion_pkg.bake_and_rank import (
+        BakeAndRankRequest,
+        LazyLlamaCppVisionSession,
+        caption_candidate_deadline_scope,
+    )
+    from exercise_motion_pkg.motion_scheduler import current_gpu_stage_deadline
+
+    session = LazyLlamaCppVisionSession(BakeAndRankRequest(
+        candidates_json=tmp_path / "candidates.json", workspace=tmp_path,
+        body_model_root=None,
+    ))
+    deadline = time.perf_counter() + 10
+    with pytest.raises(RuntimeError, match="candidate failed"):
+        with caption_candidate_deadline_scope((session.caption_images,), deadline):
+            assert session._candidate_deadlines.get() == deadline
+            assert current_gpu_stage_deadline() == deadline
+            raise RuntimeError("candidate failed")
+    assert session._candidate_deadlines.get() is None
+    assert current_gpu_stage_deadline() is None
 
 
 def test_cache_only_wave_does_not_wait_for_unstarted_worker(tmp_path):

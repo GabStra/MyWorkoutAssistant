@@ -1067,6 +1067,95 @@ def test_workout_plan_wrapper_acknowledges_ctrl_c_immediately() -> None:
 
 
 @pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None, reason="PowerShell wrapper test requires Windows pwsh")
+@pytest.mark.parametrize("deadline_owner", ["source_checkpoint", "active_phase"])
+@pytest.mark.parametrize("queue_identity_matches,process_identity_matches", [
+    (True, True), (False, True), (True, False),
+])
+def test_staged_wave_deadline_supervisor_only_terminates_the_verified_owned_service(
+    tmp_path: Path, deadline_owner: str, queue_identity_matches: bool, process_identity_matches: bool,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    wrapper_path = repo_root / "scripts" / "run_exercise_motion_workout_plan.ps1"
+    queue_root = tmp_path / "queue"
+    wave_workspace = tmp_path / "wave"
+    for name in ("requests", "processing", "results", "diagnostics"):
+        (queue_root / name).mkdir(parents=True, exist_ok=True)
+    (queue_root / "processing" / "request.json").write_text("{}", encoding="utf-8")
+
+    command = textwrap.dedent(
+        r"""
+        $ErrorActionPreference = 'Stop'
+        $tokens = $null
+        $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($env:MOTION_WRAPPER_PATH, [ref]$tokens, [ref]$parseErrors)
+        if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
+        $functionAst = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Start-StagedBakeWaveJob' }, $true)
+        $startJob = $functionAst.Find({ param($node) $node -is [System.Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Start-Job' }, $true)
+        $scriptBlockIndex = -1
+        for ($i = 0; $i -lt $startJob.CommandElements.Count; $i++) {
+            if ($startJob.CommandElements[$i] -is [System.Management.Automation.Language.CommandParameterAst] -and $startJob.CommandElements[$i].ParameterName -eq 'ScriptBlock') { $scriptBlockIndex = $i + 1; break }
+        }
+        $waiterText = $startJob.CommandElements[$scriptBlockIndex].Extent.Text
+        $waiter = [scriptblock]::Create($waiterText.Substring(1, $waiterText.Length - 2))
+        $root = $env:MOTION_CASE_ROOT
+        $queue = Join-Path $root 'queue'
+        $wave = Join-Path $root 'wave'
+        New-Item -ItemType Directory -Force -Path $wave | Out-Null
+        $child = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @('-NoProfile', '-Command', 'Start-Sleep -Seconds 120') -PassThru -WindowStyle Hidden
+        $child.Refresh()
+        $deadline = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() / 1000.0 - 20.0
+        $sourceActivity = if ($env:MOTION_DEADLINE_OWNER -eq 'source_checkpoint') { @{ operation = 'blocked source operation'; operationDeadlineEpoch = $deadline } } else { $null }
+        @{ schemaVersion = 1; waveId = 'wave'; stage = 'source_validation'; items = @(@{ exerciseName = 'Bounded fixture'; sourceActivity = $sourceActivity }) } |
+            ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $wave 'staged_wave_checkpoint.json') -Encoding UTF8
+        $checkpointBefore = (Get-FileHash -LiteralPath (Join-Path $wave 'staged_wave_checkpoint.json') -Algorithm SHA256).Hash
+        $actualQueue = if ($env:MOTION_QUEUE_IDENTITY_MATCHES -eq 'true') { $queue } else { Join-Path $root 'different-queue' }
+        $actualIdentity = [long]$child.StartTime.ToUniversalTime().ToFileTimeUtc()
+        if ($env:MOTION_PROCESS_IDENTITY_MATCHES -ne 'true') { $actualIdentity++ }
+        $activeDeadlines = if ($env:MOTION_DEADLINE_OWNER -eq 'active_phase') { @{ fixture = @{ deadlineEpoch = $deadline; stage = 'bounded_fixture_phase' } } } else { @{} }
+        @{ schemaVersion = 1; queueRoot = $actualQueue; pid = $child.Id; processIdentity = $actualIdentity; updatedAtEpoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds(); status = 'running'; currentRequestId = 'request'; activeRequests = @(@{ requestId = 'request'; phase = 'starting'; activeDeadlines = $activeDeadlines }) } |
+            ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $queue 'worker_state.json') -Encoding UTF8
+        $global:StagedWaveAmbiguousRecoveryStatus = 'ambiguous_recovery'
+        $global:StagedWaveAmbiguousRecoveryExitCode = 76
+        $job = Start-Job -ScriptBlock $waiter -ArgumentList @((Join-Path $wave 'wave.log'), $wave, 'wave', 'request', $queue)
+        try {
+            if (-not (Wait-Job -Job $job -Timeout 15)) { throw 'The staged-wave waiter did not finish within its fixture bound.' }
+            $result = Receive-Job -Job $job
+            $stillRunning = $null -ne (Get-Process -Id $child.Id -ErrorAction SilentlyContinue)
+            $checkpointAfter = (Get-FileHash -LiteralPath (Join-Path $wave 'staged_wave_checkpoint.json') -Algorithm SHA256).Hash
+            [pscustomobject]@{ result = $result; childStillRunning = $stillRunning; checkpointUnchanged = $checkpointBefore -eq $checkpointAfter } | ConvertTo-Json -Depth 12 -Compress
+        } finally {
+            Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+            if (Get-Process -Id $child.Id -ErrorAction SilentlyContinue) { Stop-Process -Id $child.Id -Force }
+        }
+        """
+    )
+    env = os.environ.copy()
+    env["MOTION_WRAPPER_PATH"] = str(wrapper_path)
+    env["MOTION_CASE_ROOT"] = str(tmp_path)
+    env["MOTION_QUEUE_IDENTITY_MATCHES"] = str(queue_identity_matches).lower()
+    env["MOTION_PROCESS_IDENTITY_MATCHES"] = str(process_identity_matches).lower()
+    env["MOTION_DEADLINE_OWNER"] = deadline_owner
+    completed = subprocess.run(
+        ["pwsh", "-NoProfile", "-Command", command],
+        cwd=repo_root,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=25,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+    payload = json.loads(completed.stdout.strip().splitlines()[-1])
+    assert payload["checkpointUnchanged"] is True
+    if queue_identity_matches and process_identity_matches:
+        assert payload["childStillRunning"] is False, payload
+        assert payload["result"]["serviceStatus"] == "ambiguous_recovery"
+        assert "stack capture was unavailable" in payload["result"]["error"].lower()
+    else:
+        assert payload["childStillRunning"] is True
+
+
+@pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None, reason="PowerShell wrapper test requires Windows pwsh")
 def test_scheduler_failure_preserves_model_services_when_staged_worker_state_is_unknown(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     wrapper_path = repo_root / "scripts" / "run_exercise_motion_workout_plan.ps1"
@@ -2399,7 +2488,10 @@ def test_staged_service_restarts_after_source_identity_worker_exit(tmp_path: Pat
         foreach ($directoryName in @('requests', 'processing', 'results', 'ambiguous', 'cancelled_runs')) {
             New-Item -ItemType Directory -Force -Path (Join-Path $script:StagedWaveServiceQueueRoot $directoryName) | Out-Null
         }
-        Ensure-StagedBakeQueueService -MaxWaveItems 1
+        $ensureOutput = @(Ensure-StagedBakeQueueService -MaxWaveItems 1)
+        if ($ensureOutput.Count -ne 0) {
+            throw "Replacing the source-identity worker leaked pipeline output: $($ensureOutput -join ',')"
+        }
         if ($script:stateReadCount -ne 2 -or $script:startCount -ne 1) {
             throw 'A confirmed worker exit did not start a replacement generation.'
         }
@@ -2422,6 +2514,265 @@ def test_staged_service_restarts_after_source_identity_worker_exit(tmp_path: Pat
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "STAGED_SERVICE_SOURCE_RESTART_OK" in result.stdout
+
+
+@pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None, reason="PowerShell wrapper test requires Windows pwsh")
+def test_staged_service_stopping_generation_emits_no_pipeline_output(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    wrapper_path = repo_root / "scripts" / "run_exercise_motion_workout_plan.ps1"
+    command = textwrap.dedent(
+        r"""
+        $ErrorActionPreference = 'Stop'
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($env:MOTION_WRAPPER_PATH, [ref]$tokens, [ref]$parseErrors)
+        if ($parseErrors.Count -gt 0) { throw ($parseErrors | Out-String) }
+        $function = $ast.Find({ param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -eq 'Ensure-StagedBakeQueueService'
+        }, $true)
+        if ($null -eq $function) { throw 'Ensure-StagedBakeQueueService was not found.' }
+        Invoke-Expression $function.Extent.Text
+
+        $script:StagedWaveServiceQueueRoot = $env:MOTION_TEST_ROOT
+        $script:MotionSourceIdentityFingerprint = 'same-source'
+        $script:PythonCommand = 'python.exe'
+        $script:repoRoot = $env:MOTION_REPO_ROOT
+        $script:stateReadCount = 0
+        $script:startCount = 0
+        $stoppingProcess = [pscustomobject]@{}
+        $stoppingProcess | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value { param([int]$Milliseconds) return $true }
+        function Get-StagedBakeServiceConfigurationFingerprint { return 'same-configuration' }
+        function Get-StagedBakeQueueServiceState {
+            param([string]$QueueRoot)
+            $script:stateReadCount += 1
+            if ($script:stateReadCount -eq 1) {
+                return [pscustomobject]@{
+                    healthy = $false; processState = 'running'; matchingProcess = $true
+                    state = [pscustomobject]@{ pid = 79216; status = 'stopping' }
+                    process = $stoppingProcess
+                }
+            }
+            if ($script:stateReadCount -eq 2) {
+                return [pscustomobject]@{
+                    healthy = $false; processState = 'stopped'; matchingProcess = $false
+                    state = [pscustomobject]@{ pid = 79216; status = 'stopped' }; process = $null
+                }
+            }
+            return [pscustomobject]@{
+                healthy = $false; processState = 'stopped'; matchingProcess = $false
+                state = [pscustomobject]@{ pid = 79216; status = 'stopped' }; process = $null
+            }
+        }
+        function Start-StagedBakeQueueServiceGeneration { $script:startCount += 1 }
+
+        foreach ($directoryName in @('requests', 'processing', 'results', 'ambiguous', 'cancelled_runs')) {
+            New-Item -ItemType Directory -Force -Path (Join-Path $script:StagedWaveServiceQueueRoot $directoryName) | Out-Null
+        }
+        $output = @(Ensure-StagedBakeQueueService -MaxWaveItems 1)
+        if ($output.Count -ne 0) { throw "Stopping-generation wait leaked pipeline output: $($output -join ',')" }
+        if ($script:stateReadCount -ne 2 -or $script:startCount -ne 1) {
+            throw 'A stopped generation was not replaced after its process exited.'
+        }
+        'STAGED_SERVICE_STOPPING_OUTPUT_OK'
+        """
+    )
+    env = os.environ.copy()
+    env["MOTION_WRAPPER_PATH"] = str(wrapper_path)
+    env["MOTION_TEST_ROOT"] = str(tmp_path / "queue")
+    env["MOTION_REPO_ROOT"] = str(repo_root)
+    result = subprocess.run(
+        ["pwsh", "-NoProfile", "-Command", command],
+        cwd=repo_root,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "STAGED_SERVICE_STOPPING_OUTPUT_OK" in result.stdout
+
+
+@pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None, reason="PowerShell wrapper test requires Windows pwsh")
+def test_gvhmr_startup_error_releases_worker_lease(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    wrapper_path = repo_root / "scripts" / "run_exercise_motion_workout_plan.ps1"
+    command = textwrap.dedent(
+        r"""
+        $ErrorActionPreference = 'Stop'
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($env:MOTION_WRAPPER_PATH, [ref]$tokens, [ref]$parseErrors)
+        if ($parseErrors.Count -gt 0) { throw ($parseErrors | Out-String) }
+        foreach ($name in @('Start-GvhmrWarmWorkerSingle', 'Stop-GvhmrWarmWorker')) {
+            $function = $ast.Find({ param($node)
+                $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+            }, $true)
+            if ($null -eq $function) { throw "Function $name was not found." }
+            Invoke-Expression $function.Extent.Text
+        }
+
+        $script:testSessionDir = $env:MOTION_TEST_SESSION
+        $script:dockerStopCount = 0
+        $script:leaseReleaseCount = 0
+        $script:GvhmrWorkerStartedOnce = $false
+        $ReconstructionDockerGpus = 'all'
+        $ReconstructionDockerImage = 'test-image'
+        $GvhmrWorkerStartupTimeoutSeconds = 5
+        function Acquire-MotionServiceSessionLease { param([string]$SessionDirectory, [string]$Stage) return $SessionDirectory }
+        function Set-MotionServiceSessionRuntimeOwner { }
+        function Set-MotionServiceSessionState { }
+        function Release-MotionServiceSessionLease { param([string]$SessionDirectory) $script:leaseReleaseCount += 1; return 'stopped' }
+        function Test-MotionRunCancelRequested { return $false }
+        function docker {
+            param([Parameter(ValueFromRemainingArguments = $true)][string[]]$DockerArgs)
+            if ($DockerArgs[0] -eq 'run') {
+                '{"error":"synthetic startup failure"}' | Set-Content -LiteralPath (Join-Path $script:testSessionDir 'startup_error.json')
+                $global:LASTEXITCODE = 0
+                return 'test-container-id'
+            }
+            if ($DockerArgs[0] -eq 'logs') { $global:LASTEXITCODE = 0; return 'synthetic worker log' }
+            if ($DockerArgs[0] -eq 'stop') { $script:dockerStopCount += 1; $global:LASTEXITCODE = 0; return }
+            throw "Unexpected docker invocation: $($DockerArgs -join ' ')"
+        }
+
+        New-Item -ItemType Directory -Force -Path $script:testSessionDir | Out-Null
+        $threw = $false
+        try {
+            Start-GvhmrWarmWorkerSingle `
+                -SessionDir $script:testSessionDir `
+                -MountRoot $env:MOTION_TEST_SESSION `
+                -WorkerScriptPath (Join-Path $env:MOTION_REPO_ROOT 'exercise_motion_pkg/gvhmr_warm_worker.py')
+        } catch {
+            $threw = $_.Exception.Message -like '*failed during startup*'
+        }
+        if (-not $threw) { throw 'The synthetic worker startup failure was not propagated.' }
+        if ($script:dockerStopCount -ne 1 -or $script:leaseReleaseCount -ne 1) {
+            throw "Startup failure did not clean up the worker and lease: stops=$script:dockerStopCount releases=$script:leaseReleaseCount"
+        }
+        if (-not (Test-Path -LiteralPath (Join-Path $script:testSessionDir 'stopped.json'))) {
+            throw 'Startup failure did not publish stopped session state.'
+        }
+        'GVHMR_STARTUP_ERROR_CLEANUP_OK'
+        """
+    )
+    env = os.environ.copy()
+    env["MOTION_WRAPPER_PATH"] = str(wrapper_path)
+    env["MOTION_TEST_SESSION"] = str(tmp_path / "session")
+    env["MOTION_REPO_ROOT"] = str(repo_root)
+    result = subprocess.run(
+        ["pwsh", "-NoProfile", "-Command", command],
+        cwd=repo_root,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "GVHMR_STARTUP_ERROR_CLEANUP_OK" in result.stdout
+
+
+@pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None, reason="PowerShell wrapper test requires Windows pwsh")
+def test_staged_wave_job_returns_only_the_job_after_source_worker_replacement(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    wrapper_path = repo_root / "scripts" / "run_exercise_motion_workout_plan.ps1"
+    command = textwrap.dedent(
+        r"""
+        $ErrorActionPreference = 'Stop'
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($env:MOTION_WRAPPER_PATH, [ref]$tokens, [ref]$parseErrors)
+        if ($parseErrors.Count -gt 0) { throw ($parseErrors | Out-String) }
+        foreach ($name in @('Ensure-StagedBakeQueueService', 'Publish-StagedBakeQueueRequest', 'Start-StagedBakeWaveJob')) {
+            $function = $ast.Find({ param($node)
+                $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+            }, $true)
+            if ($null -eq $function) { throw "Function $name was not found." }
+            Invoke-Expression $function.Extent.Text
+        }
+
+        $root = $env:MOTION_TEST_ROOT
+        $script:StagedWaveServiceQueueRoot = Join-Path $root 'queue'
+        $script:MotionSourceIdentityFingerprint = 'new-source'
+        $script:resolvedWorkspaceRoot = Join-Path $root 'workspace'
+        $script:movementRunId = 'output-regression'
+        $script:sourceReviewTurnId = 'source-review'
+        $script:effectiveWarmGvhmrWorker = $false
+        $script:effectiveMaxConcurrentStagedWaves = 1
+        $script:stateReadCount = 0
+        $script:serviceStartCount = 0
+        $script:PythonCommand = 'python.exe'
+        $StagedWaveSize = 1
+        function Get-StagedBakeServiceConfigurationFingerprint { return 'same-configuration' }
+        $oldProcess = [pscustomobject]@{}
+        $oldProcess | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value { param([int]$Milliseconds) return $true }
+        function Get-StagedBakeQueueServiceState {
+            param([string]$QueueRoot)
+            $script:stateReadCount += 1
+            if ($script:stateReadCount -eq 1) {
+                return [pscustomobject]@{
+                    healthy = $true; processState = 'running'; matchingProcess = $true
+                    state = [pscustomobject]@{ pid = 79216; status = 'idle'; sourceIdentityFingerprint = 'old-source'; serviceConfigurationFingerprint = 'same-configuration' }
+                    process = $oldProcess
+                }
+            }
+            if ($script:stateReadCount -eq 2) {
+                return [pscustomobject]@{
+                    healthy = $false; processState = 'stopped'; matchingProcess = $false
+                    state = [pscustomobject]@{ pid = 79216; status = 'stopped' }; process = $null
+                }
+            }
+            return [pscustomobject]@{
+                healthy = $true; processState = 'running'; matchingProcess = $true
+                state = [pscustomobject]@{ pid = 79217; status = 'idle'; sourceIdentityFingerprint = 'new-source'; serviceConfigurationFingerprint = 'same-configuration' }
+                process = [pscustomobject]@{}
+            }
+        }
+        function Start-StagedBakeQueueServiceGeneration { $script:serviceStartCount += 1 }
+        function Invoke-WithStagedWaveAdmissionLock {
+            param([string]$QueueRoot, [switch]$IncludeLegacyCompatibility, [scriptblock]$Operation)
+            return (& $Operation)
+        }
+        function Start-Job {
+            param([string]$Name, [scriptblock]$ScriptBlock, [object[]]$ArgumentList)
+            return [pscustomobject]@{ Name = $Name; marker = 'actual-job' }
+        }
+        foreach ($directoryName in @('requests', 'processing', 'results', 'ambiguous', 'cancelled_runs')) {
+            New-Item -ItemType Directory -Force -Path (Join-Path $script:StagedWaveServiceQueueRoot $directoryName) | Out-Null
+        }
+        $candidatePath = Join-Path $root 'candidates.json'
+        $planPath = Join-Path $root 'plan.json'
+        '{}' | Set-Content -LiteralPath $candidatePath
+        '{}' | Set-Content -LiteralPath $planPath
+        $workItem = [pscustomobject]@{
+            exerciseId = 'test-exercise'; exerciseName = 'Test Exercise'
+            exerciseCandidatesPath = $candidatePath; exercisePlanPath = $planPath
+            bakeWorkspace = (Join-Path $root 'bake'); exerciseWorkspace = (Join-Path $root 'exercise')
+            bakeArgs = @('python.exe', 'cli.py', '--example')
+        }
+        $jobs = @(Start-StagedBakeWaveJob -WorkItems @($workItem) -WaveIndex 1)
+        if ($jobs.Count -ne 1 -or $jobs[0].marker -ne 'actual-job') {
+            throw "Staged wave returned unexpected pipeline objects: count=$($jobs.Count), values=$($jobs | ConvertTo-Json -Compress)"
+        }
+        if ($script:stateReadCount -ne 3 -or $script:serviceStartCount -ne 1) {
+            throw 'Source-identity replacement did not finish before the staged request was published.'
+        }
+        'STAGED_WAVE_JOB_OUTPUT_OK'
+        """
+    )
+    env = os.environ.copy()
+    env["MOTION_WRAPPER_PATH"] = str(wrapper_path)
+    env["MOTION_TEST_ROOT"] = str(tmp_path)
+    result = subprocess.run(
+        ["pwsh", "-NoProfile", "-Command", command],
+        cwd=repo_root,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "STAGED_WAVE_JOB_OUTPUT_OK" in result.stdout
 
 
 def test_motion_runner_writes_owned_partial_outcome_and_library_rejects_stale_summary(tmp_path: Path) -> None:

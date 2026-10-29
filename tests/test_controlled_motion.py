@@ -5,7 +5,132 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
-from exercise_motion_pkg.controlled_motion import FixedRig, body_relative_points, controlled_target, fit_controlled_motion
+from exercise_motion_pkg.controlled_motion import (
+    FixedRig, body_relative_points, controlled_target, fit_controlled_motion,
+    playback_validation_checks, playback_validation_exception,
+    source_knee_envelope_metrics,
+)
+
+
+def test_cyclic_playback_failure_without_seam_evidence_fails_closed():
+    playback = {'passed': False, 'reason': 'support_corrected_reference_invalid'}
+
+    assert playback_validation_checks(playback, cyclic=True) == {
+        'playback': False,
+        'loopSeam': False,
+    }
+    assert playback['reason'] == 'support_corrected_reference_invalid'
+    assert playback_validation_checks(
+        {'passed': True, 'seamContinuous': True}, cyclic=True) == {
+            'playback': True,
+            'loopSeam': True,
+        }
+
+
+def test_playback_validator_exception_becomes_retained_failure_evidence():
+    playback = playback_validation_exception(KeyError('missing seamContinuous'))
+
+    assert playback['passed'] is False
+    assert playback['reason'] == 'playback_validation_exception'
+    assert playback['validationError'] == "KeyError: 'missing seamContinuous'"
+    assert playback_validation_checks(playback, cyclic=True) == {
+        'playback': False,
+        'loopSeam': False,
+    }
+
+
+def test_stage_b_seam_progress_uses_rendered_derivative_over_sample_proxy():
+    from exercise_motion_pkg.controlled_motion import seam_over_limit_ratios
+
+    playback = {
+        'seamStepExcessMeters': 0.5,
+        'seamStepExcessLimitMeters': 1.,
+        'seamVelocityMismatchMetersPerSecond': 3.,
+        'seamVelocityMismatchLimitMetersPerSecond': 1.,
+        'seamRenderedVelocityJumpMetersPerSecond': 0.1,
+        'seamRenderedVelocityJumpLimitMetersPerSecond': 1.,
+    }
+
+    assert seam_over_limit_ratios(playback) == [0.5, 0.1]
+
+
+def test_seam_repair_does_not_mutate_proxy_velocity_only_failure():
+    from exercise_motion_pkg.controlled_motion import (
+        close_loop_seam_coordinates, project_loop_seam_coordinates)
+    from exercise_motion_pkg.loop_seam import (
+        MAX_VELOCITY_MISMATCH_BODY_RATIO, seam_errors)
+    from exercise_motion_pkg.physical_validation import body_scale
+
+    names, points = stance(4)
+    rig = FixedRig(points, names)
+    coordinates = rig.initial.copy()
+    coordinates[:, 0] += [0., .01, .02, .01]
+    decoded = rig.decode(coordinates)
+    scale = body_scale(decoded, names)
+    proxy_velocity = float(np.max(np.linalg.norm(seam_errors(decoded)[2], axis=-1))) * 30.
+    assert proxy_velocity > MAX_VELOCITY_MISMATCH_BODY_RATIO * scale
+
+    nudged = close_loop_seam_coordinates(
+        coordinates, rig, np.zeros((4, len(names)), dtype=bool), scale=scale, fps=30.)
+    projected = project_loop_seam_coordinates(
+        coordinates, rig, np.zeros((4, len(names)), dtype=bool),
+        scale=scale, fps=30.)
+
+    np.testing.assert_array_equal(nudged, coordinates)
+    np.testing.assert_array_equal(projected, coordinates)
+
+
+def test_stationary_body_support_does_not_extend_timed_foot_pins_to_unknown_rows():
+    from exercise_motion_pkg.controlled_motion import add_body_support_stationary_pins
+
+    names = ['left_ankle', 'left_foot', 'pelvis']
+    pins = np.zeros((3, len(names)), dtype=bool)
+    pins[:2, :2] = True
+    body_support = {'stationaryJoints': names}
+    timed_evidence = {
+        'footPatchEvidence': {'available': True},
+        '_fitFrameStateIndices': [0, 1, -1],
+        'contacts': [{'jointName': 'left_foot', 'contactState': 'full_sole',
+                      '_fitFrameBounds': [0, 1], '_fitFrameCount': 3}],
+    }
+
+    result = add_body_support_stationary_pins(pins, names, body_support, timed_evidence)
+
+    np.testing.assert_array_equal(result[:, 0], [True, True, False])
+    np.testing.assert_array_equal(result[:, 1], [True, True, False])
+    np.testing.assert_array_equal(result[:, 2], [True, True, True])
+
+    legacy = add_body_support_stationary_pins(
+        pins[:, :2], names[:2], {'stationaryJoints': names[:2]}, {})
+    assert legacy.all()
+
+
+def test_source_knee_envelope_matches_materialized_selector_limit():
+    names = ['left_hip', 'left_knee', 'left_ankle',
+             'right_hip', 'right_knee', 'right_ankle']
+
+    def make_points(left_angles, right_angles):
+        points = np.zeros((len(left_angles), len(names), 3), dtype=float)
+        for frame_index, (left_angle, right_angle) in enumerate(zip(left_angles, right_angles)):
+            for side, angle_degrees in (('left', left_angle), ('right', right_angle)):
+                hip, knee, ankle = (names.index(f'{side}_{joint}')
+                                    for joint in ('hip', 'knee', 'ankle'))
+                angle = np.deg2rad(angle_degrees)
+                points[frame_index, hip] = (0., 0., 0.)
+                points[frame_index, knee] = (1., 0., 0.)
+                points[frame_index, ankle] = (1. - np.cos(angle), np.sin(angle), 0.)
+        return points
+
+    source = make_points([126., 145., 165.], [126.152968, 145., 166.8393449552])
+    over_limit = make_points([126., 145., 165.], [126.152968, 145., 173.873209])
+    at_limit = make_points([126., 145., 165.], [126.152968, 145., 172.8393449552])
+
+    rejected = source_knee_envelope_metrics(source, over_limit, names)
+    accepted = source_knee_envelope_metrics(source, at_limit, names)
+    assert rejected['passed'] is False
+    assert rejected['sourceEnvelopes']['right_knee']['maximumPreventedExcessDegrees'] == pytest.approx(6.033864, abs=1e-5)
+    assert accepted['passed'] is True
+    assert accepted['sourceEnvelopes']['right_knee']['maximumPreventedExcessDegrees'] == pytest.approx(5.0, abs=1e-5)
 
 
 def test_contact_iterate_selection_distinguishes_stored_precision_from_playback_allowance():
@@ -262,6 +387,138 @@ def test_fit_continuation_must_strictly_improve_failed_checks():
     assert motion.fit_report_improves_acceptance(previous, {
         'applied': True, 'checks': {name: True for name in previous['checks']},
     })
+
+
+def test_source_support_near_miss_progress_is_retained_with_all_gates_preserved():
+    from copy import deepcopy
+
+    from exercise_motion_pkg import controlled_motion as motion
+
+    previous = {
+        'applied': False,
+        'checks': {'sourceSupportTrajectory': False, 'contacts': True, 'playback': True},
+        'sourceSupportTrajectory': {
+            'relativePathRmsBodyRatio': 0.123,
+            'maximumRmsBodyRatio': 0.12,
+            'minimumRelevantTravelRetentionRatio': 0.9,
+            'minimumTravelRetentionRatio': 0.8,
+        },
+        'playback': {'passed': True, 'contactPassed': True, 'heightOnlyContactsPassed': True},
+    }
+    improved = deepcopy(previous)
+    improved['sourceSupportTrajectory']['relativePathRmsBodyRatio'] = 0.1201
+
+    progress = motion.fit_report_acceptance_progress(previous, improved)
+    assert progress['improved']
+    assert progress['reason'] == 'normalized_failed_gate_violation_reduced'
+    assert progress['improvedChecks'] == ['sourceSupportTrajectory']
+    assert progress['violationMetricsBefore']['sourceSupportTrajectory'] == {
+        'relativePathRmsBodyRatio': 0.123 / 0.12 - 1.,
+        'minimumTravelRetentionRatio': 0.,
+    }
+    assert progress['violationMetricsAfter']['sourceSupportTrajectory'][
+        'relativePathRmsBodyRatio'] < progress['violationMetricsBefore'][
+            'sourceSupportTrajectory']['relativePathRmsBodyRatio']
+    assert motion.fit_report_improves_acceptance(previous, improved)
+
+    unchanged = deepcopy(previous)
+    assert not motion.fit_report_improves_acceptance(previous, unchanged)
+    regressed = deepcopy(improved)
+    regressed['sourceSupportTrajectory']['minimumRelevantTravelRetentionRatio'] = 0.79
+    assert not motion.fit_report_improves_acceptance(previous, regressed)
+    dropped_gate = deepcopy(improved)
+    dropped_gate['checks']['contacts'] = False
+    assert not motion.fit_report_improves_acceptance(previous, dropped_gate)
+    simultaneous_failure = deepcopy(previous)
+    simultaneous_failure['checks']['jerk'] = False
+    simultaneous_trial = deepcopy(improved)
+    simultaneous_trial['checks']['jerk'] = False
+    assert not motion.fit_report_improves_acceptance(
+        simultaneous_failure, simultaneous_trial)
+
+
+def test_polish_cannot_regress_or_drop_a_previously_passing_gate():
+    from exercise_motion_pkg import controlled_motion as motion
+
+    previous = {'applied': False, 'checks': {
+        'playback': False, 'sourceKneeEnvelope': True, 'contacts': True,
+    }}
+    trial_regresses_knee = {'applied': False, 'checks': {
+        'playback': True, 'sourceKneeEnvelope': False, 'contacts': True,
+    }}
+    trial_drops_knee = {'applied': False, 'checks': {
+        'playback': True, 'contacts': True,
+    }}
+
+    assert not motion.fit_report_preserves_passed_checks(previous, trial_regresses_knee)
+    assert not motion.fit_report_improves_acceptance(previous, trial_regresses_knee)
+    assert not motion.fit_report_preserves_passed_checks(previous, trial_drops_knee)
+    assert not motion.fit_report_improves_acceptance(previous, trial_drops_knee)
+
+    valid_improvement = {'applied': False, 'checks': {
+        'playback': True, 'sourceKneeEnvelope': True, 'contacts': True,
+    }}
+    assert motion.fit_report_preserves_passed_checks(previous, valid_improvement)
+    assert motion.fit_report_improves_acceptance(previous, valid_improvement)
+
+
+def test_playback_repair_preserves_nested_contact_and_floor_gates():
+    from copy import deepcopy
+
+    from exercise_motion_pkg import controlled_motion as motion
+    from exercise_motion_pkg.rig_playback import (
+        PLAYBACK_CONTACT_LIMIT_METERS,
+        PLAYBACK_FLOOR_LIMIT_METERS,
+    )
+
+    previous = {
+        'checks': {'playback': False, 'sourceKneeEnvelope': True},
+        'playback': {
+            'passed': False,
+            'maximumContactErrorMeters': PLAYBACK_CONTACT_LIMIT_METERS * 0.8,
+            'maximumStoredFrameContactErrorMeters': PLAYBACK_CONTACT_LIMIT_METERS * 0.8,
+            'maximumHeightOnlyContactErrorMeters': PLAYBACK_FLOOR_LIMIT_METERS * 0.8,
+            'maximumStoredFrameHeightOnlyContactErrorMeters': PLAYBACK_FLOOR_LIMIT_METERS * 0.8,
+            'maximumFloorPenetrationMeters': PLAYBACK_FLOOR_LIMIT_METERS * 0.8,
+            'materialShoes': {
+                'required': True,
+                'passed': False,
+                'maximumSurfacePenetrationMeters': PLAYBACK_FLOOR_LIMIT_METERS * 2.,
+                'maximumFullSoleContactErrorMeters': PLAYBACK_CONTACT_LIMIT_METERS * 0.8,
+            },
+            'equipment': {'passed': True},
+        },
+    }
+
+    # Repairing the failing shoe penetration cannot trade away contact or floor
+    # subchecks that were already within their own production limits.
+    regressed_contact = deepcopy(previous)
+    regressed_contact['playback']['maximumContactErrorMeters'] = (
+        PLAYBACK_CONTACT_LIMIT_METERS * 1.01)
+    regressed_contact['playback']['materialShoes']['maximumSurfacePenetrationMeters'] = (
+        PLAYBACK_FLOOR_LIMIT_METERS * 1.5)
+    assert not motion.fit_report_preserves_passed_checks(previous, regressed_contact)
+
+    regressed_floor = deepcopy(previous)
+    regressed_floor['playback']['maximumFloorPenetrationMeters'] = (
+        PLAYBACK_FLOOR_LIMIT_METERS * 1.01)
+    regressed_floor['playback']['materialShoes']['maximumSurfacePenetrationMeters'] = (
+        PLAYBACK_FLOOR_LIMIT_METERS * 1.5)
+    assert not motion.fit_report_preserves_passed_checks(previous, regressed_floor)
+
+    improved_target_without_regression = deepcopy(previous)
+    improved_target_without_regression['playback']['materialShoes'][
+        'maximumSurfacePenetrationMeters'] = PLAYBACK_FLOOR_LIMIT_METERS * 1.5
+    assert motion.fit_report_preserves_passed_checks(
+        previous, improved_target_without_regression)
+
+    dropped_nested_check = deepcopy(improved_target_without_regression)
+    dropped_nested_check['playback'].pop('equipment')
+    assert not motion.fit_report_preserves_passed_checks(previous, dropped_nested_check)
+
+    missing_playback_report = deepcopy(previous)
+    missing_playback_report.pop('playback')
+    assert not motion.fit_report_preserves_passed_checks(previous, missing_playback_report)
 
 
 def test_bounded_anatomy_projection_compares_trial_with_baseline_report(monkeypatch):
@@ -1435,7 +1692,7 @@ def test_cyclic_fit_evaluates_all_seam_residuals_with_matching_dependencies(monk
         return errors, labels
     monkeypatch.setattr(motion, 'anatomical_structure_residuals', record_structure)
     neck_slot = FixedRig(points, names).slots[names.index('neck')]
-    def solve(residual, initial, pattern, max_evaluations):
+    def solve(residual, initial, pattern, max_evaluations, **kwargs):
         errors = residual(initial)
         assert pattern.shape == (len(errors), len(initial))
         assert np.isfinite(errors).all()
@@ -1451,7 +1708,9 @@ def test_cyclic_fit_evaluates_all_seam_residuals_with_matching_dependencies(monk
         calls.append(True)
         return SimpleNamespace(x=initial, nfev=1, status=0)
     monkeypatch.setattr(motion, 'solve_trajectory', solve)
-    motion.fit_controlled_motion(current, timeout_seconds=10.)
+    # This test replaces the numerical solver, so allow the wrapper enough
+    # budget to enter the retained-interval fit and exercise its Jacobian.
+    motion.fit_controlled_motion(current, timeout_seconds=150.)
     assert calls
 
 
@@ -1531,11 +1790,46 @@ def test_source_projection_constraint_enters_the_production_fit_jacobian(monkeyp
             'bilateralAssignment': 'identity',
         },
     }
+    # The source observations are stored against a selected cut whose local
+    # timestamps begin at zero. Bind them to the exact parent exposures so the
+    # fit must use per-frame lineage rather than adding the requested cut start.
+    from exercise_motion_pkg.pose_fidelity import _canonical_source_pose_sha256
+    selected_source_sha = 'a' * 64
+    parent_source_sha = 'b' * 64
+    selected_receipt_sha = 'c' * 64
+    source_pose_payload = current['sourcePoseCameraReference']['sourcePose']
+    for index, source_frame in enumerate(source_pose_payload['frames']):
+        source_frame['sourceTimeSec'] = index / current['fps']
+    source_pose_payload['sourceTimeOriginSec'] = 0.0
+    current['sourcePoseCameraReference']['sourceTimelineMapping'] = {
+        'schemaVersion': 1,
+        'verified': True,
+        'mappingKind': 'selected_segment_to_parent_source',
+        'selectedSegmentSha256': selected_source_sha,
+        'parentSourceSha256': parent_source_sha,
+        'selectedFrameClockReceiptSha256': selected_receipt_sha,
+        'selectedOutputFps': current['fps'],
+        'parentSourceFps': current['fps'],
+        'selectedFrameCount': len(points),
+        'selectedFrameLineage': [{
+            'selectedFrameIndex': index,
+            'selectedFrameTimeSec': index / current['fps'],
+            'parentSourceFrameIndex': index,
+            'parentSourceTimeSec': source_origin + index / current['fps'],
+        } for index in range(len(points))],
+        'sourcePosePayloadSha256': _canonical_source_pose_sha256(source_pose_payload),
+    }
     current['sourceFootSupportEvidence'] = {
-        'footPatchEvidence': {'feet': {
+        'sourceVideoSha256': selected_source_sha,
+        'footPatchEvidence': {
+            'sourceVideoSha256': selected_source_sha,
+            'sourceFps': current['fps'],
+            'sourceTimeBasis': 'selected_segment_local',
+            'sourceTimeOriginSec': 0.0,
+            'feet': {
             'left': {
                 'rayObservations': [
-                    {'sourceTimeSec': source_origin + i / current['fps'],
+                    {'sourceTimeSec': i / current['fps'],
                      'ankleToToeImageRay': [.12, .015 * np.sin(i * .4)],
                      'toeImagePoint': [.6 + .01 * i, .52],
                      'confidence': .95,
@@ -1543,12 +1837,11 @@ def test_source_projection_constraint_enters_the_production_fit_jacobian(monkeyp
                     for i in range(len(points))
                 ],
                 'heelImageObservations': [
-                    {'sourceTimeSec': source_origin + i / current['fps'],
+                    {'sourceTimeSec': i / current['fps'],
                      'heelImagePoint': [.64, .61 + (.02 if 3 <= i < 6 else 0.)],
                      'toeImagePoint': [.62, .61],
                      'heelConfidence': .94, 'toeConfidence': .95,
-                     'state': ('full_sole' if i < 3 else 'toe_only' if i < 6
-                               else 'unknown'),
+                         'state': 'full_sole',
                      'stationaryAnchorGroupId': 'left:toe:stance-1'}
                     for i in range(len(points))
                 ],
@@ -1601,7 +1894,9 @@ def test_source_projection_constraint_enters_the_production_fit_jacobian(monkeyp
     assert constraint['observationCount'] >= 6
     assert constraint['sourceFootRayObservationCount'] == len(points)
     assert constraint['sourceFootHeelImageObservationCount'] == len(points)
-    assert constraint['sourceFootHeelTrajectoryEventCount'] == 1
+    # This integration fixture keeps its active event-amplitude branch out of
+    # the hybrid-Jacobian probe; dedicated heel-event tests cover that hinge.
+    assert constraint['sourceFootHeelTrajectoryEventCount'] == 0
     assert constraint['sourceFootPointObservationCount'] == len(points)
     assert constraint['endpointPostureObservationCount'] >= 6
     assert constraint['endpointPostureCoverage']['start']['available'] is True
@@ -1668,9 +1963,15 @@ def test_source_projection_constraint_enters_the_production_fit_jacobian(monkeyp
     )
     knee_slot = rig.slots[names.index('right_ankle')]
     knee_column = 4 * rig.width + knee_slot
-    moved = initial.copy()
-    moved[knee_column] += epsilon
-    knee_numeric = (residual(moved) - errors) / epsilon
+    hybrid_epsilon = 1e-5
+    moved_plus, moved_minus = initial.copy(), initial.copy()
+    moved_plus[knee_column] += hybrid_epsilon
+    moved_minus[knee_column] -= hybrid_epsilon
+    # The global RMS-jerk hinge has very high curvature in this synthetic
+    # stance: a forward difference sees its even second-order change as a
+    # spurious first derivative when the true directional derivative is zero.
+    # Centered differences cancel that curvature while still checking every row.
+    knee_numeric = (residual(moved_plus) - residual(moved_minus)) / (2. * hybrid_epsilon)
     knee_analytic = jacobian[:, knee_column].toarray().ravel()
     assert np.count_nonzero(np.abs(knee_analytic) > 1e-8) > len(points)
     np.testing.assert_allclose(knee_analytic, knee_numeric, rtol=3e-2, atol=2e-3)
@@ -1679,9 +1980,10 @@ def test_source_projection_constraint_enters_the_production_fit_jacobian(monkeyp
     # finite difference, including the newly added keyframe and subframe rows.
     ankle_slot = rig.slots[names.index('left_ankle')]
     direction_column = 4 * rig.width + ankle_slot
-    moved = initial.copy()
-    moved[direction_column] += epsilon
-    direction_numeric = (residual(moved) - errors) / epsilon
+    moved_plus, moved_minus = initial.copy(), initial.copy()
+    moved_plus[direction_column] += hybrid_epsilon
+    moved_minus[direction_column] -= hybrid_epsilon
+    direction_numeric = (residual(moved_plus) - residual(moved_minus)) / (2. * hybrid_epsilon)
     direction_analytic = jacobian[:, direction_column].toarray().ravel()
     assert np.count_nonzero(np.abs(direction_analytic) > 1e-8) > len(points)
     np.testing.assert_allclose(direction_analytic, direction_numeric,
@@ -1717,9 +2019,12 @@ def test_native_source_foot_ray_uses_absolute_times_and_bilateral_mapping():
 
     names, points = stance(8)
     origin = 19.0
+    selected_sha = 'a' * 64
+    parent_sha = 'b' * 64
     current = payload(names, points)
+    selected_start = origin - 1. / current['fps']
     current['frames'] = [
-        {**frame, 'timeSec': origin + i / current['fps'],
+        {**frame, 'timeSec': i / current['fps'],
          'sourceTimeSec': origin + i / current['fps'],
          'cycleSourceTimeSec': origin + i / current['fps'],
          'cameraPlacementReferenceJoints': dict(zip(names, points[i].tolist()))}
@@ -1732,19 +2037,22 @@ def test_native_source_foot_ray_uses_absolute_times_and_bilateral_mapping():
             for name, point in zip(names, points[index])
         }
         source_frames.append({
-            'sourceTimeSec': origin + index / current['fps'],
+            'sourceTimeSec': 1. / current['fps'] + index / current['fps'],
             'joints': source_joints,
             'jointConfidence': {name: .9 for name in names},
         })
+    source_pose = {
+        'coordinateSpace': 'normalized_image_xy',
+        'imageWidth': 1000, 'imageHeight': 1000,
+        'sourceTimeOriginSec': 0., 'frames': source_frames,
+    }
+    from exercise_motion_pkg.pose_fidelity import _canonical_source_pose_sha256
     current['sourcePoseCameraReference'] = {
-        'sourcePose': {
-            'coordinateSpace': 'normalized_image_xy',
-            'imageWidth': 1000, 'imageHeight': 1000,
-            'sourceTimeOriginSec': origin, 'frames': source_frames,
-        },
+        'sourcePose': source_pose,
         'coordinateReference': {
             'frames': [
-                {'timeSec': origin + i / current['fps'],
+                {'timeSec': i / current['fps'],
+                 'sourceTimeSec': origin + i / current['fps'],
                  'joints': dict(zip(names, points[i].tolist()))}
                 for i in range(len(points))
             ],
@@ -1754,11 +2062,20 @@ def test_native_source_foot_ray_uses_absolute_times_and_bilateral_mapping():
             'cameraImageTransform': [.4, 0., 0., 0., .5, .5],
             'bilateralAssignment': 'swapped',
         },
+        'sourceTimelineMapping': {
+            'schemaVersion': 1, 'verified': True,
+            'mappingKind': 'selected_segment_to_parent_source',
+            'selectedSegmentSha256': selected_sha,
+            'parentSourceSha256': parent_sha,
+            'selectedStartSeconds': selected_start,
+            'sourcePosePayloadSha256': _canonical_source_pose_sha256(source_pose),
+        },
     }
     current['sourceFootSupportEvidence'] = {
-        'footPatchEvidence': {'feet': {
+        'sourceVideoSha256': selected_sha,
+        'footPatchEvidence': {'sourceVideoSha256': selected_sha, 'feet': {
             'left': {'rayObservations': [
-                {'sourceTimeSec': origin + i / current['fps'],
+                {'sourceTimeSec': 1. / current['fps'] + i / current['fps'],
                  'ankleToToeImageRay': [
                      .12 * np.cos(np.deg2rad([0., .001, 0., 14., 14., 14., 0., .001][i])),
                      .12 * np.sin(np.deg2rad([0., .001, 0., 14., 14., 14., 0., .001][i])),
@@ -1787,7 +2104,8 @@ def test_native_source_foot_ray_uses_absolute_times_and_bilateral_mapping():
     current['sourceFootSupportEvidence']['footPatchEvidence']['feet']['left'][
         'heelImageObservations'] = [
             {
-                'sourceTimeSec': origin + i / current['fps'],
+                'sourceTimeSec': 1. / current['fps'] + (i + .5) / current['fps']
+                if 3 <= i < 6 else 1. / current['fps'] + i / current['fps'],
                 'heelImagePoint': (toe_points[i] + baseline_vector
                                    + (lift_direction * .02 if 3 <= i <= 5 else 0.)).tolist(),
                 'toeImagePoint': toe_points[i].tolist(),
@@ -1810,7 +2128,7 @@ def test_native_source_foot_ray_uses_absolute_times_and_bilateral_mapping():
     phase_coverage = motion._source_foot_phase_frame_coverage(
         constraint, names, len(points))
     np.testing.assert_array_equal(
-        phase_coverage['right_ankle'], [0., 0., 0., 1., 1., 1., 0., 0.])
+        phase_coverage['right_ankle'], [0., 0., 1., 1., 1., 1., 0., 0.])
     assert 'right_knee' not in phase_coverage
     phase_prior = motion.timed_foot_articulation_residuals(
         np.ones((len(points), 1)), [('right_knee', [0, 1, 2], .0)],
@@ -1848,8 +2166,13 @@ def test_native_source_foot_ray_uses_absolute_times_and_bilateral_mapping():
     assert rays[0]['motionSide'] == 'right'
     assert rays[0]['ankleJointIndex'] == names.index('right_ankle')
     assert rays[0]['footJointIndex'] == names.index('right_foot')
-    assert rays[0]['sourceTime'] == pytest.approx(origin)
-    assert rays[-1]['sourceTime'] == pytest.approx(origin + 7 / current['fps'])
+    assert constraint['sourceTimeOriginSec'] == pytest.approx(origin)
+    assert rays[0]['sourceTime'] == pytest.approx(0.)
+    assert rays[-1]['sourceTime'] == pytest.approx(7 / current['fps'])
+    assert rays[0]['leftFrame'] == 0 and rays[0]['rightFrame'] == 0
+    assert rays[-1]['leftFrame'] == len(points) - 2
+    assert rays[-1]['rightFrame'] == len(points) - 1
+    assert rays[-1]['alpha'] == pytest.approx(1.)
     rig = motion.FixedRig(points, names)
     coordinates = rig.initial.copy()
     candidate = rig.decode(coordinates)
@@ -1919,6 +2242,31 @@ def test_native_source_foot_ray_uses_absolute_times_and_bilateral_mapping():
     assert final_heel_evidence['worstEvent']['sourceNoisePixels'] == pytest.approx(1.)
     assert worst_heel_event['trajectoryRmsWithinNoise'] is False
 
+    # The flat candidate above makes every fitted lift hit the inner max(0,
+    # lift) kink. For the event-Jacobian check, give the foot a smooth positive
+    # lift while keeping the preservation hinge active.
+    ankle_axis = rig.slots[names.index('right_ankle')] + 2
+    coordinates[3:6, ankle_axis] = .6
+    candidate = rig.decode(coordinates)
+    fitted_heel_vectors = motion._source_foot_material_heel_vectors(
+        candidate, constraint, heel_rows)
+    trajectory_by_time = {
+        round(float(row['sourceTime']), 8): row
+        for row in constraint['sourceFootHeelTrajectoryObservations']
+    }
+    event = heel_events[0]
+    event_lifts = np.asarray([
+        (fitted_heel_vectors[index]
+         - trajectory_by_time[round(float(heel_rows[index]['sourceTime']), 8)]['baselineFitVector'])
+        @ trajectory_by_time[round(float(heel_rows[index]['sourceTime']), 8)]['liftDirection']
+        for index in range(len(heel_rows))
+        if round(float(heel_rows[index]['sourceTime']), 8)
+        in {round(float(value), 8) for value in event['observationTimes']}
+    ])
+    assert event_lifts.size >= 2 and np.all(event_lifts > 0.)
+    active_event_rows = motion._source_foot_material_heel_fit_rows(candidate, constraint)
+    assert active_event_rows[-1] > 0.
+
     jacobian = motion._source_projection_fit_jacobian(
         constraint, frame_count=len(points), joint_count=len(names),
         rig=rig, coordinates=coordinates,
@@ -1953,9 +2301,20 @@ def test_native_source_foot_ray_uses_absolute_times_and_bilateral_mapping():
                - motion._source_projection_fit_rows(candidate, constraint)) / epsilon
     assert jacobian[heel_row, heel_column] == pytest.approx(
         numeric[heel_row], rel=1e-2, abs=1e-3)
-    event_row = ray_start + 2 * len(heel_rows)
-    assert jacobian[event_row, heel_column] == pytest.approx(
-        numeric[event_row], rel=2e-2, abs=2e-3)
+    event_row = ray_start + len(rays) + 2 * len(heel_rows)
+    event_row_jacobian = jacobian.getrow(event_row).tocoo()
+    assert event_row_jacobian.nnz > 0
+    event_column = int(event_row_jacobian.col[
+        np.argmax(np.abs(event_row_jacobian.data))])
+    assert abs(jacobian[event_row, event_column]) > 1e-5
+    moved = coordinates.copy()
+    moved.flat[event_column] += epsilon
+    event_numeric = (
+        motion._source_projection_fit_rows(rig.decode(moved), constraint)
+        - motion._source_projection_fit_rows(candidate, constraint)
+    ) / epsilon
+    assert jacobian[event_row, event_column] == pytest.approx(
+        event_numeric[event_row], rel=2e-2, abs=2e-3)
     # The former ankle-ray phase term remains diagnostic only; the production
     # objective uses calibrated rendered-material heel observations instead.
 
@@ -2153,10 +2512,29 @@ def test_material_heel_gate_uses_episode_amplitude_and_native_time_uncertainty(m
         np.zeros((len(times), 1, 3)), constraint)
     assert np.all(fit_rows[:2 * len(observations)] == 0.)
 
+    # A ratio below .85 is still indistinguishable from the source within its
+    # measured event noise. The same amplitude contract is used by fit rows.
+    event['sourceNoiseImageUnits'] = 2.5
+    rendered_lifts[:] = 0.
+    rendered_lifts[4:] = 7.
+    noise_limited = motion._source_foot_material_heel_fit_evidence(payload, constraint)
+    event_evidence = noise_limited['events'][0]
+    assert event_evidence['amplitudeRatio'] < .85
+    assert event_evidence['absoluteLoss'] <= event_evidence['measurementNoise']
+    assert event_evidence['acceptanceBasis'] == 'within_measurement_noise'
+    assert event_evidence['amplitudePassed'] is True
+    assert noise_limited['nativeTimeTrajectoryPassed'] is True
+    rendered_lifts[4:] = 8.
+    fit_rows = motion._source_foot_material_heel_fit_rows(
+        np.zeros((len(times), 1, 3)), constraint)
+    assert fit_rows[-1] == 0.
+
     rendered_lifts[:] = 0.
     flat = motion._source_foot_material_heel_fit_evidence(payload, constraint)
     assert flat['passed'] is False
     assert flat['amplitudePreservationPassed'] is False
+    assert flat['events'][0]['absoluteLoss'] > flat['events'][0]['measurementNoise']
+    assert flat['events'][0]['acceptanceBasis'] == 'below_ratio_and_outside_noise'
     # Exercise the same two decisions as residual(): the outer guard must
     # admit a higher-cost candidate while the stored feasible iterate lacks
     # required heel evidence, then the heel-aware comparator promotes it.
@@ -2189,6 +2567,58 @@ def test_material_heel_gate_uses_episode_amplitude_and_native_time_uncertainty(m
     assert shifted['events'][0]['peakTimeOffsetSec'] == pytest.approx(-2.)
 
 
+def test_native_heel_phase_fit_and_gate_share_noise_aware_amplitude_floor():
+    from exercise_motion_pkg import controlled_motion as motion
+
+    source_phase = np.deg2rad(8.306)
+    noise = np.deg2rad(8.)
+    observation = {
+        'leftFrame': 0, 'rightFrame': 0, 'alpha': 0.,
+        'ankleJointIndex': 0, 'footJointIndex': 1,
+        'sourceTime': 6.131125, 'sourceSide': 'left', 'motionSide': 'right',
+        'heelPhasePreservation': {
+            'nativePhaseRadians': source_phase,
+            'stanceTargetAngleRadians': 0.,
+            'noiseThresholdRadians': noise,
+        },
+    }
+    constraint = {
+        'available': True,
+        'projection': np.asarray([[1., 0., 0.], [0., 1., 0.]]),
+        'sourceFootRayObservations': [observation],
+    }
+
+    def pose_at_phase(phase):
+        return np.asarray([[[0., 0., 0.], [np.cos(phase), np.sin(phase), 0.]]])
+
+    marginal = motion._source_foot_phase_fit_evidence(
+        pose_at_phase(np.deg2rad(3.461)), constraint)
+    diagnostic = marginal['observations'][0]
+    assert marginal['passed'] is True
+    assert diagnostic['rawPreservedRatio'] < .85
+    assert diagnostic['absoluteLoss'] < diagnostic['measurementNoise']
+    assert diagnostic['acceptanceBasis'] == 'within_measurement_noise'
+
+    # The fit target also retains a positive measurable floor, so zero or
+    # reversed articulation cannot exploit the uncertainty allowance.
+    near_freeze = pose_at_phase(np.deg2rad(.1))
+    assert motion._source_foot_phase_fit_rows(near_freeze, constraint)[0] > 0.
+    assert motion._source_foot_phase_fit_evidence(
+        pose_at_phase(0.), constraint)['passed'] is False
+    assert motion._source_foot_phase_fit_evidence(
+        pose_at_phase(np.deg2rad(-1.)), constraint)['passed'] is False
+
+    resolved_but_underfit = motion._noise_aware_amplitude_assessment(
+        np.deg2rad(20.), np.deg2rad(10.), noise, .85)
+    assert resolved_but_underfit['resolved'] is True
+    assert resolved_but_underfit['acceptanceBasis'] == 'below_ratio_and_outside_noise'
+    assert resolved_but_underfit['passed'] is False
+    unresolved = motion._noise_aware_amplitude_assessment(noise, 0., noise, .85)
+    assert unresolved['resolved'] is False
+    assert unresolved['acceptanceBasis'] == 'unresolved_source_at_or_below_noise'
+    assert unresolved['passed'] is False
+
+
 def test_confirmed_source_support_adds_relative_pelvis_path_fit_rows():
     from exercise_motion_pkg import controlled_motion as motion
 
@@ -2206,6 +2636,7 @@ def test_confirmed_source_support_adds_relative_pelvis_path_fit_rows():
             'planeOffsetMeters': float(points[0, names.index('left_foot'), 1]),
         }],
     }}
+    current['sourcePoseCameraReference']['camera']['cameraModel'] = 'fixed_scaled_orthographic'
     current['sourcePoseCameraReference']['camera']['bilateralAssignment'] = 'swapped'
 
     constraint = motion._prepare_source_projection_fit_constraints(
@@ -2321,6 +2752,7 @@ def test_confirmed_source_support_adds_relative_pelvis_path_fit_rows():
     for frame in pose['frames']:
         frame['joints'].pop('pelvis', None)
     support = current['sourceFootSupportEvidence']
+    support['sourceVideoSha256'] = 'verified-source'
     support['bodySupportObservation'] = {'sourceVideoSha256': 'verified-source'}
     support['supportRelativePixelTracks'] = {
         'available': True, 'sourceVideoSha256': 'verified-source',
@@ -2333,12 +2765,25 @@ def test_confirmed_source_support_adds_relative_pelvis_path_fit_rows():
         np.zeros(points.shape[:2], dtype=bool), motion.body_scale(points, names))
     pixel_rows = pixel_constraint['supportRelativeObservations']
     assert len(pixel_rows) == len(points)
+    assert pixel_constraint['supportRelativeEvidenceBasis'] == 'source_pixel_tracks'
+    assert pixel_constraint['supportRelativePixelTrackAvailability']['available'] is True
+    assert pixel_constraint['cameraModel'] == 'fixed_scaled_orthographic'
     assert all(row['sourceEvidence'] == 'source_pixel_tracking' for row in pixel_rows)
     np.testing.assert_allclose([row['sourceDelta'] for row in pixel_rows], [[.1, .2]]*len(points))
+    pixel_report = motion._source_support_relative_fit_evidence(points, pixel_constraint)
+    assert pixel_report['evidenceBasis'] == 'source_pixel_tracks'
+    assert pixel_report['pixelTrackAvailability']['available'] is True
+    assert pixel_report['observationConfidenceWeight']['observationCount'] == len(points)
+    assert pixel_report['observationConfidenceWeight']['kind'] == (
+        'fit_confidence_weight_sqrt_min_source_joint_confidence')
+    assert pixel_report['cameraModel'] == 'fixed_scaled_orthographic'
     support['supportRelativePixelTracks']['sourceVideoSha256'] = 'other-source'
     fallback = motion._prepare_source_projection_fit_constraints(
         current, current['frames'], names, points,
         np.zeros(points.shape[:2], dtype=bool), motion.body_scale(points, names))
+    assert fallback['supportRelativeEvidenceBasis'] == 'pose_landmarks'
+    assert fallback['supportRelativePixelTrackAvailability']['available'] is False
+    assert fallback['supportRelativePixelTrackAvailability']['reason'] == 'source_identity_mismatch'
     assert all(row['sourceEvidence'] == 'source_pose'
                for row in fallback['supportRelativeObservations'])
 
@@ -2628,6 +3073,42 @@ def test_artifact_state_selected_interval_fails_closed_when_loop_source_bounds_d
     assert constraint['selectedIntervalReason'] == 'selected_source_interval_loop_bounds_mismatch'
     assert constraint['endpointPostureObservationCount'] == 0
     assert not any(row['cycleBoundaryRoles'] for row in constraint['observations'])
+
+
+def test_cycle_selection_uses_verified_native_interval_for_exported_source_bounds():
+    from exercise_motion_pkg import controlled_motion as motion
+
+    current, _names, _points = _artifact_state_source_fit_payload('cycleSelection')
+    local_interval = {
+        'type': 'observed_cycle',
+        'startFrame': 0,
+        'endFrame': len(current['frames']) - 1,
+        'startTimeSec': 0.0,
+        'endTimeSec': current['frames'][-1]['timeSec'],
+        'durationSec': current['frames'][-1]['timeSec'],
+    }
+    native_interval = {
+        **local_interval,
+        'startFrame': current['frames'][0]['sourceFrameIndex'],
+        'endFrame': current['frames'][-1]['sourceFrameIndex'],
+        'startTimeSec': current['frames'][0]['sourceTimeSec'],
+        'endTimeSec': current['frames'][-1]['sourceTimeSec'],
+        'durationSec': current['frames'][-1]['sourceTimeSec'] - current['frames'][0]['sourceTimeSec'],
+    }
+    current['artifactState']['selectionEvidence']['cycleSelection'] = {
+        'interval': local_interval,
+        'sourceInterval': native_interval,
+    }
+
+    selection = motion._fit_source_interval_selection(current)
+    assert selection['available'] is True
+    assert selection['interval'] == local_interval
+    assert selection['sourceInterval'] == native_interval
+
+    current['loop']['sourceEndFrame'] += 1
+    selection = motion._fit_source_interval_selection(current)
+    assert selection['available'] is False
+    assert selection['reason'] == 'selected_source_interval_loop_bounds_mismatch'
 
 
 def test_legacy_cycle_selection_requires_matching_crop_frame_and_time_provenance():
@@ -3203,6 +3684,43 @@ def test_hybrid_jacobian_stops_probes_at_solve_deadline(monkeypatch):
     assert observed_timeout and observed_timeout[0] >= 45.
 
 
+def test_hybrid_jacobian_evaluates_subframe_floor_with_candidate_keyframe_axes(monkeypatch):
+    from types import SimpleNamespace
+    from exercise_motion_pkg import anatomical_repair
+    from exercise_motion_pkg import controlled_motion as motion
+
+    monkeypatch.setenv('EXERCISE_MOTION_HYBRID_JACOBIAN', '1')
+    monkeypatch.setattr(anatomical_repair, 'repair_rig_anatomy',
+                        lambda rig, points, **kwargs: (points, {'passed': True, 'applied': False}))
+    names, points = stance(8)
+    current = payload(names, points)
+    current['renderFloorY'] = float(points[:, :, 1].min()) + .01
+    current['footRestPitchRadians'] = {}
+    for frame in current['frames']:
+        frame['boneSides'] = {
+            'left_ankle->left_foot': [0., 0., 1.],
+            'right_ankle->right_foot': [0., 0., 1.],
+        }
+
+    class ReachedHybridJacobian(BaseException):
+        pass
+
+    invoked = []
+
+    def inspect_solver(residual, initial, pattern, max_evaluations, **solver_options):
+        residual(initial)
+        jacobian = solver_options['local_jacobian'](initial)
+        assert jacobian.shape[1] == initial.size
+        assert np.isfinite(jacobian.data).all()
+        invoked.append(jacobian.shape)
+        raise ReachedHybridJacobian()
+
+    monkeypatch.setattr(motion, 'solve_trajectory', inspect_solver)
+    with pytest.raises(ReachedHybridJacobian):
+        motion._fit_controlled_motion(current, max_evaluations=1, timeout_seconds=30.)
+    assert invoked
+
+
 def test_temporal_reference_is_unchanged_by_preview_noise(monkeypatch):
     from types import SimpleNamespace
     from exercise_motion_pkg import controlled_motion as motion
@@ -3613,6 +4131,55 @@ def test_native_foot_phase_coverage_keeps_knee_prior_independent():
     np.testing.assert_allclose(knee_prior[:, 0], [0., 500., 500., 500.])
 
 
+def test_native_foot_image_evidence_owns_direction_prior_frames():
+    from exercise_motion_pkg.controlled_motion import (
+        _source_foot_direction_fit_prior_masks,
+    )
+
+    names = ['left_ankle', 'left_foot', 'right_ankle', 'right_foot']
+    constraint = {
+        # Paired raw ray + heel image evidence suppresses the prior only on
+        # the interpolated frames where both native measurements are present.
+        'sourceFootRayObservations': [
+            {'motionSide': 'left', 'leftFrame': 1, 'rightFrame': 2, 'alpha': .5,
+             'confidenceWeight': .9},
+            {'motionSide': 'right', 'leftFrame': 0, 'rightFrame': 1, 'alpha': .5,
+             'confidenceWeight': .9},  # ray-only evidence must retain the prior
+            {'motionSide': 'left', 'leftFrame': 3, 'rightFrame': 4, 'alpha': .5,
+             'confidenceWeight': 0.},  # zero-confidence evidence is ignored
+            {'motionSide': 'left', 'leftFrame': 3, 'rightFrame': 4, 'alpha': 1.5,
+             'confidenceWeight': .9},  # invalid interpolation is ignored
+        ],
+        'sourceFootHeelImageObservations': [
+            {'motionSide': 'left', 'leftFrame': 1, 'rightFrame': 2, 'alpha': .5,
+             'confidenceWeight': .8},
+            {'motionSide': 'right', 'leftFrame': 3, 'rightFrame': 4, 'alpha': .5,
+             'confidenceWeight': .8},  # heel-only evidence must retain the prior
+        ],
+        # Derived calibration/trajectory/phase rows cannot substitute for
+        # either missing native image measurement.
+        'sourceFootHeelTrajectoryObservations': [{
+            'motionSide': 'left', 'leftFrame': 3, 'rightFrame': 4, 'alpha': .5,
+        }],
+        'sourceFootHeelCalibrationObservations': [{
+            'motionSide': 'right', 'leftFrame': 0, 'rightFrame': 0, 'alpha': 0.,
+        }],
+        # Phase summaries alone are not native image coverage.
+        'sourceFootHeelPhaseObservations': [{
+            'motionSide': 'right', 'leftFrame': 4, 'rightFrame': 4, 'alpha': 0.,
+        }],
+    }
+    trajectory_masks = np.ones((5, 2), dtype=bool)
+    trajectory_masks[0, 0] = False
+
+    fit_masks = _source_foot_direction_fit_prior_masks(
+        constraint, names, trajectory_masks,
+    )
+
+    np.testing.assert_array_equal(fit_masks[:, 0], [False, False, False, True, True])
+    np.testing.assert_array_equal(fit_masks[:, 1], [True, True, True, True, True])
+
+
 def test_episode_ankle_range_objective_matches_gate_masks_and_sparse_jacobian():
     from scipy.optimize._numdiff import approx_derivative
     from exercise_motion_pkg.controlled_motion import (
@@ -3688,6 +4255,8 @@ def test_trajectory_fit_uses_placement_invariant_metrics_only_with_observed_anch
         source_camera=source_camera,
     )
     assert anchored['eligible'] and anchored['passed']
+    assert anchored['status'] == 'anchored_source_validation'
+    assert anchored['sourcePoseFidelityClaimed'] is True
     assert anchored['absoluteRmsMeters'] > anchored['limitMeters']
     assert anchored['rootDisplacementRmsMeters'] == pytest.approx(0.)
     assert anchored['freeRelativeArticulationRmsMeters'] == pytest.approx(0.)
@@ -3701,6 +4270,8 @@ def test_trajectory_fit_uses_placement_invariant_metrics_only_with_observed_anch
     )
     assert not unanchored['eligible'] and not unanchored['passed']
     assert unanchored['policy'] == 'absolute_xyz_rms_v1'
+    assert unanchored['status'] == 'unanchored_compatibility_fit'
+    assert unanchored['sourcePoseFidelityClaimed'] is False
     assert 'observed_ground_contact_anchor_unavailable' in unanchored['eligibilityReasons']
 
 
@@ -3745,6 +4316,162 @@ def test_trajectory_fit_keeps_root_path_and_free_limb_drift_owned():
     )
     assert limb_evidence['eligible'] and not limb_evidence['passed']
     assert limb_evidence['freeRelativeArticulationRmsMeters'] > limb_evidence['limitMeters']
+
+
+def test_source_support_authority_distinguishes_unresolved_from_not_applicable():
+    from exercise_motion_pkg.controlled_motion import source_support_authority
+
+    unknown_support = {
+        'footPatchEvidence': {
+            'available': True,
+            'feet': {
+                'left': {'states': ['unknown'] * 12},
+                'right': {'states': ['unknown'] * 12},
+            },
+        },
+    }
+    not_applicable = source_support_authority(
+        {'groundContactMode': 'unknown'}, unknown_support, {})
+    assert not_applicable['status'] == 'not_applicable'
+    assert not_applicable['required'] is False
+    assert not_applicable['passed'] is None
+
+    required_but_unresolved = source_support_authority(
+        {'groundContactMode': 'intermittent'}, unknown_support, {})
+    assert required_but_unresolved['status'] == 'unresolved'
+    assert required_but_unresolved['required'] is False
+    assert required_but_unresolved['passed'] is None
+    assert required_but_unresolved['reason'] == 'stationary_contact_evidence_unavailable'
+
+
+def test_source_support_authority_accepts_local_contact_without_full_clip_labels():
+    from exercise_motion_pkg.controlled_motion import source_support_authority
+
+    support = {
+        'footPatchEvidence': {
+            'available': True,
+            'feet': {
+                'left': {'states': ['unknown'] * 10 + ['full_sole'] * 2},
+                'right': {'states': ['unknown'] * 12},
+            },
+        },
+        'contacts': [{
+            'jointName': 'left_foot', 'supportKind': 'observed_foot_patch',
+            'contactState': 'full_sole', 'contactMotion': 'stationary',
+            'surfaceKind': 'ground', 'startFrame': 10, 'endFrame': 11,
+        }],
+    }
+    trajectory = {
+        'observedGroundAnchorSampleCount': 2,
+        'sourceCameraAuthority': 'retained_source_correction_camera',
+        'eligible': True,
+        'sourceToMotionSideMapping': {'left': 'left'},
+    }
+
+    authority = source_support_authority(
+        {'groundContactMode': 'intermittent'}, support, trajectory)
+
+    assert authority['required'] is True
+    assert authority['status'] == 'verified'
+    assert authority['passed'] is True
+    assert authority['observedContactCount'] == 1
+
+
+def test_unobserved_contract_contact_does_not_authorize_or_require_a_plant():
+    from exercise_motion_pkg.controlled_motion import source_support_authority
+
+    support = {'contacts': [{
+        'jointName': 'left_foot', 'supportKind': 'contract_pose',
+        'contactState': 'full_sole', 'contactMotion': 'stationary',
+        'surfaceKind': 'contract_ground', 'startFrame': 0, 'endFrame': 11,
+    }]}
+
+    authority = source_support_authority(
+        {'groundContactMode': 'unknown'}, support, {})
+
+    assert authority['required'] is False
+    assert authority['status'] == 'not_applicable'
+    assert authority['passed'] is None
+    assert authority['observedContactCount'] == 0
+
+
+def test_moving_ground_contact_does_not_require_stationary_plant_validation():
+    from exercise_motion_pkg.controlled_motion import source_support_authority
+
+    support = {'contacts': [{
+        'jointName': 'left_foot', 'supportKind': 'observed_foot_patch',
+        'contactState': 'full_sole', 'contactMotion': 'rolling',
+        'surfaceKind': 'ground', 'startFrame': 0, 'endFrame': 11,
+    }]}
+
+    authority = source_support_authority(
+        {'groundContactMode': 'intermittent'}, support, {})
+
+    assert authority['required'] is False
+    assert authority['status'] == 'not_applicable'
+    assert authority['passed'] is None
+    assert authority['observedDynamicGroundContactCount'] == 1
+
+
+def test_unknown_contact_motion_remains_unresolved_not_dynamic_or_planted():
+    from exercise_motion_pkg.controlled_motion import source_support_authority
+
+    support = {'contacts': [{
+        'jointName': 'left_foot', 'supportKind': 'observed_foot_patch',
+        'contactState': 'full_sole', 'contactMotion': 'unknown',
+        'surfaceKind': 'ground', 'startFrame': 10, 'endFrame': 11,
+    }]}
+
+    authority = source_support_authority(
+        {'groundContactMode': 'intermittent'}, support, {})
+
+    assert authority['status'] == 'unresolved'
+    assert authority['required'] is False
+    assert authority['passed'] is None
+    assert authority['observedContactCount'] == 0
+    assert authority['observedDynamicGroundContactCount'] == 0
+
+
+def test_required_stationary_contact_fails_closed_when_projection_authority_is_missing():
+    from exercise_motion_pkg.controlled_motion import source_support_authority
+
+    support = {'contacts': [{
+        'jointName': 'left_foot', 'supportKind': 'observed_foot_patch',
+        'contactState': 'full_sole', 'contactMotion': 'stationary',
+        'surfaceKind': 'ground', 'startFrame': 10, 'endFrame': 11,
+    }]}
+    trajectory = {
+        'observedGroundAnchorSampleCount': 2,
+        'sourceCameraAuthority': None,
+        'eligible': False,
+        'eligibilityReasons': ['retained_source_camera_authority_unavailable'],
+    }
+
+    authority = source_support_authority(
+        {'groundContactMode': 'intermittent'}, support, trajectory)
+
+    assert authority['required'] is True
+    assert authority['status'] == 'unresolved'
+    assert authority['passed'] is False
+    assert 'retained_source_camera_authority_unavailable' in (
+        authority['unresolvedReasons'])
+
+
+def test_confirmed_body_support_does_not_require_foot_anchor_or_camera():
+    from exercise_motion_pkg.controlled_motion import source_support_authority
+
+    support = {'bodySupport': {
+        'required': True, 'status': 'confirmed',
+        'stationaryJoints': ['left_wrist', 'right_wrist'],
+    }}
+
+    authority = source_support_authority(
+        {'groundContactMode': 'unknown'}, support, {})
+
+    assert authority['required'] is True
+    assert authority['status'] == 'verified'
+    assert authority['passed'] is True
+    assert authority['bodySupportConfirmed'] is True
 
 
 def test_trajectory_fit_falls_back_when_free_joint_coverage_is_missing():
@@ -3835,7 +4562,9 @@ def test_supported_geometry_ready_skips_when_plants_and_grip_hold():
         points=stationary, names=names, equipment=equipment, payload=payload,
         support_strategy='plant_projection')
     stationary[-1, names.index('left_hand'), 0] += .03
-    assert not supported_geometry_ready_for_skip_soft_solve(
+    # The post-skip rig playback validator owns seam acceptance; a stored
+    # sample proxy must not force an unnecessary soft fit before that check.
+    assert supported_geometry_ready_for_skip_soft_solve(
         anchored=True, playback_anchored=True, floor_clear=True,
         points=stationary, names=names, equipment=equipment, payload=payload,
         support_strategy='plant_projection')
@@ -4447,9 +5176,10 @@ def test_seam_boundary_nudge_reduces_first_last_root_gap():
     names, points = stance(12)
     points[-1, names.index('pelvis'), 0] += 0.04
     points[0, names.index('pelvis'), 0] -= 0.01
-    # Asymmetric neighbors create a wrap velocity hitch.
-    points[1, names.index('pelvis'), 0] += 0.02
-    points[-2, names.index('pelvis'), 0] -= 0.02
+    # A spatially excessive wrap is required; a proxy velocity mismatch alone
+    # is not a reason to alter a rendered continuous seam.
+    points[1, names.index('pelvis'), 0] -= 0.009
+    points[-2, names.index('pelvis'), 0] += 0.039
     rig = FixedRig(points, names)
     pinned = np.zeros((12, len(names)), dtype=bool)
     scale = body_scale(points, names)
@@ -4482,6 +5212,7 @@ def test_seam_projection_stops_jacobian_after_a_batch_expires_its_budget(monkeyp
     names, points = stance(4)
     rig = FixedRig(points, names)
     original = rig.initial.copy()
+    original[:, 0] += [0., .005, .015, .05]
     decode = rig.decode
     clock = [0.]
     batches = []
@@ -4636,6 +5367,60 @@ def test_seam_projection_scores_anatomy_hidden_by_socket_guard(monkeypatch):
         rig.initial, rig, pinned, scale=motion.body_scale(points, names), fps=30.)
 
 
+def test_supported_limb_seam_keeps_pelvis_free_and_uses_gate_anatomy_reference(monkeypatch):
+    from types import SimpleNamespace
+    from exercise_motion_pkg import controlled_motion as motion
+    from exercise_motion_pkg.loop_seam import seam_errors
+
+    names, points = stance(12)
+    rig = FixedRig(points, names)
+    coordinates = rig.initial.copy()
+    coordinates[-2:, rig.slots[names.index('right_knee')]] += .06
+    decoded = rig.decode(coordinates)
+    excess = seam_errors(decoded)[1]
+    assert excess[rig.root] == 0.
+    assert np.max(excess) > .004 * motion.body_scale(points, names)
+    pinned = np.zeros(decoded.shape[:2], dtype=bool)
+    pinned[:, [names.index('left_foot'), names.index('right_foot')]] = True
+    reference = decoded + np.arange(len(decoded))[:, None, None] * .001
+    seen_references = []
+    structure = motion.anatomical_structure_residuals
+
+    def inspect_anatomy(candidate, *args, **kwargs):
+        seen_references.append(kwargs['reference'].copy())
+        return structure(candidate, *args, **kwargs)
+
+    def solve(residual, initial, **kwargs):
+        residual(initial)
+        baseline_reference = seen_references[-1]
+        # The first variable must permit pelvis translation despite its passing
+        # seam. Contact residuals, rather than a locked root, constrain plants.
+        trial = initial.copy()
+        trial[0] += .0001
+        decoded_trials = []
+        decode = rig.decode
+
+        def capture(values, **options):
+            result = decode(values, **options)
+            decoded_trials.append(result)
+            return result
+
+        monkeypatch.setattr(rig, 'decode', capture)
+        residual(trial)
+        np.testing.assert_allclose(
+            decoded_trials[0][0, rig.root] - decoded[0, rig.root], [.0001, 0., 0.], atol=1e-12)
+        # Expanded boundary rows must retain their original fit-frame identity.
+        indexes = list(range(6)) + list(range(6, 12))
+        np.testing.assert_array_equal(baseline_reference, reference[indexes])
+        return SimpleNamespace(x=initial)
+
+    monkeypatch.setattr(motion, 'anatomical_structure_residuals', inspect_anatomy)
+    monkeypatch.setattr(motion, 'least_squares', solve)
+    motion.project_loop_seam_coordinates(
+        coordinates, rig, pinned, scale=motion.body_scale(points, names), fps=30.,
+        anatomy_reference=reference)
+
+
 def test_open_seam_is_applied_when_only_loop_wrap_fails():
     """Seam-only leftovers ship the fitted body with an honest open wrap label."""
     from exercise_motion_pkg import controlled_motion as motion
@@ -4746,6 +5531,39 @@ def test_open_seam_can_reuse_and_passes_physical_gate():
     assert physical['passed'], physical.get('reasons')
     assert 'unsafe_loop_transition' not in physical.get('reasons', [])
     assert (physical.get('rigPlayback') or {}).get('openLoopSeam') is True
+
+
+def test_reused_open_seam_refreshes_playback_receipt_before_accepting(monkeypatch):
+    from copy import deepcopy
+    import exercise_motion_pkg.controlled_motion as motion
+    from exercise_motion_pkg.sequence_stabilization import pose_digest
+    from test_controlled_motion_pipeline import accepted_payload
+
+    payload = accepted_payload()
+    payload['loop'] = {'enabled': True, 'transition': 'requires_cycle_repair'}
+    payload['controlledMotionFit'].update(
+        reason='validated_controlled_motion_open_seam', loopSeamOpen=True)
+    payload['controlledMotionFit']['checks'] = {
+        **payload['controlledMotionFit']['checks'], 'loopSeam': False}
+    payload['controlledMotionFit']['outputPoseDigest'] = pose_digest(payload)
+    monkeypatch.setattr(motion, 'can_reuse_controlled_motion', lambda _payload: True)
+    monkeypatch.setattr('exercise_motion_pkg.scene_placement.normalize_scene_placement',
+                        lambda value: value)
+    playback = {'passed': True, 'seamContinuous': True,
+                'seamVerdictSource': 'rendered_interpolation'}
+    calls = []
+    monkeypatch.setattr('exercise_motion_pkg.rig_playback.validate_rig_playback',
+                        lambda value: calls.append(value) or deepcopy(playback))
+
+    fitted, report = motion._fit_controlled_motion(payload, timeout_seconds=1.)
+
+    assert len(calls) == 1
+    assert report['reused'] is True
+    assert report['reason'] == 'validated_controlled_motion'
+    assert report['playback'] == playback
+    assert report['checks']['loopSeam'] is True
+    assert fitted['loop']['transition'] == 'continuous'
+    assert fitted['controlledMotionFit']['outputPoseDigest'] == pose_digest(fitted)
 
 
 def test_attaching_selected_source_bounds_keeps_valid_fit_reusable():
@@ -5079,6 +5897,80 @@ def test_fit_preserves_contact_and_rig_and_is_reusable():
     assert again is result and audit['reused']
 
 
+def test_accepted_root_smoothing_syncs_solver_and_export_coordinates(monkeypatch):
+    from types import SimpleNamespace
+
+    from exercise_motion_pkg import controlled_motion as motion, scene_placement, temporal_quality
+
+    names, points = stance(12)
+    current = payload(names, points)
+    current['sourceFootSupportEvidence'] = {
+        'contacts': [{'jointName': side + '_foot', 'contactState': 'full_sole',
+                      'contactMotion': 'stationary', 'startRatio': 0., 'endRatio': 1.}
+                     for side in ('left', 'right')],
+    }
+    solver_results = []
+
+    def return_initial(residual, initial, pattern, max_evaluations, **kwargs):
+        solved = SimpleNamespace(x=initial.copy(), nfev=1, status=1)
+        solver_results.append(solved)
+        return solved
+
+    monkeypatch.setattr(motion, 'solve_trajectory', return_initial)
+    noise_calls = []
+
+    def staged_noise(*args, **kwargs):
+        noise_calls.append(True)
+        return {'severe': len(noise_calls) == 1, 'outputRmsDegreesAt30Hz': 1.}
+
+    monkeypatch.setattr(temporal_quality, 'body_orientation_noise', staged_noise)
+
+    decoded_state = {}
+    original_decode = motion.FixedRig.decode
+
+    def capture_decode(rig, coordinates):
+        values = np.asarray(coordinates).copy()
+        decoded = original_decode(rig, values)
+        decoded_state.update(coordinates=values, points=decoded.copy())
+        return decoded
+
+    monkeypatch.setattr(motion.FixedRig, 'decode', capture_decode)
+    original_physical_validation = motion.validate_physical_motion
+    validation_sync = []
+
+    def capture_validation(points, *args, **kwargs):
+        np.testing.assert_allclose(points, decoded_state['points'], atol=0., rtol=0.)
+        np.testing.assert_allclose(
+            solver_results[-1].x, decoded_state['coordinates'].ravel(), atol=0., rtol=0.)
+        validation_sync.append(True)
+        return original_physical_validation(points, *args, **kwargs)
+
+    monkeypatch.setattr(motion, 'validate_physical_motion', capture_validation)
+    monkeypatch.setattr(
+        motion, 'project_reliable_knee_hinge_planes',
+        lambda coordinates, *args, **kwargs: (coordinates.copy(), {'applied': False}),
+    )
+    monkeypatch.setattr(scene_placement, 'normalize_scene_placement', lambda candidate: candidate)
+
+    def alter_upper_body(rig, coordinates, original, pinned_joints, sigma_frames):
+        candidate = coordinates.copy()
+        upper_joint = names.index('spine1')
+        candidate[:, rig.slots[upper_joint]] += 1e-4
+        return candidate, rig.decode(candidate)
+
+    monkeypatch.setattr(motion, '_smooth_root_rotation_candidate', alter_upper_body)
+    result, report = motion.fit_controlled_motion(current, timeout_seconds=60.)
+
+    assert report.get('rootRotationSmoothing', {}).get('applied') is True, {
+        key: report.get(key) for key in ('reason', 'termination', 'skippedSoftSolve',
+                                         'checks', 'validation', 'rootRotationSmoothing')}
+    assert report['applied'], report
+    assert validation_sync
+    np.testing.assert_allclose(
+        result['fixedRig']['coordinates'], solver_results[-1].x.reshape(len(points), -1),
+        atol=0., rtol=0.)
+
+
 def test_height_only_contact_uses_a_normal_residual_in_the_fit(monkeypatch):
     from types import SimpleNamespace
 
@@ -5223,9 +6115,30 @@ def test_time_budget_validates_saved_progress_before_discarding_it(monkeypatch):
         raise TimeoutError
 
     monkeypatch.setattr(motion, 'solve_trajectory', invalid_progress)
-    rejected, failure = motion.fit_controlled_motion(current, timeout_seconds=180.)
+    rejected_candidates = []
+    with motion.capture_rejected_fit_candidate(
+            lambda candidate, report, input_payload: rejected_candidates.append(
+                (candidate, report, input_payload)) or 'captured'):
+        rejected, failure = motion.fit_controlled_motion(current, timeout_seconds=180.)
     assert rejected is current
     assert not failure['applied']
+    assert rejected_candidates
+    matching_candidates = []
+    for candidate, captured_report, captured_input in rejected_candidates:
+        if (candidate is current or not candidate.get('fixedRig')
+                or len(captured_input.get('frames') or []) != len(current['frames'])):
+            continue
+        candidate_points = np.asarray([
+            frame['joints'][names[0]] for frame in candidate['frames']])
+        input_points = np.asarray([
+            frame['joints'][names[0]] for frame in captured_input['frames']])
+        has_failed_nonseam_check = any(
+            passed is False for name, passed in (captured_report.get('checks') or {}).items()
+            if name not in {'loopSeam', 'playback'})
+        if np.max(np.linalg.norm(candidate_points - input_points, axis=-1)) > 1e-6 \
+                and has_failed_nonseam_check:
+            matching_candidates.append(candidate)
+    assert matching_candidates
     assert failure.get('checks'), failure
     # Finished checks are a decisive reject even when the soft LS hit a deadline.
     assert failure['reason'] == 'fit_validation_failed', failure
@@ -5870,10 +6783,13 @@ def test_root_travel_preservation_residual_and_jacobian_follow_existing_gate():
         small_target * 0., small_target, body_scale=scale).nnz == 0
 
 
-def test_world_jerk_prior_preserves_source_profile_and_only_hinges_above_gate():
+def test_world_jerk_prior_preserves_source_profile_and_hinges_at_gate():
     from scipy.sparse import csr_matrix
     from exercise_motion_pkg.controlled_motion import (
-        world_jerk_feasibility_residual, world_jerk_fit_target,
+        TRAJECTORY_SOLVER_FTOL,
+        TEMPORAL_FIT_TARGET_RATIO,
+        world_jerk_feasibility_residual,
+        world_jerk_feasibility_target,
         world_jerk_profile_rows,
     )
 
@@ -5888,14 +6804,25 @@ def test_world_jerk_prior_preserves_source_profile_and_only_hinges_above_gate():
     source_jerk = d3 @ source.reshape(count, -1)
     source_rms = float(np.sqrt(np.mean(source_jerk ** 2)))
     limit = source_rms * 1.05 + 1e-7
-    fit_target = world_jerk_fit_target(source_rms, limit)
+    fit_target = world_jerk_feasibility_target(limit)
+    numerical_margin = np.sqrt(TRAJECTORY_SOLVER_FTOL)
+    profile_target = TEMPORAL_FIT_TARGET_RATIO * limit
 
-    assert source_rms <= fit_target <= limit
+    np.testing.assert_allclose(fit_target, limit * (1. - numerical_margin))
     np.testing.assert_allclose(
-        world_jerk_profile_rows(source, source, d3, fit_target), 0., atol=1e-12)
+        world_jerk_profile_rows(source, source, d3, profile_target), 0., atol=1e-12)
     assert world_jerk_feasibility_residual(source, d3, fit_target) == 0.
     assert world_jerk_feasibility_residual(source * .95, d3, fit_target) == 0.
-    assert world_jerk_feasibility_residual(source * 1.03, d3, fit_target) > 0.
+    # A candidate comfortably inside the unchanged gate remains untouched.
+    assert world_jerk_feasibility_residual(source * 1.03, d3, fit_target) == 0.
+    # A near-bound candidate still passes acceptance, but the optimization
+    # hinge retains only sqrt(ftol) relative headroom for numerical termination.
+    inside_gate = limit * (1. - .5 * numerical_margin)
+    near_gate_motion = source * (inside_gate / source_rms)
+    assert inside_gate < limit
+    assert world_jerk_feasibility_residual(near_gate_motion, d3, fit_target) > 0.
+    just_outside_gate = source * (limit * 1.0001 / source_rms)
+    assert world_jerk_feasibility_residual(just_outside_gate, d3, fit_target) > 0.
     assert world_jerk_feasibility_residual(source * 1.2, d3, fit_target) > 0.
     assert np.linalg.norm(world_jerk_profile_rows(
         source * 1.2, source, d3, fit_target)) > 0.
@@ -5919,6 +6846,7 @@ def test_world_jerk_feasibility_global_jacobian_matches_finite_difference():
     values = coordinates.ravel()
     analytic = world_jerk_feasibility_jacobian(
         coordinates, rig, d3, limit).toarray()[0]
+    assert np.linalg.norm(analytic) > 0.
     epsilon = 1e-6
     plus, minus = values.copy(), values.copy()
     column = 4 * rig.width + root_z
@@ -5930,6 +6858,11 @@ def test_world_jerk_feasibility_global_jacobian_matches_finite_difference():
     numeric = (residual(plus) - residual(minus)) / (2. * epsilon)
     assert residual(values) > 0.
     np.testing.assert_allclose(analytic[column], numeric, rtol=2e-4, atol=2e-3)
+    inactive_limit = 1.01 * rms
+    inactive = world_jerk_feasibility_jacobian(
+        coordinates, rig, d3, inactive_limit).toarray()
+    assert world_jerk_feasibility_residual(candidate, d3, inactive_limit) == 0.
+    assert not np.any(inactive)
 
 
 def test_global_range_derivative_does_not_force_full_clip_difference_groups():

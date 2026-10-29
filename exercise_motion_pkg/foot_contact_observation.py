@@ -16,7 +16,7 @@ import numpy as np
 from .contact_constraints import contact_frame_bounds, is_stationary_contact
 
 MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task"
-POLICY_VERSION = 17
+POLICY_VERSION = 18
 # Classification changes reuse the exact same expensive landmark observations.
 OBSERVATION_CACHE_VERSION = 3
 LANDMARKS = {"left_shoulder": 11, "right_shoulder": 12,
@@ -27,16 +27,23 @@ LANDMARKS = {"left_shoulder": 11, "right_shoulder": 12,
 _RUNTIME_WARNING_EMITTED = False
 
 
-def _patch_source_timing_metadata(frames, source_origin):
+def _patch_source_timing_metadata(frames, source_origin, source_fps=None):
     """Persist the same absolute source clock used by heel observations."""
     source_times = [float(source_origin) + float(frame['timeSeconds']) for frame in frames]
-    return {
+    result = {
         'sourceTimeBasis': 'absolute_source_video',
         'sourceTimeOriginSec': float(source_origin),
         'sourceTimesSec': source_times,
         'sourceStartTimeSec': source_times[0],
         'sourceEndTimeSec': source_times[-1],
     }
+    if source_fps is not None:
+        fps = float(source_fps)
+        if np.isfinite(fps) and fps > 0.:
+            # Duration is relative to the source origin; callers add the
+            # origin only when comparing absolute source-video timestamps.
+            result['sourceVideoDurationSec'] = len(source_times) / fps
+    return result
 
 
 def _model_asset_path() -> Path:
@@ -210,6 +217,41 @@ def observe_foot_landmarks(video_path: Path, *, cache_dir: Path | None = None) -
         temporary = Path(stream.name)
     temporary.replace(cache)
     return payload
+
+
+def load_cached_foot_landmarks(video_path: Path, *, cache_dir: Path | None = None) -> dict[str, Any] | None:
+    """Load hash-bound landmark observations without downloading or running a model."""
+    if not video_path.is_file():
+        return None
+    try:
+        digest = _sha256_file(video_path)
+        cache_dir = cache_dir or video_path.parent / "foot_landmarks"
+        configured_model = os.environ.get("EXERCISE_MOTION_FOOT_LANDMARK_MODEL")
+        model_path = _model_asset_path()
+        required_model_hash = (
+            _sha256_file(model_path)
+            if (configured_model and model_path.is_file())
+            else None
+        )
+        if configured_model and required_model_hash is None:
+            return None
+        matching: list[dict[str, Any]] = []
+        for cache in cache_dir.glob(f"{digest}.*.v{OBSERVATION_CACHE_VERSION}.json"):
+            try:
+                payload = json.loads(cache.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            model_sha256 = payload.get("modelSha256") if isinstance(payload, dict) else None
+            if (isinstance(model_sha256, str) and len(model_sha256) == 64
+                    and _observation_cache_path(cache_dir, digest, model_sha256).name == cache.name
+                    and _valid_observation_cache(payload, digest, model_sha256)):
+                if required_model_hash is not None and model_sha256 != required_model_hash:
+                    continue
+                matching.append(payload)
+        model_hashes = {payload["modelSha256"] for payload in matching}
+        return matching[0] if len(model_hashes) == 1 and matching else None
+    except OSError:
+        return None
 
 
 def _materialize_foot_patch_contacts(
@@ -486,7 +528,8 @@ def classify_foot_contacts(
     result: dict[str, Any] = {"available": True, "policyVersion": POLICY_VERSION,
                             "source": observations["source"], "sourceFrameCount": count,
                             "sourceFps": observations.get("fps"),
-                            **_patch_source_timing_metadata(frames, source_origin),
+                            **_patch_source_timing_metadata(
+                                frames, source_origin, observations.get("fps")),
                             "sourceVideoSha256": observations.get("sourceVideoSha256"),
                             "feet": {}, "contacts": []}
     for side in ("left", "right"):
@@ -609,9 +652,10 @@ def classify_foot_contacts(
         unresolved_heel_recontact = np.zeros(count, dtype=bool)
         uncalibrated_toe = np.count_nonzero(calibration) < 4
         observed = evidence.get('bodySupportObservation') or {}
-        answer = observed.get('observation') or {}
+        from .body_support_observation import validated_body_support_answer
+        answer = validated_body_support_answer(observed)
         toe_contact_observed = (
-            observed.get('status') == 'observed'
+            answer is not None
             and isinstance(observations.get('sourceVideoSha256'), str)
             and observed.get('sourceVideoSha256') == observations['sourceVideoSha256']
             and answer.get(f'{side}Foot') in {'stationary_full_sole', 'stationary_forefoot'}
@@ -835,12 +879,67 @@ def add_observed_foot_contacts(
     evidence: dict[str, Any], observations: dict[str, Any], source_pose: dict[str, Any],
     camera_normal: list[float] | None = None,
     depth_alignment: dict[str, Any] | None = None,
+    *, source_video_path: Path | None = None,
 ) -> dict[str, Any]:
     import copy
 
     result = copy.deepcopy(evidence)
     patch_evidence = classify_foot_contacts(observations, evidence, source_pose, camera_normal, depth_alignment)
+    material_evidence = None
+    if source_video_path is not None and patch_evidence.get("available"):
+        material_evidence = _corroborate_observed_full_sole_material(
+            Path(source_video_path), observations, patch_evidence,
+        )
+        patch_evidence["materialStationarityEvidence"] = material_evidence
+        patch_evidence["materialStationarityPolicyVersion"] = material_evidence.get("policyVersion")
+        verified = {
+            row.get("episodeId"): row for row in material_evidence.get("episodes", [])
+            if isinstance(row, dict) and row.get("status") == "verified" and row.get("passed") is True
+        }
+        for contact_index, contact in enumerate(patch_evidence.get("contacts", [])):
+            side = str(contact.get("jointName") or "").split("_", 1)[0]
+            if (side not in {"left", "right"}
+                    or contact.get("contactState") != "full_sole"
+                    or contact.get("contactMotion") == "stationary"):
+                continue
+            first, last = contact_frame_bounds(contact, int(patch_evidence.get("sourceFrameCount") or 0))
+            episode_id = f"{side}:full_sole:{contact_index}:{first}:{last}"
+            corroboration = verified.get(episode_id)
+            if corroboration is None:
+                continue
+            # Material tracks corroborate the existing full-sole proposal. They
+            # do not change the frame interval or detector state labels.
+            source_digest = corroboration.get("sourceVideoSha256")
+            if (not isinstance(source_digest, str)
+                    or source_digest != observations.get("sourceVideoSha256")
+                    or corroboration.get("side") != side
+                    or corroboration.get("contactState") != "full_sole"
+                    or corroboration.get("startFrame") != first
+                    or corroboration.get("endFrame") != last):
+                continue
+            anchor_prefix = f"source-material:{source_digest[:16]}:{side}:{first}:{last}"
+            toe_anchor_id = f"{anchor_prefix}:foot"
+            ankle_anchor_id = f"{anchor_prefix}:ankle"
+            contact["contactMotion"] = "stationary"
+            contact["materialStationarityEvidence"] = corroboration
+            contact["anchorGroupId"] = toe_anchor_id
+            contact["ankleAnchorGroupId"] = ankle_anchor_id
+            contact["materialAnchorIdentity"] = {
+                "sourceVideoSha256": source_digest,
+                "side": side,
+                "contactState": "full_sole",
+                "startFrame": first,
+                "endFrame": last,
+                "footAnchorGroupId": toe_anchor_id,
+                "ankleAnchorGroupId": ankle_anchor_id,
+            }
+            _stamp_material_anchor_on_observations(
+                patch_evidence, side, first, last, toe_anchor_id,
+            )
     result["footPatchEvidence"] = patch_evidence
+    if material_evidence is not None:
+        result["sourceMaterialStationarityPolicyVersion"] = material_evidence.get("policyVersion")
+        result["sourceMaterialStationarityEvidence"] = material_evidence
     if patch_evidence.get("available"):
         result.setdefault("footContactCandidates", result.get("contacts", []))
         # Uncertain observations must not silently fall back to an ankle-only
@@ -853,6 +952,62 @@ def add_observed_foot_contacts(
         # spans as temporal ankle contacts around the observed release.
         source_support_contacts = []
         patch_feet = patch_evidence.get("feet") or {}
+        patch_frame_count = int(patch_evidence.get("sourceFrameCount") or 0)
+
+        # Keep independently measured ankle stationarity as an ankle-only
+        # positional constraint. It must not be upgraded to a whole-foot pose:
+        # heel/toe heading can still pivot, and only observed airborne frames
+        # contradict a source ankle support interval.
+        if patch_frame_count >= 3:
+            for source_contact in evidence.get("contacts", []):
+                if (not isinstance(source_contact, dict)
+                        or source_contact.get("contactMotion") != "stationary"
+                        or source_contact.get("supportKind") != "foot"):
+                    continue
+                joint_name = str(source_contact.get("jointName") or "")
+                if joint_name not in {"left_ankle", "right_ankle"}:
+                    continue
+                side = joint_name.split("_", 1)[0]
+                if result.get("feet", {}).get(side, {}).get("continuousSupport"):
+                    continue
+                states = (patch_feet.get(side) or {}).get("states")
+                if not isinstance(states, (list, tuple)) or len(states) != patch_frame_count:
+                    continue
+                bounds = _source_contact_native_frame_bounds(
+                    source_contact, evidence, patch_evidence, source_pose,
+                )
+                if bounds is None:
+                    continue
+                first, last = bounds
+                active = [str(state).casefold() != "airborne" for state in states]
+                start = None
+                for index in range(first, last + 2):
+                    supported = index <= last and active[index]
+                    if supported and start is None:
+                        start = index
+                    if supported or start is None:
+                        continue
+                    end = index - 1
+                    if end - start + 1 >= 3:
+                        source_support_contacts.append({
+                            "jointName": joint_name,
+                            "supportKind": "foot",
+                            "contactMotion": "stationary",
+                            "anchorKind": "ankle",
+                            "startFrame": start,
+                            "endFrame": end,
+                            "startRatio": start / max(1, patch_frame_count - 1),
+                            "endRatio": end / max(1, patch_frame_count - 1),
+                            "confidence": min(0.8, float(source_contact.get("confidence", 0.8))),
+                            "source": "source_pose_stationary_ankle_excluding_observed_airborne",
+                            "sourcePoseStartSample": source_contact.get("sourceStartSample"),
+                            "sourcePoseEndSample": source_contact.get("sourceEndSample"),
+                            "sourcePoseStartTimeSec": source_contact.get("sourceStartTimeSec"),
+                            "sourcePoseEndTimeSec": source_contact.get("sourceEndTimeSec"),
+                            "sourceTimeBasis": source_contact.get("sourceTimeBasis"),
+                        })
+                    start = None
+
         for side, foot in (result.get("feet") or {}).items():
             if (
                 not isinstance(foot, dict)
@@ -903,3 +1058,192 @@ def add_observed_foot_contacts(
         result["contacts"].extend(patch_evidence["contacts"])
         result["contacts"].extend(source_support_contacts)
     return result
+
+
+def _source_contact_native_frame_bounds(source_contact, support_evidence, patch_evidence, source_pose):
+    """Map sparse source-pose support to native observations by exact source clock.
+
+    Ratios encode the source-pose sample array's endpoints, not native video
+    frame timestamps. They are only safe as direct indices for a clockless,
+    equal-length legacy payload. Otherwise missing/mismatched time authority
+    leaves the ankle interval unresolved.
+    """
+    source_times = (patch_evidence or {}).get("sourceTimesSec")
+    try:
+        native_times = np.asarray(source_times, dtype=float)
+        fps = float((patch_evidence or {}).get("sourceFps"))
+        start_time = float(source_contact.get("sourceStartTimeSec"))
+        end_time = float(source_contact.get("sourceEndTimeSec"))
+    except (TypeError, ValueError, OverflowError):
+        native_times = np.asarray([], dtype=float)
+        fps = float("nan")
+        start_time = end_time = float("nan")
+    if (source_contact.get("sourceTimeBasis") == "absolute_source_video"
+            and (patch_evidence or {}).get("sourceTimeBasis") == "absolute_source_video"
+            and np.isfinite(native_times).all() and native_times.size >= 3
+            and np.isfinite(fps) and fps > 0.
+            and np.isfinite(start_time) and np.isfinite(end_time)
+            and start_time <= end_time
+            and np.all(np.diff(native_times) > 0.)):
+        source_digest = str((support_evidence or {}).get("sourceVideoSha256") or "").casefold()
+        patch_digest = str((patch_evidence or {}).get("sourceVideoSha256") or "").casefold()
+        if not source_digest or source_digest != patch_digest:
+            return None
+        tolerance = .5 / fps + 1e-7
+        start = int(np.argmin(np.abs(native_times - start_time)))
+        if abs(float(native_times[start]) - start_time) > tolerance:
+            return None
+        end = int(np.argmin(np.abs(native_times - end_time)))
+        if abs(float(native_times[end]) - end_time) > tolerance:
+            # A source-pose sample at the exact media end can represent the
+            # final exposure only when the patch clock proves that boundary.
+            try:
+                origin = float((patch_evidence or {}).get("sourceTimeOriginSec", native_times[0]))
+                duration = float((patch_evidence or {}).get("sourceVideoDurationSec"))
+                count = int((patch_evidence or {}).get("sourceFrameCount"))
+            except (TypeError, ValueError, OverflowError):
+                return None
+            video_end = origin + duration
+            if (count != native_times.size
+                    or not np.isfinite(video_end)
+                    or abs(end_time - video_end) > 1e-6
+                    or abs(float(native_times[-1]) - (video_end - 1. / fps)) > 1e-6):
+                return None
+            end = native_times.size - 1
+        return (start, end) if 0 <= start <= end < native_times.size else None
+
+    # Legacy index identity is accepted only when both arrays are explicitly
+    # clockless and have the same row count. A sparse pose ratio is never used
+    # to manufacture native frame bounds.
+    pose_frames = (source_pose or {}).get("frames") or []
+    if (source_times is not None or (patch_evidence or {}).get("sourceTimeBasis") is not None
+            or (source_pose or {}).get("sourceTimeBasis") is not None
+            or len(pose_frames) != int((patch_evidence or {}).get("sourceFrameCount") or 0)):
+        return None
+    try:
+        start = int(source_contact["sourceStartSample"])
+        end = int(source_contact["sourceEndSample"])
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+    count = int((patch_evidence or {}).get("sourceFrameCount") or 0)
+    return (start, end) if 0 <= start <= end < count else None
+
+
+def _stamp_material_anchor_on_observations(patch_evidence, side, first, last, anchor_group_id):
+    """Carry a verified material owner only onto same-state native samples."""
+    feet = patch_evidence.get("feet") or {}
+    foot = feet.get(side) or {}
+    states = foot.get("states")
+    times = patch_evidence.get("sourceTimesSec")
+    try:
+        fps = float(patch_evidence.get("sourceFps"))
+        native_times = np.asarray(times, dtype=float)
+    except (TypeError, ValueError, OverflowError):
+        return
+    if (not isinstance(states, list) or native_times.shape != (len(states),)
+            or not np.isfinite(native_times).all() or not np.isfinite(fps) or fps <= 0.):
+        return
+    if not (0 <= first <= last < len(states)):
+        return
+    tolerance = .5 / fps + 1e-7
+    for field in ("rayObservations", "heelImageObservations"):
+        for row in foot.get(field) or []:
+            if not isinstance(row, dict) or str(row.get("state") or "").casefold() != "full_sole":
+                continue
+            try:
+                sample_time = float(row.get("sourceTimeSec"))
+            except (TypeError, ValueError, OverflowError):
+                continue
+            index = int(np.argmin(np.abs(native_times - sample_time)))
+            if (first <= index <= last and states[index] == "full_sole"
+                    and abs(float(native_times[index]) - sample_time) <= tolerance):
+                existing = row.get("stationaryAnchorGroupId")
+                if existing in (None, anchor_group_id):
+                    row["stationaryAnchorGroupId"] = anchor_group_id
+
+
+def _corroborate_observed_full_sole_material(video_path, observations, patch_evidence):
+    """Measure only classifier-proposed full-sole windows against video texture."""
+    from .source_support_tracking import FOOT_MATERIAL_POLICY_VERSION, observe_foot_material_episodes
+
+    video_path = Path(video_path)
+    frames = observations.get("frames") or []
+    width, height = int(observations.get("imageWidth") or 0), int(observations.get("imageHeight") or 0)
+    frame_count = int(patch_evidence.get("sourceFrameCount") or 0)
+    if (not video_path.is_file() or not width or not height or not frames
+            or frame_count != len(frames)):
+        return {
+            "available": False,
+            "policyVersion": FOOT_MATERIAL_POLICY_VERSION,
+            "source": "forward_backward_heel_toe_material_tracks",
+            "episodes": [],
+            "reason": "source_video_or_frame_geometry_unavailable",
+        }
+
+    episodes = []
+    for contact_index, contact in enumerate(patch_evidence.get("contacts") or []):
+        if (not isinstance(contact, dict)
+                or not str(contact.get("jointName") or "").endswith("_foot")
+                or contact.get("contactState") != "full_sole"
+                or contact.get("contactMotion") == "stationary"):
+            continue
+        side = str(contact["jointName"]).split("_", 1)[0]
+        if side not in {"left", "right"}:
+            continue
+        start, end = contact_frame_bounds(contact, frame_count)
+        if end - start + 1 < 3:
+            continue
+        states = ((patch_evidence.get("feet") or {}).get(side) or {}).get("states")
+        if (not isinstance(states, list) or len(states) != frame_count
+                or any(str(state).casefold() != "full_sole" for state in states[start:end + 1])):
+            continue
+        # Reuse the classifier's established material-spread tolerance:
+        # max(.005 normalized image units, 15% of the observed foot ray).
+        foot_sizes = []
+        for frame in frames[start:end + 1]:
+            joints = frame.get("joints") or {}
+            heel, toe = joints.get(f"{side}_heel"), joints.get(f"{side}_toe")
+            if not isinstance(heel, dict) or not isinstance(toe, dict):
+                continue
+            if min(float(heel.get("confidence") or 0.), float(toe.get("confidence") or 0.)) < .8:
+                continue
+            try:
+                heel_xy = np.asarray(heel.get("image"), dtype=float)
+                toe_xy = np.asarray(toe.get("image"), dtype=float)
+            except (TypeError, ValueError):
+                continue
+            if (heel_xy.shape == (2,) and toe_xy.shape == (2,)
+                    and np.isfinite(heel_xy).all() and np.isfinite(toe_xy).all()):
+                delta = toe_xy - heel_xy
+                foot_sizes.append(float(np.linalg.norm(delta)))
+        if not foot_sizes:
+            continue
+        maximum_displacement = max(.005, float(np.median(foot_sizes)) * .15) * min(width, height)
+        source_times = patch_evidence.get("sourceTimesSec") or []
+        if len(source_times) != frame_count:
+            start_time = end_time = None
+        else:
+            start_time, end_time = float(source_times[start]), float(source_times[end])
+        episodes.append({
+            "episodeId": f"{side}:full_sole:{contact_index}:{start}:{end}",
+            "side": side,
+            "contactState": "full_sole",
+            "startFrame": start,
+            "endFrame": end,
+            "startTimeSec": start_time,
+            "endTimeSec": end_time,
+            "maximumDisplacementPixels": maximum_displacement,
+        })
+    if not episodes:
+        return {
+            "available": False,
+            "policyVersion": FOOT_MATERIAL_POLICY_VERSION,
+            "source": "forward_backward_heel_toe_material_tracks",
+            "sourceVideoSha256": observations.get("sourceVideoSha256"),
+            "episodes": [],
+            "reason": "no_proposed_full_sole_episodes",
+        }
+    return observe_foot_material_episodes(
+        video_path, observations, patch_evidence, episodes,
+        cache_dir=video_path.parent / "foot_landmarks",
+    )

@@ -60,6 +60,181 @@ def _payload_digest(payload: Any) -> str:
     return hashlib.blake2b(encoded.encode("utf-8"), digest_size=16).hexdigest()
 
 
+def _canonical_source_pose_sha256(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _canonical_source_pose_timeline(source_payload, motion_payload):
+    """Map selected-cut pose timestamps to the parent video only with a receipt.
+
+    A selected cut's frame timestamps start at zero, while reconstructed frames
+    retain native parent-video timestamps. The loader supplies exact selected
+    exposure lineage only after checking the selected video, parent video, and
+    frame-clock receipts. Requested cut bounds are not exposure timestamps.
+    """
+    reference = (motion_payload or {}).get("sourcePoseCameraReference")
+    if not isinstance(reference, dict):
+        return source_payload, None
+    mapping = reference.get("sourceTimelineMapping")
+    if mapping is None:
+        return source_payload, None
+    if not isinstance(source_payload, dict) or not isinstance(mapping, dict):
+        return None, "source_timeline_mapping_invalid"
+    if (
+        mapping.get("schemaVersion") != 1
+        or mapping.get("verified") is not True
+        or mapping.get("mappingKind") != "selected_segment_to_parent_source"
+    ):
+        return None, "source_timeline_mapping_unverified"
+    selected_sha = str(mapping.get("selectedSegmentSha256") or "").casefold()
+    parent_sha = str(mapping.get("parentSourceSha256") or "").casefold()
+    pose_sha = str(mapping.get("sourcePosePayloadSha256") or "").casefold()
+    receipt_sha = str(mapping.get("selectedFrameClockReceiptSha256") or "").casefold()
+    if any(len(value) != 64 or any(c not in "0123456789abcdef" for c in value)
+           for value in (selected_sha, parent_sha, pose_sha, receipt_sha)):
+        return None, "source_timeline_mapping_identity_invalid"
+    try:
+        selected_fps = float(mapping["selectedOutputFps"])
+        rows = mapping["selectedFrameLineage"]
+        selected_frame_count = int(mapping["selectedFrameCount"])
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None, "source_timeline_frame_lineage_invalid"
+    if (not math.isfinite(selected_fps) or selected_fps <= 0.0
+            or not isinstance(rows, list) or not rows
+            or selected_frame_count != len(rows)):
+        return None, "source_timeline_frame_lineage_invalid"
+    selected_times = []
+    parent_times = []
+    previous_selected_time = -math.inf
+    previous_parent_time = -math.inf
+    previous_parent_index = -1
+    for expected_index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            return None, "source_timeline_frame_lineage_invalid"
+        try:
+            selected_index = row["selectedFrameIndex"]
+            parent_index = row["parentSourceFrameIndex"]
+            selected_time = float(row["selectedFrameTimeSec"])
+            parent_time = float(row["parentSourceTimeSec"])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            return None, "source_timeline_frame_lineage_invalid"
+        if (type(selected_index) is not int or selected_index != expected_index
+                or type(parent_index) is not int or parent_index < previous_parent_index
+                or not math.isfinite(selected_time) or selected_time <= previous_selected_time
+                or not math.isfinite(parent_time) or parent_time < previous_parent_time):
+            return None, "source_timeline_frame_lineage_invalid"
+        selected_times.append(selected_time)
+        parent_times.append(parent_time)
+        previous_selected_time = selected_time
+        previous_parent_time = parent_time
+        previous_parent_index = parent_index
+
+    already_applied = source_payload.get("_sourceTimelineMappingApplied")
+    mapping_identity = {
+        "selectedSegmentSha256": selected_sha,
+        "parentSourceSha256": parent_sha,
+        "selectedFrameClockReceiptSha256": receipt_sha,
+        "sourcePosePayloadSha256": pose_sha,
+    }
+    if already_applied == mapping_identity:
+        return source_payload, None
+    if already_applied is not None:
+        return None, "source_timeline_mapping_conflict"
+    try:
+        actual_pose_sha = _canonical_source_pose_sha256(source_payload)
+    except (TypeError, ValueError, OverflowError):
+        return None, "source_timeline_pose_digest_invalid"
+    if actual_pose_sha != pose_sha:
+        return None, "source_timeline_pose_identity_mismatch"
+
+    frames = source_payload.get("frames")
+    if not isinstance(frames, list):
+        return None, "source_timeline_pose_frames_invalid"
+    rebased_frames = []
+    previous_time = -math.inf
+    # Pose sample times are code-emitted from the selected clip's decoded FPS.
+    # Allow only serialization/decimal-rounding noise, not a nearby exposure.
+    mapping_tolerance = 1e-6
+    for frame in frames:
+        if not isinstance(frame, dict):
+            return None, "source_timeline_pose_frames_invalid"
+        try:
+            local_time = float(frame["sourceTimeSec"])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            return None, "source_timeline_pose_time_invalid"
+        if not math.isfinite(local_time) or local_time < previous_time - 1e-9:
+            return None, "source_timeline_pose_time_invalid"
+        previous_time = local_time
+        insertion = bisect_left(selected_times, local_time)
+        candidates = [index for index in (insertion - 1, insertion) if 0 <= index < len(selected_times)]
+        if not candidates:
+            return None, "source_timeline_pose_time_unmatched_selected_exposure"
+        matched_index = min(candidates, key=lambda index: abs(selected_times[index] - local_time))
+        if abs(selected_times[matched_index] - local_time) > mapping_tolerance:
+            return None, "source_timeline_pose_time_unmatched_selected_exposure"
+        rebased_frames.append({**frame, "sourceTimeSec": parent_times[matched_index]})
+    if not rebased_frames:
+        return None, "source_timeline_pose_frames_invalid"
+    rebased = {
+        **source_payload,
+        "frames": rebased_frames,
+        "sourceTimeOriginSec": parent_times[0],
+        "_sourceTimelineMappingApplied": mapping_identity,
+    }
+    return rebased, None
+
+
+def source_timeline_mapping_identity(mapping):
+    """Return the stable identity that binds camera evidence to a verified mapping."""
+    if not isinstance(mapping, dict):
+        return None
+    identity_fields = (
+        "selectedSegmentSha256",
+        "parentSourceSha256",
+        "selectedFrameClockReceiptSha256",
+        "sourcePosePayloadSha256",
+    )
+    identity = {name: str(mapping.get(name) or "").casefold() for name in identity_fields}
+    if any(
+        len(value) != 64 or any(character not in "0123456789abcdef" for character in value)
+        for value in identity.values()
+    ):
+        return None
+    return identity
+
+
+def _source_timeline_mapping_declared(motion_payload):
+    reference = (motion_payload or {}).get("sourcePoseCameraReference")
+    return isinstance(reference, dict) and "sourceTimelineMapping" in reference
+
+
+def _canonical_source_pose_pair(source_payload, camera_reference):
+    """Canonicalize both copies of one hash-verified selected-cut pose."""
+    if not isinstance(camera_reference, dict):
+        return source_payload, None
+    mapping = camera_reference.get("sourceTimelineMapping")
+    if mapping is None:
+        return source_payload, camera_reference.get("sourcePose")
+    embedded = camera_reference.get("sourcePose")
+    if not isinstance(embedded, dict) or not isinstance(source_payload, dict):
+        return None, None
+    source_canonical, source_error = _canonical_source_pose_timeline(
+        source_payload, {"sourcePoseCameraReference": camera_reference})
+    embedded_canonical, embedded_error = _canonical_source_pose_timeline(
+        embedded, {"sourcePoseCameraReference": camera_reference})
+    # A selected view can be a strict subset; placement verifies each frame against the bound reference.
+    if source_error or embedded_error:
+        return None, None
+    return source_canonical, embedded_canonical
+
+
 def registered_camera_pose_fidelity_metrics(source_payload, motion_payload, *, camera_reference=None,
                                             camera_orientation=None):
     """Fit one scaled orthographic camera using proximal joints, never each pose.
@@ -71,6 +246,13 @@ def registered_camera_pose_fidelity_metrics(source_payload, motion_payload, *, c
     # proposal; the camera registration (a least_squares fit per bilateral
     # swap) dominates that repeat cost. Results are pure functions of the
     # payloads, so they memoize safely.
+    source_payload, mapping_error = _canonical_source_pose_timeline(source_payload, motion_payload)
+    if mapping_error:
+        return _unavailable_metrics(
+            source_frame_count=len((source_payload or {}).get("frames", [])),
+            motion_frame_count=len((motion_payload or {}).get("frames", [])),
+            reason=mapping_error,
+        )
     cache_key = None
     if camera_orientation is None or isinstance(camera_orientation, list):
         try:
@@ -113,12 +295,24 @@ def _registered_camera_pose_fidelity_metrics_uncached(source_payload, motion_pay
     from scipy.spatial.transform import Rotation
 
     source = _pose_frames(source_payload, source=True)
-    motion = _pose_frames(motion_payload, source=False)
+    motion = pose_frames_for_source_comparison(source_payload, motion_payload)
     retained = motion_payload.get('sourcePoseRegistration')
     if camera_reference is None and isinstance(retained, dict):
         evidence = retained.get('sourcePose', {})
-        if all(evidence.get(key) == source_payload.get(key)
-               for key in ('frames', 'coordinateSpace', 'imageWidth', 'imageHeight', 'sourceTimeOriginSec')):
+        expected_mapping_identity = source_timeline_mapping_identity(
+            source_payload.get("_sourceTimelineMappingApplied")
+        )
+        retained_camera = retained.get("camera")
+        retained_mapping_identity = (
+            retained_camera.get("sourceTimelineMappingIdentity")
+            if isinstance(retained_camera, dict) else None
+        )
+        mapping_matches = (
+            expected_mapping_identity is None
+            or retained_mapping_identity == expected_mapping_identity
+        )
+        if mapping_matches and all(evidence.get(key) == source_payload.get(key)
+                                   for key in ('frames', 'coordinateSpace', 'imageWidth', 'imageHeight', 'sourceTimeOriginSec')):
             camera_reference = retained.get('camera')
     if len(source) < 5 or len(motion) < 5:
         return _unavailable_metrics(source_frame_count=len(source), motion_frame_count=len(motion),
@@ -251,6 +445,9 @@ def source_pose_reference_for_motion(
     so general playback and fidelity comparisons stay clipped to the movement.
     """
     frames = motion_payload.get("frames") or []
+    source_payload, mapping_error = _canonical_source_pose_timeline(source_payload, motion_payload)
+    if mapping_error or not isinstance(source_payload, dict):
+        return {"frames": [], "sourcePoseTimelineError": mapping_error or "source_pose_invalid"}
     if not frames:
         return {**source_payload, "frames": []}
     timestamp_key = next((key for key in ("sourceTimeSec", "cycleSourceTimeSec")
@@ -319,6 +516,79 @@ def source_pose_reference_for_motion(
     return selected_reference
 
 
+def source_comparison_time(source_payload, motion_frame):
+    """Return a motion frame's time on the selected native source timeline.
+
+    This is for source-observation lookups only. It does not alter the frame's
+    playback time or the clip timeline used by temporal processing.
+    """
+    mapped_source_is_required = isinstance(source_payload, dict) and isinstance(
+        source_payload.get("_sourceTimelineMappingApplied"), dict
+    )
+    try:
+        if isinstance(motion_frame, dict):
+            source_time_value = motion_frame.get("sourceTimeSec")
+        else:
+            source_time_value = getattr(motion_frame, "source_time_sec", None)
+        source_time = float(source_time_value)
+        origin = float(source_payload.get("sourceTimeOriginSec", 0.0))
+    except (AttributeError, TypeError, ValueError, OverflowError):
+        if mapped_source_is_required:
+            return math.inf
+        if isinstance(motion_frame, dict):
+            return float(motion_frame.get("timeSec", 0.0))
+        return float(getattr(motion_frame, "time_sec", 0.0))
+    if not math.isfinite(source_time) or not math.isfinite(origin):
+        if mapped_source_is_required:
+            return math.inf
+        if isinstance(motion_frame, dict):
+            return float(motion_frame.get("timeSec", 0.0))
+        return float(getattr(motion_frame, "time_sec", 0.0))
+    return source_time - origin
+
+
+def pose_frames_for_source_comparison(source_payload, motion_payload):
+    """View motion on the selected source-reference clock without mutating it.
+
+    Playback ``timeSec`` remains the clip's output timeline. Source comparisons
+    must instead pair retained observations with the native exposure timestamp
+    carried by ``sourceTimeSec``. The returned pose frames are a comparison-only
+    view rebased to the same origin used by ``_pose_frames(source=True)``.
+    """
+    source_payload, mapping_error = _canonical_source_pose_timeline(source_payload, motion_payload)
+    if mapping_error or not isinstance(source_payload, dict):
+        return []
+    frames = motion_payload.get("frames")
+    mapping_declared = _source_timeline_mapping_declared(motion_payload)
+    if not isinstance(frames, list) or not frames:
+        return _pose_frames(motion_payload, source=False)
+    source_times = []
+    for frame in frames:
+        if not isinstance(frame, dict) or frame.get("sourceTimeSec") is None:
+            return [] if mapping_declared else _pose_frames(motion_payload, source=False)
+        try:
+            source_time = float(frame["sourceTimeSec"])
+        except (TypeError, ValueError, OverflowError):
+            return [] if mapping_declared else _pose_frames(motion_payload, source=False)
+        if not math.isfinite(source_time):
+            return [] if mapping_declared else _pose_frames(motion_payload, source=False)
+        source_times.append(source_time)
+    try:
+        source_origin = float(source_payload.get("sourceTimeOriginSec", 0.0))
+    except (TypeError, ValueError, OverflowError):
+        return [] if mapping_declared else _pose_frames(motion_payload, source=False)
+    if not math.isfinite(source_origin):
+        return [] if mapping_declared else _pose_frames(motion_payload, source=False)
+    comparison_payload = {
+        **motion_payload,
+        "frames": [
+            {**frame, "timeSec": source_time - source_origin}
+            for frame, source_time in zip(frames, source_times)
+        ],
+    }
+    return _pose_frames(comparison_payload, source=False)
+
+
 def materialized_camera_placement_transform(source_payload, motion_payload):
     """Carry the correction camera through unchanged root-relative body shape.
 
@@ -332,10 +602,16 @@ def materialized_camera_placement_transform(source_payload, motion_payload):
     if reference is None:
         return {'available': True, 'orientation': np.eye(3), 'scale': 1., 'origin': np.zeros(3)}
     def unavailable(reason):
-        return _unavailable_metrics(source_frame_count=len(source_payload.get('frames', [])),
+        source_frames = source_payload.get('frames', []) if isinstance(source_payload, dict) else []
+        return _unavailable_metrics(source_frame_count=len(source_frames),
                                     motion_frame_count=len(motion_payload.get('frames', [])), reason=reason)
     if not isinstance(reference, dict):
         return unavailable('invalid_source_camera_reference')
+    source_payload, canonical_evidence = _canonical_source_pose_pair(source_payload, reference)
+    if source_payload is None:
+        return unavailable('source_timeline_mapping_or_pose_identity_mismatch')
+    if canonical_evidence is not None:
+        reference = {**reference, 'sourcePose': canonical_evidence}
     evidence = reference.get('sourcePose', {})
     for field in ('coordinateSpace', 'imageWidth', 'imageHeight'):
         if evidence.get(field) != source_payload.get(field):
@@ -349,12 +625,45 @@ def materialized_camera_placement_transform(source_payload, motion_payload):
     # already selected reference and never stretches sparse observations.
     if motion_payload.get('frames') and all('sourceTimeSec' in frame for frame in motion_payload['frames']):
         source_payload = source_pose_reference_for_motion(source_payload, motion_payload)
-    coordinate_frames = _pose_frames(reference.get('coordinateReference', {}), source=False)
+    # The retained pre-fit coordinate reference has playback `timeSec` and a
+    # distinct native-media `sourceTimeSec`. Placement pairs must use the same
+    # source clock as the materialized motion; using its 30 Hz playback clock
+    # can clamp the last reference samples and make an unchanged pose appear
+    # unavailable or non-rigid.
+    coordinate_frames = _pose_frames(
+        reference.get('coordinateReference', {}), source=False, time_field='sourceTimeSec',
+    )
+    coordinate_by_inference_index = {}
+    for frame in reference.get('coordinateReference', {}).get('frames', []):
+        if not isinstance(frame, dict) or frame.get('inferenceFrameIndex') is None:
+            continue
+        try:
+            inference_index = int(frame['inferenceFrameIndex'])
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if inference_index < 0 or inference_index != frame['inferenceFrameIndex']:
+            continue
+        joints = frame.get('joints')
+        if isinstance(joints, dict):
+            coordinate_by_inference_index[inference_index] = {
+                'joints': {str(name): point for name, value in joints.items()
+                           if (point := _point(value, dimensions=3)) is not None}
+            }
     original_points, placed_points, original_roots, placed_roots = [], [], [], []
     for frame in motion_payload.get('frames', []):
         if frame.get('syntheticLoopBridge'):
             continue
-        before = _motion_frame_at_time(coordinate_frames, float(frame.get('sourceTimeSec', frame.get('timeSec', 0.))))
+        before = None
+        if frame.get('inferenceFrameIndex') is not None:
+            try:
+                inference_index = int(frame['inferenceFrameIndex'])
+            except (TypeError, ValueError, OverflowError):
+                inference_index = None
+            if inference_index is not None:
+                before = coordinate_by_inference_index.get(inference_index)
+        if before is None:
+            before = _motion_frame_at_time(
+                coordinate_frames, float(frame.get('sourceTimeSec', frame.get('timeSec', 0.))))
         placed = frame.get('cameraPlacementReferenceJoints', frame.get('controlledSourceJoints'))
         if before is None or not isinstance(placed, dict):
             return unavailable('source_camera_placement_reference_unavailable')
@@ -439,8 +748,15 @@ def source_to_motion_pose_fidelity_metrics(
     required for three-quarter sources: treating them as pure X or pure Z
     injects visible sagittal motion into the model's lateral axis.
     """
+    source_payload, mapping_error = _canonical_source_pose_timeline(source_payload, motion_payload)
+    if mapping_error or not isinstance(source_payload, dict):
+        return _unavailable_metrics(
+            source_frame_count=len((source_payload or {}).get("frames", [])),
+            motion_frame_count=len((motion_payload or {}).get("frames", [])),
+            reason=mapping_error or "source_pose_invalid",
+        )
     source_frames = _pose_frames(source_payload, source=True)
-    motion_frames = _pose_frames(motion_payload, source=False)
+    motion_frames = pose_frames_for_source_comparison(source_payload, motion_payload)
     if len(source_frames) < 5 or len(motion_frames) < 5:
         return _unavailable_metrics(
             source_frame_count=len(source_frames),
@@ -535,7 +851,7 @@ def source_to_motion_pose_fidelity_metrics_for_projection(
     improvement for an apparent error created only by that branch change.
     """
     source_frames = _pose_frames(source_payload, source=True)
-    motion_frames = _pose_frames(motion_payload, source=False)
+    motion_frames = pose_frames_for_source_comparison(source_payload, motion_payload)
     horizontal_vector = projection_reference.get("projectionHorizontalVector")
     if (
         len(source_frames) < 5
@@ -834,7 +1150,7 @@ def _bilateral_name(name: str, *, swap: bool) -> str:
     return name
 
 
-def _pose_frames(payload: dict[str, Any], *, source: bool) -> list[dict[str, Any]]:
+def _pose_frames(payload: dict[str, Any], *, source: bool, time_field: str | None = None) -> list[dict[str, Any]]:
     frames_value = payload.get("frames")
     if not isinstance(frames_value, list):
         return []
@@ -859,7 +1175,9 @@ def _pose_frames(payload: dict[str, Any], *, source: bool) -> list[dict[str, Any
         }
         if source:
             joints = {name: (point[0] * horizontal_scale, point[1]) for name, point in joints.items()}
-        time_value = frame.get("sourceTimeSec") if source else frame.get("timeSec")
+        time_value = frame.get(time_field) if time_field and frame.get(time_field) is not None else (
+            frame.get("sourceTimeSec") if source else frame.get("timeSec")
+        )
         try:
             time_seconds = float(time_value) if time_value is not None else float(index)
         except (TypeError, ValueError):

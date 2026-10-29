@@ -20,6 +20,28 @@ def source_contract_clearance_sha256(contract: dict[str, Any] | None) -> str:
     return exercise_motion_contract_prompt_sha256(contract)
 
 
+def _source_manifest_contract_matches_clearance(
+    clearance: dict[str, Any], expected_contract: dict[str, Any] | None,
+) -> bool:
+    from .youtube import exercise_motion_contract_prompt_identity_matches
+
+    source_manifest_path = Path(str(clearance.get("sourceManifestPath") or ""))
+    try:
+        source_manifest = json.loads(source_manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return False
+    if not isinstance(source_manifest, dict):
+        return False
+    source_contract = source_manifest.get("exerciseMotionContract")
+    if not isinstance(source_contract, dict) and expected_contract is not None:
+        return False
+    return (
+        source_contract_clearance_sha256(source_contract)
+        == clearance.get("exerciseMotionContractSha256")
+        and exercise_motion_contract_prompt_identity_matches(source_contract, expected_contract)
+    )
+
+
 def source_selection_clearance_is_current(
     manifest: dict[str, Any], *, source_policy_version: int | None = None,
     selected_source_path: Path | None = None,
@@ -92,10 +114,9 @@ def source_selection_clearance_is_current(
                 candidate = selected.get("candidate") if isinstance(selected.get("candidate"), dict) else {}
                 contract = ranking_payload.get("exerciseMotionContract") or candidate.get("exerciseMotionContract")
                 expected_contract = contract if isinstance(contract, dict) else None
-            contract_hash = source_contract_clearance_sha256(expected_contract)
         except (TypeError, ValueError):
             return False
-        if clearance.get("exerciseMotionContractSha256") != contract_hash:
+        if not _source_manifest_contract_matches_clearance(clearance, expected_contract):
             return False
     try:
         # The display clip may be trimmed; clearance belongs to the retained reconstruction input.
@@ -269,6 +290,20 @@ def selected_artifact_identity(
     active_contract = {k: v for k, v in (active_contract or {}).items()
                        if k not in {"cachePath", "cacheStatus", "generatedAt", "elapsedSeconds"}}
     try:
+        expected_fit_strategy = policies.get("controlledMotionFit")
+        expected_bake_code = policies.get("bakeCode")
+        if isinstance(expected_fit_strategy, str) or isinstance(expected_bake_code, str):
+            skeleton_payload = json.loads(skeletons[0].read_text(encoding="utf-8"))
+            if not isinstance(skeleton_payload, dict):
+                return None
+            if isinstance(expected_fit_strategy, str) and selected_fit_receipt_problem(
+                skeleton_payload, expected_fit_strategy,
+            ) is not None:
+                return None
+            if isinstance(expected_bake_code, str) and selected_bake_code_problem(
+                skeleton_payload, expected_bake_code,
+            ) is not None:
+                return None
         return {
             "schemaVersion": 1,
             "sourceSha256": content_hash(sources[0]),
@@ -284,6 +319,30 @@ def selected_artifact_identity(
         }
     except (OSError, ValueError, TypeError):
         return None
+
+
+def selected_fit_receipt_problem(
+    payload: dict[str, Any], expected_strategy: str,
+) -> str | None:
+    """Reject applied selected fits whose current strategy receipt is stale or invalid."""
+    report = payload.get("controlledMotionFit")
+    if not isinstance(report, dict) or report.get("applied") is not True:
+        return None
+    if report.get("strategy") != expected_strategy:
+        return "controlled_motion_fit_strategy_mismatch"
+    try:
+        from .controlled_motion import can_reuse_controlled_motion
+
+        return None if can_reuse_controlled_motion(payload) else "controlled_motion_fit_receipt_invalid"
+    except (KeyError, TypeError, ValueError):
+        return "controlled_motion_fit_receipt_invalid"
+
+
+def selected_bake_code_problem(payload: dict[str, Any], expected_digest: str) -> str | None:
+    """Reject retained postprocessed skeletons created by a different bake pipeline."""
+    if payload.get("selectedSectionBakePathCodeDigest") != expected_digest:
+        return "selected_bake_processing_digest_mismatch"
+    return None
 
 
 @dataclass(frozen=True)
@@ -330,8 +389,14 @@ def decide_acceptance(
     deterministic_rejections = [reason for reason in deterministic_rejections
                                 if reason != "physical_balance_requires_review"]
     missing = required_evidence_gaps(metrics)
+    evidence_incomplete = {
+        "source_support_contact_evidence_incomplete",
+        "source_support_observation_invalid",
+        "source_support_mapping_unavailable",
+    }
     concrete = [reason for reason in deterministic_rejections
-                if not any(word in reason for word in ("unavailable", "missing", "validator_failed"))]
+                if reason not in evidence_incomplete
+                and not any(word in reason for word in ("unavailable", "missing", "validator_failed"))]
     if concrete:
         if all(reason.startswith(("materialized_exported_preview_", "materialized_preview_video_", "final_render_"))
                for reason in concrete):

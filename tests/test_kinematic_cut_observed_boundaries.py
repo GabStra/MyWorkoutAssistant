@@ -230,3 +230,52 @@ def test_loop_proposal_accepts_quiet_true_apex_boundaries():
     assert stats is not None
     assert stats["startBoundarySpeedTorsoPerSecond"] <= kinematic_cut.LOOP_BOUNDARY_QUIET_SPEED_TORSO_PER_SECOND
     assert stats["endBoundarySpeedTorsoPerSecond"] <= kinematic_cut.LOOP_BOUNDARY_QUIET_SPEED_TORSO_PER_SECOND
+
+
+def _boundary_frames(start_joints: set[str], end_joints: set[str], start_velocity: dict[str, float], end_velocity: dict[str, float]):
+    frames = []
+    for index in range(9):
+        time = index * 0.125
+        valid_joints = start_joints if index in (1, 3) else end_joints if index in (5, 7) else set(kinematic_cut.FEATURE_JOINTS)
+        positions = {}
+        for joint_index, joint in enumerate(kinematic_cut.FEATURE_JOINTS):
+            displacement = 0.0
+            if joint in start_joints and index in (1, 3):
+                displacement = start_velocity[joint] * (index - 1) * 0.02
+            elif joint in end_joints and index in (5, 7):
+                displacement = end_velocity[joint] * (index - 5) * 0.02
+            positions[joint] = (0.2 + joint_index * 0.01 + displacement, 0.5 + (0.1 if "shoulder" in joint else 0.35 if "hip" in joint else 0.0))
+        frames.append(
+            kinematic_cut.PoseFrame(
+                time_seconds=time,
+                confidence=0.9,
+                keypoints={joint: (*positions[joint], 0.9) for joint in valid_joints},
+            )
+        )
+    return frames
+
+
+def test_loop_boundary_velocity_uses_joint_identity_when_equal_length_sets_differ():
+    start_joints = set(kinematic_cut.FEATURE_JOINTS[:10])
+    end_joints = set(kinematic_cut.FEATURE_JOINTS[3:])
+    start_velocity = {joint: (-1.0 if index < 3 else 1.0) for index, joint in enumerate(kinematic_cut.FEATURE_JOINTS[:10])}
+    end_velocity = {joint: (1.0 if index < 7 else -1.0) for index, joint in enumerate(kinematic_cut.FEATURE_JOINTS[3:])}
+
+    result = kinematic_cut._loop_boundary_motion_compatibility(
+        _boundary_frames(start_joints, end_joints, start_velocity, end_velocity), 2, 6
+    )
+
+    assert result is not None
+    assert result["boundaryVelocityCosine"] > 0.99
+
+
+def test_loop_boundary_velocity_is_unresolved_when_joint_overlap_is_too_small():
+    start_joints = set(kinematic_cut.FEATURE_JOINTS[:8])
+    end_joints = set(kinematic_cut.FEATURE_JOINTS[5:])
+    velocities = {joint: 1.0 for joint in kinematic_cut.FEATURE_JOINTS}
+
+    result = kinematic_cut._loop_boundary_motion_compatibility(
+        _boundary_frames(start_joints, end_joints, velocities, velocities), 2, 6
+    )
+
+    assert result is None

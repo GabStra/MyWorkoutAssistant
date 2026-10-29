@@ -12,11 +12,21 @@ def normalized_equipment_relationships(contract):
     context = contract.get('motionContext')
     primary = context.get('primaryEquipment') if isinstance(context, dict) else None
     kind = str(primary.get('type') or '').upper() if isinstance(primary, dict) else ''
+    required = contract.get('requiredEquipment')
+    required = [required] if isinstance(required, str) else required
+    required = required if isinstance(required, (list, tuple, set)) else []
+    required_kinds = {
+        str(value).strip().upper()
+        for value in required or []
+        if isinstance(value, str) and str(value).strip()
+    }
     relationship = contract.get('handRelationship')
     support_mode = contract.get('implementSupportMode')
     updates = {}
     # Equipment count and explicitly named acting-arm count outrank model guesses.
-    if kind in {'DUMBBELLS', 'KETTLEBELLS'}:
+    if kind in {'DUMBBELLS', 'KETTLEBELLS'} or required_kinds.intersection(
+        {'DUMBBELLS', 'KETTLEBELLS'}
+    ):
         relationship = 'independent'
         updates['handRelationship'] = relationship
         updates['implementSupportMode'] = 'none'
@@ -79,38 +89,3 @@ def validate_grip(points, names, constraint):
     passed = not required or (constraint.get('available', False) and error <= constraint['toleranceMeters'])
     return {'required': required, 'passed': bool(passed), 'maximumSpacingErrorMeters': error,
             'constraint': constraint}
-
-
-def supported_bilateral_geometry_metrics(payload, *, required):
-    """Check the same centered shoulder-relative grip used by supported IK.
-
-    A constant hand distance alone also describes a tilted or displaced bar.
-    These relationships use 3D relative vectors, independent of camera angle.
-    They apply only when the caller declares a supported bilateral constraint.
-    """
-    if not required:
-        return {'required': False, 'passed': True}
-    names = ('left_shoulder', 'right_shoulder', 'left_hand', 'right_hand')
-    frames = payload.get('frames') or []
-    if not frames or any(not all(n in f.get('joints', {}) for n in names) for f in frames):
-        return {'required': True, 'passed': False, 'reason': 'supported_pair_geometry_unavailable'}
-    points = np.asarray([[f['joints'][n] for n in names] for f in frames], dtype=float)
-    if not np.isfinite(points).all():
-        return {'required': True, 'passed': False, 'reason': 'supported_pair_geometry_invalid'}
-    shoulders = points[:, 1] - points[:, 0]
-    hands = points[:, 3] - points[:, 2]
-    shoulder_width = np.linalg.norm(shoulders, axis=-1)
-    grip_width = np.linalg.norm(hands, axis=-1)
-    if np.any(np.minimum(shoulder_width, grip_width) < 1e-6):
-        return {'required': True, 'passed': False, 'reason': 'supported_pair_geometry_degenerate'}
-    axis = shoulders / shoulder_width[:, None]
-    angle = np.degrees(np.arccos(np.clip(np.sum(hands * axis, axis=-1) / grip_width, -1, 1)))
-    center = (points[:, 2] + points[:, 3] - points[:, 0] - points[:, 1]) / 2
-    offset = abs(np.sum(center * axis, axis=-1)) / shoulder_width
-    # Allow small fitting residuals and normal anatomical differences; reject
-    # a persistently different endpoint relationship, not one noisy frame.
-    angle_p90, offset_p90 = float(np.percentile(angle, 90)), float(np.percentile(offset, 90))
-    return {'required': True, 'passed': angle_p90 <= 15. and offset_p90 <= .25,
-            'p90GripShoulderAxisAngleDegrees': angle_p90,
-            'p90GripCenterOffsetShoulderWidthRatio': offset_p90,
-            'maximumAxisAngleDegrees': 15., 'maximumCenterOffsetShoulderWidthRatio': .25}

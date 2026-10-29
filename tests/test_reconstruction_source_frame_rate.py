@@ -34,6 +34,9 @@ def test_conversion_and_context_crop_use_input_frame_clock(monkeypatch, fps):
     options = {'reconstruction_results_pkl': Path('unused.pkl'), 'body_model_root': Path('unused'), 'fps': fps}
     clip = reconstruction_convert.convert_reconstruction_results_to_motion_clip(**options)
     assert clip.frames[24].time_sec == pytest.approx(24 / fps)
+    assert clip.frames[24].source_time_sec is None
+    assert clip.frames[24].source_frame_index is None
+    assert clip.frames[24].inference_frame_index is None
     cropped = crop_motion_clip_to_input_window(clip, start_seconds=1, end_seconds=2)
     assert cropped.frames[0].joints['pelvis'][0] == np.ceil(fps)
     assert cropped.frames[-1].joints['pelvis'][0] == np.ceil(2 * fps) - 1

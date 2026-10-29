@@ -62,7 +62,7 @@ def cycle_boundary_motion_metrics(payload, selection=None):
 
 
 def rank_loop_cycles(payload, *, max_candidates=5, endpoint_correction_ratio=0., diagnostics=None,
-                     phase_values=None):
+                     phase_values=None, allow_repairable_support_wrap=False):
     """Rank matching poses with compatible velocity, support and full excursion.
 
     End frames are exclusive: the matching endpoint is the first sample of the
@@ -187,10 +187,21 @@ def rank_loop_cycles(payload, *, max_candidates=5, endpoint_correction_ratio=0.,
                 / max(MAX_VELOCITY_MISMATCH_BODY_RATIO * scale, 1e-9))
             wrap_ratio = max(step_ratio, vel_ratio)
             boundary = _boundary_motion_metrics(support_points, fps=fps, scale=scale)
-            if boundary['sourceSupportWrapOverLimitRatio'] > MAX_RANKED_SOURCE_WRAP_RATIO:
+            endpoint_support_pinned = all(
+                name in names and contacts[frame, names.index(name)]
+                for frame in (start, endpoint_index)
+                for side in ('left', 'right')
+                for name in (f'{side}_ankle', f'{side}_foot')
+            )
+            repairable_wrap = bool(allow_repairable_support_wrap and endpoint_support_pinned)
+            if (boundary['sourceSupportWrapOverLimitRatio'] > MAX_RANKED_SOURCE_WRAP_RATIO
+                    and not repairable_wrap):
                 continue
             counts['wrapFeasible'] += 1
-            if not boundary['passed']:
+            deferred_reasons = boundary.get('rejectionReasons') or []
+            if (not boundary['passed']
+                    and not (repairable_wrap
+                             and deferred_reasons == ['source_support_wrap_unrepairable'])):
                 if diagnostics is not None:
                     previous = diagnostics.get('boundaryMotion')
                     if (previous is None or boundary['maximumEndpointVelocityDifferenceMetersPerSecond']
@@ -252,6 +263,12 @@ def rank_loop_cycles(payload, *, max_candidates=5, endpoint_correction_ratio=0.,
                          'score': score, 'endpointGapMeters': jump,
                          'velocityMismatchRmsMetersPerSecond': mismatch,
                          'sourceWrapOverLimitRatio': wrap_ratio,
+                         'sourceWrapDeferredToSupportInitialization': bool(
+                             allow_repairable_support_wrap and all(
+                                 name in names and contacts[frame, names.index(name)]
+                                 for frame in (start, stop if stop < count else count - 1)
+                                 for side in ('left', 'right')
+                                 for name in (f'{side}_ankle', f'{side}_foot'))),
                          'requiresEndpointCorrection': jump > .08*scale,
                          'minimumRetainedRangeRatio': float(
                              np.min(retained[moving_basis] / np.maximum(range_basis[moving_basis], 1e-12))

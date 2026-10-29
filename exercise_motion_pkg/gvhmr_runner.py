@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -133,6 +134,26 @@ class GvhmrRunResult:
         }
 
 
+@dataclass(frozen=True)
+class GvhmrPreprocessResult:
+    preprocess_manifest: Path
+    output_root: Path
+    elapsed_seconds: float
+    timings: dict[str, float]
+    worker_session_dir: Path
+    gpu_lock_wait_seconds: float
+
+    def timing_payload(self) -> dict[str, Any]:
+        return {
+            "stage": "preprocess",
+            "elapsedSeconds": round(self.elapsed_seconds, 3),
+            "timings": self.timings,
+            "preprocessManifest": str(self.preprocess_manifest),
+            "workerSessionDir": str(self.worker_session_dir),
+            "gpuLockWaitSeconds": round(self.gpu_lock_wait_seconds, 3),
+        }
+
+
 def _read_phase_timing_markers(log_path: Path) -> dict[str, dict[str, float]]:
     markers = {
         "GVHMR_PHASE_TIMINGS_JSON:": "inference",
@@ -200,6 +221,187 @@ def resolve_gvhmr_warm_worker_timeout_seconds(configured: float | None) -> float
         None
         if DEFAULT_GVHMR_WARM_WORKER_TIMEOUT_SECONDS <= 0.0
         else float(DEFAULT_GVHMR_WARM_WORKER_TIMEOUT_SECONDS)
+    )
+
+
+def _docker_image_identity(docker_image: str) -> str:
+    result = subprocess.run(
+        ["docker", "image", "inspect", "--format={{.Id}}", docker_image],
+        capture_output=True, text=True, timeout=15.0, check=False,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        raise RuntimeError(f"Could not resolve immutable GVHMR Docker image identity for {docker_image!r}.")
+    return result.stdout.strip()
+
+
+def _run_gvhmr_stage_worker(
+    *, input_video: Path, output_root: Path, logs_dir: Path, docker_image: str,
+    static_camera: bool, warm_worker_session_dir: Path | None,
+    warm_worker_mount_root: Path | None, warm_worker_timeout_seconds: float | None,
+    stage_identity: dict[str, Any] | None, candidate_deadline: float | None,
+    stage_mode: str, gpu_device: str, shared_llama_session_dir: Path | None = None,
+) -> tuple[dict[str, Any], str, Path, float, float]:
+    session_dir = resolve_gvhmr_warm_worker_session_dir(warm_worker_session_dir)
+    mount_root = resolve_gvhmr_warm_worker_mount_root(warm_worker_mount_root)
+    worker_timeout = resolve_gvhmr_warm_worker_timeout_seconds(warm_worker_timeout_seconds)
+    timeout = timeout_with_candidate_deadline(
+        worker_timeout, candidate_deadline, stage_name=f"GVHMR {stage_mode} stage",
+    )
+    jobs_dir, results_dir, job_logs_dir = (session_dir / name for name in ("jobs", "results", "job_logs"))
+    for path in (jobs_dir, results_dir, job_logs_dir):
+        path.mkdir(parents=True, exist_ok=True)
+    job_id = uuid.uuid4().hex
+    job_payload = {
+        "jobId": job_id,
+        "video": path_inside_worker_mount(input_video, mount_root=mount_root),
+        "outputRoot": path_inside_worker_mount(output_root, mount_root=mount_root),
+        "staticCam": static_camera,
+        "keepSourceBetas": False,
+        "stageIdentity": stage_identity,
+        "imageIdentity": _docker_image_identity(docker_image),
+    }
+    job_path = jobs_dir / f"{job_id}.json"
+    tmp_job_path = jobs_dir / f"{job_id}.json.tmp"
+    result_path = results_dir / f"{job_id}.json"
+    started = time.perf_counter()
+    gpu_lock_wait = 0.0
+
+    def submit() -> dict[str, Any]:
+        ensure_warm_worker_ready(
+            session_dir,
+            timeout_seconds=worker_timeout if worker_timeout is not None else DEFAULT_GVHMR_WARM_WORKER_TIMEOUT_SECONDS,
+            lazy_start_env_var=GVHMR_WARM_WORKER_LAZY_START_ENV_VAR,
+            label=f"GVHMR {stage_mode}",
+        )
+        assert_warm_worker_available(session_dir, label=f"GVHMR {stage_mode}")
+        try:
+            ready = json.loads((session_dir / "ready.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise RuntimeError(f"GVHMR {stage_mode} worker readiness record is invalid") from exc
+        if (
+            ready.get("stageMode") != stage_mode
+            or str(ready.get("gpuDevice")) != str(gpu_device)
+            or ready.get("imageIdentity") != job_payload["imageIdentity"]
+        ):
+            raise RuntimeError(
+                f"GVHMR worker role mismatch: expected {stage_mode} on GPU {gpu_device}, "
+                f"got {ready.get('stageMode')} on GPU {ready.get('gpuDevice')} "
+                f"with image {ready.get('imageIdentity')}"
+            )
+        tmp_job_path.write_text(json.dumps(job_payload, indent=2), encoding="utf-8")
+        tmp_job_path.replace(job_path)
+        return wait_for_warm_worker_result(
+            result_path, timeout_seconds=timeout,
+            candidate_deadline=candidate_deadline,
+            heartbeat_path=session_dir / "heartbeat.json",
+            stopped_path=session_dir / "stopped.json",
+        )
+
+    with gpu_stage_lock(stage=f"gvhmr_{stage_mode}", device=gpu_device) as gpu_lock_wait_seconds:
+        if shared_llama_session_dir is not None:
+            from exercise_motion_pkg.shared_llama_server import resident_gpu_compute_scope
+
+            with resident_gpu_compute_scope(
+                shared_llama_session_dir,
+            ):
+                result_payload = submit()
+        else:
+            result_payload = submit()
+    gpu_lock_wait = gpu_lock_wait_seconds
+    elapsed = time.perf_counter() - started
+    copy_worker_log(job_logs_dir / f"{job_id}.stdout.log", logs_dir / f"gvhmr_{stage_mode}.stdout.log")
+    copy_worker_log(job_logs_dir / f"{job_id}.stderr.log", logs_dir / f"gvhmr_{stage_mode}.stderr.log")
+    if str(result_payload.get("jobId") or "") != job_id:
+        raise RuntimeError("Warm GVHMR worker result job ID does not match the submitted request.")
+    if result_payload.get("stageIdentity") != stage_identity:
+        raise RuntimeError("Warm GVHMR worker result stage identity does not match the submitted candidate.")
+    if result_payload.get("status") != "completed":
+        error = result_payload.get("error") or "unknown warm worker failure"
+        raise RuntimeError(f"GVHMR {stage_mode} stage failed: {error}")
+    return result_payload, job_id, session_dir, elapsed, gpu_lock_wait
+
+
+def run_gvhmr_preprocess_stage(
+    *, input_video: Path, output_root: Path, logs_dir: Path, docker_image: str,
+    static_camera: bool, warm_worker_session_dir: Path | None,
+    warm_worker_mount_root: Path | None, warm_worker_timeout_seconds: float | None,
+    stage_identity: dict[str, Any] | None = None,
+    candidate_deadline: float | None = None, gpu_device: str = "1",
+) -> GvhmrPreprocessResult:
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    worker_session = resolve_gvhmr_warm_worker_session_dir(warm_worker_session_dir) / "preprocess"
+    payload, _, session_dir, elapsed, gpu_lock_wait = _run_gvhmr_stage_worker(
+        input_video=input_video, output_root=output_root, logs_dir=logs_dir,
+        docker_image=docker_image, static_camera=static_camera,
+        warm_worker_session_dir=worker_session,
+        warm_worker_mount_root=warm_worker_mount_root,
+        warm_worker_timeout_seconds=warm_worker_timeout_seconds,
+        stage_identity=stage_identity, candidate_deadline=candidate_deadline,
+        stage_mode="preprocess", gpu_device=gpu_device,
+    )
+    manifest = output_root / "demo" / input_video.stem / "preprocess_manifest.json"
+    expected_container_manifest = path_inside_worker_mount(
+        manifest, mount_root=resolve_gvhmr_warm_worker_mount_root(warm_worker_mount_root),
+    )
+    if not manifest.is_file() or payload.get("preprocessManifest") != expected_container_manifest:
+        raise RuntimeError(f"GVHMR preprocessing completed without its expected manifest: {manifest}")
+    return GvhmrPreprocessResult(
+        preprocess_manifest=manifest, output_root=output_root,
+        elapsed_seconds=elapsed,
+        timings={str(k): float(v) for k, v in (payload.get("timings") or {}).items()
+                 if isinstance(v, (int, float)) and not isinstance(v, bool)},
+        worker_session_dir=session_dir,
+        gpu_lock_wait_seconds=gpu_lock_wait,
+    )
+
+
+def run_gvhmr_prediction_stage(
+    *, input_video: Path, output_root: Path, logs_dir: Path, docker_image: str,
+    static_camera: bool, warm_worker_session_dir: Path | None,
+    warm_worker_mount_root: Path | None, warm_worker_timeout_seconds: float | None,
+    preprocess_manifest: Path, shared_llama_session_dir: Path | None,
+    stage_identity: dict[str, Any] | None = None,
+    candidate_deadline: float | None = None, gpu_device: str = "0",
+) -> GvhmrRunResult:
+    if shared_llama_session_dir is None:
+        raise ValueError("Split GVHMR prediction requires the shared llama session for GPU admission")
+    expected_manifest = output_root / "demo" / input_video.stem / "preprocess_manifest.json"
+    if Path(preprocess_manifest).expanduser().resolve() != expected_manifest.expanduser().resolve():
+        raise ValueError("GVHMR prediction handoff is not the manifest for this output/video pair")
+    if not expected_manifest.is_file():
+        raise FileNotFoundError(f"GVHMR preprocessing handoff is missing: {expected_manifest}")
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    worker_session = resolve_gvhmr_warm_worker_session_dir(warm_worker_session_dir) / "predict"
+    payload, job_id, session_dir, elapsed, gpu_lock_wait = _run_gvhmr_stage_worker(
+        input_video=input_video, output_root=output_root, logs_dir=logs_dir,
+        docker_image=docker_image, static_camera=static_camera,
+        warm_worker_session_dir=worker_session,
+        warm_worker_mount_root=warm_worker_mount_root,
+        warm_worker_timeout_seconds=warm_worker_timeout_seconds,
+        stage_identity=stage_identity, candidate_deadline=candidate_deadline,
+        stage_mode="predict", gpu_device=gpu_device,
+        shared_llama_session_dir=shared_llama_session_dir,
+    )
+    sequence_dir = output_root / input_video.stem
+    results_pkl = sequence_dir / "reconstruction_output.pkl"
+    if not results_pkl.is_file():
+        raise RuntimeError(f"GVHMR prediction worker completed without writing {results_pkl}")
+    timings = {
+        str(k): float(v) for k, v in (payload.get("timings") or {}).items()
+        if isinstance(v, (int, float)) and not isinstance(v, bool)
+    }
+    stdout_log, stderr_log = logs_dir / "gvhmr_predict.stdout.log", logs_dir / "gvhmr_predict.stderr.log"
+    return GvhmrRunResult(
+        output_dir=sequence_dir, results_pkl=results_pkl,
+        demo_output_dir=output_root / "demo" / input_video.stem,
+        stdout_log=stdout_log, stderr_log=stderr_log,
+        command=["gvhmr-stage-worker", "predict", job_id],
+        elapsed_seconds=elapsed, returncode=0, docker_image=docker_image,
+        gpu_lock_wait_seconds=gpu_lock_wait, docker_lock_wait_seconds=0.0,
+        phase_timings={"inference": timings}, unattributed_runner_seconds=0.0,
+        timeout_seconds=resolve_gvhmr_warm_worker_timeout_seconds(warm_worker_timeout_seconds),
+        warm_worker=True, warm_worker_job_id=job_id,
+        warm_worker_session_dir=session_dir, stage_identity=stage_identity,
     )
 
 
@@ -418,7 +620,7 @@ def build_gvhmr_command(
 
 
 @gpu_stage_task("gvhmr_reconstruction")
-def run_gvhmr_locally(
+def _run_gvhmr_locally_queued(
     *,
     input_video: Path,
     output_root: Path,
@@ -535,4 +737,58 @@ def run_gvhmr_locally(
         phase_timings=phase_timings,
         unattributed_runner_seconds=unattributed_runner_seconds,
         timeout_seconds=timeout,
+    )
+
+
+def run_gvhmr_locally(
+    *, stage_split: bool = False,
+    shared_llama_session_dir: Path | None = None,
+    **kwargs: Any,
+) -> GvhmrRunResult:
+    """Keep legacy scheduling while routing the verified split path per GPU."""
+    if not stage_split:
+        return _run_gvhmr_locally_queued(**kwargs)
+    if not bool(kwargs.get("use_warm_worker")):
+        raise ValueError("GVHMR stage splitting requires the supervised warm worker")
+    preprocess_gpu = exclusive_gpu_device()
+    if preprocess_gpu is None or preprocess_gpu == "0":
+        raise ValueError("GVHMR stage splitting requires an explicitly configured nonzero preprocessing GPU")
+    if shared_llama_session_dir is None:
+        raise ValueError("GVHMR stage splitting requires the shared llama session for GPU admission")
+    worker_timeout = kwargs.get("warm_worker_timeout_seconds")
+    if worker_timeout is None:
+        worker_timeout = kwargs.get("timeout_seconds")
+    preprocess = run_gvhmr_preprocess_stage(
+        input_video=kwargs["input_video"], output_root=kwargs["output_root"],
+        logs_dir=kwargs["logs_dir"], docker_image=kwargs.get("docker_image", DEFAULT_GVHMR_DOCKER_IMAGE),
+        static_camera=kwargs.get("static_camera", True),
+        warm_worker_session_dir=kwargs.get("warm_worker_session_dir"),
+        warm_worker_mount_root=kwargs.get("warm_worker_mount_root"),
+        warm_worker_timeout_seconds=worker_timeout,
+        stage_identity=kwargs.get("stage_identity"), candidate_deadline=kwargs.get("candidate_deadline"),
+        gpu_device=preprocess_gpu,
+    )
+    prediction = run_gvhmr_prediction_stage(
+        input_video=kwargs["input_video"], output_root=kwargs["output_root"],
+        logs_dir=kwargs["logs_dir"], docker_image=kwargs.get("docker_image", DEFAULT_GVHMR_DOCKER_IMAGE),
+        static_camera=kwargs.get("static_camera", True),
+        warm_worker_session_dir=kwargs.get("warm_worker_session_dir"),
+        warm_worker_mount_root=kwargs.get("warm_worker_mount_root"),
+        warm_worker_timeout_seconds=worker_timeout,
+        preprocess_manifest=preprocess.preprocess_manifest,
+        shared_llama_session_dir=shared_llama_session_dir,
+        stage_identity=kwargs.get("stage_identity"), candidate_deadline=kwargs.get("candidate_deadline"),
+    )
+    phase_timings = dict(prediction.phase_timings)
+    phase_timings["preprocess"] = preprocess.timings
+    return replace(
+        prediction,
+        elapsed_seconds=preprocess.elapsed_seconds + prediction.elapsed_seconds,
+        gpu_lock_wait_seconds=preprocess.gpu_lock_wait_seconds + prediction.gpu_lock_wait_seconds,
+        phase_timings=phase_timings,
+        unattributed_runner_seconds=(
+            prediction.unattributed_runner_seconds + max(
+                0.0, preprocess.elapsed_seconds - sum(preprocess.timings.values())
+            )
+        ),
     )

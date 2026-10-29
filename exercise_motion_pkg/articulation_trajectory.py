@@ -12,7 +12,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 from scipy.optimize._numdiff import approx_derivative, group_columns
 
-from .models import MotionClip, MotionFrame
+from .models import MotionClip
 
 
 def _norm(vectors: np.ndarray) -> np.ndarray:
@@ -350,7 +350,7 @@ def fit_pose_and_temporal_trajectories(
         # geometry intact and retain the partial objective only as diagnostics.
         fitted = source
     else:
-        frames = [MotionFrame(frame.time_sec, {**frame.joints,
+        frames = [replace(frame, joints={**frame.joints,
                    **{name: tuple(float(v) for v in points[i, indices[name]]) for name in corrected_names}})
                   for i, frame in enumerate(source.frames)]
         fitted = replace(source, frames=frames)
@@ -431,7 +431,7 @@ def fit_chain_rotations(
         name not in frame.joints for frame in source.frames for name in chain
     ):
         return source
-    frames = [MotionFrame(frame.time_sec, dict(frame.joints)) for frame in source.frames]
+    frames = [replace(frame, joints=dict(frame.joints)) for frame in source.frames]
     bases = []
     for frame in source.frames:
         body = _body_local_frame(frame)

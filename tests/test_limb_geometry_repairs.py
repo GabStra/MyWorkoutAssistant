@@ -157,7 +157,8 @@ def test_paired_hand_repair_follows_body_turn_without_changing_rigid_hold():
         frames.append(MotionFrame(i / 30., {name: tuple(rotation @ p) for name, p in original.joints.items()}))
     clip = MotionClip(30., list(original.joints), frames)
     repaired, report = s._stabilize_rigid_paired_hand_spacing(clip)
-    assert report["axisReference"] == "moving_body_frame"
+    assert report["preservedMeasuredHandMidpoint"]
+    assert report["preservedMeasuredHandAxis"]
     for before, after in zip(clip.frames, repaired.frames):
         for side in ("left", "right"):
             assert after.joints[f"{side}_hand"] == pytest.approx(before.joints[f"{side}_hand"], abs=1e-6)

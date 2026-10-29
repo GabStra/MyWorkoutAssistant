@@ -28,7 +28,7 @@ from pathlib import Path
 from exercise_motion_pkg.bake_and_rank import BakeAndRankRequest, LazyLlamaCppVisionSession
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SERVER = r"C:\Users\gabri\Documents\llama.cpp\build-master\bin\Release\llama-server.exe"
+SERVER = r"C:\llama.cpp\build-master\bin\Release\llama-server.exe"
 MODEL = r"C:\Users\gabri\Downloads\Qwen3.5-9B-UD-Q4_K_XL.gguf"
 MMPROJ = r"C:\Users\gabri\Downloads\mmproj-BF16(6).gguf"
 PORT = 8160

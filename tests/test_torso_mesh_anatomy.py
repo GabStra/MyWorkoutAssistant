@@ -72,7 +72,7 @@ const build = new Function("THREE", "scene", kernel + `
     const firstFace = args[0].faces.length;
     const firstRing = rings.length;
     originalSegment(...args);
-    segments.push({start: args[1].clone(), end: args[2].clone(), vertices: args[0].vertices.slice(first), rootRing: rings[firstRing], faces: args[0].faces.slice(firstFace), tipIndex: args[0].vertices.length - 1});
+    segments.push({start: args[1].clone(), end: args[2].clone(), endWidth: args[5], endInset: args[9], vertices: args[0].vertices.slice(first), rootRing: rings[firstRing], faces: args[0].faces.slice(firstFace), tipIndex: args[0].vertices.length - 1});
   };
   wearDirectionalRing = (mesh, center, side, depth, ...args) => {
     const indices = originalRing(mesh, center, side, depth, ...args);
@@ -253,6 +253,17 @@ for (const shoulderDepthOffset of [0,.07]) for (const angles of [[0,0,0], [.6,1.
       assert.equal(capFaces.filter(face => face.indices.length === 3).length, 8,
         "Heel and toe caps must be convex fans rather than broad flat polygons");
     }
+  }
+  for (const side of ["left", "right"]) {
+    const ankle = joints[side + "_ankle"];
+    const shin = segments.find(segment =>
+      segment.start.distanceTo(joints[side + "_knee"]) < 1e-10 &&
+      segment.end.distanceTo(ankle) < 1e-10);
+    const ankleCap = spheres.find(sphere => sphere.center.distanceTo(ankle) < 1e-10);
+    assert.ok(shin && ankleCap, "Each ankle must have a lower-leg mesh and its joint cap");
+    const appliedInset = Math.min(shin.endInset, shin.start.distanceTo(shin.end) * .15);
+    assert.ok(appliedInset >= ankleCap.radius * .80 && appliedInset <= ankleCap.radius,
+      "The calf endpoint must overlap the ankle cap slightly, without leaving a visible gap");
   }
   const torsoSide = joints.left_shoulder.clone().sub(joints.right_shoulder).normalize();
   const waistWidth = (() => {

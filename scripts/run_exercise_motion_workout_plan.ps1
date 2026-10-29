@@ -123,6 +123,7 @@ param(
     [string]$ReconstructionDockerShmSize = "16g",
     [bool]$WarmGvhmrWorker = $false,
     [switch]$SkipWarmGvhmrWorker,
+    [switch]$GvhmrStageSplit,
     [string]$GvhmrWorkerSessionDir,
     [double]$GvhmrWorkerStartupTimeoutSeconds = 600.0,
     [double]$GvhmrWorkerJobTimeoutSeconds = 1200.0,
@@ -160,7 +161,7 @@ param(
     [switch]$ComparativeSegmentSelection,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
     [string]$LlamaCppModel = (Join-Path (Split-Path -Parent $PSScriptRoot) "models/Qwen3.5-9B-Q6_K/Qwen3.5-9B-Q6_K.gguf"),
-    [string]$LlamaCppServerCommand = "C:\Users\gabri\Documents\llama.cpp\build-master\bin\Release\llama-server.exe",
+    [string]$LlamaCppServerCommand = $(if ($env:EXERCISE_MOTION_LLAMA_CPP_SERVER_COMMAND) { $env:EXERCISE_MOTION_LLAMA_CPP_SERVER_COMMAND } else { "C:\llama.cpp\build-master\bin\Release\llama-server.exe" }),
     [string]$LlamaCppMmproj = (Join-Path (Split-Path -Parent $PSScriptRoot) "models/Qwen3.5-9B-Q6_K/mmproj-BF16.gguf"),
     [AllowEmptyString()]
     [string]$LlamaCppMtpModel = "",
@@ -207,6 +208,13 @@ param(
     [Parameter(ValueFromRemainingArguments = $true)]
     [object[]]$RemainingArguments = @()
 )
+
+if (-not $PSBoundParameters.ContainsKey("LlamaCppServerCommand") -and [string]::IsNullOrWhiteSpace($env:EXERCISE_MOTION_LLAMA_CPP_SERVER_COMMAND)) {
+    $userLlamaCppServerCommand = [Environment]::GetEnvironmentVariable("EXERCISE_MOTION_LLAMA_CPP_SERVER_COMMAND", "User")
+    if (-not [string]::IsNullOrWhiteSpace($userLlamaCppServerCommand)) {
+        $LlamaCppServerCommand = $userLlamaCppServerCommand
+    }
+}
 
 . (Join-Path $PSScriptRoot "motion_validation_policy.ps1")
 $SelectionValidationPolicyVersion = Get-MotionSelectionValidationPolicyVersion
@@ -557,6 +565,34 @@ function Resolve-WaveSourceSelectionPolicyVersion {
     throw 'Cannot persist a source-turn cursor without a valid source-selection policy version.'
 }
 
+function Write-CanonicalSourceTurnCursor {
+    param(
+        [object]$WorkItem,
+        [object]$WaveState,
+        [ValidateSet('next_source_candidate', 'bounded_source_discovery')]
+        [string]$Transition
+    )
+
+    $resumePath = Join-Path $WorkItem.bakeWorkspace 'source_turn_resume.json'
+    $handoffPath = Join-Path $WorkItem.bakeWorkspace ('.source_turn_handoff.{0}.json' -f [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $WorkItem.bakeWorkspace -Force | Out-Null
+    try {
+        # Hand the complete Python-produced item receipt to Python. The runner
+        # does not reconstruct the cursor contract or identity fields.
+        $WaveState | ConvertTo-Json -Depth 64 | Set-Content -LiteralPath $handoffPath -Encoding UTF8
+        Invoke-PythonModule -Arguments @(
+            '-m', 'exercise_motion_pkg.source_turn_cursor_cli',
+            '--wave-state-json', $handoffPath,
+            '--exercise-plan-json', $WorkItem.exercisePlanPath,
+            '--cursor-path', $resumePath,
+            '--source-review-turn-id', $sourceReviewTurnId,
+            '--transition', $Transition
+        )
+    } finally {
+        Remove-Item -LiteralPath $handoffPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Get-OptionalDouble {
     param([object]$Value)
     if ($null -eq $Value) {
@@ -835,6 +871,25 @@ function New-TerminalExerciseSummary {
             bakeAttempts = [int]$WorkItem.bakeAttemptCount
         }
     }
+}
+
+function Add-StagedWaveSummaryTimings {
+    param([object]$Summary, [object]$WaveState, [object]$WaveResult, [string]$WaveId)
+    if ($null -eq $Summary -or $null -eq $WaveState) { return }
+    $reconstruction = Get-ObjectProperty -Object $WaveState -Name 'reconstruction'
+    $attempts = @(Get-ObjectProperty -Object $reconstruction -Name 'attempts')
+    $finalValidation = Get-ObjectProperty -Object $WaveState -Name 'finalValidation'
+    $diagnostics = @(Get-ObjectProperty -Object $finalValidation -Name 'candidateDiagnostics')
+    $Summary.timings.stagedWaveId = $WaveId
+    $Summary.timings.stagedWaveElapsedSeconds = Get-OptionalDouble -Value (Get-ObjectProperty -Object $WaveResult -Name 'elapsedSeconds')
+    $Summary.timings.sourceAttemptCount = @((Get-ObjectProperty -Object (Get-ObjectProperty -Object $WaveState -Name 'source') -Name 'attempts')).Count
+    $Summary.timings.reconstructionGeneratedCount = @($attempts | Where-Object { $_.status -eq 'prepared' -and $_.cacheStatus -eq 'generated' }).Count
+    $reconstructionSeconds = @($attempts | ForEach-Object { Get-OptionalDouble -Value $_.elapsedSeconds } | Where-Object { $null -ne $_ } | Measure-Object -Sum).Sum
+    $Summary.timings.reconstructionSeconds = if ($null -eq $reconstructionSeconds) { 0.0 } else { [Math]::Round([double]$reconstructionSeconds, 3) }
+    $Summary.timings.finalValidationSeconds = Get-OptionalDouble -Value (Get-ObjectProperty -Object $finalValidation -Name 'elapsedSeconds')
+    $diagnosticSeconds = @($diagnostics | ForEach-Object { Get-OptionalDouble -Value (Get-ObjectProperty -Object $_.timings -Name 'totalSeconds') } | Where-Object { $null -ne $_ } | Measure-Object -Sum).Sum
+    $Summary.timings.finalValidationDiagnosticSeconds = if ($null -eq $diagnosticSeconds) { 0.0 } else { [Math]::Round([double]$diagnosticSeconds, 3) }
+    $Summary.finalValidationRejectionReasons = @($diagnostics | ForEach-Object { $_.reasons } | Where-Object { $null -ne $_ } | ForEach-Object { $_ } | Select-Object -Unique)
 }
 
 function New-ExerciseCandidateManifest {
@@ -2475,7 +2530,7 @@ function Stop-SharedLlamaServer {
     param([object]$Server)
 
     if ($null -eq $Server) {
-        return
+        return $true
     }
     $sessionDir = $Server.sessionDir
     Set-MotionServiceSessionState `
@@ -2509,7 +2564,7 @@ function Stop-SharedLlamaServer {
         Remove-Item -LiteralPath (Join-Path $sessionDir "stop_intent.json") -Force -ErrorAction SilentlyContinue
         Write-Warning "Shared llama.cpp server drain timed out with $($remainingRequests.Count) live client counter(s); leaving the server running."
         $null = Release-MotionServiceSessionLease -SessionDirectory $Server.sessionLeaseKey
-        return
+        return $false
     }
 
     $stopState = Stop-MotionProcessWithIdentity `
@@ -2532,13 +2587,17 @@ function Stop-SharedLlamaServer {
     } else {
         Write-Warning "Shared llama.cpp server shutdown could not be confirmed; preserving its session markers and owner evidence."
     }
+    return $runtimeState -eq "stopped" -and $stopState -eq "stopped"
 }
 
-function Start-GvhmrWarmWorker {
+function Start-GvhmrWarmWorkerSingle {
     param(
         [string]$SessionDir,
         [string]$MountRoot,
-        [string]$WorkerScriptPath
+        [string]$WorkerScriptPath,
+        [ValidateSet("combined", "preprocess", "predict")]
+        [string]$StageMode = "combined",
+        [string]$PhysicalGpuDevice
     )
 
     $sessionLeaseKey = Acquire-MotionServiceSessionLease `
@@ -2569,8 +2628,70 @@ function Start-GvhmrWarmWorker {
         -RuntimeOwner $runtimeOwner `
         -ServiceState "starting"
     $dockerArgs = @("run", "-d", "--rm", "--name", $containerName)
-    if (-not [string]::IsNullOrWhiteSpace($ReconstructionDockerGpus)) {
-        $dockerArgs += @("--gpus", $ReconstructionDockerGpus)
+    if ($StageMode -ne "combined") {
+        $workerImageIdentity = (& docker image inspect '--format={{.Id}}' $ReconstructionDockerImage 2>$null)
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace([string]$workerImageIdentity)) {
+            throw "Cannot resolve immutable Docker image identity for the GVHMR $StageMode worker."
+        }
+        $dockerArgs += @("--env", "GVHMR_IMAGE_IDENTITY=$(([string]$workerImageIdentity).Trim())")
+    }
+    $workerGpuSelection = $ReconstructionDockerGpus
+    if (-not [string]::IsNullOrWhiteSpace($PhysicalGpuDevice)) {
+        $gpuRows = @(& nvidia-smi --query-gpu=index,uuid --format=csv,noheader,nounits 2>$null)
+        $gpuUuids = @{}
+        foreach ($gpuRow in $gpuRows) {
+            $parts = ([string]$gpuRow).Split(',', 2)
+            if ($parts.Count -eq 2) { $gpuUuids[$parts[0].Trim()] = $parts[1].Trim() }
+        }
+        if ($LASTEXITCODE -ne 0 -or -not $gpuUuids.ContainsKey($PhysicalGpuDevice)) {
+            throw "Cannot pin the GVHMR $StageMode worker to physical GPU ${PhysicalGpuDevice}: nvidia-smi did not confirm that device."
+        }
+        $physicalGpuUuid = $gpuUuids[$PhysicalGpuDevice]
+        $dockerArgs += @("--env", "CUDA_VISIBLE_DEVICES=$physicalGpuUuid")
+        $workerGpuSelection = "device=$physicalGpuUuid"
+    } else {
+        $exclusiveDevice = "$env:EXERCISE_MOTION_EXCLUSIVE_GPU_DEVICE".Trim()
+        if (-not [string]::IsNullOrWhiteSpace($exclusiveDevice) -and $exclusiveDevice -ne '0') {
+        if ($exclusiveDevice -notmatch '^[1-9]\d*$') {
+            throw "EXERCISE_MOTION_EXCLUSIVE_GPU_DEVICE must be a CUDA device index, got '$exclusiveDevice'."
+        }
+        $gpuRows = @(& nvidia-smi --query-gpu=index,uuid --format=csv,noheader,nounits 2>$null)
+        $gpuUuids = @{}
+        foreach ($gpuRow in $gpuRows) {
+            $parts = ([string]$gpuRow).Split(',', 2)
+            if ($parts.Count -eq 2) { $gpuUuids[$parts[0].Trim()] = $parts[1].Trim() }
+        }
+        if (
+            $LASTEXITCODE -ne 0 -or
+            -not $gpuUuids.ContainsKey('0') -or
+            -not $gpuUuids.ContainsKey($exclusiveDevice) -or
+            $gpuUuids['0'] -eq $gpuUuids[$exclusiveDevice]
+        ) {
+            throw "Cannot pin the warm GVHMR worker to exclusive GPU ${exclusiveDevice}: nvidia-smi did not confirm distinct GPU UUIDs."
+        }
+        $reconstructionUuid = $gpuUuids[$exclusiveDevice]
+        $dockerArgs += @("--env", "CUDA_VISIBLE_DEVICES=$reconstructionUuid")
+        $configuredSelection = "$workerGpuSelection".Trim()
+        if ([string]::IsNullOrWhiteSpace($configuredSelection) -or $configuredSelection -ieq 'all') {
+            $workerGpuSelection = "device=$reconstructionUuid"
+        } else {
+            $separatorIndex = $configuredSelection.IndexOf('=')
+            $selectorName = if ($separatorIndex -ge 0) { $configuredSelection.Substring(0, $separatorIndex).Trim() } else { '' }
+            $selectorValue = if ($separatorIndex -ge 0) { $configuredSelection.Substring($separatorIndex + 1).Trim() } else { '' }
+            if (
+                $separatorIndex -lt 0 -or
+                $selectorName.Trim() -ine 'device' -or
+                $selectorValue -match ',' -or
+                $selectorValue.Trim() -notin @($exclusiveDevice, $reconstructionUuid)
+            ) {
+                throw "Warm GVHMR GPU selection '$configuredSelection' conflicts with exclusive GPU ${exclusiveDevice}."
+            }
+            $workerGpuSelection = "device=$reconstructionUuid"
+        }
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($workerGpuSelection)) {
+        $dockerArgs += @("--gpus", $workerGpuSelection)
     }
     $warmWorkerRetentionPath = Join-Path (Split-Path -Parent $WorkerScriptPath) "warm_worker_retention.py"
         $dockerArgs += @("--shm-size", "8g")
@@ -2584,7 +2705,9 @@ function Start-GvhmrWarmWorker {
             "-w", "/opt/gvhmr",
             $ReconstructionDockerImage,
             "python", "-u", "/worker/gvhmr_warm_worker.py",
-            "--state-dir", "/worker_state"
+            "--state-dir", "/worker_state",
+            "--stage-mode", $StageMode,
+            "--gpu-device", $(if ([string]::IsNullOrWhiteSpace($PhysicalGpuDevice)) { "0" } else { $PhysicalGpuDevice })
         )
 
     if ($script:GvhmrWorkerStartedOnce) {
@@ -2637,15 +2760,25 @@ function Start-GvhmrWarmWorker {
                 & docker logs $containerName 2>&1 | Add-Content -LiteralPath (Join-Path $SessionDir "container.log") -Encoding UTF8
             } catch {
             }
-            try {
-                & docker stop $containerName | Out-Null
-            } catch {
-            }
+            Stop-GvhmrWarmWorker -Worker ([pscustomobject]@{
+                containerName = $containerName
+                containerId = $containerId
+                sessionDir = $SessionDir
+                sessionLeaseKey = $sessionLeaseKey
+                runtimeOwner = $runtimeOwner
+            })
             throw "Warm GVHMR worker failed during startup: $errorPayload"
         }
         $running = (& docker inspect -f "{{.State.Running}}" $containerName 2>$null)
         if ($LASTEXITCODE -ne 0 -or "$running".Trim().ToLowerInvariant() -ne "true") {
             $logs = (& docker logs $containerName 2>&1)
+            Stop-GvhmrWarmWorker -Worker ([pscustomobject]@{
+                containerName = $containerName
+                containerId = $containerId
+                sessionDir = $SessionDir
+                sessionLeaseKey = $sessionLeaseKey
+                runtimeOwner = $runtimeOwner
+            })
             throw "Warm GVHMR worker container exited before ready. Logs: $logs"
         }
         Start-Sleep -Seconds 2
@@ -2654,17 +2787,86 @@ function Start-GvhmrWarmWorker {
         & docker logs $containerName 2>&1 | Add-Content -LiteralPath (Join-Path $SessionDir "container.log") -Encoding UTF8
     } catch {
     }
-    try {
-        & docker stop $containerName | Out-Null
-    } catch {
-    }
+    Stop-GvhmrWarmWorker -Worker ([pscustomobject]@{
+        containerName = $containerName
+        containerId = $containerId
+        sessionDir = $SessionDir
+        sessionLeaseKey = $sessionLeaseKey
+        runtimeOwner = $runtimeOwner
+    })
     throw "Timed out waiting for warm GVHMR worker startup after $GvhmrWorkerStartupTimeoutSeconds seconds."
+}
+
+function Start-GvhmrWarmWorker {
+    param(
+        [string]$SessionDir,
+        [string]$MountRoot,
+        [string]$WorkerScriptPath,
+        [switch]$StageSplit
+    )
+
+    if (-not $StageSplit) {
+        return Start-GvhmrWarmWorkerSingle -SessionDir $SessionDir -MountRoot $MountRoot -WorkerScriptPath $WorkerScriptPath
+    }
+    $preprocessGpu = "$env:EXERCISE_MOTION_EXCLUSIVE_GPU_DEVICE".Trim()
+    $preprocess = $null
+    try {
+        $preprocess = Start-GvhmrWarmWorkerSingle `
+            -SessionDir (Join-Path $SessionDir "preprocess") `
+            -MountRoot $MountRoot `
+            -WorkerScriptPath $WorkerScriptPath `
+            -StageMode preprocess `
+            -PhysicalGpuDevice $preprocessGpu
+        $prediction = Start-GvhmrWarmWorkerSingle `
+            -SessionDir (Join-Path $SessionDir "predict") `
+            -MountRoot $MountRoot `
+            -WorkerScriptPath $WorkerScriptPath `
+            -StageMode predict `
+            -PhysicalGpuDevice "0"
+        return [pscustomobject]@{
+            workers = @($preprocess, $prediction)
+            containerName = $prediction.containerName
+            sessionDir = $SessionDir
+            split = $true
+        }
+    } catch {
+        if ($null -ne $preprocess) {
+            Stop-GvhmrWarmWorker -Worker ([pscustomobject]@{
+                workers = @($preprocess)
+                sessionDir = $SessionDir
+                split = $true
+            })
+        } else {
+            $rootState = Release-MotionServiceSessionLease -SessionDirectory $SessionDir
+            if ($rootState -eq "stopped") {
+                @{ status = "stopped"; stoppedByPid = $PID } | ConvertTo-Json |
+                    Set-Content -LiteralPath (Join-Path $SessionDir "stopped.json") -Encoding UTF8
+            }
+        }
+        throw
+    }
 }
 
 function Stop-GvhmrWarmWorker {
     param([object]$Worker)
     if ($null -eq $Worker) {
-        return
+        return $true
+    }
+    if ($Worker.PSObject.Properties.Name -contains "workers") {
+        $childrenStopped = $true
+        foreach ($childWorker in @($Worker.workers)) {
+            if (-not (Stop-GvhmrWarmWorker -Worker $childWorker)) {
+                $childrenStopped = $false
+            }
+        }
+        $rootState = Release-MotionServiceSessionLease -SessionDirectory $Worker.sessionDir
+        if ($rootState -eq "stopped") {
+            @{ status = "stopped"; stoppedByPid = $PID } | ConvertTo-Json |
+                Set-Content -LiteralPath (Join-Path $Worker.sessionDir "stopped.json") -Encoding UTF8
+        } else {
+            Write-Warning "Split GVHMR root session shutdown could not be confirmed; preserving its owner evidence."
+        }
+        return $childrenStopped -and $rootState -eq "stopped"
     }
     Set-MotionServiceSessionState `
         -SessionDirectory $Worker.sessionLeaseKey `
@@ -2690,6 +2892,7 @@ function Stop-GvhmrWarmWorker {
     } else {
         Write-Warning "Warm $($Worker.runtimeOwner.service) shutdown could not be confirmed; preserving its session owner evidence."
     }
+    return $runtimeState -eq "stopped"
 }
 
 function Remove-IntermediateArtifactFile {
@@ -2922,6 +3125,19 @@ function Test-SourceSelectionClearanceCurrent {
     }
 }
 
+function Get-ExpectedSourceClearanceContractSha256 {
+    param([object]$WorkItem)
+
+    # Prepared interval manifests carry the exact historical receipt hash. The
+    # Python revalidation path separately proves that its retained raw contract
+    # matches the current plan (including equivalent UTC timestamp offsets).
+    $receiptHash = [string]$WorkItem.retainedSourceContractReceiptSha256
+    if (-not [string]::IsNullOrWhiteSpace($receiptHash)) {
+        return $receiptHash
+    }
+    return [string]$WorkItem.currentContractSha256
+}
+
 function Get-ExistingSelectedSummary {
     param([object]$WorkItem)
 
@@ -2997,7 +3213,7 @@ function Get-ExistingSelectedSummary {
         [string]$manifestSelected.sourceSelectionClearance.status
     } else { "" }
     $selectedInputPath = if ($inputFiles.Count -gt 0) { $inputFiles[0].FullName } else { "" }
-    if (-not (Test-SourceSelectionClearanceCurrent -Selection $selection -SelectedInputPath $selectedInputPath -ExpectedExerciseName ([string]$WorkItem.exerciseName) -ExpectedContractSha256 ([string]$WorkItem.currentContractSha256) -AllowRawSkip $SkipPreReconstructionSourceValidation)) {
+    if (-not (Test-SourceSelectionClearanceCurrent -Selection $selection -SelectedInputPath $selectedInputPath -ExpectedExerciseName ([string]$WorkItem.exerciseName) -ExpectedContractSha256 (Get-ExpectedSourceClearanceContractSha256 -WorkItem $WorkItem) -AllowRawSkip $SkipPreReconstructionSourceValidation)) {
         return $null
     }
     $manifestSelectedOptions = if ($selection -and $selection.PSObject.Properties.Name -contains "selectedResults" -and $selection.selectedResults) {
@@ -3080,9 +3296,6 @@ function Test-SelectionNeedsPolicyReaudit {
     }
     try {
         $marker = Get-Content -LiteralPath $revalidationPath -Raw | ConvertFrom-ReconstructionJson
-        if ("$($marker.status)" -in @("invalid", "needs_manual_review")) {
-            return $false
-        }
         $shaOk = -not ($marker.PSObject.Properties.Name -contains "selectedManifestSha256") -or
             $marker.selectedManifestSha256 -eq (Get-FileHash -LiteralPath $artifacts.SelectionPath -Algorithm SHA256).Hash
         if (-not $shaOk) {
@@ -3092,6 +3305,16 @@ function Test-SelectionNeedsPolicyReaudit {
             [int]$marker.selectionValidationPolicyVersion -ge $SelectionValidationPolicyVersion
         $sourceMarkerCurrent = ($marker.PSObject.Properties.Name -contains "sourceSelectionPolicyVersion") -and
             [int]$marker.sourceSelectionPolicyVersion -ge $SourceSelectionPolicyVersion
+        if ("$($marker.status)" -in @("invalid", "needs_manual_review")) {
+            # A retained negative verdict is terminal only for the policies
+            # that produced it. When either owner policy changes, rerun the
+            # bounded retained-artifact audit before deciding whether the
+            # old rejection still applies.
+            if ($markerCurrent -and $sourceMarkerCurrent) {
+                return $false
+            }
+            return $true
+        }
         if (-not $sourceMarkerCurrent) {
             return $true
         }
@@ -3120,7 +3343,7 @@ function Test-SelectionNeedsPolicyReaudit {
             [string]$selected.sourceSelectionClearance.status
         } else { "" }
         $inputPath = if ($artifacts.InputFiles.Count -gt 0) { $artifacts.InputFiles[0].FullName } else { "" }
-        if (-not (Test-SourceSelectionClearanceCurrent -Selection $selection -SelectedInputPath $inputPath -ExpectedExerciseName ([string]$WorkItem.exerciseName) -ExpectedContractSha256 ([string]$WorkItem.currentContractSha256) -AllowRawSkip $SkipPreReconstructionSourceValidation)) {
+        if (-not (Test-SourceSelectionClearanceCurrent -Selection $selection -SelectedInputPath $inputPath -ExpectedExerciseName ([string]$WorkItem.exerciseName) -ExpectedContractSha256 (Get-ExpectedSourceClearanceContractSha256 -WorkItem $WorkItem) -AllowRawSkip $SkipPreReconstructionSourceValidation)) {
             return $true
         }
         return $false
@@ -3228,26 +3451,13 @@ function Set-BoundedSourceRecoveryDiscovery {
         @($source.priorAttemptedCandidateKeys) +
         @($source.attempts | ForEach-Object { $_.candidateKey })
     ) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique
-    $attemptedVideoIds = @(
-        @($source.priorAttemptedVideoIds) +
-        @($source.attempts | ForEach-Object { $_.videoId })
-    ) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique
     # Candidate keys include the exact source window. Keep these keys out of
     # the next ranked manifest without excluding other windows from the same
     # video, which may still contain usable evidence.
-    $sourceTurnResume = [ordered]@{
-        sourceSelectionPolicyVersion = Resolve-WaveSourceSelectionPolicyVersion -Source $source
-        nextCandidateKey = $null
-        attemptedCandidateKeys = @($attemptedCandidateKeys)
-        attemptedVideoIds = @($attemptedVideoIds)
-    }
-    $resumePath = Join-Path $WorkItem.bakeWorkspace 'source_turn_resume.json'
-    New-Item -ItemType Directory -Path (Split-Path -Parent $resumePath) -Force | Out-Null
-    [System.IO.File]::WriteAllText(
-        $resumePath,
-        ($sourceTurnResume | ConvertTo-Json -Depth 8),
-        [System.Text.UTF8Encoding]::new($false)
-    )
+    Write-CanonicalSourceTurnCursor `
+        -WorkItem $WorkItem `
+        -WaveState $WaveState `
+        -Transition 'bounded_source_discovery'
     $arguments = [string[]]$WorkItem.discoveryArgs
     $recoveryCandidateBudget = if ($CandidateBudget -gt 0) {
         $CandidateBudget
@@ -3616,6 +3826,25 @@ function Test-DiscoveryStageReady {
             return $false
         }
         if ($null -ne (Get-DefinitionReviewReason -Payload $Payload)) {
+            $definitionFailure = @($Payload.exercises | Where-Object {
+                $_.status -eq "needs_definition_review"
+            } | Select-Object -First 1)
+            if ($definitionFailure.Count -eq 0 -and $Payload.status -eq "needs_definition_review") {
+                $definitionFailure = @($Payload)
+            }
+            $failedContract = if ($definitionFailure.Count -gt 0) {
+                $definitionFailure[0].exerciseMotionContract
+            } else { $null }
+            # Reopen only the old unresolved-authority verdict that current
+            # plan preflight can repair from an exact approved definition.
+            if (
+                $WorkItem.definitionReadinessStatus -eq "ready" -and
+                $definitionFailure.Count -gt 0 -and
+                $definitionFailure[0].reason -eq "target_action_definition_unresolved" -and
+                $failedContract.actionDefinitionAuthority -notin @("structured_definition", "trusted")
+            ) {
+                return $false
+            }
             return (
                 [int]$signature.policyVersion -eq $discoveryStagePolicyVersion -and
                 "$($signature.argumentsSha256)".ToLowerInvariant() -eq $WorkItem.discoveryArgumentsSha256 -and
@@ -3928,6 +4157,31 @@ function Import-PreparedCandidatesManifest {
             [string]::IsNullOrWhiteSpace($expectedVideoId)) {
             throw "Prepared candidates manifest items require non-empty exerciseId, exerciseSlug, candidatesJson, and expectedVideoId: $ManifestPath"
         }
+        $retainedSourceInterval = Get-ObjectProperty -Object $item -Name 'retainedSourceInterval'
+        if ($null -ne $retainedSourceInterval) {
+            foreach ($property in @('schemaVersion', 'workspace', 'videoId', 'exerciseId', 'exerciseName', 'sourceVideoSha256', 'segmentSelectionSha256', 'selectedSegmentSha256', 'exerciseMotionContractSha256')) {
+                if ($null -eq (Get-ObjectProperty -Object $retainedSourceInterval -Name $property)) {
+                    throw "Prepared retainedSourceInterval for '$exerciseSlug' is missing '$property': $ManifestPath"
+                }
+            }
+            if ([int]$retainedSourceInterval.schemaVersion -ne 1 -or
+                [string]$retainedSourceInterval.videoId -cne $expectedVideoId -or
+                [string]$retainedSourceInterval.exerciseId -cne $exerciseId) {
+                throw "Prepared retainedSourceInterval identity does not match '$exerciseSlug': $ManifestPath"
+            }
+            foreach ($hashProperty in @('sourceVideoSha256', 'segmentSelectionSha256', 'selectedSegmentSha256', 'exerciseMotionContractSha256')) {
+                if ([string]$retainedSourceInterval.$hashProperty -notmatch '^[0-9a-fA-F]{64}$') {
+                    throw "Prepared retainedSourceInterval for '$exerciseSlug' has an invalid ${hashProperty}: $ManifestPath"
+                }
+            }
+            if (-not (Test-Path -LiteralPath ([string]$retainedSourceInterval.workspace) -PathType Container)) {
+                throw "Prepared retained source workspace for '$exerciseSlug' not found: $($retainedSourceInterval.workspace)"
+            }
+            $retainedSourceInterval.workspace = Resolve-StrictPath ([string]$retainedSourceInterval.workspace)
+            foreach ($hashProperty in @('sourceVideoSha256', 'segmentSelectionSha256', 'selectedSegmentSha256', 'exerciseMotionContractSha256')) {
+                $retainedSourceInterval.$hashProperty = ([string]$retainedSourceInterval.$hashProperty).ToLowerInvariant()
+            }
+        }
         if (-not (Test-Path -LiteralPath $candidatesJson -PathType Leaf)) {
             throw "Prepared candidates JSON not found for '$exerciseSlug': $candidatesJson"
         }
@@ -3941,12 +4195,42 @@ function Import-PreparedCandidatesManifest {
             exerciseSlug = $exerciseSlug
             candidatesJson = (Resolve-StrictPath $candidatesJson)
             expectedVideoId = $expectedVideoId
+            retainedSourceInterval = $retainedSourceInterval
         }
     }
     if ($itemsBySlug.Count -eq 0) {
         throw "Prepared candidates manifest contains no items: $ManifestPath"
     }
     return $itemsBySlug
+}
+
+function Add-PreparedRetainedSourceInterval {
+    param(
+        [string]$CandidatesJsonPath,
+        [string]$ExpectedVideoId,
+        [string]$ExpectedExerciseName,
+        [object]$RetainedSourceInterval
+    )
+
+    if ($null -eq $RetainedSourceInterval) { return }
+    $payload = Get-Content -LiteralPath $CandidatesJsonPath -Raw | ConvertFrom-ReconstructionJson
+    $matches = @(
+        foreach ($exercise in @($payload.exercises)) {
+            foreach ($candidate in @($exercise.candidates)) {
+                if ([string]$candidate.videoId -ceq $ExpectedVideoId) { $candidate }
+            }
+        }
+    )
+    if ($matches.Count -ne 1) {
+        throw "Prepared retained source for video '$ExpectedVideoId' must match exactly one candidate in $CandidatesJsonPath"
+    }
+    if ([string]$RetainedSourceInterval.exerciseName -ine $ExpectedExerciseName) {
+        throw "Prepared retained source exercise name does not match '$ExpectedExerciseName': $CandidatesJsonPath"
+    }
+    $matches[0] | Add-Member -NotePropertyName retainedSourceInterval -NotePropertyValue $RetainedSourceInterval -Force
+    $temporaryPath = "$CandidatesJsonPath.retained-source.tmp"
+    $payload | ConvertTo-Json -Depth 64 | Set-Content -LiteralPath $temporaryPath -Encoding UTF8
+    Move-Item -Force -LiteralPath $temporaryPath -Destination $CandidatesJsonPath
 }
 
 function Test-MotionProcessingResumeReady {
@@ -5145,7 +5429,7 @@ function Ensure-StagedBakeQueueService {
     if ($existingService.matchingProcess -and [string]$existingService.state.status -eq "stopping") {
         # Idle shutdown closes admission while holding the same mutex used by
         # producers. Wait for that generation to exit, then start a fresh one.
-        $existingService.process.WaitForExit(20000)
+        [void]$existingService.process.WaitForExit(20000)
         $existingService = Get-StagedBakeQueueServiceState -QueueRoot $queueRoot
         if ($existingService.matchingProcess) {
             throw "Staged-wave service process $($existingService.state.pid) is still stopping; refusing to enqueue until its generation exits."
@@ -5172,7 +5456,7 @@ function Ensure-StagedBakeQueueService {
         }
         $stopRequestPath = Join-Path $queueRoot "stop.request"
         "$changedIdentity changed" | Set-Content -LiteralPath $stopRequestPath -Encoding UTF8
-        $existingService.process.WaitForExit(20000)
+        [void]$existingService.process.WaitForExit(20000)
         $stoppedService = Get-StagedBakeQueueServiceState -QueueRoot $queueRoot
         if ($stoppedService.matchingProcess) {
             throw "Staged-wave service process $($existingService.state.pid) did not stop after its source identity changed; refusing to launch a duplicate worker."
@@ -5183,7 +5467,7 @@ function Ensure-StagedBakeQueueService {
         throw "Staged-wave service process $($existingService.state.pid) is alive but its heartbeat is stale or invalid; refusing to launch a second worker."
     }
     if ($existingService.matchingProcess) {
-        $existingService.process.WaitForExit(20000)
+        [void]$existingService.process.WaitForExit(20000)
         $stillRunning = Get-StagedBakeQueueServiceState -QueueRoot $queueRoot
         if ($stillRunning.matchingProcess) {
             throw "Staged-wave service process $($existingService.state.pid) is shutting down; refusing to launch a second worker."
@@ -5447,6 +5731,7 @@ function Start-StagedBakeWaveJob {
     $wavePayload = [ordered]@{
         schemaVersion = 1
         runId = $movementRunId
+        sourceReviewTurnId = $sourceReviewTurnId
         waveId = $waveId
         workspace = $waveWorkspace
         items = @(
@@ -5481,6 +5766,7 @@ function Start-StagedBakeWaveJob {
         runId = $movementRunId
         waveId = $waveId
         allowCpuPhaseOverlap = $effectiveMaxConcurrentStagedWaves -gt 1
+        checkpointPath = Join-Path $waveWorkspace "staged_wave_checkpoint.json"
         sourceIdentityFingerprint = $script:MotionSourceIdentityFingerprint
         serviceConfigurationFingerprint = (Get-StagedBakeServiceConfigurationFingerprint `
             -ConfiguredPythonCommand $PythonCommand `
@@ -5523,6 +5809,8 @@ function Start-StagedBakeWaveJob {
         $errorMessage = $null
         $exitCode = 1
         $serviceStatus = "failed"
+        $observedExpiredSourceDeadline = $null
+        $expiredSourceObservedAtSeconds = $null
         while ($true) {
             if (Test-Path -LiteralPath $resultPath) {
                 try {
@@ -5606,6 +5894,133 @@ function Start-StagedBakeWaveJob {
                 )
                 if (-not $workerMatchesRequest) {
                     $workerMatchesRequest = @($workerState.activeRequests | Where-Object { $_.requestId -eq $ExpectedRequestId }).Count -gt 0
+                }
+                $expiredOperation = $null
+                $checkpointPath = Join-Path $WaveWorkspace "staged_wave_checkpoint.json"
+                $nowEpoch = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() / 1000.0
+                if (Test-Path -LiteralPath $checkpointPath -PathType Leaf) {
+                    try {
+                        $checkpoint = Get-Content -LiteralPath $checkpointPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+                        $expiredSource = @()
+                        if ([string]::Equals([string]$checkpoint.waveId, $ExpectedWaveId, [StringComparison]::OrdinalIgnoreCase)) {
+                            $expiredSource = @($checkpoint.items | Where-Object {
+                                $null -ne $_.sourceActivity -and
+                                $null -ne $_.sourceActivity.operationDeadlineEpoch -and
+                                [double]$_.sourceActivity.operationDeadlineEpoch -gt 0 -and
+                                $nowEpoch -ge ([double]$_.sourceActivity.operationDeadlineEpoch + 10.0)
+                            } | Select-Object -First 1)
+                        }
+                        if ($expiredSource.Count -gt 0) {
+                            $expiredOperation = [pscustomobject]@{
+                                deadlineEpoch = [double]$expiredSource[0].sourceActivity.operationDeadlineEpoch
+                                owner = "source_activity_checkpoint"
+                                description = [string]$expiredSource[0].sourceActivity.operation
+                            }
+                        }
+                    } catch {}
+                }
+                if ($null -eq $expiredOperation -and $workerState) {
+                    $matchingActive = @($workerState.activeRequests | Where-Object { $_.requestId -eq $ExpectedRequestId } | Select-Object -First 1)
+                    if ($matchingActive.Count -gt 0 -and $matchingActive[0].activeDeadlines) {
+                        $expiredPhase = @($matchingActive[0].activeDeadlines.PSObject.Properties | ForEach-Object { $_.Value } | Where-Object {
+                            $null -ne $_.deadlineEpoch -and [double]$_.deadlineEpoch -gt 0 -and
+                            $nowEpoch -ge ([double]$_.deadlineEpoch + 10.0)
+                        } | Sort-Object { [double]$_.deadlineEpoch } | Select-Object -First 1)
+                        if ($expiredPhase.Count -gt 0) {
+                            $expiredOperation = [pscustomobject]@{
+                                deadlineEpoch = [double]$expiredPhase[0].deadlineEpoch
+                                owner = "accelerator_phase"
+                                description = [string]$expiredPhase[0].stage
+                            }
+                        }
+                    }
+                }
+                if ($null -ne $expiredOperation -and $workerMatchesRequest -and
+                    -not (Test-Path -LiteralPath $resultPath)) {
+                    $operationDeadline = [double]$expiredOperation.deadlineEpoch
+                    $operationOwner = [string]$expiredOperation.owner
+                    $observedOperationKey = "$operationOwner|$operationDeadline"
+                    if ($null -eq $observedExpiredSourceDeadline -or $observedExpiredSourceDeadline -ne $observedOperationKey) {
+                        $observedExpiredSourceDeadline = $observedOperationKey
+                        $expiredSourceObservedAtSeconds = $stopwatch.Elapsed.TotalSeconds
+                    }
+                    # Give the Python service time to persist its all-thread stack
+                    # capture after the real source-turn hard cap plus its 10s grace.
+                    # The checkpoint remains the hard bound if the heartbeat itself
+                    # cannot run (for example, while native code holds the GIL).
+                    if (($stopwatch.Elapsed.TotalSeconds - $expiredSourceObservedAtSeconds) -ge 3.0) {
+                        $diagnosticPath = $null
+                        $matchingActive = @($workerState.activeRequests | Where-Object { $_.requestId -eq $ExpectedRequestId } | Select-Object -First 1)
+                        if ($matchingActive.Count -gt 0 -and
+                            -not [string]::IsNullOrWhiteSpace([string]$matchingActive[0].stallDiagnosticPath) -and
+                            (Test-Path -LiteralPath ([string]$matchingActive[0].stallDiagnosticPath) -PathType Leaf)) {
+                            $diagnosticPath = [string]$matchingActive[0].stallDiagnosticPath
+                        }
+                        # Recheck request result, source budget and exact process
+                        # identity immediately before terminating its full tree.
+                    $latestState = $null
+                    try {
+                        $latestState = Get-Content -LiteralPath $statePath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+                    } catch {}
+                    $latestActive = if ($latestState) {
+                        @($latestState.activeRequests | Where-Object {
+                            $_.requestId -eq $ExpectedRequestId
+                        })
+                    } else { @() }
+                    $latestProcess = if ($latestState) { Get-Process -Id ([int]$latestState.pid) -ErrorAction SilentlyContinue } else { $null }
+                    $latestIdentityMatches = $false
+                    if ($latestProcess -and $null -ne $latestState.processIdentity) {
+                        try {
+                            $latestIdentityMatches = [int64]$latestProcess.StartTime.ToUniversalTime().ToFileTimeUtc() -eq [int64]$latestState.processIdentity
+                        } catch {}
+                    }
+                    $latestBudgetStillExpired = $false
+                    try {
+                        $latestNowEpoch = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() / 1000.0
+                        $latestCheckpoint = Get-Content -LiteralPath $checkpointPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+                        if ($operationOwner -eq "source_activity_checkpoint" -and
+                            [string]::Equals([string]$latestCheckpoint.waveId, $ExpectedWaveId, [StringComparison]::OrdinalIgnoreCase)) {
+                            $latestBudgetStillExpired = @($latestCheckpoint.items | Where-Object {
+                                $null -ne $_.sourceActivity -and
+                                [double]$_.sourceActivity.operationDeadlineEpoch -eq $operationDeadline -and
+                                $latestNowEpoch -ge ([double]$_.sourceActivity.operationDeadlineEpoch + 10.0)
+                            }).Count -gt 0
+                        }
+                    } catch {}
+                    if (-not $latestBudgetStillExpired -and $latestState -and $operationOwner -eq "accelerator_phase") {
+                        $latestMatchingActive = @($latestState.activeRequests | Where-Object { $_.requestId -eq $ExpectedRequestId } | Select-Object -First 1)
+                        if ($latestMatchingActive.Count -gt 0 -and $latestMatchingActive[0].activeDeadlines) {
+                            $latestBudgetStillExpired = @($latestMatchingActive[0].activeDeadlines.PSObject.Properties | ForEach-Object { $_.Value } | Where-Object {
+                                [double]$_.deadlineEpoch -eq $operationDeadline -and
+                                $latestNowEpoch -ge ([double]$_.deadlineEpoch + 10.0)
+                            }).Count -gt 0
+                        }
+                    }
+                    if ($latestActive.Count -gt 0 -and $latestIdentityMatches -and $latestBudgetStillExpired -and
+                        [int]$latestState.pid -eq [int]$workerState.pid -and
+                        [int64]$latestState.processIdentity -eq [int64]$workerState.processIdentity -and
+                        [string]::Equals([string]$latestState.queueRoot, $QueueRoot, [StringComparison]::OrdinalIgnoreCase) -and
+                        -not (Test-Path -LiteralPath $resultPath)) {
+                        $taskkillPath = Join-Path $env:SystemRoot "System32\taskkill.exe"
+                        $terminated = $false
+                        try {
+                            $terminator = Start-Process `
+                                -FilePath $taskkillPath `
+                                -ArgumentList @("/PID", [string]$latestState.pid, "/T", "/F") `
+                                -PassThru `
+                                -WindowStyle Hidden
+                            [void]$terminator.WaitForExit(7000)
+                            $terminated = $terminator.HasExited -and $terminator.ExitCode -eq 0 -and $latestProcess.WaitForExit(7000)
+                        } catch {}
+                        if ($terminated -and -not (Test-Path -LiteralPath $resultPath)) {
+                            $serviceStatus = $using:StagedWaveAmbiguousRecoveryStatus
+                            $exitCode = $using:StagedWaveAmbiguousRecoveryExitCode
+                            $stackEvidence = if ($diagnosticPath) { "Thread stacks: '$diagnosticPath'." } else { "Thread stack capture was unavailable; the source deadline and owned worker identity were verified." }
+                            $errorMessage = "Operation '$($expiredOperation.description)' exceeded its persisted hard deadline ($operationOwner). $stackEvidence The owned service process tree was stopped; its request is retained for ambiguous recovery and wave checkpoints remain available."
+                            break
+                        }
+                    }
+                    }
                 }
                 if ($workerState.schemaVersion -ne 1 -or -not $stateQueueMatches -or
                     $null -eq $workerProcess -or -not $workerIdentityMatches) {
@@ -6933,6 +7348,8 @@ $resolvedApprovedExerciseDefinitionsJson = $null
 if (-not [string]::IsNullOrWhiteSpace($ApprovedExerciseDefinitionsJson)) {
     $resolvedApprovedExerciseDefinitionsJson = Resolve-StrictPath $ApprovedExerciseDefinitionsJson
 }
+$movementRunId = if ([string]::IsNullOrWhiteSpace($InvocationRunId)) { [guid]::NewGuid().ToString("N") } else { $InvocationRunId }
+$sourceReviewTurnId = if ([string]::IsNullOrWhiteSpace($LibraryRunId)) { $movementRunId } else { $LibraryRunId }
 $definitionPreflightDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ("exercise-motion-definition-preflight-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force -Path $definitionPreflightDirectory | Out-Null
 $definitionPreflightListPath = Join-Path $definitionPreflightDirectory "workout_plan_exercises.json"
@@ -6945,6 +7362,7 @@ $listArgs = @(
     "--definition-effective-plan-json", $definitionPreflightEffectivePlanPath,
     "--definition-readiness-report-json", $definitionPreflightReportPath,
     "--source-budget-workspace-root", ([System.IO.Path]::GetFullPath($WorkspaceRoot)),
+    "--source-review-turn-id", $sourceReviewTurnId,
     "--source-review-timeout-seconds", "$SourceReviewTimeoutSeconds",
     "--exercise-timeout-seconds", "$ExerciseTimeoutSeconds",
     "--max-source-window-attempts", "$MaxSourceWindowAttempts",
@@ -7179,6 +7597,7 @@ function Assert-StagedWaveWorkspaceIsQuiescent {
 function Acquire-MotionWorkspaceLease {
     param([string]$WorkspaceRoot)
 
+    [System.IO.Directory]::CreateDirectory($WorkspaceRoot) | Out-Null
     $lockPath = Join-Path $WorkspaceRoot ".motion_workspace.lock"
     $ownerPath = Join-Path $WorkspaceRoot ".motion_workspace.owner.json"
     try {
@@ -7404,7 +7823,6 @@ New-Item -ItemType Directory -Force -Path $WorkspaceRoot | Out-Null
 $resolvedWorkspaceRoot = (Resolve-Path -LiteralPath $WorkspaceRoot).Path
 $script:MotionWorkspaceLease = Acquire-MotionWorkspaceLease -WorkspaceRoot $resolvedWorkspaceRoot
 try {
-$movementRunId = if ([string]::IsNullOrWhiteSpace($InvocationRunId)) { [guid]::NewGuid().ToString("N") } else { $InvocationRunId }
 $movementRunStartedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
 $script:MotionRunOutcome = "running"
 $summaryPath = Join-Path $resolvedWorkspaceRoot "workout_motion_generation_summary.json"
@@ -7430,6 +7848,15 @@ $script:StagedWaveServiceQueueRoot = Join-Path (Join-Path $resolvedWorkspaceRoot
 $script:MotionServiceSessionLeases = @{}
 $sharedLlamaServerInstance = $null
 $warmGvhmrWorkerInstance = $null
+$script:MotionSourceIdentityPath = Join-Path $resolvedWorkspaceRoot "motion_source_identity.json"
+# Capture pre-existing state before the initial summary write below. That write
+# creates a summary for a new workspace, which must not be mistaken for a prior
+# run and used to disable valid completed-bake resume.
+$priorRunStateExists = (
+    (Test-Path -LiteralPath $progressCheckpointPath) -or
+    (Test-Path -LiteralPath $summaryPath) -or
+    (Test-Path -LiteralPath $script:MotionSourceIdentityPath)
+)
 
 function Write-EarlyMotionRunOutcomeSummary {
     param([string]$Outcome)
@@ -7484,7 +7911,6 @@ function Write-EarlyMotionRunOutcomeSummary {
 
 Write-EarlyMotionRunOutcomeSummary -Outcome "running"
 $script:SchedulerTimelinePath = Join-Path $resolvedWorkspaceRoot "scheduler_timeline.json"
-$script:MotionSourceIdentityPath = Join-Path $resolvedWorkspaceRoot "motion_source_identity.json"
 $priorSourceIdentity = $null
 if (Test-Path -LiteralPath $script:MotionSourceIdentityPath) {
     try {
@@ -7511,11 +7937,6 @@ if ($null -ne $priorSourceIdentity) {
 }
 $priorCheckpointPath = Join-Path $resolvedWorkspaceRoot "workout_motion_generation_checkpoint.json"
 $priorSummaryPath = Join-Path $resolvedWorkspaceRoot "workout_motion_generation_summary.json"
-$priorRunStateExists = (
-    (Test-Path -LiteralPath $priorCheckpointPath) -or
-    (Test-Path -LiteralPath $priorSummaryPath) -or
-    (Test-Path -LiteralPath $script:MotionSourceIdentityPath)
-)
 if ($priorRunStateExists -and -not $script:MotionSourceIdentityMatchesPriorRun) {
     $DisableMotionProcessingResume = $true
     Write-Warning "Motion source identity changed; rechecking motion processing while retaining discovery and downloads with valid stage signatures."
@@ -7542,10 +7963,11 @@ New-Item -ItemType Directory -Force -Path (Split-Path -Parent $resolvedSourceOut
 # persistent GVHMR worker keeps preprocessing and prediction models resident.
 $effectiveWarmGvhmrWorker = (
     $hasSelectedReadyDefinitionTargets -and
-    $WarmGvhmrWorker -and
+    ($WarmGvhmrWorker -or $GvhmrStageSplit) -and
     -not $SkipWarmGvhmrWorker -and
     -not $RequireReconstructionCache
 )
+$effectiveGvhmrStageSplit = [bool]$GvhmrStageSplit
 $resolvedGvhmrWorkerSessionDir = $null
 $gvhmrWarmWorkerScriptPath = Join-Path $repoRoot "exercise_motion_pkg\gvhmr_warm_worker.py"
 if ($effectiveWarmGvhmrWorker) {
@@ -7580,6 +8002,14 @@ $effectiveSharedLlamaServer = (
     $SharedLlamaServer -and
     -not $SkipVisionRanking
 )
+if ($effectiveGvhmrStageSplit) {
+    if (-not $effectiveWarmGvhmrWorker) {
+        throw "-GvhmrStageSplit requires the warm GVHMR worker and cannot be combined with -SkipWarmGvhmrWorker or -RequireReconstructionCache."
+    }
+    if (-not $effectiveSharedLlamaServer -or -not $verifiedExclusiveGpuSplit -or -not $globalGpuLockEnabled) {
+        throw "-GvhmrStageSplit requires -SharedLlamaServer, the enabled shared GPU lock, and verified distinct primary/secondary GPU placement."
+    }
+}
 $sharedLlamaServerInstance = $null
 $sharedLlamaServerRestartRequired = $false
 # Overlapping staged waves need that shared server: two concurrent wave VLM
@@ -8008,6 +8438,9 @@ foreach ($exercise in $exerciseList.exercises) {
             "--gvhmr-worker-timeout-seconds", "$GvhmrWorkerJobTimeoutSeconds"
         )
     }
+    if ($effectiveGvhmrStageSplit) {
+        $bakeArgs += "--gvhmr-stage-split"
+    }
     if ($effectiveSharedLlamaServer) {
         $bakeArgs += @(
             "--shared-llama-server",
@@ -8126,6 +8559,15 @@ if ($NoExerciseMotionContract) {
     foreach ($workItem in $workItems) {
         $workItem | Add-Member -NotePropertyName currentContractSha256 -NotePropertyValue $nullContractSha256 -Force
     }
+}
+foreach ($workItem in $workItems) {
+    if (-not $preparedCandidatesBySlug.ContainsKey($workItem.exerciseSlug)) { continue }
+    $retainedSourceInterval = $preparedCandidatesBySlug[$workItem.exerciseSlug].retainedSourceInterval
+    if ($null -eq $retainedSourceInterval) { continue }
+    $workItem | Add-Member `
+        -NotePropertyName retainedSourceContractReceiptSha256 `
+        -NotePropertyValue ([string]$retainedSourceInterval.exerciseMotionContractSha256) `
+        -Force
 }
 if (-not $NoExerciseMotionContract -and -not $SkipVisionRanking -and -not $SkipExerciseMotionContractPrefetch) {
     $contractPrefetchReportPath = Join-Path $resolvedWorkspaceRoot "exercise_motion_contract_prefetch_report.json"
@@ -8323,6 +8765,42 @@ function Write-ProgressCheckpoint {
             Write-Warning "Progress checkpoint swap failed after retries; keeping the previous checkpoint."
         }
     }
+    try {
+        $liveSummary = $null
+        if (Test-Path -LiteralPath $summaryPath) {
+            try { $liveSummary = Get-Content -LiteralPath $summaryPath -Raw | ConvertFrom-Json -ErrorAction Stop } catch {}
+        }
+        if (-not $liveSummary -or $liveSummary.runId -ne $movementRunId) {
+            $liveSummary = [ordered]@{
+                schemaVersion = 2
+                runId = $movementRunId
+                libraryRunId = if ([string]::IsNullOrWhiteSpace($LibraryRunId)) { $null } else { $LibraryRunId }
+                outcome = $script:MotionRunOutcome
+                startedAtUtc = $movementRunStartedAtUtc
+                sourceWorkoutPlanPath = $resolvedWorkoutPlanJson
+                workspaceRoot = $resolvedWorkspaceRoot
+                inputIdentitySha256 = $inputIdentitySha256
+                approvedDefinitionsSha256 = $definitionsInputSha256
+                effectiveDefinitionPlanSha256 = $effectiveWorkoutPlanInputSha256
+            }
+        }
+        $liveSummary.exercises = $checkpointItems
+        $liveSummary.totalExerciseCount = $workItems.Count
+        $liveSummary.terminalExerciseCount = $checkpointItems.Count
+        $liveSummary.successfulExerciseCount = $successfulItems.Count
+        $liveSummary.unsuccessfulExerciseCount = $unsuccessfulItems.Count
+        $liveSummary.pendingExerciseCount = [Math]::Max(0, $workItems.Count - $checkpointItems.Count)
+        $liveSummary.outcome = $script:MotionRunOutcome
+        if ($liveSummary -is [System.Collections.IDictionary]) {
+            $liveSummary['updatedAt'] = $checkpoint.updatedAt
+        } else {
+            $liveSummary | Add-Member -MemberType NoteProperty -Name 'updatedAt' -Value $checkpoint.updatedAt -Force
+        }
+        $liveSummary.generatedAt = $checkpoint.updatedAt
+        Write-JsonAtomically -Path $summaryPath -Value $liveSummary
+    } catch {
+        Write-Warning "Could not refresh live movement summary; the progress checkpoint remains available. $($_.Exception.Message)"
+    }
     Update-IncrementalMobilePackage -SuccessfulCount $successfulItems.Count
 }
 
@@ -8427,6 +8905,11 @@ foreach ($workItem in $workItems) {
             throw "Prepared candidates require the exercise plan to be seeded in the workspace: $($workItem.exercisePlanPath)"
         }
         Copy-Item -LiteralPath $preparedCandidatesBySlug[$workItem.exerciseSlug].candidatesJson -Destination $workItem.exerciseCandidatesPath -Force
+        Add-PreparedRetainedSourceInterval `
+            -CandidatesJsonPath $workItem.exerciseCandidatesPath `
+            -ExpectedVideoId $preparedCandidatesBySlug[$workItem.exerciseSlug].expectedVideoId `
+            -ExpectedExerciseName $workItem.exerciseName `
+            -RetainedSourceInterval $preparedCandidatesBySlug[$workItem.exerciseSlug].retainedSourceInterval
         $workItem.preparedCandidates = $true
         $workItem.primarySourceDownloadReused = $true
         "[$(Get-Date -Format o)] installed prepared candidates; skipping discovery and source download" | Add-Content -LiteralPath $workItem.logPath -Encoding UTF8
@@ -8571,13 +9054,26 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                 break
             }
             if ($null -ne $warmGvhmrWorkerInstance) {
-                $workerRunning = (& docker inspect -f "{{.State.Running}}" $warmGvhmrWorkerInstance.containerName 2>$null)
-                if ($LASTEXITCODE -ne 0 -or "$workerRunning".Trim().ToLowerInvariant() -ne "true") {
+                $workersToCheck = if ($warmGvhmrWorkerInstance.PSObject.Properties.Name -contains "workers") {
+                    @($warmGvhmrWorkerInstance.workers)
+                } else {
+                    @($warmGvhmrWorkerInstance)
+                }
+                $workerFailure = $false
+                foreach ($workerToCheck in $workersToCheck) {
+                    $workerRunning = (& docker inspect -f "{{.State.Running}}" $workerToCheck.containerName 2>$null)
+                    if ($LASTEXITCODE -ne 0 -or "$workerRunning".Trim().ToLowerInvariant() -ne "true") {
+                        $workerFailure = $true
+                        break
+                    }
+                }
+                if ($workerFailure) {
                     if ($bakeRunningJobs.Count -gt 0) {
                         Write-Host "Motion extractor stopped for the expected GPU model handoff; it will be restarted before the next extraction."
                     } else {
                         Write-Warning "Motion extractor exited while idle; it will be restarted before the next extraction."
                     }
+                    Stop-GvhmrWarmWorker -Worker $warmGvhmrWorkerInstance
                     $warmGvhmrWorkerInstance = $null
                 }
             }
@@ -8663,13 +9159,18 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
             if ($stagedWaveAdmission.runningStagedWaveCount -gt $runningStagedWaveHighWater) {
                 $runningStagedWaveHighWater = $stagedWaveAdmission.runningStagedWaveCount
             }
-            # StagedWaveSize caps each handoff; the first ready item can start
-            # while discovery and CPU-only source downloads continue.
+            # Once a reconstruction is ready, stop admitting discovery turns,
+            # drain only active reviews, and hand off the available cohort as
+            # soon as they finish; StagedWaveSize remains a maximum, not a goal.
             $stagedWaveReady = $stagedWavesEnabled -and $pendingBakeItems.Count -gt 0
             $shouldYieldDiscoveryForStagedWave = (
                 $stagedWaveReady -and
                 $stagedWaveAdmission.admitted -and
-                $avoidGpuDiscoveryBakeOverlap
+                $avoidGpuDiscoveryBakeOverlap -and
+                (
+                    $pendingBakeItems.Count -ge $StagedWaveSize -or
+                    $discoveryRunningJobs.Count -eq 0
+                )
             )
             if ($shouldYieldDiscoveryForStagedWave) {
                 foreach ($discoveryJob in $discoveryRunningJobs) {
@@ -8683,7 +9184,11 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
             # Do not launch work that the ready-wave yield above will immediately pause.
             $canLaunchDiscovery = -not $shouldYieldDiscoveryForStagedWave -and -not (
                 $avoidGpuDiscoveryBakeOverlap -and
-                ($bakeRunningJobs.Count -gt 0 -or $pendingLegacyBakeItems.Count -gt 0)
+                (
+                    $pendingBakeItems.Count -gt 0 -or
+                    $bakeRunningJobs.Count -gt 0 -or
+                    $pendingLegacyBakeItems.Count -gt 0
+                )
             )
             while ($canLaunchDiscovery -and $pendingDiscoveryItems.Count -gt 0 -and $discoveryRunningJobs.Count -lt $resolvedDiscoveryWorkers) {
                 $discoveryRunningJobs += Start-InitialDiscoveryJob -WorkItem ($pendingDiscoveryItems.Dequeue())
@@ -8738,9 +9243,17 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
             $lazyWarmWorkerSessionDir = $resolvedGvhmrWorkerSessionDir
             $lazyWarmWorkerScriptPath = $gvhmrWarmWorkerScriptPath
             $lazyWarmWorkerEffective = $effectiveWarmGvhmrWorker
-            $lazyWorkerRequested = $lazyWarmWorkerEffective -and $bakeRunningJobs.Count -gt 0 -and (
-                Test-Path -LiteralPath (Join-Path $lazyWarmWorkerSessionDir 'start_requested.json')
-            )
+            $workerStartMarkers = if ($effectiveGvhmrStageSplit) {
+                @(
+                    (Join-Path $lazyWarmWorkerSessionDir 'preprocess\start_requested.json'),
+                    (Join-Path $lazyWarmWorkerSessionDir 'predict\start_requested.json')
+                )
+            } else {
+                @((Join-Path $lazyWarmWorkerSessionDir 'start_requested.json'))
+            }
+            $lazyWorkerRequested = $lazyWarmWorkerEffective -and $bakeRunningJobs.Count -gt 0 -and @(
+                $workerStartMarkers | Where-Object { Test-Path -LiteralPath $_ }
+            ).Count -gt 0
             # A warm CUDA worker may load models during startup. Only start it
             # after its requesting Python stage has acquired the shared GPU
             # lease; speculative starts from the pending queue bypass that
@@ -8749,8 +9262,11 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                 $warmGvhmrWorkerInstance = Start-GvhmrWarmWorker `
                     -SessionDir $lazyWarmWorkerSessionDir `
                     -MountRoot $resolvedWorkspaceRoot `
-                    -WorkerScriptPath $lazyWarmWorkerScriptPath
-                Remove-Item -LiteralPath (Join-Path $lazyWarmWorkerSessionDir 'start_requested.json') -Force -ErrorAction SilentlyContinue
+                    -WorkerScriptPath $lazyWarmWorkerScriptPath `
+                    -StageSplit:$effectiveGvhmrStageSplit
+                foreach ($startMarker in $workerStartMarkers) {
+                    Remove-Item -LiteralPath $startMarker -Force -ErrorAction SilentlyContinue
+                }
             }
 
             if ($canStartStagedWave) {
@@ -9122,8 +9638,11 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                                 Stop-GvhmrWarmWorker -Worker $warmGvhmrWorkerInstance
                             }
                         }
-                        if (-not $siblingStagedWaveRunning -and -not $waveAmbiguousRecovery) {
-                            $warmGvhmrWorkerInstance = $null
+                        # Keep the supervisor handle until physical shutdown is
+                        # confirmed. A successful wave may skip VLM review and
+                        # leave both split workers resident for final cleanup.
+                        if ((Test-MotionRunCancelRequested) -or ($waveResult -and [int]$waveResult.exitCode -eq 130)) {
+                            Exit-IfMotionRunInterrupted -ExitCode 130
                         }
                         if ($waveResult -and $waveResult.exitCode -eq 75) {
                             Write-Host "Movement generation stopped: insufficient free storage. Free space and resume."
@@ -9171,12 +9690,20 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                             } elseif ($reuseStagedResult) {
                                 Add-StagedWaveTimelineOutcome -WorkItem $waveItem -WaveState $waveState
                                 $pendingCompletionItems.Enqueue($waveItem)
-                            } elseif ($waveState -and (Get-ObjectProperty -Object $waveState -Name 'retryDisposition') -eq 'retry_processing') {
+                            } elseif ($waveState -and (Get-ObjectProperty -Object $waveState -Name 'retryDisposition') -in @('retry_processing', 'repair_evidence')) {
                                 Add-SchedulerTimelineItemEvent -WorkItem $waveItem -FinalStatus "failed"
-                                $summaryByIndex[$waveItem.index] = New-TerminalExerciseSummary -WorkItem $waveItem -Status "needs_motion_processing" -ErrorMessage "Local motion or support processing remains unresolved; resume with the retained approved source and reconstruction." -Stage "motion_processing" -ExitCode 0
+                                $repairEvidence = (Get-ObjectProperty -Object $waveState -Name 'retryDisposition') -eq 'repair_evidence'
+                                $localRepairMessage = if ($repairEvidence) {
+                                    "Required source projection or material support evidence remains unresolved; resume a bounded evidence repair with the retained approved source and reconstruction."
+                                } else {
+                                    "Local motion or support processing remains unresolved; resume with the retained approved source and reconstruction."
+                                }
+                                $localRepairStage = if ($repairEvidence) { 'source_evidence_repair' } else { 'motion_processing' }
+                                $summaryByIndex[$waveItem.index] = New-TerminalExerciseSummary -WorkItem $waveItem -Status "needs_motion_processing" -ErrorMessage $localRepairMessage -Stage $localRepairStage -ExitCode 0
                                 $completedCount += 1
                                 $bakeCompletedCount += 1
-                                Write-Host ("Needs local processing: {0} - approved source and reconstruction retained for resume." -f $waveItem.exerciseName)
+                                $localRepairLabel = if ($repairEvidence) { 'source evidence repair' } else { 'local processing' }
+                                Write-Host ("Needs {0}: {1} - approved source and reconstruction retained for resume." -f $localRepairLabel, $waveItem.exerciseName)
                             } elseif ($waveState -and @(
                                 (Get-ObjectProperty -Object (Get-ObjectProperty -Object $waveState -Name 'finalValidation') -Name 'candidateDiagnostics') |
                                     ForEach-Object { $_.reasons }
@@ -9200,10 +9727,26 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                                 Write-Host ("Needs local support-evidence repair: {0}; approved source and reconstruction retained." -f $waveItem.exerciseName)
                             } elseif ($waveState -and (Get-ObjectProperty -Object $waveState -Name 'retryDisposition') -eq 'retry_review') {
                                 Add-SchedulerTimelineItemEvent -WorkItem $waveItem -FinalStatus "failed"
-                                $summaryByIndex[$waveItem.index] = New-TerminalExerciseSummary -WorkItem $waveItem -Status "needs_source_review" -ErrorMessage "Review evidence remains incomplete after a bounded retry; cached source and motion retained." -Stage "source_review" -ExitCode 0
+                                $sourceAttempts = @((Get-ObjectProperty -Object (Get-ObjectProperty -Object $waveState -Name 'source') -Name 'attempts'))
+                                $supportEvidenceUnresolved = @($sourceAttempts | Where-Object {
+                                    $_.status -eq 'needs_source_review' -and
+                                    $_.failureOwner -eq 'source_evidence' -and
+                                    $_.sourceContactReadiness
+                                }).Count -gt 0
+                                $reviewError = if ($supportEvidenceUnresolved) {
+                                    "The approved exact source cut is retained; support evidence remained incomplete after bounded targeted observation and needs review."
+                                } else {
+                                    "Review evidence remains incomplete after a bounded retry; the retained source is available for review."
+                                }
+                                $summaryByIndex[$waveItem.index] = New-TerminalExerciseSummary -WorkItem $waveItem -Status "needs_source_review" -ErrorMessage $reviewError -Stage "source_review" -ExitCode 0
                                 $completedCount += 1
                                 $bakeCompletedCount += 1
-                                Write-Host ("Needs review: {0} - review evidence incomplete; resume cached review work." -f $waveItem.exerciseName)
+                                $reviewMessage = if ($supportEvidenceUnresolved) {
+                                    "Needs source evidence review: {0} - exact cut retained after bounded contact observation." -f $waveItem.exerciseName
+                                } else {
+                                    "Needs review: {0} - review evidence incomplete; resume retained review work." -f $waveItem.exerciseName
+                                }
+                                Write-Host $reviewMessage
                             } elseif ($waveState -and (Get-ObjectProperty -Object $waveState -Name 'retryDisposition') -eq 'needs_definition_review') {
                                 Add-SchedulerTimelineItemEvent -WorkItem $waveItem -FinalStatus "failed"
                                 $definitionAttempts = @($waveState.source.attempts | Where-Object { $_.status -eq 'needs_definition_review' })
@@ -9229,27 +9772,10 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                             } elseif ($waveState -and (Get-ObjectProperty -Object $waveState -Name 'retryDisposition') -eq 'next_source') {
                                 $nextCandidateKey = Get-ObjectProperty -Object $waveState.source -Name 'nextCandidateKey'
                                 if (-not [string]::IsNullOrWhiteSpace([string]$nextCandidateKey)) {
-                                    $attemptedKeys = @(
-                                        @($waveState.source.priorAttemptedCandidateKeys) +
-                                        @($waveState.source.attempts | ForEach-Object { $_.candidateKey })
-                                    ) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique
-                                    $attemptedVideoIds = @(
-                                        @($waveState.source.priorAttemptedVideoIds) +
-                                        @($waveState.source.attempts | ForEach-Object { $_.videoId })
-                                    ) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique
-                                    $sourceTurnResume = [ordered]@{
-                                        sourceSelectionPolicyVersion = Resolve-WaveSourceSelectionPolicyVersion -Source $waveState.source
-                                        nextCandidateKey = [string]$nextCandidateKey
-                                        attemptedCandidateKeys = @($attemptedKeys)
-                                        attemptedVideoIds = @($attemptedVideoIds)
-                                    }
-                                    $resumePath = Join-Path $waveItem.bakeWorkspace 'source_turn_resume.json'
-                                    New-Item -ItemType Directory -Path (Split-Path -Parent $resumePath) -Force | Out-Null
-                                    [System.IO.File]::WriteAllText(
-                                        $resumePath,
-                                        ($sourceTurnResume | ConvertTo-Json -Depth 8),
-                                        [System.Text.UTF8Encoding]::new($false)
-                                    )
+                                    Write-CanonicalSourceTurnCursor `
+                                        -WorkItem $waveItem `
+                                        -WaveState $waveState `
+                                        -Transition 'next_source_candidate'
                                     Add-SchedulerTimelineItemEvent -WorkItem $waveItem -ReadyReason "next_source_candidate" -MarkEnqueued
                                     $pendingBakeItems.Enqueue($waveItem)
                                     Write-Host ("Continuing source review: {0} - failed candidate/window skipped; next retained candidate resumes from its cursor." -f $waveItem.exerciseName)
@@ -9267,6 +9793,13 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                             } else {
                                 $pendingLegacyBakeItems.Enqueue($waveItem)
                             }
+                            if ($waveState -and $summaryByIndex.ContainsKey($waveItem.index)) {
+                                Add-StagedWaveSummaryTimings `
+                                    -Summary $summaryByIndex[$waveItem.index] `
+                                    -WaveState $waveState `
+                                    -WaveResult $waveResult `
+                                    -WaveId ([string]$job.WaveId)
+                            }
                         }
                         if ($waveAmbiguousRecovery) {
                             Write-Warning "Staged-wave completion is ambiguous; affected exercises were routed for operator inspection without retry. $($waveResult.error) Retained wave workspace: $($job.WaveWorkspace)"
@@ -9277,6 +9810,16 @@ if ($pendingPrefetchItems.Count -gt 0 -or $pendingDiscoveryItems.Count -gt 0 -or
                             Write-Warning "Staged movement wave did not finish cleanly (exit code $waveExitCode); retrying its exercises individually. Details: $waveLog. $waveError"
                         }
                         Write-ProgressCheckpoint
+                        if ($waveAmbiguousRecovery) {
+                            $warmWorkerStopped = [bool](Stop-GvhmrWarmWorker -Worker $warmGvhmrWorkerInstance)
+                            $llamaServerStopped = [bool](Stop-SharedLlamaServer -Server $sharedLlamaServerInstance)
+                            if (-not $warmWorkerStopped -or -not $llamaServerStopped) {
+                                throw "A staged-wave request became ambiguous after its hard deadline, and owned model shutdown could not be confirmed. The library run is stopping with workspace ownership evidence preserved. Inspect '$($job.WaveWorkspace)' before resuming."
+                            }
+                            $warmGvhmrWorkerInstance = $null
+                            $sharedLlamaServerInstance = $null
+                            throw "A staged-wave request exceeded its hard deadline. The affected wave is retained for inspection and the full library run stopped before any automatic GPU retry. Inspect '$($job.WaveWorkspace)' before resuming."
+                        }
                     } else {
                         $bakeSummary = Complete-BakeJob -Job $job
                         if ("$($bakeSummary.status)" -eq "retry_pending") {
@@ -9472,6 +10015,7 @@ $summary = [ordered]@{
     sharedLlamaServerEnabled = $effectiveSharedLlamaServer
     sharedLlamaServerSessionDir = $resolvedSharedLlamaServerSessionDir
     warmGvhmrWorkerEnabled = $effectiveWarmGvhmrWorker
+    gvhmrStageSplitEnabled = $effectiveGvhmrStageSplit
     gvhmrWorkerSessionDir = $resolvedGvhmrWorkerSessionDir
     gvhmrWorkerMountRoot = if ($effectiveWarmGvhmrWorker) { $resolvedWorkspaceRoot } else { $null }
     effectiveCandidateBudget = [ordered]@{

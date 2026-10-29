@@ -53,13 +53,18 @@ def test_worker_startup_archives_claimed_jobs_and_preserves_unclaimed(
     monkeypatch.setattr(
         gvhmr_warm_worker,
         "parse_args",
-        lambda: SimpleNamespace(state_dir=state_dir, poll_seconds=0.01),
+        lambda: SimpleNamespace(state_dir=state_dir, poll_seconds=0.01, stage_mode="combined", gpu_device="0"),
     )
 
-    def fake_load_gvhmr_once() -> dict:
+    def fake_load_gvhmr_once(stage_mode: str = "combined") -> dict:
         recovered = json.loads((state_dir / "results" / "interrupted-job.json").read_text())
         assert recovered["status"] == "interrupted_ambiguous"
-        return {"loadSeconds": 0.0, "gpuName": "test-only"}
+        return {
+            "loadSeconds": 0.0,
+            "gpuName": "test-only",
+            "stageMode": stage_mode,
+            "imageIdentity": "unknown",
+        }
 
     monkeypatch.setattr(gvhmr_warm_worker, "load_gvhmr_once", fake_load_gvhmr_once)
     monkeypatch.setattr(gvhmr_warm_worker, "release_gvhmr_state", lambda _state: None)

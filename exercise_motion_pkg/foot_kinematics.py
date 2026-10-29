@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 
-from .models import MotionClip, MotionFrame
+from .models import MotionClip
 from .contact_constraints import (
     ANGLE_NUMERICAL_TOLERANCE_RADIANS,
     InfeasibleContactCorrection,
@@ -200,7 +200,7 @@ def _smooth_track(values: np.ndarray, fps: float, fixed: np.ndarray | None = Non
 
 
 def stabilize_rigid_feet(clip: MotionClip) -> tuple[MotionClip, dict[str, object]]:
-    frames = [MotionFrame(time_sec=f.time_sec, joints=dict(f.joints)) for f in clip.frames]
+    frames = [replace(f, joints=dict(f.joints)) for f in clip.frames]
     corrected = 0
     for side in ("left", "right"):
         ankle_name, toe_name = f"{side}_ankle", f"{side}_foot"
@@ -438,7 +438,7 @@ def solve_rigid_foot_contacts(
     ]
     if not toe_contacts:
         return clip, {"applied": False, "reason": "forefoot_contacts_unavailable"}
-    frames = [MotionFrame(time_sec=f.time_sec, joints=dict(f.joints)) for f in clip.frames]
+    frames = [replace(f, joints=dict(f.joints)) for f in clip.frames]
     floor = min(
         f.joints[name][1] for f in clip.frames for name in ("left_foot", "right_foot")
         if name in f.joints

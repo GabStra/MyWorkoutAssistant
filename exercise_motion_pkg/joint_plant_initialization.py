@@ -4,6 +4,7 @@ from __future__ import annotations
 from time import monotonic
 
 import numpy as np
+from scipy.interpolate import PchipInterpolator
 from scipy.optimize import minimize
 from scipy.sparse import diags, eye, lil_matrix
 from scipy.sparse.linalg import spsolve
@@ -43,10 +44,14 @@ def contact_conditioned_articulation_reference(reference, pinned, targets, names
     if patch.get('available') is not True:
         return conditioned, masks, observed_masks, {
             'available': False, 'reason': 'foot_patch_unavailable'}
-    from .contact_constraints import mapped_foot_patch_state_indices
+    from .contact_constraints import (
+        fit_frame_foot_patch_states_by_side,
+        mapped_foot_patch_state_indices,
+    )
     mapped = np.asarray(
         mapped_foot_patch_state_indices(evidence, frame_times, len(source)), dtype=int)
     indices = mapped
+    fit_states = fit_frame_foot_patch_states_by_side(evidence, len(source))
     for side in ('left', 'right'):
         ankle_name, toe_name = f'{side}_ankle', f'{side}_foot'
         foot = feet.get(side)
@@ -58,9 +63,19 @@ def contact_conditioned_articulation_reference(reference, pinned, targets, names
             continue
         full_sole = np.zeros(len(source), dtype=bool)
         valid = (indices >= 0) & (indices < len(states))
-        full_sole[valid] = np.asarray([
-            str(states[index]).casefold() == 'full_sole' for index in indices[valid]
-        ], dtype=bool)
+        aligned = fit_states.get(side)
+        if aligned is not None:
+            full_sole = np.asarray([
+                str(state).casefold() == 'full_sole' for state in aligned
+            ], dtype=bool)
+            valid |= np.asarray([
+                str(state).casefold() not in {'', 'unknown', 'unobserved', 'none'}
+                for state in aligned
+            ], dtype=bool)
+        else:
+            full_sole[valid] = np.asarray([
+                str(states[index]).casefold() == 'full_sole' for index in indices[valid]
+            ], dtype=bool)
         ankle_i, toe_i = names.index(ankle_name), names.index(toe_name)
         active = full_sole & pins[:, ankle_i] & pins[:, toe_i]
         if not np.any(valid):
@@ -121,51 +136,156 @@ def _foot_pose_report(source, target):
 
 def source_conditioned_foot_direction_reference(
         reference, pinned, names, desired_world_foot_directions,
-        pitch_trajectory_mask_by_side):
-    """Carry source foot geometry on mapped trajectories without pinning it."""
+        pitch_trajectory_mask_by_side, *, source_reference, frame_times):
+    """Transport calibrated foot-angle corrections over the source clock.
+
+    Directions are measured only on qualified trajectories. Their angular
+    correction relative to the immutable pre-contact source is carried through
+    free frames, so entering or leaving a measured segment does not switch
+    between calibrated and raw angle baselines.
+    """
     source = np.asarray(reference, dtype=float)
+    original = np.asarray(source_reference, dtype=float)
     pins = np.asarray(pinned, dtype=bool)
     directions = np.asarray(desired_world_foot_directions, dtype=float)
     if (source.ndim != 3 or source.shape[1:] != (len(names), 3)
+            or original.shape != source.shape
             or pins.shape != source.shape[:2]
             or directions.shape != (len(source), 2, 3)):
         raise ValueError('incompatible source foot direction reference inputs')
+    trajectories = {
+        side: np.asarray(
+            (pitch_trajectory_mask_by_side or {}).get(side, np.zeros(len(source))),
+            dtype=bool)
+        for side in ('left', 'right')
+    }
+    for side, trajectory in trajectories.items():
+        if trajectory.shape != (len(source),):
+            raise ValueError(f'{side} pitch trajectory mask must have shape (frames,)')
+    if not any(np.any(trajectory) for trajectory in trajectories.values()):
+        return source.copy(), {'left': 0, 'right': 0}, {
+            side: {'trajectoryFrameCount': 0, 'transportedFrameCount': 0}
+            for side in ('left', 'right')
+        }
+    clock = np.asarray(frame_times, dtype=float)
+    if (clock.shape != (len(source),) or not np.isfinite(clock).all()
+            or np.any(np.diff(clock) <= 0.)):
+        raise ValueError('source foot direction clock must be finite and strictly increasing')
     conditioned = source.copy()
     counts = {}
+    details = {}
+    from scipy.interpolate import PchipInterpolator
+
     for side_index, side in enumerate(('left', 'right')):
         ankle_name, toe_name = f'{side}_ankle', f'{side}_foot'
         if ankle_name not in names or toe_name not in names:
             counts[side] = 0
             continue
         ankle_i, toe_i = names.index(ankle_name), names.index(toe_name)
-        trajectory = np.asarray(
-            (pitch_trajectory_mask_by_side or {}).get(side, np.zeros(len(source))),
-            dtype=bool)
-        if trajectory.shape != (len(source),):
-            raise ValueError(f'{side} pitch trajectory mask must have shape (frames,)')
+        trajectory = trajectories[side]
         rows = trajectory
         lengths = np.linalg.norm(directions[:, side_index], axis=1)
         if np.any(rows & (~np.isfinite(lengths) | (lengths <= _EPS))):
             raise ValueError(f'{side} source foot direction is invalid on its trajectory')
-        source_length = float(np.linalg.norm(source[0, toe_i] - source[0, ankle_i]))
+        source_bones = original[:, toe_i] - original[:, ankle_i]
+        source_lengths = np.linalg.norm(source_bones, axis=1)
+        source_length = float(np.median(source_lengths))
         if np.any(rows) and source_length <= _EPS:
             raise ValueError(f'{side} source foot length is unavailable')
-        unit_directions = directions[:, side_index] / np.maximum(lengths[:, None], _EPS)
-        conditioned[rows, toe_i] = (
-            conditioned[rows, ankle_i] + unit_directions[rows] * source_length)
+        if not np.any(rows):
+            counts[side] = 0
+            details[side] = {'trajectoryFrameCount': 0, 'transportedFrameCount': 0}
+            continue
+
+        source_unit = source_bones / np.maximum(source_lengths[:, None], _EPS)
+        target_unit = directions[:, side_index] / np.maximum(lengths[:, None], _EPS)
+        source_yaw = np.arctan2(source_unit[:, 0], source_unit[:, 2])
+        source_pitch = np.arctan2(source_unit[:, 1], np.linalg.norm(source_unit[:, [0, 2]], axis=1))
+        target_yaw = np.arctan2(target_unit[:, 0], target_unit[:, 2])
+        target_pitch = np.arctan2(target_unit[:, 1], np.linalg.norm(target_unit[:, [0, 2]], axis=1))
+        owned = np.flatnonzero(rows)
+        yaw_correction = np.unwrap(_angle_delta(target_yaw[owned], source_yaw[owned]))
+        pitch_correction = target_pitch[owned] - source_pitch[owned]
+        if len(owned) == 1:
+            yaw_track = np.full(len(source), yaw_correction[0], dtype=float)
+            pitch_track = np.full(len(source), pitch_correction[0], dtype=float)
+        else:
+            clipped_clock = np.clip(clock, clock[owned[0]], clock[owned[-1]])
+            yaw_track = np.asarray(PchipInterpolator(
+                clock[owned], yaw_correction, extrapolate=False)(clipped_clock), dtype=float)
+            pitch_track = np.asarray(PchipInterpolator(
+                clock[owned], pitch_correction, extrapolate=False)(clipped_clock), dtype=float)
+
+        transported_yaw = source_yaw + yaw_track
+        transported_pitch = source_pitch + pitch_track
+        transported_direction = np.stack((
+            np.sin(transported_yaw) * np.cos(transported_pitch),
+            np.sin(transported_pitch),
+            np.cos(transported_yaw) * np.cos(transported_pitch),
+        ), axis=1)
+        conditioned[:, toe_i] = (
+            conditioned[:, ankle_i] + transported_direction * source_length)
         counts[side] = int(rows.sum())
-    return conditioned, counts
+        details[side] = {
+            'trajectoryFrameCount': int(rows.sum()),
+            'transportedFrameCount': int((~rows).sum()),
+            'yawCorrectionRangeDegrees': np.rad2deg([
+                float(np.min(yaw_track)), float(np.max(yaw_track))]).tolist(),
+            'pitchCorrectionRangeDegrees': np.rad2deg([
+                float(np.min(pitch_track)), float(np.max(pitch_track))]).tolist(),
+            'maximumCorrectionStepDegrees': float(np.rad2deg(max(
+                np.max(np.abs(np.diff(yaw_track))) if len(yaw_track) > 1 else 0.,
+                np.max(np.abs(np.diff(pitch_track))) if len(pitch_track) > 1 else 0.))),
+        }
+    return conditioned, counts, details
+
+
+def _carry_contact_placement(source_ankle, source_toe, target_ankle, target_toe,
+                             owned, *, cyclic=False):
+    """Carry placement between contacts without filtering the source motion."""
+    rows = np.flatnonzero(owned)
+    if not len(rows):
+        return target_ankle, target_toe
+    source_center = .5 * (source_ankle + source_toe)
+    target_center = .5 * (target_ankle + target_toe)
+    corrections = target_center[rows] - source_center[rows]
+    clock = np.arange(len(owned), dtype=float)
+    if cyclic:
+        rows = np.concatenate((rows - len(owned), rows, rows + len(owned)))
+        corrections = np.tile(corrections, (3, 1))
+    if len(rows) == 1:
+        correction = np.broadcast_to(corrections[0], source_center.shape)
+    else:
+        correction = PchipInterpolator(rows, corrections, axis=0)(
+            np.clip(clock, rows[0], rows[-1]))
+    free = ~owned
+    target_ankle[free] = source_ankle[free] + correction[free]
+    target_toe[free] = source_toe[free] + correction[free]
+    return target_ankle, target_toe
 
 
 def _make_specs(names, points, pinned, targets, reference, *,
                 desired_world_foot_directions=None, pitch_authority_mask_by_side=None,
-                pitch_trajectory_mask_by_side=None):
+                pitch_trajectory_mask_by_side=None, cyclic=False, floor_y=None,
+                rest_pitch_radians=None, foot_scale=None, side_axis_by_side=None, fps=30.):
     index = {name: i for i, name in enumerate(names)}
     specs, preflight = [], {}
     directions = (None if desired_world_foot_directions is None else
                   np.asarray(desired_world_foot_directions, dtype=float))
     if directions is not None and directions.shape != (len(points), 2, 3):
         raise ValueError('desired foot directions must have shape (frames, 2, 3)')
+    side_axes = (None if side_axis_by_side is None else
+                 np.asarray(side_axis_by_side, dtype=float))
+    if floor_y is not None:
+        if (side_axes is None or side_axes.shape != (len(points), 2, 3)
+                or not isinstance(rest_pitch_radians, dict)
+                or any(side not in ('left', 'right') for side in rest_pitch_radians)
+                or any(not np.isfinite(float(value))
+                       for value in rest_pitch_radians.values())
+                or foot_scale is None or not np.isfinite(float(floor_y))
+                or not np.isfinite(float(foot_scale)) or float(foot_scale) <= 0.
+                or not np.isfinite(fps) or fps <= 0.):
+            raise ValueError('material floor correction requires calibrated floor, pitch, scale, and side axes')
     root_seed_sum = np.zeros((len(points), 3), dtype=float)
     root_seed_count = np.zeros(len(points), dtype=float)
     for side_index, side in enumerate(('left', 'right')):
@@ -230,6 +350,26 @@ def _make_specs(names, points, pinned, targets, reference, *,
                 midpoint[free_trajectory] + .5 * source_vector[free_trajectory])
         target_toe[ankle_only] = target_ankle[ankle_only] + source_vector[ankle_only]
         target_ankle[toe_only] = target_toe[toe_only] - source_vector[toe_only]
+        # Root correction moves the hip, not a released foot's world trajectory.
+        # Interpolate placement only; source-clock pitch and heading stay intact.
+        source_ankle, source_toe = points[:, ankle_i].copy(), points[:, toe_i].copy()
+        midpoint = .5 * (source_ankle + source_toe)
+        source_ankle[trajectory] = midpoint[trajectory] - .5 * source_vector[trajectory]
+        source_toe[trajectory] = midpoint[trajectory] + .5 * source_vector[trajectory]
+        target_ankle, target_toe = _carry_contact_placement(
+            source_ankle, source_toe, target_ankle, target_toe,
+            owned, cyclic=cyclic)
+        floor_corrections = np.zeros(len(points), dtype=float)
+        if floor_y is not None and side in rest_pitch_radians:
+            from .foot_geometry import free_foot_floor_translation
+            free = ~owned
+            for frame in np.flatnonzero(free):
+                floor_corrections[frame] = free_foot_floor_translation(
+                    target_ankle[frame], target_toe[frame], floor_y=floor_y,
+                    rest_pitch_radians=rest_pitch_radians[side],
+                    foot_scale=foot_scale, side_axis=side_axes[frame, side_index])
+            target_ankle[free, 1] += floor_corrections[free]
+            target_toe[free, 1] += floor_corrections[free]
         target_vector = target_toe - target_ankle
         target_length = np.linalg.norm(target_vector, axis=1)
         source_knee = angles(reference[:, hip_i], reference[:, knee_i], reference[:, ankle_i])
@@ -267,6 +407,13 @@ def _make_specs(names, points, pinned, targets, reference, *,
             'maximumPitchDeltaDegrees': max_pitch,
             'maxHeadingDeltaDegrees': max_heading,
             'maxPitchDeltaDegrees': max_pitch,
+            'materialFloorCorrection': {
+                'frameCount': int(np.count_nonzero(floor_corrections)),
+                'maximumTranslationMeters': float(np.max(floor_corrections, initial=0.)),
+                'timeSpanSeconds': ([float(np.flatnonzero(floor_corrections)[0] / fps),
+                                     float(np.flatnonzero(floor_corrections)[-1] / fps)]
+                                    if np.any(floor_corrections) else None),
+            },
         }
         # The same immutable pre-support limits used by the independent guard
         # bound contact-owned foot pose. A contradictory target must be fixed at
@@ -281,7 +428,9 @@ def _make_specs(names, points, pinned, targets, reference, *,
             'hip': points[:, hip_i], 'knee': points[:, knee_i],
             'ankle': points[:, ankle_i], 'toe': points[:, toe_i],
             'targetAnkle': target_ankle, 'targetToe': target_toe,
-            'ankleFollowsRoot': follows_root, 'toeFollowsRoot': follows_root,
+            'activeContact': owned.copy(),
+            'ankleFollowsRoot': np.zeros(len(points), dtype=bool),
+            'toeFollowsRoot': np.zeros(len(points), dtype=bool),
             'thigh': np.linalg.norm(points[:, knee_i] - points[:, hip_i], axis=1),
             'shin': np.linalg.norm(points[:, ankle_i] - points[:, knee_i], axis=1),
             'pole': _unit(poles), 'sourceAxis': _unit(points[:, ankle_i] - points[:, hip_i]),
@@ -299,11 +448,17 @@ def _make_specs(names, points, pinned, targets, reference, *,
 def _root_track(specs, count, deadline, cyclic, fps):
     bounds = [(-_ROOT_LIMIT_METERS, _ROOT_LIMIT_METERS)] * 3
     translations = np.zeros((count, 3), dtype=float)
+    def feasible(frame, value, tolerance=-1e-7):
+        margins, knees = _frame_state(specs, frame, value)
+        active = any(spec.get('activeContact') is not None
+                     and spec['activeContact'][frame] for spec in specs)
+        return ((not active or knees is not None)
+                and np.min(margins) >= tolerance)
+
     for frame in range(count):
         if monotonic() >= deadline:
             raise TimeoutError('joint plant root feasibility exceeded deadline')
-        zero_margins, _ = _frame_state(specs, frame, np.zeros(3))
-        if (np.min(zero_margins) >= -1e-8
+        if (feasible(frame, np.zeros(3), tolerance=-1e-8)
                 and all(np.max(np.abs(spec['targetAnkle'][frame] - spec['ankle'][frame]), initial=0.) < 1e-10
                         and np.max(np.abs(spec['targetToe'][frame] - spec['toe'][frame]), initial=0.) < 1e-10
                         for spec in specs)):
@@ -342,13 +497,20 @@ def _root_track(specs, count, deadline, cyclic, fps):
                              bounds=bounds, constraints=constraints,
                              options={'maxiter': 35, 'ftol': 1e-9, 'disp': False})
                     for seed in seeds]
-        feasible = [np.asarray(result.x, dtype=float) for result in attempts
-                    if np.min(_frame_state(specs, frame, result.x)[0]) >= -1e-7]
-        if not feasible:
+        feasible_offsets = [np.asarray(result.x, dtype=float) for result in attempts
+                            if feasible(frame, result.x)]
+        if not feasible_offsets:
             margins = [np.min(_frame_state(specs, frame, result.x)[0]) for result in attempts]
             return None, {'feasible': False, 'frame': frame,
                           'bestMinimumMarginDegrees': float(np.rad2deg(max(margins)))}
-        translations[frame] = min(feasible, key=cost)
+        translations[frame] = min(feasible_offsets, key=cost)
+
+    seed_margins = np.asarray([
+        _frame_state(specs, frame, translations[frame])[0]
+        for frame in range(count)
+    ])
+    minimum_seed_margin = float(np.rad2deg(np.min(seed_margins)))
+    rejected_projection_margins = []
 
     if count > 2:
         d2 = diags([np.ones(count - 2), -2. * np.ones(count - 2),
@@ -364,11 +526,12 @@ def _root_track(specs, count, deadline, cyclic, fps):
         smooth = np.column_stack([np.asarray(
             spsolve(system.tocsc(), translations[:, axis])).ravel() for axis in range(3)])
         for _ in range(3):
+            feasible_translations = translations.copy()
             projected = np.clip(smooth, -_ROOT_LIMIT_METERS, _ROOT_LIMIT_METERS)
             for frame in range(count):
                 if monotonic() >= deadline:
                     raise TimeoutError('joint plant root smoothing exceeded deadline')
-                if np.min(_frame_state(specs, frame, projected[frame])[0]) >= -1e-7:
+                if feasible(frame, projected[frame]):
                     continue
                 def smooth_frame_margins(value, f=frame):
                     if monotonic() >= deadline:
@@ -380,16 +543,31 @@ def _root_track(specs, count, deadline, cyclic, fps):
                     projected[frame], method='SLSQP', bounds=bounds,
                     constraints=[{'type': 'ineq', 'fun': smooth_frame_margins}],
                     options={'maxiter': 30, 'ftol': 1e-9, 'disp': False})
-                if np.min(_frame_state(specs, frame, result.x)[0]) >= -1e-7:
+                if feasible(frame, result.x):
                     projected[frame] = result.x
+                else:
+                    # Smoothing is only a preference for the initializer seed.
+                    # Never replace a known-feasible root offset with a failed
+                    # projection; the coupled fit still owns final validation.
+                    rejected_projection_margins.append(float(np.rad2deg(
+                        np.min(_frame_state(specs, frame, projected[frame])[0]))))
+                    projected[frame] = feasible_translations[frame]
             translations = projected
             smooth = np.column_stack([np.asarray(
                 spsolve(system.tocsc(), translations[:, axis])).ravel() for axis in range(3)])
-        margins = np.asarray([_frame_state(specs, frame, projected[frame])[0]
-                              for frame in range(count)])
-        if not np.isfinite(margins).all() or np.min(margins) < -1e-7:
+        margin_rows = [_frame_state(specs, frame, projected[frame])
+                       for frame in range(count)]
+        margins = np.asarray([row[0] for row in margin_rows])
+        if (not np.isfinite(margins).all() or np.min(margins) < -1e-7
+                or any(not feasible(frame, projected[frame])
+                       for frame in range(count))):
             return None, {'feasible': False, 'reason': 'smoothed_root_track_not_feasible',
-                          'minimumMarginDegrees': float(np.rad2deg(np.nanmin(margins)))}
+                          'minimumMarginDegrees': float(np.rad2deg(np.nanmin(margins))),
+                          'perFrameFeasibleSeedMinimumMarginDegrees': minimum_seed_margin,
+                          'rejectedSmoothingProjectionCount': len(rejected_projection_margins),
+                          'minimumRejectedSmoothingProjectionMarginDegrees': (
+                              min(rejected_projection_margins, default=None)),
+                          }
         translations = projected
     cyclic_differences = (np.diff(np.vstack((translations[-1:], translations)), axis=0)
                           if cyclic else np.diff(translations, axis=0))
@@ -410,6 +588,10 @@ def _root_track(specs, count, deadline, cyclic, fps):
             np.max(np.linalg.norm(cyclic_differences, axis=1), initial=0.) * fps),
         'maxCorrectionAccelerationMetersPerSecondSquared': float(
             np.max(np.linalg.norm(second_difference, axis=1), initial=0.) * fps * fps),
+        'perFrameFeasibleSeedMinimumMarginDegrees': minimum_seed_margin,
+        'rejectedSmoothingProjectionCount': len(rejected_projection_margins),
+        'minimumRejectedSmoothingProjectionMarginDegrees': (
+            min(rejected_projection_margins, default=None)),
         'cyclic': bool(cyclic),
     }
 
@@ -418,7 +600,9 @@ def initialize_joint_plant_coordinates(rig, coordinates, pinned, contact_targets
                                        articulation_reference, fps, cyclic=False, deadline,
                                        desired_world_foot_directions=None,
                                        pitch_authority_mask_by_side=None,
-                                       pitch_trajectory_mask_by_side=None):
+                                       pitch_trajectory_mask_by_side=None, floor_y=None,
+                                       rest_pitch_radians=None, foot_scale=None,
+                                       side_axis_by_side=None):
     """Solve planted poses with bounded root travel and only supported-leg articulation."""
     baseline = np.asarray(coordinates, dtype=float)
     pins = np.asarray(pinned, dtype=bool)
@@ -433,7 +617,9 @@ def initialize_joint_plant_coordinates(rig, coordinates, pinned, contact_targets
         rig.names, points, pins, targets, reference,
         desired_world_foot_directions=desired_world_foot_directions,
         pitch_authority_mask_by_side=pitch_authority_mask_by_side,
-        pitch_trajectory_mask_by_side=pitch_trajectory_mask_by_side)
+        pitch_trajectory_mask_by_side=pitch_trajectory_mask_by_side, cyclic=cyclic,
+        floor_y=floor_y, rest_pitch_radians=rest_pitch_radians,
+        foot_scale=foot_scale, side_axis_by_side=side_axis_by_side, fps=fps)
     if not specs:
         return None, {'feasible': False, **preflight}
     offsets, root_report = _root_track(specs, len(points), deadline, cyclic, fps)
@@ -453,6 +639,59 @@ def initialize_joint_plant_coordinates(rig, coordinates, pinned, contact_targets
         return None, {'feasible': False, 'preflight': preflight, 'root': root_report,
                       'reason': 'exact_contact_postcheck_failed',
                       'maximumContactErrorMeters': float(np.max(contact_error, initial=0.))}
+    if floor_y is not None:
+        if monotonic() >= deadline:
+            raise TimeoutError('joint plant material-floor validation exceeded deadline')
+        from .controlled_motion import _sampling_payload
+        from .foot_geometry import _sample_material_foot_geometry, shoe_vertices
+        from .rig_playback import PLAYBACK_FLOOR_LIMIT_METERS, sample_rig
+        frame_rows = []
+        for frame_points, axes in zip(actual, side_axis_by_side):
+            frame_rows.append({
+                'joints': dict(zip(rig.names, frame_points.tolist())),
+                'boneSides': {
+                    f'{side}_ankle->{side}_foot': axes[side_index].tolist()
+                    for side_index, side in enumerate(('left', 'right'))
+                },
+            })
+        sample_count = len(actual) * 4 if cyclic else max(1, (len(actual) - 1) * 4 + 1)
+        cursors = np.arange(sample_count, dtype=float) / 4.
+        sampling_payload = _sampling_payload(rig, encoded)
+        sampled = sample_rig(sampling_payload, cursors, wrap=cyclic)
+        geometry_payload = {
+            'frames': frame_rows, 'jointNames': list(rig.names),
+            'footRestPitchRadians': rest_pitch_radians,
+            'renderFloorY': float(floor_y), 'loop': {'enabled': bool(cyclic)},
+        }
+        geometry = _sample_material_foot_geometry(geometry_payload, cursors, sampled)
+        floor_violations = {}
+        from .foot_geometry import foot_scale_from_pose
+        material_scale = float(foot_scale) if foot_scale is not None else foot_scale_from_pose(actual[0], rig.names)
+        for side in ('left', 'right'):
+            if side not in (rest_pitch_radians or {}) or side not in geometry:
+                continue
+            ankle_i, toe_i = rig.names.index(f'{side}_ankle'), rig.names.index(f'{side}_foot')
+            surface = shoe_vertices(
+                sampled[:, ankle_i], sampled[:, toe_i], geometry[side]['lateral'],
+                float(rest_pitch_radians[side]), material_scale)
+            penetration = max(0., float(floor_y) - float(np.min(surface[:, :, 1])))
+            floor_violations[side] = penetration
+        maximum_floor_penetration = max(floor_violations.values(), default=0.)
+        floor_report = {
+            'required': bool(floor_violations),
+            'sampleCount': int(len(cursors)),
+            'maximumSurfacePenetrationMeters': maximum_floor_penetration,
+            'limitMeters': PLAYBACK_FLOOR_LIMIT_METERS,
+            'bySideMeters': floor_violations,
+            'passed': maximum_floor_penetration <= PLAYBACK_FLOOR_LIMIT_METERS,
+            'needsPlaybackFloorRefinement': (
+                maximum_floor_penetration > PLAYBACK_FLOOR_LIMIT_METERS),
+        }
+    else:
+        floor_report = {'required': False, 'passed': True,
+                        'sampleCount': 0, 'bySideMeters': {},
+                        'needsPlaybackFloorRefinement': False}
+
     knee_margins = margins[:, 0::2]
     ankle_margins = margins[:, 1::2]
     for side_index, spec in enumerate(specs):
@@ -463,6 +702,9 @@ def initialize_joint_plant_coordinates(rig, coordinates, pinned, contact_targets
     return encoded, {
         'feasible': True, 'strategy': 'bounded_joint_root_and_closed_chain_legs',
         'preflight': preflight, 'root': root_report,
+        'materialFloor': floor_report,
+        'initializerFeasible': True,
+        'renderReady': bool(floor_report['passed']),
         'maximumContactErrorMeters': float(np.max(contact_error, initial=0.)),
         'minimumKneeMarginDegrees': float(np.rad2deg(np.min(knee_margins))),
         'minimumAnkleMarginDegrees': float(np.rad2deg(np.min(ankle_margins))),

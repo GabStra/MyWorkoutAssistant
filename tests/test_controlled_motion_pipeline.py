@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from exercise_motion_pkg import bake_and_rank
+from exercise_motion_pkg import controlled_motion
 from exercise_motion_pkg.controlled_motion import (
     CONTROLLED_MOTION_STRATEGY, REQUIRED_FIT_CHECKS, FixedRig,
     can_reuse_controlled_motion, controlled_motion_fit_source_evidence_digest,
@@ -36,6 +37,51 @@ def accepted_payload():
         controlled_motion_fit_source_evidence_digest(payload)
     )
     return payload
+
+
+def test_support_wrap_deferral_requires_verified_camera_clock_and_bilateral_endpoint_pins(monkeypatch):
+    from exercise_motion_pkg import body_support_observation, support_geometry
+    from exercise_motion_pkg import sequence_stabilization
+
+    identity = {
+        'selectedSegmentSha256': 'selected',
+        'parentSourceSha256': 'parent',
+        'selectedFrameClockReceiptSha256': 'clock',
+        'sourcePosePayloadSha256': 'pose',
+    }
+    payload = {
+        'sourcePoseCameraReference': {
+            'camera': {'available': True, 'sourceTimelineMappingIdentity': dict(identity)},
+            'sourceTimelineMapping': {
+                'schemaVersion': 1, 'verified': True,
+                'mappingKind': 'selected_segment_to_parent_source', **identity,
+            },
+            'sourcePose': {'frames': []},
+        },
+        'sourceFootSupportEvidence': {'sourceVideoSha256': 'selected'},
+        'jointNames': ['left_ankle', 'left_foot', 'right_ankle', 'right_foot'],
+        'frames': [{'joints': {}} for _ in range(3)],
+    }
+    all_pinned = np.ones((3, 4), dtype=bool)
+    monkeypatch.setattr(body_support_observation, 'materialize_stationary_sole_support',
+                        lambda _payload: {'materialized': True})
+    monkeypatch.setattr(support_geometry, 'support_contact_readiness',
+                        lambda *_args, **_kwargs: {'passed': True})
+    monkeypatch.setattr(sequence_stabilization, 'contact_mask',
+                        lambda *_args, **_kwargs: all_pinned.copy())
+
+    assert controlled_motion._verified_support_wrap_deferral(payload)
+    incomplete = all_pinned.copy()
+    incomplete[0, 1] = False
+    monkeypatch.setattr(sequence_stabilization, 'contact_mask',
+                        lambda *_args, **_kwargs: incomplete.copy())
+    assert not controlled_motion._verified_support_wrap_deferral(payload)
+
+    payload['sourcePoseCameraReference']['camera']['sourceTimelineMappingIdentity'][
+        'selectedFrameClockReceiptSha256'] = 'different-clock'
+    monkeypatch.setattr(sequence_stabilization, 'contact_mask',
+                        lambda *_args, **_kwargs: all_pinned.copy())
+    assert not controlled_motion._verified_support_wrap_deferral(payload)
 
 
 def test_supported_fit_anatomy_gate_uses_support_reference_without_retargeting_source_articulation():
@@ -222,16 +268,83 @@ def test_stale_materialized_source_recovers_only_matching_valid_rig_view():
     assert report['reason'] == 'source_support_mapping_unresolved'
 
 
-def test_postfit_stabilization_rebinds_fit_digest_and_preserves_source_evidence(monkeypatch):
+def test_timed_contact_rematerialization_preserves_swapped_source_digest():
+    from exercise_motion_pkg.body_support_observation import (
+        materialize_timed_visual_contact_points,
+    )
+    from exercise_motion_pkg.contact_constraints import (
+        _source_evidence_from_motion_space, motion_space_support_evidence,
+    )
+
+    digest = 'c' * 64
+    canonical = {
+        'sourceVideoSha256': digest,
+        'footPatchEvidence': {'sourceVideoSha256': digest},
+        'bodySupportObservation': {
+            'source': 'exact_source_visual_support_observation',
+            'status': 'observed',
+            'sourceVideoSha256': digest,
+            'contactTimeline': {
+                'schemaVersion': 1,
+                'policyVersion': 1,
+                'source': 'exact_source_visual_contact_timeline',
+                'sourceVideoSha256': digest,
+                'sourceClock': 'video_frame_zero_seconds',
+                'status': 'observed',
+                'requestSha256': 'request',
+                'responseSha256': 'response',
+                'samples': [{
+                    'sampleId': 'left-static-sole',
+                    'sourceTimeSec': 0.5,
+                    'sourceFrameIndex': 15,
+                    'sourceFps': 30.0,
+                    'sourcePoseFrameIndex': 1,
+                    'side': 'left',
+                    'contactState': 'full_sole',
+                    'surface': 'ground',
+                    'visible': True,
+                    'sourceTrackStationary': True,
+                }],
+            },
+        },
+    }
+    payload = {
+        'sourceFootSupportEvidence': copy.deepcopy(canonical),
+        'sourcePoseCameraReference': {
+            'camera': {'bilateralAssignment': 'swapped'},
+        },
+    }
+    mapped = motion_space_support_evidence(payload)
+    frames = [{'sourceTimeSec': 0.5}]
+
+    materialize_timed_visual_contact_points(mapped, frames, ['left_foot', 'right_foot'])
+    assert len(mapped['supportContacts']) == 1
+    assert mapped['supportContacts'][0]['jointName'] == 'right_foot'
+    assert _source_evidence_from_motion_space(mapped) == canonical
+
+    materialize_timed_visual_contact_points(mapped, frames, ['left_foot', 'right_foot'])
+    assert len(mapped['supportContacts']) == 1
+    assert _source_evidence_from_motion_space(mapped) == canonical
+    assert payload['sourceFootSupportEvidence'] == canonical
+
+
+def test_validated_fit_owns_final_pose_and_preserves_source_evidence(monkeypatch):
     import copy
     from exercise_motion_pkg import controlled_motion, sequence_stabilization
 
     payload = accepted_payload()
     original_source_tracks = [copy.deepcopy(frame['sourceJoints']) for frame in payload['frames']]
+    source_heel_events = {
+        'heelEvents': [{'side': 'right', 'frameIndex': 3, 'amplitude': 0.04}],
+        'acceptedIntervalSeconds': [0.0, 6.0 / 30.0],
+    }
+    payload['sourceFootSupportEvidence'] = copy.deepcopy(source_heel_events)
     payload.pop('controlledMotionFit')
+    fitted_frames = []
 
     def fake_fit(candidate, **kwargs):
         fitted = copy.deepcopy(candidate)
+        fitted_frames.append(copy.deepcopy(fitted['frames']))
         report = {
             'applied': True,
             'strategy': CONTROLLED_MOTION_STRATEGY,
@@ -241,19 +354,18 @@ def test_postfit_stabilization_rebinds_fit_digest_and_preserves_source_evidence(
         }
         return fitted, report
 
-    def fake_stabilize(candidate):
-        stabilized = copy.deepcopy(candidate)
-        for frame in stabilized['frames']:
-            for point in frame['joints'].values():
-                point[0] += .001
-        return stabilized, {'applied': True, 'strategy': 'test_stabilization'}
+    def fail_if_stabilized(candidate):
+        raise AssertionError('validated controlled-fit geometry must not be mutated downstream')
 
     monkeypatch.setattr(controlled_motion, 'fit_controlled_motion', fake_fit)
-    monkeypatch.setattr(sequence_stabilization, 'stabilize_exported_sequence', fake_stabilize)
+    monkeypatch.setattr(sequence_stabilization, 'stabilize_exported_sequence', fail_if_stabilized)
 
     result, _ = bake_and_rank.constrain_baked_payload_to_source_articulation(payload)
 
+    assert result['frames'] == fitted_frames[0]
     assert [frame['sourceJoints'] for frame in result['frames']] == original_source_tracks
+    assert result['sourceFootSupportEvidence'] == source_heel_events
+    assert 'sequenceStabilization' not in result
     assert result['controlledMotionFit']['outputPoseDigest'] == pose_digest(result)
     assert result['controlledMotionFit']['fitSourceEvidenceDigest'] == (
         controlled_motion_fit_source_evidence_digest(result)

@@ -50,7 +50,8 @@ def source_arm_symmetry_evidence(payload: dict[str, Any] | None) -> dict[str, An
     sufficient = len(errors) >= 6 and len(errors) >= 0.7 * len(frames)
     accepted = sufficient and float(np.median(errors)) <= 0.30 and float(np.quantile(errors, 0.9)) <= 0.5 and float(np.quantile(angle_differences, 0.9)) <= 12.0
     return {
-        "accepted": bool(accepted), "source": "observed_bilateral_arm_geometry",
+        "accepted": bool(accepted), "source": "observed_bilateral_arm_projection",
+        "authorityScope": "2d_projection_diagnostic_only",
         "sampleCount": len(errors), "totalFrameCount": len(frames),
         "medianMirrorErrorShoulderWidthRatio": float(np.median(errors)) if errors else None,
         "p90ElbowDifferenceDegrees": float(np.quantile(angle_differences, 0.9)) if errors else None,

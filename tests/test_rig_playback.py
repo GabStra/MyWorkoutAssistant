@@ -44,6 +44,81 @@ def test_final_loop_gate_uses_playback_velocity_even_when_endpoints_coincide():
     assert compute_loop_bridge_quality_metrics_from_payload(hitch)['playbackSeam'] is None
 
 
+def test_final_seam_uses_rendered_derivative_when_sample_proxy_flags_a_smooth_wrap():
+    rig = rig_payload(4)
+    rig['interpolation'] = 'limited_quaternion_hermite_v2'
+    values = np.asarray(rig['coordinates'])
+    values[:, 0] += [0., .01, .02, .01]
+    rig['coordinates'] = values.tolist()
+    report = validate_rig_playback(export(rig))
+    assert report['seamVelocityMismatchMetersPerSecond'] > report['seamVelocityMismatchLimitMetersPerSecond']
+    assert report['seamStepExcessMeters'] < report['seamStepExcessLimitMeters']
+    assert report['seamProxyContinuous'] is False
+    assert report['seamRenderedVelocityJumpMetersPerSecond'] < report['seamRenderedVelocityJumpLimitMetersPerSecond']
+    from exercise_motion_pkg.rig_interpolation import frame_boundary_velocity_jump
+    expected = frame_boundary_velocity_jump(
+        lambda cursors: sample_rig(rig, cursors, wrap=True), [0], 30.)
+    assert report['seamRenderedVelocityJumpMetersPerSecond'] == pytest.approx(expected)
+    assert report['seamVerdictSource'] == 'rendered_interpolation'
+    assert report['seamContinuous'] and report['passed'], report
+
+
+def test_rendered_seam_check_keeps_interior_knot_velocity_validation(monkeypatch):
+    from exercise_motion_pkg import rig_interpolation
+
+    rig = rig_payload(8)
+    rig['interpolation'] = 'limited_quaternion_hermite_v2'
+    payload = export(rig)
+    payload['fixedRig']['interpolation'] = 'limited_quaternion_hermite_v2'
+    monkeypatch.setattr(
+        rig_interpolation, 'frame_boundary_velocity_jump',
+        lambda _sample, knots, _fps: 0. if len(knots) == 1 else 1.)
+    report = validate_rig_playback(payload)
+    assert report['seamContinuous']
+    assert not report['velocityContinuous']
+    assert not report['passed']
+
+
+def test_default_linear_interpolation_measures_wrap_velocity_and_rejects_a_hitch():
+    stable = export(rig_payload(12))
+    stable_report = validate_rig_playback(stable)
+    assert stable_report['seamRenderedVelocityJumpMetersPerSecond'] < 1e-8
+    assert stable_report['seamContinuous']
+
+    rig = rig_payload(12)
+    coordinates = np.asarray(rig['coordinates'])
+    coordinates[1, 0] += .02
+    rig['coordinates'] = coordinates.tolist()
+    report = validate_rig_playback(export(rig))
+    assert report['seamVerdictSource'] == 'rendered_interpolation'
+    assert report['seamRenderedVelocityJumpMetersPerSecond'] > report['seamRenderedVelocityJumpLimitMetersPerSecond']
+    assert not report['seamContinuous']
+
+
+def test_rendered_seam_keeps_spatial_guard_for_an_excessive_bridge():
+    from copy import deepcopy
+    from exercise_motion_pkg.physical_validation import physical_metrics_from_payload
+
+    rig = rig_payload(12)
+    rig['interpolation'] = 'limited_quaternion_hermite_v2'
+    values = np.asarray(rig['coordinates'])
+    values[:, 0] += np.linspace(0., .2, len(values))
+    rig['coordinates'] = values.tolist()
+    payload = export(rig)
+    payload['fixedRig']['interpolation'] = 'limited_quaternion_hermite_v2'
+    report = validate_rig_playback(payload)
+    assert report['seamRenderedVelocityJumpMetersPerSecond'] < report['seamRenderedVelocityJumpLimitMetersPerSecond']
+    assert report['seamStepExcessMeters'] > report['seamStepExcessLimitMeters']
+    assert not report['seamContinuous']
+    assert report['passed']  # Body playback is valid; the loop policy owns seam rejection.
+    for frame in payload['frames']:
+        frame['controlledSourceJoints'] = deepcopy(frame['joints'])
+        frame['controlledArticulationReferenceJoints'] = deepcopy(frame['joints'])
+    final = physical_metrics_from_payload(payload)
+    assert not final['passed']
+    assert 'unsafe_loop_transition' in final['reasons']
+
+
 def test_grounded_toe_recalibrates_overlapping_ankle_before_fitting():
     from exercise_motion_pkg.rig_playback import rig_contact_targets
     rig = rig_payload(12)
@@ -428,6 +503,37 @@ def test_free_joint_floor_lift_ignores_planted_contacts():
     assert lift == pytest.approx(0.003, abs=1e-4)
 
 
+def test_free_material_floor_lift_checks_shoe_shell_and_exempts_only_full_sole_plants():
+    from exercise_motion_pkg.rig_playback import free_material_floor_clearance_lift
+
+    rig = rig_payload(3)
+    coordinates = np.asarray(rig['coordinates'], dtype=float)
+    coordinates[:, 1] += 2.
+    rig['coordinates'] = coordinates.tolist()
+    payload = export(rig)
+    payload['loop'] = {'enabled': False}
+    # Missing calibration must still measure the renderer's default zero-pitch shoe.
+    payload['footRestPitchRadians'] = {}
+    points = decode_rig(rig, rig['coordinates'])
+    floor = float(points[:, :, 1].min()) - .0001
+    payload['renderFloorY'] = floor
+    assert points[:, :, 1].min() > floor
+
+    names = payload['jointNames']
+    pinned = np.zeros(points.shape[:2], dtype=bool)
+    pinned[:, names.index('left_ankle')] = True
+    lift = free_material_floor_clearance_lift(payload, pinned, cyclic=False)
+    assert lift > .001
+
+    payload['sourceFootSupportEvidence'] = {'contacts': [{
+        'jointName': 'left_foot', 'contactState': 'full_sole',
+        'contactMotion': 'stationary', 'supportKind': 'observed_foot_patch',
+        'surfaceKind': 'ground', 'startFrame': 0, 'endFrame': len(points) - 1,
+    }]}
+    pinned[:, names.index('left_foot')] = True
+    assert free_material_floor_clearance_lift(payload, pinned, cyclic=False) < .0002
+
+
 def test_materialized_support_uses_final_rig_and_still_rejects_penetration(tmp_path):
     from exercise_motion_pkg.bake_and_rank import materialized_cleanup_support_metrics
     rig = rig_payload()
@@ -546,7 +652,43 @@ def test_scene_placement_levels_consistent_supported_stance_once():
     original['sourceFootSupportEvidence'] = {'contacts': [
         {'jointName': side+'_foot', 'contactState': 'full_sole', 'contactMotion': 'stationary',
          'supportKind': 'observed_foot_patch', 'startRatio': 0., 'endRatio': 1.} for side in ('left', 'right')],
-         'sharedSupportPlaneY': .8}
+         'bodySupport': {'status': 'confirmed',
+                         'stationaryJoints': ['left_ankle', 'left_foot', 'right_ankle', 'right_foot'],
+                         'soleContacts': [], 'coplanarGroups': []}}
+    # This fixture declares a verified full-sole plane, so give its rendered
+    # shoes the corresponding material basis. The foot/knee skeleton remains
+    # tilted; only the shoe shell is oriented to the observed support plane.
+    plane_normal = tilt.apply(np.array([0., 1., 0.]))
+    plane_offset = None
+    for side in ('left', 'right'):
+        ankle = np.asarray(original['frames'][0]['joints'][f'{side}_ankle'])
+        foot = np.asarray(original['frames'][0]['joints'][f'{side}_foot'])
+        plane_offset = float(np.dot(plane_normal, foot)) if plane_offset is None else plane_offset
+        original['sourceFootSupportEvidence']['bodySupport']['soleContacts'].append({
+            'joints': [f'{side}_knee', f'{side}_ankle', f'{side}_foot'],
+            'normal': plane_normal.tolist(),
+            'planeOffsetMeters': plane_offset,
+        })
+        original['sourceFootSupportEvidence']['bodySupport']['coplanarGroups'].append({
+            'joints': [f'{side}_ankle', f'{side}_foot'],
+            'normal': plane_normal.tolist(),
+            'planeOffsetMeters': plane_offset,
+        })
+    for frame in original['frames']:
+        frame['shoeOrientation'] = {}
+        for side in ('left', 'right'):
+            ankle = np.asarray(frame['joints'][f'{side}_ankle'])
+            foot = np.asarray(frame['joints'][f'{side}_foot'])
+            forward = foot - ankle
+            forward -= plane_normal * np.dot(forward, plane_normal)
+            forward /= np.linalg.norm(forward)
+            material_side = np.cross(forward, plane_normal)
+            material_side /= np.linalg.norm(material_side)
+            frame['shoeOrientation'][side] = {
+                'forward': forward.tolist(),
+                'side': material_side.tolist(),
+            }
+    original['footRestPitchRadians'] = {'left': 0., 'right': 0.}
     placed = normalize_scene_placement(original)
     assert placed['scenePlacement']['orientationReason'] == 'consistent_extended_supported_stance'
     assert placed['scenePlacement']['rotationDegrees'] > 1.
@@ -554,6 +696,42 @@ def test_scene_placement_levels_consistent_supported_stance_once():
     up = np.array(joints['neck']) - (np.array(joints['left_ankle']) + joints['right_ankle'])/2
     np.testing.assert_allclose(up[[0, 2]], 0., atol=1e-12)
     assert validate_rig_playback(placed)['passed']
+
+
+def test_scene_placement_rotates_shoe_material_basis_without_translation(monkeypatch):
+    from exercise_motion_pkg.scene_placement import normalize_scene_placement
+    # Isolate the axis transform from the separate material-sole acceptance
+    # gate; other coverage owns that validator's thresholds and evidence.
+    monkeypatch.setattr('exercise_motion_pkg.rig_playback.validate_rig_playback',
+                        lambda _payload: {'passed': True})
+    rig = rig_payload()
+    values = np.array(rig['coordinates'])
+    tilt = Rotation.from_euler('z', 5., degrees=True)
+    values[:, :3] = tilt.apply(values[:, :3])
+    slot = 3 + 3 * rig['rotationJointNames'].index('pelvis')
+    values[:, slot:slot+3] = (tilt * Rotation.from_rotvec(values[:, slot:slot+3])).as_rotvec()
+    rig['coordinates'] = values.tolist()
+    original = export(rig)
+    original['groundContactMode'] = 'continuous'
+    original['sourceFootSupportEvidence'] = {'contacts': [
+        {'jointName': side+'_foot', 'contactState': 'full_sole', 'contactMotion': 'stationary',
+         'supportKind': 'observed_foot_patch', 'startRatio': 0., 'endRatio': 1.} for side in ('left', 'right')],
+         'sharedSupportPlaneY': .8}
+    for frame in original['frames']:
+        frame['shoeOrientation'] = {
+            side: {'forward': [0., 0., 1.], 'side': [1., 0., 0.]}
+            for side in ('left', 'right')
+        }
+    placed = normalize_scene_placement(original)
+    assert placed['scenePlacement']['rotationDegrees'] > 1.
+    rotation = Rotation.from_rotvec(placed['scenePlacement']['rotationVector'])
+    for before, after in zip(original['frames'], placed['frames'], strict=True):
+        for side in ('left', 'right'):
+            before_axes = before['shoeOrientation'][side]
+            after_axes = after['shoeOrientation'][side]
+            np.testing.assert_allclose(after_axes['forward'], rotation.apply(before_axes['forward']), atol=1e-12)
+            np.testing.assert_allclose(after_axes['side'], rotation.apply(before_axes['side']), atol=1e-12)
+            assert abs(np.dot(after_axes['forward'], after_axes['side'])) < 1e-12
 
 
 def test_fractional_rotation_preserves_lengths_and_detects_hidden_contact_slip():
@@ -565,7 +743,7 @@ def test_fractional_rotation_preserves_lengths_and_detects_hidden_contact_slip()
     values[1,slot:slot+3]=(rotation*Rotation.from_rotvec(values[0,slot:slot+3])).as_rotvec()
     rig['coordinates']=values.tolist();p=export(rig)
     np.testing.assert_allclose(p['frames'][0]['joints']['left_foot'],p['frames'][1]['joints']['left_foot'],atol=1e-12)
-    p['sourceFootSupportEvidence']={'contacts':[{'jointName':'left_foot','contactState':'toe_only','contactMotion':'stationary','startRatio':0.,'endRatio':1.}]}
+    p['sourceFootSupportEvidence']={'contacts':[{'jointName':'left_foot','contactState':'toe_only','verticalOnly':False,'contactMotion':'stationary','startRatio':0.,'endRatio':1.}]}
     report=validate_rig_playback(p)
     assert not report['passed']
     assert report['maximumContactErrorMeters']>.01
@@ -719,7 +897,7 @@ def test_contact_validation_cannot_move_the_source_anchor_with_the_repaired_pose
     for frame,original in zip(payload['frames'],source):
         frame['controlledSourceJoints']=original
     payload['sourceFootSupportEvidence']={'contacts':[{'jointName':'left_foot',
-        'contactState':'toe_only','contactMotion':'stationary','startRatio':0.,'endRatio':1.}]}
+        'contactState':'toe_only','verticalOnly':False,'contactMotion':'stationary','startRatio':0.,'endRatio':1.}]}
     report=validate_rig_playback(payload)
     assert not report['passed']
     assert abs(report['maximumContactErrorMeters']-.01)<1e-10
@@ -758,8 +936,10 @@ def test_supported_playback_uses_the_validated_support_anatomy_reference(monkeyp
     monkeypatch.setattr(loop_seam, 'seam_quality_metrics',
                         lambda *_args, **_kwargs: {'seamContinuous': True})
     monkeypatch.setattr(equipment_constraints, 'validate_grip', lambda *_: {'passed': True})
-    monkeypatch.setattr(support_geometry, 'validate_support_geometry', lambda *_: {'passed': True})
-    monkeypatch.setattr(support_geometry, 'validate_supported_shoe_orientation', lambda *_: {'passed': True})
+    monkeypatch.setattr(support_geometry, 'validate_support_geometry',
+                        lambda *_args, **_kwargs: {'passed': True})
+    monkeypatch.setattr(support_geometry, 'validate_supported_shoe_orientation',
+                        lambda *_args, **_kwargs: {'passed': True})
     monkeypatch.setattr(foot_geometry, 'validate_material_shoes', lambda *_args, **_kwargs: {'passed': True})
     monkeypatch.setattr(support_alignment, 'validate_payload_alignment', lambda *_: {'passed': True})
 

@@ -22,6 +22,69 @@ def _powershell_function(source: str, name: str) -> str:
     return source[start:] if next_function < 0 else source[start:next_function]
 
 
+def test_power_shell_workspace_lease_creates_child_directory_and_keeps_exclusion(tmp_path: Path):
+    pwsh = shutil.which('pwsh')
+    if pwsh is None:
+        pytest.skip('PowerShell required')
+    source = (Path(__file__).resolve().parents[1] / 'scripts/run_exercise_motion_workout_plan.ps1').read_text(encoding='utf-8-sig')
+    acquire = _powershell_function(source, 'Acquire-MotionWorkspaceLease')
+    old = acquire.replace('    [System.IO.Directory]::CreateDirectory($WorkspaceRoot) | Out-Null\n', '')
+    command = f'''
+$ErrorActionPreference = 'Stop'
+function Assert-StagedWaveWorkspaceIsQuiescent {{ param($WorkspaceRoot) }}
+function Get-ObjectProperty {{ param($Object, $Name); return $null }}
+{old}
+$reproduced = $false
+try {{ $null = Acquire-MotionWorkspaceLease -WorkspaceRoot (Join-Path $env:MOTION_TEST_WORKSPACE 'old/predict') }}
+catch {{ $reproduced = $_.Exception.Message.Contains('already owned') }}
+if (-not $reproduced) {{ throw 'Missing-directory failure was not reproduced' }}
+{acquire}
+$child = Join-Path $env:MOTION_TEST_WORKSPACE 'new/predict'
+$lease = Acquire-MotionWorkspaceLease -WorkspaceRoot $child
+try {{
+    if (-not (Test-Path -LiteralPath $lease.ownerPath)) {{ throw 'Owner receipt missing' }}
+    $excluded = $false
+    try {{ $null = Acquire-MotionWorkspaceLease -WorkspaceRoot $child }}
+    catch {{ $excluded = $_.Exception.Message.Contains('already owned') }}
+    if (-not $excluded) {{ throw 'Concurrent owner was admitted' }}
+}} finally {{ $lease.stream.Dispose() }}
+$next = Acquire-MotionWorkspaceLease -WorkspaceRoot $child
+$next.stream.Dispose()
+'''
+    completed = subprocess.run([pwsh, '-NoProfile', '-NonInteractive', '-Command', command],
+        env={**os.environ, 'MOTION_TEST_WORKSPACE': str(tmp_path)}, capture_output=True, text=True, check=False)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+def test_successful_wave_retains_worker_handle_for_confirmed_shutdown():
+    pwsh = shutil.which('pwsh')
+    if pwsh is None:
+        pytest.skip('PowerShell required')
+    source = (Path(__file__).resolve().parents[1] / 'scripts/run_exercise_motion_workout_plan.ps1').read_text(encoding='utf-8-sig')
+    start = source.index('                        $siblingStagedWaveRunning =')
+    end = source.index('                        if ($waveResult -and $waveResult.exitCode -eq 75)', start)
+    cleanup = _powershell_function(source, 'Stop-MotionModelServicesAfterStagedWorker')
+    command = f'''
+$ErrorActionPreference = 'Stop'
+$bakeRunningJobs = @()
+$job = [pscustomobject]@{{ Id = 1 }}
+$waveResult = [pscustomobject]@{{ exitCode = 0 }}
+$waveAmbiguousRecovery = $false
+$warmGvhmrWorkerInstance = [pscustomobject]@{{ workers = @('preprocess', 'predict') }}
+$script:Stopped = $false
+function Stop-GvhmrWarmWorker {{ param($Worker); if ($null -ne $Worker) {{ $script:Stopped = $true }} }}
+function Stop-SharedLlamaServer {{ param($Server) }}
+{source[start:end]}
+if ($null -eq $warmGvhmrWorkerInstance) {{ throw 'Successful wave discarded the live worker owner' }}
+{cleanup}
+$null = Stop-MotionModelServicesAfterStagedWorker -StagedWaveShutdownConfirmed $true -WarmGvhmrWorker $warmGvhmrWorkerInstance
+if (-not $script:Stopped) {{ throw 'Final cleanup lost the worker handle' }}
+'''
+    completed = subprocess.run([pwsh, '-NoProfile', '-NonInteractive', '-Command', command],
+        capture_output=True, text=True, check=False)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
 def test_workspace_lease_refuses_to_replace_a_live_service_owner(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -116,7 +179,7 @@ def test_power_shell_services_preserve_leases_until_runtime_exit():
     acquire = _powershell_function(script, "Acquire-MotionWorkspaceLease")
     release = _powershell_function(script, "Release-MotionServiceSessionLease")
     llama_stop = _powershell_function(script, "Stop-SharedLlamaServer")
-    worker_stop = _powershell_function(script, "Stop-ReconstructionWarmWorker")
+    worker_stop = _powershell_function(script, "Stop-GvhmrWarmWorker")
 
     assert "Get-MotionServiceRuntimeState -RuntimeOwner $previousRuntime" in acquire
     assert '$runtimeState -ne "stopped"' in acquire
@@ -125,7 +188,8 @@ def test_power_shell_services_preserve_leases_until_runtime_exit():
     assert '$runtimeState -eq "stopped"' in llama_stop
     assert '"ready.json"' in llama_stop
     assert "Release-MotionServiceSessionLease -SessionDirectory $Worker.sessionLeaseKey" in worker_stop
-    assert '$runtimeState -ne "stopped"' in worker_stop
+    assert '$runtimeState -eq "stopped"' in worker_stop
+    assert 'shutdown could not be confirmed; preserving its session owner evidence.' in worker_stop
 
 
 def test_power_shell_workspace_admission_rejects_queued_motion_work(tmp_path: Path):

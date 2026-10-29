@@ -8,6 +8,7 @@ from exercise_motion_pkg.models import MotionClip, MotionFrame
 from exercise_motion_pkg import structural_refinement as s
 from exercise_motion_pkg import bake_and_rank as b
 from exercise_motion_pkg.foot_kinematics import solve_rigid_foot_contacts, _knee_angles
+from exercise_motion_pkg.bilateral_evidence import source_arm_symmetry_evidence
 
 
 def test_body_supported_upper_back_bar_retains_hand_constraint():
@@ -115,27 +116,76 @@ def test_rigid_hand_solver_preserves_shared_endpoints_and_all_arm_bone_lengths()
                     math.dist(before.joints[f"{side}_{parent}"], before.joints[f"{side}_{child}"]))
 
 
-def test_supported_bilateral_hand_targets_remain_centered_on_shoulders():
-    clip, _ = s._align_upper_body_to_horizontal_support(press_clip(), level_shoulders=True)
-    result, _ = s._stabilize_rigid_paired_hand_spacing(clip, supported_bilateral=True)
-    for frame in result.frames:
-        joints = {k: np.array(v) for k, v in frame.joints.items()}
-        axis = joints["right_shoulder"] - joints["left_shoulder"]
-        axis /= np.linalg.norm(axis)
-        hand_axis = joints["right_hand"] - joints["left_hand"]
-        assert np.cross(axis, hand_axis) == pytest.approx(np.zeros(3), abs=1e-7)
-        mid_delta = (joints["right_hand"] + joints["left_hand"] - joints["right_shoulder"] - joints["left_shoulder"]) / 2
-        assert np.dot(mid_delta, axis) == pytest.approx(0, abs=1e-7)
+def test_rigid_grip_preserves_measured_midpoint_axis_and_independent_elbow_bends():
+    clip = press_clip()
+    frames = []
+    for index, frame in enumerate(clip.frames):
+        joints = dict(frame.joints)
+        joints["left_elbow"] = (-.2, 1.5, .5)
+        joints["right_elbow"] = (.2, 1.1, -.25)
+        frames.append(MotionFrame(frame.time_sec, joints))
+    clip = replace(clip, frames=frames)
+    result, report = s._stabilize_rigid_paired_hand_spacing(clip)
+    assert report["preservedMeasuredHandMidpoint"]
+    assert report["preservedMeasuredHandAxis"]
+    for before, after in zip(clip.frames, result.frames):
+        before_mid = (np.array(before.joints["left_hand"]) + np.array(before.joints["right_hand"])) / 2
+        after_mid = (np.array(after.joints["left_hand"]) + np.array(after.joints["right_hand"])) / 2
+        np.testing.assert_allclose(after_mid, before_mid, atol=1e-7)
+        before_axis = np.subtract(before.joints["right_hand"], before.joints["left_hand"])
+        after_axis = np.subtract(after.joints["right_hand"], after.joints["left_hand"])
+        np.testing.assert_allclose(after_axis / np.linalg.norm(after_axis),
+                                   before_axis / np.linalg.norm(before_axis), atol=1e-7)
+        assert after.joints["left_elbow"][2] > 0
+        assert after.joints["right_elbow"][2] < 0
+
+
+def test_2d_symmetric_projection_and_rigid_grip_do_not_mirror_3d_arm_pose():
+    frames = []
+    source_frames = []
+    for index in range(12):
+        phase = index / 11
+        joints = {
+            "pelvis": (0, 0, 0), "neck": (0, 1.5, 0),
+            "left_shoulder": (-.2, 1, 0), "right_shoulder": (.2, 1, 0),
+            "left_hip": (-.15, .4, 0), "right_hip": (.15, .4, 0),
+            "left_elbow": (-.4, 1.3 + .15 * phase, .35),
+            "right_elbow": (.4, 1.3 + .15 * phase, -.35),
+            "left_wrist": (-.6, 1.7 + .15 * phase, .35),
+            "right_wrist": (.6, 1.7 + .15 * phase, -.35),
+            "left_hand": (-.7, 1.75 + .15 * phase, .35),
+            "right_hand": (.7, 1.75 + .15 * phase, -.35),
+        }
+        frames.append(MotionFrame(index / 30, joints))
+        source_frames.append({"sourceTimeSec": index / 30,
+                              "joints": {name: [point[0], -point[1]]
+                                         for name, point in joints.items()}})
+    clip = MotionClip(30, list(frames[0].joints), frames)
+    source = {"frames": source_frames}
+    assert source_arm_symmetry_evidence(source)["accepted"]
+
+    refined = s.refine_motion_clip_structurally(
+        clip, source_pose_payload=source, rigid_paired_hands_required=True)
+
+    for frame in refined.frames:
+        assert frame.joints["left_elbow"][2] > 0.2
+        assert frame.joints["right_elbow"][2] < -0.2
+        assert frame.joints["left_hand"][2] > 0.2
+        assert frame.joints["right_hand"][2] < -0.2
+    report = refined.metadata["structuralRefinement"]
+    assert report["finalSamePhaseArmSymmetry"]["applied"] is False
 
 
 def test_terminal_cleanup_preserves_supported_press_constraints():
+    clip = press_clip()
     result = s.refine_motion_clip_structurally(
-        press_clip(), rigid_paired_hands_required=True, horizontal_torso_required=True)
+        clip, rigid_paired_hands_required=True, horizontal_torso_required=True)
     distances = []
-    for frame in result.frames:
+    for source_frame, frame in zip(clip.frames, result.frames):
         j = frame.joints
-        assert j["left_shoulder"][1] == pytest.approx(j["right_shoulder"][1], abs=1e-7)
-        assert j["left_hand"][1] == pytest.approx(j["right_hand"][1], abs=1e-7)
+        assert (j["left_shoulder"][1] - j["right_shoulder"][1]) == pytest.approx(
+            source_frame.joints["left_shoulder"][1] - source_frame.joints["right_shoulder"][1],
+            abs=1e-7)
         distances.append(math.dist(j["left_hand"], j["right_hand"]))
     assert max(distances) - min(distances) < 1e-7
 

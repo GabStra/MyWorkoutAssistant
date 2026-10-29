@@ -4,10 +4,28 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 from exercise_motion_pkg.acceptance import promote_verified_artifact
-from exercise_motion_pkg.bake_and_rank import FINAL_OUTPUT_VALIDATION_POLICY_VERSION, SELECTION_VALIDATION_POLICY_VERSION
+from exercise_motion_pkg.bake_and_rank import (
+    FINAL_OUTPUT_VALIDATION_POLICY_VERSION,
+    SELECTION_VALIDATION_POLICY_VERSION,
+    SOURCE_SELECTION_POLICY_VERSION,
+    _selected_section_bake_code_digest,
+)
 from exercise_motion_pkg.preview import preview_runtime_signature
+from exercise_motion_pkg.controlled_motion import CONTROLLED_MOTION_STRATEGY
+
+
+def current_promotion_policies() -> dict[str, Any]:
+    return {
+        "selection": SELECTION_VALIDATION_POLICY_VERSION,
+        "visual": FINAL_OUTPUT_VALIDATION_POLICY_VERSION,
+        "source": SOURCE_SELECTION_POLICY_VERSION,
+        "renderer": preview_runtime_signature(),
+        "controlledMotionFit": CONTROLLED_MOTION_STRATEGY,
+        "bakeCode": _selected_section_bake_code_digest()["sha256"],
+    }
 
 
 def main() -> None:
@@ -19,8 +37,7 @@ def main() -> None:
     args = parser.parse_args()
     backup = promote_verified_artifact(
         args.source, args.destination,
-        policies={"selection": SELECTION_VALIDATION_POLICY_VERSION,
-                  "visual": FINAL_OUTPUT_VALIDATION_POLICY_VERSION, "renderer": preview_runtime_signature()},
+        policies=current_promotion_policies(),
         context=json.loads(args.context_json.read_text(encoding="utf-8")) if args.context_json else None,
         contract=json.loads(args.contract_json.read_text(encoding="utf-8")) if args.contract_json else None,
     )

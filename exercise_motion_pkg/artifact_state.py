@@ -117,6 +117,7 @@ def validate_artifact_state(
             if not _selection_interval_matches_payload(
                 evidence["cycleSelection"]["interval"],
                 movement_payload,
+                source_interval=evidence["cycleSelection"].get("sourceInterval"),
             ):
                 raise ValueError("Cyclic rebake interval does not match its selected-cycle evidence")
     if artifact_class == BOUNDED_MOVEMENT_REBAKE and lineage_complete:
@@ -132,6 +133,14 @@ def validate_artifact_state(
                 raise ValueError(
                     "Bounded movement source-parent identity does not match its parent payload"
                 )
+            if "sourceInterval" in selection:
+                expected_source_interval = _source_interval_for_selected_parent(
+                    source_parent_payload, selection.get("interval") or {}
+                )
+                if expected_source_interval != selection.get("sourceInterval"):
+                    raise ValueError(
+                        "Bounded movement source interval does not match its parent payload"
+                    )
         if movement_payload is not None:
             payload_loop = movement_payload.get("loop")
             payload_loop_enabled = (
@@ -145,6 +154,7 @@ def validate_artifact_state(
             if not _selection_interval_matches_payload(
                 evidence["boundedMovementSelection"]["interval"],
                 movement_payload,
+                source_interval=evidence["boundedMovementSelection"].get("sourceInterval"),
             ):
                 raise ValueError("Bounded rebake interval does not match its movement-selection evidence")
     expected_terminal = expected_artifact_terminal(artifact_class, required_class)
@@ -370,9 +380,11 @@ def cycle_selection_evidence(
     interval = _selection_interval(selected_interval)
     if not _is_valid_selection_interval(interval):
         raise ValueError("Cycle selection is missing complete source interval bounds")
+    source_interval = _source_interval_for_selected_parent(full_clip_payload, interval)
     selection_payload = {
         "fullClipContentSha256": full_clip_identity["contentSha256"],
         "interval": interval,
+        **({"sourceInterval": source_interval} if source_interval is not None else {}),
     }
     selection_id = _selection_id(selection_payload)
     return {
@@ -380,6 +392,7 @@ def cycle_selection_evidence(
         "cycleSelection": {
             "selectionId": selection_id,
             "interval": interval,
+            **({"sourceInterval": source_interval} if source_interval is not None else {}),
         },
     }
 
@@ -394,14 +407,64 @@ def bounded_movement_selection_evidence(
     if not _is_valid_selection_interval(interval):
         raise ValueError("Bounded movement selection is missing complete source interval bounds")
     source_parent_identity = baked_payload_identity(source_parent_payload)
+    source_interval = _source_interval_for_selected_parent(source_parent_payload, interval)
     selection_payload = {
         "sourceParentContentSha256": source_parent_identity["contentSha256"],
         "interval": interval,
+        **({"sourceInterval": source_interval} if source_interval is not None else {}),
     }
     return {
         "sourceParent": source_parent_identity,
         "selectionId": _selection_id(selection_payload),
         "interval": interval,
+        **({"sourceInterval": source_interval} if source_interval is not None else {}),
+    }
+
+
+def _source_interval_for_selected_parent(
+    parent_payload: dict[str, Any], interval: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Resolve selected local bounds to exact retained source endpoints."""
+    frames = parent_payload.get("frames") if isinstance(parent_payload, dict) else None
+    if not isinstance(frames, list):
+        return None
+    source_frames = [frame for frame in frames if isinstance(frame, dict)
+                     and not frame.get("syntheticLoopBridge")]
+    start_index, end_index = interval["startFrame"], interval["endFrame"]
+    if end_index >= len(source_frames):
+        return None
+    first, last = source_frames[start_index], source_frames[end_index]
+    try:
+        first_time = float(first["timeSec"])
+        last_time = float(last["timeSec"])
+        start_time = float(interval["startTimeSec"])
+        end_time = float(interval["endTimeSec"])
+        first_source_time = float(first["sourceTimeSec"])
+        last_source_time = float(last["sourceTimeSec"])
+        first_source_frame = first["sourceFrameIndex"]
+        last_source_frame = last["sourceFrameIndex"]
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+    if (
+        type(first_source_frame) is not int
+        or type(last_source_frame) is not int
+        or not all(math.isfinite(value) for value in (
+            first_time, last_time, start_time, end_time,
+            first_source_time, last_source_time,
+        ))
+        or not math.isclose(first_time, start_time, rel_tol=0.0, abs_tol=1e-6)
+        or not math.isclose(last_time, end_time, rel_tol=0.0, abs_tol=1e-6)
+        or last_source_frame <= first_source_frame
+        or last_source_time <= first_source_time
+    ):
+        return None
+    return {
+        "type": interval["type"],
+        "startFrame": first_source_frame,
+        "endFrame": last_source_frame,
+        "startTimeSec": first_source_time,
+        "endTimeSec": last_source_time,
+        "durationSec": last_source_time - first_source_time,
     }
 
 
@@ -417,6 +480,7 @@ def _has_complete_cycle_lineage(history: Any, evidence: Any) -> bool:
     full_clip_digest = full_clip.get("contentSha256")
     selection_id = selection.get("selectionId")
     interval = selection.get("interval")
+    source_interval = selection.get("sourceInterval")
     cyclic_rebake = evidence.get("cyclicRebake")
     cyclic_rebake_digest = (
         cyclic_rebake.get("contentSha256")
@@ -427,22 +491,18 @@ def _has_complete_cycle_lineage(history: Any, evidence: Any) -> bool:
         return False
     if not _has_valid_payload_identity(cyclic_rebake):
         return False
-    if not _is_valid_selection_interval(interval):
+    if (not _is_valid_selection_interval(interval)
+            or (source_interval is not None
+                and not _is_valid_selection_interval(source_interval))):
         return False
     if interval["endFrame"] >= full_clip["frameCount"]:
         return False
     try:
-        expected_selection_id = hashlib.sha256(
-            json.dumps(
-                {
-                    "fullClipContentSha256": full_clip_digest,
-                    "interval": interval,
-                },
-                sort_keys=True,
-                separators=(",", ":"),
-                allow_nan=False,
-            ).encode("utf-8")
-        ).hexdigest()
+        expected_selection_id = _selection_id({
+            "fullClipContentSha256": full_clip_digest,
+            "interval": interval,
+            **({"sourceInterval": source_interval} if source_interval is not None else {}),
+        })
     except (TypeError, ValueError):
         return False
     return (
@@ -479,18 +539,26 @@ def _has_complete_bounded_lineage(history: Any, evidence: Any) -> bool:
     if not _is_valid_selection_interval(interval) or not _has_valid_payload_identity(rebake):
         return False
     source_parent = selection.get("sourceParent")
+    if "sourceInterval" in selection and not _is_valid_selection_interval(
+        selection.get("sourceInterval")
+    ):
+        return False
+    source_interval = selection.get("sourceInterval")
+    if source_interval is not None and source_parent is None:
+        return False
     if source_parent is None:
         # Schema-v1 artifacts written before parent binding remain readable.
-        expected_selection_id = _selection_id({"interval": interval})
+        selection_identity = {"interval": interval}
     else:
         if not _has_valid_payload_identity(source_parent):
             return False
-        expected_selection_id = _selection_id(
-            {
-                "sourceParentContentSha256": source_parent["contentSha256"],
-                "interval": interval,
-            }
-        )
+        selection_identity = {
+            "sourceParentContentSha256": source_parent["contentSha256"],
+            "interval": interval,
+        }
+    if source_interval is not None:
+        selection_identity["sourceInterval"] = source_interval
+    expected_selection_id = _selection_id(selection_identity)
     return isinstance(selection_id, str) and selection_id == expected_selection_id
 
 
@@ -560,7 +628,12 @@ def _selection_id(payload: dict[str, Any]) -> str:
 def _selection_interval_matches_payload(
     interval: dict[str, Any],
     payload: dict[str, Any],
+    *,
+    source_interval: dict[str, Any] | None = None,
 ) -> bool:
+    selected_frame_count = interval["endFrame"] - interval["startFrame"] + 1
+    if source_interval is not None:
+        interval = source_interval
     loop = payload.get("loop")
     if not isinstance(loop, dict):
         return False
@@ -599,6 +672,8 @@ def _selection_interval_matches_payload(
         if not bool(frame.get("syntheticLoopBridge")):
             source_frames.append(frame)
     if not source_frames:
+        return False
+    if source_interval is not None and len(source_frames) != selected_frame_count:
         return False
     first_frame = source_frames[0]
     last_frame = source_frames[-1]

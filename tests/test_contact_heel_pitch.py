@@ -227,6 +227,117 @@ def test_unknown_small_positive_lift_is_not_dead_zoned_to_stance(monkeypatch):
     assert abs(pitch_rows[2][1]) > .05  # native fast rise remains in source time
 
 
+def _stationary_unknown_heel_case(
+    monkeypatch, *, toe_offset=0., ray_time_shift=0., baseline=True, native_pitch=0.,
+):
+    names = ['pelvis', 'left_hip', 'left_knee', 'left_ankle', 'left_foot',
+             'right_hip', 'right_knee', 'right_ankle', 'right_foot']
+    points = np.zeros((4, len(names), 3), dtype=float)
+    for side in ('left', 'right'):
+        points[:, names.index(f'{side}_ankle')] = [0., 0., 0.]
+        points[:, names.index(f'{side}_foot')] = [
+            0., .2 * np.sin(native_pitch), .2 * np.cos(native_pitch)]
+    monkeypatch.setattr(
+        'exercise_motion_pkg.foot_geometry.sample_material_foot_points',
+        lambda _payload, cursors, *, points=None: {
+            'left': {'heel': np.zeros((len(cursors), 3)),
+                     'toe': np.zeros((len(cursors), 3))},
+            'right': {'heel': np.zeros((len(cursors), 3)),
+                      'toe': np.zeros((len(cursors), 3))},
+        })
+    image_rows = [
+        {'sourceSide': 'left', 'motionSide': 'left', 'state': 'full_sole',
+         'sourceTime': 0., 'leftFrame': 0, 'alpha': 0.,
+         'stationaryAnchorGroupId': 'stance', 'sourceHeelToToeVector': [0., 0.],
+         'confidenceWeight': .95, 'sourceNoiseImageUnits': .005},
+        {'sourceSide': 'left', 'motionSide': 'left', 'state': 'unknown',
+         'sourceTime': .2, 'leftFrame': 1, 'alpha': 0.,
+         'sourceHeelToToeVector': [0., .001],
+         'confidenceWeight': .95, 'sourceNoiseImageUnits': .005},
+        {'sourceSide': 'left', 'motionSide': 'left', 'state': 'toe_only',
+         'sourceTime': .25, 'leftFrame': 2, 'alpha': 0.,
+         'stationaryAnchorGroupId': 'stance', 'sourceHeelToToeVector': [0., .02],
+         'confidenceWeight': .95, 'sourceNoiseImageUnits': .005},
+        {'sourceSide': 'left', 'motionSide': 'left', 'state': 'full_sole',
+         'sourceTime': .3, 'leftFrame': 3, 'alpha': 0.,
+         'stationaryAnchorGroupId': 'stance', 'sourceHeelToToeVector': [0., 0.],
+         'confidenceWeight': .95, 'sourceNoiseImageUnits': .005},
+    ]
+    calibration_rows = ([
+        {'sourceSide': 'left', 'motionSide': 'left', 'state': 'full_sole',
+         'sourceTime': time, 'leftFrame': 0, 'alpha': 0.,
+         'stationaryAnchorGroupId': 'stance', 'sourceHeelToToeVector': [0., 0.]}
+        for time in (0., .01, .02)
+    ] if baseline else [])
+    ray_rows = []
+    ray_rows.append({
+        'sourceSide': 'left', 'motionSide': 'left', 'state': 'unknown',
+        'sourceTime': .2, 'toeImagePoint': [.50015 + toe_offset, .6],
+        'confidenceWeight': .95,
+    })
+    for time, x in ((.1, .5), (.15, .5001), (.25, .5002), (.3, .5003)):
+        ray_rows.append({
+            'sourceSide': 'left', 'motionSide': 'left', 'state': 'toe_only',
+            'sourceTime': time + ray_time_shift, 'toeImagePoint': [x, .6],
+            'confidenceWeight': .95, 'stationaryAnchorGroupId': 'stance',
+        })
+    constraint = {
+        'sourceFootHeelImageObservations': image_rows,
+        'sourceFootHeelCalibrationObservations': calibration_rows,
+        'sourceFootRayObservations': ray_rows,
+        'footGeometryPayload': {'sourcePoseCameraReference': {
+            'sourcePose': {'imageWidth': 854, 'imageHeight': 480}}},
+    }
+    result = contact_heel_pitch._measured_unknown_heel_pitches(
+        constraint, points, names, np.array([[1., 0., 0.], [0., 1., 0.]]))
+    return result
+
+
+def test_unknown_heel_direction_uses_stationary_same_anchor_toe_without_contact(monkeypatch):
+    pitch_rows, failures, report = _stationary_unknown_heel_case(monkeypatch)
+
+    assert not failures
+    assert len(pitch_rows) == 1
+    row, target = pitch_rows[0]
+    assert target == pytest.approx(0.)
+    assert row['state'] == 'unknown'
+    assert row['directionOnlyNeutralWithinNoise'] is True
+    evidence = row['toeStationarityEvidence']
+    assert evidence['contactResolved'] is False
+    assert evidence['toeDisplacementPixels'] < evidence['calibratedSameAnchorJitterP95Pixels']
+    assert report['resolvedUnknownDirectionOnlyCount'] == 1
+
+
+@pytest.mark.parametrize('case', [
+    'moved_toe', 'outside_cadence', 'missing_baseline',
+])
+def test_unknown_heel_direction_stays_unresolved_without_its_evidence(monkeypatch, case):
+    kwargs = {
+        'toe_offset': .02 if case == 'moved_toe' else 0.,
+        'ray_time_shift': 1. if case == 'outside_cadence' else 0.,
+        'baseline': case != 'missing_baseline',
+        'native_pitch': 0.,
+    }
+    pitch_rows, _failures, report = _stationary_unknown_heel_case(monkeypatch, **kwargs)
+
+    assert pitch_rows == []
+    assert report['resolvedUnknownDirectionOnlyCount'] == 0
+
+
+def test_inconsistent_native_pitch_uses_measured_neutral_baseline_not_raw_orientation(monkeypatch):
+    pitch_rows, failures, report = _stationary_unknown_heel_case(
+        monkeypatch, native_pitch=-.4)
+
+    assert not failures
+    assert len(pitch_rows) == 1
+    row, target = pitch_rows[0]
+    assert target == pytest.approx(0.)
+    assert row['directionOnlyNeutralWithinNoise'] is True
+    assert row['nativePitchMatchesSourceImage'] is False
+    assert row['toeStationarityEvidence']['contactResolved'] is False
+    assert report['resolvedUnknownDirectionOnlyCount'] == 1
+
+
 def test_source_pitch_authority_never_exceeds_mapped_trajectory():
     # The observation's source clock is closer to fit frame 0, while its
     # retained cursor points at frame 1. The singleton cannot be mapped within

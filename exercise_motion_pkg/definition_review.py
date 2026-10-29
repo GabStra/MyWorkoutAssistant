@@ -82,6 +82,9 @@ def export_definition_review(*, plan_path: Path, candidates_path: Path,
             "variantQualifiers": contract.get("variantQualifiers") or [],
         },
     }
+    proposed_phases = contract.get("requiredPhases")
+    if isinstance(proposed_phases, list) and proposed_phases:
+        review["definition"]["requiredPhases"] = proposed_phases
     write_json_atomic(review_path, review)
     return review
 
@@ -102,8 +105,8 @@ def approve_definition_review(*, plan_path: Path, exercise_id: str,
     raw = review.get("definition")
     if not isinstance(raw, dict):
         raise ValueError("Review needs a definition object")
-    if set(raw) - {"definingAction", "completionMode", "variantQualifiers"}:
-        raise ValueError("Definition supports only definingAction, completionMode, and variantQualifiers")
+    if set(raw) - {"definingAction", "completionMode", "variantQualifiers", "requiredPhases"}:
+        raise ValueError("Definition supports only definingAction, completionMode, variantQualifiers, and requiredPhases")
     action = raw.get("definingAction")
     qualifiers = raw.get("variantQualifiers", [])
     if not isinstance(action, str) or not action.strip() or len(action.strip()) > 512:
@@ -111,12 +114,20 @@ def approve_definition_review(*, plan_path: Path, exercise_id: str,
     if (not isinstance(qualifiers, list) or len(qualifiers) > 6
             or any(not isinstance(item, str) or not item.strip() or len(item.strip()) > 120 for item in qualifiers)):
         raise ValueError("variantQualifiers must contain at most six nonempty strings of at most 120 characters")
+    phases = raw.get("requiredPhases")
+    if phases is not None and (
+        not isinstance(phases, list) or not 1 <= len(phases) <= 8
+        or any(not isinstance(item, str) or not item.strip() or len(item.strip()) > 180 for item in phases)
+    ):
+        raise ValueError("requiredPhases must contain at most eight nonempty strings of at most 180 characters")
     normalized = exercise_motion_context_action_definition({"exerciseDefinition": raw})
     if normalized is None:
         raise ValueError("Definition needs a supported completionMode")
     definition = {key: normalized.get(key, []) for key in (
         "definingAction", "completionMode", "variantQualifiers",
     )}
+    if phases is not None:
+        definition["requiredPhases"] = normalized.get("requiredPhases", [])
     definition["review"] = {
         "status": "approved",
         "approvedAtUtc": datetime.now(timezone.utc).isoformat(),

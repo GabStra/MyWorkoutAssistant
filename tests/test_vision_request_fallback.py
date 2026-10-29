@@ -21,6 +21,7 @@ def test_vision_sends_source_evidence_schema(monkeypatch):
         assert requests[0]['response_format'] == {'type': 'json_schema', 'json_schema': {
             'name': 'source_evidence', 'strict': True, 'schema': schema}}
         assert requests[0]['chat_template_kwargs'] == {'enable_thinking': False}
+        assert requests[0]['reasoning_format'] == 'deepseek'
     finally:
         client.close()
 
@@ -28,7 +29,7 @@ def test_vision_sends_source_evidence_schema(monkeypatch):
 @pytest.mark.parametrize("status,body,removed", [
     (400, "unsupported response_format", "response_format"),
     (422, "unknown reasoning_format parameter", "reasoning_format"),
-    (400, "Failed to initialize samplers: Unexpected empty grammar stack after accepting piece: <think> (248068)", "response_format"),
+    (400, "Failed to initialize samplers: Unexpected empty grammar stack after accepting piece: <think> (248068)", "reasoning_parser"),
     (400, "request exceeds context size", None),
     (500, "server unavailable", None),
     (400, "unsupported chat_template_kwargs", None),
@@ -46,16 +47,82 @@ def test_vision_fallback_preserves_thinking_control(monkeypatch, status, body, r
     monkeypatch.setattr(client, "_server_debug_snapshot", lambda: {"test": True})
     try:
         if removed:
-            assert client.caption_images(frame_paths=[], prompt="Return JSON.") == '{"ok":true}'
+            assert client.caption_images(
+                frame_paths=[], prompt="Return JSON.",
+                **({"json_response": False} if removed == "reasoning_parser" else {}),
+            ) == '{"ok":true}'
             assert len(requests) == 2
-            assert removed not in requests[1]
-            assert requests[1] == {key: value for key, value in requests[0].items() if key != removed}
+            if removed == "reasoning_parser":
+                assert requests[1] == {**requests[0], "reasoning_format": "deepseek"}
+                assert requests[1]["chat_template_kwargs"] == {"enable_thinking": False}
+                assert requests[1].get("response_format") == requests[0].get("response_format")
+                assert requests[0]["reasoning_format"] == "none"
+                assert client.compatibility_events_snapshot()[0]["responseFormatPreserved"] is True
+            else:
+                assert removed not in requests[1]
+                assert requests[1] == {key: value for key, value in requests[0].items() if key != removed}
             assert requests[1]["chat_template_kwargs"] == {"enable_thinking": False}
         else:
             with pytest.raises(CriticalVlmInteractionError) as error:
                 client.caption_images(frame_paths=[], prompt="Return JSON.")
             assert error.value.details["statusCode"] == status
             assert len(requests) == 1
+    finally:
+        client.close()
+
+
+def test_explicit_schema_uses_compatible_reasoning_parser_on_first_request(monkeypatch):
+    client = LlamaCppVisionClient("http://127.0.0.1:8090", "test", max_recovery_retries=0)
+    schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {"completionVerdict": {"type": "string", "enum": ["supported", "unresolved"]}},
+        "required": ["completionVerdict"],
+    }
+    requests = []
+
+    def post(**kwargs):
+        requests.append(kwargs["json"])
+        return httpx.Response(200, json={"choices": [{"message": {"content": '{"completionVerdict":"supported"}'}}]})
+
+    monkeypatch.setattr(client, "_post_chat_completion", post)
+    try:
+        raw = client.caption_images(
+            frame_paths=[], prompt="Select from the provided evidence.", response_schema=schema,
+            disable_reasoning=True,
+        )
+        assert raw == '{"completionVerdict":"supported"}'
+        assert len(requests) == 1
+        assert requests[0]["response_format"]["json_schema"]["schema"] == schema
+        assert requests[0]["chat_template_kwargs"] == {"enable_thinking": False}
+        assert requests[0]["reasoning_format"] == "deepseek"
+        events = client.compatibility_events_snapshot()
+        assert events == []
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("status,body", [
+    (400, "unsupported response_format"),
+    (422, "unknown reasoning_format parameter"),
+])
+def test_explicit_schema_compatibility_errors_fail_closed(monkeypatch, status, body):
+    client = LlamaCppVisionClient("http://127.0.0.1:8090", "test", max_recovery_retries=0)
+    schema = {"type": "object", "properties": {}, "additionalProperties": False}
+    requests = []
+
+    def post(**kwargs):
+        requests.append(kwargs["json"])
+        return httpx.Response(status, text=body)
+
+    monkeypatch.setattr(client, "_post_chat_completion", post)
+    monkeypatch.setattr(client, "_server_debug_snapshot", lambda: {"test": True})
+    try:
+        with pytest.raises(CriticalVlmInteractionError) as error:
+            client.caption_images(frame_paths=[], prompt="Return schema.", response_schema=schema)
+        assert error.value.details["statusCode"] == status
+        assert len(requests) == 1
+        assert requests[0]["response_format"]["json_schema"]["schema"] == schema
     finally:
         client.close()
 

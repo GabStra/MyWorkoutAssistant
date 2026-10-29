@@ -10,6 +10,55 @@ from exercise_motion_pkg.source_outcomes import update_source_outcome_index
 from exercise_motion_pkg.wave_pipeline import final_processing_diagnostics, wave_retry_disposition
 
 
+def test_exact_preview_range_validates_parent_source_bounds_with_nonzero_offset():
+    preview_seed = {
+        "frames": [
+            {"sourceFrameIndex": source_frame}
+            for source_frame in range(60, 153)
+        ]
+    }
+    expected = bake._preview_parent_source_frame_bounds(preview_seed, (0, 90))
+    assert expected == (60, 150)
+
+    correct_cut = {
+        "frames": [
+            {"sourceFrameIndex": source_frame}
+            for source_frame in range(60, 151)
+        ],
+        "loop": {"sourceStartFrame": 60, "sourceEndFrame": 150},
+    }
+    wrong_parent_cut = {
+        "frames": [
+            {"sourceFrameIndex": source_frame}
+            for source_frame in range(61, 152)
+        ],
+        "loop": {"sourceStartFrame": 61, "sourceEndFrame": 151},
+    }
+    wrong_length_cut = {
+        "frames": [
+            {"sourceFrameIndex": source_frame}
+            for source_frame in range(60, 150)
+        ],
+        "loop": {"sourceStartFrame": 60, "sourceEndFrame": 149},
+    }
+
+    assert bake._baked_source_frame_bounds_match(
+        correct_cut,
+        local_frame_bounds=(0, 90),
+        expected_parent_bounds=expected,
+    )
+    assert not bake._baked_source_frame_bounds_match(
+        wrong_parent_cut,
+        local_frame_bounds=(0, 90),
+        expected_parent_bounds=expected,
+    )
+    assert not bake._baked_source_frame_bounds_match(
+        wrong_length_cut,
+        local_frame_bounds=(0, 90),
+        expected_parent_bounds=expected,
+    )
+
+
 @pytest.mark.parametrize("report,incomplete", [
     ({"applied": False, "reason": "fit_timeout"}, True),
     ({"applied": False, "reason": "no_validated_loop_cycle", "cycleSelectionAttempts": [

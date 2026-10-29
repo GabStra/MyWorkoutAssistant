@@ -21,7 +21,9 @@ def test_seam_repairs_joint_planted_only_inside_repetition(monkeypatch, root_dri
     names, points = stance(12)
     rig = motion.FixedRig(points, names)
     coordinates = rig.initial.copy()
-    coordinates[-1, rig.slots[names.index('right_ankle')]] += .06
+    # Hold the endpoint so the wrap is spatially excessive, rather than just
+    # a velocity-proxy mismatch that does not require seam projection.
+    coordinates[-2:, rig.slots[names.index('right_ankle')]] += .06
     if root_drift:
         coordinates[:, 0] += np.linspace(0., .01, len(coordinates))
     pinned = np.zeros((12, len(names)), dtype=bool)
