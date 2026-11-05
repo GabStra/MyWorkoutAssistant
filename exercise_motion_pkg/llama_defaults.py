@@ -3,7 +3,7 @@ from pathlib import Path
 
 
 _MODEL_DIR = Path(__file__).resolve().parents[1] / "models" / "Qwen3.5-9B-Q6_K"
-DEFAULT_LLAMA_CPP_BIN_DIR = "C:\\llama.cpp\\build-master\\bin\\Release"
+DEFAULT_LLAMA_CPP_BIN_DIR = "C:\\llama.cpp\\current"
 DEFAULT_LLAMA_CPP_SERVER_COMMAND = os.environ.get(
     "EXERCISE_MOTION_LLAMA_CPP_SERVER_COMMAND",
     f"{DEFAULT_LLAMA_CPP_BIN_DIR}\\llama-server.exe",

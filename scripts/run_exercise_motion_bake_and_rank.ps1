@@ -65,7 +65,7 @@
     [double]$FinalOutputValidationMinScore = 0.90,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
     [string]$LlamaCppModel = (Join-Path (Split-Path -Parent $PSScriptRoot) "models/Qwen3.5-9B-Q6_K/Qwen3.5-9B-Q6_K.gguf"),
-    [string]$LlamaCppServerCommand = $(if ($env:EXERCISE_MOTION_LLAMA_CPP_SERVER_COMMAND) { $env:EXERCISE_MOTION_LLAMA_CPP_SERVER_COMMAND } else { "C:\llama.cpp\build-master\bin\Release\llama-server.exe" }),
+    [string]$LlamaCppServerCommand = $(if ($env:EXERCISE_MOTION_LLAMA_CPP_SERVER_COMMAND) { $env:EXERCISE_MOTION_LLAMA_CPP_SERVER_COMMAND } else { "C:\llama.cpp\current\llama-server.exe" }),
     [string]$LlamaCppMmproj = (Join-Path (Split-Path -Parent $PSScriptRoot) "models/Qwen3.5-9B-Q6_K/mmproj-BF16.gguf"),
     [AllowEmptyString()]
     [string]$LlamaCppMtpModel = "",

@@ -36,12 +36,7 @@ if (-not (Test-Path -LiteralPath $mmprojPath -PathType Leaf)) {
 }
 
 if ([string]::IsNullOrWhiteSpace($LlamaServerPath)) {
-    $workspaceServer = Join-Path $runtimeRoot "llama.cpp\b11433\llama-server.exe"
-    if (Test-Path -LiteralPath $workspaceServer -PathType Leaf) {
-        $LlamaServerPath = $workspaceServer
-    } else {
-        $LlamaServerPath = "llama-server"
-    }
+    $LlamaServerPath = "C:\llama.cpp\current\llama-server.exe"
 }
 
 $resolvedCommand = Get-Command -Name $LlamaServerPath -ErrorAction SilentlyContinue
@@ -50,10 +45,11 @@ if ($null -ne $resolvedCommand) {
 } elseif (Test-Path -LiteralPath $LlamaServerPath -PathType Leaf) {
     $serverExe = (Resolve-Path -LiteralPath $LlamaServerPath).Path
 } else {
-    throw "llama-server was not found. Extract the workspace runtime or pass -LlamaServerPath <path>."
+    throw "llama-server was not found. Check C:\llama.cpp\current or pass -LlamaServerPath <path>."
 }
 
 $versionOutput = (& $serverExe --version 2>&1 | Out-String).Trim()
+if ($LASTEXITCODE -ne 0) { throw "Shared llama.cpp runtime could not start: $serverExe" }
 Write-Host "Using llama-server: $serverExe"
 Write-Host "Version: $versionOutput"
 Write-Host "Clef typed image decisions use the /v1/systemone endpoint and the configured multimodal projector."

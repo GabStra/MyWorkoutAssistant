@@ -12,7 +12,7 @@ param(
     [int]$LlamaCppSpecDraftNMax = 3,
     [ValidateSet("cpu", "gpu")]
     [string]$LlamaCppBackend = "gpu",
-    [string]$LlamaCppServerCommand = "C:\\llama.cpp\\build-master\\bin\\Release\\llama-server.exe",
+    [string]$LlamaCppServerCommand = "C:\\llama.cpp\\current\\llama-server.exe",
     [int]$LlamaCppServerPort = 8090,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
     [int]$LlamaCppNPredict = 512,
@@ -79,7 +79,7 @@ function Get-LlamaCppServerCommand {
     if (-not [string]::IsNullOrWhiteSpace($ConfiguredCommand)) {
         return $ConfiguredCommand
     }
-    $fallback = "C:\llama.cpp\build-master\bin\Release\llama-server.exe"
+    $fallback = "C:\llama.cpp\current\llama-server.exe"
     if (Test-Path -LiteralPath $fallback) {
         return $fallback
     }
@@ -188,16 +188,15 @@ function Resolve-LlamaCppServerProcess {
         $args += @("--mtmd-batch-max-tokens", "$MtmdBatchMaxTokens")
     }
     if (-not $Mmap) {
-        $args += "--no-mmap"
-    }
-    if ($Mlock) {
-        $args += "--mlock"
+        $args += @("--load-mode", $(if ($Mlock) { "mlock" } else { "none" }))
+    } elseif ($Mlock) {
+        $args += @("--load-mode", "mmap+mlock")
     }
     $args += if ($MmprojOffload) { "--mmproj-offload" } else { "--no-mmproj-offload" }
     $args += if ($ContBatching) { "--cont-batching" } else { "--no-cont-batching" }
     if ($Backend -eq "gpu") {
         $gpuLayers = if ($Fit -eq "off") { "all" } else { "auto" }
-        $args += @("--gpu-layers", $gpuLayers)
+        $args += @("--gpu-layers", $gpuLayers, "--split-mode", "none")
     }
     else {
         $args += @("--gpu-layers", "0")

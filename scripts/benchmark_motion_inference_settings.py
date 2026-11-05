@@ -1,127 +1,174 @@
-"""Benchmark fixed local review requests; keep model and image quality constant."""
+"""Replay fixed review requests through the production llama.cpp launcher and client."""
 from __future__ import annotations
 
 import argparse
-import base64
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 from pathlib import Path
+import shutil
+import socket
 import subprocess
 import sys
 import threading
 import time
 
-import httpx
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from exercise_motion_pkg.boundary_evidence import ENDPOINT_OBSERVATION_PROMPT
-from exercise_motion_pkg.llama_defaults import (
-    DEFAULT_LLAMA_CPP_MODEL, DEFAULT_LLAMA_CPP_MMPROJ, DEFAULT_LLAMA_CPP_SERVER_COMMAND,
+from exercise_motion_pkg.llama_defaults import DEFAULT_LLAMA_CPP_CTX_SIZE, DEFAULT_LLAMA_CPP_PARALLEL
+from exercise_motion_pkg.bake_and_rank import (
+    SourceCutCandidate, parse_source_cut_candidate_choice, extract_json_object_with_trailing_repair,
 )
-from exercise_motion_pkg.bake_and_rank import extract_json_object_with_trailing_repair
-from exercise_motion_pkg.gpu_lock import GlobalGpuLock
+from exercise_motion_pkg.segment_detection import DetectionWindow
+from exercise_motion_pkg.youtube import LlamaCppVisionRanker, YouTubeRankingSettings
 
 
 def fixed_requests(path: Path) -> list[dict]:
-    cases = json.loads(path.read_text(encoding="utf-8"))
-    requests = []
-    for index in (0, 2, 3, 6):
-        debug = cases[index]["debug"]
-        requests.append({"id": f"sequence-{index}", "prompt": debug["prompt"],
-            "images": debug["framePaths"], "max_tokens": debug["requestKwargs"].get("max_tokens", 512)})
-    for index in (0, 3):
-        for endpoint, position in (("start", 0), ("end", -1)):
-            requests.append({"id": f"endpoint-{index}-{endpoint}", "prompt": ENDPOINT_OBSERVATION_PROMPT,
-                "images": [cases[index]["debug"]["sampleFramePaths"][position]], "max_tokens": 200})
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(data, dict):
+        requests = data["requests"]
+    else:
+        requests = []
+        for index, case in enumerate(data):
+            debug = case.get("debug", case)
+            requests.append({"id": f"sequence-{index}", "prompt": debug["prompt"],
+                "images": debug["framePaths"], "kwargs": debug["requestKwargs"]})
+            samples = debug.get("sampleFramePaths", [])
+            for endpoint, position in (("start", 0), ("end", -1)) if samples else ():
+                requests.append({"id": f"endpoint-{index}-{endpoint}", "prompt": ENDPOINT_OBSERVATION_PROMPT,
+                    "images": [samples[position]], "kwargs": {
+                        "max_tokens": 200, "disable_reasoning": True, "json_response": True}})
+    if not requests:
+        raise ValueError("At least one fixed review request is required")
+    ids = [row["id"] for row in requests]
+    if len(ids) != len(set(ids)):
+        raise ValueError("Review request ids must be unique")
     for request in requests:
+        request["kwargs"] = {key: value for key, value in request.get("kwargs", {}).items()
+                             if not key.startswith("clef_visual_decision_")}
+        request["images"] = [str((path.parent / p).resolve()) for p in request["images"]]
         request["imageHashes"] = [hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in request["images"]]
-        request["content"] = [{"type": "text", "text": request["prompt"]}] + [
-            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," +
-                base64.b64encode(Path(p).read_bytes()).decode("ascii")}} for p in request["images"]]
     return requests
 
 
-def benchmark(config: str, requests: list[dict], output: Path, port: int) -> dict:
+def parse_gpu_samples(raw: str) -> list[dict]:
+    rows = []
+    for line in raw.splitlines():
+        index, utilization, memory, power = (value.strip() for value in line.split(","))
+        rows.append({"index": int(index), "utilizationPercent": float(utilization),
+                     "memoryMiB": float(memory), "powerWatts": None if "N/A" in power else float(power)})
+    return rows
+
+
+def review_decision(request: dict, parsed: dict, raw: str) -> dict:
+    spec = request.get("sourceCandidate")
+    if spec is None:
+        return {key: value for key, value in parsed.items() if key != "description"}
+    candidate = SourceCutCandidate(spec["id"], DetectionWindow(0, spec["start"], spec["end"]),
+                                   [Path(p) for p in request["images"]])
+    ranking = parse_source_cut_candidate_choice(raw, [candidate], has_contract=False,
+        require_identity_evidence=True,
+        required_equipment=spec["requiredEquipment"],
+        equipment_timing_requirement_ids=spec.get("equipmentRequirementIds"))
+    if ranking is None:
+        raise ValueError("Source review failed the production parser")
+    rows = ranking.payload["sourceCutScorecardCandidates"]
+    if len(rows) != 1 or rows[0]["id"] != candidate.candidate_id:
+        raise ValueError("Source review did not return the requested candidate")
+    return {key: rows[0].get(key) for key in ("id", "passed", "rejectionReasons", "identityMatch",
+        "completeMovement", "startBoundaryClean", "finishBoundaryClean", "setupOrFiller",
+        "namedEquipmentEngagedStatus")}
+
+
+def benchmark(config: str, requests: list[dict], output: Path, port: int, *,
+              context_per_slot: int, workers: int, repeats: int, kv_type: str, kv_unified: bool) -> dict:
     slots, batch, ubatch = map(int, config.split(":"))
-    name = config.replace(":", "-")
-    command = [DEFAULT_LLAMA_CPP_SERVER_COMMAND, "-m", DEFAULT_LLAMA_CPP_MODEL,
-        "--mmproj", DEFAULT_LLAMA_CPP_MMPROJ, "--host", "127.0.0.1", "--port", str(port),
-        "--parallel", str(slots), "--ctx-size", str(slots * 8192), "--batch-size", str(batch),
-        "--ubatch-size", str(ubatch), "--flash-attn", "on", "--cache-type-k", "q8_0",
-        "--cache-type-v", "q8_0", "--fit", "on", "--fit-ctx", str(slots * 8192),
-        "--fit-target", "2048", "--gpu-layers", "all", "--reasoning", "off",
-        "--reasoning-format", "none", "--reasoning-budget", "0", "--image-min-tokens", "1024",
-        "--image-max-tokens", "2048", "--mtmd-batch-max-tokens", "768", "--cont-batching"]
-    samples = []
+    if min(slots, batch, ubatch, context_per_slot, workers, repeats) < 1:
+        raise ValueError("Benchmark dimensions must be positive")
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", port))
+    output.mkdir(parents=True, exist_ok=False)
+    settings = YouTubeRankingSettings(llama_cpp_base_url=f"http://127.0.0.1:{port}",
+        llama_cpp_parallel=slots, llama_cpp_ctx_size=slots * context_per_slot,
+        llama_cpp_fit_ctx=slots * context_per_slot, llama_cpp_batch_size=batch,
+        llama_cpp_ubatch_size=ubatch, llama_cpp_cache_type_k=kv_type, llama_cpp_cache_type_v=kv_type,
+        llama_cpp_kv_unified=kv_unified, llama_cpp_threads_http=8)
+    result = {"config": config, "contextPerSlot": context_per_slot, "workers": workers,
+              "kvType": kv_type, "kvUnified": kv_unified, "waves": []}
+    samples, sample_errors = [], []
     stopped = threading.Event()
+    local = threading.local()
+    ranker = None
+
     def sample_gpu():
         while not stopped.is_set():
             try:
-                raw = subprocess.check_output(["nvidia-smi", "--query-gpu=utilization.gpu,memory.used,power.draw",
+                raw = subprocess.check_output(["nvidia-smi", "--query-gpu=index,utilization.gpu,memory.used,power.draw",
                     "--format=csv,noheader,nounits"], text=True, timeout=5,
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-                samples.append([float(value.strip()) for value in raw.strip().split(",")])
-            except (OSError, ValueError, subprocess.SubprocessError):
-                pass
+                samples.append({"seconds": time.perf_counter() - started, "gpus": parse_gpu_samples(raw)})
+            except (OSError, ValueError, subprocess.SubprocessError) as exc:
+                sample_errors.append(str(exc))
             stopped.wait(1)
-    result = {"config": config, "command": command}
-    with (output / f"{name}.log").open("w", encoding="utf-8") as log:
-        process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        monitor = threading.Thread(target=sample_gpu, daemon=True)
-        monitor.start()
-        started = time.perf_counter()
+
+    def capture_response(response):
+        response.read()
+        data = response.json()
+        local.responses.append({"status": response.status_code, "timings": data.get("timings"),
+            "usage": data.get("usage"), "finishReason": (data.get("choices") or [{}])[0].get("finish_reason")})
+
+    def run(request):
+        began = time.perf_counter()
+        local.responses = []
+        row = {"id": request["id"]}
         try:
-            with httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=120) as client:
-                while time.perf_counter() - started < 180:
-                    if process.poll() is not None:
-                        raise RuntimeError(f"Server exited; see {name}.log")
-                    try:
-                        if client.get("/health", timeout=2).status_code == 200:
-                            break
-                    except httpx.HTTPError:
-                        pass
-                    time.sleep(.5)
-                else:
-                    raise TimeoutError("Server startup")
-                result["startupSeconds"] = time.perf_counter() - started
-                def run(request):
-                    began = time.perf_counter()
-                    payload = {"model": DEFAULT_LLAMA_CPP_MODEL,
-                        "messages": [{"role": "user", "content": request["content"]}],
-                        "temperature": 0, "top_p": 1, "top_k": 0, "cache_prompt": False,
-                        "max_tokens": request["max_tokens"], "response_format": {"type": "json_object"},
-                        "reasoning_format": "none", "chat_template_kwargs": {"enable_thinking": False}}
-                    response = client.post("/v1/chat/completions", json=payload)
-                    response.raise_for_status()
-                    data = response.json()
-                    raw = data["choices"][0]["message"]["content"]
-                    return {"id": request["id"], "seconds": time.perf_counter() - began,
-                        "parsed": extract_json_object_with_trailing_repair(raw), "raw": raw,
-                        "timings": data.get("timings"), "usage": data.get("usage"),
-                        "finishReason": data["choices"][0].get("finish_reason")}
-                # Identical visual warmup in each server, excluded from throughput.
-                run(requests[-1])
-                sample_start = len(samples)
-                began = time.perf_counter()
-                with ThreadPoolExecutor(max_workers=slots) as executor:
-                    result["rows"] = list(executor.map(run, requests))
-                result["workloadSeconds"] = time.perf_counter() - began
-                result["requestsPerMinute"] = len(requests) * 60 / result["workloadSeconds"]
-                result["gpuSamples"] = samples[sample_start:]
+            raw = ranker.client.caption_images(frame_paths=[Path(p) for p in request["images"]],
+                                               prompt=request["prompt"], **request["kwargs"])
+            row.update(raw=raw)
+            parsed = extract_json_object_with_trailing_repair(raw)
+            if not isinstance(parsed, dict):
+                raise ValueError("Response is not a JSON object")
+            row.update(parsed=parsed, decision=review_decision(request, parsed, raw))
         except Exception as exc:
-            result["error"] = f"{type(exc).__name__}: {exc}"
+            row["error"] = f"{type(exc).__name__}: {exc}"
+        row.update(seconds=time.perf_counter() - began, responses=local.responses)
+        return row
+
+    started = time.perf_counter()
+    monitor = threading.Thread(target=sample_gpu, daemon=True)
+    monitor.start()
+    try:
+        # The real launcher owns its GPU lock, process cleanup, fit and reasoning policy.
+        ranker = LlamaCppVisionRanker(settings)
+        if ranker.process is None:
+            raise RuntimeError("Benchmark did not start its own isolated server")
+        result.update(command=ranker.process.args, startupSeconds=time.perf_counter() - started)
+        result["serverProps"] = ranker._server_props_payload()
+        ranker.client.client.event_hooks["response"].append(capture_response)
+        for repeat in range(repeats):
+            sample_start = len(samples)
+            began = time.perf_counter()
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                rows = list(executor.map(run, requests))
+            elapsed = time.perf_counter() - began
+            result["waves"].append({"repeat": repeat, "seconds": elapsed, "rows": rows,
+                "jsonReviewsPerMinute": sum("error" not in row for row in rows) * 60 / elapsed,
+                "gpuSamples": samples[sample_start:]})
+            (output / "result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+    except Exception as exc:
+        result["error"] = f"{type(exc).__name__}: {exc}"
+    finally:
+        try:
+            if ranker is not None:
+                log_path = ranker.server_log_path
+                ranker.close(force_stop_server=True)
+                if log_path is not None and log_path.exists():
+                    shutil.copyfile(log_path, output / "server.log")
         finally:
-            process.terminate()
-            try:
-                process.wait(timeout=20)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=10)
             stopped.set()
             monitor.join(timeout=6)
-    (output / f"{name}.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+            result["gpuSamplingErrors"] = sample_errors
+            (output / "result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     return result
 
 
@@ -129,21 +176,29 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cases", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--configs", nargs="+", default=["4:256:512", "2:256:512", "1:256:512", "2:512:256", "4:512:256", "2:1024:512", "4:1024:512"])
-    parser.add_argument("--port", type=int, default=8097)
+    parser.add_argument("--configs", nargs="+", default=["3:1024:512", "1:1024:512", "2:1024:512",
+                                                        "3:2048:512", "3:1024:256", "3:1024:512"])
+    parser.add_argument("--context-per-slot", type=int,
+                        default=DEFAULT_LLAMA_CPP_CTX_SIZE // DEFAULT_LLAMA_CPP_PARALLEL)
+    parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--repeats", type=int, default=2)
+    parser.add_argument("--kv-type", choices=["q8_0", "f16"], default="q8_0")
+    parser.add_argument("--kv-unified", action="store_true")
+    parser.add_argument("--port", type=int, default=18181)
     args = parser.parse_args()
-    # Never connect the benchmark to a server owned by another task.
-    import socket
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", args.port))
-    args.output.mkdir(parents=True, exist_ok=True)
+    args.output.mkdir(parents=True, exist_ok=False)
     requests = fixed_requests(args.cases)
-    (args.output / "requests.json").write_text(json.dumps(
-        [{k: v for k, v in row.items() if k != "content"} for row in requests], indent=2), encoding="utf-8")
-    for config in args.configs:
-        with GlobalGpuLock(stage="motion_inference_benchmark"):
-            result = benchmark(config, requests, args.output, args.port)
-        print(json.dumps({k: result.get(k) for k in ("config", "workloadSeconds", "requestsPerMinute", "error")}), flush=True)
+    (args.output / "requests.json").write_text(json.dumps(requests, indent=2), encoding="utf-8")
+    for index, config in enumerate(args.configs):
+        for request in requests:
+            if [hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in request["images"]] != request["imageHashes"]:
+                raise ValueError(f"Fixture images changed: {request['id']}")
+        result = benchmark(config, requests, args.output / f"{index:02}-{config.replace(':', '-')}",
+            args.port, context_per_slot=args.context_per_slot, workers=args.workers, repeats=args.repeats,
+            kv_type=args.kv_type, kv_unified=args.kv_unified)
+        print(json.dumps({"config": config, "error": result.get("error"),
+            "waves": [{k: wave[k] for k in ("repeat", "seconds", "jsonReviewsPerMinute")}
+                      for wave in result["waves"]]}), flush=True)
 
 
 if __name__ == "__main__":

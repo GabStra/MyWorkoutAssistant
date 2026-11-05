@@ -12095,9 +12095,9 @@ def test_llama_cpp_server_model_matching_uses_model_basename() -> None:
     )
 
 
-def test_llama_cpp_defaults_use_current_master_qwen35_and_mmproj() -> None:
-    assert llama_defaults_module.DEFAULT_LLAMA_CPP_SERVER_COMMAND.endswith(
-        "build-master\\bin\\Release\\llama-server.exe"
+def test_llama_cpp_defaults_use_shared_current_qwen35_and_mmproj() -> None:
+    assert llama_defaults_module.DEFAULT_LLAMA_CPP_BIN_DIR.endswith(
+        "llama.cpp\\current"
     )
     assert llama_defaults_module.DEFAULT_LLAMA_CPP_MODEL.endswith(
         "Qwen3.5-9B-Q6_K.gguf"
@@ -12334,7 +12334,7 @@ def test_llama_cpp_ranker_starts_server_with_safe_vision_profile(
         assert args[args.index("--spec-draft-n-max") + 1] == "4"
         assert args[args.index("--gpu-layers-draft") + 1] == "all"
         assert args[args.index("--gpu-layers") + 1] == "auto"
-        assert args[args.index("--split-mode") + 1] == "layer"
+        assert args[args.index("--split-mode") + 1] == "none"
         assert "--ctx-size" in args
         assert args[args.index("--ctx-size") + 1] == "65536"
         assert "--batch-size" in args

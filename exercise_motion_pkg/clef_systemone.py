@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from .gpu_lock import GlobalGpuLock, wait_for_gpu_cooling
+from .llama_defaults import DEFAULT_LLAMA_CPP_BIN_DIR
 
 CLEF_FINAL_REVIEW_POLICY_VERSION = "clef-final-preview-review-v2"
 CLEF_FINAL_REVIEW_FINDING_THRESHOLD = 0.80
@@ -701,15 +702,15 @@ def _local_base_urls_from_source(source: Any) -> tuple[str, ...]:
 def _managed_runtime_files() -> tuple[Path, Path, Path]:
     workspace_root = Path(__file__).resolve().parents[1]
     runtime_root = workspace_root / "build" / "clef_runtime"
-    server_exe = runtime_root / "llama.cpp" / "b11433" / "llama-server.exe"
+    server_exe = Path(DEFAULT_LLAMA_CPP_BIN_DIR) / "llama-server.exe"
     model_path = runtime_root / "hf-model" / "Clef-Flash-Q4_K_M.gguf"
     mmproj_path = runtime_root / "hf-model" / "mmproj-Clef-Flash-BF16.gguf"
     missing = [path for path in (server_exe, model_path, mmproj_path) if not path.is_file()]
     if missing:
         missing_text = ", ".join(str(path) for path in missing)
         raise FileNotFoundError(
-            "Managed Clef decisions require the isolated runtime files. "
-            f"Missing: {missing_text}. Run scripts/install_clef_llama_cpp.ps1 first."
+            "Managed Clef decisions require the shared llama.cpp runtime and Clef model files. "
+            f"Missing: {missing_text}. Check the shared runtime with scripts/install_clef_llama_cpp.ps1 and install missing Clef models."
         )
     return server_exe, model_path, mmproj_path
 

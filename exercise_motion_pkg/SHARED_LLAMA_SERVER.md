@@ -214,9 +214,15 @@ takes `shared-llama-transition.lock`, defers when a live exclusive handoff is
 present, clears stale markers, and removes only in-flight counters whose PID
 and process-start identity prove the owner has stopped. Malformed or
 unverifiable counters are retained. It then starts `llama-server` using the
-configured `-LlamaCpp*` parameters (model and projection paths, parallelism,
-context and batch sizes, cache types, reasoning mode and budget, and GPU
-layers); host/port come from `-LlamaCppBaseUrl`. It polls `/v1/models` until
+configured `-LlamaCpp*` parameters (model and projection paths, optional MTP,
+parallelism, context and batch sizes, cache types and reuse, image-token bounds,
+image-encoding batch size, loading mode, reasoning budget and message, and GPU
+layers). The current 9B profile keeps the model on the primary GPU
+(`--split-mode none`), with three 16K slots, Flash Attention, Q8 KV, and batch
+1024 / microbatch 512. The image bounds are 1024–2048 tokens per image and the
+encoding batch limit is 768 tokens. `-LlamaCppMmap` / `-LlamaCppMlock` map to the
+current llama.cpp `--load-mode` flag; host/port come from `-LlamaCppBaseUrl`.
+It polls `/v1/models` until
 healthy within
 `-LlamaCppServerStartupTimeoutSeconds` while holding the transition lock,
 writes `ready.json` +
@@ -233,6 +239,28 @@ shutdown-unconfirmed lease instead of stopping clients mid-request.
 `Update-SharedLlamaServerHeartbeat` refreshes `heartbeat.json` from the run
 loop. The workout-plan runner starts, monitors, restarts, and stops this
 supervised instance when `-SharedLlamaServer` is enabled.
+
+## Comparing inference settings
+
+`scripts/benchmark_motion_inference_settings.py --cases <reviews.json> --output <new-directory>`
+replays retained review debug records through `LlamaCppVisionRanker` and
+`LlamaCppVisionClient`. It preserves request-specific reasoning, schema and
+sampling controls, the production image bounds, and 16K context per slot.
+The default comparison checks one/two/three slots and batch alternatives,
+with four submitting workers and a repeated baseline. Each profile records
+its command, responses, timings, finish reasons and both GPUs' sampled memory.
+Use a quiet GPU window; the script does not stop other services.
+
+The input can be a list of review debug records (optionally nested under
+`debug`), or `{"requests": [{"id": "case", "prompt": "...", "images": ["frame.jpg"],
+"kwargs": {"max_tokens": 200, "disable_reasoning": true}}]}`. Image paths in
+that manifest resolve relative to the manifest. Images are hashed before the
+comparison. `--kv-type f16` and `--kv-unified` support separate cache comparisons.
+
+`jsonReviewsPerMinute` measures parsed inference responses, including valid
+rejections. It does not establish correct verdicts, accepted movement yield,
+or rendered quality. Inspect the raw decisions and use representative fixed
+inputs before changing production defaults.
 
 ## Remaining follow-ups
 

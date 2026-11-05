@@ -161,7 +161,7 @@ param(
     [switch]$ComparativeSegmentSelection,
     [string]$LlamaCppBaseUrl = "http://127.0.0.1:8090",
     [string]$LlamaCppModel = (Join-Path (Split-Path -Parent $PSScriptRoot) "models/Qwen3.5-9B-Q6_K/Qwen3.5-9B-Q6_K.gguf"),
-    [string]$LlamaCppServerCommand = $(if ($env:EXERCISE_MOTION_LLAMA_CPP_SERVER_COMMAND) { $env:EXERCISE_MOTION_LLAMA_CPP_SERVER_COMMAND } else { "C:\llama.cpp\build-master\bin\Release\llama-server.exe" }),
+    [string]$LlamaCppServerCommand = $(if ($env:EXERCISE_MOTION_LLAMA_CPP_SERVER_COMMAND) { $env:EXERCISE_MOTION_LLAMA_CPP_SERVER_COMMAND } else { "C:\llama.cpp\current\llama-server.exe" }),
     [string]$LlamaCppMmproj = (Join-Path (Split-Path -Parent $PSScriptRoot) "models/Qwen3.5-9B-Q6_K/mmproj-BF16.gguf"),
     [AllowEmptyString()]
     [string]$LlamaCppMtpModel = "",
@@ -2190,13 +2190,13 @@ function Start-SharedLlamaServer {
     # geometry, and reasoning mode come from the same params that feed the
     # bake/discovery requests so the clients' attach-time runtime validation
     # (parallel slots, reasoning flags, budget) always matches the supervisor.
-    $parallel = if ($null -ne $LlamaCppParallel) { [int]$LlamaCppParallel } else { 8 }
+    $parallel = if ($null -ne $LlamaCppParallel) { [int]$LlamaCppParallel } else { 3 }
     $ctxSize = if ($null -ne $LlamaCppCtxSize) { [int]$LlamaCppCtxSize } else { 49152 }
     $batchSize = if ($null -ne $LlamaCppBatchSize) { [int]$LlamaCppBatchSize } else { 1024 }
     $ubatchSize = if ($null -ne $LlamaCppUBatchSize) { [int]$LlamaCppUBatchSize } else { 512 }
     $threadsHttp = if ($null -ne $LlamaCppThreadsHttp) { [int]$LlamaCppThreadsHttp } else { 8 }
     $reasoningBudget = if ($null -ne $LlamaCppReasoningBudget) { [int]$LlamaCppReasoningBudget } else { 64 }
-    $gpuLayers = if ($LlamaCppFit -eq "off") { "all" } else { "auto" }
+    $gpuLayers = if ($LlamaCppBackend -eq "cpu") { "0" } elseif ($LlamaCppFit -eq "off") { "all" } else { "auto" }
     $fitCtx = if ($null -ne $LlamaCppFitCtx) { [int]$LlamaCppFitCtx } else { $ctxSize }
     $fitTarget = if ($null -ne $LlamaCppFitTarget) { [int]$LlamaCppFitTarget } else { 2048 }
     $serverArgs = @(
@@ -2215,8 +2215,33 @@ function Start-SharedLlamaServer {
         "--reasoning", "on", "--reasoning-format", "deepseek", "--reasoning-budget", "$reasoningBudget",
         "--cont-batching",
         "--gpu-layers", $gpuLayers,
-        "--split-mode", "layer"
+        "--split-mode", "none"
     )
+    if ($null -ne $LlamaCppImageMinTokens) {
+        $serverArgs += @("--image-min-tokens", "$([Math]::Max(1, [int]$LlamaCppImageMinTokens))")
+    }
+    if ($null -ne $LlamaCppImageMaxTokens) {
+        $serverArgs += @("--image-max-tokens", "$([Math]::Max(1, [int]$LlamaCppImageMaxTokens))")
+    }
+    if ($null -ne $LlamaCppMtmdBatchMaxTokens) {
+        $serverArgs += @("--mtmd-batch-max-tokens", "$([Math]::Max(1, [int]$LlamaCppMtmdBatchMaxTokens))")
+    }
+    if ($reasoningBudget -ge 0 -and -not [string]::IsNullOrWhiteSpace($LlamaCppReasoningBudgetMessage)) {
+        $serverArgs += @("--reasoning-budget-message", $LlamaCppReasoningBudgetMessage)
+    }
+    if ($null -ne $LlamaCppCacheReuse) {
+        $serverArgs += @("--cache-reuse", "$([Math]::Max(0, [int]$LlamaCppCacheReuse))")
+    }
+    if (-not [string]::IsNullOrWhiteSpace($LlamaCppMtpModel)) {
+        $draftGpuLayers = if ($LlamaCppBackend -eq "gpu") { "all" } else { "0" }
+        $serverArgs += @("--model-draft", $LlamaCppMtpModel, "--spec-type", "draft-mtp",
+            "--spec-draft-n-max", "$([Math]::Max(1, $LlamaCppSpecDraftNMax))", "--gpu-layers-draft", $draftGpuLayers)
+    }
+    if (-not $LlamaCppMmap) {
+        $serverArgs += @("--load-mode", $(if ($LlamaCppMlock) { "mlock" } else { "none" }))
+    } elseif ($LlamaCppMlock) {
+        $serverArgs += @("--load-mode", "mmap+mlock")
+    }
     $launchId = "$(Get-Date -Format 'yyyyMMdd-HHmmss-fff')-$([guid]::NewGuid().ToString('N'))"
     $logPath = Join-Path $SessionDir "server-$launchId.log"
     $errorLogPath = Join-Path $SessionDir "server-$launchId.err.log"

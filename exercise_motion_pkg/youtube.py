@@ -9916,9 +9916,9 @@ class LlamaCppVisionRanker:
             args.append("--mmproj-offload" if self.settings.llama_cpp_mmproj_offload else "--no-mmproj-offload")
         args.append("--cont-batching" if self.settings.llama_cpp_cont_batching else "--no-cont-batching")
         if self.settings.llama_cpp_backend == "gpu":
-            # Split layers/KV across all visible GPUs using llama.cpp's free-memory weights.
+            # The secondary GPU's PCIe transfers slowed the resident 9B model in host benchmarks.
             gpu_layers = "all" if self.settings.llama_cpp_fit == "off" else "auto"
-            args.extend(["--gpu-layers", gpu_layers, "--split-mode", "layer"])
+            args.extend(["--gpu-layers", gpu_layers, "--split-mode", "none"])
         else:
             args.extend(["--gpu-layers", "0"])
         args_without_mtp: list[str] | None = None
