@@ -49,7 +49,7 @@ fun estimateKcalPerMinute(
         val hrRest = (restingHeartRateBpm ?: 60).coerceIn(25, 120)
         val heartRateReserve = (hrMax - hrRest).coerceAtLeast(1)
         val fractionOfReserve = (clampedHr - hrRest).toDouble() / heartRateReserve
-        if (fractionOfReserve in 0.10..1.10) {
+        if (fractionOfReserve in 0.0..1.10) {
             // %VO2R maps ~1:1 to %HRR (ACSM); VO2 = VO2rest + %VO2R * (VO2max - VO2rest)
             val vo2MlKgMin = 3.5 + fractionOfReserve.coerceAtMost(1.0) * (vo2Max - 3.5)
             val litersO2PerMinute = vo2MlKgMin * weightKg / 1000.0
@@ -70,8 +70,19 @@ fun estimateKcalPerMinute(
 }
 
 /**
- * Whole-effort form of [estimateKcalPerMinute]: the rate applied over one
- * [durationMillis] span, rounded to whole kilocalories.
+ * Resting metabolic burn (1 MET) in kcal/minute for a body weight.
+ * Subtracting this from [estimateKcalPerMinute] yields NET (activity-only)
+ * energy expenditure, the convention used by gym machines and watch
+ * "active calorie" displays.
+ */
+fun restingMetKcalPerMinute(weightKg: Double): Double =
+    3.5 * weightKg / 1000.0 * 5.05
+
+/**
+ * Whole-effort form of [estimateKcalPerMinute]: the NET (activity-only) rate
+ * applied over one [durationMillis] span, rounded to whole kilocalories. The
+ * 1-MET resting burn is subtracted so the result matches the live workout
+ * counter and "active calories" displays.
  *
  * @return whole kilocalories, 0 when inputs are unusable
  */
@@ -97,5 +108,7 @@ fun estimateCaloriesKcal(
         maxHeartRateBpm = maxHeartRateBpm,
         restingHeartRateBpm = restingHeartRateBpm,
     )
-    return (kcalPerMinute * (durationMillis / 60000.0)).roundToInt().coerceAtLeast(0)
+    val netKcalPerMinute = (kcalPerMinute - restingMetKcalPerMinute(weightKg))
+        .coerceAtLeast(0.0)
+    return (netKcalPerMinute * (durationMillis / 60000.0)).roundToInt().coerceAtLeast(0)
 }

@@ -338,6 +338,7 @@ fun EnduranceSetScreen (
         val showCalories by viewModel.calorieDisplayEnabled
         val latestHeartRate by viewModel.latestHeartRateBpm
         val liveCaloriesKcal by viewModel.liveCaloriesKcal
+        val liveCaloriesPerMinute by viewModel.liveCaloriesPerMinute
 
         // Feed the per-set calorie integral on every clock tick and HR update;
         // the accumulator charges each interval at the previous sample's rate.
@@ -373,11 +374,16 @@ fun EnduranceSetScreen (
                 )
             }
             if (showCalories && liveCaloriesKcal > 0) {
-                Text(
-                    text = "≈ $liveCaloriesKcal kcal",
-                    style = MaterialTheme.typography.bodyExtraSmall,
-                    color = MaterialTheme.colorScheme.tertiaryContent
-                )
+                SetValueSection(
+                    label = "CALORIES",
+                    headerStyle = MaterialTheme.typography.bodyExtraSmall,
+                ) {
+                    Text(
+                        text = "≈ $liveCaloriesKcal kcal · $liveCaloriesPerMinute/min",
+                        style = MaterialTheme.typography.bodyExtraSmall,
+                        color = MaterialTheme.colorScheme.tertiaryContent
+                    )
+                }
             }
         }
     }

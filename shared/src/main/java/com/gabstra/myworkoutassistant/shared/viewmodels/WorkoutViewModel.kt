@@ -646,6 +646,12 @@ open class WorkoutViewModel(
     private val liveCalorieAccumulator = LiveCalorieAccumulator()
     private var _liveCaloriesKcal = mutableIntStateOf(0)
     val liveCaloriesKcal: State<Int> = _liveCaloriesKcal
+    // Burn rate readout for the kcal/min label: an EMA over recent HR samples so
+    // a single beat-to-beat wobble does not make the number jump.
+    private var _liveCaloriesPerMinute = mutableIntStateOf(0)
+    val liveCaloriesPerMinute: State<Int> = _liveCaloriesPerMinute
+    private var liveCaloriesPerMinuteEma = 0.0
+    private var liveCaloriesPerMinuteHasSample = false
 
     // Plate recalculation debouncer and state
     private val plateRecalculationDebouncer = PlateRecalculationDebouncer(viewModelScope, debounceDelayMs = 400L)
@@ -1180,6 +1186,8 @@ open class WorkoutViewModel(
             userAge = _userAge.intValue,
             measuredMaxHeartRate = workoutStore.measuredMaxHeartRate,
             restingHeartRate = workoutStore.restingHeartRate,
+            userFemale = workoutStore.sex,
+            userVo2MaxMlKgMin = workoutStore.estimatedVo2MaxMlKgMin,
             startWorkoutTime = startWorkoutTime,
             enableDimming = _enableDimming.value,
             keepScreenOn = _keepScreenOn.value,
@@ -2423,11 +2431,24 @@ open class WorkoutViewModel(
             )
         }
         _liveCaloriesKcal.intValue = cumulativeKcal.roundToInt()
+        _liveCaloriesPerMinute.intValue = estimateKcalPerMinute(
+            heartRateBpm = heartRateBpm,
+            weightKg = _bodyWeight.doubleValue,
+            ageYears = _userAge.intValue,
+            female = screenProfile.userFemale,
+            vo2MaxMlKgMin = screenProfile.userVo2MaxMlKgMin,
+            maxHeartRateBpm = getEffectiveMaxHeartRate(
+                screenProfile.userAge,
+                screenProfile.measuredMaxHeartRate,
+            ),
+            restingHeartRateBpm = screenProfile.restingHeartRate,
+        ).coerceAtLeast(0.0).roundToInt()
     }
 
     fun resetLiveCalorieAccumulator() {
         liveCalorieAccumulator.reset()
         _liveCaloriesKcal.intValue = 0
+        _liveCaloriesPerMinute.intValue = 0
     }
 
     internal fun updateWorkout(currentExercise: Exercise, updatedExercise: Exercise) {

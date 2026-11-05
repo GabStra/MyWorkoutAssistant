@@ -106,10 +106,12 @@ class CalorieEstimationTest {
                     vo2MaxMlKgMin = 45.0,
                     maxHeartRateBpm = 195,
                 )
-                // The wrapper clamps negative near-rest totals at zero (female
-                // formula at HR 60 goes negative); the rate function does not.
+                // The wrapper is NET: gross rate minus the 1-MET resting burn,
+                // clamped at zero (near-rest rates go negative after the
+                // subtraction, as the female formula does at HR 60).
+                val net = (rate - restingMetKcalPerMinute(75.0)).coerceAtLeast(0.0)
                 assertEquals(
-                    (rate * 30).roundToInt().coerceAtLeast(0),
+                    (net * 30).roundToInt().coerceAtLeast(0),
                     estimateCaloriesKcal(heartRate, 30 * 60_000L, 75.0, 30, female = female, vo2MaxMlKgMin = 45.0, maxHeartRateBpm = 195),
                 )
             }
