@@ -1,8 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
-import android.annotation.SuppressLint
 import android.content.Context
-import android.os.PowerManager
 import android.provider.Settings
 import android.view.WindowManager
 import androidx.compose.foundation.background
@@ -21,8 +19,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.core.content.getSystemService
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.services.ScreenWakeService
 import com.gabstra.myworkoutassistant.data.findActivity
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -47,8 +45,6 @@ private fun readSystemBrightnessAsWindowOverride(context: Context): Float {
 }
 
 @Composable
-@SuppressLint("Wakelock", "WakelockTimeout")
-@Suppress("DEPRECATION")
 fun KeepOn(
     appViewModel: AppViewModel,
     keepInteractive: Boolean = true,
@@ -59,13 +55,6 @@ fun KeepOn(
     val context = LocalContext.current
     val activity = context.findActivity()
     val window = activity?.window
-    val powerManager = context.getSystemService<PowerManager>()
-    val wakeLock = remember(powerManager) {
-        powerManager?.newWakeLock(
-            PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
-            "MyWorkoutAssistant:ScreenOn"
-        )?.apply { setReferenceCounted(false) }
-    }
 
     val scope = rememberWearCoroutineScope()
 
@@ -111,18 +100,6 @@ fun KeepOn(
         activity?.setTurnScreenOn(false)
     }
 
-    fun acquireWakeLock() {
-        if (wakeLock?.isHeld == false) {
-            wakeLock.acquire()
-        }
-    }
-
-    fun releaseWakeLock() {
-        if (wakeLock?.isHeld == true) {
-            wakeLock.release()
-        }
-    }
-
     var isCoolingDown by remember { mutableStateOf(false) }
 
     fun deactivateInteractiveMode() {
@@ -130,7 +107,7 @@ fun KeepOn(
         clearWindowFlags()
         setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
         isDimmed = false
-        releaseWakeLock()
+        ScreenWakeService.stop(context)
     }
 
     fun wakeUpAndResetTimer() {
@@ -165,7 +142,9 @@ fun KeepOn(
         }
 
         applyWindowFlags()
-        acquireWakeLock()
+        // Lock lives in ScreenWakeService: a plain service keeps the process
+        // state below "cached", where PMS silently disables screen wake locks.
+        ScreenWakeService.start(context)
         try {
             wakeUpAndResetTimer()
         } catch (t: Throwable) {
