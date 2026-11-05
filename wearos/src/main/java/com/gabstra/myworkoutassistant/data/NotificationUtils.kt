@@ -6,7 +6,12 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.graphics.drawable.Icon
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
 import android.os.SystemClock
+import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -14,6 +19,7 @@ import androidx.wear.ongoing.OngoingActivity
 import androidx.wear.ongoing.Status
 import com.gabstra.myworkoutassistant.MainActivity
 import com.gabstra.myworkoutassistant.R
+import com.gabstra.myworkoutassistant.complications.WorkoutComplication
 import com.gabstra.myworkoutassistant.shared.workout.timer.WorkoutTimerService
 import com.gabstra.myworkoutassistant.shared.workout.timer.formatTimerNotificationStatus
 import java.util.UUID
@@ -73,6 +79,9 @@ fun showWorkoutInProgressNotification(
         .setPriority(NotificationCompat.PRIORITY_HIGH)
         .setOngoing(true)
 
+    // What the Samsung Now Bar card (built from this notification, see below) shows.
+    var nowBarText = "Workout in progress"
+    var nowBarChronometer: RemoteViews? = null
     val ongoingActivityStatus = if (timerUiState == null) {
         notificationBuilder
             .setContentText("Tap to open the app.")
@@ -81,6 +90,7 @@ fun showWorkoutInProgressNotification(
         Status.Builder().addTemplate("Workout in progress").build()
     } else if (!timerUiState.isRunning) {
         val pausedStatus = formatTimerNotificationStatus(timerUiState) ?: "Workout in progress"
+        nowBarText = pausedStatus
         notificationBuilder
             .setContentText(pausedStatus)
             .setShowWhen(false)
@@ -111,6 +121,19 @@ fun showWorkoutInProgressNotification(
         } else {
             System.currentTimeMillis() - timerUiState.displayMillis
         }
+        nowBarText = timerLabel
+        // RemoteViews is how the Now Bar card gets a live timer instead of static text.
+        // Chronometer runs on the elapsedRealtime time base, not wall clock.
+        val chronometerBase = if (isCountdown) {
+            SystemClock.elapsedRealtime() + timerUiState.displayMillis
+        } else {
+            SystemClock.elapsedRealtime() - timerUiState.displayMillis
+        }
+        nowBarChronometer = RemoteViews(context.packageName, R.layout.nowbar_chronometer_remote).apply {
+            setChronometerCountDown(R.id.nowbar_chronometer, isCountdown)
+            // null format: let Chronometer pick MM:SS / H:MM:SS itself.
+            setChronometer(R.id.nowbar_chronometer, chronometerBase, null, true)
+        }
         notificationBuilder
             .setContentText(timerLabel)
             .setWhen(timerBaseWallClockMillis)
@@ -124,15 +147,45 @@ fun showWorkoutInProgressNotification(
             .build()
     }
 
-    OngoingActivity.Builder(context, notificationId, notificationBuilder)
-        // The watch face ongoing button does not inherit notification colorization,
-        // so the ongoing icons carry their own contrast and occupy most of the viewport.
-        .setAnimatedIcon(R.drawable.avd_ongoing_workout_badge)
-        .setStaticIcon(R.drawable.ic_ongoing_workout_badge)
-        .setTouchIntent(pendingIntent)
-        .setStatus(ongoingActivityStatus)
-        .build()
-        .apply(context)
+    if (Build.MANUFACTURER.equals("samsung", ignoreCase = true)) {
+        // One UI Watch's Now Bar draws OngoingActivity cards inside a hard-coded gray oval
+        // inset by 2dp and animates only lottie:// icons. A card supplied by the
+        // notification itself has no background icon, so the badge fills the whole slot.
+        val icon = Icon.createWithContentUri(
+            Uri.parse(
+                "lottie://${context.packageName}/" +
+                    context.resources.getResourceEntryName(R.raw.ongoing_workout_badge_lottie)
+            )
+        )
+        val nowBarData = Bundle().apply {
+            putInt("type", 1)
+            putParcelable("cardIconLeft", icon)
+            putParcelable("expandViewIcon", icon)
+            putParcelable("queIcon", icon)
+            putString("cardContents", nowBarText)
+            putString("expandPrimaryInfo", nowBarText)
+            putString("expandSecondaryInfo", "Workout in progress")
+            nowBarChronometer?.let {
+                putParcelable("cardChronometerRemoteView", it)
+                putParcelable("expandChronometerRemoteView", it)
+            }
+        }
+        notificationBuilder.addExtras(Bundle().apply {
+            putBundle("customDisplayBundle", Bundle().apply {
+                putBoolean("enableNowBar", true)
+                putBundle("nowBarData", nowBarData)
+            })
+        })
+    } else {
+        // Stock Wear OS animates the AVD in the ongoing-activity chip directly.
+        OngoingActivity.Builder(context, notificationId, notificationBuilder)
+            .setAnimatedIcon(R.drawable.avd_ongoing_workout_badge)
+            .setStaticIcon(R.drawable.ic_ongoing_workout_badge)
+            .setTouchIntent(pendingIntent)
+            .setStatus(ongoingActivityStatus)
+            .build()
+            .apply(context)
+    }
 
     val notification = notificationBuilder.build()
 
@@ -150,6 +203,7 @@ fun cancelWorkoutInProgressNotification(context: Context) {
     with(NotificationManagerCompat.from(context)) {
         cancel(notificationId)
     }
+    WorkoutComplication.clear(context)
 }
 
 @SuppressLint("MissingPermission")

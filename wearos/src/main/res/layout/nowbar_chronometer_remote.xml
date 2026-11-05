@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Mirrors SysUI's non_sec_nowbar_chronometer: the Now Bar card looks up the live timer
+     by the "aod_chronometer" tag and forces that view to render immediately. -->
+<Chronometer xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/nowbar_chronometer"
+    android:tag="aod_chronometer"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:layout_gravity="center"
+    android:ellipsize="middle"
+    android:maxLines="1"
+    android:textColor="#FFFFFFFF"
+    android:textSize="13sp" />

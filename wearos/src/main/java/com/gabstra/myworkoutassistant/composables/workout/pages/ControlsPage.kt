@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composables.workout.pages
 
+import android.content.Intent
 import com.gabstra.myworkoutassistant.composables.*
 import com.gabstra.myworkoutassistant.presentation.theme.tertiaryContent
 
@@ -207,7 +208,7 @@ fun ControlsPage(
                         onClick = {
                             hapticsViewModel.doGentleVibration()
                             // Handle go back for calibration flow:
-                            // CalibrationRIRSelection â†’ Set(isCalibrationSet) â†’ CalibrationLoadSelection â†’ previous non-Rest state
+                            // CalibrationRIRSelection → Set(isCalibrationSet) → CalibrationLoadSelection → previous non-Rest state
                             // Use undo() for CalibrationRIRSelection and Set(isCalibrationSet) to maintain proper state sequence
                             // Use goToPreviousNonRestState() for CalibrationLoadSelection to skip Rest states
                             when (currentWorkoutState) {
@@ -541,6 +542,51 @@ fun ControlsPage(
                                 uncheckedTrackColor = MediumLightGray,
                                 uncheckedBorderColor = MaterialTheme.colorScheme.onBackground,
                             ),
+                        )
+                    }
+                }
+            }
+
+            item {
+                // SysUI owns the per-app Now Bar style ("icon" vs "icon + text"). Only the
+                // exported settings entry point is reachable, so this row opens it; with
+                // "icon + text" the watch face shows the Now Bar card, which carries our timer.
+                WearTonalContentButton(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(
+                            if (isInspectionMode) Modifier else Modifier.transformedHeight(
+                                this,
+                                spec
+                            )
+                        ),
+                    transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
+                    onClick = {
+                        hapticsViewModel.doGentleVibration()
+                        try {
+                            context.startActivity(
+                                Intent("com.samsung.android.wearable.sysui.W_NOWBAR_SETTINGS")
+                                    .setPackage("com.samsung.android.wearable.sysui")
+                            )
+                        } catch (exception: Exception) {
+                            android.util.Log.e("ControlsPage", "Now Bar settings unavailable", exception)
+                        }
+                    }
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(2.5.dp)
+                    ) {
+                        Text(
+                            text = "Watch face timer",
+                            style = MaterialTheme.typography.bodySmall,
+                            textAlign = TextAlign.Start,
+                        )
+                        Text(
+                            text = "Pick this app, then style \"icon + text\"",
+                            style = MaterialTheme.typography.bodyExtraSmall,
+                            textAlign = TextAlign.Start,
+                            color = MaterialTheme.colorScheme.tertiaryContent
                         )
                     }
                 }

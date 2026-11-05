@@ -58,6 +58,7 @@ import com.gabstra.myworkoutassistant.composables.WorkoutStateHeader
 import com.gabstra.myworkoutassistant.composables.rememberTopOverlayController
 import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.complications.WorkoutComplication
 import com.gabstra.myworkoutassistant.data.ExternalHeartRateDeviceController
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
@@ -264,6 +265,15 @@ fun WorkoutScreen(
             )
         } catch (exception: Exception) {
             android.util.Log.e("WorkoutScreen", "Error updating workout timer notification", exception)
+        }
+    }
+
+    // Mirror the timer into complication data so the watch face can show the countdown.
+    LaunchedEffect(notificationTimerUiState) {
+        try {
+            WorkoutComplication.update(context, notificationTimerUiState)
+        } catch (exception: Exception) {
+            android.util.Log.e("WorkoutScreen", "Error updating workout complication", exception)
         }
     }
 
@@ -777,7 +787,6 @@ fun WorkoutScreen(
                 }
             }
             // Sync status badge (non-blocking)
-            //SyncStatusBadge(viewModel = viewModel)
 
             // HR target indicators (non-blocking)
             HrStatusBadge(hrStatus = hrStatus)

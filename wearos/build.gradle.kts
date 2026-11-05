@@ -161,6 +161,7 @@ dependencies {
     implementation("com.google.accompanist:accompanist-permissions:0.37.3")
     implementation("androidx.wear:wear-tooling-preview:1.0.0")
     implementation("androidx.wear:wear-ongoing:1.1.0")
+    implementation("androidx.wear.watchface:watchface-complications-data-source:1.3.0-alpha07")
     implementation("com.google.android.gms:play-services-wearable:20.0.1")
     //Horologist
     implementation("com.google.android.horologist:horologist-datalayer:0.8.2-alpha")
