@@ -75,6 +75,50 @@ def test_recovery_restores_orphan_occurrence_links_without_editing_recorded_sets
     assert next(migration.exercises(result))['id'] == 'occurrence'
     assert result['SetHistories'] == backup['SetHistories']
     assert report['recoveredExercises'][0]['exerciseId'] == 'occurrence'
+    assert result['WorkoutStore']['workouts'][0]['workoutComponents'][0]['type'] == 'Superset'
+
+
+def test_recovery_restores_member_inside_its_original_superset_without_rewriting_sibling():
+    backup, _ = case()
+    group = backup['WorkoutStore']['workouts'][0]['workoutComponents'][0]
+    sibling = {**copy.deepcopy(group['exercises'][0]), 'id': 'sibling', 'notes': 'Keep this context'}
+    group['exercises'].append(sibling)
+    group['restSecondsByExercise'] = {'occurrence': 30, 'sibling': 60}
+    recovery = copy.deepcopy(backup)
+    group['exercises'] = [sibling]
+    original_sets = copy.deepcopy(backup['SetHistories'])
+
+    recovered, missing = migration.recover_missing(backup, [recovery])
+
+    assert not missing and len(recovered) == 1
+    assert group['exercises'] == recovery['WorkoutStore']['workouts'][0]['workoutComponents'][0]['exercises']
+    assert group['restSecondsByExercise'] == {'occurrence': 30, 'sibling': 60}
+    assert backup['SetHistories'] == original_sets
+
+
+def test_recovery_requires_the_original_workout_version_even_for_one_matching_exercise():
+    backup, _ = case()
+    recovery = copy.deepcopy(backup)
+    recovery['WorkoutStore']['workouts'][0]['id'] = 'another-version'
+    backup['WorkoutStore']['workouts'][0]['workoutComponents'] = []
+
+    recovered, missing = migration.recover_missing(backup, [recovery])
+
+    assert not recovered and 'original workout version' in missing[0]['reason']
+    assert not backup['WorkoutStore']['workouts'][0]['workoutComponents']
+
+
+def test_recovery_rejects_changed_superset_context():
+    backup, _ = case()
+    group = backup['WorkoutStore']['workouts'][0]['workoutComponents'][0]
+    group['restSecondsByExercise'] = {'occurrence': 30}
+    recovery = copy.deepcopy(backup)
+    group['exercises'] = []
+    group['restSecondsByExercise']['occurrence'] = 90
+
+    recovered, missing = migration.recover_missing(backup, [recovery])
+
+    assert not recovered and 'superset context conflicts' in missing[0]['reason']
 
 
 def test_cache_is_bound_to_source_files_and_explicit_mapping_checks_load_semantics():

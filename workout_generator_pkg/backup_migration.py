@@ -102,34 +102,82 @@ def recover_missing(backup, recoveries):
     for recovery in recoveries:
         definitions = {d['id']: d for d in recovery.get('WorkoutStore', {}).get('exerciseDefinitions', [])}
         for workout in recovery.get('WorkoutStore', {}).get('workouts', []):
-            for exercise in exercises(workout):
-                templates.setdefault(exercise['id'], []).append((workout['id'], exercise, identity(exercise, definitions)))
+            for component in workout.get('workoutComponents', []):
+                for exercise in exercises(component):
+                    templates.setdefault(exercise['id'], []).append((
+                        workout['id'], exercise, identity(exercise, definitions), component, definitions))
     recovered, missing = [], []
     for workout_id, exercise_id in sorted(history_references(backup) - known, key=lambda pair: (pair[0] or '', pair[1])):
+        if (workout_id, exercise_id) in known:
+            continue
         context = {'exerciseId': exercise_id, 'workoutId': workout_id}
         if workout_id not in workouts:
             missing.append({**context, 'reason': 'Original workout or session context is missing.'})
             continue
         candidates = templates.get(exercise_id, [])
         exact = [item for item in candidates if item[0] == workout_id]
-        candidates = exact or candidates
-        unique = {fingerprint([item[1], item[2]]): item for item in candidates}
+        if not exact:
+            reason = ('Recovery backups contain conflicting workout versions; supply the exact version.'
+                      if len({fingerprint([item[1], item[2], item[3]]) for item in candidates}) > 1
+                      else 'Supply a recovery backup containing this original workout version.')
+            missing.append({**context, 'reason': reason})
+            continue
+        unique = {fingerprint([item[1], item[2], item[3]]): item for item in exact}
         if len(unique) != 1:
             reason = ('Recovery backups contain conflicting workout versions; supply the exact version.' if unique
                       else 'Supply an older --recovery-backup containing this exercise.')
             missing.append({**context, 'reason': reason})
             continue
-        _, exercise, source = next(iter(unique.values()))
+        _, exercise, source, component, source_definitions = next(iter(unique.values()))
         definition_id = exercise.get('exerciseDefinitionId') or source.get('id')
         if not definition_id:
             missing.append({**context, 'reason': 'Original definition is missing.'})
             continue
-        definitions = backup['WorkoutStore'].setdefault('exerciseDefinitions', [])
-        if not any(d['id'] == definition_id for d in definitions):
-            definitions.append({**source, 'id': definition_id})
         restored = copy.deepcopy(exercise)
         restored['exerciseDefinitionId'] = definition_id
-        workouts[workout_id].setdefault('workoutComponents', []).append(restored)
+        components = workouts[workout_id].setdefault('workoutComponents', [])
+        destination = next((item for item in components if item.get('id') == component.get('id')), None)
+        source_members = list(exercises(component))
+        if component.get('type') == 'Superset':
+            source_order = [item['id'] for item in source_members]
+            if destination is not None:
+                metadata = lambda value: {key: val for key, val in value.items() if key != 'exercises'}
+                current_ids = [item['id'] for item in destination.get('exercises', [])]
+                if (metadata(destination) != metadata(component)
+                        or current_ids != [key for key in source_order if key in current_ids]):
+                    missing.append({**context, 'reason': 'Recovered superset context conflicts with the owning workout.'})
+                    continue
+                additions = [restored]
+            elif any((workout_id, item['id']) in known for item in source_members):
+                missing.append({**context, 'reason': 'Recovered superset members belong to a different component.'})
+                continue
+            else:
+                additions = copy.deepcopy(source_members)
+        else:
+            if destination is not None:
+                missing.append({**context, 'reason': 'Recovered exercise component identity conflicts with the owning workout.'})
+                continue
+            additions = [restored]
+        definitions = backup['WorkoutStore'].setdefault('exerciseDefinitions', [])
+        by_id = {item['id']: item for item in definitions}
+        sources = [identity(item, source_definitions) for item in additions]
+        for item, definition in zip(additions, sources):
+            identifier = item.get('exerciseDefinitionId') or definition.get('id')
+            if not identifier or identifier in by_id and by_id[identifier] != {**definition, 'id': identifier}:
+                raise ValueError('Recovered historical definition conflicts with the preserved catalog.')
+            item['exerciseDefinitionId'] = identifier
+            if identifier not in by_id:
+                by_id[identifier] = {**definition, 'id': identifier}
+                definitions.append(by_id[identifier])
+        if component.get('type') == 'Superset':
+            if destination is None:
+                destination = {**copy.deepcopy(component), 'exercises': []}
+                components.append(destination)
+            members = {item['id']: item for item in destination['exercises'] + additions}
+            destination['exercises'] = [members[key] for key in source_order if key in members]
+        else:
+            components.extend(additions)
+        known.update((workout_id, item['id']) for item in additions)
         recovered.append({'exerciseId': exercise_id, 'name': source['name'], 'workoutIds': [workout_id]})
     return recovered, missing
 
