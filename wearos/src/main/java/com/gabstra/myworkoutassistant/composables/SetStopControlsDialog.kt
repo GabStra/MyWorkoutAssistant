@@ -76,9 +76,13 @@ internal fun SetStopControlsDialog(onStop: () -> Unit, onDismiss: () -> Unit) {
                 verticalArrangement = Arrangement.SpaceEvenly,
             ) {
                 Text("SET CONTROLS", style = MaterialTheme.typography.titleMedium)
-                Box(
-                    modifier = Modifier
-                        .size(WearStandardIconButtonSize + 8.dp)
+                SetValueSection(
+                    label = "HOLD TO STOP",
+                    headerStyle = MaterialTheme.typography.bodyExtraSmall,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(WearStandardIconButtonSize + 8.dp)
                         .semantics {
                             role = Role.Button
                             contentDescription = "Hold to stop set"
@@ -136,17 +140,23 @@ internal fun SetStopControlsDialog(onStop: () -> Unit, onDismiss: () -> Unit) {
                         )
                     }
                 }
-                EnhancedIconButton(
-                    onClick = onDismiss,
-                    buttonSize = 48.dp,
-                    hitBoxScale = 1f,
-                    buttonModifier = Modifier.clip(CircleShape),
+                }
+                SetValueSection(
+                    label = "BACK",
+                    headerStyle = MaterialTheme.typography.bodyExtraSmall,
                 ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back to set",
-                        tint = androidx.wear.compose.material3.LocalContentColor.current,
-                    )
+                    EnhancedIconButton(
+                        onClick = onDismiss,
+                        buttonSize = 48.dp,
+                        hitBoxScale = 1f,
+                        buttonModifier = Modifier.clip(CircleShape),
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back to set",
+                            tint = androidx.wear.compose.material3.LocalContentColor.current,
+                        )
+                    }
                 }
             }
         }

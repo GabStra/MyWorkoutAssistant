@@ -265,36 +265,37 @@ fun CustomDialogYesOnLongPress(
                             )
                         }
                         Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = "Hold check to confirm",
-                            textAlign = TextAlign.Center,
-                            color = MaterialTheme.colorScheme.tertiaryContent,
-                            style = MaterialTheme.typography.labelMedium,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
                         val contentColor = MaterialTheme.colorScheme.onSurface
                         Row(
                             horizontalArrangement = Arrangement.Center,
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
                         ) {
-                            EnhancedIconButton(
-                                buttonSize = ConfirmationCancelButtonSize,
-                                hitBoxScale = 1.2f,
-                                onClick = {
-                                    runNoClick()
-                                },
-                                buttonModifier = Modifier.clip(CircleShape)
+                            SetValueSection(
+                                label = "CANCEL",
+                                headerStyle = MaterialTheme.typography.bodyExtraSmall,
                             ) {
-                                Icon(
-                                    modifier = Modifier.size(ConfirmationCancelIconSize),
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = "Close",
-                                    tint = androidx.wear.compose.material3.LocalContentColor.current
-                                )
+                                EnhancedIconButton(
+                                    buttonSize = ConfirmationCancelButtonSize,
+                                    hitBoxScale = 1.2f,
+                                    onClick = {
+                                        runNoClick()
+                                    },
+                                    buttonModifier = Modifier.clip(CircleShape)
+                                ) {
+                                    Icon(
+                                        modifier = Modifier.size(ConfirmationCancelIconSize),
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Close",
+                                        tint = androidx.wear.compose.material3.LocalContentColor.current
+                                    )
+                                }
                             }
                             Spacer(modifier = Modifier.width(14.dp))
+                            SetValueSection(
+                                label = "HOLD TO CONFIRM",
+                                headerStyle = MaterialTheme.typography.bodyExtraSmall,
+                            ) {
                             Box(
                                 modifier = Modifier
                                     .size(ConfirmationIndicatorSize)
@@ -335,6 +336,7 @@ fun CustomDialogYesOnLongPress(
                                         tint = confirmContentColor
                                     )
                                 }
+                            }
                             }
                         }
                     }
